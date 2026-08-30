@@ -1085,6 +1085,266 @@ def test_choose_a_quality_missing_choice_is_refused_not_defaulted(client, game):
         thread.join(timeout=10)
 
 
+# -- put_on_top_or_bottom: Subtlety's ETB (CR 608.2d) ------------------------
+#
+# alice: Subtlety in hand, four Islands ({2}{U}{U}). bob: Grizzly Bears in
+# hand, two Forests, and is the active player - his sorcery-speed Bears needs
+# his own main phase, and Subtlety's flash (CR 702.8b) is what lets alice
+# answer from outside her turn. This is the same board `test_up_to_one_target_
+# spell.py` in the engine repo builds for the same card, so a `decide` bug
+# here is not a bug the engine repo's own scenario tests would ever see -
+# they script the answer directly rather than routing it through a live
+# mailbox.
+#
+# The stack, once both spells are up, is [Grizzly Bears, Subtlety]. Resolving
+# the top twice does the whole thing: first Subtlety resolves, entering the
+# battlefield and putting its own ETB trigger on the stack - which itself
+# blocks on a `choose_targets` decision for the trigger's target (`test_
+# target_decisions.py`'s own mechanism, exercised again here because
+# Subtlety's target has to be chosen before its `put_on_top_or_bottom`
+# question can even be asked). Second, the trigger resolves and asks
+# `put_on_top_or_bottom` - of *bob*, Grizzly Bears' owner, not alice, who
+# controls the resolving trigger (CR 108.3).
+
+
+def stock_subtlety_board(client: TestClient, game_id: str, *, uid: str | None = None) -> dict:
+    add_card(client, game_id, "Grizzly Bears", "bob", "hand")
+    add_card(client, game_id, "Forest", "bob", "battlefield")
+    add_card(client, game_id, "Forest", "bob", "battlefield")
+    add_card(client, game_id, "Subtlety", "alice", "hand")
+    for _ in range(4):
+        add_card(client, game_id, "Island", "alice", "battlefield")
+    board = state(client, game_id, uid=uid)
+    return {
+        "bears": board["hands"]["bob"][0],
+        "forests": [c["id"] for c in board["battlefield"] if c["name"] == "Forest"],
+        "subtlety": board["hands"]["alice"][0],
+        "islands": [c["id"] for c in board["battlefield"] if c["name"] == "Island"],
+    }
+
+
+def new_subtlety_game(client: TestClient) -> tuple[str, dict[str, str]]:
+    """A fresh game with bob active in his own precombat main - `game`'s own
+    fixture always starts alice active, which is wrong for this board: bob's
+    Grizzly Bears is sorcery-speed and needs to be cast on his turn.
+
+    Built directly rather than through the `game` fixture, so `state()`'s
+    admin-key fallback is unavailable here - every `state()` call below must
+    pass an explicit `uid`, an admin key stashed by the test, or accept a
+    redacted (seat-scoped) view."""
+    created = client.post(
+        "/api/games",
+        json={
+            "players": [{"username": "alice"}, {"username": "bob"}],
+            "active_player": "bob",
+            "step": "precombat_main",
+        },
+    ).json()
+    uids = dict(created["seat_uids"])
+    uids["admin"] = created["admin_key"]
+    return created["game_id"], uids
+
+
+def get_both_spells_on_the_stack(client: TestClient, game_id: str, board: dict) -> None:
+    """Bob casts Grizzly Bears, passes priority, and alice flashes in
+    Subtlety in response - all foreground calls, since none of them raises a
+    decision. Leaves the stack as [Grizzly Bears, Subtlety]."""
+    cast_bears = client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={"player": "bob", "card_id": board["bears"]["id"], "mana_sources": board["forests"]},
+    )
+    assert cast_bears.status_code == 200, cast_bears.text
+    passed = client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": "bob"})
+    assert passed.status_code == 200, passed.text
+    cast_subtlety = client.post(
+        f"/api/games/{game_id}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": board["subtlety"]["id"],
+            "mana_sources": board["islands"],
+        },
+    )
+    assert cast_subtlety.status_code == 200, cast_subtlety.text
+
+
+def resolve_top_in_background(game_id: str) -> threading.Thread:
+    def post() -> None:
+        stepping_client = TestClient(app)
+        stepping_client.post(f"/api/games/{game_id}/resolve-top")
+
+    return run_in_background(post)
+
+
+def choose_subtletys_target(client: TestClient, game_id: str, uid: str, bears_id: str) -> None:
+    """Answers the `choose_targets` decision Subtlety's own ETB trigger asks
+    (of alice, its controller) before its `put_on_top_or_bottom` question can
+    be asked at all - see the section docstring."""
+    wait_for_pending(client, game_id, uid)
+    answer = client.post(
+        f"/api/games/{game_id}/decide",
+        params={"uid": uid},
+        json={"player": "alice", "targets": [bears_id]},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["accepted"] is True
+
+
+def test_put_on_top_or_bottom_top_returns_the_spell_to_the_top(client):
+    game_id, uids = new_subtlety_game(client)
+    try:
+        board = stock_subtlety_board(client, game_id, uid=uids["admin"])
+        get_both_spells_on_the_stack(client, game_id, board)
+
+        first = resolve_top_in_background(game_id)  # Subtlety resolves and enters
+        try:
+            choose_subtletys_target(client, game_id, uids["alice"], board["bears"]["id"])
+        finally:
+            first.join(timeout=10)
+        assert not first.is_alive()
+
+        second = resolve_top_in_background(game_id)  # the ETB trigger resolves
+        try:
+            pending = wait_for_pending(client, game_id, uids["bob"])["pending_decision"]
+            assert pending["kind"] == "put_on_top_or_bottom"
+            assert pending["player"] == "bob", "Grizzly Bears' owner, not Subtlety's controller"
+
+            answer = client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["bob"]},
+                json={"player": "bob", "top": True},
+            )
+            assert answer.status_code == 200, answer.text
+            assert answer.json()["accepted"] is True
+        finally:
+            second.join(timeout=10)
+        assert not second.is_alive()
+
+        final = state(client, game_id, uid=uids["admin"])
+        assert final["libraries"]["bob"][0]["name"] == "Grizzly Bears"
+        assert final["stack"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_put_on_top_or_bottom_bottom_returns_the_spell_to_the_bottom(client):
+    game_id, uids = new_subtlety_game(client)
+    try:
+        board = stock_subtlety_board(client, game_id, uid=uids["admin"])
+        get_both_spells_on_the_stack(client, game_id, board)
+
+        first = resolve_top_in_background(game_id)
+        try:
+            choose_subtletys_target(client, game_id, uids["alice"], board["bears"]["id"])
+        finally:
+            first.join(timeout=10)
+
+        second = resolve_top_in_background(game_id)
+        try:
+            wait_for_pending(client, game_id, uids["bob"])
+            answer = client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["bob"]},
+                json={"player": "bob", "top": False},
+            )
+            assert answer.status_code == 200, answer.text
+            assert answer.json()["accepted"] is True
+        finally:
+            second.join(timeout=10)
+        assert not second.is_alive()
+
+        final = state(client, game_id, uid=uids["admin"])
+        assert final["libraries"]["bob"][-1]["name"] == "Grizzly Bears"
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_put_on_top_or_bottom_missing_answer_is_refused_not_defaulted(client):
+    """A `decide` call for `put_on_top_or_bottom` with no `top` must be
+    refused by name, matching `pay_life`'s and `choose_a_quality`'s refusal of
+    a missing answer - not silently defaulted to "top" (`default_answer`'s own
+    engine-side fallback), which would hide exactly the same freeze this
+    file's other kinds already guard against."""
+    game_id, uids = new_subtlety_game(client)
+    try:
+        board = stock_subtlety_board(client, game_id, uid=uids["admin"])
+        get_both_spells_on_the_stack(client, game_id, board)
+
+        first = resolve_top_in_background(game_id)
+        try:
+            choose_subtletys_target(client, game_id, uids["alice"], board["bears"]["id"])
+        finally:
+            first.join(timeout=10)
+
+        second = resolve_top_in_background(game_id)
+        try:
+            wait_for_pending(client, game_id, uids["bob"])
+            refused = client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["bob"]},
+                json={"player": "bob"},
+            )
+            assert refused.status_code == 200
+            body = refused.json()
+            assert body["accepted"] is False
+            assert "top" in body["reason"]
+
+            # Still pending - the refusal above did not consume the question.
+            still_pending = state(client, game_id, uid=uids["bob"])
+            assert still_pending.get("pending_decision") is not None
+
+            client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["bob"]},
+                json={"player": "bob", "top": True},
+            )
+        finally:
+            second.join(timeout=10)
+        assert not second.is_alive()
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_the_caster_cannot_answer_a_put_on_top_or_bottom_decision_asked_of_the_owner(client):
+    """CR 108.3: alice controls the resolving Subtlety trigger, but bob owns
+    the targeted Grizzly Bears, and it is bob's choice - alice trying to
+    answer for him must be refused, matching `test_the_opponent_cannot_
+    answer_a_pay_life_decision`'s shape for a decision asked of someone else."""
+    game_id, uids = new_subtlety_game(client)
+    try:
+        board = stock_subtlety_board(client, game_id, uid=uids["admin"])
+        get_both_spells_on_the_stack(client, game_id, board)
+
+        first = resolve_top_in_background(game_id)
+        try:
+            choose_subtletys_target(client, game_id, uids["alice"], board["bears"]["id"])
+        finally:
+            first.join(timeout=10)
+
+        second = resolve_top_in_background(game_id)
+        try:
+            wait_for_pending(client, game_id, uids["bob"])
+            refused = client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["alice"]},
+                json={"player": "alice", "top": True},
+            )
+            assert refused.json()["accepted"] is False
+
+            still_pending = state(client, game_id, uid=uids["bob"])
+            assert still_pending.get("pending_decision") is not None
+
+            client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["bob"]},
+                json={"player": "bob", "top": True},
+            )
+        finally:
+            second.join(timeout=10)
+        assert not second.is_alive()
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
 # -- the drift test: every DecisionKind is answerable or named elsewhere ----
 
 

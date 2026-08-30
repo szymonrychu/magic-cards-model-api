@@ -882,6 +882,12 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["choice"] = req.choice
+    elif kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
+        try:
+            answer = decisions.top_or_bottom_answer(req.top)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["top"] = req.top
     elif kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
         try:
             answer = decisions.card_split_answer(req.moved, req.top_order)

@@ -92,6 +92,15 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "
 #: yes/no shape `PAY_ENERGY` already uses, since it too is a fixed-amount
 #: payment. Asked of the *targeted spell's* controller, not the resolving
 #: counterspell's caster - see `Game.may_pay_mana`'s docstring.
+#: `PUT_ON_TOP_OR_BOTTOM` (Subtlety's "its owner puts it on the top or bottom
+#: of their library") is the same gap a third time: the drift test caught it
+#: at merge time rather than in a live game, the way `choose_a_quality` was
+#: caught the hard way. Not `bool_answer` despite also being a `bool` under
+#: the hood - `top_or_bottom_answer` refuses a missing answer the same way,
+#: but the field name (`top`) is deliberately its own so a client cannot
+#: confuse this top/bottom choice for a yes/no `accept`. Asked of the
+#: targeted spell's *owner* (CR 108.3), never of Subtlety's controller - see
+#: `machines/effects.py`'s `_parse_choose_up_to_one_target_spell_clauses`.
 ANSWERABLE_KINDS = frozenset(
     {
         DecisionKind.MAY,
@@ -104,6 +113,7 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.CHOOSE_CARDS,
         DecisionKind.CHOOSE_TARGETS,
         DecisionKind.CHOOSE_A_QUALITY,
+        DecisionKind.PUT_ON_TOP_OR_BOTTOM,
     }
 )
 
@@ -467,6 +477,21 @@ def quality_answer(choice: str | None) -> str:
     if not choice:
         raise ValueError("this decision needs a chosen value ('choice'), CR 614.12a")
     return choice
+
+
+def top_or_bottom_answer(top: bool | None) -> bool:
+    """A `decide` request body's `top`, in the shape `Game.ask` expects for
+    `PUT_ON_TOP_OR_BOTTOM` (Subtlety) - a plain `bool`, `True` for the top of
+    the library, `False` for the bottom.
+
+    Refuses a missing answer with a 400-shaped `ValueError`, matching
+    `bool_answer`'s reasoning for `accept`: `Game.ask`'s own `isinstance(value,
+    bool)` check would raise the same way but inside the other request thread,
+    where nobody would ever see it.
+    """
+    if top is None:
+        raise ValueError("this decision needs a top-or-bottom answer ('top')")
+    return top
 
 
 def card_split_answer(moved: list[str], top_order: list[str] | None) -> CardSplit:

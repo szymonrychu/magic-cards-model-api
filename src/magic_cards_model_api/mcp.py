@@ -352,6 +352,7 @@ def build_server(seats: Seats) -> MCPServer:
         top_order: str = "",
         energy_amount: int | None = None,
         choice: str = "",
+        top: bool | None = None,
         hold_priority: bool = False,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
@@ -411,6 +412,13 @@ def build_server(seats: Seats) -> MCPServer:
           (a *look*, CR 701.20e: shown only to the deciding player) or a
           library-sourced `choose_cards` is never answered blind. Look the id
           up in `card_details` before choosing.
+        - `put_on_top_or_bottom` (Subtlety's "its owner puts it on the top or
+          bottom of their library"): `top` is `True` for the top, `False` for
+          the bottom. Not `accept` - this is a top/bottom choice, not a
+          yes/no, even though both are booleans. `pending_decision.player` is
+          the *targeted spell's owner* here, not Subtlety's controller
+          (CR 108.3) - check it before answering, since in a two-player game
+          it is easy to assume it is always the caster.
 
         `may`, `pay_life`, `scry`, and `surveil` were not answerable through
         this tool before this wave: the request simply parked until its
@@ -449,6 +457,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["energy_amount"] = energy_amount
         if choice:
             body["choice"] = choice
+        if top is not None:
+            body["top"] = top
 
         def perform() -> Any:
             answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/decide", body)

@@ -157,6 +157,15 @@ def build_parser() -> argparse.ArgumentParser:
             "the chosen color/card name/creature type, for a choose_a_quality decision (CR 614.12a)"
         ),
     )
+    decide.add_argument(
+        "--top",
+        choices=("top", "bottom"),
+        default=None,
+        help=(
+            "top or bottom of the library, for a put_on_top_or_bottom decision "
+            "(Subtlety) - asked of the targeted spell's owner, not its caster"
+        ),
+    )
     blocking(decide)
 
     passer = sub.add_parser("pass", help="pass priority - 'I am done for now'")
@@ -336,6 +345,8 @@ def run(argv: list[str] | None = None) -> int:
                 body["energy_amount"] = args.energy_amount
             if args.choice:
                 body["choice"] = args.choice
+            if args.top is not None:
+                body["top"] = args.top == "top"
             answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
             if isinstance(answer, dict) and answer.get("accepted") is False:
                 return {"allowed": False, **answer}

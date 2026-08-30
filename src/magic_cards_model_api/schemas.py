@@ -211,3 +211,10 @@ class DecideRequest(BaseModel):
     """For `scry`/`surveil`: the order the cards that stay on top go back,
     topmost first. `None` (the default) keeps them in the order they were
     looked at, which is what a rigged library needs to stay rigged."""
+    top: bool | None = None
+    """The `put_on_top_or_bottom` kind's answer (Subtlety, CR 608.2d) - `True`
+    for the top of the library, `False` for the bottom. Asked of the targeted
+    spell's *owner* (CR 108.3), not of Subtlety's controller - see
+    `pending_decision.player`. Not `accept`: this is a top/bottom choice, not
+    a yes/no, even though both happen to be booleans. `None` (the default) is
+    refused, matching `accept`/`choice`/`energy_amount`."""
