@@ -1,0 +1,151 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "01091bfd-e9b8-4a9b-89a9-56da625a5d18",
+      "name": "A-Teferi, Time Raveler",
+      "object": "related_card",
+      "type_line": "Legendary Planeswalker \u2014 Teferi",
+      "uri": "https://api.scryfall.com/cards/01091bfd-e9b8-4a9b-89a9-56da625a5d18"
+    },
+    {
+      "component": "combo_piece",
+      "id": "662fe50f-d75c-422c-8c6c-1f9b5c4ba21f",
+      "name": "Teferi, Time Raveler",
+      "object": "related_card",
+      "type_line": "Legendary Planeswalker \u2014 Teferi",
+      "uri": "https://api.scryfall.com/cards/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f"
+    }
+  ],
+  "artist": "Chris Rallis",
+  "artist_ids": [
+    "a8e7b854-b15a-421a-b66d-6e68187ae285"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 748585,
+  "cmc": 3.0,
+  "collector_number": "232",
+  "color_identity": [
+    "U",
+    "W"
+  ],
+  "colors": [
+    "U",
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 1140,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "662fe50f-d75c-422c-8c6c-1f9b5c4ba21f",
+  "illustration_id": "c7084f18-aa61-4027-bcab-04ba6bcecd9c",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T03:27:51Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.webp?1783913271",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.jpg?1783913271",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.jpg?1783913271",
+    "crop": "https://cards.scryfall.io/crop/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.webp?1783913271",
+    "display": "https://cards.scryfall.io/display/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.webp?1783913271",
+    "grid": "https://cards.scryfall.io/grid/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.webp?1783913271",
+    "large": "https://cards.scryfall.io/large/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.jpg?1783913271",
+    "normal": "https://cards.scryfall.io/normal/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.jpg?1783913271",
+    "png": "https://cards.scryfall.io/png/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.png?1783913271",
+    "small": "https://cards.scryfall.io/small/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.jpg?1783913271",
+    "thumb": "https://cards.scryfall.io/thumb/front/6/6/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f.webp?1783913271"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "not_legal",
+    "commander": "legal",
+    "competitivebrawl": "not_legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "not_legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "banned",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "banned",
+    "vintage": "legal"
+  },
+  "loyalty": "4",
+  "mana_cost": "{1}{W}{U}",
+  "mtgo_id": 120991,
+  "multiverse_ids": [
+    643239
+  ],
+  "name": "Teferi, Time Raveler",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "ae7604bb-4818-45a3-960c-cf3d83f15964",
+  "oracle_text": "Each opponent can cast spells only any time they could cast a sorcery.\n+1: Until your next turn, you may cast sorcery spells as though they had flash.\n\u22123: Return up to one target artifact, creature, or enchantment to its owner's hand. Draw a card.",
+  "oversized": false,
+  "prices": {
+    "eur": "6.83",
+    "eur_foil": "9.30",
+    "tix": "8.06",
+    "usd": "7.13",
+    "usd_etched": null,
+    "usd_foil": "8.92"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aae7604bb-4818-45a3-960c-cf3d83f15964&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/120991?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=748585&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F531057%3Fpage%3D1"
+  },
+  "rarity": "mythic",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Teferi%2C+Time+Raveler",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=643239&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DTeferi%252C%2BTime%2BRaveler",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DTeferi%252C%2BTime%2BRaveler"
+  },
+  "released_at": "2024-01-12",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/rvr?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/rvr/232/teferi-time-raveler?utm_source=api",
+  "security_stamp": "oval",
+  "set": "rvr",
+  "set_id": "fed2c8cd-ab92-44f6-808a-41e7809bcfe2",
+  "set_name": "Ravnica Remastered",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Arvr&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/fed2c8cd-ab92-44f6-808a-41e7809bcfe2",
+  "story_spotlight": false,
+  "tcgplayer_id": 531057,
+  "textless": false,
+  "type_line": "Legendary Planeswalker \u2014 Teferi",
+  "uri": "https://api.scryfall.com/cards/662fe50f-d75c-422c-8c6c-1f9b5c4ba21f",
+  "variation": false
+}

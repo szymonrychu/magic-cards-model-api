@@ -1,0 +1,135 @@
+{
+  "arena_id": 80296,
+  "artist": "Daarken",
+  "artist_ids": [
+    "e607a0d4-fc12-4c01-9e3f-501f5269b9cb"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 651643,
+  "cmc": 3.0,
+  "collector_number": "145",
+  "color_identity": [
+    "G"
+  ],
+  "colors": [
+    "G"
+  ],
+  "digital": false,
+  "edhrec_rank": 3817,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "86fd3454-efe7-4feb-a6ad-069ae2fdbd18",
+  "illustration_id": "25e91e1e-3d50-41a8-9a72-cf04b1c45c21",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T06:11:43Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.webp?1783923103",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.jpg?1783923103",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.jpg?1783923103",
+    "crop": "https://cards.scryfall.io/crop/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.webp?1783923103",
+    "display": "https://cards.scryfall.io/display/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.webp?1783923103",
+    "grid": "https://cards.scryfall.io/grid/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.webp?1783923103",
+    "large": "https://cards.scryfall.io/large/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.jpg?1783923103",
+    "normal": "https://cards.scryfall.io/normal/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.jpg?1783923103",
+    "png": "https://cards.scryfall.io/png/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.png?1783923103",
+    "small": "https://cards.scryfall.io/small/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.jpg?1783923103",
+    "thumb": "https://cards.scryfall.io/thumb/front/8/6/86fd3454-efe7-4feb-a6ad-069ae2fdbd18.webp?1783923103"
+  },
+  "keywords": [
+    "Hideaway"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{2}{G}",
+  "mtgo_id": 98509,
+  "multiverse_ids": [
+    555346
+  ],
+  "name": "Fight Rigging",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "117d89b2-b4c0-4421-a631-37810c0e0969",
+  "oracle_text": "Hideaway 5 (When this enchantment enters, look at the top five cards of your library, exile one face down, then put the rest on the bottom in a random order.)\nAt the beginning of combat on your turn, put a +1/+1 counter on target creature you control. Then if you control a creature with power 7 or greater, you may play the exiled card without paying its mana cost.",
+  "oversized": false,
+  "penny_rank": 4743,
+  "prices": {
+    "eur": "0.71",
+    "eur_foil": "1.40",
+    "tix": "0.19",
+    "usd": "1.41",
+    "usd_etched": null,
+    "usd_foil": "2.76"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A117d89b2-b4c0-4421-a631-37810c0e0969&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/98509?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=651643&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F268664%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Fight+Rigging",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=555346&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DFight%2BRigging",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DFight%2BRigging"
+  },
+  "released_at": "2022-04-29",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/86fd3454-efe7-4feb-a6ad-069ae2fdbd18/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/snc?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/snc/145/fight-rigging?utm_source=api",
+  "security_stamp": "oval",
+  "set": "snc",
+  "set_id": "df837242-8c15-42e4-b049-c933a02dc501",
+  "set_name": "Streets of New Capenna",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Asnc&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/df837242-8c15-42e4-b049-c933a02dc501",
+  "story_spotlight": false,
+  "tcgplayer_id": 268664,
+  "textless": false,
+  "type_line": "Enchantment",
+  "uri": "https://api.scryfall.com/cards/86fd3454-efe7-4feb-a6ad-069ae2fdbd18",
+  "variation": false
+}

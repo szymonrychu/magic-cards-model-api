@@ -1,0 +1,165 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "1c516212-ad39-4396-8e05-ae57f100309f",
+      "name": "Energy Reserve",
+      "object": "related_card",
+      "type_line": "Card",
+      "uri": "https://api.scryfall.com/cards/1c516212-ad39-4396-8e05-ae57f100309f"
+    },
+    {
+      "component": "combo_piece",
+      "id": "298de33f-cb39-47c5-9579-54d91eb34414",
+      "name": "Guide of Souls",
+      "object": "related_card",
+      "type_line": "Creature \u2014 Human Cleric",
+      "uri": "https://api.scryfall.com/cards/298de33f-cb39-47c5-9579-54d91eb34414"
+    },
+    {
+      "component": "combo_piece",
+      "id": "23690b14-8e3e-4aff-bf5e-dd002dcc0bed",
+      "name": "A-Guide of Souls",
+      "object": "related_card",
+      "type_line": "Creature \u2014 Human Cleric",
+      "uri": "https://api.scryfall.com/cards/23690b14-8e3e-4aff-bf5e-dd002dcc0bed"
+    }
+  ],
+  "arena_id": 90878,
+  "artist": "Ryan Valle",
+  "artist_ids": [
+    "6190569f-5e77-4bc1-bf22-9f85dba3a139"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 771820,
+  "cmc": 1.0,
+  "collector_number": "29",
+  "color_identity": [
+    "W"
+  ],
+  "colors": [
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 1516,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "76c3cad2-1e25-4abe-878d-9194de6fcc27",
+  "illustration_id": "84b5b9c4-bc13-42cb-8f16-e189464ef755",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:55:00Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.webp?1783911300",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.jpg?1783911300",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.jpg?1783911300",
+    "crop": "https://cards.scryfall.io/crop/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.webp?1783911300",
+    "display": "https://cards.scryfall.io/display/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.webp?1783911300",
+    "grid": "https://cards.scryfall.io/grid/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.webp?1783911300",
+    "large": "https://cards.scryfall.io/large/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.jpg?1783911300",
+    "normal": "https://cards.scryfall.io/normal/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.jpg?1783911300",
+    "png": "https://cards.scryfall.io/png/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.png?1783911300",
+    "small": "https://cards.scryfall.io/small/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.jpg?1783911300",
+    "thumb": "https://cards.scryfall.io/thumb/front/7/6/76c3cad2-1e25-4abe-878d-9194de6fcc27.webp?1783911300"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "not_legal",
+    "commander": "legal",
+    "competitivebrawl": "not_legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "not_legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{W}",
+  "mtgo_id": 126075,
+  "multiverse_ids": [
+    662181
+  ],
+  "name": "Guide of Souls",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "b304ac72-7f40-40de-b8d6-6392909b6029",
+  "oracle_text": "Whenever another creature you control enters, you gain 1 life and get {E} (an energy counter).\nWhenever you attack, you may pay {E}{E}{E}. When you do, put two +1/+1 counters and a flying counter on target attacking creature. It becomes an Angel in addition to its other types.",
+  "oversized": false,
+  "power": "1",
+  "preview": {
+    "previewed_at": "2024-05-23",
+    "source": "MagicBlogs",
+    "source_uri": "https://www.youtube.com/watch?v=ECVCLcUy11Y"
+  },
+  "prices": {
+    "eur": "3.33",
+    "eur_foil": "3.80",
+    "tix": "1.60",
+    "usd": "2.97",
+    "usd_etched": null,
+    "usd_foil": "4.07"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ab304ac72-7f40-40de-b8d6-6392909b6029&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/126075?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=771820&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F552731%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Guide+of+Souls",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=662181&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DGuide%2Bof%2BSouls",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DGuide%2Bof%2BSouls"
+  },
+  "released_at": "2024-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/76c3cad2-1e25-4abe-878d-9194de6fcc27/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh3?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh3/29/guide-of-souls?utm_source=api",
+  "security_stamp": "oval",
+  "set": "mh3",
+  "set_id": "3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "set_name": "Modern Horizons 3",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh3&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "story_spotlight": false,
+  "tcgplayer_id": 552731,
+  "textless": false,
+  "toughness": "2",
+  "type_line": "Creature \u2014 Human Cleric",
+  "uri": "https://api.scryfall.com/cards/76c3cad2-1e25-4abe-878d-9194de6fcc27",
+  "variation": false
+}

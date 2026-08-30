@@ -1,0 +1,33 @@
+# Boros energy - pilot ratabruta, 2026-08-18, source videre-58646035
+# mainboard 60, sideboard 15
+4 Ajani, Nacatl Pariah
+1 Arena of Glory
+2 Blood Moon
+2 Elegant Parlor
+2 Dalkovan Encampment
+4 Flooded Strand
+3 Goblin Bombardment
+4 Galvanic Discharge
+4 Guide of Souls
+3 Marsh Flats
+4 Ocelot Pride
+3 Plains
+3 Sacred Foundry
+1 Mountain
+4 Ragavan, Nimble Pilferer
+2 Ranger-Captain of Eos
+3 Voice of Victory
+3 Seasoned Pyromancer
+1 Static Prison
+3 Thraben Charm
+4 Arid Mesa
+
+Sideboard
+2 High Noon
+2 Clarion Conqueror
+2 Rest in Peace
+1 The Legend of Roku
+1 Vexing Bauble
+2 Wear/Tear
+3 Wrath of the Skies
+2 Celestial Purge

@@ -1,0 +1,137 @@
+{
+  "artist": "John Stanko",
+  "artist_ids": [
+    "b0f038a0-73b5-4806-918e-9cd11b5f92e1"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 565923,
+  "cmc": 1.0,
+  "collector_number": "25",
+  "color_identity": [
+    "W"
+  ],
+  "colors": [
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 13988,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "Right before his demise, he experienced a shattering revelation.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "825969b9-3c70-4fca-8cab-696e9ca7cdb2",
+  "illustration_id": "78feeb10-4d5b-49f3-9fda-17da6bee148b",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T07:14:48Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.webp?1783926888",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.jpg?1783926888",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.jpg?1783926888",
+    "crop": "https://cards.scryfall.io/crop/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.webp?1783926888",
+    "display": "https://cards.scryfall.io/display/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.webp?1783926888",
+    "grid": "https://cards.scryfall.io/grid/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.webp?1783926888",
+    "large": "https://cards.scryfall.io/large/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.jpg?1783926888",
+    "normal": "https://cards.scryfall.io/normal/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.jpg?1783926888",
+    "png": "https://cards.scryfall.io/png/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.png?1783926888",
+    "small": "https://cards.scryfall.io/small/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.jpg?1783926888",
+    "thumb": "https://cards.scryfall.io/thumb/front/8/2/825969b9-3c70-4fca-8cab-696e9ca7cdb2.webp?1783926888"
+  },
+  "keywords": [
+    "Converge"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{X}{W}",
+  "mtgo_id": 90419,
+  "multiverse_ids": [
+    522101
+  ],
+  "name": "Prismatic Ending",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "2cb98ca9-d7bb-416b-a17e-ee5f8e4d78f2",
+  "oracle_text": "Converge \u2014 Exile target nonland permanent if its mana value is less than or equal to the number of colors of mana spent to cast this spell.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2021-05-24",
+    "source": "The Games Capital",
+    "source_uri": "https://thegamescapital.com.au/pages/exclusive-modern-horizons-2-preview"
+  },
+  "prices": {
+    "eur": "0.42",
+    "eur_foil": "0.96",
+    "tix": "4.02",
+    "usd": "0.33",
+    "usd_etched": null,
+    "usd_foil": "0.58"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A2cb98ca9-d7bb-416b-a17e-ee5f8e4d78f2&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/90419?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=565923&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F239436%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Prismatic+Ending",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=522101&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DPrismatic%2BEnding",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DPrismatic%2BEnding"
+  },
+  "released_at": "2021-06-18",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/825969b9-3c70-4fca-8cab-696e9ca7cdb2/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh2?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh2/25/prismatic-ending?utm_source=api",
+  "set": "mh2",
+  "set_id": "c1c7eb8c-f205-40ab-a609-767cb296544e",
+  "set_name": "Modern Horizons 2",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh2&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/c1c7eb8c-f205-40ab-a609-767cb296544e",
+  "story_spotlight": false,
+  "tcgplayer_id": 239436,
+  "textless": false,
+  "type_line": "Sorcery",
+  "uri": "https://api.scryfall.com/cards/825969b9-3c70-4fca-8cab-696e9ca7cdb2",
+  "variation": false
+}

@@ -1,0 +1,39 @@
+# Eldrazi ramp - pilot Gobern, 2026-08-28, source videre-58654388
+# mainboard 60, sideboard 15
+1 Bojuka Bog
+1 Cavern of Souls
+1 Underground Mortuary
+2 Formidable Speaker
+4 Talisman of Resilience
+3 Emrakul, the Promised End
+4 Forest
+1 Verdant Catacombs
+1 Overgrown Tomb
+1 Sire of Seven Deaths
+4 Kozilek's Command
+1 Ghost Quarter
+4 Malevolent Rumble
+1 Misty Rainforest
+1 Sanctum of Ugin
+3 Devourer of Destiny
+4 Sowing Mycospawn
+4 Ugin's Labyrinth
+4 Utopia Sprawl
+2 Ugin, Eye of the Storms
+3 Fatal Push
+1 Windswept Heath
+1 Wooded Foothills
+1 Toxic Deluge
+4 Eldrazi Temple
+2 Icetill Explorer
+1 World Breaker
+
+Sideboard
+2 Culling Ritual
+2 Go Blank
+1 Faerie Macabre
+2 Disruptor Flute
+3 Trinisphere
+1 Toxic Deluge
+2 Grafdigger's Cage
+2 Assassin's Trophy

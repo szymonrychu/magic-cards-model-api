@@ -1,0 +1,33 @@
+# Azorius blink - pilot LukeTurner88, 2026-08-27, mtgtop8 event 90135 deck 884153
+# mainboard 60, sideboard 15
+4 Flagstones of Trokair
+4 Flooded Strand
+3 Hallowed Fountain
+1 Marsh Flats
+2 Meticulous Archive
+3 Plains
+1 Sacred Foundry
+4 Guide of Souls
+1 Mockingbird
+4 Ocelot Pride
+4 Phelia, Exuberant Shepherd
+4 Quantum Riddler
+4 Solitude
+2 Starfield Shepherd
+4 White Orchid Phantom
+4 Witch Enchanter
+3 Consign to Memory
+4 Ephemerate
+2 Prismatic Ending
+2 Teferi, Time Raveler
+
+Sideboard
+2 Clarion Conqueror
+1 Consign to Memory
+1 Damping Sphere
+1 Elesh Norn, Mother of Machines
+2 High Noon
+2 Mystical Dispute
+2 Sanctifier en-Vec
+1 Surgical Extraction
+3 Wrath of the Skies

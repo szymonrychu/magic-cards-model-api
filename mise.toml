@@ -1,0 +1,28 @@
+[tools]
+python = "3.13"
+uv = "latest"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+UV_PYTHON_DOWNLOADS = "never"
+
+[tasks.install]
+description = "Install into the venv (engine comes from ../magic-cards-model)"
+run = "uv sync"
+
+[tasks.run]
+description = "Serve the API and the frontend on http://127.0.0.1:8000"
+alias = "default"
+run = "uv run uvicorn magic_cards_model_api.main:app --host 127.0.0.1 --port 8000"
+
+[tasks.test]
+description = "Run the API tests"
+run = "uv run pytest"
+
+[tasks.lint]
+description = "Ruff check"
+run = "uv run ruff check ."
+
+[tasks.fmt]
+description = "Ruff format and fix"
+run = "uv run ruff format . && uv run ruff check --fix ."

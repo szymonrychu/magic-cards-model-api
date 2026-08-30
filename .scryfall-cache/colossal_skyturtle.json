@@ -1,0 +1,148 @@
+{
+  "arena_id": 79654,
+  "artist": "Nicholas Gregory",
+  "artist_ids": [
+    "a1bba8ff-63b4-4786-b1c4-f1bfe5d3ab1c"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 608277,
+  "cmc": 7.0,
+  "collector_number": "216",
+  "color_identity": [
+    "G",
+    "U"
+  ],
+  "colors": [
+    "G",
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 3858,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "frame_effects": [
+    "enchantment"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "f40bd797-4d12-4098-a1a8-d7e5b7b82ac9",
+  "illustration_id": "f6a41d0d-03ee-4fc9-9d24-67b921e26f9b",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T06:23:57Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.webp?1783923837",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.jpg?1783923837",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.jpg?1783923837",
+    "crop": "https://cards.scryfall.io/crop/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.webp?1783923837",
+    "display": "https://cards.scryfall.io/display/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.webp?1783923837",
+    "grid": "https://cards.scryfall.io/grid/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.webp?1783923837",
+    "large": "https://cards.scryfall.io/large/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.jpg?1783923837",
+    "normal": "https://cards.scryfall.io/normal/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.jpg?1783923837",
+    "png": "https://cards.scryfall.io/png/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.png?1783923837",
+    "small": "https://cards.scryfall.io/small/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.jpg?1783923837",
+    "thumb": "https://cards.scryfall.io/thumb/front/f/4/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9.webp?1783923837"
+  },
+  "keywords": [
+    "Flying",
+    "Ward",
+    "Channel"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "not_legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{4}{G}{G}{U}",
+  "mtgo_id": 97378,
+  "multiverse_ids": [
+    548527
+  ],
+  "name": "Colossal Skyturtle",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "871e4c4e-8105-4cb9-b1cd-53c5f8e64494",
+  "oracle_text": "Flying, ward {2}\nChannel \u2014 {2}{G}, Discard this card: Return target card from your graveyard to your hand.\nChannel \u2014 {1}{U}, Discard this card: Return target creature to its owner's hand.",
+  "oversized": false,
+  "penny_rank": 795,
+  "power": "6",
+  "preview": {
+    "previewed_at": "2022-02-03",
+    "source": "/r/magicTCG",
+    "source_uri": "https://www.reddit.com/r/magicTCG/comments/sjy61l/neo_colossal_skyturtle_rmagictcgs_official/"
+  },
+  "prices": {
+    "eur": "0.63",
+    "eur_foil": "1.20",
+    "tix": "0.03",
+    "usd": "0.51",
+    "usd_etched": null,
+    "usd_foil": "3.79"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A871e4c4e-8105-4cb9-b1cd-53c5f8e64494&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/97378?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=608277&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F262770%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Colossal+Skyturtle",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=548527&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DColossal%2BSkyturtle",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DColossal%2BSkyturtle"
+  },
+  "released_at": "2022-02-18",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/neo?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/neo/216/colossal-skyturtle?utm_source=api",
+  "set": "neo",
+  "set_id": "59a2059f-5482-433f-8761-eb2e17859b71",
+  "set_name": "Kamigawa: Neon Dynasty",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Aneo&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/59a2059f-5482-433f-8761-eb2e17859b71",
+  "story_spotlight": false,
+  "tcgplayer_id": 262770,
+  "textless": false,
+  "toughness": "5",
+  "type_line": "Enchantment Creature \u2014 Turtle",
+  "uri": "https://api.scryfall.com/cards/f40bd797-4d12-4098-a1a8-d7e5b7b82ac9",
+  "variation": false
+}

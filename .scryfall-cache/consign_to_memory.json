@@ -1,0 +1,139 @@
+{
+  "arena_id": 90903,
+  "artist": "Ben Hill",
+  "artist_ids": [
+    "35785d29-9538-407e-852d-a9b3ab626388"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 772177,
+  "cmc": 1.0,
+  "collector_number": "54",
+  "color_identity": [
+    "U"
+  ],
+  "colors": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 7280,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "He wept not for what was, but what could never be.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "bc95af55-d1dd-4fe6-adb0-3ad6db20d986",
+  "illustration_id": "0e31f05c-147b-48bd-aae1-a1c208c4ee47",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:54:53Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.webp?1783911293",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.jpg?1783911293",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.jpg?1783911293",
+    "crop": "https://cards.scryfall.io/crop/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.webp?1783911293",
+    "display": "https://cards.scryfall.io/display/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.webp?1783911293",
+    "grid": "https://cards.scryfall.io/grid/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.webp?1783911293",
+    "large": "https://cards.scryfall.io/large/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.jpg?1783911293",
+    "normal": "https://cards.scryfall.io/normal/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.jpg?1783911293",
+    "png": "https://cards.scryfall.io/png/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.png?1783911293",
+    "small": "https://cards.scryfall.io/small/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.jpg?1783911293",
+    "thumb": "https://cards.scryfall.io/thumb/front/b/c/bc95af55-d1dd-4fe6-adb0-3ad6db20d986.webp?1783911293"
+  },
+  "keywords": [
+    "Replicate"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{U}",
+  "mtgo_id": 126125,
+  "multiverse_ids": [
+    662206
+  ],
+  "name": "Consign to Memory",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "16c39265-72d9-4c86-a961-8dd38ff9adcd",
+  "oracle_text": "Replicate {1} (When you cast this spell, copy it for each time you paid its replicate cost. You may choose new targets for the copies.)\nCounter target triggered ability or colorless spell.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2024-05-27",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://twitter.com/MTGArenaJP/status/1795017348715597895"
+  },
+  "prices": {
+    "eur": "3.65",
+    "eur_foil": "6.86",
+    "tix": "24.59",
+    "usd": "3.07",
+    "usd_etched": null,
+    "usd_foil": "5.38"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A16c39265-72d9-4c86-a961-8dd38ff9adcd&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/126125?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=772177&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F552840%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Consign+to+Memory",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=662206&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DConsign%2Bto%2BMemory",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DConsign%2Bto%2BMemory"
+  },
+  "released_at": "2024-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/bc95af55-d1dd-4fe6-adb0-3ad6db20d986/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh3?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh3/54/consign-to-memory?utm_source=api",
+  "set": "mh3",
+  "set_id": "3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "set_name": "Modern Horizons 3",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh3&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "story_spotlight": false,
+  "tcgplayer_id": 552840,
+  "textless": false,
+  "type_line": "Instant",
+  "uri": "https://api.scryfall.com/cards/bc95af55-d1dd-4fe6-adb0-3ad6db20d986",
+  "variation": false
+}

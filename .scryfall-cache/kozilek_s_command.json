@@ -1,0 +1,156 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "92585587-cfdc-406a-9114-4f6dd8802c37",
+      "name": "Kozilek's Command",
+      "object": "related_card",
+      "type_line": "Kindred Instant \u2014 Eldrazi",
+      "uri": "https://api.scryfall.com/cards/92585587-cfdc-406a-9114-4f6dd8802c37"
+    },
+    {
+      "component": "token",
+      "id": "e32795e1-5548-43ef-8cd6-c605a19ef708",
+      "name": "Eldrazi Spawn",
+      "object": "related_card",
+      "type_line": "Token Creature \u2014 Eldrazi Spawn",
+      "uri": "https://api.scryfall.com/cards/e32795e1-5548-43ef-8cd6-c605a19ef708"
+    }
+  ],
+  "arena_id": 90860,
+  "artist": "Yeong-Hao Han",
+  "artist_ids": [
+    "f8e7f8d6-6dde-4059-973c-30f1fd1bbe4e"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 772176,
+  "cmc": 2.0,
+  "collector_number": "11",
+  "color_identity": [],
+  "colors": [],
+  "digital": false,
+  "edhrec_rank": 2146,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": true,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "92585587-cfdc-406a-9114-4f6dd8802c37",
+  "illustration_id": "f5db8470-f6f8-4b8c-b365-3bf22b5fafea",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-21T11:42:36Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.webp?1784634156",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+    "crop": "https://cards.scryfall.io/crop/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.webp?1784634156",
+    "display": "https://cards.scryfall.io/display/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.webp?1784634156",
+    "grid": "https://cards.scryfall.io/grid/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.webp?1784634156",
+    "large": "https://cards.scryfall.io/large/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+    "normal": "https://cards.scryfall.io/normal/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+    "png": "https://cards.scryfall.io/png/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.png?1784634156",
+    "small": "https://cards.scryfall.io/small/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+    "thumb": "https://cards.scryfall.io/thumb/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.webp?1784634156"
+  },
+  "keywords": [
+    "Scry"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{X}{C}{C}",
+  "mtgo_id": 126039,
+  "multiverse_ids": [
+    662163
+  ],
+  "name": "Kozilek's Command",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "2f2c549d-0293-4b9d-b9a8-ff392800f3a5",
+  "oracle_text": "Choose two \u2014\n\u2022 Target player creates X 0/1 colorless Eldrazi Spawn creature tokens with \"Sacrifice this token: Add {C}.\"\n\u2022 Target player scries X, then draws a card.\n\u2022 Exile target creature with mana value X or less.\n\u2022 Exile up to X target cards from graveyards.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2024-05-24",
+    "source": "Bandit",
+    "source_uri": "https://twitter.com/BanditMTG1/status/1793894475934167344"
+  },
+  "prices": {
+    "eur": "7.28",
+    "eur_foil": "13.18",
+    "tix": "13.81",
+    "usd": "8.85",
+    "usd_etched": null,
+    "usd_foil": "10.22"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A2f2c549d-0293-4b9d-b9a8-ff392800f3a5&unique=prints",
+  "produced_mana": [
+    "C"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/126039?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=772176&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F552839%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Kozilek%27s+Command",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=662163&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DKozilek%2527s%2BCommand",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DKozilek%2527s%2BCommand"
+  },
+  "released_at": "2024-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/92585587-cfdc-406a-9114-4f6dd8802c37/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh3?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh3/11/kozileks-command?utm_source=api",
+  "security_stamp": "oval",
+  "set": "mh3",
+  "set_id": "3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "set_name": "Modern Horizons 3",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh3&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "story_spotlight": false,
+  "tcgplayer_id": 552839,
+  "textless": false,
+  "type_line": "Kindred Instant \u2014 Eldrazi",
+  "uri": "https://api.scryfall.com/cards/92585587-cfdc-406a-9114-4f6dd8802c37",
+  "variation": false
+}

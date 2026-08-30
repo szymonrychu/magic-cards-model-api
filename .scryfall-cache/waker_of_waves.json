@@ -1,0 +1,140 @@
+{
+  "arena_id": 71866,
+  "artist": "Svetlin Velinov",
+  "artist_ids": [
+    "ffd063ae-c097-4f26-b2e6-b1e2137708bc"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 467779,
+  "cmc": 7.0,
+  "collector_number": "84",
+  "color_identity": [
+    "U"
+  ],
+  "colors": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 15691,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "On the open sea, there is nowhere to hide.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "arena",
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "abb47990-a5a9-4a22-a8bb-d229b17132c6",
+  "illustration_id": "51a582a6-1b4c-459e-aaa3-1559b869770f",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T08:18:34Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.webp?1783930714",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.jpg?1783930714",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.jpg?1783930714",
+    "crop": "https://cards.scryfall.io/crop/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.webp?1783930714",
+    "display": "https://cards.scryfall.io/display/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.webp?1783930714",
+    "grid": "https://cards.scryfall.io/grid/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.webp?1783930714",
+    "large": "https://cards.scryfall.io/large/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.jpg?1783930714",
+    "normal": "https://cards.scryfall.io/normal/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.jpg?1783930714",
+    "png": "https://cards.scryfall.io/png/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.png?1783930714",
+    "small": "https://cards.scryfall.io/small/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.jpg?1783930714",
+    "thumb": "https://cards.scryfall.io/thumb/front/a/b/abb47990-a5a9-4a22-a8bb-d229b17132c6.webp?1783930714"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "not_legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{5}{U}{U}",
+  "mtgo_id": 81395,
+  "multiverse_ids": [
+    485407
+  ],
+  "name": "Waker of Waves",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "3a19a959-ea83-404b-89f7-e5dbf4cb7995",
+  "oracle_text": "Creatures your opponents control get -1/-0.\n{1}{U}, Discard this card: Look at the top two cards of your library. Put one of them into your hand and the other into your graveyard.",
+  "oversized": false,
+  "penny_rank": 2821,
+  "power": "7",
+  "preview": {
+    "previewed_at": "2020-06-06",
+    "source": "HandsomeDoge",
+    "source_uri": "https://www.facebook.com/HandsomeDoge/posts/1334492770083918"
+  },
+  "prices": {
+    "eur": "0.37",
+    "eur_foil": "1.13",
+    "tix": "0.03",
+    "usd": "0.33",
+    "usd_etched": null,
+    "usd_foil": "0.82"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A3a19a959-ea83-404b-89f7-e5dbf4cb7995&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/81395?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=467779&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F215521%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Waker+of+Waves",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=485407&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DWaker%2Bof%2BWaves",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DWaker%2Bof%2BWaves"
+  },
+  "released_at": "2020-07-03",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/abb47990-a5a9-4a22-a8bb-d229b17132c6/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/m21?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/m21/84/waker-of-waves?utm_source=api",
+  "set": "m21",
+  "set_id": "bc94aba1-7376-4e02-a12d-3a2efb66ab0f",
+  "set_name": "Core Set 2021",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Am21&unique=prints",
+  "set_type": "core",
+  "set_uri": "https://api.scryfall.com/sets/bc94aba1-7376-4e02-a12d-3a2efb66ab0f",
+  "story_spotlight": false,
+  "tcgplayer_id": 215521,
+  "textless": false,
+  "toughness": "7",
+  "type_line": "Creature \u2014 Whale",
+  "uri": "https://api.scryfall.com/cards/abb47990-a5a9-4a22-a8bb-d229b17132c6",
+  "variation": false
+}

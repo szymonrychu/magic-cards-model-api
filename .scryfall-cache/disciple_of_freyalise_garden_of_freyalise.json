@@ -1,0 +1,175 @@
+{
+  "arena_id": 90826,
+  "artist": "Valera Lutfullina",
+  "artist_ids": [
+    "76bc57c7-47c6-40c5-8797-8ffcce430ac7"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_faces": [
+    {
+      "artist": "Valera Lutfullina",
+      "artist_id": "76bc57c7-47c6-40c5-8797-8ffcce430ac7",
+      "colors": [
+        "G"
+      ],
+      "flavor_text": "\"Freyalise is gone, but her song lives on.\"",
+      "illustration_id": "04cb5dc1-cda2-4602-91a4-2817979dadb8",
+      "image_uris": {
+        "art": "https://cards.scryfall.io/art/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "art_crop": "https://cards.scryfall.io/art_crop/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "border_crop": "https://cards.scryfall.io/border_crop/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "crop": "https://cards.scryfall.io/crop/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "display": "https://cards.scryfall.io/display/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "grid": "https://cards.scryfall.io/grid/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "large": "https://cards.scryfall.io/large/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "normal": "https://cards.scryfall.io/normal/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "png": "https://cards.scryfall.io/png/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.png?1783911228",
+        "small": "https://cards.scryfall.io/small/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "thumb": "https://cards.scryfall.io/thumb/front/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228"
+      },
+      "mana_cost": "{3}{G}{G}{G}",
+      "name": "Disciple of Freyalise",
+      "object": "card_face",
+      "oracle_text": "When this creature enters, you may sacrifice another creature. If you do, you gain X life and draw X cards, where X is that creature's power.",
+      "power": "3",
+      "toughness": "3",
+      "type_line": "Creature \u2014 Elf Druid"
+    },
+    {
+      "artist": "Valera Lutfullina",
+      "artist_id": "76bc57c7-47c6-40c5-8797-8ffcce430ac7",
+      "colors": [],
+      "flavor_text": "The Juniper Order safeguards secret places that still thrum with traces of Freyalise's life-giving magic.",
+      "illustration_id": "cfbd26c7-aa69-49b5-a0b0-f7f6a3bbaa35",
+      "image_uris": {
+        "art": "https://cards.scryfall.io/art/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "art_crop": "https://cards.scryfall.io/art_crop/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "border_crop": "https://cards.scryfall.io/border_crop/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "crop": "https://cards.scryfall.io/crop/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "display": "https://cards.scryfall.io/display/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "grid": "https://cards.scryfall.io/grid/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228",
+        "large": "https://cards.scryfall.io/large/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "normal": "https://cards.scryfall.io/normal/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "png": "https://cards.scryfall.io/png/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.png?1783911228",
+        "small": "https://cards.scryfall.io/small/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.jpg?1783911228",
+        "thumb": "https://cards.scryfall.io/thumb/back/a/8/a8e9ea5a-5e10-4b77-baef-0352ff035483.webp?1783911228"
+      },
+      "mana_cost": "",
+      "name": "Garden of Freyalise",
+      "object": "card_face",
+      "oracle_text": "As this land enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {G}.",
+      "type_line": "Land"
+    }
+  ],
+  "cardmarket_id": 771209,
+  "cmc": 6.0,
+  "collector_number": "250",
+  "color_identity": [
+    "G"
+  ],
+  "digital": false,
+  "edhrec_rank": 468,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "a8e9ea5a-5e10-4b77-baef-0352ff035483",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:53:48Z",
+  "keywords": [],
+  "lang": "en",
+  "layout": "modal_dfc",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "not_legal",
+    "vintage": "legal"
+  },
+  "mtgo_id": 126545,
+  "multiverse_ids": [
+    661779
+  ],
+  "name": "Disciple of Freyalise // Garden of Freyalise",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "2699005b-a471-429f-a9d8-fbf2077ee2fd",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2024-05-21",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://magic.wizards.com/en/news/making-magic/third-times-the-charm-part-1"
+  },
+  "prices": {
+    "eur": "2.66",
+    "eur_foil": "4.13",
+    "tix": "0.21",
+    "usd": "6.21",
+    "usd_etched": null,
+    "usd_foil": "6.82"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A2699005b-a471-429f-a9d8-fbf2077ee2fd&unique=prints",
+  "produced_mana": [
+    "G"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/126545?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=771209&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F552466%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Disciple+of+Freyalise",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=661779&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DDisciple%2Bof%2BFreyalise%2B%252F%252F%2BGarden%2Bof%2BFreyalise",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DDisciple%2Bof%2BFreyalise%2B%252F%252F%2BGarden%2Bof%2BFreyalise"
+  },
+  "released_at": "2024-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/a8e9ea5a-5e10-4b77-baef-0352ff035483/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh3?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh3/250/disciple-of-freyalise-garden-of-freyalise?utm_source=api",
+  "set": "mh3",
+  "set_id": "3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "set_name": "Modern Horizons 3",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh3&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "story_spotlight": false,
+  "tcgplayer_id": 552466,
+  "textless": false,
+  "type_line": "Creature \u2014 Elf Druid // Land",
+  "uri": "https://api.scryfall.com/cards/a8e9ea5a-5e10-4b77-baef-0352ff035483",
+  "variation": false
+}

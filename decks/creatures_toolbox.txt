@@ -1,0 +1,43 @@
+# Creatures toolbox - pilot Dydyk95, 2026-08-25, source videre-58652567
+# mainboard 60, sideboard 15
+2 Overgrown Tomb
+1 Shang-Chi, Master of Kung Fu
+4 Leyline of Abundance
+1 Ouroboroid
+4 Nature's Rhythm
+1 Craterhoof Behemoth
+1 Forest
+1 Underground Mortuary
+2 Agatha's Soul Cauldron
+4 Delighted Halfling
+4 Tyvar, Jubilant Brawler
+1 Boseiju, Who Endures
+1 Nurturing Peatland
+1 Fiend Artisan
+1 Walking Ballista
+3 Verdant Catacombs
+1 Temple Garden
+3 Birds of Paradise
+4 Devoted Druid
+2 Misty Rainforest
+1 Postmortem Lunge
+1 Dryad Arbor
+2 Windswept Heath
+2 Wooded Foothills
+1 Duskwatch Recruiter
+1 Vizier of Remedies
+4 Green Sun's Zenith
+4 Badgermole Cub
+2 Forest
+
+Sideboard
+1 Guerrilla Gorilla
+1 Keen-Eyed Curator
+2 Vexing Bauble
+1 Grist, the Hunger Tide
+2 Endurance
+2 Thoughtseize
+1 Collector Ouphe
+1 Kraul Harpooner
+2 Abrupt Decay
+2 Force of Vigor

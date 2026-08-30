@@ -1,0 +1,145 @@
+{
+  "arena_id": 90889,
+  "artist": "Rudy Siswanto",
+  "artist_ids": [
+    "23f86db1-9103-49bb-83d5-0fda18143921"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 768036,
+  "cmc": 2.0,
+  "collector_number": "40",
+  "color_identity": [
+    "W"
+  ],
+  "colors": [
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 1577,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "frame_effects": [
+    "legendary"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "55707746-da6e-46e5-a5ca-7ac843fdc38e",
+  "illustration_id": "fec56c1b-e339-4232-8e2d-cf0bd692a5d5",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:54:58Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.webp?1783911298",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.jpg?1783911298",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.jpg?1783911298",
+    "crop": "https://cards.scryfall.io/crop/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.webp?1783911298",
+    "display": "https://cards.scryfall.io/display/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.webp?1783911298",
+    "grid": "https://cards.scryfall.io/grid/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.webp?1783911298",
+    "large": "https://cards.scryfall.io/large/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.jpg?1783911298",
+    "normal": "https://cards.scryfall.io/normal/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.jpg?1783911298",
+    "png": "https://cards.scryfall.io/png/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.png?1783911298",
+    "small": "https://cards.scryfall.io/small/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.jpg?1783911298",
+    "thumb": "https://cards.scryfall.io/thumb/front/5/5/55707746-da6e-46e5-a5ca-7ac843fdc38e.webp?1783911298"
+  },
+  "keywords": [
+    "Flash"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{1}{W}",
+  "mtgo_id": 126097,
+  "multiverse_ids": [
+    662192
+  ],
+  "name": "Phelia, Exuberant Shepherd",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "5d86a59a-ba1f-45f7-b829-dca6f9f3e624",
+  "oracle_text": "Flash\nWhenever Phelia attacks, exile up to one other target nonland permanent. At the beginning of the next end step, return that card to the battlefield under its owner's control. If it entered under your control, put a +1/+1 counter on Phelia.",
+  "oversized": false,
+  "penny_rank": 85,
+  "power": "2",
+  "preview": {
+    "previewed_at": "2024-04-30",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://magic.wizards.com/en/news/announcements/the-modern-horizons-3-leaks-nulldrifters-and-you"
+  },
+  "prices": {
+    "eur": "6.57",
+    "eur_foil": "9.62",
+    "tix": "1.22",
+    "usd": "5.14",
+    "usd_etched": null,
+    "usd_foil": "5.97"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A5d86a59a-ba1f-45f7-b829-dca6f9f3e624&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/126097?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=768036&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F548602%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Phelia%2C+Exuberant+Shepherd",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=662192&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DPhelia%252C%2BExuberant%2BShepherd",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DPhelia%252C%2BExuberant%2BShepherd"
+  },
+  "released_at": "2024-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/55707746-da6e-46e5-a5ca-7ac843fdc38e/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh3?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh3/40/phelia-exuberant-shepherd?utm_source=api",
+  "security_stamp": "oval",
+  "set": "mh3",
+  "set_id": "3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "set_name": "Modern Horizons 3",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh3&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "story_spotlight": false,
+  "tcgplayer_id": 548602,
+  "textless": false,
+  "toughness": "2",
+  "type_line": "Legendary Creature \u2014 Dog",
+  "uri": "https://api.scryfall.com/cards/55707746-da6e-46e5-a5ca-7ac843fdc38e",
+  "variation": false
+}

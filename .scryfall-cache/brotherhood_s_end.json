@@ -1,0 +1,138 @@
+{
+  "arena_id": 82612,
+  "artist": "Bryan Sola",
+  "artist_ids": [
+    "e6879299-a28b-48bc-8db1-9cafcf36de09"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 682330,
+  "cmc": 3.0,
+  "collector_number": "128",
+  "color_identity": [
+    "R"
+  ],
+  "colors": [
+    "R"
+  ],
+  "digital": false,
+  "edhrec_rank": 6244,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "The brothers' rivalry escalated into all-out enmity, and Tocasia paid the price.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "arena",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "50f7666d-0d60-4fe5-b144-286d4e47b704",
+  "illustration_id": "1b3f78ed-0913-45b3-9527-7930ef035c90",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T05:21:15Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.webp?1783920075",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.jpg?1783920075",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.jpg?1783920075",
+    "crop": "https://cards.scryfall.io/crop/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.webp?1783920075",
+    "display": "https://cards.scryfall.io/display/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.webp?1783920075",
+    "grid": "https://cards.scryfall.io/grid/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.webp?1783920075",
+    "large": "https://cards.scryfall.io/large/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.jpg?1783920075",
+    "normal": "https://cards.scryfall.io/normal/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.jpg?1783920075",
+    "png": "https://cards.scryfall.io/png/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.png?1783920075",
+    "small": "https://cards.scryfall.io/small/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.jpg?1783920075",
+    "thumb": "https://cards.scryfall.io/thumb/front/5/0/50f7666d-0d60-4fe5-b144-286d4e47b704.webp?1783920075"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{1}{R}{R}",
+  "mtgo_id": 104874,
+  "multiverse_ids": [
+    583713
+  ],
+  "name": "Brotherhood's End",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "fe7bf8ca-88ae-4c6d-8d71-ef170a87c0d0",
+  "oracle_text": "Choose one \u2014\n\u2022 Brotherhood's End deals 3 damage to each creature and each planeswalker.\n\u2022 Destroy all artifacts with mana value 3 or less.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2022-11-01",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://magic.wizards.com/en/news/making-magic/act-of-war-part-1"
+  },
+  "prices": {
+    "eur": "1.13",
+    "eur_foil": "2.35",
+    "tix": "1.96",
+    "usd": "1.35",
+    "usd_etched": null,
+    "usd_foil": "1.45"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Afe7bf8ca-88ae-4c6d-8d71-ef170a87c0d0&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/104874?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=682330&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F452265%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Brotherhood%27s+End",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=583713&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DBrotherhood%2527s%2BEnd",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DBrotherhood%2527s%2BEnd"
+  },
+  "released_at": "2022-11-18",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/50f7666d-0d60-4fe5-b144-286d4e47b704/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/bro?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/bro/128/brotherhoods-end?utm_source=api",
+  "security_stamp": "oval",
+  "set": "bro",
+  "set_id": "4219a14e-6701-4ddd-a185-21dc054ab19b",
+  "set_name": "The Brothers' War",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Abro&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/4219a14e-6701-4ddd-a185-21dc054ab19b",
+  "story_spotlight": true,
+  "tcgplayer_id": 452265,
+  "textless": false,
+  "type_line": "Sorcery",
+  "uri": "https://api.scryfall.com/cards/50f7666d-0d60-4fe5-b144-286d4e47b704",
+  "variation": false
+}

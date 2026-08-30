@@ -1,0 +1,146 @@
+{
+  "all_parts": [
+    {
+      "component": "token",
+      "id": "6ef7df0d-d7d6-463d-b452-32666973234a",
+      "name": "Eldrazi Scion",
+      "object": "related_card",
+      "type_line": "Token Creature \u2014 Eldrazi Scion",
+      "uri": "https://api.scryfall.com/cards/6ef7df0d-d7d6-463d-b452-32666973234a"
+    },
+    {
+      "component": "combo_piece",
+      "id": "afcc9c88-836b-48b6-9d81-5a6844a6b70f",
+      "name": "Warping Wail",
+      "object": "related_card",
+      "type_line": "Instant",
+      "uri": "https://api.scryfall.com/cards/afcc9c88-836b-48b6-9d81-5a6844a6b70f"
+    }
+  ],
+  "artist": "Jason Felix",
+  "artist_ids": [
+    "af42a44c-8ec3-47a7-9047-5d29ddad186d"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 723139,
+  "cmc": 2.0,
+  "collector_number": "812",
+  "color_identity": [],
+  "colors": [],
+  "digital": false,
+  "edhrec_rank": 2045,
+  "finishes": [
+    "nonfoil"
+  ],
+  "foil": false,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "afcc9c88-836b-48b6-9d81-5a6844a6b70f",
+  "illustration_id": "8178a226-f72b-447e-851e-924ba11f1149",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T04:04:15Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.webp?1783915455",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.jpg?1783915455",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.jpg?1783915455",
+    "crop": "https://cards.scryfall.io/crop/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.webp?1783915455",
+    "display": "https://cards.scryfall.io/display/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.webp?1783915455",
+    "grid": "https://cards.scryfall.io/grid/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.webp?1783915455",
+    "large": "https://cards.scryfall.io/large/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.jpg?1783915455",
+    "normal": "https://cards.scryfall.io/normal/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.jpg?1783915455",
+    "png": "https://cards.scryfall.io/png/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.png?1783915455",
+    "small": "https://cards.scryfall.io/small/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.jpg?1783915455",
+    "thumb": "https://cards.scryfall.io/thumb/front/a/f/afcc9c88-836b-48b6-9d81-5a6844a6b70f.webp?1783915455"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{1}{C}",
+  "mtgo_id": 113965,
+  "multiverse_ids": [
+    625217
+  ],
+  "name": "Warping Wail",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "c8b9fa02-0a0c-4a87-9a00-3c1c7e2f4bfd",
+  "oracle_text": "({C} represents colorless mana.)\nChoose one \u2014\n\u2022 Exile target creature with power or toughness 1 or less.\n\u2022 Counter target sorcery spell.\n\u2022 Create a 1/1 colorless Eldrazi Scion creature token. It has \"Sacrifice this token: Add {C}.\"",
+  "oversized": false,
+  "penny_rank": 2972,
+  "prices": {
+    "eur": "0.45",
+    "eur_foil": null,
+    "tix": "0.04",
+    "usd": "1.28",
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ac8b9fa02-0a0c-4a87-9a00-3c1c7e2f4bfd&unique=prints",
+  "produced_mana": [
+    "C"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/113965?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=723139&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F506691%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Warping+Wail",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=625217&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DWarping%2BWail",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DWarping%2BWail"
+  },
+  "released_at": "2023-08-04",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/afcc9c88-836b-48b6-9d81-5a6844a6b70f/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/cmm?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/cmm/812/warping-wail?utm_source=api",
+  "set": "cmm",
+  "set_id": "cd05036f-2698-43e6-a48e-5c8d82f0a551",
+  "set_name": "Commander Masters",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Acmm&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/cd05036f-2698-43e6-a48e-5c8d82f0a551",
+  "story_spotlight": false,
+  "tcgplayer_id": 506691,
+  "textless": false,
+  "type_line": "Instant",
+  "uri": "https://api.scryfall.com/cards/afcc9c88-836b-48b6-9d81-5a6844a6b70f",
+  "variation": false
+}
