@@ -762,6 +762,213 @@ def test_pay_energy_amount_missing_value_is_refused_not_defaulted(client, game):
         thread.join(timeout=10)
 
 
+# -- pay_mana: "unless its controller pays {N}" (CR 118.12a) ----------------
+
+
+def test_pay_mana_yes_spends_floating_mana(client, game):
+    """`Game.may_pay_mana` (Censor's/Mystical Dispute's "counter target spell
+    unless its controller pays {N}", CR 118.12a) is asked of the *targeted
+    spell's* controller, not the counterspell's caster, and only mana already
+    floating counts (see the docstring on `may_pay_mana`). This proves
+    `decide` reuses `bool_answer` for `pay_mana` the same way it already does
+    for `pay_life`/`pay_energy`, and that a "yes" really spends the mana."""
+    uids = seats_for(client, game)
+    client.put(f"/api/games/{game}/players/alice/mana-pool", json={"set": {"R": 3}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_mana("alice", 2, source="Mystical Dispute"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "pay_mana"
+        assert pending["player"] == "alice"
+        assert pending["amount"] == 2
+        assert pending["affirmative_is_legal"] is True
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": True},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [True]
+    final = state(client, game)
+    alice = next(p for p in final["players"] if p["username"] == "alice")
+    assert alice["mana_pool"]["floating"].get("R", 0) == 1, "2 of the 3 floating {R} were spent"
+
+
+def test_pay_mana_no_declines_and_leaves_mana_untouched(client, game):
+    """The opposite answer: declining leaves the floating mana untouched -
+    proving `decide` carries the chosen branch through, not just "any answer
+    means paid", matching `test_pay_life_no_keeps_life_and_enters_tapped`."""
+    uids = seats_for(client, game)
+    client.put(f"/api/games/{game}/players/alice/mana-pool", json={"set": {"R": 3}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_mana("alice", 2, source="Mystical Dispute"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": False},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [False]
+    final = state(client, game)
+    alice = next(p for p in final["players"] if p["username"] == "alice")
+    assert alice["mana_pool"]["floating"].get("R", 0) == 3, "declining spends nothing"
+
+
+def test_pay_mana_below_the_amount_offers_no_yes(client, game):
+    """CR 118.12a/118.3: a player short on floating mana cannot legally say
+    yes - `affirmative_is_legal` must say so before the seat even answers,
+    the same floor `pay_energy` enforces off energy instead of mana."""
+    uids = seats_for(client, game)
+    client.put(f"/api/games/{game}/players/alice/mana-pool", json={"set": {"R": 1}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_mana("alice", 2, source="Mystical Dispute"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["affirmative_is_legal"] is False
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": False},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [False]
+
+
+def test_pay_mana_missing_accept_is_refused_not_defaulted(client, game):
+    """A `decide` call for `pay_mana` with no `accept` must be refused by
+    name, not silently defaulted, matching `pay_life`'s and `pay_energy`'s
+    refusal of a missing `accept`."""
+    uids = seats_for(client, game)
+    client.put(f"/api/games/{game}/players/alice/mana-pool", json={"set": {"R": 3}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_mana("alice", 2, source="Mystical Dispute"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        refused = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice"},
+        )
+        assert refused.status_code == 200
+        body = refused.json()
+        assert body["accepted"] is False
+        assert "yes/no" in body["reason"]
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": True},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [True]
+
+
+def test_the_caster_cannot_answer_a_pay_mana_decision_asked_of_the_opponent(client, game):
+    """CR 118.12a asks the *targeted spell's controller*, not the resolving
+    counterspell's caster - `bob` here is the one who would be casting
+    Mystical Dispute, but `alice` is the one being asked, so only alice may
+    answer, matching `test_the_opponent_cannot_answer_a_pay_life_decision`."""
+    uids = seats_for(client, game)
+    client.put(f"/api/games/{game}/players/alice/mana-pool", json={"set": {"R": 3}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_mana("alice", 2, source="Mystical Dispute"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        refused = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["bob"]},
+            json={"player": "bob", "accept": True},
+        )
+        assert refused.json()["accepted"] is False
+
+        still_pending = state(client, game, uid=uids["alice"])
+        assert still_pending.get("pending_decision") is not None
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": True},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [True]
+
+
 # -- choose_a_quality: "as this enters, choose a color" (CR 614.12a) --------
 
 

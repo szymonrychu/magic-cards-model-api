@@ -859,7 +859,12 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(f"bad target: {exc}", **detail)
         detail["targets"] = req.targets
-    elif kind in (DecisionKind.MAY, DecisionKind.PAY_LIFE, DecisionKind.PAY_ENERGY):
+    elif kind in (
+        DecisionKind.MAY,
+        DecisionKind.PAY_LIFE,
+        DecisionKind.PAY_ENERGY,
+        DecisionKind.PAY_MANA,
+    ):
         try:
             answer = decisions.bool_answer(req.accept)
         except ValueError as exc:

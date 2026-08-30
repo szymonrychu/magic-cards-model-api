@@ -86,12 +86,19 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "
 #: fails, by name, the moment a new one is added to
 #: `magic_cards_model.machines.decisions` without a matching entry here (or
 #: in `SERVED_ELSEWHERE`, below) - the exact gap that let this one through.
+#: `PAY_MANA` (CR 118.12a, "counter target spell unless its controller pays
+#: {N}") is exactly that gap caught again, this time by the regression test
+#: itself rather than a live game: it reuses `bool_answer`, the same
+#: yes/no shape `PAY_ENERGY` already uses, since it too is a fixed-amount
+#: payment. Asked of the *targeted spell's* controller, not the resolving
+#: counterspell's caster - see `Game.may_pay_mana`'s docstring.
 ANSWERABLE_KINDS = frozenset(
     {
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_ENERGY_AMOUNT,
+        DecisionKind.PAY_MANA,
         DecisionKind.SCRY,
         DecisionKind.SURVEIL,
         DecisionKind.CHOOSE_CARDS,

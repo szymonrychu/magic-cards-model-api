@@ -374,12 +374,17 @@ def build_server(seats: Seats) -> MCPServer:
           leave it empty to give the ability no target at all, which is
           always legal here (this wave does not yet refuse an empty answer to
           a trigger that requires one).
-        - `may`, `pay_life`, and `pay_energy` (e.g. a shockland's "pay 2
-          life", CR 119.4, or a fixed "pay {E}{E}", CR 107.14): `accept` is
-          `True` to say yes, `False` to say no.
-          `pending_decision.affirmative_is_legal` is `False` when yes is not
-          a legal answer at all (too little life or energy to pay) -
-          answering `True` there is refused.
+        - `may`, `pay_life`, `pay_energy`, and `pay_mana` (e.g. a shockland's
+          "pay 2 life", CR 119.4; a fixed "pay {E}{E}", CR 107.14; or "counter
+          target spell unless its controller pays {N}", CR 118.12a): `accept`
+          is `True` to say yes, `False` to say no. A `pay_mana` decision is
+          asked of the *targeted spell's controller*, not whoever cast the
+          counterspell, and only mana already floating in that player's pool
+          counts toward it - see `pending_decision.player` for who is
+          actually being asked. `pending_decision.affirmative_is_legal` is
+          `False` when yes is not a legal answer at all (too little life,
+          energy, or floating mana to pay) - answering `True` there is
+          refused.
         - `pay_energy_amount` (e.g. "pay any amount of {E}", CR 107.14,
           CR 118.3): `energy_amount` is an integer from 0 up to
           `pending_decision.amount` (the energy you actually have). Not the
