@@ -446,6 +446,99 @@ def test_surveil_moves_named_cards_to_the_graveyard(client, game):
     assert admin_final["libraries"]["alice"][0]["name"] == "Forest"
 
 
+# -- surveil: the deciding player must be able to read what they are looking
+# at (CR 701.20e), the opponent must not (CR 701.20e names only the deciding
+# player) -----------------------------------------------------------------
+
+
+def test_the_deciding_player_can_resolve_surveilled_card_identities(client, game):
+    """The reported defect: `pending_decision.cards` on a `surveil` is a bare
+    list of ids, and `libraries` is stripped for every non-admin viewer -
+    including the viewer's own - so the deciding player had no way to learn
+    what card each id names, and had to choose blind. `card_details` is the
+    fix: the full view of exactly the cards this decision names, and nothing
+    else from the library."""
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Contingency Plan", "alice", "hand")
+    stock_library_top(client, game, "alice", ["Mountain", "Forest", "Grizzly Bears"])
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    island = find(board["battlefield"], "Island")
+    red_source = find(board["battlefield"], "Mountain")
+    plan = board["hands"]["alice"][0]
+    admin_board = state(client, game)
+    mountain, forest, bears = admin_board["libraries"]["alice"][:3]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", plan["id"], [island["id"], red_source["id"]]
+    )
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "surveil"
+        assert set(pending["cards"]) == {mountain["id"], forest["id"], bears["id"]}
+
+        # The deciding player must be able to name every card the decision
+        # offers, from `card_details` alone - not by cross-referencing a
+        # library view they are never sent.
+        details_by_id = {c["id"]: c["name"] for c in pending["card_details"]}
+        assert details_by_id == {
+            mountain["id"]: "Mountain",
+            forest["id"]: "Forest",
+            bears["id"]: "Grizzly Bears",
+        }
+        # And nothing beyond those three cards leaks - no surrounding library
+        # order or contents.
+        assert len(pending["card_details"]) == 3
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "moved": [mountain["id"]], "top_order": [forest["id"]]},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
+def test_the_opponent_cannot_resolve_a_pending_surveils_cards(client, game):
+    """The opponent still learns that alice is surveilling (CR 101.4a: the
+    choice itself is public) but never which cards, and never gets a
+    `card_details` field to resolve them from - the genuine-look half of the
+    fix must not regress."""
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Contingency Plan", "alice", "hand")
+    stock_library_top(client, game, "alice", ["Mountain", "Forest"])
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    island = find(board["battlefield"], "Island")
+    red_source = find(board["battlefield"], "Mountain")
+    plan = board["hands"]["alice"][0]
+    admin_board = state(client, game)
+    mountain, forest = admin_board["libraries"]["alice"][:2]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", plan["id"], [island["id"], red_source["id"]]
+    )
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        bobs_view = state(client, game, uid=uids["bob"])
+        pending = bobs_view["pending_decision"]
+        assert pending == {"player": "alice", "kind": "surveil", "prompt": pending["prompt"]}
+        assert "cards" not in pending
+        assert "card_details" not in pending
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "moved": [mountain["id"]], "top_order": [forest["id"]]},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
 # -- may: the other yes/no kind, sharing `decisions.bool_answer` ------------
 
 

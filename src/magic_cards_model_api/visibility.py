@@ -60,6 +60,16 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     """
     if viewer is ADMIN:
         return view
+    # Built from the *unredacted* view, before `libraries`/`sideboards` are
+    # popped below, so `redact_pending_decision` can still hand the deciding
+    # player the identity of the exact cards their own pending decision names
+    # (CR 701.20e: a look is shown to the specified player) even though those
+    # zones are about to disappear from the response entirely. Every card on
+    # the board is indexed, not just the viewer's - a decision can only ever
+    # name cards from the deciding player's own zone, so looking up an
+    # opponent's card here is never reachable, but building the map without
+    # first guessing whose cards matter is simpler than trying to scope it.
+    card_lookup = _card_lookup(view) if view.get("pending_decision") is not None else None
     view = dict(view)
     view["hands"] = {
         name: (cards if name == viewer else []) for name, cards in view.get("hands", {}).items()
@@ -67,7 +77,9 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     view.pop("libraries", None)
     view.pop("sideboards", None)
     if view.get("pending_decision") is not None:
-        view["pending_decision"] = redact_pending_decision(view["pending_decision"], viewer)
+        view["pending_decision"] = redact_pending_decision(
+            view["pending_decision"], viewer, card_lookup
+        )
     if view.get("decision_timeouts"):
         view["decision_timeouts"] = [
             redact_decision_timeout(entry, viewer) for entry in view["decision_timeouts"]
@@ -77,7 +89,30 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     return view
 
 
-def redact_pending_decision(pending: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every card on the board right now, by id, from the *unredacted* view.
+
+    Used only to resolve the specific ids a pending decision names for the
+    player it names them to - never exposed wholesale. Includes hidden zones
+    (hands, libraries, sideboards) precisely because those are the zones a
+    `SCRY`/`SURVEIL`/library-sourced `CHOOSE_CARDS` decision draws its
+    candidates from.
+    """
+    lookup: dict[str, dict[str, Any]] = {}
+    for zone_key in ("hands", "libraries", "sideboards", "graveyards"):
+        for cards in view.get(zone_key, {}).values():
+            for card in cards:
+                lookup[card["id"]] = card
+    for card in view.get("battlefield", []):
+        lookup[card["id"]] = card
+    return lookup
+
+
+def redact_pending_decision(
+    pending: dict[str, Any],
+    viewer: Viewer,
+    card_lookup: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """A pending decision, as `viewer` may see it.
 
     CR 101.4a lets a choice made in a hidden zone stay face down - "those
@@ -87,8 +122,25 @@ def redact_pending_decision(pending: dict[str, Any], viewer: Viewer) -> dict[str
     So a seat that is not the one deciding gets `{player, kind, prompt}` and
     nothing that names a card; the deciding player (and the admin, handled
     above) sees the rest - the candidates and how many to choose.
+
+    For the deciding player, `cards` stays a bare list of ids (existing
+    callers - `decide`'s own `moved`/`card_ids` - answer by id, and changing
+    that shape would break them), but `card_details` is added alongside it:
+    the full view of exactly those ids, resolved from `card_lookup`. Without
+    this, a `scry`/`surveil` decision (CR 701.22a, CR 701.25a - a *look*,
+    shown only to the deciding player, CR 701.20e) or a library-sourced
+    `choose_cards` left the deciding player nothing to read the ids against,
+    because `libraries` is stripped for every non-admin viewer, including
+    that viewer's own. `card_details` is scoped to only the ids this decision
+    actually names - never the rest of the zone they came from - so this
+    grants exactly the visibility the effect itself grants, no more.
     """
     if viewer == pending.get("player"):
+        cards = pending.get("cards") or ()
+        if cards and card_lookup is not None:
+            details = [card_lookup[card_id] for card_id in cards if card_id in card_lookup]
+            if details:
+                pending = {**pending, "card_details": details}
         return pending
     return {
         "player": pending.get("player"),

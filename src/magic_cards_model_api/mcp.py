@@ -359,7 +359,12 @@ def build_server(seats: Seats) -> MCPServer:
         - `choose_cards` (e.g. the cleanup discard): `card_ids` is a
           comma-separated list of the card id(s) to discard, exactly as many
           as `pending_decision.amount` names, chosen from
-          `pending_decision.cards`.
+          `pending_decision.cards`. A hand-sourced `choose_cards` (the
+          cleanup discard, a "discard N" effect) is already resolvable
+          against your own `hand` in `my_state`; a library-sourced one (a
+          "reveal the top N, choose among them" effect) instead resolves
+          through `pending_decision.card_details` - see the `scry`/`surveil`
+          bullet below, which explains that field.
         - `choose_targets` (a triggered ability's targets, CR 603.3d):
           `targets` is a comma-separated list of up to
           `pending_decision.target_maximum` entries, each a card or ability
@@ -378,7 +383,13 @@ def build_server(seats: Seats) -> MCPServer:
           graveyard for a surveil. Every card not named stays on top, in
           `top_order` (comma-separated ids, topmost first) if given, or
           unchanged otherwise. Leaving `moved` empty is a real answer: keep
-          everything on top.
+          everything on top. `pending_decision.cards` is still bare ids
+          (`moved`/`top_order` answer by id), but `pending_decision.card_details`
+          - present only for the deciding player - carries the full card view
+          (name, oracle text, etc.) for exactly those ids, so a `scry`/`surveil`
+          (a *look*, CR 701.20e: shown only to the deciding player) or a
+          library-sourced `choose_cards` is never answered blind. Look the id
+          up in `card_details` before choosing.
 
         `may`, `pay_life`, `scry`, and `surveil` were not answerable through
         this tool before this wave: the request simply parked until its
