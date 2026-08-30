@@ -42,29 +42,89 @@ from .schemas import (
     StepUpdate,
     TargetRequest,
 )
-from .serialize import snapshot, state_view
+from .serialize import state_view
 from .store import new_seat_uids, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 
 
+def _card_fingerprint(state: CardState) -> tuple[Any, ...]:
+    """One card's own observable state, identity included (CR 400.7).
+
+    `zone_change_stamp` is the load-bearing field: "An object that moves from
+    one zone to another becomes a new object with no memory of, or relation
+    to, its previous existence" (CR 400.7), and the engine mutates one
+    `CardState` in place across a zone change rather than replacing it, so
+    `id` alone cannot tell a card that never moved apart from one that left
+    and came back. `move_to` reassigns `zone_change_stamp` on every call,
+    which is exactly the signal a blink needs: Ephemerate exiles a creature
+    and returns it to the battlefield in the same resolution, so the `id`,
+    name, controller, tapped state, and counters can all come back identical
+    while the object itself is a new one CR 400.7's own terms - and only the
+    stamp says so.
+
+    `tapped`, `is_summoning_sick`, `damage`, the sorted counters, and
+    `attachment` ride along so a mutation that does *not* change zones (an
+    aura attaching, a counter added, a tap, a block-time attachment loss)
+    still shows up without needing its own special case.
+    """
+    return (
+        str(state.zone_change_stamp),
+        state.tapped,
+        state.is_summoning_sick,
+        state.damage,
+        tuple(sorted(state.counters.root.items())),
+        state.attachment,
+    )
+
+
 def _resolution_state(game: Game) -> dict[str, Any]:
-    """The snapshot a resolution is meant to change, minus the stack itself.
+    """A fingerprint of everything a resolution is meant to change, minus the
+    stack itself.
 
     Resolving always pops the stack, so the stack cannot say whether the
-    resolution *did* anything. Everything else can: an effect the engine has
-    no implementation for leaves board, hands, zones, life and pools exactly
-    as they were.
+    resolution *did* anything. Everything else can - board, hands,
+    graveyards, exile, life, and pools - as long as it is compared by each
+    card's own identity and observable state (`_card_fingerprint`), not by
+    zone-and-name alone: a bare list of names, the shape this used to build
+    from `serialize.snapshot`, cannot tell a card that stayed apart from a
+    card that left and came back to the exact same zone under the exact same
+    name, which is precisely what a blink (Ephemerate) does. Keyed by card
+    id so `_without_own_arrival` can discount one specific object rather than
+    guessing which of several same-named cards changed.
 
     This is necessary but not sufficient on its own for a *spell*: every
     spell also leaves the stack somewhere as part of resolving at all
-    (CR 608.2m), and that arrival mutates this snapshot regardless of
+    (CR 608.2m), and that arrival mutates this fingerprint regardless of
     whether the spell's own effect ran. `_without_own_arrival` is what
     discounts that one mandatory move for spells; abilities need no such
     correction, since CR 608.2n removes a resolved ability from the stack
     without putting it anywhere (see `machines.triggers.AbilityOnStack`).
+
+    **What this still cannot see**, honestly: the library, the command zone,
+    and the sideboard are not fingerprinted at all (an effect that only
+    shuffles the library, or only changes what is in a face-down command-zone
+    card, reads as "nothing changed"); a card's own printed text or
+    characteristics changed by a continuous effect that touches none of the
+    fields above (e.g. a name change with no P/T, tap, or counter change)
+    is invisible; and two effects that exactly cancel out within the same
+    resolution (a counter added then removed by the same spell) leave no
+    trace, the same blind spot a snapshot diff always has.
     """
-    return {key: value for key, value in snapshot(game).items() if key != "stack"}
+
+    def zone_fingerprint(cards: Any) -> dict[str, tuple[Any, ...]]:
+        return {str(c.id): _card_fingerprint(c) for c in cards if isinstance(c, CardState)}
+
+    return {
+        "life": {player.username: player.life for player in game.players},
+        "pools": {player.username: dict(player.mana_pool.floating) for player in game.players},
+        "battlefield": zone_fingerprint(game.shared_zones.get(Zone.BATTLEFIELD, [])),
+        "hands": {player.username: zone_fingerprint(player.hand) for player in game.players},
+        "graveyards": {
+            player.username: zone_fingerprint(player.graveyard) for player in game.players
+        },
+        "exile": zone_fingerprint(game.shared_zones.get(Zone.EXILE, [])),
+    }
 
 
 def _without_own_arrival(game: Game, spell_id: UUID, after: dict[str, Any]) -> dict[str, Any]:
@@ -81,41 +141,34 @@ def _without_own_arrival(game: Game, spell_id: UUID, after: dict[str, Any]) -> d
     against `before`. Anything beyond it (a life total, a hand, a second
     card's zone, the battlefield) is left untouched and is the real signal.
 
-    Matched by the spell's own name in its landing zone's list, since that
-    list (like the rest of `snapshot`) only records names, not ids. Two
-    identical cards landing in the same zone in the same resolution are
-    indistinguishable this way, but removing one occurrence of the name is
-    the correct discount regardless of which of them it was.
+    Removed by the spell's own id, now that `_resolution_state` keys each
+    zone by id rather than by a bare list of names - exact, unlike the old
+    by-name removal, which could not tell two identically named cards
+    landing in the same zone apart.
 
-    A spell that instead ends up in a zone `snapshot` does not track at all
-    (library, command, sideboard) needs no discount here: `before` and
+    A spell that instead ends up in a zone `_resolution_state` does not track
+    at all (library, command, sideboard) needs no discount here: `before` and
     `after` already agree on those untracked zones, so no false "changed"
     can arise from that arrival in the first place.
     """
     landed = game.find_by_id(spell_id)
     if landed is None or landed.zone is Zone.BATTLEFIELD:
         return after
-
-    def discard_one(names: list[str]) -> list[str]:
-        if landed.name not in names:
-            return names
-        copy = list(names)
-        copy.remove(landed.name)
-        return copy
+    landed_key = str(spell_id)
 
     if landed.zone is Zone.EXILE:
-        return {**after, "exile": discard_one(after["exile"])}
+        return {**after, "exile": {k: v for k, v in after["exile"].items() if k != landed_key}}
     if landed.zone is Zone.GRAVEYARD:
         owner = landed.controller_or_owner
         graveyards = dict(after["graveyards"])
         if owner in graveyards:
-            graveyards[owner] = discard_one(graveyards[owner])
+            graveyards[owner] = {k: v for k, v in graveyards[owner].items() if k != landed_key}
         return {**after, "graveyards": graveyards}
     if landed.zone is Zone.HAND:
         owner = landed.controller_or_owner
         hands = dict(after["hands"])
         if owner in hands:
-            hands[owner] = discard_one(hands[owner])
+            hands[owner] = {k: v for k, v in hands[owner].items() if k != landed_key}
         return {**after, "hands": hands}
     return after
 
@@ -806,12 +859,24 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(f"bad target: {exc}", **detail)
         detail["targets"] = req.targets
-    elif kind in (DecisionKind.MAY, DecisionKind.PAY_LIFE):
+    elif kind in (DecisionKind.MAY, DecisionKind.PAY_LIFE, DecisionKind.PAY_ENERGY):
         try:
             answer = decisions.bool_answer(req.accept)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["accept"] = req.accept
+    elif kind is DecisionKind.PAY_ENERGY_AMOUNT:
+        try:
+            answer = decisions.energy_amount_answer(req.energy_amount)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["energy_amount"] = req.energy_amount
+    elif kind is DecisionKind.CHOOSE_A_QUALITY:
+        try:
+            answer = decisions.quality_answer(req.choice)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["choice"] = req.choice
     elif kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
         try:
             answer = decisions.card_split_answer(req.moved, req.top_order)
@@ -823,12 +888,22 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # `kind` is either unparseable (a future `DecisionKind` this API has
         # not been told about) or one of `MULLIGAN`/`DECLARE_ATTACKERS`/
         # `DECLARE_BLOCKERS`, which never reach this mailbox at all - see
-        # `decisions.ANSWERABLE_KINDS`. Either way, refuse by name rather than
-        # guessing a shape or silently letting the engine's own default stand
-        # in: "the player announces" fails loudly here, not quietly in a
-        # decision_timeout log `decisions.DEFAULT_TIMEOUT_SECONDS` from now.
+        # `decisions.ANSWERABLE_KINDS`/`decisions.SERVED_ELSEWHERE`. Either
+        # way, refuse by name rather than guessing a shape or silently
+        # letting the engine's own default stand in: "the player announces"
+        # fails loudly here, not quietly in a decision_timeout log
+        # `decisions.DEFAULT_TIMEOUT_SECONDS` from now. The reason names how
+        # to actually answer it when one is known, rather than leaving a
+        # stuck player to guess a fifth argument shape that will never work -
+        # see the reported bug this replaced, where a live player tried four
+        # shapes against `choose_a_quality` with no path to a fifth that
+        # would have worked either, because none existed.
+        hint = decisions.SERVED_ELSEWHERE.get(
+            kind, "this is a new DecisionKind decide has not been taught yet"
+        )
         return refuse(
-            f"this endpoint does not know how to answer a {pending.kind!r} decision", **detail
+            f"this endpoint does not know how to answer a {pending.kind!r} decision: {hint}",
+            **detail,
         )
     # Recorded before `answer_if`, not after - see the docstring above on why
     # that ordering is what keeps this read of the `Game` race-free.

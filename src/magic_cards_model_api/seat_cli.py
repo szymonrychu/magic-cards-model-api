@@ -126,7 +126,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--accept",
         choices=("yes", "no"),
         default=None,
-        help="yes/no, for a may or pay_life decision (CR 608.2d, CR 119.4)",
+        help=(
+            "yes/no, for a may, pay_life, or pay_energy decision (CR 608.2d, CR 119.4, CR 107.14)"
+        ),
     )
     decide.add_argument(
         "--moved",
@@ -140,6 +142,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--top-order",
         default="",
         help="comma-separated card ids: the order the rest go back on top, topmost first",
+    )
+    decide.add_argument(
+        "--energy-amount",
+        type=int,
+        default=None,
+        help="integer amount of {E} to pay, for a pay_energy_amount decision (CR 107.14, CR 118.3)",
+    )
+    decide.add_argument(
+        "--choice",
+        default="",
+        help=(
+            "the chosen color/card name/creature type, for a choose_a_quality decision (CR 614.12a)"
+        ),
     )
     blocking(decide)
 
@@ -316,6 +331,10 @@ def run(argv: list[str] | None = None) -> int:
                 body["accept"] = args.accept == "yes"
             if args.top_order:
                 body["top_order"] = _parse_ids(args.top_order)
+            if args.energy_amount is not None:
+                body["energy_amount"] = args.energy_amount
+            if args.choice:
+                body["choice"] = args.choice
             answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
             if isinstance(answer, dict) and answer.get("accepted") is False:
                 return {"allowed": False, **answer}

@@ -75,30 +75,56 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "
 
 #: Every `DecisionKind` that `POST /api/games/{id}/decide` actually knows how
 #: to answer - see `app.py`'s `decide` endpoint, which this set must be kept
-#: in lockstep with.
-#:
-#: `DecisionKind.MULLIGAN`, `DECLARE_ATTACKERS`, and `DECLARE_BLOCKERS` are
-#: deliberately absent. Reading `machines/decisions.py` and `models/game.py`
-#: (`ask_mulligan`, `ask_attackers`, `ask_blockers`, all of which call
-#: `DecisionScript.take` and `default_answer` directly) shows none of the
-#: three ever consults `Game.decisions.provider` - the mailbox this module
-#: publishes to. A live seat cannot answer them through this endpoint no
-#: matter what `decide` supports: the mulligan declaration (CR 103.5) is
-#: settled during `Match.start_game`, and attacking/blocking (CR 703.4i,
-#: 703.4j) already have their own actions (`actions/attack`,
-#: `actions/declare-blockers`) that call `Game.declare_attackers` /
-#: `Game.declare_blockers` directly. Building `decide` support for them would
-#: be speculative: nothing can ever reach it.
+#: in lockstep with. `PAY_ENERGY` and `PAY_ENERGY_AMOUNT` (CR 107.14,
+#: CR 118.3) and `CHOOSE_A_QUALITY` (CR 614.12a) joined this set after a
+#: player's Utopia Sprawl froze a live game: the engine could ask the
+#: question, `Game.ask` had nowhere live to route it, and `decide` refused
+#: every shape the player tried, so the "as this enters, choose a color"
+#: replacement effect never got its answer and the whole match sat stuck
+#: behind it. `test_decision_kinds.test_every_decision_kind_is_answerable_or_served_elsewhere`
+#: is the regression test: it enumerates the engine's own `DecisionKind` and
+#: fails, by name, the moment a new one is added to
+#: `magic_cards_model.machines.decisions` without a matching entry here (or
+#: in `SERVED_ELSEWHERE`, below) - the exact gap that let this one through.
 ANSWERABLE_KINDS = frozenset(
     {
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,
+        DecisionKind.PAY_ENERGY,
+        DecisionKind.PAY_ENERGY_AMOUNT,
         DecisionKind.SCRY,
         DecisionKind.SURVEIL,
         DecisionKind.CHOOSE_CARDS,
         DecisionKind.CHOOSE_TARGETS,
+        DecisionKind.CHOOSE_A_QUALITY,
     }
 )
+
+#: `DecisionKind.MULLIGAN`, `DECLARE_ATTACKERS`, and `DECLARE_BLOCKERS` are
+#: deliberately absent from `ANSWERABLE_KINDS`. Reading `machines/decisions.py`
+#: and `models/game.py` (`ask_mulligan`, `ask_attackers`, `ask_blockers`, all
+#: of which call `DecisionScript.take` and `default_answer` directly) shows
+#: none of the three ever consults `Game.decisions.provider` - the mailbox
+#: this module publishes to. A live seat cannot answer them through `decide`
+#: no matter what it supports: the mulligan declaration (CR 103.5) is settled
+#: during `Match.start_game`, and attacking/blocking (CR 703.4i, 703.4j)
+#: already have their own actions (`actions/attack`,
+#: `actions/declare-blockers`) that call `Game.declare_attackers` /
+#: `Game.declare_blockers` directly. Building `decide` support for them would
+#: be speculative: nothing can ever reach it. Named here, deliberately,
+#: rather than left as an absence - the drift test treats a `DecisionKind` in
+#: neither set as the bug, and a kind that belongs in neither must say why.
+SERVED_ELSEWHERE: dict[DecisionKind, str] = {
+    DecisionKind.MULLIGAN: (
+        "settled automatically by Match.start_game (CR 103.5) - never reaches decide"
+    ),
+    DecisionKind.DECLARE_ATTACKERS: (
+        "use POST /api/games/{game_id}/actions/attack instead of decide"
+    ),
+    DecisionKind.DECLARE_BLOCKERS: (
+        "use POST /api/games/{game_id}/actions/declare-blockers instead of decide"
+    ),
+}
 
 
 def _target_view(ref: TargetRef) -> dict[str, str]:
@@ -145,12 +171,18 @@ class PendingDecision:
     cards: tuple[str, ...]
     targets: tuple[dict[str, str], ...] = ()
     target_maximum: int | None = None
-    #: Whether the yes branch of a `may`/`pay_life` question is legal at all
-    #: (CR 608.2d, CR 119.4) - `False` at, say, 1 life against a 2-life
-    #: payment, which is what a shockland at 1 life looks like before the
-    #: deciding seat is even asked. A seat should not be offered "yes" for a
-    #: question it cannot legally say yes to.
+    #: Whether the yes branch of a `may`/`pay_life`/`pay_energy` question is
+    #: legal at all (CR 608.2d, CR 119.4, CR 118.3) - `False` at, say, 1 life
+    #: against a 2-life payment, which is what a shockland at 1 life looks
+    #: like before the deciding seat is even asked. A seat should not be
+    #: offered "yes" for a question it cannot legally say yes to.
     affirmative_is_legal: bool = True
+    #: The legal answers to a `choose_a_quality` question (CR 614.12a) - the
+    #: five colors' letter codes for "choose a color", empty for "choose a
+    #: card name"/"choose a creature type", whose universe is too large to
+    #: enumerate (`machines/replacement.py`'s `_choose_a_quality`). Also
+    #: empty for every other kind.
+    options: tuple[str, ...] = ()
 
     @classmethod
     def from_engine(cls, decision: Decision) -> PendingDecision:
@@ -164,6 +196,7 @@ class PendingDecision:
             targets=tuple(_target_view(ref) for ref in decision.targets),
             target_maximum=decision.target_maximum,
             affirmative_is_legal=decision.affirmative_is_legal,
+            options=decision.options,
         )
 
     def to_view(self) -> dict[str, Any]:
@@ -177,6 +210,7 @@ class PendingDecision:
             "targets": [dict(ref) for ref in self.targets],
             "target_maximum": self.target_maximum,
             "affirmative_is_legal": self.affirmative_is_legal,
+            "options": list(self.options),
         }
 
 
@@ -390,6 +424,42 @@ def bool_answer(accept: bool | None) -> bool:
     if accept is None:
         raise ValueError("this decision needs a yes/no answer ('accept')")
     return accept
+
+
+def energy_amount_answer(energy_amount: int | None) -> int:
+    """A `decide` request body's `energy_amount`, in the shape `Game.ask`
+    expects for `PAY_ENERGY_AMOUNT` - a plain `int` from 0 up to however much
+    energy the player has (CR 118.3, CR 107.14). Distinct from `PAY_ENERGY`
+    (a fixed-cost yes/no answered by `bool_answer`, same as `MAY`/`PAY_LIFE`):
+    `PAY_ENERGY_AMOUNT` is "pay any amount", so the answer is how much, not
+    whether.
+
+    Refuses a missing amount with a 400-shaped `ValueError` here, matching
+    `bool_answer`'s reasoning for `accept` - `Game.ask`'s own `isinstance`
+    and range checks (0..`pending_decision.amount`, the energy available)
+    still run on the other side of the mailbox and are not duplicated here;
+    this only keeps `None` from reaching them in the first place.
+    """
+    if energy_amount is None:
+        raise ValueError("this decision needs an integer amount of energy ('energy_amount')")
+    return energy_amount
+
+
+def quality_answer(choice: str | None) -> str:
+    """A `decide` request body's `choice`, in the shape `Game.ask` expects
+    for `CHOOSE_A_QUALITY` (CR 614.12a) - a plain, non-empty `str` naming
+    whichever of a color, a card name, or a creature type
+    `pending_decision.options` calls for (empty `options` means "any card
+    name" or "any creature type"; five color codes means "choose a color").
+
+    Refuses a missing or empty choice with a 400-shaped `ValueError` here,
+    matching `bool_answer`'s reasoning for `accept` - `Game.ask`'s own check
+    that a non-empty `options` narrows the legal answers still runs on the
+    other side of the mailbox and is not duplicated here.
+    """
+    if not choice:
+        raise ValueError("this decision needs a chosen value ('choice'), CR 614.12a")
+    return choice
 
 
 def card_split_answer(moved: list[str], top_order: list[str] | None) -> CardSplit:

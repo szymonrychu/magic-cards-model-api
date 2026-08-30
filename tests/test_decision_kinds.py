@@ -2,13 +2,29 @@
 matched against what `POST /api/games/{id}/decide` actually answers.
 
 Before this file, `decide` only knew `choose_cards` and `choose_targets`
-(`test_decisions.py`, `test_target_decisions.py`). The other four the engine's
+(`test_decisions.py`, `test_target_decisions.py`). Four more the engine's
 `Game.ask` can route through this API's live `GameDecisionProvider` - `may`,
-`pay_life`, `scry`, `surveil` - fell through to `default_answer` no matter what
-a seat sent, after parking the request for the full timeout. The reported case
-was a shockland's "pay 2 life" (`pending_decision.kind == "pay_life"`):
-`decide` refused it outright, the request timed out, and CR 119.4's choice was
-made *for* the player rather than *by* them.
+`pay_life`, `scry`, `surveil` - then fell through to `default_answer` no
+matter what a seat sent, after parking the request for the full timeout. The
+reported case was a shockland's "pay 2 life" (`pending_decision.kind ==
+"pay_life"`): `decide` refused it outright, the request timed out, and
+CR 119.4's choice was made *for* the player rather than *by* them.
+
+A second wave hit the same gap for three kinds added to the engine within
+hours of each other and never given an API path at all: a live player cast
+Utopia Sprawl, the engine raised `choose_a_quality` ("as this Aura enters,
+choose a color", CR 614.12a), and `decide` answered every shape the player
+tried with "this endpoint does not know how to answer a 'choose_a_quality'
+decision" - freezing the whole match, every seat, not just that card, since a
+pending decision blocks the game until it is answered. `pay_energy` (a fixed
+"pay {E}{E}...", CR 107.14/118.3) and `pay_energy_amount` (a variable "pay
+any amount of {E}") were the other two gaps, added to the engine in the same
+window. `test_every_decision_kind_is_answerable_or_served_elsewhere` below is
+the regression test for the *shape* of this bug, not just this instance of
+it: it enumerates the engine's own `DecisionKind` members and fails, by name,
+the moment a new one is added without a matching entry in
+`decisions.ANSWERABLE_KINDS` or `decisions.SERVED_ELSEWHERE` - so the next
+`DecisionKind` cannot silently freeze a game the same way.
 
 `mulligan`, `declare_attackers`, and `declare_blockers` are the other three
 `DecisionKind`s and are deliberately not covered here with a live-seat test:
@@ -36,6 +52,7 @@ from typing import Any
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
 
+from magic_cards_model_api import decisions
 from magic_cards_model_api.decisions import PendingDecision
 from magic_cards_model_api.main import app
 from magic_cards_model_api.store import store
@@ -316,13 +333,18 @@ def stock_library_top(client: TestClient, game_id: str, player: str, names: list
 
 
 def cast_and_resolve_in_background(
-    game_id: str, player: str, card_id: str, sources: list[str]
+    game_id: str, player: str, card_id: str, sources: list[str], targets: list[str] | None = None
 ) -> threading.Thread:
     def post() -> None:
         stepping_client = TestClient(app)
         cast = stepping_client.post(
             f"/api/games/{game_id}/actions/cast",
-            json={"player": player, "card_id": card_id, "mana_sources": sources},
+            json={
+                "player": player,
+                "card_id": card_id,
+                "mana_sources": sources,
+                **({"targets": targets} if targets is not None else {}),
+            },
         )
         assert cast.status_code == 200, cast.text
         stepping_client.post(f"/api/games/{game_id}/resolve-top")
@@ -578,6 +600,332 @@ def test_may_shares_the_same_bool_answer_path_as_pay_life(client, game):
             thread.join(timeout=10)
         assert not thread.is_alive()
         assert outcome == [accept]
+
+
+# -- pay_energy: the fixed-amount cousin of pay_life (CR 107.14, CR 118.3) --
+
+
+def test_pay_energy_yes_spends_the_energy(client, game):
+    """`Game.may_pay_energy` (Static Prison's "sacrifice this unless you pay
+    {E}" reads the same call the other way round, but the payment itself is
+    identical) is the same fixed-amount question `may_pay_life` already asks
+    - `bool_answer` is what `decide` reuses for both, so this proves it
+    covers `pay_energy` too, the same way `test_may_shares_the_same_bool_
+    answer_path_as_pay_life` proved it for `may`."""
+    uids = seats_for(client, game)
+    client.patch(f"/api/games/{game}/players/alice", json={"counters": {"energy": 3}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_energy("alice", 2, source="Static Prison"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "pay_energy"
+        assert pending["amount"] == 2
+        assert pending["affirmative_is_legal"] is True
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": True},
+        )
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [True]
+    final = state(client, game)
+    assert next(p for p in final["players"] if p["username"] == "alice")["counters"]["energy"] == 1
+
+
+def test_pay_energy_below_the_amount_offers_no_yes(client, game):
+    """CR 118.3: a player short on energy cannot legally say yes -
+    `affirmative_is_legal` must say so before the seat even answers, the same
+    floor `pay_life` enforces off life instead of energy."""
+    uids = seats_for(client, game)
+    client.patch(f"/api/games/{game}/players/alice", json={"counters": {"energy": 1}})
+
+    def ask_in_background(outcome: list[bool]) -> threading.Thread:
+        def call() -> None:
+            with store.locked(game) as live_game:
+                outcome.append(live_game.may_pay_energy("alice", 2, source="Static Prison"))
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        thread.join(timeout=0.5)
+        assert thread.is_alive()
+        return thread
+
+    outcome: list[bool] = []
+    thread = ask_in_background(outcome)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["affirmative_is_legal"] is False
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "accept": False},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome == [False]
+
+
+# -- pay_energy_amount: "pay any amount of {E}" (CR 107.14, CR 118.3) -------
+
+
+def test_pay_energy_amount_pays_the_named_amount(client, game):
+    """Galvanic Discharge: "You get {E}{E}{E}..., then you may pay any amount
+    of {E}." deals that much damage. A `pay_energy_amount` decision is an
+    `int`, not a bool - this proves `decide` carries the chosen *amount*
+    through to real damage, not just accepts or refuses the call."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Galvanic Discharge", "alice", "hand")
+    bob_bears = add_card(client, game, "Grizzly Bears", "bob", "battlefield")["added"]["card_id"]
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    mountain = find(board["battlefield"], "Mountain")
+    discharge = board["hands"]["alice"][0]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", discharge["id"], [mountain["id"]], targets=[bob_bears]
+    )
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "pay_energy_amount"
+        assert pending["amount"] == 3  # the three energy Galvanic Discharge just granted
+
+        # 1, not the full 3 or the lethal 2: proving `decide` carries through
+        # the exact amount chosen, not "as much as possible" - and staying
+        # below Grizzly Bears' toughness so the creature is still there
+        # afterwards to show the damage on.
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "energy_amount": 1},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    final = state(client, game)
+    alice = next(p for p in final["players"] if p["username"] == "alice")
+    assert alice["counters"]["energy"] == 2, "3 granted, 1 spent"
+    bears = find(final["battlefield"], "Grizzly Bears")
+    assert bears["damage"] == 1
+
+
+def test_pay_energy_amount_missing_value_is_refused_not_defaulted(client, game):
+    """A `decide` call for `pay_energy_amount` with no `energy_amount` must be
+    refused by name, matching `pay_life`'s refusal of a missing `accept`."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Galvanic Discharge", "alice", "hand")
+    bob_bears = add_card(client, game, "Grizzly Bears", "bob", "battlefield")["added"]["card_id"]
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    mountain = find(board["battlefield"], "Mountain")
+    discharge = board["hands"]["alice"][0]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", discharge["id"], [mountain["id"]], targets=[bob_bears]
+    )
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        refused = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice"},
+        )
+        assert refused.status_code == 200
+        body = refused.json()
+        assert body["accepted"] is False
+        assert "energy_amount" in body["reason"]
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "energy_amount": 0},
+        )
+    finally:
+        thread.join(timeout=10)
+
+
+# -- choose_a_quality: "as this enters, choose a color" (CR 614.12a) --------
+
+
+def test_choose_a_quality_picks_the_named_color(client, game):
+    """The reported bug, exactly: Utopia Sprawl ("As this Aura enters, choose
+    a color.") cast on the caster's own Forest. `decide` used to refuse every
+    shape a live player tried, freezing the whole match behind this one
+    `choose_a_quality` decision - a pending decision blocks the game until it
+    is answered, not just the seat that raised it."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Utopia Sprawl", "alice", "hand")
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    forests = [c["id"] for c in board["battlefield"] if c["name"] == "Forest"]
+    sprawl = board["hands"]["alice"][0]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", sprawl["id"], [forests[0]], targets=[forests[1]]
+    )
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "choose_a_quality"
+        assert set(pending["options"]) == {"W", "U", "B", "R", "G"}
+
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": "R"},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    final = state(client, game)
+    # A `choose_a_quality` answer that never arrived used to be indistinguishable
+    # from one that did in exactly this way: an unattached Aura is destroyed by
+    # the next state-based action check (CR 704.5m) - `state_based_actions`
+    # below proves the attach (and so the choice) really went through, the same
+    # regression `test_utopia_sprawl_attaches_to_the_forest_it_targeted` in the
+    # engine repo's own scenario tests guards against.
+    sprawl_state = find(final["battlefield"], "Utopia Sprawl")
+    assert sprawl_state["zone"] == "battlefield"
+    sba = client.post(f"/api/games/{game}/state-based-actions").json()
+    assert "Utopia Sprawl" not in sba["destroyed"]
+
+
+def test_choose_a_quality_rejects_a_color_outside_the_five(client, game):
+    """CR 608.2d: "The player can't choose an option that's illegal or
+    impossible" - `pending_decision.options` narrows a color choice to the
+    five colors (CR 105.1), and `Game.ask` is what actually enforces it, so a
+    made-up color must not silently become the choice."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Utopia Sprawl", "alice", "hand")
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    forests = [c["id"] for c in board["battlefield"] if c["name"] == "Forest"]
+    sprawl = board["hands"]["alice"][0]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", sprawl["id"], [forests[0]], targets=[forests[1]]
+    )
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        # `Game.ask` raises inside the *resolving* request's thread (the one
+        # blocked on `cast_and_resolve_in_background`), not this one - the
+        # same shape `test_pay_life_at_too_little_life_offers_no_yes` already
+        # documents for an illegal `pay_life` answer.
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": "not-a-color"},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
+def test_choose_a_quality_missing_choice_is_refused_not_defaulted(client, game):
+    """A `decide` call for `choose_a_quality` with no `choice` must be
+    refused by name, matching `pay_life`'s refusal of a missing `accept`."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Utopia Sprawl", "alice", "hand")
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    forests = [c["id"] for c in board["battlefield"] if c["name"] == "Forest"]
+    sprawl = board["hands"]["alice"][0]
+
+    thread = cast_and_resolve_in_background(
+        game, "alice", sprawl["id"], [forests[0]], targets=[forests[1]]
+    )
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        refused = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice"},
+        )
+        assert refused.status_code == 200
+        body = refused.json()
+        assert body["accepted"] is False
+        assert "choice" in body["reason"]
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": "G"},
+        )
+    finally:
+        thread.join(timeout=10)
+
+
+# -- the drift test: every DecisionKind is answerable or named elsewhere ----
+
+
+def test_every_decision_kind_is_answerable_or_served_elsewhere():
+    """The regression test for the shape of the reported bug, not just this
+    instance of it.
+
+    `choose_a_quality`, `pay_energy`, and `pay_energy_amount` were added to
+    `magic_cards_model.machines.decisions.DecisionKind` and never given a
+    path through `decide` - the engine could ask the question, `Game.ask`
+    called into this API's live provider exactly as designed, and `decide`
+    refused every shape a real player tried, freezing the match. Nothing in
+    either repo's own test suite could have caught that gap: the engine's
+    suite has no idea this API exists, and this API's suite, before this
+    test, only ever exercised the kinds someone remembered to write a test
+    for.
+
+    This enumerates every `DecisionKind` the engine actually defines and
+    requires each one to be named on one side or the other:
+    `decisions.ANSWERABLE_KINDS` (a live seat can answer it through `decide`)
+    or `decisions.SERVED_ELSEWHERE` (it is deliberately never routed here,
+    with a note on where it *is* answered instead - `mulligan`,
+    `declare_attackers`, `declare_blockers`). A kind in neither set is
+    exactly the bug: the engine can ask it, nothing in this API answers it,
+    and the failure below names the kind and says what to do about it,
+    rather than leaving the next author to rediscover the freeze in a live
+    game the way this one was found."""
+    from magic_cards_model.machines.decisions import DecisionKind
+
+    all_kinds = set(DecisionKind)
+    routed = decisions.ANSWERABLE_KINDS | set(decisions.SERVED_ELSEWHERE)
+    orphaned = all_kinds - routed
+    assert not orphaned, (
+        f"DecisionKind(s) {sorted(k.value for k in orphaned)} are asked by the engine "
+        f"(magic_cards_model.machines.decisions.DecisionKind) but neither answerable "
+        f"through POST /api/games/{{id}}/decide (decisions.ANSWERABLE_KINDS) nor "
+        f"documented as served elsewhere (decisions.SERVED_ELSEWHERE) - a live seat "
+        f"asked one of these will see decide refuse every answer it tries and the "
+        f"game will hang until GameDecisionProvider's timeout defaults it for them. "
+        f"Fix: either wire an answer path for it in app.py's decide() and add it to "
+        f"ANSWERABLE_KINDS, or, if it truly has its own transport the way "
+        f"mulligan/declare_attackers/declare_blockers do, add it to SERVED_ELSEWHERE "
+        f"with a note on where it is actually answered."
+    )
+    # And the two sets must not overlap - a kind claiming to be both
+    # answerable here and served by some other transport is a contradiction,
+    # not a redundancy.
+    assert not (decisions.ANSWERABLE_KINDS & set(decisions.SERVED_ELSEWHERE))
 
 
 # -- an unwired kind: refused by name, not defaulted -------------------------

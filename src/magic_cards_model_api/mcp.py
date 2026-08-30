@@ -350,6 +350,8 @@ def build_server(seats: Seats) -> MCPServer:
         accept: bool | None = None,
         moved: str = "",
         top_order: str = "",
+        energy_amount: int | None = None,
+        choice: str = "",
         hold_priority: bool = False,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
@@ -372,11 +374,25 @@ def build_server(seats: Seats) -> MCPServer:
           leave it empty to give the ability no target at all, which is
           always legal here (this wave does not yet refuse an empty answer to
           a trigger that requires one).
-        - `may` and `pay_life` (e.g. a shockland's "pay 2 life", CR 119.4):
-          `accept` is `True` to say yes, `False` to say no.
+        - `may`, `pay_life`, and `pay_energy` (e.g. a shockland's "pay 2
+          life", CR 119.4, or a fixed "pay {E}{E}", CR 107.14): `accept` is
+          `True` to say yes, `False` to say no.
           `pending_decision.affirmative_is_legal` is `False` when yes is not
-          a legal answer at all (too little life to pay) - answering `True`
-          there is refused.
+          a legal answer at all (too little life or energy to pay) -
+          answering `True` there is refused.
+        - `pay_energy_amount` (e.g. "pay any amount of {E}", CR 107.14,
+          CR 118.3): `energy_amount` is an integer from 0 up to
+          `pending_decision.amount` (the energy you actually have). Not the
+          same question as `pay_energy`'s `accept` - this kind asks how much,
+          not whether. 0 always declines and is always legal.
+        - `choose_a_quality` (e.g. Utopia Sprawl's "as this enters, choose a
+          color", CR 614.12a): `choice` is the chosen color, card name, or
+          creature type. `pending_decision.options` lists the legal colors
+          when this is a color choice (the five letter codes); empty
+          `options` means a card name or creature type, and any non-empty
+          string is accepted - `Game.ask` is what actually enforces
+          legality, so a bad card name or creature type still reaches the
+          engine rather than being second-guessed here.
         - `scry` and `surveil` (CR 701.22a, CR 701.25a): `moved` is a
           comma-separated list of the `pending_decision.cards` entries to
           move off the top - to the bottom of the library for a scry, to the
@@ -424,6 +440,10 @@ def build_server(seats: Seats) -> MCPServer:
             body["accept"] = accept
         if top_order:
             body["top_order"] = _parse_ids(top_order)
+        if energy_amount is not None:
+            body["energy_amount"] = energy_amount
+        if choice:
+            body["choice"] = choice
 
         def perform() -> Any:
             answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/decide", body)

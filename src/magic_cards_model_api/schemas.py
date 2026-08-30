@@ -185,10 +185,23 @@ class DecideRequest(BaseModel):
     same token shape `CastRequest.targets` and `ActivateRequest.targets`
     already use, so a client does not learn a second format for "a target"."""
     accept: bool | None = None
-    """The yes/no answer, for the `may` and `pay_life` kinds (CR 608.2d,
-    CR 119.4) - a shockland's "pay 2 life" is a `pay_life` decision. `None`
-    (the default) is refused rather than treated as "no": a client must say
-    which one it means."""
+    """The yes/no answer, for the `may`, `pay_life`, and `pay_energy` kinds
+    (CR 608.2d, CR 119.4, CR 118.3) - a shockland's "pay 2 life" is a
+    `pay_life` decision, a fixed "pay {E}{E}" is `pay_energy`. `None` (the
+    default) is refused rather than treated as "no": a client must say which
+    one it means."""
+    energy_amount: int | None = None
+    """The `pay_energy_amount` kind's answer (CR 107.14, CR 118.3) - "pay any
+    amount of {E}" (Galvanic Discharge), an integer from 0 up to
+    `pending_decision.amount` (the energy the player actually has). Not the
+    same question as `pay_energy`'s `accept`: this kind asks how much, not
+    whether. `None` (the default) is refused, matching `accept`."""
+    choice: str | None = None
+    """The `choose_a_quality` kind's answer (CR 614.12a) - "as this enters,
+    choose a color/card name/creature type". A color choice is narrowed to
+    `pending_decision.options`; a card name or creature type choice offers no
+    `options` (the universe is too large to enumerate) and accepts any
+    non-empty string. `None` (the default) is refused, matching `accept`."""
     moved: list[str] = Field(default_factory=list)
     """For the `scry` and `surveil` kinds: which of `pending_decision.cards`
     move off the top - to the bottom of the library for a scry (CR 701.22a),

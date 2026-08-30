@@ -264,11 +264,68 @@ def test_a_pass_that_resolves_nothing_records_no_resolution(client, game):
 
 
 def test_an_unimplemented_instant_records_changed_false(client, game):
-    """Ephemerate has no entry in `machines/effects.py`, so it resolves and
-    does nothing at all: it just leaves the stack for alice's graveyard,
-    same as every instant does whether or not its effect ran. `changed`
-    must not fire on that mandatory move alone - the whole point of the
-    marker is to catch exactly this, an effect the engine cannot execute."""
+    """Mind Rot ("Target player discards two cards.") has no entry in
+    `machines/effects.py` - confirmed with `scripts/sweep_pool.py --effects`
+    in the engine repo, which lists it among the cards with rules text that
+    do nothing and log nothing - so it resolves and does nothing at all: it
+    just leaves the stack for alice's graveyard, same as every sorcery does
+    whether or not its effect ran. `changed` must not fire on that mandatory
+    move alone - the whole point of the marker is to catch exactly this, an
+    effect the engine cannot execute.
+
+    Ephemerate used to be the example here, but it has since gained an entry
+    (including rebound, CR 702.88a) - it now genuinely changes the game (a
+    blink) and, as of `_resolution_state`'s CR 400.7 `zone_change_stamp`
+    rewrite, is correctly reported as `changed: true` (see
+    `test_a_blink_records_changed_true` below). Mind Rot has no such
+    ambiguity: discarding cards is a plain effect with no keyword ability
+    of its own to grow into over time, so its silence should stay stable."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Mind Rot", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "hand")
+    board = state(client, game)
+    swamps = [c["id"] for c in board["battlefield"] if c["name"] == "Swamp"]
+    mind_rot = board["hands"]["alice"][0]
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": mind_rot["id"],
+            "targets": ["bob"],
+            "mana_sources": [{"card_id": sid} for sid in swamps],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    resolving = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert resolving.json()["outcome"] == PriorityOutcome.RESOLVE_TOP.value
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["detail"]["resolved"] == "Mind Rot"
+    assert entry["detail"]["changed"] is False
+    # it still went where a sorcery goes - the graveyard move itself is
+    # real, it just is not the "effect happened" signal
+    assert [card["name"] for card in state(client, game)["graveyards"]["alice"]] == ["Mind Rot"]
+    # and bob's hand - the thing Mind Rot claims to empty - is untouched
+    assert [card["name"] for card in state(client, game)["hands"]["bob"]] == ["Grizzly Bears"]
+
+
+def test_a_blink_records_changed_true(client, game):
+    """The blind spot `_resolution_state` used to have: Ephemerate exiles
+    Grizzly Bears and immediately returns it to the battlefield under its
+    owner's control (CR 301.5a is not in play here, this is the plain
+    "exile then return" text). The bears keep the same `id`, the same
+    controller, the same name, and - since it returns untapped with no
+    counters, same as it started - every field the old name-and-flags
+    snapshot compared. Only `zone_change_stamp` (CR 400.7's "becomes a new
+    object") tells the two incarnations apart, which is why this needs its
+    own test: `test_a_resolution_records_what_resolved_and_whether_it_changed_anything`
+    above only proves a *new* permanent arriving is seen, not a permanent
+    that was already there and round-tripped through exile."""
     add_card(client, game, "Plains", "alice", "battlefield")
     add_card(client, game, "Grizzly Bears", "alice", "battlefield")
     add_card(client, game, "Ephemerate", "alice", "hand")
@@ -293,10 +350,14 @@ def test_an_unimplemented_instant_records_changed_false(client, game):
 
     entry = entry_of(log_of(client, game), "pass_priority")
     assert entry["detail"]["resolved"] == "Ephemerate"
-    assert entry["detail"]["changed"] is False
-    # it still went where an instant goes - the graveyard move itself is
-    # real, it just is not the "effect happened" signal
-    assert [card["name"] for card in state(client, game)["graveyards"]["alice"]] == ["Ephemerate"]
+    assert entry["detail"]["changed"] is True
+    # rebound (CR 702.88a) sends the spell to exile, not the graveyard, as
+    # it resolves - Ephemerate's own effect, not the discount, put it there
+    assert state(client, game)["graveyards"]["alice"] == []
+    assert [card["name"] for card in state(client, game)["exile"]] == ["Ephemerate"]
+    # and the bears really are still on the battlefield, under their own id
+    still_there = find(state(client, game)["battlefield"], "Grizzly Bears")
+    assert still_there["id"] == bears["id"]
 
 
 def test_an_implemented_instant_that_leaves_the_stack_records_changed_true(client, game):
