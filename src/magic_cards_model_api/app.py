@@ -55,8 +55,69 @@ def _resolution_state(game: Game) -> dict[str, Any]:
     resolution *did* anything. Everything else can: an effect the engine has
     no implementation for leaves board, hands, zones, life and pools exactly
     as they were.
+
+    This is necessary but not sufficient on its own for a *spell*: every
+    spell also leaves the stack somewhere as part of resolving at all
+    (CR 608.2m), and that arrival mutates this snapshot regardless of
+    whether the spell's own effect ran. `_without_own_arrival` is what
+    discounts that one mandatory move for spells; abilities need no such
+    correction, since CR 608.2n removes a resolved ability from the stack
+    without putting it anywhere (see `machines.triggers.AbilityOnStack`).
     """
     return {key: value for key, value in snapshot(game).items() if key != "stack"}
+
+
+def _without_own_arrival(game: Game, spell_id: UUID, after: dict[str, Any]) -> dict[str, Any]:
+    """`after`, with a just-resolved spell's own mandatory landing undone.
+
+    A permanent spell resolving onto the battlefield is not "nothing
+    happened" - a new object started existing under a player's control, and
+    the `changed` marker should say so. So this only touches spells that did
+    *not* land on the battlefield: an instant or sorcery goes to its owner's
+    graveyard (CR 608.2m), and a few cards route themselves to exile instead
+    (flashback, adventure, foretell). That move is the fixed, mandatory
+    conclusion of resolving at all - it happens whether or not the spell's
+    own effect executed - so it is subtracted back out before comparing
+    against `before`. Anything beyond it (a life total, a hand, a second
+    card's zone, the battlefield) is left untouched and is the real signal.
+
+    Matched by the spell's own name in its landing zone's list, since that
+    list (like the rest of `snapshot`) only records names, not ids. Two
+    identical cards landing in the same zone in the same resolution are
+    indistinguishable this way, but removing one occurrence of the name is
+    the correct discount regardless of which of them it was.
+
+    A spell that instead ends up in a zone `snapshot` does not track at all
+    (library, command, sideboard) needs no discount here: `before` and
+    `after` already agree on those untracked zones, so no false "changed"
+    can arise from that arrival in the first place.
+    """
+    landed = game.find_by_id(spell_id)
+    if landed is None or landed.zone is Zone.BATTLEFIELD:
+        return after
+
+    def discard_one(names: list[str]) -> list[str]:
+        if landed.name not in names:
+            return names
+        copy = list(names)
+        copy.remove(landed.name)
+        return copy
+
+    if landed.zone is Zone.EXILE:
+        return {**after, "exile": discard_one(after["exile"])}
+    if landed.zone is Zone.GRAVEYARD:
+        owner = landed.controller_or_owner
+        graveyards = dict(after["graveyards"])
+        if owner in graveyards:
+            graveyards[owner] = discard_one(graveyards[owner])
+        return {**after, "graveyards": graveyards}
+    if landed.zone is Zone.HAND:
+        owner = landed.controller_or_owner
+        hands = dict(after["hands"])
+        if owner in hands:
+            hands[owner] = discard_one(hands[owner])
+        return {**after, "hands": hands}
+    return after
 
 
 # -- error mapping ---------------------------------------------------------
@@ -558,7 +619,9 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     round again) or `end_step` (everyone passed on an empty stack, so the
     step ended and the next has already begun - CR 117.4, 405.5)."""
     with store.locked(game_id) as game:
-        resolving = game.stack[-1].name if game.stack else None
+        resolving_obj = game.stack[-1] if game.stack else None
+        resolving = resolving_obj.name if resolving_obj is not None else None
+        resolving_spell_id = resolving_obj.id if isinstance(resolving_obj, CardState) else None
         before = _resolution_state(game)
         try:
             outcome = game.pass_priority(req.player)
@@ -574,7 +637,10 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
             # untouched, and without this the log cannot tell that apart from
             # one that worked.
             detail["resolved"] = resolving
-            detail["changed"] = _resolution_state(game) != before
+            after = _resolution_state(game)
+            if resolving_spell_id is not None:
+                after = _without_own_arrival(game, resolving_spell_id, after)
+            detail["changed"] = after != before
         seq = audit.record(
             game_id, "pass_priority", player=req.player, allowed=True, reason=None, **detail
         )

@@ -261,3 +261,68 @@ def test_a_pass_that_resolves_nothing_records_no_resolution(client, game):
     entry = entry_of(log_of(client, game), "pass_priority")
     assert "resolved" not in entry["detail"]
     assert "changed" not in entry["detail"]
+
+
+def test_an_unimplemented_instant_records_changed_false(client, game):
+    """Ephemerate has no entry in `machines/effects.py`, so it resolves and
+    does nothing at all: it just leaves the stack for alice's graveyard,
+    same as every instant does whether or not its effect ran. `changed`
+    must not fire on that mandatory move alone - the whole point of the
+    marker is to catch exactly this, an effect the engine cannot execute."""
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Ephemerate", "alice", "hand")
+    board = state(client, game)
+    plains = find(board["battlefield"], "Plains")
+    bears = find(board["battlefield"], "Grizzly Bears")
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Ephemerate",
+            "targets": [bears["id"]],
+            "mana_sources": [{"card_id": plains["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    resolving = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert resolving.json()["outcome"] == PriorityOutcome.RESOLVE_TOP.value
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["detail"]["resolved"] == "Ephemerate"
+    assert entry["detail"]["changed"] is False
+    # it still went where an instant goes - the graveyard move itself is
+    # real, it just is not the "effect happened" signal
+    assert [card["name"] for card in state(client, game)["graveyards"]["alice"]] == ["Ephemerate"]
+
+
+def test_an_implemented_instant_that_leaves_the_stack_records_changed_true(client, game):
+    """Contrast case: Lightning Bolt also leaves the stack for a graveyard,
+    exactly like Ephemerate, but its effect (3 damage to bob) really does
+    run - so the graveyard-move discount must not swallow that real change."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Lightning Bolt",
+            "targets": ["bob"],
+            "mana_sources": [{"card_id": mountain["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    resolving = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert resolving.json()["outcome"] == PriorityOutcome.RESOLVE_TOP.value
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["detail"]["resolved"] == "Lightning Bolt"
+    assert entry["detail"]["changed"] is True
