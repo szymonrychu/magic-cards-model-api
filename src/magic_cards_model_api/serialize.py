@@ -5,14 +5,75 @@ from __future__ import annotations
 from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
+from magic_cards_model.machines.abilities import keywords_in_lines
+from magic_cards_model.machines.combat import Keyword
+from magic_cards_model.machines.layers import Characteristics
 from magic_cards_model.machines.turn import PHASE_OF
-from magic_cards_model.models import CardState, Game, Player, Zone
+from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
 
 from . import scryfall
 from .engine_api import list_abilities
 from .store import store
 
 StackObject = CardState | AbilityOnStack
+
+
+def _type_line(
+    supertypes: tuple[Supertype, ...], types: tuple[Type, ...], subtypes: tuple[str, ...]
+) -> str:
+    """A display type line built from computed characteristics.
+
+    `Characteristics` (`machines/layers.py`) carries types as enum tuples, not
+    a printed string - there is nothing to read off the card once layers have
+    changed what it is, so this is the same left-side/right-side-of-the-dash
+    shape Scryfall's own `type_line` uses (CR 205.1), rebuilt from the parts.
+    """
+    left = " ".join(word.value.capitalize() for word in (*supertypes, *types))
+    if not subtypes:
+        return left
+    return f"{left} — {' '.join(subtypes)}"
+
+
+def _keywords_of(game: Game, state: CardState) -> list[str]:
+    """The keyword abilities this permanent has right now.
+
+    On the battlefield this reads the computed board (CR 613.5), so a keyword
+    granted or removed by a continuous effect shows up; the vocabulary is the
+    combat keywords `machines/combat.has_keyword` knows plus whatever is
+    actually printed on the card, so a granted keyword outside that list (a
+    landwalk this printing doesn't have, say) is still caught. Off the
+    battlefield there is no computed board to ask - "permanents exist only
+    on the battlefield" (CR 403.3), so a card anywhere else has none of these
+    to compute - this falls back to `CardState.keywords` instead, printed
+    plus face-down/DFC handling, with no layers applied.
+    """
+    printed = state.keywords
+    if state.zone is not Zone.BATTLEFIELD:
+        return list(printed)
+    characteristics = game.characteristics_of(state)
+    vocabulary = [keyword.value for keyword in Keyword] + list(printed)
+    return sorted(keywords_in_lines(list(characteristics.abilities), vocabulary))
+
+
+def _current_characteristics(game: Game, state: CardState) -> tuple[str, int | None, int | None]:
+    """(type_line, power, toughness) as they are right now.
+
+    A permanent on the battlefield gets the computed board (CR 613.5) - the
+    whole point of this module existing is that a Forest earthbend animated or
+    a creature under an anthem does not look printed. Anything not on the
+    battlefield (hand, graveyard, library, stack before it resolves) has no
+    computed characteristics to ask for - "permanents exist only on the
+    battlefield" (CR 403.3) - so it falls back to `CardState`'s own
+    printed-plus-counters accessors, which already do the right thing for a
+    double-faced card's chosen face.
+    """
+    if state.zone is not Zone.BATTLEFIELD:
+        return state.card.type_line, state.power, state.toughness
+    characteristics: Characteristics = game.characteristics_of(state)
+    type_line = _type_line(
+        characteristics.supertypes, characteristics.types, characteristics.subtypes
+    )
+    return type_line, characteristics.power, characteristics.toughness
 
 
 def _images_for(game: Game) -> dict[str, dict[str, str]]:
@@ -59,11 +120,19 @@ def _target_names(game: Game, targets: list[Any]) -> list[str]:
 
 def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) -> dict[str, Any]:
     image = images.get(state.card.name, {})
-    return {
+    type_line, power, toughness = _current_characteristics(game, state)
+    view = {
         "id": str(state.id),
         "name": state.name,
         "card_name": state.card.name,
-        "type_line": state.card.type_line,
+        # `type_line`/`power`/`toughness`/`keywords` are what this object *is*
+        # right now: computed off the battlefield board (CR 613.5) when it's a
+        # permanent, printed-plus-counters otherwise. `printed_*` is added
+        # below only on the battlefield and only when it differs, so a card
+        # nothing has touched carries no redundant duplicate fields, and an
+        # animated or pumped one is flagged rather than just silently shown
+        # with a different number a player has to notice on their own.
+        "type_line": type_line,
         "mana_cost": state.card.mana_cost,
         "oracle_text": state.card.oracle_text,
         "zone": state.zone.value,
@@ -74,14 +143,24 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "counters": dict(state.counters.root),
         "damage": state.damage,
         "summoning_sick": state.is_summoning_sick,
-        "power": state.card.power,
-        "toughness": state.card.toughness,
+        "power": power,
+        "toughness": toughness,
+        "keywords": _keywords_of(game, state),
         "targets": _target_names(game, state.targets),
         "image": image.get("normal"),
         "small_image": image.get("small"),
         "art_crop": image.get("art_crop"),
         "abilities": list_abilities(game, state),
     }
+    if state.zone is Zone.BATTLEFIELD:
+        printed_type_line = state.card.type_line
+        printed_power, printed_toughness = state.power, state.toughness
+        if printed_type_line != type_line:
+            view["printed_type_line"] = printed_type_line
+        if printed_power != power or printed_toughness != toughness:
+            view["printed_power"] = printed_power
+            view["printed_toughness"] = printed_toughness
+    return view
 
 
 def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
@@ -138,8 +217,14 @@ def snapshot(game: Game) -> dict[str, Any]:
             bits.append("(tapped)")
         if state.is_summoning_sick:
             bits.append("(sick)")
-        if state.card.power is not None:
-            bits.append(f"[{state.card.power}/{state.card.toughness}]")
+        # Computed, not printed (CR 613.5): a battlefield permanent's power
+        # and toughness are whatever the layer system currently makes them -
+        # an animated land, an anthem, a pump - and a log recording the
+        # printed number instead would hide exactly the state a debugger
+        # reads this log to find.
+        power, toughness = game.power_of(state), game.toughness_of(state)
+        if power is not None:
+            bits.append(f"[{power}/{toughness}]")
         if state.damage:
             bits.append(f"dmg:{state.damage}")
         if state.counters.root:
