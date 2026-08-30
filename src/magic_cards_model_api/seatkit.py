@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from typing import Any
 
@@ -657,6 +658,72 @@ def _unknown_outcome(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("unknown_outcome") is True
 
 
+#: Marker `_call_watching_for_self_decision` returns in place of an outcome
+#: when it gave up on `perform` because a decision addressed to this same
+#: seat showed up first - see that function's docstring for why this is not
+#: an ordinary refusal or an `UNKNOWN_OUTCOME` (both of those mean the call
+#: itself is done, one way or another; this one is still running).
+SELF_DECISION_IN_FLIGHT = "SELF_DECISION_IN_FLIGHT"
+
+
+def _call_watching_for_self_decision(
+    seat: Seat, perform: Any, poll_seconds: float = POLL_SECONDS
+) -> tuple[Any, dict[str, Any] | None]:
+    """Run `perform` (one mutating call) on a background thread while polling
+    this seat's own state for a decision addressed to it, so a decision that
+    call itself raises *for this same seat* - CR 608.2d mid-resolution, or CR
+    603.3d/601.2c putting one of this seat's own triggered abilities on the
+    stack - does not sit unanswerable for the server's whole decision timeout.
+
+    Why a decision like that is otherwise unanswerable: `POST .../decide`
+    never takes `store.locked(game_id)` (`decisions.py`'s module docstring),
+    so a *different* seat's own poll (`block_until_wake`) notices and answers
+    a decision addressed to it promptly, well within the timeout - that path
+    already works. But a real caller here is one MCP tool call from one
+    client with exactly one request in flight at a time (`mcp.py`'s module
+    docstring: "one call, one meaningful action"); it cannot send `decide`
+    until `perform`'s own HTTP response comes back, and that response will
+    not come back until `Game.ask`, deep inside the very request `perform`
+    is waiting on, gets an answer. Nothing server-side can fix this - the
+    lock was never the problem for this seat, its own single-threaded
+    transport is - so the fix has to add a second, concurrent connection on
+    the client side, which is what this function is.
+
+    Returns `(outcome, None)` when `perform` finished before any such
+    decision showed up - the ordinary case, including an ordinary refusal or
+    a decision addressed to someone else, which this never reacts to (that
+    seat's own poll is what answers those, unaffected by this one running
+    concurrently). Returns `(SELF_DECISION_IN_FLIGHT, pending_decision)` when
+    a decision naming this seat appeared first: `perform`'s own HTTP call is
+    abandoned here - not aborted, since a request already sent may already be
+    landing server-side - on a daemon thread that finishes or times out on
+    its own with nobody left watching. The caller told about the decision
+    this way has to answer it (`decide`) as a genuinely separate request
+    before checking state or the game log for what the abandoned call itself
+    ended up doing.
+    """
+    done = threading.Event()
+    box: dict[str, Any] = {}
+
+    def call() -> None:
+        try:
+            box["outcome"] = perform()
+        except Exception as exc:  # re-raised below only if nobody moved on
+            box["exception"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=call, daemon=True).start()
+    while not done.wait(poll_seconds):
+        state = seat.fetch_state()
+        pending = state.get("pending_decision")
+        if pending is not None and pending.get("player") == seat.player:
+            return SELF_DECISION_IN_FLIGHT, pending
+    if "exception" in box:
+        raise box["exception"]
+    return box["outcome"], None
+
+
 def run_action(
     seat: Seat,
     perform: Any,
@@ -681,9 +748,33 @@ def run_action(
     try something else), and `hold_priority=True` must never block by
     construction - the check happens before `block_until_wake` is ever
     reached, not by timing or luck.
+
+    `perform` itself, and the auto-pass below, both go through
+    `_call_watching_for_self_decision` rather than being called directly:
+    either can cross a decision addressed to this very seat (an ETB trigger
+    the seat itself must target, the cleanup discard closing its own turn,
+    ...), which - unlike a decision addressed to someone else - this seat's
+    own single in-flight call could never otherwise answer. See that
+    function's docstring for the full shape of why.
     """
     before = seat.fetch_state()
-    outcome = perform()
+    outcome, self_decision = _call_watching_for_self_decision(seat, perform)
+
+    if self_decision is not None:
+        state = seat.fetch_state()
+        return {
+            "outcome": None,
+            "held_priority": None,
+            "wake_reason": (
+                "a decision is waiting for you, raised by this very call: "
+                f"{self_decision.get('prompt')} - answer it with decide() now; "
+                "that unblocks the action you just took, whose own outcome you "
+                "will only see afterward, from state or the game log"
+            ),
+            "state": state,
+            "available_actions": available_actions(seat, state),
+            "in_flight_action": True,
+        }
 
     if _unknown_outcome(outcome):
         # A transport timeout, not a rules refusal: re-fetch state (a fresh
@@ -725,9 +816,36 @@ def run_action(
 
     pass_outcome = None
     if release:
-        pass_outcome = seat.call_json(
-            "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", {"player": seat.player}
-        )
+
+        def perform_pass() -> Any:
+            return seat.call_json(
+                "POST",
+                f"/api/games/{seat.game_id()}/actions/pass-priority",
+                {"player": seat.player},
+            )
+
+        pass_outcome, pass_self_decision = _call_watching_for_self_decision(seat, perform_pass)
+        if pass_self_decision is not None:
+            # Releasing priority - not the action above, which already came
+            # back clean - is what crossed a decision only this seat could
+            # ever answer (`put_triggers_on_stack` runs at the top of every
+            # `pass_priority`, CR 603.3). Same shape as the check on `perform`
+            # itself: report it and let the caller `decide()` as a separate
+            # call rather than sit behind its own in-flight pass.
+            state = seat.fetch_state()
+            return {
+                "outcome": outcome,
+                "held_priority": None,
+                "wake_reason": (
+                    "your action went through, but releasing priority raised a "
+                    f"decision only you can answer: {pass_self_decision.get('prompt')} - "
+                    "answer it with decide() now; check state or the game log "
+                    "afterward for what releasing priority itself then did"
+                ),
+                "state": state,
+                "available_actions": available_actions(seat, state),
+                "in_flight_action": True,
+            }
         if _unknown_outcome(pass_outcome):
             # The action itself is confirmed (we are past that check above);
             # it is *releasing priority* that is now ambiguous. Blocking
