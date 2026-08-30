@@ -32,7 +32,8 @@ A blocked call returns as soon as one of these holds, for this seat:
 - it has priority *and* the visible board changed since the call began (not
   merely "has priority" - that would also fire the instant this seat's own
   action hands priority right back with nothing new to react to);
-- a pending decision (CR 608.2d) is addressed to it;
+- a pending decision (CR 608.2d for most kinds; a `choose_targets` decision is
+  CR 603.3d/601.2c instead - see `decisions.rule_for_kind`) is addressed to it;
 - the game is over (a winner is set, or it is a draw);
 - the step gives nobody priority (untap, cleanup) and this seat is the active
   player - the harness has no other way to make the turn proceed but calling
@@ -53,13 +54,26 @@ shape. `hold_priority=True` additionally guarantees the *action* path never
 enters `block_until_wake` at all: the check happens before the loop is ever
 reached, by construction, not by timing.
 
+This used to be wrong in one more place, past the loop: every return path of
+`run_action` called `available_actions(seat, state)` unconditionally, and
+*that* function issues `POST .../actions/cast?dry_run=true` for every card in
+hand (and `.../activate` for every ability) - each of which takes
+`store.locked(game_id)` (`app.py`). When this seat wakes because a decision is
+now pending *for it*, that lock is not free: it is held by the opponent's
+request, parked deep inside `Game.ask` (`decisions.py`) waiting on this same
+seat to answer through `POST .../decide`. Calling `available_actions` there
+queued this call behind the very decision it was returning to let the seat
+answer, for the full decision timeout - a real deadlock, not a wait, that
+`available_actions` itself now avoids: see its own docstring for the fix.
+
 ## The other block: a single request, not the wait loop
 
 `block_until_wake`'s own polling is quick reads and cannot itself run into a
 client read timeout. The real risk is upstream of it: `perform()` - one
 mutating call (`cast`/`activate`/`attack`/`pass-priority`/`resolve-top`/
-`advance`) - can cross a live CR 608.2d question and block *inside that one
-request*, in `Game.ask` (`decisions.py`), for up to the server's own
+`advance`) - can cross a live decision question (CR 608.2d, or CR 603.3d/601.2c
+for `choose_targets`) and block *inside that one request*, in `Game.ask`
+(`decisions.py`), for up to the server's own
 `decision_timeout_seconds`. A `Seat`'s HTTP client timeout is sized to
 comfortably outlast that (`resolve_client_timeout`), so a legitimate hold
 never reads as a dead server; if a read/write/pool timeout happens anyway,
@@ -130,7 +144,8 @@ DEFAULT_MAX_SECONDS = 60.0
 #: (`block_until_wake`) polls with short, quick reads and re-fetches state
 #: repeatedly, so no single HTTP call there is at risk. The real one is a
 #: single mutating call (`cast`/`activate`/`attack`/`pass-priority`/
-#: `resolve-top`/`advance`) crossing a live CR 608.2d question: `Game.ask`
+#: `resolve-top`/`advance`) crossing a live decision question (CR 608.2d, or
+#: CR 603.3d/601.2c for `choose_targets`): `Game.ask`
 #: (`decisions.py`) blocks that one request, inside the game's lock, for up
 #: to the server's own `decision_timeout_seconds` (reported at
 #: `/api/health`) before falling back to the engine's default answer. A
@@ -173,7 +188,7 @@ UNKNOWN_OUTCOME = (
 
 def resolve_client_timeout(bootstrap: httpx.Client) -> float:
     """The read timeout a `Seat`'s/`Seats`' own `httpx.Client` should use,
-    derived from the live server's own CR 608.2d decision-block bound
+    derived from the live server's own decision-block bound
     (`/api/health`'s `decision_timeout_seconds`, `decisions.DEFAULT_TIMEOUT_SECONDS`
     on the server) plus `TIMEOUT_MARGIN_SECONDS` of slack - never a bare
     constant sized independently of the thing it must outlast, which is
@@ -553,7 +568,33 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     the API does not already pay for a single such check. A hand and a board
     are both small (single digits), so this stays cheap; it is not run inside
     the poll loop above, only once, right before a call returns.
+
+    Skips every dry run - and returns empty - when `state["pending_decision"]`
+    is addressed to this seat, and for a reason sharper than "why bother, the
+    engine has frozen mid-resolution anyway": while that decision is
+    outstanding nothing else is legal (whichever CR governs it - see
+    `decisions.rule_for_kind`), so an honest legality check would say no to
+    all of them regardless. The `cast`/`activate` dry runs below
+    each take `store.locked(game_id)` (`app.py`), and that lock is exactly
+    what is held by the request that raised this decision, parked inside
+    `Game.ask` waiting on this seat's own answer (`POST .../decide`, which
+    deliberately never takes that lock - see `decisions.py`'s module
+    docstring). Probing anyway would queue this call behind the very decision
+    it exists to let the seat answer, for the full decision timeout - the
+    deadlock this function used to cause on every wake into a pending
+    decision, traced live: 18 decision timeouts in one game, because
+    `run_action` calls this on every return path (see the module docstring).
     """
+    pending = state.get("pending_decision")
+    if pending is not None and pending.get("player") == seat.player:
+        return {
+            "castable": [],
+            "activatable": [],
+            "attackers_requested": False,
+            "blockers_requested": False,
+            "pending_decision": pending,
+        }
+
     game_id = seat.game_id()
     sources = seat.my_untapped_sources(state)
 

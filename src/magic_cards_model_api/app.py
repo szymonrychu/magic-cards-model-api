@@ -112,7 +112,7 @@ def card_or_404(game: Game, card_id: UUID) -> CardState:
 
 
 def audit_outcome(
-    game_id: str, action: str, outcome: engine_api.Outcome, **keys: Any
+    game_id: str, action: str, outcome: engine_api.Outcome, *, dry_run: bool = False, **keys: Any
 ) -> dict[str, Any]:
     """Record an action attempt and hand the engine's answer to the caller.
 
@@ -121,7 +121,20 @@ def audit_outcome(
     marker: a caller unsure whether a timed-out call actually landed can
     compare the `log_seq` on a later, successful call (or a `GET .../log`
     read) against what it saw before, rather than guessing from a retry.
+
+    `dry_run=True` skips `audit.record` entirely rather than logging the
+    probe: `seatkit.available_actions` issues one such dry-run `cast`/`activate`
+    call per card in hand and per ability on the battlefield, every time a
+    seat's blocked call wakes, and every one of them - refused or not -
+    changes nothing. Auditing them anyway is how one traced game's log grew to
+    2410 entries with 1355 of them `cast`, 956 of those refusal noise from
+    probing cards with no flash - real plays buried in attempts nobody
+    actually made. A caller of a dry run already has its own legality answer
+    in `outcome`/the HTTP response; `log_seq` is `None` here because there is
+    no log entry for it to identify.
     """
+    if dry_run:
+        return {**outcome.body(), "log_seq": None}
     seq = audit.record(game_id, action, allowed=outcome.allowed, reason=outcome.reason, **keys)
     return {**outcome.body(), "log_seq": seq}
 
@@ -237,6 +250,18 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
     and both public boards; the game's admin key sees everything."""
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
+    if isinstance(viewer, str):
+        # This is the read `Seat.fetch_state` polls (`seatkit.block_until_wake`),
+        # so a real seat reaching here has, by definition, just been shown
+        # whatever `pending_decision` this response carries - including one
+        # addressed to it. Marking that delivered here is what lets
+        # `decisions.DecisionMailbox.wait_for_answer` start its real timeout
+        # clock from "the seat could have seen this" rather than from
+        # `publish()`, when the seat may not have polled yet. A no-op unless
+        # this game currently has a decision pending for `viewer` specifically.
+        mailbox = store.mailbox(game_id)
+        if mailbox is not None:
+            mailbox.mark_delivered(viewer)
     return visibility.redact_view(state_view(game, game_id), viewer)
 
 
@@ -459,6 +484,7 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
             game_id,
             "cast",
             outcome,
+            dry_run=req.dry_run,
             player=req.player,
             card=req.card or str(req.card_id),
             from_zone=req.from_zone,
@@ -491,6 +517,7 @@ def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
             game_id,
             "activate",
             outcome,
+            dry_run=req.dry_run,
             player=req.player,
             card_id=str(req.card_id),
             ability_index=req.ability_index,
@@ -655,7 +682,8 @@ def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
 
 @app.post("/api/games/{game_id}/decide")
 def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str, Any]:
-    """Answer this game's pending decision (CR 608.2d), such as the cleanup
+    """Answer this game's pending decision - most kinds CR 608.2d, `choose_targets`
+    CR 603.3d/601.2c instead (`decisions.rule_for_kind`) - such as the cleanup
     discard's choice of which card to put in the graveyard.
 
     Deliberately does not call `store.locked(game_id)` or touch the `Game`
@@ -665,57 +693,104 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     queue this request behind the one it exists to unblock, which is a
     deadlock, not a wait. See `decisions.py`'s module docstring.
 
+    `audit.record` is safe to call here even though the lock above is not:
+    it only ever calls `store.get(game_id)` (a plain read of the store's own
+    lock, not the per-game one) to pull a snapshot for the log entry - the
+    same reason `decisions.GameDecisionProvider._log_timeout` already calls
+    it from inside `Game.ask`. Every answer is recorded, accepted or refused,
+    with this endpoint's own reason verbatim - this used to be the one
+    mutating-shaped endpoint with no audit trail at all, which is why a
+    player who answered a decision correctly could still look, from the log
+    alone, like they had never answered it.
+
+    The accepted-answer audit entry below is written *before*
+    `mailbox.answer_if` is called, not after, and that ordering is load
+    bearing, not incidental: `answer_if` is what wakes the resolving request
+    parked in `Game.ask`, which then resumes mutating the `Game` object under
+    its own lock - a lock this endpoint never holds. Reading a snapshot of
+    that same `Game` *after* calling `answer_if` would race a thread that
+    might already be back to mutating it; reading it in the instant before,
+    while that thread is still provably parked in `DecisionMailbox.wait_for_answer`'s
+    condition wait, cannot. See `test_deadlock.py`'s
+    `test_decide_never_races_the_resolving_thread_for_the_audit_snapshot`.
+
     `uid` must open the deciding player's own seat - not the opponent's, not
     a bystander's - matching CR 608.2d's "the player announces": nobody else
     may make this choice for them.
     """
+
+    def refuse(reason: str, **detail: Any) -> dict[str, Any]:
+        seq = audit.record(
+            game_id, "decide", player=req.player, allowed=False, reason=reason, **detail
+        )
+        return {"accepted": False, "reason": reason, "log_seq": seq}
+
     player = visibility.resolve_viewer(game_id, uid)
     mailbox = store.mailbox(game_id)
     if mailbox is None:
         raise KeyError(f"no game {game_id}")
     if player != req.player or not isinstance(player, str):
-        return {"accepted": False, "reason": "that uid does not open the deciding player's seat"}
+        return refuse("that uid does not open the deciding player's seat")
     pending = mailbox.snapshot()
     if pending is None or pending.player != req.player:
-        return {"accepted": False, "reason": "no pending decision for you"}
+        return refuse("no pending decision for you")
     try:
         kind = DecisionKind(pending.kind)
     except ValueError:
         kind = None
+    detail: dict[str, Any] = {"kind": pending.kind, "prompt": pending.prompt}
     if kind is DecisionKind.CHOOSE_CARDS:
         try:
             answer = decisions.card_ids_answer(req.card_ids)
         except ValueError as exc:
-            return {"accepted": False, "reason": f"bad card id: {exc}"}
+            return refuse(f"bad card id: {exc}", **detail)
+        detail["card_ids"] = req.card_ids
     elif kind is DecisionKind.CHOOSE_TARGETS:
         try:
             answer = decisions.targets_answer(req.targets)
         except ValueError as exc:
-            return {"accepted": False, "reason": f"bad target: {exc}"}
+            return refuse(f"bad target: {exc}", **detail)
+        detail["targets"] = req.targets
     elif kind in (DecisionKind.MAY, DecisionKind.PAY_LIFE):
         try:
             answer = decisions.bool_answer(req.accept)
         except ValueError as exc:
-            return {"accepted": False, "reason": str(exc)}
+            return refuse(str(exc), **detail)
+        detail["accept"] = req.accept
     elif kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
         try:
             answer = decisions.card_split_answer(req.moved, req.top_order)
         except ValueError as exc:
-            return {"accepted": False, "reason": f"bad card id: {exc}"}
+            return refuse(f"bad card id: {exc}", **detail)
+        detail["moved"] = req.moved
+        detail["top_order"] = req.top_order
     else:
         # `kind` is either unparseable (a future `DecisionKind` this API has
         # not been told about) or one of `MULLIGAN`/`DECLARE_ATTACKERS`/
         # `DECLARE_BLOCKERS`, which never reach this mailbox at all - see
         # `decisions.ANSWERABLE_KINDS`. Either way, refuse by name rather than
         # guessing a shape or silently letting the engine's own default stand
-        # in: CR 608.2d's "the player announces" fails loudly here, not quietly
-        # in a decision_timeout log 60 seconds from now.
-        return {
-            "accepted": False,
-            "reason": f"this endpoint does not know how to answer a {pending.kind!r} decision",
-        }
+        # in: "the player announces" fails loudly here, not quietly in a
+        # decision_timeout log `decisions.DEFAULT_TIMEOUT_SECONDS` from now.
+        return refuse(
+            f"this endpoint does not know how to answer a {pending.kind!r} decision", **detail
+        )
+    # Recorded before `answer_if`, not after - see the docstring above on why
+    # that ordering is what keeps this read of the `Game` race-free.
+    seq = audit.record(game_id, "decide", player=req.player, allowed=True, reason=None, **detail)
     accepted = mailbox.answer_if(req.player, answer)
-    return {"accepted": accepted}
+    if not accepted:
+        # A genuine race: the pending decision moved on (answered elsewhere,
+        # or timed out and defaulted) between `snapshot()` above and this
+        # call. The entry just written said "allowed: True" in good faith -
+        # correct it with a second entry rather than leave a wrong one
+        # standing as the only record of what happened.
+        reason = "the pending decision changed before this answer arrived"
+        seq = audit.record(
+            game_id, "decide", player=req.player, allowed=False, reason=reason, **detail
+        )
+        return {"accepted": False, "reason": reason, "log_seq": seq}
+    return {"accepted": True, "log_seq": seq}
 
 
 # -- the frontend ------------------------------------------------------------

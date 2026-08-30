@@ -218,6 +218,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     return {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
+        "decision_timeouts": store.decision_timeouts(game_id),
         "turn_number": turn.turn_number if turn is not None else None,
         "step": step.value,
         "phase": PHASE_OF[step].value,

@@ -98,21 +98,28 @@ action only when allowed and `dry_run` is not set.
 | `POST /api/games/{id}/resolve-top` | resolves the top of the stack |
 | `POST /api/games/{id}/state-based-actions` | counter state-based actions, then the full check |
 | `POST /api/games/{id}/advance` | one step, with turn-based actions |
-| `POST /api/games/{id}/decide?uid=` | `{player, card_ids: [...]}` - answers this game's pending decision (CR 608.2d); refused if `uid` is not that decision's own player |
+| `POST /api/games/{id}/decide?uid=` | `{player, card_ids: [...]}` - answers this game's pending decision; refused if `uid` is not that decision's own player |
 
-### Decisions (CR 608.2d)
+### Decisions (CR 608.2d, mostly)
 
 Some turn-based actions ask the player something instead of the engine
 choosing for them - the cleanup discard (CR 514.1, 701.9b) is the first one.
-When that happens, the mutating request (`advance`, so far) blocks on a
-server-side timeout (60s by default, `MCM_DECISION_TIMEOUT_SECONDS`) waiting
-for a seat to answer through `decide`; on timeout it falls back to the
-engine's documented default and writes a `decision_timeout` line to the game
-log, naming the default taken and the rule. The state object's
-`pending_decision` field carries `{player, kind, prompt}` for every seat, plus
-`cards` and `amount` for the deciding player (and the admin key) only -
-everyone else may see that a choice is being made, never what it is a choice
-among.
+Most of these questions are CR 608.2d; `choose_targets` is the one exception
+(CR 603.3d, CR 601.2c instead - see `decisions.rule_for_kind`), since it is
+choosing targets *while* a spell or ability goes on the stack, exactly the
+case 608.2d's own wording excludes. When a question comes up, the mutating
+request (`advance`, so far) blocks - starting once the deciding seat's own
+state read has shown it the question (`decisions.DecisionMailbox.mark_delivered`),
+not from the moment it was raised - for a server-side timeout (5 minutes by
+default, `MCM_DECISION_TIMEOUT_SECONDS`) waiting for a seat to answer through
+`decide`; on timeout it falls back to the engine's documented default and
+writes a `decision_timeout` line to the game log *and* the state object's own
+`decision_timeouts` list (naming the default taken and the rule), because a
+default is a harness failure standing in for a real answer and should not be
+readable only by digging through the log. The state object's `pending_decision`
+field carries `{player, kind, prompt}` for every seat, plus `cards` and
+`amount` for the deciding player (and the admin key) only - everyone else may
+see that a choice is being made, never what it is a choice among.
 
 ### The state object
 
@@ -122,8 +129,8 @@ name, type line, zone, controller, owner, tapped, face up, counters, damage,
 summoning sickness, resolved target names, Scryfall image links, and the
 activated abilities the engine would let you index into. The stack comes
 top-first; spells and abilities are distinguishable by `kind`. `pending_decision`
-is `null` unless a CR 608.2d question is currently blocked on an answer - see
-Decisions below.
+is `null` unless a decision (CR 608.2d, or CR 603.3d/601.2c for `choose_targets`)
+is currently blocked on an answer - see Decisions below.
 
 ## Known gaps (engine coverage, mirrored here)
 

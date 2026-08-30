@@ -43,6 +43,7 @@ class GameStore:
         self._admin_keys: dict[str, str] = {}  # game_id -> admin key
         self._locks: dict[str, threading.Lock] = {}  # game_id -> its mutation lock
         self._mailboxes: dict[str, DecisionMailbox] = {}  # game_id -> its pending decision
+        self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -84,6 +85,23 @@ class GameStore:
         with self._lock:
             return self._mailboxes.get(game_id)
 
+    def record_decision_timeout(self, game_id: str, record: dict) -> None:
+        """A decision that timed out and took the engine's default, for this
+        game - appended so `decision_timeouts` (`serialize.state_view`) can
+        show it in the game state itself, not only the audit log. A default
+        answer produces a plausible-looking transcript of a game that was
+        never actually played through that choice, so it belongs where every
+        reader of the current state sees it, not only where someone thought
+        to look at history. Called from `decisions.GameDecisionProvider`,
+        itself lazy-importing this module (see that call site's own comment)."""
+        with self._lock:
+            self._decision_timeouts.setdefault(game_id, []).append(record)
+
+    def decision_timeouts(self, game_id: str) -> list[dict]:
+        """Every decision timeout recorded for this game so far, oldest first."""
+        with self._lock:
+            return list(self._decision_timeouts.get(game_id, []))
+
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""
         with self._lock:
@@ -119,6 +137,7 @@ class GameStore:
             self._admin_keys.pop(game_id, None)
             self._locks.pop(game_id, None)
             self._mailboxes.pop(game_id, None)
+            self._decision_timeouts.pop(game_id, None)
             return self._games.pop(game_id, None) is not None
 
     def ids(self) -> list[str]:
