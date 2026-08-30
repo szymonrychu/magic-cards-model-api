@@ -8,6 +8,8 @@ from datetime import datetime
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import PriorityOutcome
+from magic_cards_model.machines.effects import effect_for as real_effect_for
+from magic_cards_model.models import game as game_module
 
 
 def log_of(client: TestClient, game: str) -> list[dict]:
@@ -263,23 +265,45 @@ def test_a_pass_that_resolves_nothing_records_no_resolution(client, game):
     assert "changed" not in entry["detail"]
 
 
-def test_an_unimplemented_instant_records_changed_false(client, game):
-    """Mind Rot ("Target player discards two cards.") has no entry in
-    `machines/effects.py` - confirmed with `scripts/sweep_pool.py --effects`
-    in the engine repo, which lists it among the cards with rules text that
-    do nothing and log nothing - so it resolves and does nothing at all: it
-    just leaves the stack for alice's graveyard, same as every sorcery does
-    whether or not its effect ran. `changed` must not fire on that mandatory
-    move alone - the whole point of the marker is to catch exactly this, an
-    effect the engine cannot execute.
+def test_an_unimplemented_instant_records_changed_false(client, game, monkeypatch):
+    """This test pins the `changed: false` half of the marker's job: a spell
+    resolves, has no effect, and the audit log must say so.
 
-    Ephemerate used to be the example here, but it has since gained an entry
-    (including rebound, CR 702.88a) - it now genuinely changes the game (a
-    blink) and, as of `_resolution_state`'s CR 400.7 `zone_change_stamp`
-    rewrite, is correctly reported as `changed: true` (see
-    `test_a_blink_records_changed_true` below). Mind Rot has no such
-    ambiguity: discarding cards is a plain effect with no keyword ability
-    of its own to grow into over time, so its silence should stay stable."""
+    Twice already this test named a real card as "the unimplemented one" -
+    first Ephemerate, then Mind Rot - and twice the engine caught up and
+    implemented it out from under the test (see git history/`docs/`). Any
+    specific card is a ticking clock: this project's whole point is to keep
+    implementing more of the Comprehensive Rules, so "currently unimplemented"
+    is never a stable property of a card name, only of a moment in time. It
+    also turned out to be a hang risk: the newly-implemented effect (Mind
+    Rot's discard) raises a live decision that nothing in this test answers,
+    which parks the request on `GameDecisionProvider`'s real timeout
+    (`magic_cards_model_api.decisions.DEFAULT_TIMEOUT_SECONDS`, 300s) instead
+    of failing fast.
+
+    So this test no longer trusts any card's implementation status. It still
+    casts a real card (Mind Rot, a real Scryfall printing, cast for real mana,
+    same as every other scenario in this suite - CLAUDE.md's "no mocks"
+    applies here too) but forces the structural precondition the old test was
+    hoping to get by luck: it monkeypatches `models.game.effect_for` - the
+    exact seam `Game._resolve` calls, `effect = effect_for(spell.name,
+    spell.oracle_text, x_value=x_value)` - so that this one card resolves to
+    `None` (no effect) regardless of what `machines/effects.py` knows how to
+    do with it, this test run or any future one. That is stable by
+    construction, not by whichever cards the engine has and has not gotten to
+    yet, and it also means no decision is ever raised for this resolution, so
+    there is nothing to hang on - the hang and the flaky premise share one fix.
+    `test_an_implemented_instant_that_leaves_the_stack_records_changed_true`
+    below is the contrast case proving the discount does not swallow a real
+    effect, and does not go through this patch."""
+
+    def effect_for_forced_no_op(card_name, effect_text=None, *, x_value=None):
+        if card_name == "Mind Rot":
+            return None
+        return real_effect_for(card_name, effect_text, x_value=x_value)
+
+    monkeypatch.setattr(game_module, "effect_for", effect_for_forced_no_op)
+
     add_card(client, game, "Swamp", "alice", "battlefield")
     add_card(client, game, "Swamp", "alice", "battlefield")
     add_card(client, game, "Swamp", "alice", "battlefield")
