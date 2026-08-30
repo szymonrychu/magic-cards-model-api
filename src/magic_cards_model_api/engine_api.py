@@ -20,7 +20,14 @@ from magic_cards_model.models import CardState, Color, Game, Zone
 from magic_cards_model.models.card_state import Counter, counter_state_based_actions
 from pydantic import ValidationError
 
-from .schemas import ActivateRequest, AttackRequest, CastRequest, ManaSource, TargetRequest
+from .schemas import (
+    ActivateRequest,
+    AttackRequest,
+    CastRequest,
+    ManaSource,
+    PlayLandRequest,
+    TargetRequest,
+)
 
 SHARED_ZONES = (Zone.BATTLEFIELD, Zone.STACK, Zone.EXILE, Zone.COMMAND)
 
@@ -379,9 +386,41 @@ def declare_attack(game: Game, req: AttackRequest) -> Outcome:
 # -- the rest of the flow --------------------------------------------------
 
 
-def play_land(game: Game, player: str, land: CardState) -> Outcome:
+def locate_land(game: Game, req: PlayLandRequest) -> CardState:
+    """The card to play: by id, or the first *land* name match in hand.
+
+    Mirrors `locate_castable`: a name that matches nothing raises `ValueError`
+    rather than looking like a 404 or a bare validation error, so a caller
+    that resolves the card by name gets exactly the same refusal shape as one
+    that resolves it by id - see `play_land` below, which is what turns that
+    into an audited `Outcome(False, ...)` instead of an exception the endpoint
+    would otherwise have to raise before any audit entry is written.
+    """
+    if req.card_id is not None:
+        return find_card(game, req.card_id)
+    if not req.card:
+        raise ValueError("give either card_id or card (a name)")
+    for state in game.player(req.player).hand:
+        if state.card.name == req.card and state.card.is_land:
+            return state
+    raise ValueError(f"{req.player} has no land named {req.card} in hand")
+
+
+def play_land(game: Game, req: PlayLandRequest) -> Outcome:
+    """Play a land: locating the card and playing it are one refusal path.
+
+    A name that resolves to nothing is exactly as much a refusal as the
+    engine saying no once the card is found - both must come back as
+    `Outcome(False, ...)`, so `action_play_land` can audit either one and
+    `run_action` recognises it as `allowed: False` rather than falling
+    through to releasing priority as if the play had gone through.
+    """
     try:
-        played = game.play_land(land, player)
+        land = locate_land(game, req)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    try:
+        played = game.play_land(land, req.player)
     except ValueError as exc:
         return refused(exc)
     return Outcome(True, detail={"card_id": str(played.id)})

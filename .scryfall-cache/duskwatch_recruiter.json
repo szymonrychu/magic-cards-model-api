@@ -1,0 +1,191 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "4bef0ee6-465a-4a42-b22b-7e6b91a0f9df",
+      "name": "Duskwatch Recruiter // Krallenhorde Howler",
+      "object": "related_card",
+      "type_line": "Creature \u2014 Human Warrior Werewolf // Creature \u2014 Werewolf",
+      "uri": "https://api.scryfall.com/cards/4bef0ee6-465a-4a42-b22b-7e6b91a0f9df"
+    },
+    {
+      "component": "combo_piece",
+      "id": "4d323ead-24f5-42e4-9e23-aa14eb66264d",
+      "name": "Shadows Over Innistrad Checklist 1",
+      "object": "related_card",
+      "type_line": "Card",
+      "uri": "https://api.scryfall.com/cards/4d323ead-24f5-42e4-9e23-aa14eb66264d"
+    }
+  ],
+  "artist": "Craig J Spearing",
+  "artist_ids": [
+    "b0f15e74-0dd6-4156-959e-c5e30c5cdc52"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_faces": [
+    {
+      "artist": "Craig J Spearing",
+      "artist_id": "b0f15e74-0dd6-4156-959e-c5e30c5cdc52",
+      "colors": [
+        "G"
+      ],
+      "illustration_id": "7c7c6edf-7046-465d-93ff-1f13bbf3db73",
+      "image_uris": {
+        "art": "https://cards.scryfall.io/art/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "art_crop": "https://cards.scryfall.io/art_crop/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "border_crop": "https://cards.scryfall.io/border_crop/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "crop": "https://cards.scryfall.io/crop/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "display": "https://cards.scryfall.io/display/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "grid": "https://cards.scryfall.io/grid/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "large": "https://cards.scryfall.io/large/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "normal": "https://cards.scryfall.io/normal/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "png": "https://cards.scryfall.io/png/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.png?1783908108",
+        "small": "https://cards.scryfall.io/small/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "thumb": "https://cards.scryfall.io/thumb/front/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108"
+      },
+      "mana_cost": "{1}{G}",
+      "name": "Duskwatch Recruiter",
+      "object": "card_face",
+      "oracle_text": "{2}{G}: Look at the top three cards of your library. You may reveal a creature card from among them and put it into your hand. Put the rest on the bottom of your library in any order.\nAt the beginning of each upkeep, if no spells were cast last turn, transform this creature.",
+      "power": "2",
+      "toughness": "2",
+      "type_line": "Creature \u2014 Human Warrior Werewolf"
+    },
+    {
+      "artist": "Craig J Spearing",
+      "artist_id": "b0f15e74-0dd6-4156-959e-c5e30c5cdc52",
+      "color_indicator": [
+        "G"
+      ],
+      "colors": [
+        "G"
+      ],
+      "illustration_id": "02f4e677-adb6-4389-81ae-c2e67047b86f",
+      "image_uris": {
+        "art": "https://cards.scryfall.io/art/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "art_crop": "https://cards.scryfall.io/art_crop/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "border_crop": "https://cards.scryfall.io/border_crop/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "crop": "https://cards.scryfall.io/crop/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "display": "https://cards.scryfall.io/display/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "grid": "https://cards.scryfall.io/grid/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108",
+        "large": "https://cards.scryfall.io/large/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "normal": "https://cards.scryfall.io/normal/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "png": "https://cards.scryfall.io/png/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.png?1783908108",
+        "small": "https://cards.scryfall.io/small/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.jpg?1783908108",
+        "thumb": "https://cards.scryfall.io/thumb/back/4/e/4ef68479-ab2e-4a60-886c-ad007b64f185.webp?1783908108"
+      },
+      "mana_cost": "",
+      "name": "Krallenhorde Howler",
+      "object": "card_face",
+      "oracle_text": "Creature spells you cast cost {1} less to cast.\nAt the beginning of each upkeep, if a player cast two or more spells last turn, transform this creature.",
+      "power": "3",
+      "toughness": "3",
+      "type_line": "Creature \u2014 Werewolf"
+    }
+  ],
+  "cardmarket_id": 805820,
+  "cmc": 2.0,
+  "collector_number": "193",
+  "color_identity": [
+    "G"
+  ],
+  "digital": false,
+  "edhrec_rank": 6014,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "4ef68479-ab2e-4a60-886c-ad007b64f185",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:01:48Z",
+  "keywords": [
+    "Transform"
+  ],
+  "lang": "en",
+  "layout": "transform",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mtgo_id": 135798,
+  "multiverse_ids": [
+    686034
+  ],
+  "name": "Duskwatch Recruiter // Krallenhorde Howler",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "87c43776-dd98-4e12-9b95-82d2b8f4f1ab",
+  "oversized": false,
+  "penny_rank": 1180,
+  "prices": {
+    "eur": "0.19",
+    "eur_foil": "0.27",
+    "tix": "0.04",
+    "usd": "0.32",
+    "usd_etched": null,
+    "usd_foil": "0.37"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A87c43776-dd98-4e12-9b95-82d2b8f4f1ab&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/135798?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=805820&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F609865%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Duskwatch+Recruiter",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=686034&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DDuskwatch%2BRecruiter%2B%252F%252F%2BKrallenhorde%2BHowler",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DDuskwatch%2BRecruiter%2B%252F%252F%2BKrallenhorde%2BHowler"
+  },
+  "released_at": "2025-01-24",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/4ef68479-ab2e-4a60-886c-ad007b64f185/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/inr?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/inr/193/duskwatch-recruiter-krallenhorde-howler?utm_source=api",
+  "set": "inr",
+  "set_id": "b9618c8c-9f31-4b42-9798-2991893c27bf",
+  "set_name": "Innistrad Remastered",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Ainr&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/b9618c8c-9f31-4b42-9798-2991893c27bf",
+  "story_spotlight": false,
+  "tcgplayer_id": 609865,
+  "textless": false,
+  "type_line": "Creature \u2014 Human Warrior Werewolf // Creature \u2014 Werewolf",
+  "uri": "https://api.scryfall.com/cards/4ef68479-ab2e-4a60-886c-ad007b64f185",
+  "variation": false
+}

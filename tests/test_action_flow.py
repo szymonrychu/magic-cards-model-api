@@ -147,6 +147,46 @@ def test_a_refused_action_returns_immediately_without_blocking(client, game, mon
     assert bolt_id in [c["id"] for c in result["state"]["hands"]["alice"]]
 
 
+def test_play_land_by_an_unresolvable_name_is_refused_not_a_silent_pass(client, game, monkeypatch):
+    """The bug this regression proves fixed: `seat_cli.py`'s `play-land`
+    sends a bare `card` name for anything that is not a UUID. When that name
+    matched no land in hand, the endpoint used to raise a plain `ValueError`
+    before `audit_outcome` ever ran - a 400 shaped `{"detail": "..."}`
+    instead of the ordinary `{"allowed": False, ...}` refusal. `_refused`
+    only recognises the latter shape, so `run_action` fell through past both
+    the unknown-outcome and refused branches and treated the call as a
+    success: it released priority and blocked, exactly as if the land had
+    been played. Two such calls in a row - the report that started this -
+    cost a full main phase and combat step with no warning and no audit
+    entry to explain why.
+
+    `held_priority` must be `True` and the wake reason must say "refused":
+    the same two assertions `test_a_refused_action_returns_immediately_without_blocking`
+    makes for a bad cast, now made for a `play-land` naming a card that is
+    not in hand at all.
+    """
+    seats, uids = wired_seats(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+
+    started = time.monotonic()
+    result = run_action(
+        alice,
+        lambda: alice.call_json(
+            "POST",
+            f"/api/games/{game}/actions/play-land",
+            {"player": "alice", "card": "Not A Real Card"},
+        ),
+        max_seconds=30,
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, "a refusal must not block"
+    assert result["outcome"]["allowed"] is False
+    assert result["held_priority"] is True, "a refused play-land must not release priority"
+    assert "refused" in result["wake_reason"]
+    assert result["state"]["priority_holder"] == "alice", "priority never left, so it is still hers"
+
+
 # -- the other wake conditions ------------------------------------------------
 
 

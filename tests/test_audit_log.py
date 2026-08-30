@@ -73,6 +73,25 @@ def test_refused_cast_records_the_engine_reason_verbatim(client, game):
     assert body["reason"] == "pool {} cannot pay {R}"
 
 
+def test_play_land_by_an_unresolvable_name_is_still_audited(client, game):
+    """The regression for the silent-pass bug: a `play-land` naming a card
+    that is not in hand used to raise before `action_play_land` ever reached
+    `audit_outcome`, so nothing landed in the log at all - a play a player
+    believed happened left no trace to contradict them. It must now be
+    refused and audited exactly like any other illegal `play-land`.
+    """
+    response = client.post(
+        f"/api/games/{game}/actions/play-land",
+        json={"player": "alice", "card": "Not A Real Card"},
+    )
+    assert response.json()["allowed"] is False
+
+    entry = entry_of(log_of(client, game), "play_land")
+    assert entry["detail"]["allowed"] is False
+    assert entry["detail"]["reason"] == response.json()["reason"]
+    assert entry["detail"]["card"] == "Not A Real Card"
+
+
 def test_step_put_records_from_and_to(client, game):
     response = client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
     assert response.status_code == 200

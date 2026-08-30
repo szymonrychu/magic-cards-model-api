@@ -545,21 +545,10 @@ def action_attack(game_id: str, req: AttackRequest) -> dict[str, Any]:
 def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
     with store.locked(game_id) as game:
         game.player(req.player)
-        if req.card_id is not None:
-            land = card_or_404(game, req.card_id)
-        elif req.card:
-            matches = [
-                state
-                for state in game.player(req.player).hand
-                if state.card.name == req.card and state.card.is_land
-            ]
-            if not matches:
-                raise ValueError(f"{req.player} has no land named {req.card} in hand")
-            land = matches[0]
-        else:
-            raise ValueError("give either card_id or card (a name)")
-        outcome = engine_api.play_land(game, req.player, land)
-        return audit_outcome(game_id, "play_land", outcome, player=req.player, card=land.card.name)
+        outcome = engine_api.play_land(game, req)
+        return audit_outcome(
+            game_id, "play_land", outcome, player=req.player, card=req.card or str(req.card_id)
+        )
 
 
 @app.post("/api/games/{game_id}/actions/pass-priority")
