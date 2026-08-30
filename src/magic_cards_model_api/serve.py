@@ -1,19 +1,39 @@
-"""The bootable entry point: a full game from two decklist files, then uvicorn.
+"""The bootable entry point: one or more games from decklist files, then uvicorn.
 
     uv run python -m magic_cards_model_api.serve --deck alice=decks/a.txt \
         --deck bob=decks/b.txt [--seed 7] [--port 8000]
 
-The game is created before uvicorn starts serving, through the same engine
+boots exactly one game (this form is unchanged - existing invocations keep
+working). To boot several concurrent games in the same server - several
+matchups playable at once - repeat `--match` instead, once per matchup:
+
+    uv run python -m magic_cards_model_api.serve \
+        --match alice=decks/a.txt,bob=decks/b.txt,seed=1 \
+        --match carol=decks/c.txt,dave=decks/d.txt,seed=2 \
+        --match eve=decks/e.txt,frank=decks/f.txt,seed=3 \
+        --port 8000
+
+Each `--match` is one comma-separated `PLAYER=PATH` pair plus an optional
+`seed=N`; `--deck`/`--seed` and `--match` are mutually exclusive ways of
+describing the same thing - one game's worth of decks and a seed - so every
+matchup, single or several, is built by the same code underneath
+(`_boot_from_spec`). Everything else the store and the endpoints do was
+already per-`game_id` before this - the store keys games, locks, mailboxes,
+and seat uids by id (`store.py`), and every HTTP route already takes a
+`game_id` path segment - so serving several games is a change to this module
+only, not to the store or the API.
+
+Each game is created before uvicorn starts serving, through the same engine
 path the endpoints use - `decks.load_deck_into_game`, which hands the
 decklists to the engine's `Match.start_game` (CR 103: sideboard set aside,
 seeded shuffles, life totals, opening hands of seven, first player by seat
 order) - and then registered in the session store directly. No HTTP
 self-calls: by the time the server accepts a request, `/api/games` already
-lists a live game.
+lists every live game.
 
-The engine's shuffle seed comes from `--seed`; without one, a random seed is
-drawn and printed, so even an unseeded boot is replayable by passing the
-printed seed back.
+Each game's shuffle seed comes from its own `seed=`/`--seed`; without one, a
+random seed is drawn and printed, so even an unseeded boot is replayable by
+passing the printed seed back.
 """
 
 from __future__ import annotations
@@ -73,64 +93,135 @@ class Boot:
         return "\n".join(lines)
 
 
+@dataclass
+class MatchSpec:
+    """One game's worth of boot instructions: two (player, path) pairs, in
+    seat order, and an optional seed. What either `--deck`/`--seed` (one
+    game) or one `--match` (one of several) boils down to, so `main`/
+    `setup_all` need only ever handle a `list[MatchSpec]`."""
+
+    decks: list[tuple[str, str]]
+    seed: int | None
+
+
+def _parse_deck_entry(entry: str, parser: argparse.ArgumentParser, flag: str) -> tuple[str, str]:
+    name, sep, path = entry.partition("=")
+    if not sep or not name.strip() or not path.strip():
+        parser.error(f"{flag} must be PLAYER=PATH, got {entry!r}")
+    return name.strip(), path.strip()
+
+
+def _parse_match_entry(entry: str, parser: argparse.ArgumentParser) -> MatchSpec:
+    """One `--match` value: comma-separated `PLAYER=PATH` tokens plus an
+    optional `seed=N` token, in any order. Exactly two decks are required -
+    the same "two players, seat order" shape `--deck` enforces for the
+    single-game form."""
+    decks: list[tuple[str, str]] = []
+    seed: int | None = None
+    for token in entry.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if token.startswith("seed="):
+            raw_seed = token.removeprefix("seed=")
+            try:
+                seed = int(raw_seed)
+            except ValueError:
+                parser.error(f"--match: bad seed={raw_seed!r} in {entry!r}")
+            continue
+        decks.append(_parse_deck_entry(token, parser, "--match"))
+    if len(decks) != 2:
+        parser.error(f"--match needs exactly two PLAYER=PATH decks, got {len(decks)} in {entry!r}")
+    return MatchSpec(decks=decks, seed=seed)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """The CLI: exactly two `--deck PLAYER=PATH` arguments, optional seed and port."""
+    """The CLI.
+
+    Two mutually exclusive ways to describe the game(s) to boot:
+
+    - `--deck PLAYER=PATH` given exactly twice, plus an optional `--seed` -
+      one game, unchanged from before this module supported more than one.
+    - `--match PLAYER=PATH,PLAYER=PATH[,seed=N]`, repeatable - one game per
+      `--match`, so three matchups is three `--match` arguments.
+
+    `args.matches` (built here, not by argparse itself) is the
+    `list[MatchSpec]` every caller downstream actually wants, regardless of
+    which form was used - see `setup_all`.
+    """
     parser = argparse.ArgumentParser(
         prog="python -m magic_cards_model_api.serve",
-        description="Boot a two-player game from decklist files and serve the API.",
+        description="Boot one or more games from decklist files and serve the API.",
     )
     parser.add_argument(
         "--deck",
         action="append",
-        required=True,
         metavar="PLAYER=PATH",
         help=(
             "a player and their decklist file; give exactly two, in seat order - "
-            "the first one takes the first turn"
+            "the first one takes the first turn. Boots a single game; "
+            "mutually exclusive with --match"
         ),
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=None,
-        help="seed for the shuffles (CR 103.3); default is a random one, printed below",
+        help="seed for --deck's game (CR 103.3); default is a random one, printed below",
+    )
+    parser.add_argument(
+        "--match",
+        action="append",
+        metavar="PLAYER=PATH,PLAYER=PATH[,seed=N]",
+        help=(
+            "one matchup's two decks and optional seed, comma-separated; give it "
+            "multiple times to boot that many concurrent games. Mutually exclusive "
+            "with --deck/--seed"
+        ),
     )
     parser.add_argument("--port", type=int, default=8000, help="port for uvicorn")
     args = parser.parse_args(argv)
-    if len(args.deck) != 2:
-        parser.error(f"exactly two --deck arguments are required, got {len(args.deck)}")
-    for entry in args.deck:
-        name, sep, path = entry.partition("=")
-        if not sep or not name.strip() or not path.strip():
-            parser.error(f"--deck must be PLAYER=PATH, got {entry!r}")
+
+    if args.deck and args.match:
+        parser.error("give either --deck/--seed (one game) or --match (one or more), not both")
+    if not args.deck and not args.match:
+        parser.error("give --deck twice for one game, or --match at least once")
+
+    if args.match:
+        if args.seed is not None:
+            parser.error("--seed applies to --deck's game; give seed=N inside each --match instead")
+        args.matches = [_parse_match_entry(entry, parser) for entry in args.match]
+    else:
+        if len(args.deck) != 2:
+            parser.error(f"exactly two --deck arguments are required, got {len(args.deck)}")
+        decks = [_parse_deck_entry(entry, parser, "--deck") for entry in args.deck]
+        args.matches = [MatchSpec(decks=decks, seed=args.seed)]
     return args
 
 
-def setup(args: argparse.Namespace, *, check_legality: bool = True) -> Boot:
-    """Create the game from the --deck arguments and hand it to the store.
+def _boot_from_spec(spec: MatchSpec, *, check_legality: bool) -> Boot:
+    """Create one game from a `MatchSpec` and hand it to the store.
 
-    This is the whole boot, minus serving: read the decklist files, build and
-    start the game through the engine (`load_deck_into_game` - registration,
-    legality, the CR 103.2a sideboard, the seeded CR 103.3 shuffles, the CR
-    103.5 hands), register it in the session store the endpoints read, and
-    record the boot events. `check_legality` defaults to the engine's own
-    construction-rules check (CR 100.2a, 100.4a); the tests of this module
-    turn it off because no legal deck can be built from the four cards in the
-    fixture cache.
+    This is the whole boot of one game, minus serving: read its decklist
+    files, build and start it through the engine (`load_deck_into_game` -
+    registration, legality, the CR 103.2a sideboard, the seeded CR 103.3
+    shuffles, the CR 103.5 hands), register it in the session store the
+    endpoints read (keyed by its own fresh `game_id`, same as every other
+    game already in the store), and record its boot events. Shared by
+    `setup` (the single-game `--deck` form) and `setup_all` (`--match`, one
+    or several) so both go through exactly one boot path.
     """
     specs: list[tuple[str, str, str]] = []
-    for entry in args.deck:
-        name, _, path = entry.partition("=")
-        path = path.strip()
+    for name, path in spec.decks:
         try:
             text = Path(path).read_text()
         except OSError as exc:
             raise SystemExit(f"serve: cannot read decklist for {name}: {exc}") from None
-        specs.append((name.strip(), path, text))
+        specs.append((name, path, text))
 
     match = load_deck_into_game(
         [(name, text) for name, _, text in specs],
-        seed=args.seed,
+        seed=spec.seed,
         check_legality=check_legality,
     )
     game = match.games[-1]
@@ -146,6 +237,28 @@ def setup(args: argparse.Namespace, *, check_legality: bool = True) -> Boot:
     )
     _record_boot_events(boot)
     return boot
+
+
+def setup(args: argparse.Namespace, *, check_legality: bool = True) -> Boot:
+    """Boot the single game described by `args` (the `--deck` form) and hand
+    it to the store. `check_legality` defaults to the engine's own
+    construction-rules check (CR 100.2a, 100.4a); the tests of this module
+    turn it off because no legal deck can be built from the four cards in the
+    fixture cache.
+
+    Kept as a one-game function, unchanged in shape, for existing callers
+    (this module's own tests boot exactly one game this way); `setup_all`
+    is the multi-game counterpart used when `--match` was given."""
+    (spec,) = args.matches
+    return _boot_from_spec(spec, check_legality=check_legality)
+
+
+def setup_all(args: argparse.Namespace, *, check_legality: bool = True) -> list[Boot]:
+    """Boot every game `args.matches` describes - one game for the `--deck`
+    form, one per `--match` otherwise - each into its own entry in the
+    session store, and return every `Boot` in the order given on the command
+    line."""
+    return [_boot_from_spec(spec, check_legality=check_legality) for spec in args.matches]
 
 
 def _record(game_id: str, action: str, **detail: object) -> None:
@@ -181,10 +294,20 @@ def _record_boot_events(boot: Boot) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Parse, boot, print the summary block, then serve until interrupted."""
+    """Parse, boot every game `args.matches` describes, print one block per
+    game (numbered when there is more than one, so an operator reading
+    `/tmp/game-server.log` can never mix up two games' seat uids), then serve
+    all of them from one uvicorn process until interrupted."""
     args = parse_args(argv)
-    boot = setup(args)
-    print(boot.summary(), flush=True)
+    boots = setup_all(args)
+    if len(boots) == 1:
+        print(boots[0].summary(), flush=True)
+    else:
+        print(f"booted {len(boots)} games:\n", flush=True)
+        for index, boot in enumerate(boots, start=1):
+            print(f"--- game {index}/{len(boots)} ---", flush=True)
+            print(boot.summary(), flush=True)
+            print(flush=True)
     uvicorn.run(app, port=args.port)
 
 
