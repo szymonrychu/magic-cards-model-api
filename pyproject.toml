@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn>=0.32",
     "httpx>=0.27",
     "mcp>=1.2",
+    "prometheus-client>=0.21",
 ]
 
 [tool.uv.sources]
@@ -21,8 +22,11 @@ dev = ["pytest>=8.3", "ruff>=0.8"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.scripts]
+cc-stop-hook = "mtg_agent.wrapper.stop_hook:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/magic_cards_model_api"]
+packages = ["src/magic_cards_model_api", "src/mtg_agent"]
 
 [tool.ruff]
 line-length = 100
