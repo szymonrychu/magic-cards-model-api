@@ -122,7 +122,13 @@ mise run fmt     # ruff format + fix
 - Games live in memory: a restart wipes every session.
 - Card data is fetched from the real Scryfall API
   (`User-Agent: magic-cards-model-api/0.1`, at most one request per 100 ms)
-  and cached to disk under `.scryfall-cache/`, so a card is fetched once.
+  and cached to disk under `.scryfall-cache/` (`MCM_CACHE_DIR` moves it), so a
+  card is fetched once. Before the network, the engine's scenario-test pool at
+  `../magic-cards-model/tests/fixtures/cards` is read - read-only, never
+  written - which covers all but one card of every deck in `decks/` and takes
+  a cold-cache decklist validation from ~35 seconds to instant.
+  `MCM_FIXTURE_CARDS_DIR` points that elsewhere; an empty value turns it off,
+  and a missing directory just means the network again.
   Every card is validated through the engine's `Card` model; non-Modern-legal
   cards are flagged in the response, not refused.
 - Every legality answer comes from the engine itself: a `why_cannot_*` reason

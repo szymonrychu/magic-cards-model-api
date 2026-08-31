@@ -300,8 +300,12 @@ async function startGame() {
     err.textContent = "the two players need different names";
     return;
   }
-  const youResult = await validateAndReport("you");
-  const aiResult = await validateAndReport("ai");
+  // Both at once: the two validations are independent, write to different
+  // panels, and each can still cost a round trip per uncached card.
+  const [youResult, aiResult] = await Promise.all([
+    validateAndReport("you"),
+    validateAndReport("ai"),
+  ]);
   if (!youResult || !youResult.valid || !aiResult || !aiResult.valid) {
     err.textContent = "fix the decklist errors above before starting";
     return;
