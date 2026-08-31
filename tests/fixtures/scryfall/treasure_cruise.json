@@ -1,0 +1,130 @@
+{
+  "artist": "Cynthia Sheppard",
+  "artist_ids": [
+    "9dfbdd58-65e6-40cf-951a-80e141061939"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 881525,
+  "cmc": 8.0,
+  "collector_number": "205",
+  "color_identity": [
+    "U"
+  ],
+  "colors": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 629,
+  "finishes": [
+    "nonfoil"
+  ],
+  "flavor_text": "Countless delights drift on the surface while dark schemes run below.",
+  "foil": false,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "42c45880-15c7-4259-8066-c04d031d8216",
+  "illustration_id": "6601826b-90b2-4362-8a52-61280a3bb7bb",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T00:49:48Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.webp?1783903788",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.jpg?1783903788",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.jpg?1783903788",
+    "crop": "https://cards.scryfall.io/crop/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.webp?1783903788",
+    "display": "https://cards.scryfall.io/display/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.webp?1783903788",
+    "grid": "https://cards.scryfall.io/grid/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.webp?1783903788",
+    "large": "https://cards.scryfall.io/large/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.jpg?1783903788",
+    "normal": "https://cards.scryfall.io/normal/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.jpg?1783903788",
+    "png": "https://cards.scryfall.io/png/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.png?1783903788",
+    "small": "https://cards.scryfall.io/small/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.jpg?1783903788",
+    "thumb": "https://cards.scryfall.io/thumb/front/4/2/42c45880-15c7-4259-8066-c04d031d8216.webp?1783903788"
+  },
+  "keywords": [
+    "Delve"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "banned",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "banned",
+    "modern": "banned",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "banned",
+    "paupercommander": "legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "not_legal",
+    "vintage": "restricted"
+  },
+  "mana_cost": "{7}{U}",
+  "mtgo_id": 148879,
+  "multiverse_ids": [],
+  "name": "Treasure Cruise",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "5b6bdf5a-2742-4851-92cd-a857a3852836",
+  "oracle_text": "Delve (Each card you exile from your graveyard while casting this spell pays for {1}.)\nDraw three cards.",
+  "oversized": false,
+  "penny_rank": 13,
+  "prices": {
+    "eur": "0.19",
+    "eur_foil": null,
+    "tix": "0.05",
+    "usd": "0.30",
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A5b6bdf5a-2742-4851-92cd-a857a3852836&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/148879?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=881525&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F687467%3Fpage%3D1"
+  },
+  "rarity": "common",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Treasure+Cruise",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DTreasure%2BCruise",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DTreasure%2BCruise"
+  },
+  "released_at": "2026-04-24",
+  "reprint": true,
+  "reserved": false,
+  "resource_id": "C9A456A881D793BBAEBB4E753DFEA796985A4ABBAE4DC880A7DED5D60FEF43BB",
+  "rulings_uri": "https://api.scryfall.com/cards/42c45880-15c7-4259-8066-c04d031d8216/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/soc?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/soc/205/treasure-cruise?utm_source=api",
+  "set": "soc",
+  "set_id": "97fab8d1-480a-419d-ab14-663968e29b9c",
+  "set_name": "Secrets of Strixhaven Commander",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Asoc&unique=prints",
+  "set_type": "commander",
+  "set_uri": "https://api.scryfall.com/sets/97fab8d1-480a-419d-ab14-663968e29b9c",
+  "story_spotlight": false,
+  "tcgplayer_id": 687467,
+  "textless": false,
+  "type_line": "Sorcery",
+  "uri": "https://api.scryfall.com/cards/42c45880-15c7-4259-8066-c04d031d8216",
+  "variation": false
+}

@@ -40,6 +40,7 @@ from .schemas import (
     AttackRequest,
     CastRequest,
     ConcedeRequest,
+    CrewRequest,
     CycleRequest,
     DecideRequest,
     DeclareBlockersRequest,
@@ -775,6 +776,11 @@ def get_affordances(
         # discovering one means building a `Casting`, which is per-card work
         # not worth doing for every card on the board on every poll.
         result["alternative_costs"] = affordances.alternative_costs(game, state, player)
+    # Convoke, delve and crew: which objects could be spent on this card's
+    # cost. Absent keys mean the card offers none of them.
+    object_costs = affordances.object_costs(game, state, player)
+    if object_costs:
+        result["object_costs"] = object_costs
     return result
 
 
@@ -805,6 +811,25 @@ def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
             ability_index=req.ability_index,
             targets=req.targets,
             mana_sources=[str(source) for source in req.mana_sources or []],
+        )
+
+
+@app.post("/api/games/{game_id}/actions/crew")
+def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
+    """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
+    `activate` against an ability index: the cost is the creatures tapped,
+    not mana, and crew is the Vehicle's ability rather than theirs."""
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        outcome = engine_api.crew_vehicle(game, req)
+        return audit_outcome(
+            game_id,
+            "crew",
+            outcome,
+            dry_run=req.dry_run,
+            player=req.player,
+            card_id=str(req.card_id),
+            crewing=[str(card_id) for card_id in req.crewing],
         )
 
 

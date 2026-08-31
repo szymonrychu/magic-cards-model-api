@@ -109,6 +109,12 @@ class CastRequest(BaseModel):
     freshly granted a `PlayPermission` (suspend's own free cast, CR 702.62a's
     third ability) needs no `keyword`: that permission is found and used
     automatically whenever one is live for this player and card."""
+    convoke: list[ConvokeChoice] | None = None
+    """Creatures tapped for convoke (CR 702.51a). Applied after the total
+    cost is determined, never as part of the announcement."""
+    delve: list[UUID] | None = None
+    """Cards exiled from the payer's graveyard for delve (CR 702.66a), one
+    per generic mana in the total cost."""
     alternative_cost: int | str | None = None
     """The CR 118.9 alternative cost this spell is announced under, as either
     its `index` in `GET .../affordances/{card_id}`'s `alternative_costs` list
@@ -122,6 +128,39 @@ class CastRequest(BaseModel):
     """The objects an alternative cost requires the caster to supply - the
     cards pitched to Force of Negation, the Mountains sacrificed to Fireblast.
     `alternative_costs[i].requires` says how many are needed."""
+    dry_run: bool = False
+
+
+class ConvokeChoice(BaseModel):
+    """One creature tapped to pay one symbol of a convoke spell's cost.
+
+    CR 702.51b: convoke "isn't an additional or alternative cost and applies
+    only after the total cost of the spell with convoke is determined", so
+    this is not part of the announcement - it is which objects the payer
+    offers against the already-determined cost."""
+
+    card_id: UUID
+    color: str | None = None
+    """The coloured symbol this creature covers (CR 702.51a: only a colour
+    the creature actually is). Omitted, it is offered against a generic
+    symbol instead."""
+
+
+class CrewRequest(BaseModel):
+    """CR 702.122a: "Crew N" means "Tap any number of other untapped
+    creatures you control with total power N or greater: This permanent
+    becomes an artifact creature until end of turn."
+
+    Crew is an activated ability of the Vehicle, not of the creatures, and it
+    has no `{T}` symbol of its own - so this is not an `ActivateRequest`
+    against an ability index. The creatures are the cost."""
+
+    player: str
+    card_id: UUID
+    """The Vehicle being crewed."""
+    crewing: list[UUID] = Field(min_length=1)
+    """The creatures tapped to pay for it (CR 702.122b: "a creature crews a
+    Vehicle when it's tapped to pay the cost")."""
     dry_run: bool = False
 
 

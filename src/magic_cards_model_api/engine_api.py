@@ -29,6 +29,7 @@ from .schemas import (
     ActivateRequest,
     AttackRequest,
     CastRequest,
+    CrewRequest,
     CycleRequest,
     ManaSource,
     PlayLandRequest,
@@ -253,6 +254,12 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
     payment = None
     try:
         payment = casting.determine_cost(x_value=req.x_value)
+        # CR 702.51b/702.66a: convoke and delve are neither additional nor
+        # alternative costs - they "apply only after the total cost ... is
+        # determined" - so they are spliced in exactly here, between
+        # `determine_cost` and the mana payment, and `payment.cost` still
+        # reads as the spell's real total cost afterwards.
+        apply_object_costs(game, casting.spell, payment, req)
         pay_with(payment, list(req.mana_sources or []), game)
         if req.dry_run:
             # The offered sources are activated into the payment's working
@@ -274,6 +281,70 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
     game.put_on_stack(state, casting.caster)
     game.retain_priority(casting.caster)
     return Outcome(True, detail={"spell_id": str(state.id), "cost": str(payment.cost)})
+
+
+def apply_object_costs(game: Game, spell: CardState, payment: Any, req: CastRequest) -> None:
+    """Offer convoke creatures and delve cards against an open payment.
+
+    Both keywords pay part of an already-determined cost by spending objects
+    rather than mana - tapping an untapped creature you control (CR 702.51a),
+    exiling a card from your graveyard (CR 702.66a) - which is why they share
+    `machines/objects_as_costs.py` in the engine and share this one hook here.
+    The objects are spent when the payment is paid, and given back if it is
+    rewound (CR 733.1), so a refusal after this point leaves no trace.
+    """
+    from magic_cards_model.machines.objects_as_costs import convoke, delve
+
+    for choice in req.convoke or []:
+        creature = find_card(game, choice.card_id)
+        color = Color(choice.color.strip().upper()) if choice.color else None
+        convoke(payment, spell, creature, color)
+    if req.delve:
+        delve(payment, spell, *[find_card(game, card_id) for card_id in req.delve])
+
+
+# -- crewing a Vehicle (CR 702.122) ----------------------------------------
+
+
+def crew_vehicle(game: Game, req: CrewRequest) -> Outcome:
+    """CR 702.122a's crew ability: tap creatures with total power N or more,
+    and the Vehicle becomes an artifact creature until end of turn.
+
+    Not an `ActivateRequest` against an ability index: crew is an activated
+    ability of the *Vehicle*, its cost is the creatures rather than any mana,
+    and it carries no `{T}` of its own - so `Game.begin_activating` (which
+    only ever opens a mana-or-symbol cost on a permanent's printed ability)
+    is not the right door. `machines.keywords.crew_activation` is, the same
+    object the engine's own `tests/scenarios/test_crew.py` builds.
+    """
+    from magic_cards_model.machines.keywords import crew_activation
+
+    try:
+        vehicle = find_card(game, req.card_id)
+        crewing = [find_card(game, card_id) for card_id in req.crewing]
+        activation = crew_activation(game, vehicle, crewing, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+
+    payment = None
+    try:
+        payment = activation.begin_paying()
+        if req.dry_run:
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost)})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost)})
+        payment.pay()
+    except ValueError as exc:
+        if payment is not None:
+            payment.rewind()
+        return refused(exc)
+
+    on_stack = activation.activate()
+    game.retain_priority(req.player)
+    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
 
 
 # -- special actions: suspend, plot, foretell (CR 116.2) --------------------

@@ -1050,6 +1050,9 @@ function beginAction(kind, cardId, extra) {
       modes: [],
       xValue: null,
       color: null, // chosen colour for a mana ability that offers one
+      convoke: [], // creatures tapped for convoke (CR 702.51a)
+      delve: [], // graveyard cards exiled for delve (CR 702.66a)
+      crewing: [], // creatures tapped to crew a Vehicle (CR 702.122a)
       altCost: null, // chosen CR 118.9 alternative cost index, or null
       choosing: [], // objects supplied to pay it (pitched cards, sacrifices)
       targets: [],
@@ -1246,6 +1249,8 @@ function renderActionTray() {
   const title =
     action.kind === "land"
       ? "Play land"
+      : action.kind === "crew"
+      ? "Crew"
       : action.kind === "special"
       ? `${action.keyword}`
       : ability
@@ -1292,6 +1297,19 @@ function renderActionTray() {
     parts.push(
       trayStepHtml("Which colour", `<div class="chip-row">${chips}</div>`, action.color !== null)
     );
+  }
+
+  // --- convoke / delve / crew: paying a cost with objects, not mana ---
+  const objectCosts = (action.affordance && action.affordance.object_costs) || {};
+  if (action.kind === "crew" && objectCosts.crew) {
+    parts.push(renderCrewStep(action, objectCosts.crew));
+  } else if (action.kind === "cast") {
+    if (objectCosts.convoke) {
+      parts.push(renderObjectCostStep(action, objectCosts.convoke, "convoke", "Convoke - tap creatures to pay"));
+    }
+    if (objectCosts.delve) {
+      parts.push(renderObjectCostStep(action, objectCosts.delve, "delve", "Delve - exile from your graveyard"));
+    }
   }
 
   // --- alternative costs (CR 118.9), only when this card offers one ---
@@ -1423,6 +1441,61 @@ function renderAlternativeCostStep(action, alts) {
   );
 }
 
+/** Convoke and delve: each chosen object covers one symbol of an
+ * already-determined cost (CR 702.51b, CR 702.66a), so this is a plain
+ * multi-select over whatever the engine says is eligible. Neither is a cost
+ * reduction nor an alternative cost, which is why this sits alongside the
+ * mana payment rather than replacing it. */
+function renderObjectCostStep(action, offer, field, label) {
+  const chips = offer.candidates
+    .map(
+      (candidate) =>
+        `<button class="chip ${action[field].includes(candidate.id) ? "on" : ""}" onclick="toggleObjectCost('${field}','${escapeHtml(candidate.id)}')">${escapeHtml(candidate.name)}</button>`
+    )
+    .join("");
+  const body = offer.candidates.length
+    ? `<div class="chip-row">${chips}</div>`
+    : '<div class="hint">nothing eligible right now</div>';
+  return trayStepHtml(
+    `${label} (${action[field].length} chosen) - optional`,
+    body + `<div class="hint">${escapeHtml(offer.rule)}</div>`,
+    action[field].length > 0
+  );
+}
+
+/** Crew (CR 702.122a): unlike convoke and delve this is not optional padding
+ * on a mana cost - the creatures ARE the cost, and the total power has to
+ * reach the Vehicle's crew number before the ability can be activated at
+ * all, so the step shows the running total against it. */
+function renderCrewStep(action, offer) {
+  const chosen = offer.candidates.filter((c) => action.crewing.includes(c.id));
+  const total = chosen.reduce((sum, c) => sum + (c.power || 0), 0);
+  const chips = offer.candidates
+    .map(
+      (candidate) =>
+        `<button class="chip ${action.crewing.includes(candidate.id) ? "on" : ""}" onclick="toggleObjectCost('crewing','${escapeHtml(candidate.id)}')">${escapeHtml(candidate.name)} (${candidate.power})</button>`
+    )
+    .join("");
+  const body = offer.candidates.length
+    ? `<div class="chip-row">${chips}</div>`
+    : '<div class="hint">no other untapped creature you control can crew this</div>';
+  return trayStepHtml(
+    `Crew ${offer.number} - total power ${total}/${offer.number}`,
+    body + `<div class="hint">${escapeHtml(offer.rule)}</div>`,
+    total >= (offer.number || 0)
+  );
+}
+
+function toggleObjectCost(field, id) {
+  const action = game.action;
+  if (!action) return;
+  const at = action[field].indexOf(id);
+  if (at >= 0) action[field].splice(at, 1);
+  else action[field].push(id);
+  render(game.state);
+}
+window.toggleObjectCost = toggleObjectCost;
+
 function chooseColor(color) {
   if (!game.action) return;
   game.action.color = game.action.color === color ? null : color;
@@ -1474,6 +1547,14 @@ async function confirmAction() {
         card_id: action.cardId,
       });
       if (res.allowed === false) return failAction(res.reason);
+    } else if (action.kind === "crew") {
+      const res = await api("POST", `/api/games/${game.gameId}/actions/crew`, {
+        player: you,
+        card_id: action.cardId,
+        crewing: action.crewing,
+      });
+      if (res.allowed === false) return failAction(res.reason);
+      goesOnStack = true;
     } else if (action.abilityIndex !== null) {
       const body = { player: you, card_id: action.cardId, ability_index: action.abilityIndex };
       if (action.color) body.color = action.color;
@@ -1490,6 +1571,10 @@ async function confirmAction() {
       if (action.modes.length) body.modes = action.modes;
       if (action.xValue !== null) body.x_value = action.xValue;
       if (action.keyword) body.keyword = action.keyword;
+      if (action.convoke.length) {
+        body.convoke = action.convoke.map((id) => ({ card_id: id }));
+      }
+      if (action.delve.length) body.delve = action.delve;
       if (action.altCost !== null) body.alternative_cost = action.altCost;
       if (action.choosing.length) body.choosing = action.choosing;
       if (action.fromZone) body.from_zone = action.fromZone;
@@ -1538,16 +1623,29 @@ function onBoardCardClick(cardId) {
   if (!card) return;
   if (card.controller !== game.state.you) return; // not yours to activate
   const abilities = card.abilities || [];
-  if (!abilities.length) return;
-  if (abilities.length === 1) {
+  // Crew is an activated ability of the Vehicle (CR 702.122a) but carries no
+  // ability index - its cost is the creatures - so it is offered alongside
+  // the printed abilities rather than being one of them. The type line is a
+  // display hint only; `crew_activation` is what actually decides, and it
+  // refuses with its own reason.
+  const isVehicle = (card.type_line || "").toLowerCase().includes("vehicle");
+  if (!abilities.length && !isVehicle) return;
+  if (!abilities.length && isVehicle) {
+    beginAction("crew", cardId);
+    return;
+  }
+  if (abilities.length === 1 && !isVehicle) {
     beginAction("activate", cardId, { abilityIndex: 0 });
     return;
   }
-  openAbilityPicker(card);
+  openAbilityPicker(card, isVehicle);
 }
 
-function openAbilityPicker(card) {
-  const rows = (card.abilities || [])
+function openAbilityPicker(card, isVehicle) {
+  const crewRow = isVehicle
+    ? `<button class="option" onclick="chooseCrew('${escapeHtml(card.id)}')"><strong>Crew</strong> - tap creatures with enough total power (CR 702.122a)</button>`
+    : "";
+  const rows = crewRow + (card.abilities || [])
     .map(
       (a) =>
         `<button class="option" onclick="chooseAbility('${escapeHtml(card.id)}', ${a.index})">` +
@@ -1560,6 +1658,12 @@ function openAbilityPicker(card) {
   showModal(`<h3>Activate: ${escapeHtml(card.name)}</h3>${rows}
     <button onclick="closeModal()">Cancel</button>`);
 }
+
+function chooseCrew(cardId) {
+  closeModal();
+  beginAction("crew", cardId);
+}
+window.chooseCrew = chooseCrew;
 
 function chooseAbility(cardId, index) {
   closeModal();

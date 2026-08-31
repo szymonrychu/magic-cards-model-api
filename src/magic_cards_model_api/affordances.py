@@ -339,6 +339,67 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
     ]
 
 
+def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
+    """Which objects could be spent on this card's cost, and for what.
+
+    Convoke (CR 702.51a), delve (CR 702.66a) and crew (CR 702.122a) all pay
+    part of a cost by spending objects rather than mana, and the engine
+    shares one `ObjectOffer` across all three. The candidate list is that
+    offer's own eligibility answer, so a UI cannot disagree with the payment
+    that follows it.
+
+    Only the keys that apply are present: a card with none of the three gets
+    an empty dict, so the UI renders no row at all rather than three empty
+    ones.
+    """
+    from magic_cards_model.machines.objects_as_costs import (
+        convoke_offer,
+        crew_number,
+        crew_offer,
+        delve_offer,
+        has_convoke,
+        has_delve,
+        is_vehicle,
+        power_of,
+    )
+
+    def eligible(offer: Any, cards: list[CardState]) -> list[dict[str, Any]]:
+        found = []
+        for card in cards:
+            if offer.why_not(card, player, game) is None:
+                entry = _label(card)
+                if card.zone is Zone.BATTLEFIELD:
+                    # Only crew cares about power, and only a battlefield
+                    # permanent has a computed one - a delve candidate in the
+                    # graveyard would report a meaningless 0.
+                    entry["power"] = power_of(card, game)
+                found.append(entry)
+        return found
+
+    battlefield = [
+        card for card in game.shared_zones.get(Zone.BATTLEFIELD, []) if isinstance(card, CardState)
+    ]
+    out: dict[str, Any] = {}
+    if has_convoke(state.card):
+        out["convoke"] = {
+            "rule": "CR 702.51a",
+            "candidates": eligible(convoke_offer(), battlefield),
+        }
+    if has_delve(state.card):
+        out["delve"] = {
+            "rule": "CR 702.66a",
+            "candidates": eligible(delve_offer(), list(game.player(player).graveyard)),
+        }
+    if is_vehicle(state.card):
+        number = crew_number(state.card)
+        out["crew"] = {
+            "rule": "CR 702.122a",
+            "number": number,
+            "candidates": eligible(crew_offer(state), battlefield),
+        }
+    return out
+
+
 def find_source(game: Game, card_id: UUID) -> CardState:
     state = game.find_by_id(card_id)
     if not isinstance(state, CardState):
