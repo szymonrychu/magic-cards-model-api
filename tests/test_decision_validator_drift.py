@@ -76,7 +76,9 @@ def _game(game_id: str) -> Game:
 def _check_parity(engine_game: Game, decision: Decision, value: object) -> None:
     """Feed `value` to both validators; they must agree on accept/reject, and
     on the exact refusal text when both reject."""
-    engine_game.decisions.add(ScriptedAnswer(kind=decision.kind, value=value, player=decision.player))
+    engine_game.decisions.add(
+        ScriptedAnswer(kind=decision.kind, value=value, player=decision.player)
+    )
     engine_message: str | None = None
     try:
         engine_game.ask(decision)
@@ -112,23 +114,43 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
     bears_id = board["bears_id"]
     stray_id = uuid4()
 
-    bool_kinds = (DecisionKind.MAY, DecisionKind.PAY_LIFE, DecisionKind.PAY_ENERGY, DecisionKind.PAY_MANA)
+    bool_kinds = (
+        DecisionKind.MAY,
+        DecisionKind.PAY_LIFE,
+        DecisionKind.PAY_ENERGY,
+        DecisionKind.PAY_MANA,
+    )
     cases: dict[DecisionKind, tuple[Decision, list[object]]] = {}
     for kind in bool_kinds:
-        legal = Decision(kind=kind, player="alice", prompt=f"{kind.value} test", affirmative_is_legal=True)
+        legal = Decision(
+            kind=kind, player="alice", prompt=f"{kind.value} test", affirmative_is_legal=True
+        )
         cases[kind] = (legal, [True, False, "yes", 1])
 
     cases[DecisionKind.PAY_ENERGY_AMOUNT] = (
-        Decision(kind=DecisionKind.PAY_ENERGY_AMOUNT, player="alice", prompt="pay energy amount", amount=5),
+        Decision(
+            kind=DecisionKind.PAY_ENERGY_AMOUNT,
+            player="alice",
+            prompt="pay energy amount",
+            amount=5,
+        ),
         [3, 0, 5, -1, 6, "3", True],
     )
     cases[DecisionKind.PAY_LIFE_AMOUNT] = (
-        Decision(kind=DecisionKind.PAY_LIFE_AMOUNT, player="alice", prompt="pay life amount", amount=10),
+        Decision(
+            kind=DecisionKind.PAY_LIFE_AMOUNT, player="alice", prompt="pay life amount", amount=10
+        ),
         [4, 0, 10, -1, 11, "4", True],
     )
 
     cases[DecisionKind.SCRY] = (
-        Decision(kind=DecisionKind.SCRY, player="alice", prompt="scry 3", amount=3, cards=tuple(library_ids)),
+        Decision(
+            kind=DecisionKind.SCRY,
+            player="alice",
+            prompt="scry 3",
+            amount=3,
+            cards=tuple(library_ids),
+        ),
         [
             CardSplit(moved=(library_ids[0],), top_order=(library_ids[1], library_ids[2])),
             CardSplit(),
@@ -137,7 +159,13 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         ],
     )
     cases[DecisionKind.SURVEIL] = (
-        Decision(kind=DecisionKind.SURVEIL, player="alice", prompt="surveil 3", amount=3, cards=tuple(library_ids)),
+        Decision(
+            kind=DecisionKind.SURVEIL,
+            player="alice",
+            prompt="surveil 3",
+            amount=3,
+            cards=tuple(library_ids),
+        ),
         [
             CardSplit(moved=(library_ids[1],), top_order=(library_ids[0], library_ids[2])),
             CardSplit(moved=(stray_id,)),
@@ -218,14 +246,18 @@ def test_every_answerable_kind_has_a_drift_case(board: dict[str, Any]) -> None:
 
 
 @pytest.mark.parametrize("kind", sorted(ANSWERABLE_KINDS, key=lambda k: k.value))
-def test_validator_matches_engine_ask(client: TestClient, game: str, board: dict[str, Any], kind: DecisionKind) -> None:
+def test_validator_matches_engine_ask(
+    client: TestClient, game: str, board: dict[str, Any], kind: DecisionKind
+) -> None:
     engine_game = _game(game)
     decision, values = _cases(board)[kind]
     for value in values:
         _check_parity(engine_game, decision, value)
 
 
-def test_pay_life_below_the_floor_is_illegal_on_both_sides(client: TestClient, game: str, board: dict[str, Any]) -> None:
+def test_pay_life_below_the_floor_is_illegal_on_both_sides(
+    client: TestClient, game: str, board: dict[str, Any]
+) -> None:
     """`affirmative_is_legal=False` (CR 119.4's life floor, or an
     energy/mana floor the same shape) removes `True` from both validators'
     legal answers - not just a bare bool-type check, the actual `legal_options`
@@ -242,7 +274,9 @@ def test_pay_life_below_the_floor_is_illegal_on_both_sides(client: TestClient, g
         _check_parity(engine_game, decision, value)
 
 
-def test_choose_cards_any_number_ceiling_matches(client: TestClient, game: str, board: dict[str, Any]) -> None:
+def test_choose_cards_any_number_ceiling_matches(
+    client: TestClient, game: str, board: dict[str, Any]
+) -> None:
     """`exact=False` (CR 107.1c's "any number of") turns `amount` into a
     ceiling rather than an exact count - a separate branch in both
     validators, exercised here rather than only the `exact=True` case above."""

@@ -716,14 +716,12 @@ def validate_answer(decision: Decision, value: object) -> None:
         stray = [str(card_id) for card_id in value if card_id not in offered]
         if stray:
             raise ValueError(
-                f"{decision.prompt}: cannot choose a card that was not offered: "
-                f"{', '.join(stray)}"
+                f"{decision.prompt}: cannot choose a card that was not offered: {', '.join(stray)}"
             )
         if decision.exact:
             if len(value) != decision.amount:
                 raise ValueError(
-                    f"{decision.prompt}: needs {decision.amount} card(s) chosen, "
-                    f"{len(value)} given"
+                    f"{decision.prompt}: needs {decision.amount} card(s) chosen, {len(value)} given"
                 )
         elif len(value) > decision.amount:
             raise ValueError(

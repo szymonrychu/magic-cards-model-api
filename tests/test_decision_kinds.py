@@ -1314,9 +1314,9 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
     final = state(client, game)
     assert life_of(final, "alice") == 23, "the offered mode - gain 3 life - actually happened"
     assert [c["name"] for c in final["hands"]["alice"]] == [], "no card drawn either"
-    assert [c["name"] for c in final["battlefield"]] == [
-        "Elder Gargaroth"
-    ], "no Beast token was created either"
+    assert [c["name"] for c in final["battlefield"]] == ["Elder Gargaroth"], (
+        "no Beast token was created either"
+    )
 
 
 # -- put_on_top_or_bottom: Subtlety's ETB (CR 608.2d) ------------------------
