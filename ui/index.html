@@ -69,16 +69,25 @@
     </div>
 
     <div id="decision-box" hidden></div>
+    <div id="autopilot-banner" hidden></div>
 
-    <div id="board">
-      <div id="opponent-row" class="player-row"></div>
-      <div id="stack-row"></div>
-      <div id="battlefield-you" class="battlefield"></div>
-      <div id="you-row" class="player-row"></div>
-      <div id="hand-you" class="hand"></div>
+    <!-- Mirrored MTGO/Arena-style board: opponent on top, shared stack in
+         the middle, you on the bottom. -->
+    <div id="mtg-board">
+      <div id="opp-info" class="info-row"></div>
+      <div id="opp-hand" class="hand-row hand-row-opp"></div>
+      <div id="opp-battlefield" class="battlefield-row"></div>
+
+      <div id="stack-row" class="stack-row"></div>
+
+      <div id="my-battlefield" class="battlefield-row"></div>
+      <div id="my-hand" class="hand-row"></div>
+      <div id="you-info" class="info-row"></div>
+
       <div id="action-bar"></div>
     </div>
 
+    <div id="card-preview" class="card-preview" hidden></div>
     <div id="action-modal" class="modal" hidden></div>
 
     <details id="raw-state-details">

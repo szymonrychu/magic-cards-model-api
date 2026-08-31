@@ -1,10 +1,22 @@
 "use strict";
+// Node has no `window` - this file is still `require()`-able there for
+// `tests/test_ui_autopilot.py`, which loads the real `autopilotStopReason`/
+// `interpretPassOutcome` functions (see the `module.exports` guard near the
+// bottom) rather than a Python reimplementation of their logic. A no-op in
+// the browser, where `window` already exists.
+if (typeof window === "undefined") {
+  var window = globalThis; // eslint-disable-line no-var
+}
+
 /* Server-rendered HTML + plain JS UI over the existing seat API
  * (app.py/schemas.py/decisions.py) - no build step, no framework.
  *
  * This file never invents game rules: every button below calls one of the
  * endpoints the API already documents in its README, and every refusal shown
- * to the player is the engine's own `reason` text, verbatim.
+ * to the player is the engine's own `reason` text, verbatim. It also never
+ * invents what it cannot see: the opponent's hand is rendered as card backs,
+ * counted but not named, because `visibility.py` already strips their
+ * contents server-side before this file ever gets a response.
  */
 
 const $ = (sel) => document.querySelector(sel);
@@ -17,11 +29,25 @@ let game = {
   uid: null,
   you: null,
   pollHandle: null,
+  polling: false, // re-entrancy guard: skip a tick if the previous one is still in flight
   state: null,
+  cardLookup: {}, // card/ability id -> its state-view object, for hover preview
   selectedHandCard: null, // card id being cast/played
   selectedTargets: [], // token strings (card id or username)
-  selectedAttackers: {}, // card id -> defender username/card id
-  selectedBlocks: {}, // attacker id -> [blocker ids]
+  holdOnCast: false, // "keep priority" checkbox - the opt-out of feature 2b
+  // Priority automation (feature 2). `autopilot` is null when nothing is
+  // running; a run is driven from inside the ordinary poll() tick, never an
+  // unbounded loop of its own, so a `Stop` click (or reaching a stop
+  // condition) takes effect on the very next tick, at most ~1.2s away.
+  autopilot: null,
+  autopilotStoppedReason: null,
+  settings: {
+    // The safe default (task requirement): stop and ask whenever anything
+    // the player could respond to goes on the stack, rather than blow
+    // through it. A player who wants to auto-pass through the opponent's
+    // whole turn can turn this off explicitly.
+    stopOnStack: true,
+  },
 };
 
 // ---------------------------------------------------------------- fetch ----
@@ -161,7 +187,7 @@ async function startGame() {
   const aiUid = created.seat_uids[aiName];
   enterGame(created.game_id, youUid);
   // Start the AI seat right away - fire and forget; its own status poll
-  // (startAiPanelPolling) reports whatever came back, including a fallback.
+  // (pollAiStatus) reports whatever came back, including a fallback.
   api("POST", `/api/ui/games/${created.game_id}/ai-seat/start`, { uid: aiUid }).catch(() => {});
   game.aiUid = aiUid;
   localStorage.setItem(LS_KEY, JSON.stringify({ gameId: created.game_id, uid: youUid, aiUid }));
@@ -174,12 +200,14 @@ function enterGame(gameId, uid) {
   game.uid = uid;
   $("#lobby").hidden = true;
   $("#game").hidden = false;
+  wireCardPreview();
   poll();
   game.pollHandle = setInterval(poll, 1200);
 }
 
 function leaveGame() {
   if (game.pollHandle) clearInterval(game.pollHandle);
+  game.autopilot = null;
   localStorage.removeItem(LS_KEY);
   game.gameId = null;
   game.uid = null;
@@ -188,20 +216,26 @@ function leaveGame() {
 }
 
 async function poll() {
-  if (!game.gameId) return;
-  let state;
+  if (!game.gameId || game.polling) return;
+  game.polling = true;
   try {
-    state = await api("GET", withUid(`/api/games/${game.gameId}`));
-  } catch (e) {
-    $("#conn-status").textContent = `disconnected: ${e.message}`;
-    $("#conn-status").className = "pill bad";
-    return;
+    let state;
+    try {
+      state = await api("GET", withUid(`/api/games/${game.gameId}`));
+    } catch (e) {
+      $("#conn-status").textContent = `disconnected: ${e.message}`;
+      $("#conn-status").className = "pill bad";
+      return;
+    }
+    $("#conn-status").textContent = "connected";
+    $("#conn-status").className = "pill ok";
+    game.state = state;
+    render(state);
+    if (game.aiUid) pollAiStatus();
+    await tickAutopilot(state);
+  } finally {
+    game.polling = false;
   }
-  $("#conn-status").textContent = "connected";
-  $("#conn-status").className = "pill ok";
-  game.state = state;
-  render(state);
-  if (game.aiUid) pollAiStatus();
 }
 
 async function pollAiStatus() {
@@ -232,6 +266,8 @@ function render(state) {
   const opponent = state.players.find((p) => p.username !== you) || state.players[0];
   const youPlayer = state.players.find((p) => p.username === you) || state.players[0];
 
+  game.cardLookup = buildCardLookup(state);
+
   const winnerLine = state.winner
     ? ` — WINNER: ${escapeHtml(state.winner)}`
     : state.drawn
@@ -242,71 +278,177 @@ function render(state) {
     `active: ${escapeHtml(state.active_player)} · ` +
     `<span class="prio">priority: ${escapeHtml(state.priority_holder || "-")}</span>${winnerLine}`;
 
-  $("#opponent-row").innerHTML = playerRowHtml(opponent, opponent.username === you);
-  $("#you-row").innerHTML = playerRowHtml(youPlayer, true);
-  $("#opponent-row").onclick = () => toggleTarget(opponent.username);
-  $("#you-row").onclick = () => toggleTarget(youPlayer.username);
+  $("#opp-info").innerHTML = infoRowHtml(opponent, false);
+  $("#you-info").innerHTML = infoRowHtml(youPlayer, true);
+  $("#opp-info").onclick = () => toggleTarget(opponent.username);
+  $("#you-info").onclick = () => toggleTarget(youPlayer.username);
 
+  renderOpponentHand(state, opponent);
   renderStack(state);
   renderBattlefield(state, you);
   renderHand(state, you);
   renderDecision(state, you);
+  renderAutopilotBanner();
   renderActionBar(state, you);
 
   $("#raw-state").textContent = JSON.stringify(state, null, 1);
 }
 
-function playerRowHtml(player, isYou) {
+function buildCardLookup(state) {
+  const lookup = {};
+  const add = (card) => {
+    if (card && card.id) lookup[card.id] = card;
+  };
+  (state.battlefield || []).forEach(add);
+  (state.stack || []).forEach(add);
+  ((state.hands && state.hands[state.you]) || []).forEach(add);
+  return lookup;
+}
+
+function infoRowHtml(player, isYou) {
+  const lifeClass = player.life <= 5 ? "life low" : "life";
   return `
-    <div><strong>${escapeHtml(player.username)}</strong>${isYou ? " (you)" : ""}</div>
-    <div class="life">${player.life} life</div>
+    <div class="name">${escapeHtml(player.username)}${isYou ? " (you)" : ""}</div>
+    <div class="${lifeClass}">${player.life} life</div>
     <div class="pool">mana: ${manaLine(player.mana_pool)}</div>
-    <div>hand: ${player.hand_count} · library: ${player.library_count} · gy: ${player.graveyard_count}</div>
+    <div class="counts">library ${player.library_count} · graveyard ${player.graveyard_count} · hand ${player.hand_count}</div>
   `;
 }
 
-function cardHtml(card, opts) {
+// -------------------------------------------------------- card rendering ----
+
+function fallbackInnerHtml(card) {
+  const pt = card.power !== null && card.power !== undefined ? `${card.power}/${card.toughness}` : "";
+  const typeLine = card.type_line || (card.kind === "ability" ? "Ability" : "");
+  const text = card.oracle_text || card.text || "";
+  return `<span class="name">${escapeHtml(card.name || card.card_name || "?")}</span>
+    <span class="type">${escapeHtml(typeLine)}</span>
+    <span class="oracle">${escapeHtml(text.slice(0, 200))}</span>
+    ${pt ? `<span class="pt">${escapeHtml(pt)}</span>` : ""}`;
+}
+
+function cardVisualInner(card, sizeClass) {
+  const img = sizeClass === "card-md" ? card.image || card.small_image : card.small_image || card.image;
+  if (!img) {
+    return `<div class="card-fallback ${sizeClass}">${fallbackInnerHtml(card)}</div>`;
+  }
+  // Cards with no image fall back to a legible text card (above); a card
+  // that *has* an image URL but fails to load falls back the same way, via
+  // `onerror` swapping visibility to the pre-rendered sibling below, rather
+  // than a broken-image box.
+  return (
+    `<img class="card-visual ${sizeClass}" src="${escapeHtml(img)}" alt="${escapeHtml(card.name || "")}" ` +
+    `onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />` +
+    `<div class="card-fallback ${sizeClass}" style="display:none">${fallbackInnerHtml(card)}</div>`
+  );
+}
+
+function cardEl(card, sizeClass, opts) {
   opts = opts || {};
-  const classes = ["card"];
+  const classes = ["card", sizeClass];
   if (card.tapped) classes.push("tapped");
   if (opts.opponent) classes.push("opponent-card");
   if (opts.selected) classes.push("selected");
+  if (opts.attacking) classes.push("attacking");
+  if (opts.blocking) classes.push("blocking");
+  if (card.summoning_sick) classes.push("summoning-sick");
+  const hasImage = !!(card.image || card.small_image);
   const pt = card.power !== null && card.power !== undefined ? `${card.power}/${card.toughness}` : "";
   const counters = Object.entries(card.counters || {})
     .filter(([, n]) => n)
     .map(([k, n]) => `${k}:${n}`)
     .join(" ");
-  return `<div class="${classes.join(" ")}" data-card-id="${card.id}" data-owner="${escapeHtml(card.controller || card.owner || "")}" title="${escapeHtml(card.oracle_text || "")}">
-    <span class="name">${escapeHtml(card.name)}</span>
-    <span class="type">${escapeHtml(card.type_line || "")}</span>
-    ${counters ? `<span class="counters">${escapeHtml(counters)}</span>` : ""}
-    ${pt ? `<span class="pt">${escapeHtml(pt)}</span>` : ""}
+  return `<div class="${classes.join(" ")}" data-card-id="${card.id}">
+    ${cardVisualInner(card, sizeClass)}
+    ${hasImage && pt ? `<span class="badge-pt">${escapeHtml(pt)}</span>` : ""}
+    ${hasImage && counters ? `<span class="badge-counters">${escapeHtml(counters)}</span>` : ""}
   </div>`;
+}
+
+function cardBackHtml() {
+  return `<div class="card-back"></div>`;
+}
+
+// -------------------------------------------------------------- preview ----
+
+function wireCardPreview() {
+  const board = $("#mtg-board");
+  if (!board || board.dataset.previewWired) return;
+  board.dataset.previewWired = "1";
+  board.addEventListener("mouseover", (e) => {
+    const el = e.target.closest(".card[data-card-id]");
+    if (!el) return;
+    const card = game.cardLookup[el.dataset.cardId];
+    if (card) showPreview(card);
+  });
+  board.addEventListener("mouseout", (e) => {
+    const el = e.target.closest(".card[data-card-id]");
+    const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest(".card") : null;
+    if (el && !to) hidePreview();
+  });
+}
+
+function showPreview(card) {
+  const box = $("#card-preview");
+  const img = card.image || card.small_image;
+  if (img) {
+    box.innerHTML = `<img src="${escapeHtml(img)}" alt="${escapeHtml(card.name || "")}" onerror="this.remove()" />`;
+  } else {
+    box.innerHTML = `<div class="fallback-text">
+      <span class="name">${escapeHtml(card.name || card.card_name || "?")}</span><br/>
+      <span class="type">${escapeHtml(card.type_line || "")}</span>
+      <div class="oracle">${escapeHtml(card.oracle_text || card.text || "")}</div>
+    </div>`;
+  }
+  box.hidden = false;
+}
+
+function hidePreview() {
+  $("#card-preview").hidden = true;
+}
+
+// -------------------------------------------------------------- zones ----
+
+function renderOpponentHand(state, opponent) {
+  const box = $("#opp-hand");
+  const count = opponent.hand_count || 0;
+  // Card backs only, counted but not named - the visibility filter already
+  // hides their contents server-side (`state.hands[opponent] === []`), so
+  // this must not invent what it cannot see.
+  box.innerHTML = Array.from({ length: count }, cardBackHtml).join("") || '<div class="hint">(empty hand)</div>';
 }
 
 function renderStack(state) {
   const box = $("#stack-row");
-  if (!state.stack.length) {
-    box.innerHTML = "";
-    return;
+  box.classList.toggle("empty", state.stack.length === 0);
+  box.innerHTML = state.stack.map((o) => cardEl(o, "card-sm", {})).join("");
+  $$("#stack-row .card").forEach((el) => {
+    el.addEventListener("click", () => toggleTarget(el.dataset.cardId));
+  });
+}
+
+function attackingBlockingSets(state) {
+  const attacking = new Set();
+  const blocking = new Set();
+  for (const attack of (state.combat && state.combat.attacks) || []) {
+    attacking.add(attack.attacker);
+    for (const blocker of attack.blockers || []) blocking.add(blocker);
   }
-  box.innerHTML =
-    "<h4>stack (top first)</h4><div class=\"stack-cards\">" +
-    state.stack.map((o) => cardHtml(o, {})).join("") +
-    "</div>";
+  return { attacking, blocking };
 }
 
 function renderBattlefield(state, you) {
-  const box = $("#battlefield-you");
+  const { attacking, blocking } = attackingBlockingSets(state);
   const mine = state.battlefield.filter((c) => c.controller === you);
   const theirs = state.battlefield.filter((c) => c.controller !== you);
-  box.innerHTML =
-    `<h4>opponent's battlefield</h4><div class="battlefield" id="opp-battlefield">${theirs
-      .map((c) => cardHtml(c, { opponent: true }))
-      .join("")}</div>` +
-    `<h4>your battlefield</h4><div class="battlefield" id="my-battlefield">${mine
-      .map((c) => cardHtml(c, {}))
-      .join("")}</div>`;
+
+  $("#opp-battlefield").innerHTML = theirs
+    .map((c) => cardEl(c, "card-sm", { opponent: true, attacking: attacking.has(c.id), blocking: blocking.has(c.id) }))
+    .join("");
+  $("#my-battlefield").innerHTML = mine
+    .map((c) => cardEl(c, "card-sm", { attacking: attacking.has(c.id), blocking: blocking.has(c.id) }))
+    .join("");
+
   // Your own permanent: a click either adds/removes it as a target (when a
   // hand card is selected and being cast) or opens its own ability list.
   $$("#my-battlefield .card").forEach((el) => {
@@ -320,10 +462,12 @@ function renderBattlefield(state, you) {
 }
 
 function renderHand(state, you) {
-  const box = $("#hand-you");
+  const box = $("#my-hand");
   const hand = (state.hands && state.hands[you]) || [];
-  box.innerHTML = "<h4>your hand</h4>" + hand.map((c) => cardHtml(c, { selected: c.id === game.selectedHandCard })).join("");
-  $$("#hand-you .card").forEach((el) => {
+  box.innerHTML =
+    hand.map((c) => cardEl(c, "card-md", { selected: c.id === game.selectedHandCard })).join("") ||
+    '<div class="hint">(empty hand)</div>';
+  $$("#my-hand .card").forEach((el) => {
     el.addEventListener("click", () => onHandCardClick(el.dataset.cardId, hand));
   });
 }
@@ -457,7 +601,7 @@ function renderDecision(state, you) {
   }
   box.hidden = false;
   const renderer = DECISION_RENDERERS[pending.kind];
-  const body = renderer ? renderer(pending) : `<div class="error">no UI handler for decision kind ${escapeHtml(pending.kind)} - this is a drift bug, see tests/ui/test_decision_kind_coverage.py</div>`;
+  const body = renderer ? renderer(pending) : `<div class="error">no UI handler for decision kind ${escapeHtml(pending.kind)} - this is a drift bug, see tests/test_ui_decision_coverage.py</div>`;
   box.innerHTML = `<h3>Decision: ${escapeHtml(pending.prompt)}</h3>${body}`;
 }
 
@@ -476,6 +620,148 @@ window.submitChooseCards = submitChooseCards;
 window.submitCardSplit = submitCardSplit;
 window.submitChooseTargets = submitChooseTargets;
 
+// --------------------------------------------------- priority automation ----
+//
+// Feature 2 in full: (a) "pass until my upkeep", (b) casting auto-passes by
+// default with a "keep priority" opt-out. Both ultimately drive the same
+// `pass-priority` endpoint a manual click would; the loop for (a) runs one
+// step per ordinary poll() tick (never its own unbounded loop), so a `Stop`
+// click - or any of the conditions in `tickAutopilot` below - takes effect
+// within one tick (~1.2s), never mid-flight and never silently.
+
+function startPassUntilUpkeep() {
+  if (!game.state) return;
+  game.autopilotStoppedReason = null;
+  game.autopilot = {
+    target: "upkeep",
+    knownStackIds: new Set((game.state.stack || []).map((o) => o.id)),
+  };
+  renderAutopilotBanner();
+}
+window.startPassUntilUpkeep = startPassUntilUpkeep;
+
+function stopAutopilot(reason) {
+  const wasRunning = game.autopilot !== null;
+  game.autopilot = null;
+  game.autopilotStoppedReason = reason || null;
+  if (wasRunning || reason) renderAutopilotBanner();
+}
+window.stopAutopilot = stopAutopilot;
+
+function toggleStopOnStackSetting(checked) {
+  game.settings.stopOnStack = checked;
+}
+window.toggleStopOnStackSetting = toggleStopOnStackSetting;
+
+function renderAutopilotBanner() {
+  const banner = $("#autopilot-banner");
+  if (game.autopilot) {
+    banner.hidden = false;
+    banner.innerHTML = `
+      <span>Auto-passing until your upkeep…</span>
+      <button class="danger" onclick="stopAutopilot('stopped by you')">Stop</button>
+    `;
+    return;
+  }
+  if (game.autopilotStoppedReason) {
+    banner.hidden = false;
+    banner.innerHTML = `<span class="why">Auto-pass stopped: ${escapeHtml(game.autopilotStoppedReason)}</span>
+      <button onclick="dismissAutopilotBanner()">Dismiss</button>`;
+    return;
+  }
+  banner.hidden = true;
+  banner.innerHTML = "";
+}
+
+function dismissAutopilotBanner() {
+  game.autopilotStoppedReason = null;
+  renderAutopilotBanner();
+}
+window.dismissAutopilotBanner = dismissAutopilotBanner;
+
+/**
+ * The stop-condition check for a running autopilot run, as a pure function
+ * of (state, autopilot, you, settings) - no DOM, no fetch, no mutation of
+ * `game` itself. Pulled out of `tickAutopilot` on purpose: these are exactly
+ * the paths that "cost games" if they regress (a decision-timeout already
+ * has, per this task), so they need to be exercised by a real test without
+ * standing up a browser - see `tests/test_ui_autopilot.py`, which runs this
+ * exact function under Node.
+ *
+ * Returns a human-readable stop reason, or `null` to keep running. Checked,
+ * in order: the game ending, a decision addressed to this seat, the target
+ * step being reached, then (gated by `settings.stopOnStack`, on by default -
+ * the safe default) a new object having arrived on the stack since the run
+ * started or since the last tick, covering both "the opponent cast
+ * something" and "a trigger went on the stack" the same way, because from
+ * this seat's own point of view both are just "something new is here".
+ */
+function autopilotStopReason(state, autopilot, you, settings) {
+  if (!autopilot) return null;
+  if (state.winner || state.drawn) {
+    return state.winner ? `game over - ${state.winner} won` : "game over - drawn";
+  }
+  if (state.pending_decision && state.pending_decision.player === you) {
+    return `a decision is waiting for you: ${state.pending_decision.prompt}`;
+  }
+  if (autopilot.target === "upkeep" && state.step === "upkeep" && state.active_player === you) {
+    return "reached your upkeep";
+  }
+  const currentIds = new Set((state.stack || []).map((o) => o.id));
+  const arrived = [...currentIds].filter((id) => !autopilot.knownStackIds.has(id));
+  if (arrived.length && settings.stopOnStack) {
+    const obj = state.stack.find((o) => o.id === arrived[0]);
+    return `something new went on the stack: ${obj ? obj.name : arrived[0]}`;
+  }
+  return null;
+}
+
+/** Whether a `pass-priority` outcome should stop a running autopilot, and
+ * why - the fourth stop condition ("any command is refused"), split out as
+ * its own pure function for the same testability reason as
+ * `autopilotStopReason` above. `null` means the pass went through cleanly. */
+function interpretPassOutcome(res) {
+  if (res && res.allowed === false) {
+    return `pass was refused: ${res.reason}`;
+  }
+  return null;
+}
+
+/** One step of a running "pass until my upkeep" - called from every poll()
+ * tick. Stops immediately (and says why) on: a pending decision addressed to
+ * this seat, the game ending, reaching the target step, a new object on the
+ * stack (gated by the `stopOnStack` setting, default on - the safe default),
+ * or the pass itself being refused. Never blocks longer than one HTTP call:
+ * this function does exactly one thing (check, then maybe one pass call) and
+ * returns - the loop is `poll()`'s own 1.2s interval, so a `Stop` click is
+ * never more than one tick away from taking effect. */
+async function tickAutopilot(state) {
+  if (!game.autopilot) return;
+  const you = state.you;
+
+  const stopReason = autopilotStopReason(state, game.autopilot, you, game.settings);
+  if (stopReason) {
+    stopAutopilot(stopReason);
+    return;
+  }
+  game.autopilot.knownStackIds = new Set((state.stack || []).map((o) => o.id));
+
+  if (state.priority_holder !== you) return; // nothing for us to do this tick - keep waiting
+  try {
+    const res = await api("POST", `/api/games/${game.gameId}/actions/pass-priority`, { player: you });
+    const refusalReason = interpretPassOutcome(res);
+    if (refusalReason) stopAutopilot(refusalReason);
+  } catch (e) {
+    stopAutopilot(`pass failed: ${e.message}`);
+  }
+}
+
+// Node-loadable for tests (`tests/test_ui_autopilot.py`) - a no-op in the
+// browser, where `module` does not exist.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { autopilotStopReason, interpretPassOutcome };
+}
+
 // ------------------------------------------------------------- actions ----
 
 function renderActionBar(state, you) {
@@ -484,9 +770,18 @@ function renderActionBar(state, you) {
   const isActive = state.active_player === you;
   const buttons = [];
 
-  if (isYourPriority) {
-    buttons.push(`<button class="primary" onclick="passPriority()">Pass priority</button>`);
-  }
+  const passControls = [`
+    <div class="pass-controls">
+      ${isYourPriority ? '<button class="primary" onclick="passPriority()">Pass priority</button>' : ""}
+      <button ${game.autopilot ? "disabled" : ""} onclick="startPassUntilUpkeep()">Pass until my upkeep</button>
+      <label title="Stop and ask whenever a spell, ability trigger, or anything else lands on the stack while auto-passing - the safe default. Turn off to auto-pass through the opponent's whole turn.">
+        <input type="checkbox" ${game.settings.stopOnStack ? "checked" : ""} onchange="toggleStopOnStackSetting(this.checked)" />
+        stop on new stack object
+      </label>
+    </div>
+  `];
+  buttons.push(...passControls);
+
   if (isActive && (state.step === "untap" || state.step === "cleanup")) {
     buttons.push(`<button onclick="advanceTurn()">Advance (${escapeHtml(state.step)})</button>`);
   }
@@ -589,6 +884,8 @@ function openCastModal() {
       <label>Modes (comma-separated numbers, leave blank if none) <input type="text" id="modal-modes" /></label>
       <label>X value (leave blank if none) <input type="number" id="modal-x" /></label>
       <label>Keyword permission (e.g. Plot, Foretell - leave blank normally) <input type="text" id="modal-keyword" /></label>
+      <label><input type="checkbox" id="modal-hold" ${game.holdOnCast ? "checked" : ""} />
+        keep priority after casting (CR 117.3c) - normally priority auto-passes so the spell resolves</label>
     `}
     <div>
       <button class="primary" onclick="confirmCast(${isLand})">${isLand ? "Play" : "Cast"}</button>
@@ -610,6 +907,8 @@ async function confirmCast(isLand) {
       const modes = $("#modal-modes").value.trim();
       const x = $("#modal-x").value.trim();
       const keyword = $("#modal-keyword").value.trim();
+      const hold = $("#modal-hold").checked;
+      game.holdOnCast = hold; // remember the choice for next cast, this session only
       const body = {
         player: game.state.you,
         card_id: cardId,
@@ -622,6 +921,16 @@ async function confirmCast(isLand) {
       if (res.allowed === false) {
         $("#modal-error").textContent = res.reason;
         return;
+      }
+      // Feature 2b: casting auto-passes priority by default (CR 117.3c: a
+      // player who acted keeps priority and is entitled to act again - "hold"
+      // is that entitlement exercised, matching `seatkit.run_action`'s own
+      // `hold_priority` semantics; the default here mirrors that module's
+      // default of releasing unless told to hold). Fire-and-forget: any
+      // refusal is reported by `passPriority` itself, and `poll()` below
+      // still refreshes the board either way.
+      if (!hold) {
+        passPriority();
       }
     }
     closeModal();
@@ -868,4 +1177,6 @@ function init() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", init);
+if (typeof document !== "undefined") {
+  document.addEventListener("DOMContentLoaded", init);
+}

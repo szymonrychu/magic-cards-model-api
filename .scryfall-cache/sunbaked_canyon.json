@@ -1,0 +1,139 @@
+{
+  "artist": "Yeong-Hao Han",
+  "artist_ids": [
+    "f8e7f8d6-6dde-4059-973c-30f1fd1bbe4e"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 374508,
+  "cmc": 0.0,
+  "collector_number": "247",
+  "color_identity": [
+    "R",
+    "W"
+  ],
+  "colors": [],
+  "digital": false,
+  "edhrec_rank": 1485,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "Since the river ran dry, travelers wander where fish once swam.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "c36820fa-ee86-4206-9a0d-737a67cf5208",
+  "illustration_id": "67e63308-d209-49c9-a047-3c76fc8f4625",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T08:57:45Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.webp?1783933065",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.jpg?1783933065",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.jpg?1783933065",
+    "crop": "https://cards.scryfall.io/crop/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.webp?1783933065",
+    "display": "https://cards.scryfall.io/display/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.webp?1783933065",
+    "grid": "https://cards.scryfall.io/grid/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.webp?1783933065",
+    "large": "https://cards.scryfall.io/large/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.jpg?1783933065",
+    "normal": "https://cards.scryfall.io/normal/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.jpg?1783933065",
+    "png": "https://cards.scryfall.io/png/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.png?1783933065",
+    "small": "https://cards.scryfall.io/small/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.jpg?1783933065",
+    "thumb": "https://cards.scryfall.io/thumb/front/c/3/c36820fa-ee86-4206-9a0d-737a67cf5208.webp?1783933065"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "",
+  "mtgo_id": 72866,
+  "multiverse_ids": [
+    464196
+  ],
+  "name": "Sunbaked Canyon",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "f97fd068-b83a-4621-bf8c-cc96e880ce90",
+  "oracle_text": "{T}, Pay 1 life: Add {R} or {W}.\n{1}, {T}, Sacrifice this land: Draw a card.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2019-05-21",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://magic.wizards.com/en/articles/archive/card-preview/lands-horizon-2019-05-21"
+  },
+  "prices": {
+    "eur": "3.23",
+    "eur_foil": "7.68",
+    "tix": "1.62",
+    "usd": "4.78",
+    "usd_etched": null,
+    "usd_foil": "8.51"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Af97fd068-b83a-4621-bf8c-cc96e880ce90&unique=prints",
+  "produced_mana": [
+    "R",
+    "W"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/72866?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=374508&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F190784%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Sunbaked+Canyon",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=464196&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DSunbaked%2BCanyon",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DSunbaked%2BCanyon"
+  },
+  "released_at": "2019-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/c36820fa-ee86-4206-9a0d-737a67cf5208/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh1?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh1/247/sunbaked-canyon?utm_source=api",
+  "security_stamp": "oval",
+  "set": "mh1",
+  "set_id": "d7efccd6-55bc-4fb8-9138-e72577510a99",
+  "set_name": "Modern Horizons",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh1&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/d7efccd6-55bc-4fb8-9138-e72577510a99",
+  "story_spotlight": false,
+  "tcgplayer_id": 190784,
+  "textless": false,
+  "type_line": "Land",
+  "uri": "https://api.scryfall.com/cards/c36820fa-ee86-4206-9a0d-737a67cf5208",
+  "variation": false
+}

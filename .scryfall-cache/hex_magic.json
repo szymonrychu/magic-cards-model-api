@@ -1,0 +1,133 @@
+{
+  "arena_id": 105028,
+  "artist": "Kevin Glint",
+  "artist_ids": [
+    "1d9ddf35-c50d-4fc7-987c-4e2bf909f75a"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 891549,
+  "cmc": 3.0,
+  "collector_number": "133",
+  "color_identity": [
+    "R"
+  ],
+  "colors": [
+    "R"
+  ],
+  "digital": false,
+  "edhrec_rank": 7523,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "At the Scarlet Witch's touch, probabilities shift and the impossible becomes real.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "259bed47-1950-43ae-8efd-3009537529a8",
+  "illustration_id": "1521f5bf-b70b-42a5-8659-00b288100052",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T00:35:32Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.webp?1783902932",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.jpg?1783902932",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.jpg?1783902932",
+    "crop": "https://cards.scryfall.io/crop/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.webp?1783902932",
+    "display": "https://cards.scryfall.io/display/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.webp?1783902932",
+    "grid": "https://cards.scryfall.io/grid/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.webp?1783902932",
+    "large": "https://cards.scryfall.io/large/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.jpg?1783902932",
+    "normal": "https://cards.scryfall.io/normal/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.jpg?1783902932",
+    "png": "https://cards.scryfall.io/png/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.png?1783902932",
+    "small": "https://cards.scryfall.io/small/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.jpg?1783902932",
+    "thumb": "https://cards.scryfall.io/thumb/front/2/5/259bed47-1950-43ae-8efd-3009537529a8.webp?1783902932"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "legal",
+    "standardbrawl": "legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{2}{R}",
+  "mtgo_id": 152453,
+  "multiverse_ids": [],
+  "name": "Hex Magic",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "2283729c-11db-471c-9f63-46092c97bd00",
+  "oracle_text": "Exile all the cards from your hand, then draw that many cards. Until the end of your next turn, you may play cards exiled this way.",
+  "oversized": false,
+  "prices": {
+    "eur": "1.60",
+    "eur_foil": "3.23",
+    "tix": "2.14",
+    "usd": "0.72",
+    "usd_etched": null,
+    "usd_foil": "2.69"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A2283729c-11db-471c-9f63-46092c97bd00&unique=prints",
+  "promo": false,
+  "promo_types": [
+    "universesbeyond"
+  ],
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/152453?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=891549&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F697024%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Hex+Magic",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DHex%2BMagic",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DHex%2BMagic"
+  },
+  "released_at": "2026-06-26",
+  "reprint": false,
+  "reserved": false,
+  "resource_id": "FF900D91917593E2C8FD8BED060EBAE12A6620CC4DB426B24DDC5F2BFE7D0C1E",
+  "rulings_uri": "https://api.scryfall.com/cards/259bed47-1950-43ae-8efd-3009537529a8/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/msh?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/msh/133/hex-magic?utm_source=api",
+  "set": "msh",
+  "set_id": "ba9bf625-681c-4a4e-ab48-399b2fecac6b",
+  "set_name": "Marvel Super Heroes",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amsh&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/ba9bf625-681c-4a4e-ab48-399b2fecac6b",
+  "story_spotlight": false,
+  "tcgplayer_id": 697024,
+  "textless": false,
+  "type_line": "Sorcery \u2014 Arcane",
+  "uri": "https://api.scryfall.com/cards/259bed47-1950-43ae-8efd-3009537529a8",
+  "variation": false
+}

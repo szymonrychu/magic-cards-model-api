@@ -1,0 +1,152 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "0441cd2c-3646-4c69-ae97-ad3bcea7466f",
+      "name": "Mirrorpool",
+      "object": "related_card",
+      "type_line": "Land",
+      "uri": "https://api.scryfall.com/cards/0441cd2c-3646-4c69-ae97-ad3bcea7466f"
+    },
+    {
+      "component": "token",
+      "id": "febfca87-fc37-46cc-8236-73bc5c0e5755",
+      "name": "Copy",
+      "object": "related_card",
+      "type_line": "Token",
+      "uri": "https://api.scryfall.com/cards/febfca87-fc37-46cc-8236-73bc5c0e5755"
+    }
+  ],
+  "artist": "Cliff Childs",
+  "artist_ids": [
+    "ed6f7e03-20ba-4c73-bdda-4a4928480721"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 723177,
+  "cmc": 0.0,
+  "collector_number": "1010",
+  "color_identity": [],
+  "colors": [],
+  "digital": false,
+  "edhrec_rank": 2789,
+  "finishes": [
+    "nonfoil"
+  ],
+  "foil": false,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "0441cd2c-3646-4c69-ae97-ad3bcea7466f",
+  "illustration_id": "e22150e9-c635-40ae-b793-bc12ea8cc50b",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T04:03:06Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.webp?1783915386",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.jpg?1783915386",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.jpg?1783915386",
+    "crop": "https://cards.scryfall.io/crop/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.webp?1783915386",
+    "display": "https://cards.scryfall.io/display/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.webp?1783915386",
+    "grid": "https://cards.scryfall.io/grid/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.webp?1783915386",
+    "large": "https://cards.scryfall.io/large/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.jpg?1783915386",
+    "normal": "https://cards.scryfall.io/normal/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.jpg?1783915386",
+    "png": "https://cards.scryfall.io/png/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.png?1783915386",
+    "small": "https://cards.scryfall.io/small/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.jpg?1783915386",
+    "thumb": "https://cards.scryfall.io/thumb/front/0/4/0441cd2c-3646-4c69-ae97-ad3bcea7466f.webp?1783915386"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "",
+  "mtgo_id": 114361,
+  "multiverse_ids": [
+    625415
+  ],
+  "name": "Mirrorpool",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "57b86d5c-3269-44bc-a838-3c5439d820d9",
+  "oracle_text": "This land enters tapped.\n{T}: Add {C}.\n{2}{C}, {T}, Sacrifice this land: Copy target instant or sorcery spell you control. You may choose new targets for the copy.\n{4}{C}, {T}, Sacrifice this land: Create a token that's a copy of target creature you control.",
+  "oversized": false,
+  "penny_rank": 6231,
+  "preview": {
+    "previewed_at": "2023-07-20",
+    "source": "LoadingReadyRun",
+    "source_uri": "https://www.youtube.com/watch?v=MHeLpN0k7WQ"
+  },
+  "prices": {
+    "eur": "2.51",
+    "eur_foil": null,
+    "tix": "0.26",
+    "usd": "3.67",
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A57b86d5c-3269-44bc-a838-3c5439d820d9&unique=prints",
+  "produced_mana": [
+    "C"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/114361?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=723177&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F506678%3Fpage%3D1"
+  },
+  "rarity": "mythic",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Mirrorpool",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=625415&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DMirrorpool",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DMirrorpool"
+  },
+  "released_at": "2023-08-04",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/0441cd2c-3646-4c69-ae97-ad3bcea7466f/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/cmm?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/cmm/1010/mirrorpool?utm_source=api",
+  "security_stamp": "oval",
+  "set": "cmm",
+  "set_id": "cd05036f-2698-43e6-a48e-5c8d82f0a551",
+  "set_name": "Commander Masters",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Acmm&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/cd05036f-2698-43e6-a48e-5c8d82f0a551",
+  "story_spotlight": false,
+  "tcgplayer_id": 506678,
+  "textless": false,
+  "type_line": "Land",
+  "uri": "https://api.scryfall.com/cards/0441cd2c-3646-4c69-ae97-ad3bcea7466f",
+  "variation": false
+}

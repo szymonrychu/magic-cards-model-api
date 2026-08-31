@@ -1,0 +1,143 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "e9116aa0-1993-4f4a-9a1d-0561d0fbcba9",
+      "name": "Empty the Warrens",
+      "object": "related_card",
+      "type_line": "Sorcery",
+      "uri": "https://api.scryfall.com/cards/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9"
+    },
+    {
+      "component": "token",
+      "id": "09faad62-42ff-4e37-b8a5-d8e8a0f6d096",
+      "name": "Goblin",
+      "object": "related_card",
+      "type_line": "Token Creature \u2014 Goblin",
+      "uri": "https://api.scryfall.com/cards/09faad62-42ff-4e37-b8a5-d8e8a0f6d096"
+    }
+  ],
+  "artist": "Johan Grenier",
+  "artist_ids": [
+    "465e38b8-7eed-4d22-a6d2-d3603ee0c00b"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cmc": 4.0,
+  "collector_number": "DMR-118",
+  "color_identity": [
+    "R"
+  ],
+  "colors": [
+    "R"
+  ],
+  "digital": false,
+  "edhrec_rank": 2499,
+  "finishes": [
+    "nonfoil"
+  ],
+  "flavor_text": "Kicking the warren\n\u2014Argivian expression meaning \"causing trouble\"",
+  "foil": false,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper"
+  ],
+  "highres_image": true,
+  "id": "e9116aa0-1993-4f4a-9a1d-0561d0fbcba9",
+  "illustration_id": "b2af7bf3-ff5a-4b3e-978c-727c793d3442",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-08-25T17:41:59Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.webp?1787679719",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.jpg?1787679719",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.jpg?1787679719",
+    "crop": "https://cards.scryfall.io/crop/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.webp?1787679719",
+    "display": "https://cards.scryfall.io/display/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.webp?1787679719",
+    "grid": "https://cards.scryfall.io/grid/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.webp?1787679719",
+    "large": "https://cards.scryfall.io/large/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.jpg?1787679719",
+    "normal": "https://cards.scryfall.io/normal/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.jpg?1787679719",
+    "png": "https://cards.scryfall.io/png/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.png?1787679719",
+    "small": "https://cards.scryfall.io/small/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.jpg?1787679719",
+    "thumb": "https://cards.scryfall.io/thumb/front/e/9/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9.webp?1787679719"
+  },
+  "keywords": [
+    "Storm"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "banned",
+    "paupercommander": "legal",
+    "penny": "legal",
+    "pioneer": "not_legal",
+    "predh": "legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "not_legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{3}{R}",
+  "multiverse_ids": [],
+  "name": "Empty the Warrens",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "3a59c882-8bb8-49ba-862f-125020dd5bec",
+  "oracle_text": "Create two 1/1 red Goblin creature tokens.\nStorm (When you cast this spell, copy it for each spell cast before it this turn.)",
+  "oversized": false,
+  "penny_rank": 1401,
+  "prices": {
+    "eur": null,
+    "eur_foil": null,
+    "tix": null,
+    "usd": null,
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A3a59c882-8bb8-49ba-862f-125020dd5bec&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D=Empty+the+Warrens&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString=Empty+the+Warrens&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3DEmpty%2Bthe%2BWarrens%26view%3Dgrid"
+  },
+  "rarity": "common",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Empty+the+Warrens",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DEmpty%2Bthe%2BWarrens",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DEmpty%2Bthe%2BWarrens"
+  },
+  "released_at": "2026-11-09",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/plst?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/plst/DMR-118/empty-the-warrens?utm_source=api",
+  "set": "plst",
+  "set_id": "67e47ba2-b019-4181-9005-fe9fc021de44",
+  "set_name": "The List",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Aplst&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/67e47ba2-b019-4181-9005-fe9fc021de44",
+  "story_spotlight": false,
+  "textless": false,
+  "type_line": "Sorcery",
+  "uri": "https://api.scryfall.com/cards/e9116aa0-1993-4f4a-9a1d-0561d0fbcba9",
+  "variation": false
+}
