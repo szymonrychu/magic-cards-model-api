@@ -1,0 +1,33 @@
+# UR aggro - pilot duanceyao, 2026-08-29, source videre-58654130
+# mainboard 60, sideboard 15
+2 Assault Strobe
+1 Thundering Falls
+4 Cori-Steel Cutter
+4 Dragon's Rage Channeler
+2 Expressive Iteration
+1 Fiery Islet
+4 Lava Dart
+1 Stomping Ground
+3 Steam Vents
+4 Scalding Tarn
+2 Monstrous Rage
+2 Mountain
+3 Mutagenic Growth
+4 Slickshot Show-Off
+4 Monastery Swiftspear
+4 Mishra's Bauble
+4 Lightning Bolt
+1 Unholy Heat
+3 Bloodstained Mire
+3 Wooded Foothills
+4 Preordain
+
+Sideboard
+3 Consign to Memory
+1 Expressive Iteration
+1 Heritage Reclamation
+2 Surgical Extraction
+1 Pick Your Poison
+2 Spell Pierce
+3 Unholy Heat
+2 Meltdown

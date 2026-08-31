@@ -1,0 +1,42 @@
+# 45c control - pilot albertosd87, 2026-08-28, source videre-58655085
+# mainboard 60, sideboard 15
+2 Coiling Oracle
+2 Arid Mesa
+1 Hedge Maze
+2 Omnath, Locus of Creation
+3 Risen Reef
+4 Windswept Heath
+1 Ephemerate
+2 Voice of Resurgence
+2 Flooded Strand
+1 Witch Enchanter
+1 Wooded Foothills
+1 Plains
+1 Indatha Triome
+1 Steam Vents
+1 Temple Garden
+1 Raugrin Triome
+1 Breeding Pool
+1 Sacred Foundry
+1 Stomping Ground
+4 Solitude
+1 Hallowed Fountain
+1 Overgrown Tomb
+1 Forest
+4 Leyline Binding
+3 Renegade Rallier
+4 Quantum Riddler
+4 Birthing Ritual
+3 Starfield Vocalist
+2 Phelia, Exuberant Shepherd
+2 Consign to Memory
+2 Misty Rainforest
+
+Sideboard
+1 Consign to Memory
+2 High Noon
+2 Pest Control
+3 Clarion Conqueror
+2 White Orchid Phantom
+2 Prismatic Ending
+3 Endurance

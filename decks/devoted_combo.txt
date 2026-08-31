@@ -1,0 +1,42 @@
+# Devoted combo - pilot musasabi, 2026-08-29, source videre-58655572
+# mainboard 60, sideboard 15
+4 Devoted Druid
+4 Delighted Halfling
+4 Badgermole Cub
+4 Tyvar, Jubilant Brawler
+2 Birds of Paradise
+1 Vizier of Remedies
+1 Fiend Artisan
+1 Duskwatch Recruiter
+1 Formidable Speaker
+1 Shang-Chi, Master of Kung Fu
+1 Tyvar, the Pummeler
+1 Walking Ballista
+4 Leyline of Abundance
+2 Agatha's Soul Cauldron
+4 Green Sun's Zenith
+4 Nature's Rhythm
+1 Summoner's Pact
+3 Windswept Heath
+3 Verdant Catacombs
+2 Wooded Foothills
+2 Misty Rainforest
+2 Overgrown Tomb
+1 Temple Garden
+1 Underground Mortuary
+1 Nurturing Peatland
+1 Boseiju, Who Endures
+2 Dryad Arbor
+2 Forest
+
+Sideboard
+3 Thoughtseize
+2 Fatal Push
+2 Force of Vigor
+2 Vexing Bauble
+1 Collector Ouphe
+1 Crystal Barricade
+1 Endurance
+1 Keen-Eyed Curator
+1 Guerrilla Gorilla
+1 Kraul Harpooner

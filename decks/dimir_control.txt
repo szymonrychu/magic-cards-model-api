@@ -1,0 +1,36 @@
+# Dimir control - pilot cntrlfreak_ttv, 2026-08-25, source videre-58652547
+# mainboard 60, sideboard 15
+1 Darkslick Shores
+4 Thoughtseize
+1 Swamp
+3 Subtlety
+1 Otawara, Soaring City
+4 Fatal Push
+2 Sink into Stupor
+2 Tamiyo, Inquisitive Student
+2 Kaito, Bane of Nightmares
+2 Undercity Sewers
+2 Marsh Flats
+2 Sheoldred's Edict
+4 Flooded Strand
+4 Psychic Frog
+3 Watery Grave
+4 Polluted Delta
+2 Island
+3 Spell Snare
+1 Drown in the Loch
+2 Force of Negation
+3 Quantum Riddler
+3 Orcish Bowmasters
+3 Counterspell
+2 Cling to Dust
+
+Sideboard
+4 Consign to Memory
+2 Harbinger of the Seas
+3 Mystical Dispute
+1 Stern Scolding
+1 Surgical Extraction
+2 Engineered Explosives
+1 Glistening Deluge
+1 Requiting Hex

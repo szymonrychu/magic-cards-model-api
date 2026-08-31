@@ -1,0 +1,31 @@
+# Izzet prowess - pilot ratabruta, 2026-08-30, source videre-58656391
+# mainboard 60, sideboard 15
+2 Arid Mesa
+2 Bloodstained Mire
+4 Cori-Steel Cutter
+4 Dragon's Rage Channeler
+4 Expressive Iteration
+1 Fiery Islet
+4 Lava Dart
+4 Lightning Bolt
+4 Mishra's Bauble
+4 Monastery Swiftspear
+3 Mountain
+4 Mutagenic Growth
+4 Preordain
+3 Scalding Tarn
+4 Slickshot Show-Off
+3 Steam Vents
+1 Thundering Falls
+1 Unholy Heat
+1 Violent Urge
+3 Wooded Foothills
+
+Sideboard
+4 Consign to Memory
+1 End the Festivities
+1 Meltdown
+1 Spell Pierce
+3 Spell Snare
+2 Tormod's Crypt
+3 Unholy Heat

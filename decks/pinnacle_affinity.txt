@@ -1,0 +1,32 @@
+# Pinnacle affinity - pilot Shamplade, 2026-08-29, source videre-58656063
+# mainboard 60, sideboard 15
+4 Fiery Islet
+4 Mishra's Bauble
+4 Spirebluff Canal
+4 Tormod's Crypt
+4 Kappa Cannoneer
+1 Skateboard
+4 Pinnacle Emissary
+1 Shadowspear
+2 Shivan Reef
+1 Island
+1 Welding Jar
+1 Sink into Stupor
+4 Weapons Manufacturing
+4 Mox Opal
+4 Experimental Synthesizer
+4 Engineered Explosives
+1 Pithing Needle
+3 Metallic Rebuke
+4 Claws of Gix
+4 Urza's Saga
+1 Steam Vents
+
+Sideboard
+2 Damping Sphere
+2 Blood Moon
+2 Mystical Dispute
+3 Consign to Memory
+3 Galvanic Blast
+2 Emry, Lurker of the Loch
+1 Whipflare

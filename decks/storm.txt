@@ -1,0 +1,38 @@
+# Storm - pilot IrIWANG, 2026-08-29, source videre-58655658
+# mainboard 60, sideboard 15
+# Three separate "Mountain" rows in the source list merged into one.
+4 Ruby Medallion
+4 Ral, Monsoon Mage
+4 First Day of Class
+4 Highway Robbery
+4 Hex Magic
+4 Manamorphose
+4 Pyretic Ritual
+4 Desperate Ritual
+3 Past in Flames
+2 Wrenn's Resolve
+2 Stormscale Scion
+1 Valakut Awakening
+3 Mountain
+3 Scalding Tarn
+3 Bloodstained Mire
+3 Wooded Foothills
+2 Arid Mesa
+2 Thundering Falls
+1 Steam Vents
+1 Stomping Ground
+1 Commercial District
+1 Boseiju, Who Endures
+
+Sideboard
+3 Divide by Zero
+2 Boomerang Basics
+2 Redirect Lightning
+1 Abandon Attachments
+1 Improvisation Capstone
+1 Mascot Exhibition
+1 Iroh's Demonstration
+1 It'll Quench Ya!
+1 Origin of Metalbending
+1 Price of Freedom
+1 Firebending Lesson

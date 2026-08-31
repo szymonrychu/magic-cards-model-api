@@ -1,0 +1,32 @@
+# Boros ponza - pilot Zompatanfo, 2026-08-30, source videre-58656392
+# mainboard 60, sideboard 15
+4 Avengers Disassembled
+1 Castle Ardenvale
+4 Cleansing Wildfire
+4 Cori Mountain Monastery
+4 Demolition Field
+4 Erode
+4 Field of Ruin
+4 Galvanic Discharge
+2 High Noon
+2 Mountain
+4 Path to Exile
+4 Plains
+4 Price of Freedom
+1 Rustvale Bridge
+3 Sacred Foundry
+4 Solitude
+3 Sunken Citadel
+1 The Legend of Roku
+3 Wrath of the Skies
+
+Sideboard
+2 High Noon
+1 Kaheera, the Orphanguard
+2 Orim's Chant
+2 Rest in Peace
+2 Rustvale Bridge
+1 Surgical Extraction
+1 The Legend of Roku
+3 Wear/Tear
+1 Wrath of God

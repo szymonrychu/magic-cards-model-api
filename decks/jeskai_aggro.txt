@@ -1,0 +1,38 @@
+# Jeskai aggro - pilot _Falcon_, 2026-08-28, source videre-58655057
+# mainboard 60, sideboard 15
+4 Ajani, Nacatl Pariah
+1 Arena of Glory
+4 Arid Mesa
+1 Dalkovan Encampment
+1 Elegant Parlor
+3 Ephemerate
+4 Flooded Strand
+2 Galvanic Discharge
+3 Goblin Bombardment
+4 Guide of Souls
+2 Hallowed Fountain
+1 Meticulous Archive
+1 Mountain
+4 Ocelot Pride
+2 Plains
+4 Quantum Riddler
+3 Ragavan, Nimble Pilferer
+2 Sacred Foundry
+1 Scalding Tarn
+4 Solitude
+2 Starfield Shepherd
+1 Steam Vents
+2 Thraben Charm
+3 Voice of Victory
+1 Windswept Heath
+
+Sideboard
+2 Consign to Memory
+2 Flusterstorm
+1 Grafdigger's Cage
+2 Obsidian Charmaw
+1 Orim's Chant
+1 Prismatic Ending
+2 Spell Snare
+2 Surgical Extraction
+2 Wrath of the Skies

@@ -1,0 +1,30 @@
+# Hollow one - pilot hockeybro26, 2026-08-29, source videre-58656118
+# mainboard 60, sideboard 15
+1 Arena of Glory
+3 Bloodstained Mire
+4 Blazing Rootwalla
+4 Faithless Looting
+4 Burning Inquiry
+4 Detective's Phoenix
+1 Elegant Parlor
+4 Sacred Foundry
+4 Hardened Academic
+4 Hollow One
+2 Mountain
+4 Marauding Mako
+4 Lightning Bolt
+2 Practiced Offense
+2 Scalding Tarn
+4 Street Wraith
+4 Vengevine
+2 Wooded Foothills
+3 Arid Mesa
+
+Sideboard
+2 Damping Sphere
+2 Enter the Avatar State
+2 Prismatic Ending
+2 Rough // Tumble
+2 Vexing Bauble
+2 Wear // Tear
+3 Surgical Extraction
