@@ -28,6 +28,15 @@
 
 * { box-sizing: border-box; }
 
+/* `[hidden]` is only a UA-stylesheet `display: none`, so ANY `display` rule
+   in this file beats it. That bit three times: an empty bordered banner on
+   the board, `#game`'s grid rendering on top of the lobby, and - worst - the
+   `.modal` overlay, which is `position: fixed; inset: 0` with a dark
+   background, so while "hidden" it covered the whole page and swallowed
+   every click. The page looked greyed out and no button worked.
+   Asserted once, globally, rather than per-element. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -151,10 +160,6 @@ h3 { font-size: 14px; }
 #phase-track li.target { border-color: var(--accent); color: var(--accent); }
 
 #banners { grid-area: banner; display: flex; flex-direction: column; gap: 6px; }
-/* `[hidden]` only sets `display: none` at the UA level, so any `display`
-   rule here would override it and leave an empty bordered box on the board -
-   which is exactly what happened. Re-assert it. */
-#banners > div[hidden], #side-panel > div[hidden] { display: none; }
 #banners > div {
   border-radius: 8px;
   padding: 8px 12px;
