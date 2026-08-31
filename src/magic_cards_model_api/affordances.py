@@ -123,6 +123,20 @@ def ability_hints(ability: Any) -> dict[str, Any]:
             "amount": loyalty.amount,
             "label": f"+{loyalty.amount}" if loyalty.amount > 0 else str(loyalty.amount),
         }
+    # A mana ability that offers a choice of colour needs one announced -
+    # `Game.activate_ability`'s `color` argument, and `ActivateRequest.color`.
+    # A Cavern of Souls or a Ravnica dual is unusable from a UI that never
+    # asks, and a UI that asks on every land is asking five times too often,
+    # so the options are reported here: `None` for an ability with no choice
+    # to make, a list of colour letters for one that offers a fixed set, and
+    # every colour for an "any colour" source (CR 106.1b).
+    mana = getattr(ability, "mana", None)
+    if mana is not None:
+        if mana.any_color:
+            hints["mana_options"] = ["W", "U", "B", "R", "G"]
+        else:
+            produced = {color.value for option in mana.options for color in option}
+            hints["mana_options"] = sorted(produced) if len(mana.options) > 1 else None
     # An ability's targeting is read off its effect text, which is what
     # `engine_api.check_target` already asks `profile_for_text` for - the same
     # parse the engine itself runs at CR 602.2b announcement.

@@ -1049,6 +1049,7 @@ function beginAction(kind, cardId, extra) {
       keyword: null,
       modes: [],
       xValue: null,
+      color: null, // chosen colour for a mana ability that offers one
       altCost: null, // chosen CR 118.9 alternative cost index, or null
       choosing: [], // objects supplied to pay it (pitched cards, sacrifices)
       targets: [],
@@ -1280,6 +1281,19 @@ function renderActionTray() {
     );
   }
 
+  // --- which colour (CR 106.1b), only for a source that offers a choice ---
+  if (ability && ability.mana_options) {
+    const chips = ability.mana_options
+      .map(
+        (color) =>
+          `<button class="chip ${action.color === color ? "on" : ""}" onclick="chooseColor('${color}')">${symbolHtml(`{${color}}`, true)}</button>`
+      )
+      .join("");
+    parts.push(
+      trayStepHtml("Which colour", `<div class="chip-row">${chips}</div>`, action.color !== null)
+    );
+  }
+
   // --- alternative costs (CR 118.9), only when this card offers one ---
   const alts = (action.affordance && action.affordance.alternative_costs) || [];
   if (alts.length && action.kind === "cast") {
@@ -1409,6 +1423,13 @@ function renderAlternativeCostStep(action, alts) {
   );
 }
 
+function chooseColor(color) {
+  if (!game.action) return;
+  game.action.color = game.action.color === color ? null : color;
+  render(game.state);
+}
+window.chooseColor = chooseColor;
+
 function chooseAlternativeCost(index) {
   if (!game.action) return;
   game.action.altCost = game.action.altCost === index ? null : index;
@@ -1455,6 +1476,7 @@ async function confirmAction() {
       if (res.allowed === false) return failAction(res.reason);
     } else if (action.abilityIndex !== null) {
       const body = { player: you, card_id: action.cardId, ability_index: action.abilityIndex };
+      if (action.color) body.color = action.color;
       const targets = sendTargets(action);
       if (targets !== undefined) body.targets = targets;
       if (action.xValue !== null) body.x_value = action.xValue;
