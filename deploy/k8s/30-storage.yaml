@@ -1,0 +1,47 @@
+# Two PersistentVolumeClaims and one hostPath (the hostPath lives on the Pod,
+# see 50-pod.yaml).
+#
+# Neither claim names a storageClassName, so both take the cluster's DEFAULT
+# StorageClass. If the cluster has no default, both PVCs stay `Pending`
+# forever and the Pod never starts - `kubectl -n mtg get pvc` shows it, and
+# `kubectl -n mtg describe pvc mtg-agent-memory` says "no persistent volumes
+# available for this claim and no storage class is set". Fix it either by
+# marking a StorageClass default:
+#
+#     kubectl annotate storageclass <name> \
+#       storageclass.kubernetes.io/is-default-class=true
+#
+# or by uncommenting and filling in `storageClassName` on both claims below.
+---
+# The agent's own notes. This is the one thing that crosses a match boundary:
+# the agent container exits after every match and comes back empty, so
+# /workspace/memory is where cross-game learning actually lives. Losing this
+# volume means losing everything the agent has learned.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mtg-agent-memory
+  namespace: mtg
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+# The Scryfall card cache. Not correctness-critical, purely speed: a cold
+# cache re-fetches every card on first use (measured at 34.5s for a single
+# decklist), and every Pod restart would pay it again without a volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mtg-scryfall-cache
+  namespace: mtg
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

@@ -1,0 +1,37 @@
+# One Service, three ports - the same three things compose published.
+#
+# 8000 is the point of the whole stack: it serves /play/, so without it you
+# cannot play. 8090 and 8080 are exposed because they are how you see what the
+# agent is doing: `GET /status` on the driver says which deck it identified and
+# how confidently, and the agent's `/v1/messages/{turnId}` carries the full
+# text of a turn the driver only logs a trimmed version of (plus /v1/probe and
+# /v1/interrupt when a turn looks stuck). Neither has any authentication, so
+# they belong on a home network and nowhere else - drop those two ports if the
+# Service is reachable by anyone you would not hand the API key to.
+#
+# type is NodePort so a single-node/homelab cluster can reach it without an
+# ingress controller. If you would rather not open node ports, change `type`
+# to ClusterIP, delete the three nodePort lines, and use
+# `kubectl -n mtg port-forward pod/mtg-stack 8000 8080 8090`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mtg-stack
+  namespace: mtg
+spec:
+  type: NodePort
+  selector:
+    app: mtg-stack
+  ports:
+    - name: game
+      port: 8000
+      targetPort: 8000
+      nodePort: 30800
+    - name: agent
+      port: 8080
+      targetPort: 8080
+      nodePort: 30880
+    - name: driver
+      port: 8090
+      targetPort: 8090
+      nodePort: 30890

@@ -1,0 +1,34 @@
+# The agent spawns the `mtg` MCP server itself, over stdio, inside the agent
+# container - so that server's `--api` URL is resolved by the agent, not by
+# Kubernetes. In compose it points at `http://game:8000`; in one Pod the game
+# is on the same network namespace, so it must be `http://127.0.0.1:8000`.
+#
+# `deploy/mcp.base.json` in the repo is the compose-facing file and is left
+# alone. The wrapper reads whatever `BASE_MCP_PATH` points at, so this
+# ConfigMap is mounted at /etc/mtg/mcp.base.json and the agent container sets
+# BASE_MCP_PATH to that path - no overmount of the repo copy, and compose keeps
+# working unchanged.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mtg-agent-mcp
+  namespace: mtg
+data:
+  mcp.base.json: |
+    {
+      "mcpServers": {
+        "mtg": {
+          "command": "python",
+          "args": [
+            "-m",
+            "magic_cards_model_api.mcp",
+            "--api",
+            "http://127.0.0.1:8000"
+          ]
+        },
+        "spellslinger": {
+          "type": "http",
+          "url": "https://mcp.szymonrichert.pl/mcp"
+        }
+      }
+    }
