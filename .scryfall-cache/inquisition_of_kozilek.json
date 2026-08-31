@@ -1,0 +1,135 @@
+{
+  "artist": "Tomasz Jedruszek",
+  "artist_ids": [
+    "bba69285-2445-4a4b-a847-59397be972ea"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 664241,
+  "cmc": 1.0,
+  "collector_number": "80",
+  "color_identity": [
+    "B"
+  ],
+  "colors": [
+    "B"
+  ],
+  "digital": false,
+  "edhrec_rank": 9103,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "You will scream out your innermost secrets just to make it stop.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "17f38740-20fd-4097-90f8-f0c2c2ff7281",
+  "illustration_id": "5a4c2371-8dc2-4fca-ae7f-8c4a84638b3c",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T05:51:45Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.webp?1783921905",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.jpg?1783921905",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.jpg?1783921905",
+    "crop": "https://cards.scryfall.io/crop/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.webp?1783921905",
+    "display": "https://cards.scryfall.io/display/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.webp?1783921905",
+    "grid": "https://cards.scryfall.io/grid/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.webp?1783921905",
+    "large": "https://cards.scryfall.io/large/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.jpg?1783921905",
+    "normal": "https://cards.scryfall.io/normal/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.jpg?1783921905",
+    "png": "https://cards.scryfall.io/png/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.png?1783921905",
+    "small": "https://cards.scryfall.io/small/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.jpg?1783921905",
+    "thumb": "https://cards.scryfall.io/thumb/front/1/7/17f38740-20fd-4097-90f8-f0c2c2ff7281.webp?1783921905"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{B}",
+  "mtgo_id": 101644,
+  "multiverse_ids": [
+    571413
+  ],
+  "name": "Inquisition of Kozilek",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "395611fa-aec2-4c9e-92c3-70cf95cc00f4",
+  "oracle_text": "Target player reveals their hand. You choose a nonland card from it with mana value 3 or less. That player discards that card.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2022-06-17",
+    "source": "PleasantKenobi",
+    "source_uri": "https://www.youtube.com/watch?v=1WuGFmG67cc"
+  },
+  "prices": {
+    "eur": "0.84",
+    "eur_foil": "0.55",
+    "tix": "1.91",
+    "usd": "0.58",
+    "usd_etched": null,
+    "usd_foil": "0.91"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A395611fa-aec2-4c9e-92c3-70cf95cc00f4&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/101644?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=664241&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F276442%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Inquisition+of+Kozilek",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=571413&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DInquisition%2Bof%2BKozilek",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DInquisition%2Bof%2BKozilek"
+  },
+  "released_at": "2022-07-08",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/17f38740-20fd-4097-90f8-f0c2c2ff7281/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/2x2?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/2x2/80/inquisition-of-kozilek?utm_source=api",
+  "set": "2x2",
+  "set_id": "5a645837-b050-449f-ac90-1e7ccbf45031",
+  "set_name": "Double Masters 2022",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3A2x2&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/5a645837-b050-449f-ac90-1e7ccbf45031",
+  "story_spotlight": false,
+  "tcgplayer_id": 276442,
+  "textless": false,
+  "type_line": "Sorcery",
+  "uri": "https://api.scryfall.com/cards/17f38740-20fd-4097-90f8-f0c2c2ff7281",
+  "variation": false
+}

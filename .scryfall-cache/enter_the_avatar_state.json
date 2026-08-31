@@ -1,0 +1,142 @@
+{
+  "arena_id": 97291,
+  "artist": "Shiren",
+  "artist_ids": [
+    "21c7279b-f378-43d2-b369-c3a7d1435106"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 857729,
+  "cmc": 1.0,
+  "collector_number": "18",
+  "color_identity": [
+    "W"
+  ],
+  "colors": [
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 4512,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "\"The glow is the combination of all your past lives, focusing their energy through your body.\"\n\u2014Avatar Roku",
+  "foil": true,
+  "frame": "2015",
+  "frame_effects": [
+    "lesson"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "arena",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "a8f3d2cb-d073-4df8-8769-49612628a377",
+  "illustration_id": "5ba3c1a8-7a9e-4ea0-acb9-b341e03ce738",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T01:10:01Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.webp?1783905001",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.jpg?1783905001",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.jpg?1783905001",
+    "crop": "https://cards.scryfall.io/crop/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.webp?1783905001",
+    "display": "https://cards.scryfall.io/display/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.webp?1783905001",
+    "grid": "https://cards.scryfall.io/grid/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.webp?1783905001",
+    "large": "https://cards.scryfall.io/large/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.jpg?1783905001",
+    "normal": "https://cards.scryfall.io/normal/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.jpg?1783905001",
+    "png": "https://cards.scryfall.io/png/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.png?1783905001",
+    "small": "https://cards.scryfall.io/small/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.jpg?1783905001",
+    "thumb": "https://cards.scryfall.io/thumb/front/a/8/a8f3d2cb-d073-4df8-8769-49612628a377.webp?1783905001"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "legal",
+    "standardbrawl": "legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{W}",
+  "mtgo_id": 144512,
+  "multiverse_ids": [],
+  "name": "Enter the Avatar State",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "4e552be1-0702-4e18-822f-98611f8a8e70",
+  "oracle_text": "Until end of turn, target creature you control becomes an Avatar in addition to its other types and gains flying, first strike, lifelink, and hexproof. (A creature with hexproof can't be the target of spells or abilities your opponents control.)",
+  "oversized": false,
+  "penny_rank": 3276,
+  "preview": {
+    "previewed_at": "2025-11-03",
+    "source": "But Why Tho?",
+    "source_uri": "https://butwhytho.net/2025/11/atla-magic-the-gathering-bonus-sheet/"
+  },
+  "prices": {
+    "eur": "0.27",
+    "eur_foil": "0.37",
+    "tix": "0.03",
+    "usd": "0.34",
+    "usd_etched": null,
+    "usd_foil": "0.36"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A4e552be1-0702-4e18-822f-98611f8a8e70&unique=prints",
+  "promo": false,
+  "promo_types": [
+    "universesbeyond"
+  ],
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/144512?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=857729&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F662030%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Enter+the+Avatar+State",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DEnter%2Bthe%2BAvatar%2BState",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DEnter%2Bthe%2BAvatar%2BState"
+  },
+  "released_at": "2025-11-21",
+  "reprint": false,
+  "reserved": false,
+  "resource_id": "3F6F09A5F009A6F31B11711E65C2EFE8A5C1D2A896F0AD345F5F7E49F837CE5A",
+  "rulings_uri": "https://api.scryfall.com/cards/a8f3d2cb-d073-4df8-8769-49612628a377/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/tla?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/tla/18/enter-the-avatar-state?utm_source=api",
+  "set": "tla",
+  "set_id": "118f7e64-5caa-4cb7-99a8-184f4d3a7422",
+  "set_name": "Avatar: The Last Airbender",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Atla&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/118f7e64-5caa-4cb7-99a8-184f4d3a7422",
+  "story_spotlight": false,
+  "tcgplayer_id": 662030,
+  "textless": false,
+  "type_line": "Instant \u2014 Lesson",
+  "uri": "https://api.scryfall.com/cards/a8f3d2cb-d073-4df8-8769-49612628a377",
+  "variation": false
+}

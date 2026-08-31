@@ -1,0 +1,133 @@
+{
+  "arena_id": 94115,
+  "artist": "Kamila Szutenberg",
+  "artist_ids": [
+    "bec9ba7f-594e-4ff0-8172-9ec1fc909607"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 796134,
+  "cmc": 0.0,
+  "collector_number": "687",
+  "color_identity": [],
+  "colors": [],
+  "digital": false,
+  "edhrec_rank": 397,
+  "finishes": [
+    "nonfoil"
+  ],
+  "foil": false,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "arena",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "0c7e51b6-4898-4632-b39c-3ce438caa882",
+  "illustration_id": "a27c2ad6-b366-4eb6-a6a0-8e32d528475d",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:15:02Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.webp?1783908902",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.jpg?1783908902",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.jpg?1783908902",
+    "crop": "https://cards.scryfall.io/crop/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.webp?1783908902",
+    "display": "https://cards.scryfall.io/display/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.webp?1783908902",
+    "grid": "https://cards.scryfall.io/grid/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.webp?1783908902",
+    "large": "https://cards.scryfall.io/large/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.jpg?1783908902",
+    "normal": "https://cards.scryfall.io/normal/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.jpg?1783908902",
+    "png": "https://cards.scryfall.io/png/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.png?1783908902",
+    "small": "https://cards.scryfall.io/small/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.jpg?1783908902",
+    "thumb": "https://cards.scryfall.io/thumb/front/0/c/0c7e51b6-4898-4632-b39c-3ce438caa882.webp?1783908902"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "legal",
+    "standardbrawl": "legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "",
+  "mtgo_id": 134710,
+  "multiverse_ids": [
+    680826
+  ],
+  "name": "Demolition Field",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "93953926-a644-49bb-9b5a-4c8f19114c7e",
+  "oracle_text": "{T}: Add {C}.\n{2}, {T}, Sacrifice this land: Destroy target nonbasic land an opponent controls. That land's controller may search their library for a basic land card, put it onto the battlefield, then shuffle. You may search your library for a basic land card, put it onto the battlefield, then shuffle.",
+  "oversized": false,
+  "penny_rank": 424,
+  "prices": {
+    "eur": "0.26",
+    "eur_foil": null,
+    "tix": "0.02",
+    "usd": "0.27",
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A93953926-a644-49bb-9b5a-4c8f19114c7e&unique=prints",
+  "produced_mana": [
+    "C"
+  ],
+  "promo": false,
+  "promo_types": [
+    "startercollection"
+  ],
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/134710?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=796134&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F591093%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Demolition+Field",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=680826&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DDemolition%2BField",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DDemolition%2BField"
+  },
+  "released_at": "2024-11-15",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/0c7e51b6-4898-4632-b39c-3ce438caa882/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/fdn?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/fdn/687/demolition-field?utm_source=api",
+  "set": "fdn",
+  "set_id": "a7ecb771-d1b6-4dec-8cf5-8d45179f21e0",
+  "set_name": "Foundations",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Afdn&unique=prints",
+  "set_type": "core",
+  "set_uri": "https://api.scryfall.com/sets/a7ecb771-d1b6-4dec-8cf5-8d45179f21e0",
+  "story_spotlight": false,
+  "tcgplayer_id": 591093,
+  "textless": false,
+  "type_line": "Land",
+  "uri": "https://api.scryfall.com/cards/0c7e51b6-4898-4632-b39c-3ce438caa882",
+  "variation": false
+}

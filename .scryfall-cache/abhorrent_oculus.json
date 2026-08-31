@@ -1,0 +1,161 @@
+{
+  "all_parts": [
+    {
+      "component": "combo_piece",
+      "id": "5f89402a-ef5c-47c1-8cef-f40920f98fac",
+      "name": "Abhorrent Oculus",
+      "object": "related_card",
+      "type_line": "Creature \u2014 Eye",
+      "uri": "https://api.scryfall.com/cards/5f89402a-ef5c-47c1-8cef-f40920f98fac"
+    },
+    {
+      "component": "combo_piece",
+      "id": "01104ab1-84e1-4c78-853d-637c6554bdf9",
+      "name": "Manifest",
+      "object": "related_card",
+      "type_line": "Creature",
+      "uri": "https://api.scryfall.com/cards/01104ab1-84e1-4c78-853d-637c6554bdf9"
+    }
+  ],
+  "arena_id": 92104,
+  "artist": "Bryan Sola",
+  "artist_ids": [
+    "e6879299-a28b-48bc-8db1-9cafcf36de09"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 788264,
+  "cmc": 3.0,
+  "collector_number": "42",
+  "color_identity": [
+    "U"
+  ],
+  "colors": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 5466,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "d2705b43-a94a-44c0-8740-82e0b296820c",
+  "illustration_id": "6ec0c8c4-2639-4566-a748-13b7eac6f1a8",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:25:00Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.webp?1783909500",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.jpg?1783909500",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.jpg?1783909500",
+    "crop": "https://cards.scryfall.io/crop/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.webp?1783909500",
+    "display": "https://cards.scryfall.io/display/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.webp?1783909500",
+    "grid": "https://cards.scryfall.io/grid/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.webp?1783909500",
+    "large": "https://cards.scryfall.io/large/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.jpg?1783909500",
+    "normal": "https://cards.scryfall.io/normal/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.jpg?1783909500",
+    "png": "https://cards.scryfall.io/png/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.png?1783909500",
+    "small": "https://cards.scryfall.io/small/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.jpg?1783909500",
+    "thumb": "https://cards.scryfall.io/thumb/front/d/2/d2705b43-a94a-44c0-8740-82e0b296820c.webp?1783909500"
+  },
+  "keywords": [
+    "Flying",
+    "Manifest",
+    "Manifest dread"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "legal",
+    "standardbrawl": "legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{2}{U}",
+  "mtgo_id": 130215,
+  "multiverse_ids": [
+    673447
+  ],
+  "name": "Abhorrent Oculus",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "b1a0e129-27f0-4a09-b00d-497e18777306",
+  "oracle_text": "As an additional cost to cast this spell, exile six cards from your graveyard.\nFlying\nAt the beginning of each opponent's upkeep, manifest dread. (Look at the top two cards of your library. Put one onto the battlefield face down as a 2/2 creature and the other into your graveyard. Turn it face up any time for its mana cost if it's a creature card.)",
+  "oversized": false,
+  "power": "5",
+  "preview": {
+    "previewed_at": "2024-09-10",
+    "source": "Wizards of the Coast",
+    "source_uri": ""
+  },
+  "prices": {
+    "eur": "14.73",
+    "eur_foil": "20.14",
+    "tix": "11.19",
+    "usd": "12.66",
+    "usd_etched": null,
+    "usd_foil": "16.49"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ab1a0e129-27f0-4a09-b00d-497e18777306&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/130215?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=788264&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F578053%3Fpage%3D1"
+  },
+  "rarity": "mythic",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Abhorrent+Oculus",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=673447&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DAbhorrent%2BOculus",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DAbhorrent%2BOculus"
+  },
+  "released_at": "2024-09-27",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/d2705b43-a94a-44c0-8740-82e0b296820c/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/dsk?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/dsk/42/abhorrent-oculus?utm_source=api",
+  "security_stamp": "oval",
+  "set": "dsk",
+  "set_id": "a111d8a9-b647-48ec-afab-2b78f92173f5",
+  "set_name": "Duskmourn: House of Horror",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Adsk&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/a111d8a9-b647-48ec-afab-2b78f92173f5",
+  "story_spotlight": false,
+  "tcgplayer_id": 578053,
+  "textless": false,
+  "toughness": "5",
+  "type_line": "Creature \u2014 Eye",
+  "uri": "https://api.scryfall.com/cards/d2705b43-a94a-44c0-8740-82e0b296820c",
+  "variation": false
+}

@@ -1,0 +1,148 @@
+{
+  "arena_id": 90965,
+  "artist": "Deruchenko Alexander",
+  "artist_ids": [
+    "806f6ff9-6ed4-4e93-998a-a562c0b792e6"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 771191,
+  "cmc": 3.0,
+  "collector_number": "116",
+  "color_identity": [
+    "R"
+  ],
+  "colors": [
+    "R"
+  ],
+  "digital": false,
+  "edhrec_rank": 8511,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "frame_effects": [
+    "enchantment"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "e2a01edd-dbc0-4ed4-b827-9b608290e9a1",
+  "illustration_id": "39fd322a-23ce-4b3b-b127-e9ca8fe1a008",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T02:54:33Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.webp?1783911273",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.jpg?1783911273",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.jpg?1783911273",
+    "crop": "https://cards.scryfall.io/crop/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.webp?1783911273",
+    "display": "https://cards.scryfall.io/display/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.webp?1783911273",
+    "grid": "https://cards.scryfall.io/grid/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.webp?1783911273",
+    "large": "https://cards.scryfall.io/large/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.jpg?1783911273",
+    "normal": "https://cards.scryfall.io/normal/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.jpg?1783911273",
+    "png": "https://cards.scryfall.io/png/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.png?1783911273",
+    "small": "https://cards.scryfall.io/small/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.jpg?1783911273",
+    "thumb": "https://cards.scryfall.io/thumb/front/e/2/e2a01edd-dbc0-4ed4-b827-9b608290e9a1.webp?1783911273"
+  },
+  "keywords": [
+    "Flying",
+    "Collect evidence",
+    "Haste",
+    "Bestow"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{2}{R}",
+  "mtgo_id": 126249,
+  "multiverse_ids": [
+    662268
+  ],
+  "name": "Detective's Phoenix",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "52c3fe55-74ee-44cb-b62b-dc6c5dfdc33e",
+  "oracle_text": "Bestow\u2014{R}, Collect evidence 6. (To pay this bestow cost, pay {R} and exile cards with total mana value 6 or greater from your graveyard.)\nFlying, haste\nEnchanted creature gets +2/+2 and has flying and haste.\nYou may cast this card from your graveyard using its bestow ability.",
+  "oversized": false,
+  "penny_rank": 1030,
+  "power": "2",
+  "preview": {
+    "previewed_at": "2024-05-21",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://magic.wizards.com/en/news/feature/modern-horizons-3-mechanics"
+  },
+  "prices": {
+    "eur": "0.74",
+    "eur_foil": "1.50",
+    "tix": "0.02",
+    "usd": "0.33",
+    "usd_etched": null,
+    "usd_foil": "0.37"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A52c3fe55-74ee-44cb-b62b-dc6c5dfdc33e&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/126249?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=771191&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F552322%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Detective%27s+Phoenix",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=662268&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DDetective%2527s%2BPhoenix",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DDetective%2527s%2BPhoenix"
+  },
+  "released_at": "2024-06-14",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/e2a01edd-dbc0-4ed4-b827-9b608290e9a1/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh3?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh3/116/detectives-phoenix?utm_source=api",
+  "security_stamp": "oval",
+  "set": "mh3",
+  "set_id": "3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "set_name": "Modern Horizons 3",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh3&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/3ed80bb6-77e8-4aa7-8262-95377a38aba1",
+  "story_spotlight": false,
+  "tcgplayer_id": 552322,
+  "textless": false,
+  "toughness": "2",
+  "type_line": "Enchantment Creature \u2014 Phoenix",
+  "uri": "https://api.scryfall.com/cards/e2a01edd-dbc0-4ed4-b827-9b608290e9a1",
+  "variation": false
+}

@@ -1,0 +1,140 @@
+{
+  "artist": "Andrew Mar",
+  "artist_ids": [
+    "adad79bf-cd52-456a-b170-740ed8bff0fc"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 566810,
+  "cmc": 8.0,
+  "collector_number": "75",
+  "color_identity": [
+    "B"
+  ],
+  "colors": [
+    "B"
+  ],
+  "digital": false,
+  "edhrec_rank": 1103,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "Malice spreads on wings of tyranny.",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "1be9d9a4-d7ee-4854-abc2-85cabf993ec9",
+  "illustration_id": "935965e1-d66f-4dc3-beac-7e502a94079a",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T07:14:25Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.webp?1783926865",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.jpg?1783926865",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.jpg?1783926865",
+    "crop": "https://cards.scryfall.io/crop/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.webp?1783926865",
+    "display": "https://cards.scryfall.io/display/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.webp?1783926865",
+    "grid": "https://cards.scryfall.io/grid/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.webp?1783926865",
+    "large": "https://cards.scryfall.io/large/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.jpg?1783926865",
+    "normal": "https://cards.scryfall.io/normal/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.jpg?1783926865",
+    "png": "https://cards.scryfall.io/png/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.png?1783926865",
+    "small": "https://cards.scryfall.io/small/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.jpg?1783926865",
+    "thumb": "https://cards.scryfall.io/thumb/front/1/b/1be9d9a4-d7ee-4854-abc2-85cabf993ec9.webp?1783926865"
+  },
+  "keywords": [
+    "Flying"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "not_legal",
+    "commander": "legal",
+    "competitivebrawl": "not_legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "not_legal",
+    "historic": "not_legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "not_legal",
+    "tlr": "not_legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{6}{B}{B}",
+  "mtgo_id": 90523,
+  "multiverse_ids": [
+    522151
+  ],
+  "name": "Archon of Cruelty",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "aa1a6646-c1e6-4bff-9092-43ee3e137914",
+  "oracle_text": "Flying\nWhenever this creature enters or attacks, target opponent sacrifices a creature or planeswalker of their choice, discards a card, and loses 3 life. You draw a card and gain 3 life.",
+  "oversized": false,
+  "power": "6",
+  "preview": {
+    "previewed_at": "2021-05-30",
+    "source": "Kenta Harane",
+    "source_uri": "https://twitter.com/jspd_/status/1398963465054613508"
+  },
+  "prices": {
+    "eur": "8.04",
+    "eur_foil": "15.34",
+    "tix": "4.62",
+    "usd": "8.12",
+    "usd_etched": null,
+    "usd_foil": "14.19"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aaa1a6646-c1e6-4bff-9092-43ee3e137914&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/90523?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=566810&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F240156%3Fpage%3D1"
+  },
+  "rarity": "mythic",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Archon+of+Cruelty",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=522151&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DArchon%2Bof%2BCruelty",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DArchon%2Bof%2BCruelty"
+  },
+  "released_at": "2021-06-18",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/1be9d9a4-d7ee-4854-abc2-85cabf993ec9/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mh2?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mh2/75/archon-of-cruelty?utm_source=api",
+  "security_stamp": "oval",
+  "set": "mh2",
+  "set_id": "c1c7eb8c-f205-40ab-a609-767cb296544e",
+  "set_name": "Modern Horizons 2",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amh2&unique=prints",
+  "set_type": "draft_innovation",
+  "set_uri": "https://api.scryfall.com/sets/c1c7eb8c-f205-40ab-a609-767cb296544e",
+  "story_spotlight": false,
+  "tcgplayer_id": 240156,
+  "textless": false,
+  "toughness": "6",
+  "type_line": "Creature \u2014 Archon",
+  "uri": "https://api.scryfall.com/cards/1be9d9a4-d7ee-4854-abc2-85cabf993ec9",
+  "variation": false
+}

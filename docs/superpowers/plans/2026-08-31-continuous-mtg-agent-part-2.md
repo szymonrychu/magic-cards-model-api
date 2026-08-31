@@ -976,49 +976,51 @@ In `Manager.__init__`, after `self.ring = Ring()`:
 And these methods on `Manager`:
 
 ```python
-    def probe(self, text: str = "") -> str:
-        """Write text straight into the PTY mid-turn. Never raises BusyError:
-        working while a turn is in flight is the entire point."""
-        with self._lock:
-            proc = self._proc
-            if proc is None or self._state in (State.DEAD, State.BOOTING):
-                raise ProbeUnavailableError("probe unavailable: no live session")
-            self._probe_seq += 1
-            probe_id = f"probe-{self._probe_seq}"
-        self.probes.start(probe_id, self.now())
-        seq = self.submit_seq
-        body = text or DEFAULT_PROBE_TEXT
-        with self._pty_lock:
-            try:
-                proc.write((seq.paste_start + body + seq.paste_end).encode())
-                time.sleep(self.settings.submit_delay)
-                proc.write(seq.submit.encode())
-            except OSError as exc:
-                raise ProbeUnavailableError(f"probe write failed: {exc}") from exc
-        self.metrics.probe_total.labels(result="written").inc()
-        log.info("probe written probe_id=%s", probe_id)
-        return probe_id
+def probe(self, text: str = "") -> str:
+    """Write text straight into the PTY mid-turn. Never raises BusyError:
+    working while a turn is in flight is the entire point."""
+    with self._lock:
+        proc = self._proc
+        if proc is None or self._state in (State.DEAD, State.BOOTING):
+            raise ProbeUnavailableError("probe unavailable: no live session")
+        self._probe_seq += 1
+        probe_id = f"probe-{self._probe_seq}"
+    self.probes.start(probe_id, self.now())
+    seq = self.submit_seq
+    body = text or DEFAULT_PROBE_TEXT
+    with self._pty_lock:
+        try:
+            proc.write((seq.paste_start + body + seq.paste_end).encode())
+            time.sleep(self.settings.submit_delay)
+            proc.write(seq.submit.encode())
+        except OSError as exc:
+            raise ProbeUnavailableError(f"probe write failed: {exc}") from exc
+    self.metrics.probe_total.labels(result="written").inc()
+    log.info("probe written probe_id=%s", probe_id)
+    return probe_id
 
-    def probe_status(self, probe_id: str) -> dict | None:
-        return self.probes.status(probe_id)
 
-    def interrupt(self) -> str | None:
-        """One ESC byte. Pasted text is only consumed at the next tool-call
-        boundary; ESC cancels synchronously even inside a running tool call,
-        which is the one failure mode worth interrupting. The session, its
-        id, transcript and context all survive."""
-        with self._lock:
-            proc = self._proc
-            if proc is None or self._state is State.DEAD:
-                raise ProbeUnavailableError("interrupt unavailable: no live session")
-            turn_id = self._current
-        with self._pty_lock:
-            try:
-                proc.write(b"\x1b")
-            except OSError as exc:
-                raise ProbeUnavailableError(f"interrupt write failed: {exc}") from exc
-        log.warning("interrupt written turn_id=%s", turn_id)
-        return turn_id
+def probe_status(self, probe_id: str) -> dict | None:
+    return self.probes.status(probe_id)
+
+
+def interrupt(self) -> str | None:
+    """One ESC byte. Pasted text is only consumed at the next tool-call
+    boundary; ESC cancels synchronously even inside a running tool call,
+    which is the one failure mode worth interrupting. The session, its
+    id, transcript and context all survive."""
+    with self._lock:
+        proc = self._proc
+        if proc is None or self._state is State.DEAD:
+            raise ProbeUnavailableError("interrupt unavailable: no live session")
+        turn_id = self._current
+    with self._pty_lock:
+        try:
+            proc.write(b"\x1b")
+        except OSError as exc:
+            raise ProbeUnavailableError(f"interrupt write failed: {exc}") from exc
+    log.warning("interrupt written turn_id=%s", turn_id)
+    return turn_id
 ```
 
 - [ ] **Step 5: Run the tests**
@@ -1065,9 +1067,7 @@ def settings_in(tmp_path, **overrides) -> Settings:
     home = tmp_path / "home"
     workspace.mkdir(exist_ok=True)
     home.mkdir(exist_ok=True)
-    return Settings.from_env(
-        {"WORKSPACE": str(workspace), "HOME_DIR": str(home)} | overrides
-    )
+    return Settings.from_env({"WORKSPACE": str(workspace), "HOME_DIR": str(home)} | overrides)
 
 
 def test_claude_json_seeds_every_dialog_suppressor(tmp_path):
@@ -1172,9 +1172,7 @@ def test_claude_md_files_are_copied_to_both_locations(tmp_path):
     project.write_text("# project rules")
     glob = tmp_path / "global.md"
     glob.write_text("# global rules")
-    s = settings_in(
-        tmp_path, PROJECT_CLAUDE_MD_PATH=str(project), GLOBAL_CLAUDE_MD_PATH=str(glob)
-    )
+    s = settings_in(tmp_path, PROJECT_CLAUDE_MD_PATH=str(project), GLOBAL_CLAUDE_MD_PATH=str(glob))
     bootstrap.write_claude_md(s)
     assert (s.workspace / "CLAUDE.md").read_text() == "# project rules"
     assert (s.home_dir / ".claude" / "CLAUDE.md").read_text() == "# global rules"
@@ -1450,9 +1448,7 @@ def test_delivery_posts_the_full_record(monkeypatch):
     posted = []
     metrics = Metrics()
     deliverer = Deliverer(metrics)
-    monkeypatch.setattr(
-        deliverer, "_post", lambda url, body: posted.append((url, body))
-    )
+    monkeypatch.setattr(deliverer, "_post", lambda url, body: posted.append((url, body)))
     deliverer.deliver(a_record())
     url, body = posted[0]
     assert url == "https://cb.example/x"
@@ -1518,15 +1514,11 @@ class Metrics:
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         self.registry = registry or CollectorRegistry()
         r = self.registry
-        self.turns_total = Counter(
-            "ccw_turns_total", "Turns by result", ["result"], registry=r
-        )
+        self.turns_total = Counter("ccw_turns_total", "Turns by result", ["result"], registry=r)
         self.turn_duration_seconds = Histogram(
             "ccw_turn_duration_seconds", "Turn duration", registry=r
         )
-        self.turn_in_flight = Gauge(
-            "ccw_turn_in_flight", "1 while a turn is running", registry=r
-        )
+        self.turn_in_flight = Gauge("ccw_turn_in_flight", "1 while a turn is running", registry=r)
         self.claude_restarts_total = Counter(
             "ccw_claude_restarts_total", "claude process exits", registry=r
         )
@@ -1545,9 +1537,7 @@ class Metrics:
         self.turn_stall_suspected_total = Counter(
             "ccw_turn_stall_suspected_total", "Inactivity timer firings", registry=r
         )
-        self.probe_total = Counter(
-            "ccw_probe_total", "Probes by result", ["result"], registry=r
-        )
+        self.probe_total = Counter("ccw_probe_total", "Probes by result", ["result"], registry=r)
 
     def record_tokens(self, turn_tokens: list[dict[str, Any]]) -> None:
         for entry in turn_tokens or []:
@@ -2016,7 +2006,9 @@ def _split_addr(addr: str, default_host: str) -> tuple[str, int]:
 
 def main() -> None:
     settings = Settings.from_env(os.environ)
-    logging.basicConfig(level=settings.log_level.upper(), format="%(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=settings.log_level.upper(), format="%(levelname)s %(name)s %(message)s"
+    )
 
     bootstrap.render(settings)
 
@@ -2151,9 +2143,7 @@ def main() -> None:
                 "hook_event_name": "Stop",
                 "last_assistant_message": f"ACK:{text}",
             }
-            subprocess.run(
-                hook, shell=True, input=json.dumps(payload).encode(), check=False
-            )
+            subprocess.run(hook, shell=True, input=json.dumps(payload).encode(), check=False)
             print("turn done", flush=True)
 
 
@@ -2331,9 +2321,7 @@ def test_the_callback_url_receives_the_finished_turn(stack):
         received.append(body)
         return {"ok": True}
 
-    server = uvicorn.Server(
-        uvicorn.Config(sink, host="127.0.0.1", port=port, log_level="error")
-    )
+    server = uvicorn.Server(uvicorn.Config(sink, host="127.0.0.1", port=port, log_level="error"))
     threading.Thread(target=server.run, daemon=True).start()
     deadline = time.monotonic() + 10
     while not server.started and time.monotonic() < deadline:

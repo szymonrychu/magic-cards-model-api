@@ -231,7 +231,7 @@ def test_the_serve_boot_path_rests_in_the_pregame_too(tmp_path) -> None:
 
 
 def test_a_seat_declares_its_own_mulligan_and_the_round_resolves(client: TestClient) -> None:
-    """"First, the starting player declares whether they will take a mulligan.
+    """ "First, the starting player declares whether they will take a mulligan.
     Then each other player in turn order does the same" - and "once each player
     has made a declaration, all players who decided to take mulligans do so at
     the same time". So alice's declaration alone changes nothing; bob's is what
@@ -419,7 +419,7 @@ def test_a_seat_begins_the_game_with_a_leyline_on_the_battlefield(client: TestCl
 
 
 def test_declining_the_opening_hand_action_leaves_the_card_in_hand(client: TestClient) -> None:
-    """"May take any such actions" (CR 103.6) means no is a real answer:
+    """ "May take any such actions" (CR 103.6) means no is a real answer:
     finishing without taking it leaves the Leyline in hand and the battlefield
     empty."""
     info = boot(

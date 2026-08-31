@@ -1,0 +1,141 @@
+{
+  "arena_id": 97426,
+  "artist": "Kotakan",
+  "artist_ids": [
+    "81519769-b8a8-4a28-a5c6-a64b1a345495"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 857457,
+  "cmc": 2.0,
+  "collector_number": "149",
+  "color_identity": [
+    "R"
+  ],
+  "colors": [
+    "R"
+  ],
+  "digital": false,
+  "edhrec_rank": 6612,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "\"We're going to win a great victory against the Fire Nation today.\"\n\u2014Jet",
+  "foil": true,
+  "frame": "2015",
+  "frame_effects": [
+    "lesson"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "arena",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "9fbe94e9-a71d-4a31-9210-c599abe08e3f",
+  "illustration_id": "c043adba-5ccd-4705-862f-c06455d449ba",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T01:09:13Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.webp?1783904953",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.jpg?1783904953",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.jpg?1783904953",
+    "crop": "https://cards.scryfall.io/crop/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.webp?1783904953",
+    "display": "https://cards.scryfall.io/display/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.webp?1783904953",
+    "grid": "https://cards.scryfall.io/grid/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.webp?1783904953",
+    "large": "https://cards.scryfall.io/large/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.jpg?1783904953",
+    "normal": "https://cards.scryfall.io/normal/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.jpg?1783904953",
+    "png": "https://cards.scryfall.io/png/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.png?1783904953",
+    "small": "https://cards.scryfall.io/small/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.jpg?1783904953",
+    "thumb": "https://cards.scryfall.io/thumb/front/9/f/9fbe94e9-a71d-4a31-9210-c599abe08e3f.webp?1783904953"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "legal",
+    "standardbrawl": "legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{1}{R}",
+  "mtgo_id": 144782,
+  "multiverse_ids": [],
+  "name": "Price of Freedom",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "5e6faa98-cf55-430d-87ce-8085f68aa20a",
+  "oracle_text": "Destroy target artifact or land an opponent controls. Its controller may search their library for a basic land card, put it onto the battlefield tapped, then shuffle.\nDraw a card.",
+  "oversized": false,
+  "preview": {
+    "previewed_at": "2025-10-31",
+    "source": "GameSpot",
+    "source_uri": "https://www.gamespot.com/articles/avatar-the-last-airbenders-jet-makes-his-magic-the-gathering-debut-in-four-new-cards/1100-6535746/"
+  },
+  "prices": {
+    "eur": "0.48",
+    "eur_foil": "0.69",
+    "tix": "0.95",
+    "usd": "0.46",
+    "usd_etched": null,
+    "usd_foil": "1.03"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A5e6faa98-cf55-430d-87ce-8085f68aa20a&unique=prints",
+  "promo": false,
+  "promo_types": [
+    "universesbeyond"
+  ],
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/144782?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=857457&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F661887%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Price+of+Freedom",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DPrice%2Bof%2BFreedom",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DPrice%2Bof%2BFreedom"
+  },
+  "released_at": "2025-11-21",
+  "reprint": false,
+  "reserved": false,
+  "resource_id": "3CDF5C817E046176FD1B7E4F7A5006CC81C85F3A9180FEA24AB0CF43BF36E6AC",
+  "rulings_uri": "https://api.scryfall.com/cards/9fbe94e9-a71d-4a31-9210-c599abe08e3f/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/tla?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/tla/149/price-of-freedom?utm_source=api",
+  "set": "tla",
+  "set_id": "118f7e64-5caa-4cb7-99a8-184f4d3a7422",
+  "set_name": "Avatar: The Last Airbender",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Atla&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/118f7e64-5caa-4cb7-99a8-184f4d3a7422",
+  "story_spotlight": false,
+  "tcgplayer_id": 661887,
+  "textless": false,
+  "type_line": "Sorcery \u2014 Lesson",
+  "uri": "https://api.scryfall.com/cards/9fbe94e9-a71d-4a31-9210-c599abe08e3f",
+  "variation": false
+}

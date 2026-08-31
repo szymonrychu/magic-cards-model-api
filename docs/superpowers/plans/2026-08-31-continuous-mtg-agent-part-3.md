@@ -104,9 +104,7 @@ def test_parse_decklist_folds_the_sideboard_into_one_mapping():
 
 
 def test_parse_decklist_skips_comments_and_set_codes():
-    assert parse_decklist("# a comment\n// another\n4 Fatal Push (MH3) 12\n") == {
-        "Fatal Push": 4
-    }
+    assert parse_decklist("# a comment\n// another\n4 Fatal Push (MH3) 12\n") == {"Fatal Push": 4}
 
 
 def test_parse_decklist_sums_a_card_listed_twice():
@@ -590,8 +588,7 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
             lines += [
                 f"- per-matchup detail: `{guide.matchups_dir}/<archetype>.json`",
                 "",
-                "Archetypes with a matchup file: "
-                + ", ".join(f"`{a}`" for a in guide.archetypes),
+                "Archetypes with a matchup file: " + ", ".join(f"`{a}`" for a in guide.archetypes),
             ]
         lines.append("")
 
@@ -1018,9 +1015,7 @@ def build_app(
             return response.json()
 
     def push_turn(text: str) -> str:
-        headers = (
-            {"X-Wrapper-Secret": settings.wrapper_secret} if settings.wrapper_secret else {}
-        )
+        headers = {"X-Wrapper-Secret": settings.wrapper_secret} if settings.wrapper_secret else {}
         with make_client(settings.wrapper_api) as client:
             response = client.post(
                 "/v1/messages",
@@ -1129,9 +1124,7 @@ def build_app(
             return {
                 "gameId": assignment.game_id if assignment else None,
                 "player": assignment.player if assignment else None,
-                "deck": (
-                    assignment.guide.slug if assignment and assignment.guide else None
-                ),
+                "deck": (assignment.guide.slug if assignment and assignment.guide else None),
                 "lastTurnId": current["lastTurnId"],
                 "reflected": current["reflected"],
             }
@@ -1771,9 +1764,7 @@ def turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "
 and replace the "Before you take a single action" block's item 1 with:
 
 ```python
-    briefing_block = (
-        f"\n{briefing}\n" if briefing else f"Read `{current_game_path}`.\n"
-    )
+briefing_block = f"\n{briefing}\n" if briefing else f"Read `{current_game_path}`.\n"
 ```
 
 interpolating `briefing_block` where item 1 currently sits, so the prompt
