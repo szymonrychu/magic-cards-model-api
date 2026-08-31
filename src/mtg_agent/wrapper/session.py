@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import Settings
 from .metrics import Metrics
+from .probe import DEFAULT_PROBE_TEXT, ProbeTracker, ProbeUnavailableError
 from .pty_proc import ClaudeProcess, spawn_claude
 from .ring import Ring
 from .turns import Record, Store
@@ -115,6 +116,8 @@ class Manager:
         self.submit_seq = submit_seq
 
         self.ring = Ring()
+        self.probes = ProbeTracker()
+        self._probe_seq = 0
         self.transcript_path = ""
         self._lock = threading.RLock()
         self._pty_lock = threading.Lock()
@@ -347,6 +350,52 @@ class Manager:
         self.metrics.record_cost(record.result_json)
         log.info("turn complete turn_id=%s", turn_id)
         self._deliver(record)
+
+    # ---- probing ---------------------------------------------------------
+
+    def probe(self, text: str = "") -> str:
+        """Write text straight into the PTY mid-turn. Never raises BusyError:
+        working while a turn is in flight is the entire point."""
+        with self._lock:
+            proc = self._proc
+            if proc is None or self._state in (State.DEAD, State.BOOTING):
+                raise ProbeUnavailableError("probe unavailable: no live session")
+            self._probe_seq += 1
+            probe_id = f"probe-{self._probe_seq}"
+        self.probes.start(probe_id, self.now())
+        seq = self.submit_seq
+        body = text or DEFAULT_PROBE_TEXT
+        with self._pty_lock:
+            try:
+                proc.write((seq.paste_start + body + seq.paste_end).encode())
+                time.sleep(self.settings.submit_delay)
+                proc.write(seq.submit.encode())
+            except OSError as exc:
+                raise ProbeUnavailableError(f"probe write failed: {exc}") from exc
+        self.metrics.probe_total.labels(result="written").inc()
+        log.info("probe written probe_id=%s", probe_id)
+        return probe_id
+
+    def probe_status(self, probe_id: str) -> dict | None:
+        return self.probes.status(probe_id)
+
+    def interrupt(self) -> str | None:
+        """One ESC byte. Pasted text is only consumed at the next tool-call
+        boundary; ESC cancels synchronously even inside a running tool call,
+        which is the one failure mode worth interrupting. The session, its
+        id, transcript and context all survive."""
+        with self._lock:
+            proc = self._proc
+            if proc is None or self._state is State.DEAD:
+                raise ProbeUnavailableError("interrupt unavailable: no live session")
+            turn_id = self._current
+        with self._pty_lock:
+            try:
+                proc.write(b"\x1b")
+            except OSError as exc:
+                raise ProbeUnavailableError(f"interrupt write failed: {exc}") from exc
+        log.warning("interrupt written turn_id=%s", turn_id)
+        return turn_id
 
     def _finish_failed(self, turn_id: str, reason: str) -> None:
         record = self.store.fail(turn_id, reason, self.now())
