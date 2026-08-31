@@ -136,6 +136,20 @@ top-first; spells and abilities are distinguishable by `kind`. `pending_decision
 is `null` unless a decision (CR 608.2d, or CR 603.3d/601.2c for `choose_targets`)
 is currently blocked on an answer - see Decisions below.
 
+`exile_pile` is the CR 406.4-marked cards sitting in `exile` (suspended, with
+their time counters; foretold; plotted; a cascade hit awaiting its cast) -
+the same card views `exile` already carries, filtered down to the ones with
+a marker, so a seat does not have to scan the whole pile. `play_permissions`
+is every live CR 601.3 grant (`PlayPermission` - cascade's "you may cast it
+without paying its mana cost", suspend's own free cast), keyed by the player
+who may use it: which card, from which zone, granted by what, whether it
+pays the mana cost, and when it expires (`until_end_of_turn` and cleanup, or
+"when used" for suspend's standing grant). No separate endpoint drives one -
+`POST .../actions/cast` (no `keyword` needed) and `POST .../actions/play-land`
+already pick up a live permission covering the card being cast or played, the
+same way they pick up a suspended card's free cast; `play_permissions` exists
+so a seat can *see* the grant it is about to use.
+
 ## Known gaps (engine coverage, mirrored here)
 
 - The engine's effects registry is keyed by card name: an unregistered card

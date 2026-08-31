@@ -6,7 +6,7 @@ from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
 from magic_cards_model.machines.abilities import keywords_in_lines
-from magic_cards_model.machines.casting import MarkedExile
+from magic_cards_model.machines.casting import MarkedExile, PlayPermission
 from magic_cards_model.machines.combat import Keyword
 from magic_cards_model.machines.keywords import cycling_abilities, cycling_activation
 from magic_cards_model.machines.layers import Characteristics
@@ -184,6 +184,69 @@ def _exile_pile(state: CardState) -> dict[str, Any] | None:
         "owner": annotation.owner,
         "turn_exiled": annotation.turn_exiled,
     }
+
+
+def _play_permission_view(
+    game: Game, permission: PlayPermission, images: dict[str, dict[str, str]]
+) -> dict[str, Any] | None:
+    """One `PlayPermission` (CR 601.3's dynamic half - `machines/casting.py`),
+    shaped so a seat holding it can actually drive `Casting.use_permission()`:
+    which card, from which zone, granted by what, whether it pays the mana
+    cost, and when it expires.
+
+    A real game already hit the gap this closes: cascade offering "you may
+    cast Living End without paying its mana cost" was accepted, the engine
+    granted the permission, and nothing in the state a seat reads ever named
+    it - the card just sat in exile until cleanup bottomed it, unusable
+    though `POST .../actions/cast` (with no `keyword` needed - see
+    `engine_api.cast_card`'s exile-zone branch) would have driven it straight
+    through.
+
+    `None` when the object the permission was granted against is no longer
+    findable (moved zones since - CR 400.7 already makes the permission dead
+    the instant that happens; `PlayPermission.names` is the same identity
+    check `usable_play_permission` runs) - nothing useful to show a seat
+    about a permission that no longer names anything on the board.
+    """
+    card = game.find_by_id(permission.card_id)
+    if card is None or not permission.names(card):
+        return None
+    reason = permission.why_not(card, permission.player, game)
+    expires = "until end of turn (CR 514.2)" if permission.until_end_of_turn else "when used"
+    return {
+        "card": _card_view(game, card, images),
+        "granted_by": permission.source_name,
+        "action": permission.action.value,
+        "pays_mana_cost": permission.pays_mana_cost,
+        "from_zone": permission.zone.value,
+        "rule": permission.rule,
+        "until_end_of_turn": permission.until_end_of_turn,
+        "expires": expires,
+        "expired": permission.expired(game),
+        "bottom_if_unused": permission.bottom_if_unused,
+        "usable_now": reason is None,
+        "why_not": reason,
+    }
+
+
+def _play_permissions_view(
+    game: Game, images: dict[str, dict[str, str]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Every live `PlayPermission`, grouped by the player who may use it.
+
+    Not secret: every permission this engine actually grants today (cascade,
+    suspend's own third ability) names a card that is already visible in a
+    public zone (CR 400.2's exile), so there is nothing here for
+    `visibility.redact_view` to hide beyond the ordinary face-down-card
+    redaction it already applies to `exile`/`play_permissions["card"]["face_up"]`
+    entries - handled generically since each entry nests a full `_card_view`.
+    """
+    by_player: dict[str, list[dict[str, Any]]] = {player.username: [] for player in game.players}
+    for permission in game.play_permissions:
+        view = _play_permission_view(game, permission, images)
+        if view is not None:
+            by_player.setdefault(permission.player, []).append(view)
+    return by_player
 
 
 def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) -> dict[str, Any]:
@@ -376,6 +439,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     step = turn.step if turn is not None else Step.UNTAP
     mailbox = store.mailbox(game_id)
     pending = mailbox.snapshot() if mailbox is not None else None
+    exile_views = views(game.shared_zones.get(Zone.EXILE, []))
     return {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
@@ -388,7 +452,20 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "players": [_player_view(player) for player in game.players],
         "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "stack": _stack_view(game, images),
-        "exile": views(game.shared_zones.get(Zone.EXILE, [])),
+        "exile": exile_views,
+        # CR 406.4's marked piles - suspended cards (with their time counters,
+        # via each card's own `counters`), foretold and plotted cards, and a
+        # cascade hit awaiting its cast - pulled out of `exile` so a seat does
+        # not have to scan the whole pile to find what it may still act on.
+        # Every entry here is already a full `exile` card view; `exile_pile`
+        # is a filtered *view* of `exile`, not a second source of truth.
+        "exile_pile": [card for card in exile_views if card.get("exile_pile") is not None],
+        # CR 601.3's dynamic grants - see `_play_permissions_view`. Keyed by
+        # the player who may use it; `POST .../actions/cast` (no `keyword`
+        # needed) and `POST .../actions/play-land` already drive
+        # `Casting.use_permission()` for a card sitting in the permission's
+        # own zone, so this is purely the discoverability half of the gap.
+        "play_permissions": _play_permissions_view(game, images),
         "command": views(game.shared_zones.get(Zone.COMMAND, [])),
         "hands": {player.username: views(player.hand) for player in game.players},
         "graveyards": {player.username: views(player.graveyard) for player in game.players},

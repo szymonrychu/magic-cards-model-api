@@ -76,6 +76,13 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     }
     if "exile" in view:
         view["exile"] = [_redact_facedown_card(card, viewer) for card in view["exile"]]
+    if "exile_pile" in view:
+        view["exile_pile"] = [_redact_facedown_card(card, viewer) for card in view["exile_pile"]]
+    if "play_permissions" in view:
+        view["play_permissions"] = {
+            player: [_redact_permission(entry, viewer) for entry in entries]
+            for player, entries in view["play_permissions"].items()
+        }
     view.pop("libraries", None)
     view.pop("sideboards", None)
     if view.get("pending_decision") is not None:
@@ -122,6 +129,21 @@ def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any
         "card_name": None,
         "exile_pile": card.get("exile_pile"),
     }
+
+
+def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """One `play_permissions` entry (`serialize._play_permission_view`), as
+    `viewer` may see it. Every permission this engine grants today names a
+    card that is already public (cascade and suspend both exile face up), so
+    there is nothing to hide in practice - but the entry nests a full card
+    view under `"card"`, the same shape `exile` carries, so a hypothetical
+    future permission over a face-down card is still covered the same way
+    `_redact_facedown_card` already covers `exile`, rather than assuming this
+    stays true forever."""
+    card = entry.get("card")
+    if not isinstance(card, dict):
+        return entry
+    return {**entry, "card": _redact_facedown_card(card, viewer)}
 
 
 def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
