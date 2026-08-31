@@ -1,0 +1,35 @@
+# Amulet Titan - pilot Chillbais, 2026-08-29, source videre-58655619
+# mainboard 60, sideboard 15
+4 Amulet of Vigor
+4 Arboreal Grazer
+1 Aftermath Analyst
+3 Primeval Titan
+1 Cultivator Colossus
+4 Malevolent Rumble
+2 Summoner's Pact
+4 Scapeshift
+4 Spelunking
+3 Green Sun's Zenith
+4 Forest
+1 Dryad Arbor
+4 Crumbling Vestige
+3 Gruul Turf
+3 Simic Growth Chamber
+4 Urza's Saga
+3 Boseiju, Who Endures
+1 Otawara, Soaring City
+1 Hanweir Battlements
+1 Mirrorpool
+1 Echoing Deeps
+1 Shifting Woodland
+1 Tolaria West
+2 The Mycosynth Gardens
+
+Sideboard
+3 Trinisphere
+3 Dismember
+2 Grafdigger's Cage
+2 Null Elemental Blast
+2 Force of Vigor
+2 Faerie Macabre
+1 Mjölnir, Hammer of Thor

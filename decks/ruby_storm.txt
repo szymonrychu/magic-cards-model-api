@@ -1,0 +1,35 @@
+# Ruby Storm - pilot Gobeli, 2026-08-30, source videre-58656318
+# mainboard 60, sideboard 15
+4 Ruby Medallion
+4 Ral, Monsoon Mage
+4 Pyretic Ritual
+4 Desperate Ritual
+4 Manamorphose
+4 Wrenn's Resolve
+4 Reckless Impulse
+4 Hex Magic
+3 Past in Flames
+2 Artist's Talent
+2 Valakut Awakening
+2 Wish
+1 Grapeshot
+5 Mountain
+3 Arid Mesa
+2 Scalding Tarn
+2 Wooded Foothills
+2 Bloodstained Mire
+1 Sacred Foundry
+1 Elegant Parlor
+1 Commercial District
+1 Sunbaked Canyon
+1 Gemstone Caverns
+
+Sideboard
+4 Orim's Chant
+3 Prismatic Ending
+2 Wear // Tear
+2 Brotherhood's End
+1 Past in Flames
+1 Grapeshot
+1 Empty the Warrens
+1 Fire Magic
