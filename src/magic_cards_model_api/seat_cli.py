@@ -172,7 +172,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "comma-separated target ids or player names, for a choose_targets "
-            "decision - a triggered ability asking for its target (CR 603.3d)"
+            "decision - a triggered ability asking for its target (CR 603.3d), "
+            "or a targeted ability being activated with no targets supplied "
+            "(CR 602.2b/601.2c)"
         ),
     )
     decide.add_argument(

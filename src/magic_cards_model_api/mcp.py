@@ -535,8 +535,9 @@ def build_server(seats: Seats) -> MCPServer:
           "reveal the top N, choose among them" effect) instead resolves
           through `pending_decision.card_details` - see the `scry`/`surveil`
           bullet below, which explains that field.
-        - `choose_targets` (a triggered ability's targets, CR 603.3d):
-          `targets` is a comma-separated list of up to
+        - `choose_targets` (a triggered ability's targets, CR 603.3d, or a
+          targeted ability being activated with no targets supplied,
+          CR 602.2b/601.2c): `targets` is a comma-separated list of up to
           `pending_decision.target_maximum` entries, each a card or ability
           id or a player's name, chosen from `pending_decision.targets` -
           leave it empty to give the ability no target at all, which is

@@ -534,7 +534,11 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
         return refused(exc)
 
     try:
-        targets = [target_thing(game, token) for token in req.targets or []]
+        targets = (
+            [target_thing(game, token) for token in req.targets]
+            if req.targets is not None
+            else None
+        )
         ability = game.activate_ability(
             permanent, req.ability_index, req.player, targets=targets, color=color
         )
