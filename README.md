@@ -6,6 +6,19 @@ engine's own refusal text back when it is not. A crude MTGO-style frontend is
 served at `/` from the sibling repo `../magic-cards-model-test-frontend` when
 it exists.
 
+## Play it - Human vs AI
+
+`http://127.0.0.1:8000/play/` is a small, buildless, server-rendered UI
+(`ui/`, plain HTML/CSS/JS - no npm, no framework) over exactly the seat API
+below: load a bundled decklist from `decks/` or paste/upload your own,
+validate it (`Deck.check_legality`, CR 100.2a/100.4a), and start a game where
+you click one seat and a headless `claude` subprocess plays the other,
+driving `seat_cli` the same way a human dispatched to that seat would. If
+`claude` is not on `PATH`, the UI falls back to showing the exact command and
+prompt to run by hand in another terminal - the game is fully playable either
+way. See `ai_seat.py` and `docs/ai_seat_brief.md` for the mechanism and the
+brief the agent is given.
+
 ## Run it
 
 One command, from this repo:

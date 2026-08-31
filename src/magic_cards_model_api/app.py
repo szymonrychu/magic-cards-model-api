@@ -21,7 +21,7 @@ from magic_cards_model.machines.decisions import DecisionKind
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 
-from . import audit, decisions, engine_api, scryfall, seatkit, visibility
+from . import ai_seat_api, audit, decisions, decks_api, engine_api, scryfall, seatkit, visibility
 from .schemas import (
     ActivateRequest,
     ActorRequest,
@@ -48,6 +48,8 @@ from .serialize import state_view
 from .store import new_seat_uids, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
+app.include_router(decks_api.router)
+app.include_router(ai_seat_api.router)
 
 
 def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
@@ -1060,6 +1062,19 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         )
         return {"accepted": False, "reason": reason, "log_seq": seq}
     return {"accepted": True, "log_seq": seq}
+
+
+# -- the play-vs-AI UI --------------------------------------------------------
+#
+# Server-rendered HTML plus plain JS, served from this repo (`ui/`) - no
+# build step, no npm. Mounted at /play, not /, so it never fights with the
+# sibling `magic-cards-model-test-frontend` repo's own mount at / below (that
+# mount matches every otherwise-unclaimed path, so /play only stays ours
+# because this include happens first - route/mount order decides the match).
+
+_ui_dir = Path(__file__).resolve().parents[2] / "ui"
+if _ui_dir.is_dir():
+    app.mount("/play", StaticFiles(directory=_ui_dir, html=True), name="play-ui")
 
 
 # -- the frontend ------------------------------------------------------------

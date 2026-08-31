@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>magic-cards-model: play</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>magic-cards-model</h1>
+  <div id="conn-status" class="pill"></div>
+</header>
+
+<main>
+  <!-- ================= LOBBY ================= -->
+  <section id="lobby">
+    <h2>Start a game</h2>
+    <p class="hint">
+      You play one seat by clicking. The other seat is played by a headless
+      Claude Sonnet agent (or, if that is not available on this server, by a
+      human you dispatch yourself with a copy-pasted prompt).
+    </p>
+
+    <div class="deck-pickers">
+      <div class="deck-picker" id="picker-you">
+        <h3>Your deck</h3>
+        <label>Name <input type="text" id="you-name" value="you" /></label>
+        <label>Bundled deck
+          <select id="you-bundled"><option value="">(none - paste/upload below)</option></select>
+        </label>
+        <label>Or upload a .txt <input type="file" id="you-upload" accept=".txt" /></label>
+        <label>Or paste a decklist
+          <textarea id="you-text" rows="10" placeholder="4 Lightning Bolt&#10;..."></textarea>
+        </label>
+        <button id="you-validate">Validate</button>
+        <div class="validation" id="you-validation"></div>
+      </div>
+
+      <div class="deck-picker" id="picker-ai">
+        <h3>AI opponent's deck</h3>
+        <label>Name <input type="text" id="ai-name" value="claude" /></label>
+        <label>Bundled deck
+          <select id="ai-bundled"><option value="">(none - paste/upload below)</option></select>
+        </label>
+        <label>Or upload a .txt <input type="file" id="ai-upload" accept=".txt" /></label>
+        <label>Or paste a decklist
+          <textarea id="ai-text" rows="10" placeholder="4 Lightning Bolt&#10;..."></textarea>
+        </label>
+        <button id="ai-validate">Validate</button>
+        <div class="validation" id="ai-validation"></div>
+      </div>
+    </div>
+
+    <label>Seed (optional, for a replayable shuffle)
+      <input type="number" id="seed" placeholder="random" />
+    </label>
+
+    <button id="start-game" class="primary">Start game</button>
+    <div id="start-error" class="error"></div>
+  </section>
+
+  <!-- ================= GAME ================= -->
+  <section id="game" hidden>
+    <div class="game-header">
+      <div id="turn-info"></div>
+      <div id="ai-panel"></div>
+      <button id="leave-game">Back to lobby</button>
+    </div>
+
+    <div id="decision-box" hidden></div>
+
+    <div id="board">
+      <div id="opponent-row" class="player-row"></div>
+      <div id="stack-row"></div>
+      <div id="battlefield-you" class="battlefield"></div>
+      <div id="you-row" class="player-row"></div>
+      <div id="hand-you" class="hand"></div>
+      <div id="action-bar"></div>
+    </div>
+
+    <div id="action-modal" class="modal" hidden></div>
+
+    <details id="raw-state-details">
+      <summary>Raw state (debug)</summary>
+      <pre id="raw-state"></pre>
+    </details>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
