@@ -212,7 +212,16 @@ def _play_permission_view(
     if card is None or not permission.names(card):
         return None
     reason = permission.why_not(card, permission.player, game)
-    expires = "until end of turn (CR 514.2)" if permission.until_end_of_turn else "when used"
+    granted_step = permission.granted_step.value if permission.granted_step is not None else None
+    if permission.immediate:
+        expires = (
+            f"only for the {granted_step or '?'} step it was granted in (CR 117.2e), "
+            "not until end of turn"
+        )
+    elif permission.until_end_of_turn:
+        expires = "until end of turn (CR 514.2)"
+    else:
+        expires = "when used"
     return {
         "card": _card_view(game, card, images),
         "granted_by": permission.source_name,
@@ -221,6 +230,8 @@ def _play_permission_view(
         "from_zone": permission.zone.value,
         "rule": permission.rule,
         "until_end_of_turn": permission.until_end_of_turn,
+        "immediate": permission.immediate,
+        "granted_step": granted_step,
         "expires": expires,
         "expired": permission.expired(game),
         "bottom_if_unused": permission.bottom_if_unused,

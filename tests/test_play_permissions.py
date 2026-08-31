@@ -92,19 +92,30 @@ def test_suspends_free_cast_permission_is_discoverable_before_it_is_used(client,
     assert permission["pays_mana_cost"] is False
     assert permission["granted_by"] == "Living End's suspend"
     assert permission["rule"] == "CR 702.62a"
-    # `finish_suspend` grants this through the same `Game.grant_play_permission`
-    # every other grant uses, with `until_end_of_turn` left at its default
-    # `True` - CR 702.62a's own text names no duration, but the engine still
-    # drops the *permission* (not the card) at cleanup if it goes unused; the
-    # card's own "if you don't, it remains exiled" is what leaves it sitting
-    # there afterward with no route back, exactly like a cascade hit nobody
-    # claims (`bottom_if_unused` is the one difference between the two).
+    # `finish_suspend` grants this `immediate=True` (CR 117.2e/608.2g): CR
+    # 702.62a's third ability prints no "until end of turn", so the "you may
+    # play it" is only good for as long as the triggered ability's own
+    # resolution is instructing it, which `PlayPermission.expired` scopes to
+    # the exact step (`granted_step`) the grant happened in - here, the
+    # upkeep the last time counter came off in. This is why a suspended
+    # sorcery can legally be cast during an upkeep that is nobody's main
+    # phase: it is cast as the resolving ability's own instruction
+    # (CR 117.1's preamble), not through the ordinary priority system.
+    # `until_end_of_turn` stays at `Game.grant_play_permission`'s own default
+    # of `True` even here - `PlayPermission.expired` ignores it entirely once
+    # `immediate` is set (`PlayPermission.expired`'s own branch), which is
+    # exactly why a seat must be shown `immediate`/`granted_step` rather than
+    # read `until_end_of_turn` at face value.
     assert permission["until_end_of_turn"] is True
-    assert permission["expires"] == "until end of turn (CR 514.2)"
+    assert permission["immediate"] is True
+    assert permission["granted_step"] == "upkeep"
+    assert permission["expires"] == (
+        "only for the upkeep step it was granted in (CR 117.2e), not until end of turn"
+    )
     assert permission["usable_now"] is True
     assert permission["why_not"] is None
 
-    client.put(f"/api/games/{game}/step", json={"step": "precombat_main", "player": "alice"})
+    # Still usable while play stays in the very upkeep it was granted in.
     cast = client.post(
         f"/api/games/{game}/actions/cast",
         json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
@@ -138,6 +149,55 @@ def test_bobs_own_view_never_carries_alices_permission_under_the_wrong_key(clien
     assert as_bob["play_permissions"]["bob"] == []
     assert len(as_bob["play_permissions"]["alice"]) == 1
     assert as_bob["play_permissions"]["alice"][0]["card"]["name"] == "Living End"
+
+
+def test_suspends_free_cast_is_only_good_for_its_own_upkeep_not_the_rest_of_the_turn(client, game):
+    """CR 117.2e/608.2g, end to end through the ordinary `actions/cast` path
+    with no `keyword`: `finish_suspend` grants an `immediate=True`
+    `PlayPermission` (`machines/casting.finish_suspend`), scoped to the exact
+    step it was granted in (`PlayPermission.granted_step`), not "until end of
+    turn" the way Ugin's -11 or Ragavan's trigger are. Two branches from the
+    same setup prove both halves: the cast succeeds while play is still in
+    the upkeep the last time counter came off in, and the identical cast is
+    refused, with the engine's own CR 117.2e reason, once play has moved on
+    to the next step - never reaching a main phase in this second branch, so
+    a pass/fail here cannot be confused with an ordinary sorcery-speed
+    refusal."""
+    add_card(client, game, "Living End", "alice", "hand")
+    for _ in range(4):
+        add_card(client, game, "Swamp", "alice", "battlefield")
+    swamps = [c["id"] for c in state(client, game)["battlefield"]]
+    client.post(
+        f"/api/games/{game}/actions/suspend",
+        json={"player": "alice", "card": "Living End", "mana_sources": swamps},
+    )
+    for _ in range(3):
+        client.put(f"/api/games/{game}/step", json={"step": "upkeep", "player": "alice"})
+
+    living_end = find(state(client, game)["exile"], "Living End")
+    permission = state(client, game)["play_permissions"]["alice"][0]
+    assert permission["immediate"] is True
+    assert permission["granted_step"] == "upkeep"
+    assert permission["usable_now"] is True
+
+    # The step moves on before anybody uses it - CR 117.2e's own window (the
+    # resolving trigger's instruction) has already closed, so the grant is
+    # dead even though `Game.cleanup_step` has not run yet to actually drop
+    # it from `game.play_permissions`, and the card is still sitting right
+    # there in exile.
+    client.put(f"/api/games/{game}/step", json={"step": "draw", "player": "alice"})
+    (after_step,) = state(client, game)["play_permissions"]["alice"]
+    assert after_step["expired"] is True
+    assert after_step["usable_now"] is False
+    assert after_step["why_not"] is not None
+
+    refused = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
+    ).json()
+    assert refused["allowed"] is False
+    assert "cast" in refused["reason"] and "Living End" in refused["reason"]
+    assert living_end["id"] == find(state(client, game)["exile"], "Living End")["id"]
 
 
 # -- exile_pile: the marked piles pulled out of the whole exile list --------

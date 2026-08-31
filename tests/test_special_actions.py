@@ -108,9 +108,13 @@ def test_time_counters_come_off_each_upkeep_and_the_free_cast_reanimates(client,
     living_end = find(state(client, game)["exile"], "Living End")
     assert living_end["counters"].get("time", 0) == 0
 
-    # Free cast: back to a main phase, stack empty - the permission removes
-    # the cost, not the timing (CR 117.1a still applies to a sorcery).
-    client.put(f"/api/games/{game}/step", json={"step": "precombat_main", "player": "alice"})
+    # Free cast: CR 702.62a's third ability is a resolving trigger's own
+    # instruction (CR 117.2e/608.2g), not a standing "until end of turn"
+    # grant - `finish_suspend` hands it out `immediate=True`, good only for
+    # the upkeep step it was granted in (`PlayPermission.granted_step`), so
+    # the cast has to happen right here, still in that upkeep, and it works
+    # despite this being nobody's main phase because an immediate permission
+    # bypasses `why_cannot_cast_now`'s ordinary sorcery-speed check entirely.
     cast = client.post(
         f"/api/games/{game}/actions/cast",
         json={"player": "alice", "card_id": living_end["id"], "from_zone": "exile"},
