@@ -63,10 +63,19 @@ class PtyProcess:
         return self._status
 
     def close(self) -> None:
-        with contextlib.suppress(OSError):
-            os.close(self._fd)
+        """Signal the child FIRST, then close the master.
+
+        The order is load-bearing. The session runs a reader thread parked in
+        `os.read` on this same fd; on macOS `os.close` then blocks until that
+        read returns, and the read cannot return while the child still holds
+        the slave open - the two wait on each other forever. Killing the
+        child drops the last slave reference, the parked read gets EIO and
+        returns, and the close completes.
+        """
         with contextlib.suppress(OSError, ProcessLookupError):
             os.kill(self.pid, signal.SIGTERM)
+        with contextlib.suppress(OSError):
+            os.close(self._fd)
 
 
 def _set_winsize(fd: int) -> None:
