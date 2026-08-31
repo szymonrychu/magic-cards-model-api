@@ -6,7 +6,9 @@ from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
 from magic_cards_model.machines.abilities import keywords_in_lines
+from magic_cards_model.machines.casting import MarkedExile
 from magic_cards_model.machines.combat import Keyword
+from magic_cards_model.machines.keywords import cycling_abilities, cycling_activation
 from magic_cards_model.machines.layers import Characteristics
 from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
@@ -118,6 +120,72 @@ def _target_names(game: Game, targets: list[Any]) -> list[str]:
     return names
 
 
+def _special_actions(game: Game, state: CardState) -> dict[str, Any]:
+    """What this hand card's CR 116.2 special actions and keyword-activated
+    zone-leaving abilities offer right now: suspend/plot/foretell (each a
+    `MarkedExile` special action) and cycling (an activated ability, but one
+    that only functions from the hand - CR 702.29a).
+
+    Every entry here is computed by building the engine's own action object
+    and reading its cost back - `MarkedExile.plot`/`.foretell`/`.suspend` and
+    `cycling_activation` all validate timing and printed-cost legality as part
+    of construction and raise rather than mutate anything, so a card that
+    cannot currently take the action is simply left out (its `ValueError` is
+    the "not right now" answer), and building one to check never taps a
+    source, discards a card, or otherwise changes the board - the same
+    side-effect-free shape a `dry_run` cast already relies on.
+
+    Empty for anything not in a hand: these are all CR 702.29b-style "only
+    while in a player's hand" abilities.
+    """
+    if state.zone is not Zone.HAND:
+        return {}
+    controller = state.controller or state.owner
+    if controller is None:
+        return {}
+    actions: dict[str, Any] = {}
+    for name, factory in (
+        ("plot", MarkedExile.plot),
+        ("foretell", MarkedExile.foretell),
+        ("suspend", MarkedExile.suspend),
+    ):
+        try:
+            action = factory(game, state, controller)
+        except ValueError:
+            continue
+        entry: dict[str, Any] = {"cost": str(action.cost)}
+        if action.time_counters is not None:
+            entry["time_counters"] = action.time_counters
+        actions[name] = entry
+
+    cyclers = []
+    for index, ability in enumerate(cycling_abilities(state.card)):
+        try:
+            activation = cycling_activation(game, state, controller, index)
+        except ValueError:
+            continue
+        cyclers.append({"index": index, "keyword": ability.canonical, "cost": str(activation.cost)})
+    if cyclers:
+        actions["cycling"] = cyclers
+    return actions
+
+
+def _exile_pile(state: CardState) -> dict[str, Any] | None:
+    """CR 406.4's pile marker, for a card in exile: which special action put
+    it there, whose it is, and the turn it landed - the fact that makes "may I
+    cast this from exile" answerable at all (`Casting.use_keyword`/
+    `MarkedExile`'s own `marker`/`owner`/`turn_exiled` reads). `None` for a
+    card in exile no special action marked (an ordinary exiled card)."""
+    annotation = state.exile_annotation
+    if annotation is None:
+        return None
+    return {
+        "marker": annotation.marker.value,
+        "owner": annotation.owner,
+        "turn_exiled": annotation.turn_exiled,
+    }
+
+
 def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) -> dict[str, Any]:
     image = images.get(state.card.name, {})
     type_line, power, toughness = _current_characteristics(game, state)
@@ -152,6 +220,14 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "art_crop": image.get("art_crop"),
         "abilities": list_abilities(game, state),
     }
+    if state.zone is Zone.HAND:
+        special_actions = _special_actions(game, state)
+        if special_actions:
+            view["special_actions"] = special_actions
+    if state.zone is Zone.EXILE:
+        exile_pile = _exile_pile(state)
+        if exile_pile is not None:
+            view["exile_pile"] = exile_pile
     if state.zone is Zone.BATTLEFIELD:
         printed_type_line = state.card.type_line
         printed_power, printed_toughness = state.power, state.toughness

@@ -74,6 +74,8 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     view["hands"] = {
         name: (cards if name == viewer else []) for name, cards in view.get("hands", {}).items()
     }
+    if "exile" in view:
+        view["exile"] = [_redact_facedown_card(card, viewer) for card in view["exile"]]
     view.pop("libraries", None)
     view.pop("sideboards", None)
     if view.get("pending_decision") is not None:
@@ -87,6 +89,39 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if viewer is not None:
         view["you"] = viewer
     return view
+
+
+def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """A card in a shared, public zone (CR 400.2), as `viewer` may see it.
+
+    Exile is public - everybody sees a pile exists and roughly what is in it -
+    but CR 406.3 lets a card sit there face down (foretell, CR 702.143a), and
+    CR 703's face-down rule is the same "no name, no text, no characteristics
+    visible" whoever is looking, except the object's own controller and the
+    admin, who chose (or are owed) the look. `face_up` is already on every
+    card view (`serialize._card_view`); this is the one place that acts on it
+    for a *viewer other than the card's own controller*.
+
+    `exile_pile` (the marker/owner/turn-exiled fact, CR 406.4) is not hidden
+    by this - "there is a foretold card in exile, owned by alice" is public;
+    only *which* card it is stays secret.
+    """
+    if card.get("face_up", True) or viewer is ADMIN:
+        return card
+    owner = card.get("controller") or card.get("owner")
+    if viewer is not None and owner == viewer:
+        return card
+    return {
+        "id": card.get("id"),
+        "zone": card.get("zone"),
+        "controller": card.get("controller"),
+        "owner": card.get("owner"),
+        "tapped": card.get("tapped"),
+        "face_up": False,
+        "name": "a face-down card",
+        "card_name": None,
+        "exile_pile": card.get("exile_pile"),
+    }
 
 
 def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:

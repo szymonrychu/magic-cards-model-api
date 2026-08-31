@@ -81,7 +81,60 @@ def build_parser() -> argparse.ArgumentParser:
     cast.add_argument(
         "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
     )
+    cast.add_argument(
+        "--keyword",
+        default="",
+        help=(
+            'the keyword this cast is announced under (CR 601.2b) - "Plot" or '
+            '"Foretell" for a card exiled with suspend/plot cast --from-zone exile '
+            "(a suspended card's free cast is picked up automatically once its "
+            "last time counter is off, no --keyword needed)"
+        ),
+    )
     blocking(cast)
+
+    def special_action(name: str, help_text: str) -> Any:
+        """suspend/plot/foretell share this shape: name or id of a hand card,
+        which mana sources pay the special action's own cost (default: every
+        untapped source), and dry-run."""
+        parser = sub.add_parser(name, help=help_text)
+        parser.add_argument("card", help="card name or id, in your hand")
+        parser.add_argument(
+            "--sources",
+            default="",
+            help="comma-separated mana source ids (default: all your untapped sources)",
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
+        )
+        blocking(parser)
+        return parser
+
+    special_action(
+        "suspend",
+        "CR 116.2f/702.62a: exile a card with suspend from your hand, with N time counters",
+    )
+    special_action(
+        "plot", "CR 116.2k/702.170b: exile a card with plot from your hand, for its plot cost"
+    )
+    special_action(
+        "foretell", "CR 116.2h/702.143b: pay {2} and exile a card with foretell face down"
+    )
+
+    cycle = sub.add_parser("cycle", help="CR 702.29a: discard a card with cycling to draw")
+    cycle.add_argument("card", help="card name or id, in your hand")
+    cycle.add_argument(
+        "--index", type=int, default=0, help="which cycling ability, if the card has more than one"
+    )
+    cycle.add_argument(
+        "--sources",
+        default="",
+        help="comma-separated mana source ids (default: all your untapped sources)",
+    )
+    cycle.add_argument(
+        "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
+    )
+    blocking(cycle)
 
     land = sub.add_parser("play-land", help="play a land from your hand")
     land.add_argument("card", help="card name or id")
@@ -256,8 +309,36 @@ def run(argv: list[str] | None = None) -> int:
             body["modes"] = [int(mode) for mode in _parse_ids(args.modes)]
         if args.x is not None:
             body["x_value"] = args.x
+        if args.keyword:
+            body["keyword"] = args.keyword
         act(
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cast", body),
+            dry_run=args.dry_run,
+        )
+    elif args.command in ("suspend", "plot", "foretell"):
+        body = {"player": seat.player, "dry_run": args.dry_run}
+        if _UUID.match(args.card.strip()):
+            body["card_id"] = args.card.strip()
+        else:
+            body["card"] = args.card
+        sources = sources_or_all(args.sources)
+        if sources:
+            body["mana_sources"] = sources
+        act(
+            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/{args.command}", body),
+            dry_run=args.dry_run,
+        )
+    elif args.command == "cycle":
+        body = {"player": seat.player, "ability_index": args.index, "dry_run": args.dry_run}
+        if _UUID.match(args.card.strip()):
+            body["card_id"] = args.card.strip()
+        else:
+            body["card"] = args.card
+        sources = sources_or_all(args.sources)
+        if sources:
+            body["mana_sources"] = sources
+        act(
+            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
             dry_run=args.dry_run,
         )
     elif args.command == "play-land":

@@ -1,0 +1,135 @@
+{
+  "object": "card",
+  "id": "516c1c46-dccd-405c-a71f-d83619c681eb",
+  "oracle_id": "a0494d84-06c8-4a79-a9bc-ff4e16bbc68e",
+  "multiverse_ids": [
+    548280
+  ],
+  "arena_id": 79959,
+  "name": "Lupine Harbingers",
+  "lang": "en",
+  "released_at": "2021-12-09",
+  "uri": "https://api.scryfall.com/cards/516c1c46-dccd-405c-a71f-d83619c681eb",
+  "scryfall_uri": "https://scryfall.com/card/ymid/53/lupine-harbingers?utm_source=api",
+  "layout": "normal",
+  "highres_image": false,
+  "image_status": "lowres",
+  "image_updated_at": "2026-07-13T06:35:34Z",
+  "image_uris": {
+    "small": "https://cards.scryfall.io/small/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.jpg?1783924534",
+    "normal": "https://cards.scryfall.io/normal/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.jpg?1783924534",
+    "large": "https://cards.scryfall.io/large/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.jpg?1783924534",
+    "png": "https://cards.scryfall.io/png/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.png?1783924534",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.jpg?1783924534",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.jpg?1783924534",
+    "thumb": "https://cards.scryfall.io/thumb/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.webp?1783924534",
+    "grid": "https://cards.scryfall.io/grid/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.webp?1783924534",
+    "display": "https://cards.scryfall.io/display/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.webp?1783924534",
+    "art": "https://cards.scryfall.io/art/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.webp?1783924534",
+    "crop": "https://cards.scryfall.io/crop/front/5/1/516c1c46-dccd-405c-a71f-d83619c681eb.webp?1783924534"
+  },
+  "mana_cost": "{3}{G}",
+  "cmc": 4.0,
+  "type_line": "Creature \u2014 Wolf",
+  "oracle_text": "Trample, haste\nLupine Harbingers enters the battlefield with X +1/+1 counters on it, where X is the number of turns you've begun since it was foretold.\nForetell {4}{G}{G} (During your turn, you may pay {2} and exile this card from your hand face down. Cast it on a later turn for its foretell cost.)",
+  "power": "4",
+  "toughness": "4",
+  "colors": [
+    "G"
+  ],
+  "color_identity": [
+    "G"
+  ],
+  "keywords": [
+    "Haste",
+    "Trample",
+    "Foretell"
+  ],
+  "legalities": {
+    "standard": "not_legal",
+    "future": "not_legal",
+    "historic": "legal",
+    "timeless": "legal",
+    "gladiator": "legal",
+    "pioneer": "not_legal",
+    "modern": "not_legal",
+    "legacy": "not_legal",
+    "pauper": "not_legal",
+    "vintage": "not_legal",
+    "penny": "not_legal",
+    "commander": "not_legal",
+    "oathbreaker": "not_legal",
+    "standardbrawl": "not_legal",
+    "brawl": "legal",
+    "competitivebrawl": "legal",
+    "alchemy": "not_legal",
+    "paupercommander": "not_legal",
+    "duel": "not_legal",
+    "oldschool": "not_legal",
+    "premodern": "not_legal",
+    "predh": "not_legal",
+    "tlr": "not_legal"
+  },
+  "games": [
+    "arena"
+  ],
+  "reserved": false,
+  "game_changer": false,
+  "foil": false,
+  "nonfoil": true,
+  "finishes": [
+    "nonfoil"
+  ],
+  "oversized": false,
+  "promo": false,
+  "reprint": false,
+  "variation": false,
+  "set_id": "8a673262-8745-452d-820a-03d5c4a4f135",
+  "set": "ymid",
+  "set_name": "Alchemy: Innistrad",
+  "set_type": "alchemy",
+  "set_uri": "https://api.scryfall.com/sets/8a673262-8745-452d-820a-03d5c4a4f135",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Aymid&unique=prints",
+  "scryfall_set_uri": "https://scryfall.com/sets/ymid?utm_source=api",
+  "rulings_uri": "https://api.scryfall.com/cards/516c1c46-dccd-405c-a71f-d83619c681eb/rulings",
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aa0494d84-06c8-4a79-a9bc-ff4e16bbc68e&unique=prints",
+  "collector_number": "53",
+  "digital": true,
+  "rarity": "rare",
+  "watermark": "foretell",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "artist": "Filip Burburan",
+  "artist_ids": [
+    "66082c3b-a623-4d34-be51-2475214b85d3"
+  ],
+  "illustration_id": "a21247d1-e16a-4d29-8b43-dff6a8d40c2c",
+  "border_color": "black",
+  "frame": "2015",
+  "security_stamp": "arena",
+  "full_art": false,
+  "textless": false,
+  "booster": false,
+  "story_spotlight": false,
+  "promo_types": [
+    "alchemy"
+  ],
+  "preview": {
+    "source": "Ali Eldrazi",
+    "source_uri": "https://twitter.com/AliEldrazi/status/1468377587181309954",
+    "previewed_at": "2021-12-07"
+  },
+  "prices": {
+    "usd": null,
+    "usd_foil": null,
+    "usd_etched": null,
+    "eur": null,
+    "eur_foil": null,
+    "tix": null
+  },
+  "related_uris": {
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=548280&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DLupine%2BHarbingers",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DLupine%2BHarbingers",
+    "edhrec": "https://edhrec.com/route/?cc=Lupine+Harbingers"
+  }
+}

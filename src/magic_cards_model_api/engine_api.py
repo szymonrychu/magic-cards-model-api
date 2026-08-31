@@ -15,17 +15,24 @@ from typing import Any
 from uuid import UUID
 
 from magic_cards_model.machines import Casting, Step
+from magic_cards_model.machines.casting import (
+    MarkedExile,
+    finish_suspend,
+    remove_suspend_time_counter,
+)
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
 from magic_cards_model.models import CardState, Color, Game, Zone
-from magic_cards_model.models.card_state import Counter, counter_state_based_actions
+from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
 from pydantic import ValidationError
 
 from .schemas import (
     ActivateRequest,
     AttackRequest,
     CastRequest,
+    CycleRequest,
     ManaSource,
     PlayLandRequest,
+    SpecialActionRequest,
     TargetRequest,
 )
 
@@ -207,6 +214,22 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
         return refused(exc)
 
     try:
+        if req.keyword:
+            # CR 601.2b: plot and foretell are announced this way - the
+            # keyword names both the exile pile the card must be in and what
+            # is paid instead of the mana cost (`Casting.use_keyword`).
+            casting.use_keyword(req.keyword)
+        elif spell.zone is Zone.EXILE and game.play_permission_for(spell, req.player) is not None:
+            # CR 601.3's dynamic half: a live `PlayPermission` covering this
+            # exact object, player and action - suspend's own free cast
+            # (`finish_suspend`) grants one of these rather than a keyword,
+            # so it is picked up automatically here instead of needing a
+            # second parameter naming it.
+            casting.use_permission()
+    except ValueError as exc:
+        return refused(exc)
+
+    try:
         if req.modes:
             casting.choose_modes(req.modes, x_value=req.x_value)
         if req.targets:
@@ -238,6 +261,172 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
     game.put_on_stack(state, casting.caster)
     game.retain_priority(casting.caster)
     return Outcome(True, detail={"spell_id": str(state.id), "cost": str(payment.cost)})
+
+
+# -- special actions: suspend, plot, foretell (CR 116.2) --------------------
+
+
+def locate_hand_card(
+    game: Game, player: str, card_id: UUID | None, card_name: str | None
+) -> CardState:
+    """The card a special action names: by id, or the first name match in
+    `player`'s hand - the same shape `locate_castable` gives `cast_card`."""
+    if card_id is not None:
+        return find_card(game, card_id)
+    if not card_name:
+        raise ValueError("give either card_id or card (a name)")
+    for state in game.player(player).hand:
+        if state.card.name == card_name:
+            return state
+    raise ValueError(f"{player} has no {card_name} in hand")
+
+
+def _take_marked_exile(game: Game, action: MarkedExile, req: SpecialActionRequest) -> Outcome:
+    """Pay a `MarkedExile` special action's cost, then take it - the same
+    payment/dry-run shape `cast_card`/`activate_ability` already use. Building
+    `action` itself (`MarkedExile.suspend`/`.plot`/`.foretell`) never mutates
+    the game - only `.take()` moves the card - so a caller that fails before
+    reaching this leaves nothing to roll back beyond the payment itself.
+    """
+    payment = action.begin_paying()
+    try:
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost)})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost)})
+        payment.pay()
+    except ValueError as exc:
+        payment.rewind()
+        return refused(exc)
+
+    card = action.take()
+    detail: dict[str, Any] = {"card_id": str(card.id), "cost": str(payment.cost)}
+    if action.time_counters is not None:
+        detail["time_counters"] = action.time_counters
+    return Outcome(True, detail=detail)
+
+
+def suspend_card(game: Game, req: SpecialActionRequest) -> Outcome:
+    """CR 116.2f/702.62a: exile a card from hand with N time counters, paying
+    its suspend cost. The free cast once the last counter is removed is
+    `drive_suspend_upkeep`'s job, not this one's."""
+    try:
+        card = locate_hand_card(game, req.player, req.card_id, req.card)
+        action = MarkedExile.suspend(game, card, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    return _take_marked_exile(game, action, req)
+
+
+def plot_card(game: Game, req: SpecialActionRequest) -> Outcome:
+    """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot cost."""
+    try:
+        card = locate_hand_card(game, req.player, req.card_id, req.card)
+        action = MarkedExile.plot(game, card, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    return _take_marked_exile(game, action, req)
+
+
+def foretell_card(game: Game, req: SpecialActionRequest) -> Outcome:
+    """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
+    face down."""
+    try:
+        card = locate_hand_card(game, req.player, req.card_id, req.card)
+        action = MarkedExile.foretell(game, card, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+    return _take_marked_exile(game, action, req)
+
+
+def drive_suspend_upkeep(game: Game, player: str) -> list[dict[str, Any]]:
+    """CR 702.62a's second and third abilities, hand-driven for `player`'s own
+    upkeep: nothing in `Game.advance`/`Game.advance_to` dispatches a per-card
+    upkeep trigger any more than it dispatches combat's own declarations (see
+    `machines.casting.remove_suspend_time_counter`'s docstring), so this is
+    called once from the `advance`/`step` endpoints whenever the turn marker
+    lands on `Step.UPKEEP`, the same hand-driven call a scenario test makes
+    for each upkeep it cares about.
+
+    For every card `player` owns that is suspended in exile (CR 702.62b):
+    removes one time counter, and - if that was the last one - grants the
+    CR 702.62a third-ability `PlayPermission` (`finish_suspend`) so a
+    following `cast_card` call picks it up automatically. Returns one entry
+    per suspended card touched, for the caller's own response/audit detail.
+    """
+    touched: list[dict[str, Any]] = []
+    for card in list(game.shared_zones.get(Zone.EXILE, [])):
+        if not isinstance(card, CardState):
+            continue
+        annotation = card.exile_annotation
+        if annotation is None or annotation.marker is not ExileMarker.SUSPENDED:
+            continue
+        if annotation.owner != player:
+            continue
+        remaining = remove_suspend_time_counter(game, card)
+        entry: dict[str, Any] = {
+            "card_id": str(card.id),
+            "card": card.name,
+            "time_counters": remaining,
+        }
+        if remaining == 0:
+            permission = finish_suspend(game, card)
+            entry["cast_permission_granted"] = permission is not None
+        touched.append(entry)
+    return touched
+
+
+# -- cycling (CR 702.29): an activated ability that functions only in hand --
+
+
+def cycle_card(game: Game, req: CycleRequest) -> Outcome:
+    """CR 702.29a: "[Cost], Discard this card: Draw a card." (or, typecycled,
+    search for a card of the named type.) Unlike `activate_ability`, this has
+    no `Game.begin_activating`/`why_cannot_activate` to call through - cycling
+    "functions only while the card... is in a player's hand" (CR 702.29b),
+    which is exactly the case `Game.begin_activating` never covers (it only
+    ever activates a battlefield permanent) - so `machines.keywords.
+    cycling_activation` is used directly, the same object the engine's own
+    `tests/scenarios/test_cycling.py` builds.
+
+    Puts the ability on the stack rather than resolving it immediately
+    (`cycle()`'s own "when nobody responds" shortcut is not used here): the
+    same shape `activate_ability` already gives every other activated
+    ability, so it can be responded to and is resolved through the ordinary
+    `resolve-top`/`pass-priority` flow.
+    """
+    from magic_cards_model.machines.keywords import cycling_activation
+
+    try:
+        card = locate_hand_card(game, req.player, req.card_id, req.card)
+        activation = cycling_activation(game, card, req.player, req.ability_index)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+
+    payment = None
+    try:
+        payment = activation.begin_paying()
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost)})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost)})
+        payment.pay()
+    except ValueError as exc:
+        if payment is not None:
+            payment.rewind()
+        return refused(exc)
+
+    on_stack = activation.activate()
+    game.retain_priority(req.player)
+    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
 
 
 # -- targeting -------------------------------------------------------------

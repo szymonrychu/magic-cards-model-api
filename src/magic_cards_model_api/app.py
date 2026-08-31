@@ -28,6 +28,7 @@ from .schemas import (
     AdvanceRequest,
     AttackRequest,
     CastRequest,
+    CycleRequest,
     DecideRequest,
     DeclareBlockersRequest,
     ManaPoolUpdate,
@@ -39,6 +40,7 @@ from .schemas import (
     PlayLandRequest,
     PutCard,
     ReportProblemRequest,
+    SpecialActionRequest,
     StepUpdate,
     TargetRequest,
 )
@@ -581,9 +583,24 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
     with store.locked(game_id) as game:
         before = game.turn.step.value if game.turn is not None else None
         engine_api.set_step(game, Step(req.step))
-        audit.record(game_id, "step", player=req.player, **{"from": before, "to": req.step})
+        suspend_upkeep: list[dict[str, Any]] = []
+        if Step(req.step) is Step.UPKEEP and game.turn is not None and req.player:
+            # Same hand-driven trigger `advance` runs - a seat stepping
+            # straight to its own upkeep (rather than passing priority
+            # through to it) must not skip CR 702.62a's counter removal.
+            suspend_upkeep = engine_api.drive_suspend_upkeep(game, game.turn.active_player)
+        audit.record(
+            game_id,
+            "step",
+            player=req.player,
+            suspend_upkeep=suspend_upkeep,
+            **{"from": before, "to": req.step},
+        )
         viewer = visibility.resolve_viewer(game_id, uid)
-        return visibility.redact_view(state_view(game, game_id), viewer)
+        return {
+            **visibility.redact_view(state_view(game, game_id), viewer),
+            "suspend_upkeep": suspend_upkeep,
+        }
 
 
 # -- the heart: legality questions ------------------------------------------
@@ -603,6 +620,82 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
             card=req.card or str(req.card_id),
             from_zone=req.from_zone,
             targets=req.targets,
+            mana_sources=[str(source) for source in req.mana_sources or []],
+        )
+
+
+@app.post("/api/games/{game_id}/actions/suspend")
+def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
+    """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
+    suspend cost, with N time counters. The free cast once the last counter
+    comes off is picked up automatically by `actions/cast` - see `advance`."""
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        outcome = engine_api.suspend_card(game, req)
+        return audit_outcome(
+            game_id,
+            "suspend",
+            outcome,
+            dry_run=req.dry_run,
+            player=req.player,
+            card=req.card or str(req.card_id),
+            mana_sources=[str(source) for source in req.mana_sources or []],
+        )
+
+
+@app.post("/api/games/{game_id}/actions/plot")
+def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
+    """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
+    cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        outcome = engine_api.plot_card(game, req)
+        return audit_outcome(
+            game_id,
+            "plot",
+            outcome,
+            dry_run=req.dry_run,
+            player=req.player,
+            card=req.card or str(req.card_id),
+            mana_sources=[str(source) for source in req.mana_sources or []],
+        )
+
+
+@app.post("/api/games/{game_id}/actions/foretell")
+def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
+    """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
+    face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
+    later turn, for its printed foretell cost."""
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        outcome = engine_api.foretell_card(game, req)
+        return audit_outcome(
+            game_id,
+            "foretell",
+            outcome,
+            dry_run=req.dry_run,
+            player=req.player,
+            card=req.card or str(req.card_id),
+            mana_sources=[str(source) for source in req.mana_sources or []],
+        )
+
+
+@app.post("/api/games/{game_id}/actions/cycle")
+def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
+    """CR 702.29a: discard a card with cycling from hand, paying its cycling
+    cost, to draw a card (or search for a typecycled one). Puts the ability on
+    the stack, same as `actions/activate` - resolve it with `resolve-top`."""
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        outcome = engine_api.cycle_card(game, req)
+        return audit_outcome(
+            game_id,
+            "cycle",
+            outcome,
+            dry_run=req.dry_run,
+            player=req.player,
+            card=req.card or str(req.card_id),
+            ability_index=req.ability_index,
             mana_sources=[str(source) for source in req.mana_sources or []],
         )
 
@@ -763,17 +856,26 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
         except ValueError as exc:  # the engine's own refusal text
             seq = audit.record(game_id, "advance", player=player, allowed=False, reason=str(exc))
             return {"allowed": False, "reason": str(exc), "log_seq": seq}
+        suspend_upkeep: list[dict[str, Any]] = []
+        if step is Step.UPKEEP:
+            # CR 702.62a's second/third abilities: nothing in `Game.advance`
+            # dispatches this trigger on its own (see `engine_api.
+            # drive_suspend_upkeep`), so it is driven by hand here, once,
+            # for whoever's upkeep was just entered.
+            suspend_upkeep = engine_api.drive_suspend_upkeep(game, game.turn.active_player)
         seq = audit.record(
             game_id,
             "advance",
             player=player,
             allowed=True,
+            suspend_upkeep=suspend_upkeep,
             **{"from": before, "to": step.value},
         )
         viewer = visibility.resolve_viewer(game_id, uid)
         return {
             **visibility.redact_view(state_view(game, game_id), viewer),
             "advanced_to": step.value,
+            "suspend_upkeep": suspend_upkeep,
             "allowed": True,
             "log_seq": seq,
         }

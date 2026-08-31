@@ -159,6 +159,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         modes: str = "",
         x_value: int | None = None,
+        keyword: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
         max_seconds: float = DEFAULT_MAX_SECONDS,
@@ -169,6 +170,13 @@ def build_server(seats: Seats) -> MCPServer:
         untapped mana sources (the engine taps only what the cost needs).
         Set `dry_run` to true to ask "could I cast this?" without changing
         anything (a dry run never blocks).
+
+        `keyword` announces this cast under a keyword permission (CR 601.2b) -
+        "Plot" or "Foretell" - required to cast a card you previously exiled
+        with `plot`/`foretell` (state's `exile` entries carry `exile_pile`
+        naming which). A card you `suspend`d needs no `keyword`: once its last
+        time counter is off (see `advance`'s `suspend_upkeep`), the free cast
+        it grants is picked up automatically.
 
         Otherwise this does the whole turn of events in one call: cast, then
         - unless `hold_priority` is true - release priority and block until
@@ -196,11 +204,169 @@ def build_server(seats: Seats) -> MCPServer:
             body["modes"] = [int(mode) for mode in _parse_ids(modes)]
         if x_value is not None:
             body["x_value"] = x_value
+        if keyword:
+            body["keyword"] = keyword
         if dry_run:
             return seat.call("POST", f"/api/games/{seat.game_id()}/actions/cast", body)
 
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cast", body)
+
+        return act(seat, perform, hold_priority, max_seconds)
+
+    def _special_action_tool(action: str) -> Any:
+        """suspend/plot/foretell share `cast`'s exact shape, minus targeting
+        and modes: locate a hand card, pay its own special-action cost, then
+        release-and-wait like every other action tool - see `cast`'s
+        docstring for the shared answer shape."""
+
+        def tool(
+            player_uid: str,
+            card: str,
+            mana_sources: str = "",
+            dry_run: bool = False,
+            hold_priority: bool = False,
+            max_seconds: float = DEFAULT_MAX_SECONDS,
+        ) -> str:
+            seat = resolve(player_uid)
+            if seat is None:
+                return NO_SUCH_SEAT
+            state = seat.fetch_state()
+            body: dict[str, Any] = {"player": seat.player, "dry_run": dry_run}
+            if _UUID.match(card.strip()):
+                body["card_id"] = card.strip()
+            else:
+                body["card"] = card
+            sources = _parse_ids(mana_sources) or seat.my_untapped_sources(state)
+            if sources:
+                body["mana_sources"] = sources
+            if dry_run:
+                return seat.call("POST", f"/api/games/{seat.game_id()}/actions/{action}", body)
+
+            def perform() -> Any:
+                return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/{action}", body)
+
+            return act(seat, perform, hold_priority, max_seconds)
+
+        return tool
+
+    @server.tool()
+    @_guarded(seats)
+    def suspend(
+        player_uid: str,
+        card: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        max_seconds: float = DEFAULT_MAX_SECONDS,
+    ) -> str:
+        """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
+        its suspend cost, with N time counters on it. `card` is the card's
+        name or id in your hand. `mana_sources` is comma-separated source ids;
+        leave it empty to offer all your untapped mana sources.
+
+        Once N reaches zero (removed one per your own upkeep - see `advance`'s
+        `suspend_upkeep`), you may cast it without paying its mana cost: call
+        `cast` on it with no `keyword`, the permission is picked up
+        automatically. Releases priority and blocks for your next moment to
+        act unless `hold_priority` is true - see `cast`'s docstring for the
+        shape."""
+        return _special_action_tool("suspend")(
+            player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
+        )
+
+    @server.tool()
+    @_guarded(seats)
+    def plot(
+        player_uid: str,
+        card: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        max_seconds: float = DEFAULT_MAX_SECONDS,
+    ) -> str:
+        """CR 116.2k/702.170b: exile a card with plot from your hand, paying
+        its plot cost. `card` is the card's name or id in your hand.
+        `mana_sources` is comma-separated source ids; leave it empty to offer
+        all your untapped mana sources.
+
+        On any later turn, cast it from exile without paying its mana cost:
+        call `cast` on it with `keyword="Plot"`. Releases priority and blocks
+        for your next moment to act unless `hold_priority` is true - see
+        `cast`'s docstring for the shape."""
+        return _special_action_tool("plot")(
+            player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
+        )
+
+    @server.tool()
+    @_guarded(seats)
+    def foretell(
+        player_uid: str,
+        card: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        max_seconds: float = DEFAULT_MAX_SECONDS,
+    ) -> str:
+        """CR 116.2h/702.143b: pay {2} and exile a card with foretell from
+        your hand, face down (opponents see only that a face-down card is
+        there, not what it is). `card` is the card's name or id in your hand.
+        `mana_sources` is comma-separated source ids; leave it empty to offer
+        all your untapped mana sources.
+
+        On any later turn, cast it from exile for its printed foretell cost
+        (not its mana cost): call `cast` on it with `keyword="Foretell"`.
+        Releases priority and blocks for your next moment to act unless
+        `hold_priority` is true - see `cast`'s docstring for the shape."""
+        return _special_action_tool("foretell")(
+            player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
+        )
+
+    @server.tool()
+    @_guarded(seats)
+    def cycle(
+        player_uid: str,
+        card: str,
+        ability_index: int = 0,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        max_seconds: float = DEFAULT_MAX_SECONDS,
+    ) -> str:
+        """CR 702.29a: discard a card with cycling from your hand, paying its
+        cycling cost, to draw a card (or search your library for a card of the
+        named type, for a typecycling ability). `card` is the card's name or
+        id in your hand. `ability_index` picks which cycling ability, for the
+        rare card printing more than one line ending "cycling" - almost
+        always 0. `mana_sources` is comma-separated source ids; leave it
+        empty to offer all your untapped mana sources.
+
+        Unlike a mana ability, cycling uses the stack (CR 605.1a does not
+        apply to it) and can be responded to - it does not resolve as part of
+        this call. Releases priority and blocks for your next moment to act
+        unless `hold_priority` is true - see `cast`'s docstring for the
+        shape."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        state = seat.fetch_state()
+        body: dict[str, Any] = {
+            "player": seat.player,
+            "ability_index": ability_index,
+            "dry_run": dry_run,
+        }
+        if _UUID.match(card.strip()):
+            body["card_id"] = card.strip()
+        else:
+            body["card"] = card
+        sources = _parse_ids(mana_sources) or seat.my_untapped_sources(state)
+        if sources:
+            body["mana_sources"] = sources
+        if dry_run:
+            return seat.call("POST", f"/api/games/{seat.game_id()}/actions/cycle", body)
+
+        def perform() -> Any:
+            return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cycle", body)
 
         return act(seat, perform, hold_priority, max_seconds)
 

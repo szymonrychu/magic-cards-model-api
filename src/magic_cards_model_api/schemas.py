@@ -101,6 +101,47 @@ class CastRequest(BaseModel):
     modes: list[int] | None = None
     x_value: int | None = None
     mana_sources: list[UUID | ManaSource] | None = None
+    keyword: str | None = None
+    """The keyword permission this cast is announced under (CR 601.2b), e.g.
+    "Plot" or "Foretell" - required to cast a plotted or foretold card out of
+    exile, since those keywords are what makes the cast legal at all (CR
+    116.2k, CR 116.2h) and what it costs instead of the mana cost. A card
+    freshly granted a `PlayPermission` (suspend's own free cast, CR 702.62a's
+    third ability) needs no `keyword`: that permission is found and used
+    automatically whenever one is live for this player and card."""
+    dry_run: bool = False
+
+
+class CycleRequest(BaseModel):
+    """CR 702.29a: "[Cost], Discard this card: Draw a card." An activated
+    ability, but one `Game.begin_activating`/`activate_ability` cannot reach -
+    they only ever activate a battlefield permanent's ability, and cycling
+    "functions only while the card... is in a player's hand" (CR 702.29b) - so
+    it gets its own request shape and endpoint rather than reusing
+    `ActivateRequest`."""
+
+    player: str
+    card_id: UUID | None = None
+    card: str | None = None
+    """Card name, used when no card_id is given: first match in the player's hand."""
+    ability_index: int = 0
+    """Which of the card's cycling abilities (printed order) - almost always
+    0; only a card with more than one line ending "cycling" needs another."""
+    mana_sources: list[UUID | ManaSource] | None = None
+    dry_run: bool = False
+
+
+class SpecialActionRequest(BaseModel):
+    """A CR 116.2 special action that exiles a card from hand to cast later:
+    suspend (CR 116.2f), plot (CR 116.2k), or foretell (CR 116.2h). All three
+    share this shape - locate the card, pay its special-action cost, exile it
+    into its own marked pile - so one request body serves all three actions."""
+
+    player: str
+    card_id: UUID | None = None
+    card: str | None = None
+    """Card name, used when no card_id is given: first match in the player's hand."""
+    mana_sources: list[UUID | ManaSource] | None = None
     dry_run: bool = False
 
 

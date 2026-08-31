@@ -1,0 +1,156 @@
+{
+  "object": "card",
+  "id": "7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d",
+  "oracle_id": "74c7a029-59aa-4511-8e4c-f8f167cda4e2",
+  "multiverse_ids": [
+    655087
+  ],
+  "mtgo_id": 124203,
+  "arena_id": 90492,
+  "tcgplayer_id": 544208,
+  "cardmarket_id": 763570,
+  "name": "Slickshot Show-Off",
+  "lang": "en",
+  "released_at": "2024-04-19",
+  "uri": "https://api.scryfall.com/cards/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d",
+  "scryfall_uri": "https://scryfall.com/card/otj/146/slickshot-show-off?utm_source=api",
+  "layout": "normal",
+  "highres_image": true,
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T03:03:34Z",
+  "image_uris": {
+    "small": "https://cards.scryfall.io/small/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.jpg?1783911814",
+    "normal": "https://cards.scryfall.io/normal/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.jpg?1783911814",
+    "large": "https://cards.scryfall.io/large/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.jpg?1783911814",
+    "png": "https://cards.scryfall.io/png/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.png?1783911814",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.jpg?1783911814",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.jpg?1783911814",
+    "thumb": "https://cards.scryfall.io/thumb/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.webp?1783911814",
+    "grid": "https://cards.scryfall.io/grid/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.webp?1783911814",
+    "display": "https://cards.scryfall.io/display/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.webp?1783911814",
+    "art": "https://cards.scryfall.io/art/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.webp?1783911814",
+    "crop": "https://cards.scryfall.io/crop/front/7/0/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d.webp?1783911814"
+  },
+  "mana_cost": "{1}{R}",
+  "cmc": 2.0,
+  "type_line": "Creature \u2014 Bird Wizard",
+  "oracle_text": "Flying, haste\nWhenever you cast a noncreature spell, this creature gets +2/+0 until end of turn.\nPlot {1}{R} (You may pay {1}{R} and exile this card from your hand. Cast it as a sorcery on a later turn without paying its mana cost. Plot only as a sorcery.)",
+  "power": "1",
+  "toughness": "2",
+  "colors": [
+    "R"
+  ],
+  "color_identity": [
+    "R"
+  ],
+  "keywords": [
+    "Flying",
+    "Plot",
+    "Haste"
+  ],
+  "all_parts": [
+    {
+      "object": "related_card",
+      "id": "304523e7-f332-4c1d-9590-ff9a70daff26",
+      "component": "combo_piece",
+      "name": "Slickshot Show-Off",
+      "type_line": "Creature \u2014 Bird Wizard",
+      "uri": "https://api.scryfall.com/cards/304523e7-f332-4c1d-9590-ff9a70daff26"
+    },
+    {
+      "object": "related_card",
+      "id": "f07677af-88a4-4ff5-b591-e1e3ac05235d",
+      "component": "combo_piece",
+      "name": "Plot",
+      "type_line": "Card",
+      "uri": "https://api.scryfall.com/cards/f07677af-88a4-4ff5-b591-e1e3ac05235d"
+    }
+  ],
+  "legalities": {
+    "standard": "legal",
+    "future": "legal",
+    "historic": "legal",
+    "timeless": "legal",
+    "gladiator": "legal",
+    "pioneer": "legal",
+    "modern": "legal",
+    "legacy": "legal",
+    "pauper": "not_legal",
+    "vintage": "legal",
+    "penny": "not_legal",
+    "commander": "legal",
+    "oathbreaker": "legal",
+    "standardbrawl": "legal",
+    "brawl": "legal",
+    "competitivebrawl": "legal",
+    "alchemy": "not_legal",
+    "paupercommander": "not_legal",
+    "duel": "legal",
+    "oldschool": "not_legal",
+    "premodern": "not_legal",
+    "predh": "not_legal",
+    "tlr": "legal"
+  },
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "reserved": false,
+  "game_changer": false,
+  "foil": true,
+  "nonfoil": true,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "oversized": false,
+  "promo": false,
+  "reprint": false,
+  "variation": false,
+  "set_id": "55a85ebe-644e-4bef-8be8-5290408be3d1",
+  "set": "otj",
+  "set_name": "Outlaws of Thunder Junction",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/55a85ebe-644e-4bef-8be8-5290408be3d1",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Aotj&unique=prints",
+  "scryfall_set_uri": "https://scryfall.com/sets/otj?utm_source=api",
+  "rulings_uri": "https://api.scryfall.com/cards/7054012b-4f9d-44a0-aaf9-7fd3bddc7b2d/rulings",
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A74c7a029-59aa-4511-8e4c-f8f167cda4e2&unique=prints",
+  "collector_number": "146",
+  "digital": false,
+  "rarity": "rare",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "artist": "Augusto Quirino",
+  "artist_ids": [
+    "c978da18-e7b5-4739-a331-754c0fc2262e"
+  ],
+  "illustration_id": "5269dc03-211e-41f8-9d86-8f7b6e2da36a",
+  "border_color": "black",
+  "frame": "2015",
+  "security_stamp": "oval",
+  "full_art": false,
+  "textless": false,
+  "booster": true,
+  "story_spotlight": false,
+  "edhrec_rank": 9228,
+  "prices": {
+    "usd": "4.67",
+    "usd_foil": "6.21",
+    "usd_etched": null,
+    "eur": "5.58",
+    "eur_foil": "6.67",
+    "tix": "2.59"
+  },
+  "related_uris": {
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=655087&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DSlickshot%2BShow-Off",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DSlickshot%2BShow-Off",
+    "edhrec": "https://edhrec.com/route/?cc=Slickshot+Show-Off"
+  },
+  "purchase_uris": {
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F544208%3Fpage%3D1",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=763570&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "cardhoarder": "https://www.cardhoarder.com/cards/124203?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall"
+  }
+}

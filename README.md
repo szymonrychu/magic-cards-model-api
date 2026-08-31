@@ -76,7 +76,7 @@ All under `/api`. Interactive docs at `/docs`.
 Zones: `library`, `hand`, `battlefield`, `graveyard`, `stack`, `exile`,
 `command`, `sideboard`. Shared zones (battlefield, stack, exile, command)
 take the `player` as the controller. Counter kinds: `+1/+1`, `-1/-1`,
-`loyalty`, `poison`, `energy`, `experience`, `charge`.
+`loyalty`, `poison`, `energy`, `experience`, `time`, `charge`.
 
 ### The heart: legality questions
 
@@ -85,9 +85,13 @@ action only when allowed and `dry_run` is not set.
 
 | | |
 |---|---|
-| `POST /api/games/{id}/actions/cast` | `{player, card_id | card, from_zone?, targets?: [card ids or usernames], modes?: [1,2], x_value?, mana_sources?: [card ids or {card_id, colors: ["R"]}], dry_run?}` |
+| `POST /api/games/{id}/actions/cast` | `{player, card_id | card, from_zone?, targets?: [card ids or usernames], modes?: [1,2], x_value?, keyword?, mana_sources?: [card ids or {card_id, colors: ["R"]}], dry_run?}` - `keyword` (e.g. "Plot", "Foretell") announces a cast under a keyword permission (CR 601.2b); a suspended card's own free cast is picked up automatically once its last time counter is off, no `keyword` needed |
 | `POST /api/games/{id}/actions/target` | `{source_id, target, ability_index?}` - a spell on the stack, a card in hand, or an activated ability line |
 | `POST /api/games/{id}/actions/activate` | `{player, card_id, ability_index? (default 0), targets?, mana_sources?, sacrificing?, discarding?, dry_run?}` - mana abilities resolve straight into the pool |
+| `POST /api/games/{id}/actions/suspend` | `{player, card_id | card, mana_sources?, dry_run?}` - CR 116.2f/702.62a: exile a card with suspend from hand, with N time counters |
+| `POST /api/games/{id}/actions/plot` | `{player, card_id | card, mana_sources?, dry_run?}` - CR 116.2k/702.170b: exile a card with plot from hand |
+| `POST /api/games/{id}/actions/foretell` | `{player, card_id | card, mana_sources?, dry_run?}` - CR 116.2h/702.143b: pay {2}, exile a card with foretell from hand face down |
+| `POST /api/games/{id}/actions/cycle` | `{player, card_id | card, ability_index? (default 0), mana_sources?, dry_run?}` - CR 702.29a: discard a card with cycling from hand to draw (or typecycle); puts the ability on the stack |
 | `POST /api/games/{id}/actions/attack` | `{attackers: [{card_id, defender: username or planeswalker card_id}], dry_run?}` |
 | `POST /api/games/{id}/actions/play-land` | `{player, card_id | card}` - the land-drop rules come with it |
 
@@ -97,7 +101,7 @@ action only when allowed and `dry_run` is not set.
 |---|---|
 | `POST /api/games/{id}/resolve-top` | resolves the top of the stack |
 | `POST /api/games/{id}/state-based-actions` | counter state-based actions, then the full check |
-| `POST /api/games/{id}/advance` | one step, with turn-based actions |
+| `POST /api/games/{id}/advance` | one step, with turn-based actions; landing on `upkeep` also drives CR 702.62a's suspend upkeep trigger for every card the now-active player has suspended in exile, reported as `suspend_upkeep: [{card_id, card, time_counters, cast_permission_granted?}]` (`PUT .../step` does the same when it lands on `upkeep`) |
 | `POST /api/games/{id}/decide?uid=` | `{player, card_ids: [...]}` - answers this game's pending decision; refused if `uid` is not that decision's own player |
 
 ### Decisions (CR 608.2d, mostly)
