@@ -171,6 +171,10 @@ h3 { font-size: 14px; }
 #autopilot-banner { background: #1c2536; border: 1px solid var(--accent); }
 #autopilot-banner .why { color: var(--ink-dim); }
 #game-over { background: #2a1c1c; border: 1px solid var(--warn); font-weight: 600; }
+/* Refusals and errors, in the page rather than a blocking native dialog. */
+.notice { background: #1d2330; border: 1px solid var(--line-bright); }
+.notice.bad { background: #2c1a1a; border-color: var(--bad); color: var(--bad); }
+.notice button { margin-left: auto; }
 
 /* --------------------------------------------------------- the board ---- */
 

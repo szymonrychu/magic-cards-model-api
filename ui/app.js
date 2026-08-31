@@ -81,6 +81,10 @@ let game = {
     // Casting releases priority so the spell resolves, unless the player
     // asks to keep it (CR 117.3c). Remembered across casts this session.
     holdPriority: false,
+    // The auto-pass destination the player picked, kept here rather than
+    // read off the <select> only at click time: the panel re-renders on a
+    // poll tick, and a value that lived only in the DOM would reset itself.
+    autopilotTarget: "upkeep|you",
   },
 };
 
@@ -113,6 +117,38 @@ async function api(method, path, body) {
 function withUid(path) {
   const sep = path.includes("?") ? "&" : "?";
   return `${path}${sep}uid=${encodeURIComponent(game.uid)}`;
+}
+
+/**
+ * Replace a container's HTML - but never while the player is using a control
+ * inside it, and never when nothing actually changed.
+ *
+ * `render()` runs on every poll tick (~1.2s) and rebuilds whole panels from
+ * `innerHTML`. That destroys and recreates every element underneath, which
+ * for a form control means: an open `<select>` snaps shut, a half-typed
+ * `<input>` loses its text and its focus, and a checkbox mid-click is
+ * replaced. Both reported symptoms - the auto-pass dropdown closing before it
+ * could be used, and the card-name box for Disruptor Flute's "as this enters,
+ * choose a card name" being impossible to type into - are this one bug.
+ *
+ * Two guards, cheapest first: skip when the markup is byte-identical (the
+ * common case between ticks, so most polls touch no DOM at all), and skip
+ * when the focused element lives inside this container. The panel refreshes
+ * on the next tick after the player moves on, so nothing goes stale for long.
+ */
+function setHtml(el, html) {
+  if (!el) return;
+  if (el.innerHTML === html) return;
+  const active = document.activeElement;
+  if (
+    active &&
+    active !== document.body &&
+    el.contains(active) &&
+    /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName)
+  ) {
+    return;
+  }
+  el.innerHTML = html;
 }
 
 function escapeHtml(s) {
@@ -826,7 +862,7 @@ function renderDecision(state, you) {
   const body = renderer
     ? renderer(pending)
     : `<div class="error">no UI handler for decision kind ${escapeHtml(pending.kind)} - this is a drift bug, see tests/test_ui_decision_coverage.py</div>`;
-  box.innerHTML = `<h3>${withSymbols(pending.prompt)}</h3>${body}`;
+  setHtml(box, `<h3>${withSymbols(pending.prompt)}</h3>${body}`);
 }
 
 async function decide(answer) {
@@ -834,7 +870,7 @@ async function decide(answer) {
   try {
     await api("POST", withUid(`/api/games/${game.gameId}/decide`), body);
   } catch (e) {
-    alert(`decision refused: ${e.message}`);
+    notice(`Decision refused: ${e.message}`, "bad");
   }
   poll();
 }
@@ -880,8 +916,14 @@ function startAutopilot(step, who) {
 }
 window.startAutopilot = startAutopilot;
 
+function rememberAutopilotTarget(value) {
+  game.settings.autopilotTarget = value;
+}
+window.rememberAutopilotTarget = rememberAutopilotTarget;
+
 function startAutopilotFromPicker() {
-  const value = $("#autopilot-target").value;
+  const select = $("#autopilot-target");
+  const value = (select && select.value) || game.settings.autopilotTarget;
   const [step, who] = value.split("|");
   startAutopilot(step, who);
 }
@@ -899,6 +941,32 @@ function toggleStopOnStackSetting(checked) {
   game.settings.stopOnStack = checked;
 }
 window.toggleStopOnStackSetting = toggleStopOnStackSetting;
+
+/**
+ * Show a refusal or an error in the page, never in a native dialog.
+ *
+ * `alert()` and `confirm()` block the whole renderer thread. This page polls
+ * the server every ~1.2s and drives an AI seat alongside it, so a native
+ * dialog freezes the board behind it and stacks up ticks until it is
+ * dismissed - and while one is open the page is genuinely unresponsive, not
+ * merely busy. Every refusal path goes through here instead.
+ */
+function notice(message, kind) {
+  const box = $("#notice");
+  if (!box) return;
+  box.hidden = false;
+  box.className = kind === "bad" ? "notice bad" : "notice";
+  box.innerHTML = `<span>${escapeHtml(message)}</span>
+    <button class="ghost" onclick="dismissNotice()">Dismiss</button>`;
+}
+window.notice = notice;
+
+function dismissNotice() {
+  const box = $("#notice");
+  box.hidden = true;
+  box.innerHTML = "";
+}
+window.dismissNotice = dismissNotice;
 
 function renderAutopilotBanner() {
   const banner = $("#autopilot-banner");
@@ -1350,7 +1418,7 @@ function renderActionTray() {
     </div>`
   );
   if (action.error) parts.push(`<div class="error">${escapeHtml(action.error)}</div>`);
-  tray.innerHTML = parts.join("");
+  setHtml(tray, parts.join(""));
 }
 
 function renderTargetStep(action, targeting) {
@@ -1683,7 +1751,7 @@ function renderActionBar(state, you) {
   const targets = autopilotTargets();
   const current = game.autopilot
     ? `${game.autopilot.step}|${game.autopilot.who}`
-    : `upkeep|you`;
+    : game.settings.autopilotTarget;
   groups.push(`<div class="group"><div class="label">Priority</div>
     <div class="pass-controls">
       <div class="row">
@@ -1691,7 +1759,7 @@ function renderActionBar(state, you) {
         ${state.stack.length ? '<button onclick="resolveTop()">Resolve top</button>' : ""}
       </div>
       <div class="row">
-        <select id="autopilot-target">
+        <select id="autopilot-target" onchange="rememberAutopilotTarget(this.value)">
           ${targets
             .map(
               (t) =>
@@ -1774,16 +1842,16 @@ function renderActionBar(state, you) {
     <button class="danger" onclick="concede()">Concede</button>
   </div></div>`);
 
-  bar.innerHTML = groups.join("");
+  setHtml(bar, groups.join(""));
 }
 
 async function simpleAction(path, body, label) {
   try {
     const res = await api("POST", withUid(`/api/games/${game.gameId}/${path}`), body);
-    if (res && res.allowed === false) alert(`${label} refused: ${res.reason}`);
+    if (res && res.allowed === false) notice(`${label} refused: ${res.reason}`, "bad");
     return res;
   } catch (e) {
-    alert(`${label} failed: ${e.message}`);
+    notice(`${label} failed: ${e.message}`, "bad");
   } finally {
     poll();
   }
@@ -1828,11 +1896,23 @@ function castFromPermission(cardId, fromZone) {
 }
 window.castFromPermission = castFromPermission;
 
-async function concede() {
-  if (!confirm("Concede this game? You leave the game immediately (CR 104.3a).")) return;
-  await simpleAction("actions/concede", { player: game.state.you }, "concede");
+function concede() {
+  // An irreversible action, so it is confirmed - but in the page, not behind
+  // a blocking `confirm()`.
+  showModal(`<h3>Concede this game?</h3>
+    <p class="hint">You leave the game immediately (CR 104.3a). This cannot be undone.</p>
+    <div class="chip-row">
+      <button class="danger" onclick="confirmConcede()">Concede</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>`);
 }
 window.concede = concede;
+
+async function confirmConcede() {
+  closeModal();
+  await simpleAction("actions/concede", { player: game.state.you }, "concede");
+}
+window.confirmConcede = confirmConcede;
 
 function openReportModal() {
   showModal(`<h3>Report a problem</h3>
@@ -2045,7 +2125,9 @@ function renderAiPanel(status) {
 }
 
 function showAiError(status) {
-  alert(`AI seat error (returncode ${status.returncode}):\n${(status.stderr_tail || []).join("\n")}`);
+  showModal(`<h3>AI seat error (returncode ${escapeHtml(status.returncode)})</h3>
+    <textarea rows="12" readonly>${escapeHtml((status.stderr_tail || []).join("\n"))}</textarea>
+    <button onclick="closeModal()">Close</button>`);
 }
 window.showAiError = showAiError;
 
