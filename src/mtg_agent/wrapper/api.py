@@ -9,10 +9,11 @@ endpoint.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from .config import Settings
@@ -29,7 +30,19 @@ class ProbeIn(BaseModel):
     text: str = ""
 
 
-def build_public_app(manager: Manager, settings: Settings) -> FastAPI:
+def build_public_app(
+    manager: Manager,
+    settings: Settings,
+    *,
+    on_exit: Callable[[], None] | None = None,
+) -> FastAPI:
+    """`on_exit` is how the HTTP layer asks the process to stop.
+
+    It is supplied by `__main__`, which owns the uvicorn server; the app never
+    reaches for the server object and never calls `os._exit`, so the routes
+    stay testable and the port stays a port.
+    """
+
     app = FastAPI(title="mtg-agent-wrapper")
 
     def require_secret(request: Request) -> None:
@@ -68,9 +81,15 @@ def build_public_app(manager: Manager, settings: Settings) -> FastAPI:
         return manager.snapshot()
 
     @app.delete("/v1/session", status_code=202, dependencies=guard)
-    def delete_session() -> dict:
+    def delete_session(background: BackgroundTasks) -> dict:
+        """End this container's life. The session is not restartable in place:
+        one container plays one match, and the next match gets a fresh
+        process with a fresh conversation. The exit runs as a background task
+        so the 202 is on the wire before the listener goes away."""
         manager.shutdown()
-        return {"stopping": True}
+        if on_exit is not None:
+            background.add_task(on_exit)
+        return {"stopping": True, "exiting": on_exit is not None}
 
     @app.get("/v1/transcript", dependencies=guard)
     def get_transcript() -> Response:

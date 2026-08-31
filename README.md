@@ -22,14 +22,33 @@ brief the agent is given.
 ## Play against a continuous agent
 
 `docker compose up --build` brings up three containers: the game (this repo,
-with the `/play/` UI), an **agent** running one long-lived interactive
-`claude` under a PTY, and a **driver** that tells the agent what it is
-playing.
+with the `/play/` UI), an **agent** running one interactive `claude` under a
+PTY for the length of one match, and a **driver** that tells the agent what it
+is playing and recycles it between matches.
 
 The difference from the bundled AI seat is memory. The bundled seat is a
-one-shot `claude --print` that forgets the game when it ends. The agent
-container keeps one claude session alive across games, so it builds a read on
-a matchup and can act on what happened last time.
+one-shot `claude --print` that forgets the game when it ends. The agent runs
+in the interactive harness a human gets, and carries what it learned from one
+game to the next through notes it writes itself.
+
+**One container plays exactly one match.** When the game ends the driver
+pushes a single reflection turn, then sends `DELETE /v1/session`; the agent
+process exits, `restart: unless-stopped` brings up a fresh container, and the
+next game starts with a brand-new `claude` session. The same thing happens if
+the supervised `claude` dies mid-game: a session that can never serve another
+turn takes the container down with it rather than sitting there "running".
+
+So nothing crosses a match boundary except `./memory`, the host bind-mount the
+agent writes its notes into. That is deliberate: a session that remembered
+game one directly would carry its whole transcript - and its mistaken reads -
+into game two, while a note has to be written down to survive.
+
+A dispatch that lands while the replacement container is still booting (pty
+spawn, bypass dialog and quiescence take up to about two minutes) is accepted
+with `pending: true`, and the driver keeps offering turn 0 until the agent
+answers or the boot budget (`AGENT_BOOT_WAIT_SECONDS`, default 180) runs out.
+A second *different* game arriving while a match is live is refused with a 409
+naming the game in progress - the agent plays one at a time.
 
 What it knows before its first action:
 
@@ -41,9 +60,11 @@ What it is deliberately NOT told: anything about your deck. It works the
 matchup out from the cards you play, then opens the matching guide. Getting
 that read right sooner is what the notes are for.
 
-After the game it writes `./memory/<deck>/games/<game-id>.md` and revises
+On the reflection turn - the last thing it does before the container exits -
+it writes `./memory/<deck>/games/<game-id>.md` and revises
 `./memory/<deck>/vs-<archetype>.md`. That directory is a host bind-mount, so
-it survives every rebuild - and you can read and edit it yourself.
+it survives every restart and every rebuild - and you can read and edit it
+yourself.
 
 | what | where |
 |---|---|
