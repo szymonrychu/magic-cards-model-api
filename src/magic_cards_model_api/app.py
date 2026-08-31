@@ -48,7 +48,7 @@ from .store import new_seat_uids, store
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 
 
-def _card_fingerprint(state: CardState) -> tuple[Any, ...]:
+def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
     """One card's own observable state, identity included (CR 400.7).
 
     `zone_change_stamp` is the load-bearing field: "An object that moves from
@@ -71,7 +71,7 @@ def _card_fingerprint(state: CardState) -> tuple[Any, ...]:
     return (
         str(state.zone_change_stamp),
         state.tapped,
-        state.is_summoning_sick,
+        state.is_summoning_sick(game),
         state.damage,
         tuple(sorted(state.counters.root.items())),
         state.attachment,
@@ -113,7 +113,7 @@ def _resolution_state(game: Game) -> dict[str, Any]:
     """
 
     def zone_fingerprint(cards: Any) -> dict[str, tuple[Any, ...]]:
-        return {str(c.id): _card_fingerprint(c) for c in cards if isinstance(c, CardState)}
+        return {str(c.id): _card_fingerprint(c, game) for c in cards if isinstance(c, CardState)}
 
     return {
         "life": {player.username: player.life for player in game.players},

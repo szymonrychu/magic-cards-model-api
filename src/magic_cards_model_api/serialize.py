@@ -142,7 +142,7 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "face_up": state.face_up,
         "counters": dict(state.counters.root),
         "damage": state.damage,
-        "summoning_sick": state.is_summoning_sick,
+        "summoning_sick": state.is_summoning_sick(game),
         "power": power,
         "toughness": toughness,
         "keywords": _keywords_of(game, state),
@@ -215,7 +215,7 @@ def snapshot(game: Game) -> dict[str, Any]:
         bits = [f"{state.controller}: {state.name}"]
         if state.tapped:
             bits.append("(tapped)")
-        if state.is_summoning_sick:
+        if state.is_summoning_sick(game):
             bits.append("(sick)")
         # Computed, not printed (CR 613.5): a battlefield permanent's power
         # and toughness are whatever the layer system currently makes them -
