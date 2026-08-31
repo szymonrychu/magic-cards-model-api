@@ -1,0 +1,6 @@
+# Everything in these manifests lives in one namespace. Drop this file and add
+# `-n <ns>` to the kubectl commands if you would rather use an existing one.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mtg

@@ -1,0 +1,277 @@
+# The whole stack as ONE Pod with three containers: game, agent, driver.
+# It is the docker-compose.yml topology with the network collapsed onto
+# loopback. Read that file next to this one; the env below is copied from it.
+#
+# THREE THINGS CHANGE when the three containers share a Pod:
+#
+# 1. One network namespace, so every service-name URL becomes 127.0.0.1:
+#      http://game:8000   -> http://127.0.0.1:8000    (driver GAME_API, game
+#                                                      DRIVER_URL's peer, and
+#                                                      the mtg MCP server, see
+#                                                      20-configmap-mcp.yaml)
+#      http://agent:8080  -> http://127.0.0.1:8080    (driver WRAPPER_API)
+#      http://driver:8090 -> http://127.0.0.1:8090    (game DRIVER_URL,
+#                                                      driver DRIVER_SELF_URL)
+#
+# 2. One port space, so the ports must not collide - and in compose THEY DO.
+#    The wrapper's loopback-only internal listener is INTERNAL_ADDR, which
+#    compose sets to 127.0.0.1:8090 - the same port the driver serves on.
+#    Separate namespaces made that harmless; here it would be a bind clash
+#    between the agent and the driver. The internal listener is moved to
+#    127.0.0.1:8099 below, and CCW_INTERNAL_URL (the URL the stop hook posts
+#    the finished turn to) is moved with it. Final port map:
+#      8000 game (public)   8080 agent (public)   8090 driver (public)
+#      8099 agent internal (loopback only, not a containerPort)
+#
+# 3. `restartPolicy: Always`. The agent EXITS ON PURPOSE at the end of every
+#    match - one match per container, then a brand-new claude session - and it
+#    exits ZERO (a clean return out of wrapper/__main__). `OnFailure` would
+#    therefore never restart it and the stack would sit there dead after game
+#    one; `Never` is worse. `Always` restarts the agent container in place
+#    while the game and driver containers keep running untouched - a container
+#    restart is not a Pod restart, so no state and no listener is lost on the
+#    other two, and the driver's next dispatch is answered `pending: true`
+#    until the fresh claude has booted. This is the same behaviour compose gets
+#    from `restart: unless-stopped`.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mtg-stack
+  namespace: mtg
+  labels:
+    app: mtg-stack
+spec:
+  restartPolicy: Always
+
+  # The agent image creates a uid/gid 1000 `agent` user and does `USER agent`
+  # because claude REFUSES bypass-permissions mode as root and exits 1 - which
+  # surfaces as `claude exited code=1`. Do not "fix" a permission error by
+  # putting runAsUser: 0 here; fix the volume ownership instead. fsGroup makes
+  # the two PVCs group-writable by 1000 so the agent can write its memory.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  # hostPath pins this Pod to whichever node holds the guides. Uncomment and
+  # set the node once you have put them somewhere. See deploy/k8s/README.md.
+  # nodeSelector:
+  #   kubernetes.io/hostname: my-node
+
+  volumes:
+    # The deck guides, compose's `${MTG_DECKS}:/guides:ro` bind mount.
+    # hostPath, honestly: see the README for what that costs.
+    - name: guides
+      hostPath:
+        path: /srv/mtg-decks
+        type: Directory
+    - name: memory
+      persistentVolumeClaim:
+        claimName: mtg-agent-memory
+    - name: scryfall-cache
+      persistentVolumeClaim:
+        claimName: mtg-scryfall-cache
+    - name: mcp-base
+      configMap:
+        name: mtg-agent-mcp
+    # The driver's scratch dir (DRIVER_WORKSPACE). In compose this is just
+    # container-local disk; an emptyDir is the same thing with a name.
+    - name: driver-workspace
+      emptyDir: {}
+
+  containers:
+    # ---------------------------------------------------------------- game --
+    - name: game
+      image: mtg-game:dev
+      imagePullPolicy: IfNotPresent
+      # CMD from the Dockerfile: uvicorn magic_cards_model_api.main:app.
+      ports:
+        - name: game
+          containerPort: 8000
+      env:
+        - name: AI_SEAT_MODE
+          value: wrapper
+        - name: DRIVER_URL
+          value: http://127.0.0.1:8090
+      volumeMounts:
+        - name: guides
+          mountPath: /guides
+          readOnly: true
+        - name: scryfall-cache
+          mountPath: /app/.scryfall-cache
+      # The compose healthcheck, as a k8s probe. /api/health is cheap and is
+      # filtered out of uvicorn's access log, so probing it does not spam.
+      readinessProbe:
+        httpGet:
+          path: /api/health
+          port: 8000
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /api/health
+          port: 8000
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        # A uvicorn app serving one game. Conservative on purpose: requests are
+        # what the scheduler reserves, limits are where it gets throttled/OOMed.
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+
+    # --------------------------------------------------------------- agent --
+    - name: agent
+      image: mtg-agent:dev
+      imagePullPolicy: IfNotPresent
+      # CMD from Dockerfile.agent: python -m mtg_agent.wrapper, as PID 1 of
+      # this container, supervising one interactive claude over a PTY.
+      ports:
+        - name: agent
+          containerPort: 8080
+      env:
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mtg-agent
+              key: ANTHROPIC_API_KEY
+        - name: MODEL
+          value: sonnet
+        - name: HTTP_ADDR
+          value: ":8080"
+        # Moved off 8090: that is the driver's port in this Pod. See the
+        # header comment.
+        - name: INTERNAL_ADDR
+          value: 127.0.0.1:8099
+        - name: WORKSPACE
+          value: /workspace
+        - name: HOME_DIR
+          value: /agent-home
+        - name: HOOK_COMMAND
+          value: /app/.venv/bin/cc-stop-hook
+        - name: CCW_INTERNAL_URL
+          value: http://127.0.0.1:8099/internal/turn-complete
+        - name: CCW_RESULT_JSON
+          value: /workspace/result.json
+        # The k8s copy, with the mtg MCP server pointed at loopback.
+        - name: BASE_MCP_PATH
+          value: /etc/mtg/mcp.base.json
+        - name: TURN_TIMEOUT_SECONDS
+          value: "1800"
+        - name: BOOT_TIMEOUT_SECONDS
+          value: "120"
+        - name: LOG_LEVEL
+          value: info
+      volumeMounts:
+        - name: guides
+          mountPath: /guides
+          readOnly: true
+        - name: memory
+          mountPath: /workspace/memory
+        - name: mcp-base
+          mountPath: /etc/mtg
+          readOnly: true
+      # BOOT IS SLOW AND MUST NOT BE KILLED. The wrapper boots claude (pty
+      # spawn, bypass dialog, output quiescence - up to about two minutes)
+      # BEFORE it starts serving HTTP at all, so nothing on :8080 answers
+      # during boot. A liveness probe alone would kill the container mid-boot,
+      # forever. The startupProbe therefore owns the whole boot window
+      # (10s * 36 = 6 minutes of grace) and liveness only starts after it
+      # passes, per the kubelet's probe ordering.
+      startupProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 36
+      # /healthz is "the process is serving"; /readyz is "claude has actually
+      # booted and can take a turn" (503 while booting or dead). Readiness
+      # gates the Service, liveness must not - a dead claude takes the
+      # container down by exiting on its own, which is the designed path.
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 8080
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        # This is the expensive container: a node runtime plus an interactive
+        # claude session holding a long transcript. Give it real memory; the
+        # CPU limit is generous because a turn is bursty.
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 3Gi
+
+    # -------------------------------------------------------------- driver --
+    - name: driver
+      image: mtg-game:dev
+      imagePullPolicy: IfNotPresent
+      command: ["python", "-m", "mtg_agent.driver"]
+      ports:
+        - name: driver
+          containerPort: 8090
+      env:
+        - name: GAME_API
+          value: http://127.0.0.1:8000
+        - name: WRAPPER_API
+          value: http://127.0.0.1:8080
+        - name: DRIVER_SELF_URL
+          value: http://127.0.0.1:8090
+        - name: GUIDES_ROOT
+          value: /guides
+        - name: MEMORY_ROOT
+          value: /workspace/memory
+        - name: DRIVER_WORKSPACE
+          value: /driver-workspace
+        - name: HTTP_ADDR
+          value: ":8090"
+      volumeMounts:
+        - name: guides
+          mountPath: /guides
+          readOnly: true
+        - name: memory
+          mountPath: /workspace/memory
+        - name: driver-workspace
+          mountPath: /driver-workspace
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8090
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8090
+        initialDelaySeconds: 30
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        # Bookkeeping and HTTP calls; it does no heavy work of its own.
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
