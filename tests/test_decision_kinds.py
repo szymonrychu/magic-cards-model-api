@@ -34,8 +34,14 @@ reading `machines/decisions.py` and `models/game.py` shows `ask_mulligan`,
 this API publishes to) at all. No request through this API can ever make one
 of them arrive at `POST /decide` - attacking and blocking already have their
 own actions (`actions/attack`, `actions/declare-blockers`) that call
-`Game.declare_attackers`/`Game.declare_blockers` directly, and a mulligan is
-settled inside `Match.start_game`. `test_an_unwired_kind_is_refused_by_name`
+`Game.declare_attackers`/`Game.declare_blockers` directly, and a mulligan's
+declaration, although the API now really does put it (`opening.py` runs
+`Match.run_mulligans` on every game booted from decklists), is answered by
+`ask_mulligan` off `default_answer` without a seat ever being shown it.
+`OPENING_HAND_ACTION`, asked at the end of that same sequence, is *not* in
+this group: `Game.take_opening_hand_actions` asks it through `Game.ask`, so it
+does reach the mailbox and does have a live-seat test below.
+`test_an_unwired_kind_is_refused_by_name`
 below proves `decide`'s refusal path for them the only way it can be
 proved - by publishing one by hand to the mailbox, the way a future
 `DecisionKind` would arrive if a caller forgot to update

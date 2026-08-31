@@ -726,6 +726,7 @@ function renderHand(state, you) {
 
 const DECISION_RENDERERS = {
   may: renderYesNoDecision("accept"),
+  opening_hand_action: renderYesNoDecision("accept"),
   pay_life: renderYesNoDecision("accept"),
   pay_energy: renderYesNoDecision("accept"),
   pay_mana: renderYesNoDecision("accept"),

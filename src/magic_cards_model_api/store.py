@@ -44,6 +44,7 @@ class GameStore:
         self._locks: dict[str, threading.Lock] = {}  # game_id -> its mutation lock
         self._mailboxes: dict[str, DecisionMailbox] = {}  # game_id -> its pending decision
         self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
+        self._opening_done: dict[str, threading.Event] = {}  # game_id -> CR 103.5/103.6 finished
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -55,7 +56,23 @@ class GameStore:
             self._admin_keys[game_id] = uuid4().hex
             self._locks[game_id] = threading.Lock()
             self._mailboxes[game_id] = mailbox
+            self._opening_done[game_id] = threading.Event()
         return game_id
+
+    def opening_done(self, game_id: str) -> threading.Event:
+        """The flag `opening.py` sets once this game's CR 103.5 mulligan
+        process and CR 103.6 opening-hand actions have finished.
+
+        Created with the game and set by whichever thread ran them, so a
+        caller that needs the settled opening hand - a test, a seat that will
+        not act until the game is really ready - can wait for it instead of
+        guessing. It stays unset for a game that has no opening sequence to
+        run at all (`POST /api/games` builds a board with no decks and no
+        opening hand), and for an unknown game id: "not done" is the honest
+        answer in both cases, and neither has a caller that waits on it.
+        """
+        with self._lock:
+            return self._opening_done.setdefault(game_id, threading.Event())
 
     @contextmanager
     def locked(self, game_id: str) -> Iterator[Game]:
@@ -138,6 +155,7 @@ class GameStore:
             self._locks.pop(game_id, None)
             self._mailboxes.pop(game_id, None)
             self._decision_timeouts.pop(game_id, None)
+            self._opening_done.pop(game_id, None)
             return self._games.pop(game_id, None) is not None
 
     def ids(self) -> list[str]:

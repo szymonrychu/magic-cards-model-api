@@ -595,6 +595,16 @@ def build_server(seats: Seats) -> MCPServer:
           (a *look*, CR 701.20e: shown only to the deciding player) or a
           library-sourced `choose_cards` is never answered blind. Look the id
           up in `card_details` before choosing.
+        - `opening_hand_action` (Leyline of the Void's "if this card is in
+          your opening hand, you may begin the game with it on the
+          battlefield", CR 103.6a; or a card that lets you reveal it from
+          your opening hand, CR 103.6b): `accept` is `True` to take the
+          action, `False` to decline - "may take any such actions"
+          (CR 103.6), so no is always a real answer. This one arrives before
+          the first turn has begun, right after the mulligan process, so it
+          may well be the very first thing a seat is asked; answering it is
+          what lets the game reach turn one. `pending_decision.source` names
+          the card offering it.
         - `put_on_top_or_bottom` (Subtlety's "its owner puts it on the top or
           bottom of their library"): `top` is `True` for the top, `False` for
           the bottom. Not `accept` - this is a top/bottom choice, not a
@@ -610,11 +620,18 @@ def build_server(seats: Seats) -> MCPServer:
         on the API side for the CR 608.2d fallback rule).
 
         `mulligan`, `declare_attackers`, and `declare_blockers` decisions
-        never reach this tool no matter what it supports - they are asked
-        straight off the engine's own decision script during game setup and
-        the dedicated `attackers`/`blockers` actions, never through this
-        mailbox. Answering when nothing is pending, or when the pending
-        decision is not yours, is refused rather than accepted.
+        never reach this tool no matter what it supports - each is answered
+        straight off the engine's own decision script, never through this
+        mailbox. Attacking and blocking have the dedicated
+        `attackers`/`blockers` actions instead. The mulligan does not have a
+        replacement: CR 103.5's declaration really is put to you when your
+        game is created, but the engine answers it with its own default (keep
+        the hand as dealt) without ever showing it to a seat, so you are
+        never asked and cannot mulligan through this API at all. The
+        `opening_hand_action` above, asked at the end of that same sequence,
+        is the part you do get to answer. Answering when nothing is pending,
+        or when the pending decision is not yours, is refused rather than
+        accepted.
 
         Answering a decision does not, itself, involve priority (CR 608.2d is
         the resolving effect asking a question, not a priority action), but

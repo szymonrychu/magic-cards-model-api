@@ -1067,6 +1067,10 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_MANA,
+        # CR 103.6's "may take any such actions": the same yes/no shape, now
+        # that `opening.py` runs the mulligan process and a seat really is
+        # asked - see `decisions.ANSWERABLE_KINDS`.
+        DecisionKind.OPENING_HAND_ACTION,
     ):
         try:
             answer = decisions.bool_answer(req.accept)
@@ -1113,7 +1117,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     else:
         # `kind` is either unparseable (a future `DecisionKind` this API has
         # not been told about) or one of `MULLIGAN`/`DECLARE_ATTACKERS`/
-        # `DECLARE_BLOCKERS`, which never reach this mailbox at all - see
+        # `DECLARE_BLOCKERS`, none of which this mailbox ever carries - see
         # `decisions.ANSWERABLE_KINDS`/`decisions.SERVED_ELSEWHERE`. Either
         # way, refuse by name rather than guessing a shape or silently
         # letting the engine's own default stand in: "the player announces"
