@@ -17,9 +17,10 @@ game. That agent:
   prompt from the interactive harness, so skills, hooks and MCP behave
   differently from what a human gets.
 
-We want an opponent that persists across games, remembers what it played and
-why, has the deck guides from `~/Documents/mtg-decks` available, and knows
-which deck it is piloting before it is asked for a single action.
+We want an opponent that carries what it learned from one game into the next,
+remembers what it played and why, has the deck guides from
+`~/Documents/mtg-decks` available, and knows which deck it is piloting before
+it is asked for a single action.
 
 `tatara-claude-code-wrapper` (Go) already solves the hard part of this: it
 supervises one long-lived **interactive** `claude` process over a PTY and
@@ -29,7 +30,8 @@ driver service, all brought up by one `docker compose up`.
 
 ## Non-goals
 
-- Multi-game routing. One agent container plays one match at a time.
+- Multi-game routing. One agent container plays exactly one match, then
+  exits and is replaced.
 - Kubernetes. No OIDC/Keycloak, no pod TTL, no handoff turns.
 - Changing the engine. `../magic-cards-model` is not touched.
 - Replacing the existing subprocess AI seat. It stays as the default mode.
@@ -142,7 +144,7 @@ are ported as-is, and the port's tests pin each one:
 | POST | `/v1/probe` | `{text?}` written mid-turn; never 409; 503 with no live PTY |
 | GET | `/v1/probe/{probeId}` | `pending` / `delivered` / `answered`; 404 if superseded |
 | POST | `/v1/interrupt` | one ESC byte; never 409; 503 with no live PTY |
-| DELETE | `/v1/session` | graceful shutdown |
+| DELETE | `/v1/session` | shut the session down and exit the process; the restart policy supplies the next container |
 | GET | `/healthz` `/readyz` `/metrics` | operator surface, no auth |
 
 Auth: `OIDC_ISSUER` and the Keycloak verifier are dropped. In their place,
@@ -191,6 +193,37 @@ On `/dispatch` the driver:
    `callbackUrl: DRIVER_URL/turn-done`.
 5. On `/turn-done`, checks whether the game ended. If it did, pushes a
    reflection turn.
+6. On the `/turn-done` for that reflection turn, sends
+   `DELETE wrapper /v1/session` and forgets the assignment. See "One match per
+   container" below.
+
+### One match per container
+
+An agent container plays exactly one match. `DELETE /v1/session` shuts the
+session down *and exits the process*, so `restart: unless-stopped` replaces
+the container and the next match gets a new `claude` with no conversation
+history. The same exit fires when the supervised `claude` dies on its own: a
+`DEAD` session can never serve another turn, and a container that is "running"
+but permanently useless is worse than one that restarts. Only
+`/workspace/memory` crosses the boundary.
+
+The exit is wired from `__main__` (which owns the uvicorn server) into
+`build_public_app(on_exit=...)` and `Manager(on_dead=...)`; the HTTP layer
+never touches the server object and never calls `os._exit`. The route runs it
+as a background task so the 202 is on the wire first.
+
+Two consequences for the driver:
+
+- **A second, different game while a match is live is a 409** naming the game
+  in progress. Idempotent re-dispatch of the *same* uid still returns the
+  running assignment.
+- **A dispatch can land while the replacement container is booting** (pty
+  spawn, bypass dialog, quiescence - up to ~2 minutes). Blocking the request
+  is not an option: the caller in `ai_seat.py` gives up after 30s. So the
+  dispatch is answered 202 `{pending: true, turnId: null}` and turn 0 is
+  retried in the background until the agent answers or `AGENT_BOOT_WAIT_SECONDS`
+  (default 180) runs out, after which the assignment is dropped with a reason
+  on `/status.lastError` rather than held for a game nobody is playing.
 
 ### Turn 0
 
@@ -241,9 +274,9 @@ itself.
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/dispatch` | `{uid, game_id, player, api_base}` -> 202 `{turnId, deck, guide}` |
+| POST | `/dispatch` | `{uid, game_id, player, api_base}` -> 202 `{turnId, deck, matchScore, pending}`; 409 while a different game is live |
 | POST | `/turn-done` | the wrapper's webhook target |
-| GET | `/status` | current game, deck, last turn id and state |
+| GET | `/status` | current game, deck, last turn id, whether turn 0 is still pending, and the last dispatch error |
 | GET | `/healthz` | liveness |
 
 ## Component 3: docker compose

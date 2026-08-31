@@ -17,6 +17,11 @@ class DriverSettings:
     workspace: Path = Path("/workspace")
     self_url: str = "http://driver:8090"
     http_addr: str = ":8090"
+    #: How long a dispatch may keep trying to reach an agent that is booting.
+    #: A fresh container needs a pty spawn, the bypass dialog and output
+    #: quiescence - about two minutes in the worst case.
+    agent_boot_wait: float = 180.0
+    agent_retry_interval: float = 3.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> DriverSettings:
@@ -32,4 +37,6 @@ class DriverSettings:
             workspace=Path(value("DRIVER_WORKSPACE", "/workspace")),
             self_url=value("DRIVER_SELF_URL", "http://driver:8090"),
             http_addr=value("HTTP_ADDR", ":8090"),
+            agent_boot_wait=float(value("AGENT_BOOT_WAIT_SECONDS", "180")),
+            agent_retry_interval=float(value("AGENT_RETRY_INTERVAL_SECONDS", "3")),
         )

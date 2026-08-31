@@ -298,6 +298,38 @@ def test_death_mid_turn_fails_the_in_flight_turn(monkeypatch):
     assert "exited" in record.error
 
 
+def test_a_dead_session_asks_the_process_to_exit(monkeypatch):
+    """A session that has died can never serve another turn. Staying up would
+    leave a container that is 'running' and useless; exiting hands the next
+    match a fresh one."""
+    monkeypatch.setattr("mtg_agent.wrapper.session.MIN_BOOT", 0.01)
+    monkeypatch.setattr("mtg_agent.wrapper.session.IDLE_READY", 0.05)
+    exits: list[str] = []
+    proc = FakeProc(b"ready")
+    manager = make(proc, on_dead=lambda: exits.append("exit"))
+    manager.start()
+    proc.die()
+    deadline = time.monotonic() + 5
+    while not exits and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert exits == ["exit"]
+    assert manager.state is State.DEAD
+
+
+def test_a_deliberate_shutdown_does_not_fire_the_exit_hook_twice(monkeypatch):
+    """`DELETE /v1/session` already exits by its own route. The watcher must
+    not treat that closure as a crash and ask a second time."""
+    monkeypatch.setattr("mtg_agent.wrapper.session.MIN_BOOT", 0.01)
+    monkeypatch.setattr("mtg_agent.wrapper.session.IDLE_READY", 0.05)
+    exits: list[str] = []
+    proc = FakeProc(b"ready")
+    manager = make(proc, on_dead=lambda: exits.append("exit"))
+    manager.start()
+    manager.shutdown()
+    time.sleep(0.2)
+    assert exits == []
+
+
 def test_shutdown_is_deliberate_and_does_not_mark_dead_by_crash(monkeypatch):
     proc = FakeProc(b"ready")
     manager = ready_manager(monkeypatch, proc)

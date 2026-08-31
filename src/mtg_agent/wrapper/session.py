@@ -104,6 +104,7 @@ class Manager:
         new_id: Callable[[], str] = new_turn_id,
         spawn: Callable[[Settings, bool], ClaudeProcess] = spawn_claude,
         on_turn_done: Callable[[Record], None] | None = None,
+        on_dead: Callable[[], None] | None = None,
         submit_seq: SubmitSequence = DEFAULT_SUBMIT_SEQ,
     ) -> None:
         self.settings = settings
@@ -113,6 +114,7 @@ class Manager:
         self.new_id = new_id
         self.spawn = spawn
         self.on_turn_done = on_turn_done
+        self.on_dead = on_dead
         self.submit_seq = submit_seq
 
         self.ring = Ring()
@@ -211,7 +213,8 @@ class Manager:
         """Block until claude exits, then mark the session dead and fail any
         turn that was in flight. Nothing recovers here: the container is
         restarted by its restart policy, and the transcript survives on the
-        workspace volume."""
+        workspace volume - which is why `on_dead` asks the process to exit
+        rather than leaving a container that is up and can never work."""
         try:
             code = proc.wait()
         except ChildProcessError:
@@ -228,6 +231,11 @@ class Manager:
             self._cancel_timer_locked()
         if turn_id:
             self._finish_failed(turn_id, f"claude exited with code {code}")
+        if self.on_dead is not None:
+            try:
+                self.on_dead()
+            except Exception as exc:  # noqa: BLE001 - a bad hook must not hide the death
+                log.error("on_dead raised: %s", exc)
 
     def shutdown(self) -> None:
         self._stopping = True

@@ -168,6 +168,41 @@ def test_delete_session_stops_the_manager(wired):
     manager, proc, public, _ = wired
     response = public.delete("/v1/session")
     assert response.status_code == 202
-    assert response.json() == {"stopping": True}
+    assert response.json() == {"stopping": True, "exiting": False}
     assert proc._closed
     assert manager._stopping is True
+
+
+def test_delete_session_asks_the_process_to_exit(monkeypatch):
+    """One container plays one match, so the endpoint has to end the process,
+    not merely the session. The hook is asserted, not the interpreter dying -
+    a real exit would take the test runner with it."""
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    exits: list[str] = []
+    client = TestClient(
+        build_public_app(manager, manager.settings, on_exit=lambda: exits.append("exit"))
+    )
+    try:
+        response = client.delete("/v1/session")
+        assert response.status_code == 202
+        assert response.json() == {"stopping": True, "exiting": True}
+        assert exits == ["exit"], "the exit hook runs after the response, exactly once"
+        assert proc._closed, "the pty is closed before the process goes"
+    finally:
+        manager.shutdown()
+
+
+def test_the_exit_hook_is_not_reachable_without_the_secret(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc, fast_settings(WRAPPER_SHARED_SECRET="hunter2"))
+    exits: list[str] = []
+    client = TestClient(
+        build_public_app(manager, manager.settings, on_exit=lambda: exits.append("exit"))
+    )
+    try:
+        assert client.delete("/v1/session").status_code == 401
+        assert exits == []
+        assert manager._stopping is False
+    finally:
+        manager.shutdown()
