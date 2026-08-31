@@ -13,7 +13,7 @@
 2 Valakut Awakening
 2 Wish
 1 Grapeshot
-5 Mountain
+4 Mountain
 3 Arid Mesa
 2 Scalding Tarn
 2 Wooded Foothills
