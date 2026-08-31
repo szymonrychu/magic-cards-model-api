@@ -272,9 +272,23 @@ class AiSeatRegistry:
             status = self._dispatch_to_driver(
                 uid=uid, game_id=game_id, player=player, api_base=api_base
             )
+            # Recorded either way: a dispatch that failed used to be entirely
+            # silent here - the UI got a "fallback" status and the container
+            # log said nothing, so an unreachable driver looked exactly like
+            # an agent that was simply thinking.
             if status["mechanism"] == "wrapper":
                 with self._lock:
                     self._dispatched[uid] = status
+                note = (
+                    f"handed to the driver at {status['driver']}: deck="
+                    f"{status.get('deck') or 'unrecognised'} match={status.get('match_score')} "
+                    f"turn={status.get('turn_id')}"
+                )
+            else:
+                note = f"NOT STARTED - {status.get('reason')}"
+            from . import audit  # lazy: ai_seat is imported by modules audit imports
+
+            audit.record(game_id, "ai_seat", player=player, note=note)
             return status
 
         with self._lock:

@@ -32,6 +32,24 @@ from .prompt import Assignment, reflection_turn, render_current_game, turn_zero
 
 log = logging.getLogger("driver")
 
+#: How much of the agent's own account of a turn goes into the container log.
+#: The whole `finalText` can be a page; the first paragraphs are where the
+#: agent says what it did and why, which is what a person watching
+#: `docker compose logs` wants. The full text is always in the turn record.
+FINAL_TEXT_CHARS = 1200
+
+
+def trim_final_text(text: str, limit: int = FINAL_TEXT_CHARS) -> str:
+    """`text` collapsed to what is worth putting in the log: blank lines
+    dropped, indented one level so it reads as a quoted block, and cut at
+    `limit` characters with an explicit marker rather than silently."""
+    body = "\n".join(line.rstrip() for line in text.strip().splitlines() if line.strip())
+    if not body:
+        return "  (the agent finished the turn without saying anything)"
+    if len(body) > limit:
+        body = body[:limit].rstrip() + f"\n... [{len(text) - limit} more characters]"
+    return "\n".join(f"  {line}" for line in body.splitlines())
+
 
 class DispatchIn(BaseModel):
     uid: str
@@ -116,7 +134,9 @@ def build_app(
                 f"the agent answered {response.status_code}",
                 retryable=response.status_code in BOOTING_STATUSES,
             )
-        return response.json()["turnId"]
+        turn_id = response.json()["turnId"]
+        log.info("turn %s pushed to the agent (%d chars)", turn_id, len(text))
+        return turn_id
 
     def retire(assignment: Assignment) -> bool:
         """End the agent's life. `DELETE /v1/session` makes it exit, its
@@ -289,10 +309,13 @@ def build_app(
             if current["assignment"] is assignment:
                 current.update(lastTurnId=turn_id, pending=False)
         log.info(
-            "dispatched game=%s player=%s deck=%s turn=%s",
+            "dispatched game=%s player=%s vs=%s deck=%s (match %.2f, %d cards) turn=%s",
             body.game_id,
             body.player,
+            assignment.opponent or "?",
             assignment.deck_slug,
+            score,
+            sum(decklist.values()),
             turn_id,
         )
         return {
@@ -302,8 +325,25 @@ def build_app(
             "pending": False,
         }
 
+    def log_turn_result(record: dict) -> None:
+        """The agent's own account of the turn it just finished.
+
+        This callback carried `finalText` all along and the driver threw it
+        away, which is why nothing the agent said ever reached the compose
+        log. A failed turn is logged at ERROR with its reason; a normal one at
+        INFO with a trimmed block of what the agent wrote."""
+        turn_id = record.get("turnId") or "?"
+        state = record.get("state") or "?"
+        if state == "failed" or record.get("error"):
+            log.error("turn %s failed: %s", turn_id, record.get("error") or state)
+            return
+        stop = record.get("stopReason") or ""
+        head = f"turn {turn_id} done ({state}{', stop=' + stop if stop else ''}); the agent says:"
+        log.info("%s\n%s", head, trim_final_text(str(record.get("finalText") or "")))
+
     @app.post("/turn-done", status_code=202)
     def turn_done(record: dict) -> dict:
+        log_turn_result(record)
         with lock:
             assignment = current["assignment"]
             reflected = current["reflected"]

@@ -76,6 +76,27 @@ yourself.
 Set `AI_SEAT_MODE=subprocess` (the default outside compose) to go back to the
 one-shot seat.
 
+### What `docker compose logs` shows
+
+Three containers, three different things worth watching:
+
+- **game** - one line per game action (the audit log), and, in a banner at
+  WARNING, every `report_problem` a seat files, its text included. That call
+  is the agent saying the engine got a rule wrong while it was playing, so it
+  is deliberately the loudest thing in the log. `grep "PROBLEM REPORTED"`.
+  The five-second healthcheck's `GET /api/health` is filtered out of uvicorn's
+  access log (`access_log.py`); every other request, and any health probe that
+  *fails*, still prints.
+- **driver** - the whole match lifecycle: which deck it identified and how well
+  it matched, each turn pushed, the agent's own account of every finished turn
+  (trimmed - the full text is on `GET /v1/messages/{turnId}` in the agent), the
+  game ending, the reflection turn, and the retirement that stops the agent.
+- **agent** - session boot, turn submitted/complete with its stop reason,
+  suspected stalls, interrupts, and a dead `claude` with the tail of its
+  terminal.
+
+Nothing here needs `LOG_LEVEL=debug`; that is for the wrapper's own internals.
+
 ## Run it
 
 One command, from this repo:
