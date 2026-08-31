@@ -43,6 +43,7 @@ from magic_cards_model.machines.decisions import (
     Decision,
     DecisionKind,
     ScriptedAnswer,
+    ask_mulligan,
 )
 from magic_cards_model.models import Game
 from magic_cards_model.models.card_state import TargetRef
@@ -73,6 +74,22 @@ def _game(game_id: str) -> Game:
     return found
 
 
+def _engine_ask(engine_game: Game, decision: Decision) -> object:
+    """The engine's own validating entry point for `decision`'s kind.
+
+    `Game.ask` for every kind but one. `MULLIGAN` never goes through it: CR
+    103.5's declaration is asked by `machines/decisions.py`'s `ask_mulligan`,
+    which validates the answer itself (and a `MULLIGAN` handed to `Game.ask`
+    would fall past its whole kind dispatch into the trailing `CardSplit`
+    branch, refusing a perfectly good `True`). So the parity this file
+    enforces is against `ask_mulligan` for that kind - the function that
+    really is the other side of the mailbox for it.
+    """
+    if decision.kind is DecisionKind.MULLIGAN:
+        return ask_mulligan(engine_game.decisions, decision.player, prompt=decision.prompt)
+    return engine_game.ask(decision)
+
+
 def _check_parity(engine_game: Game, decision: Decision, value: object) -> None:
     """Feed `value` to both validators; they must agree on accept/reject, and
     on the exact refusal text when both reject."""
@@ -81,7 +98,7 @@ def _check_parity(engine_game: Game, decision: Decision, value: object) -> None:
     )
     engine_message: str | None = None
     try:
-        engine_game.ask(decision)
+        _engine_ask(engine_game, decision)
         engine_accepted = True
     except ValueError as exc:
         engine_accepted = False
@@ -239,6 +256,16 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
             prompt="begin the game with Leyline of the Void on the battlefield",
             source="Leyline of the Void",
         ),
+        [True, False, "yes", 1, None],
+    )
+
+    # CR 103.5's declaration: a yes-or-no with both branches always legal -
+    # the engine simply does not ask a player who has hit the zero-hand
+    # ceiling, rather than offering them an illegal "yes" - so, as with
+    # `OPENING_HAND_ACTION`, only the answer's shape is checked. The engine
+    # side of this parity is `ask_mulligan`, not `Game.ask`; see `_engine_ask`.
+    cases[DecisionKind.MULLIGAN] = (
+        Decision(kind=DecisionKind.MULLIGAN, player="alice", prompt="take a mulligan"),
         [True, False, "yes", 1, None],
     )
 

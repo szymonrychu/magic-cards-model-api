@@ -13,9 +13,9 @@ Two halves:
   opening hands of seven (CR 103.5), and decides the starting player
   (CR 103.1) - and doing any of that by hand in the API layer would be rules
   logic out of place. What it stops short of is CR 103.5's mulligan
-  declarations and CR 103.6's opening-hand actions: those need a game that is
-  already in the store, with a mailbox and seat uids, so they are
-  `opening.py`'s job and run right after this one. Seat order is the
+  declarations and CR 103.6's opening-hand actions: the engine leaves a dealt
+  game *resting* in those two steps, and each seat declares for itself
+  afterwards through `opening.py`'s endpoints. Seat order is the
   "mutually agreeable method" the rule
   allows, so the first `--deck` given to `serve` plays first; the match's
   `random_first_player` stays off.
@@ -156,12 +156,11 @@ def load_deck_into_game(
     - each library is shuffled from a seed derived from `seed` (CR 103.3),
       so the same seed and the same lists replay the same game.
     - life totals are set to 20 (CR 103.4) and opening hands of seven are
-      dealt (CR 103.5). Mulligans are *not* settled here: the engine leaves
-      that declaration sequence (CR 103.5) to the players, and this function
-      returns before the game has a decision mailbox or seat uids, so a
-      question put now could reach nobody. `opening.start_opening_sequence`
-      runs CR 103.5 and CR 103.6 immediately after the caller registers the
-      game and its seats - see that module for why the split is necessary.
+      dealt (CR 103.5). Mulligans are *not* settled here, and nothing
+      settles them behind this call either: `Match.start_game` leaves the
+      game resting in `Step.MULLIGAN` (turn 0), and each seat declares for
+      itself once it holds its uid - see `opening.py` for why running the
+      sequence here, or on a thread behind it, blocked the whole game.
     - the first player is seat order (CR 103.1's mutually agreeable method),
       so the first pair in `decklists` takes the first turn.
 

@@ -98,11 +98,19 @@ def test_load_deck_into_game_deals_the_engine_start_state() -> None:
     alice, bob = game.player("alice"), game.player("bob")
 
     # CR 103.1: seat order - alice's list was given first, so she plays first.
-    # The game sits where the engine's start leaves it: turn 1, untap step.
+    #
+    # The game sits where the engine's start leaves it, which is *before*
+    # CR 103.8's first turn: resting in CR 103.5's mulligan step, turn 0, in no
+    # phase at all (CR 500.1 makes a phase part of a turn, and no turn has
+    # begun). It used to be turn 1 / untap here, which was the observable leak
+    # the engine's pregame steps closed - both start-of-game sequences ran
+    # while the turn machine already claimed the first turn was under way.
     assert match.first_players == ["alice"]
     assert game.turn is not None
-    assert game.turn.turn_number == 1
-    assert game.turn.step is Step.UNTAP
+    assert game.turn.turn_number == 0
+    assert game.turn.step is Step.MULLIGAN
+    assert game.turn.phase is None
+    assert game.in_pregame is True
     assert game.turn.active_player == "alice"
 
     # CR 103.5: opening hands of seven. CR 103.2a: sideboards set aside.

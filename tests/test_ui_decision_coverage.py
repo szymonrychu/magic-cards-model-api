@@ -41,28 +41,25 @@ _UI_HANDLED_ELSEWHERE = {
     DecisionKind.DECLARE_BLOCKERS: "openBlockModal",
 }
 
-#: `MULLIGAN` is the one `DecisionKind` with no live-decision path *at all* -
-#: not a UI gap, an engine one. The API does now run the mulligan process
-#: (`opening.py` calls `Match.run_mulligans` on every game booted from
-#: decklists), so CR 103.5's declaration is genuinely asked of each player -
-#: but `machines/decisions.py`'s `ask_mulligan` answers it from
-#: `DecisionScript.take`/`default_answer` without ever consulting
-#: `Game.decisions.provider`, which is the mailbox `pending_decision` is
-#: built from. So no seat is ever shown a `mulligan` kind, and nothing in the
-#: UI needs a form for a question that cannot arrive. Recorded here, by name,
-#: rather than silently absent, matching `decisions.SERVED_ELSEWHERE`'s own
-#: reasoning for the same kind. Closing it is an engine change - routing
-#: `ask_mulligan` through `Game.ask` - after which this entry must move and
-#: `ui/app.js` must grow a `mulligan` renderer.
+#: Empty, and that is the point: every `DecisionKind` the engine can ask now
+#: reaches a live seat somehow.
 #:
-#: `OPENING_HAND_ACTION` used to sit here alongside it, on the then-true
-#: ground that nothing called `run_mulligans`. It has moved out: it is asked
-#: through `Game.take_opening_hand_actions`'s `self.ask` (CR 103.6), which
-#: *does* consult the provider, of a game already in the store with its seat
-#: uids handed out. It is in `decisions.ANSWERABLE_KINDS` and has a
-#: `DECISION_RENDERERS` entry, so the two assertions below now cover it the
-#: same way they cover `may`.
-_NEVER_REACHES_A_LIVE_SEAT = {DecisionKind.MULLIGAN}
+#: `MULLIGAN` used to be the one kind with no live path at all - CR 103.5's
+#: declaration was genuinely asked of each player, but
+#: `machines/decisions.py`'s `ask_mulligan` answered it from
+#: `DecisionScript.take`/`default_answer` without ever consulting
+#: `Game.decisions.provider`, the mailbox `pending_decision` is built from.
+#: The engine closed that: `ask_mulligan` now consults the provider between
+#: the script and the default, so a `mulligan` really does land in a seat's
+#: `pending_decision` whenever `Game.settle_pregame` walks the pregame. It is
+#: in `decisions.ANSWERABLE_KINDS` and has its own `DECISION_RENDERERS` entry
+#: (a plain yes/no, like `may`). A seat declaring for *itself* has a second,
+#: non-blocking transport that raises no decision at all - the pregame panel
+#: over `POST .../pregame/mulligan` - which is what `/play/` actually uses.
+#:
+#: `OPENING_HAND_ACTION` sat here before that and moved out for the same
+#: reason: `Game.take_opening_hand_actions` asks it through `Game.ask`.
+_NEVER_REACHES_A_LIVE_SEAT: set[DecisionKind] = set()
 
 
 def _decision_renderers_object() -> str:

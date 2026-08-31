@@ -433,3 +433,59 @@ def test_the_seat_cli_flow(monkeypatch, capsys) -> None:
             http.delete(f"/api/games/{game_id}")
     finally:
         http.close()
+
+
+# -- who is actually behind the seat (decisions.DecisionMailbox) --------------
+#
+# `wait_for_answer` used to give its *delivery* phase the same budget as its
+# *thinking* phase, so a game nobody was watching paid `2 x timeout_seconds`
+# per question - the multiplier that turned a two-seat pregame into a 1200s
+# block. The two phases measure different things, and `delivery_bound` is
+# what tells them apart, from the one piece of evidence there is: whether any
+# seat has actually read this game's state (`app.py`'s `get_game` records it).
+
+
+def test_a_watching_seat_is_still_given_its_full_thinking_time(client, game) -> None:
+    """The three states of "is anybody there", read straight off the mailbox.
+
+    An unproven seat gets the one-off presence probe; a seat that has read the
+    game gets the (much shorter than thinking time, but real) delivery bound;
+    and a seat that has not is still unproven - one seat watching does not
+    vouch for the other."""
+    mailbox = store.mailbox(game)
+    assert mailbox is not None
+    assert mailbox.delivery_bound("alice", delivery=10.0, presence=3.0) == 3.0
+    mailbox.mark_watching("alice")
+    assert mailbox.is_watching("alice") is True
+    assert mailbox.delivery_bound("alice", delivery=10.0, presence=3.0) == 10.0
+    assert mailbox.delivery_bound("bob", delivery=10.0, presence=3.0) == 3.0
+
+
+def test_a_seat_that_shows_up_late_is_no_longer_written_off(client, game) -> None:
+    """The absent latch is a latch, not a verdict: an unattended game pays one
+    probe rather than one per question, but the moment that seat really does
+    read the game it is present again."""
+    from magic_cards_model.machines.decisions import Decision, DecisionKind
+
+    from magic_cards_model_api.decisions import PendingDecision
+
+    mailbox = store.mailbox(game)
+    assert mailbox is not None
+    decision = Decision(kind=DecisionKind.MAY, player="bob", prompt="you may")
+    mailbox.publish(PendingDecision.from_engine(decision), decision)
+    mailbox.wait_for_answer(0.05, 0.05)
+    assert mailbox.delivery_bound("bob", delivery=10.0, presence=3.0) == 0.0
+    mailbox.mark_watching("bob")
+    assert mailbox.delivery_bound("bob", delivery=10.0, presence=3.0) == 10.0
+
+
+def test_a_state_read_is_what_proves_a_seat_is_there(client, game) -> None:
+    """End to end through the transport, not the mailbox directly: a seat's own
+    `GET /api/games/{id}` is the evidence, and it counts whether or not a
+    decision happens to be pending for that seat at the time."""
+    mailbox = store.mailbox(game)
+    uids = seats_for(client, game)
+    assert mailbox.is_watching("alice") is False
+    client.get(f"/api/games/{game}", params={"uid": uids["alice"]})
+    assert mailbox.is_watching("alice") is True
+    assert mailbox.is_watching("bob") is False, "one seat's poll does not vouch for the other"

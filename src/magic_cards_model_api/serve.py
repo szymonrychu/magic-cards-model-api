@@ -31,13 +31,14 @@ order) - and then registered in the session store directly. No HTTP
 self-calls: by the time the server accepts a request, `/api/games` already
 lists every live game.
 
-Registration is followed by `opening.start_opening_sequence`, which runs
-CR 103.5's mulligan process and CR 103.6's opening-hand actions on a thread of
-its own. The summary block below therefore reports each hand *as dealt*: the
-sequence is still settling while uvicorn comes up, which is deliberate - a
-CR 103.6 question is put through the decision mailbox, and only a server that
-is already accepting requests can let the seat holding the printed uid answer
-it. See `opening.py` for why the sequence cannot simply be part of the boot.
+Nothing settles CR 103.5 or CR 103.6 at boot. `Match.start_game` leaves each
+game resting in `Step.MULLIGAN` (turn 0, no phase), and every seat declares for
+itself once uvicorn is accepting requests, through
+`POST /api/games/{id}/pregame/mulligan` and its two CR 103.6 siblings. The
+summary block below therefore reports each hand *as dealt*, and says which step
+the game is resting in. See `opening.py` for why running the sequence here - or
+on a thread behind this boot - blocked the whole game for the full decision
+timeout per question per seat.
 
 Each game's shuffle seed comes from its own `seed=`/`--seed`; without one, a
 random seed is drawn and printed, so even an unseeded boot is replayable by
@@ -54,7 +55,6 @@ from pathlib import Path
 import uvicorn
 from magic_cards_model.models import Game, Match
 
-from . import opening
 from .decks import load_deck_into_game
 from .main import app
 from .store import new_seat_uids, store
@@ -88,7 +88,7 @@ class Boot:
             )
         lines.append(f"  seed: {match.seed}")
         lines.append(
-            "  opening hands (as dealt; CR 103.5/103.6 settle behind this boot): "
+            "  opening hands (as dealt; CR 103.5 is the seats' own to declare): "
             + ", ".join(f"{player.username} {len(player.hand)}" for player in game.players)
         )
         assert game.turn is not None
@@ -237,13 +237,11 @@ def _boot_from_spec(spec: MatchSpec, *, check_legality: bool) -> Boot:
     game_id = store.create(game)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
-    # CR 103.5's mulligan process and CR 103.6's opening-hand actions, started
-    # here and left to run behind the boot: `opening.py` explains why they
-    # cannot be part of `load_deck_into_game` itself. Nothing joins the thread
-    # - the summary below prints the hands *as dealt*, and by the time uvicorn
-    # is accepting requests a seat can see and answer any CR 103.6 question
-    # the sequence raised.
-    opening.start_opening_sequence(game_id, match, game)
+    store.register_decklists(game_id, {name: text for name, _, text in specs})
+    # Nothing runs CR 103.5 or CR 103.6 here: `Match.start_game` has already
+    # left the game resting in `Step.MULLIGAN` (turn 0), and each seat declares
+    # for itself through `POST /api/games/{id}/pregame/mulligan` once uvicorn is
+    # accepting requests. See `opening.py`.
     boot = Boot(
         game_id=game_id,
         match=match,

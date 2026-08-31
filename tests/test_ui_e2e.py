@@ -6,13 +6,24 @@ test-only shortcut. This is the "drives a real game through the UI's own
 endpoints" test the task asks for, proving the UI layer added in this branch
 (`decks_api.py`, `ai_seat_api.py`) sits on top of the existing seat API
 correctly rather than merely importing without error.
+
+The fixture also plays out CR 103.5 and CR 103.6 through the UI's own pregame
+endpoints, because a game booted from decklists now rests in those two steps
+before turn 1 - and it does so under a hard wall-clock bound, which is what
+this file was missing when the old blocking pregame made it hang for the whole
+suite instead of failing.
 """
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
+
+#: No call in this file may block on a decision - see `booted_game`.
+PREGAME_WITHIN_SECONDS = 20.0
 
 LEGAL_DECK = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
 LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
@@ -37,6 +48,40 @@ def booted_game(client: TestClient) -> dict:
     )
     assert response.status_code == 200, response.text
     body = response.json()
+
+    # The boot leaves the game resting in CR 103.5's mulligan step (turn 0),
+    # which is where a human at /play/ now starts: nothing on the board can
+    # happen until both seats have declared and finished CR 103.6. So this
+    # fixture plays that out through the same three endpoints the UI's pregame
+    # panel posts to, rather than skipping past it - the tests below are about
+    # a turn, and a turn cannot begin before CR 103.8.
+    #
+    # Bounded, and that bound is the point: the old blocking pregame put every
+    # question through a decision provider with no live seat behind it, which
+    # cost one full answer timeout per question per seat. This file did not
+    # merely run slowly then - it hung for the whole run, because the settling
+    # thread held the game lock that every call below needs.
+    started = time.monotonic()
+    for player in ("alice", "bob"):
+        kept = client.post(
+            f"/api/games/{body['game_id']}/pregame/mulligan",
+            params={"uid": body["seat_uids"][player]},
+            json={"player": player, "take": False},
+        )
+        assert kept.status_code == 200, kept.text
+    for player in ("alice", "bob"):
+        done = client.post(
+            f"/api/games/{body['game_id']}/pregame/opening-hand/finish",
+            params={"uid": body["seat_uids"][player]},
+            json={"player": player},
+        )
+        assert done.status_code == 200, done.text
+    assert done.json()["step"] == "untap", "CR 103.8's first turn should have begun"
+    elapsed = time.monotonic() - started
+    assert elapsed < PREGAME_WITHIN_SECONDS, (
+        f"the pregame took {elapsed:.1f}s - no pregame call may block on a decision"
+    )
+
     yield body
     client.delete(f"/api/games/{body['game_id']}")
 

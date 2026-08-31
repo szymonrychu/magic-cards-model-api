@@ -762,6 +762,51 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
+    def mulligan(player_uid: str, take: bool, bottom: str = "") -> str:
+        """Declare whether you take a mulligan (CR 103.5), before the game starts.
+
+        A game dealt from decklists rests in the mulligan step until every seat
+        has declared - `my_state`'s `pregame` block says who is still owed.
+        `take=true` shuffles your hand back and draws a fresh seven;
+        `take=false` keeps what you have.
+
+        Keeping costs one card on the bottom of your library per mulligan you
+        took (`pregame.cards_to_bottom`). `bottom` is a comma-separated list of
+        that many card ids from your hand; leave it empty to let the back of
+        your hand go. Does not block."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        ids = _parse_ids(bottom)
+        body: dict[str, Any] = {"player": seat.player, "take": take}
+        if ids:
+            body["bottom"] = ids
+        return seat.call("POST", f"/api/games/{seat.game_id()}/pregame/mulligan", body)
+
+    @server.tool()
+    @_guarded(seats)
+    def opening_hand_action(player_uid: str, card: str = "") -> str:
+        """Take a card's opening-hand action, or finish (CR 103.6).
+
+        Some cards let you act with them from your opening hand - Leyline of
+        the Void's "you may begin the game with this card on the battlefield",
+        Gemstone Caverns' reveal. `my_state`'s `pregame.opening_hand_options`
+        lists what yours offers, and `pregame.opening_hand_actor` says whose
+        turn it is.
+
+        `card` is one card id from that list. Call with no `card` when you are
+        done - that passes to the next seat, and the last seat finishing starts
+        turn 1. Does not block."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        base = f"/api/games/{seat.game_id()}/pregame/opening-hand"
+        if not card.strip():
+            return seat.call("POST", f"{base}/finish", {"player": seat.player})
+        return seat.call("POST", f"{base}/action", {"player": seat.player, "card_id": card.strip()})
+
+    @server.tool()
+    @_guarded(seats)
     def report_problem(player_uid: str, text: str) -> str:
         """Report a problem with the engine straight into the game log: write
         what you did, what the rules say should have happened, and what

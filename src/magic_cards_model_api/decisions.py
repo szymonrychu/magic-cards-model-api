@@ -74,6 +74,53 @@ logger = logging.getLogger("mcm.decisions")
 #: decision is never charged for that gap - see that method's docstring.
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "300"))
 
+#: How long to wait for a seat *that is already known to be reading this
+#: game* to be shown the question - `DecisionMailbox.wait_for_answer`'s first
+#: phase, which used to be given the whole of `DEFAULT_TIMEOUT_SECONDS`.
+#:
+#: That was the bug this constant exists to fix. The two phases measure two
+#: completely different things: the second is "how long may a player think",
+#: which is minutes; the first is "how long until this seat's own poll loop
+#: comes round again", which is *one poll interval* - the browser UI polls
+#: every 1.2s, `seatkit.block_until_wake` faster still. Charging the poll
+#: interval 300 seconds meant a game whose seats were not polling at all -
+#: every test, `serve.py`'s boot, an AI seat that has not started yet - paid
+#: 2x300s for every question the engine asked it, and CR 103.5's mulligan
+#: process asks two before the first turn even begins. That is how
+#: the pregame came to block for 600-1200s on an ordinary two-decklist game
+#: while holding `store.locked(game_id)`. The engine has since turned CR 103.5
+#: and CR 103.6 into steps the game *rests* in, so no live game pays that at
+#: all any more (`opening.py`) - but the two-phase bug was never specific to
+#: the pregame, and this constant is what keeps every other question honest.
+#:
+#: 10s is roughly eight of the slowest poll interval any client here uses, so
+#: a live seat is never cut off by it; it is only ever reached by a seat that
+#: has stopped polling mid-game. `MCM_DECISION_DELIVERY_SECONDS` overrides.
+DEFAULT_DELIVERY_SECONDS = float(os.environ.get("MCM_DECISION_DELIVERY_SECONDS", "10"))
+
+#: How long to wait for a seat that has **never** read this game's state to
+#: turn up - the presence probe, and the one thing that tells a live human
+#: apart from an unattended game.
+#:
+#: A seat proves it is there by fetching `GET /api/games/{id}` with its own
+#: uid; `DecisionMailbox.mark_watching` records that. Before the first such
+#: read there is no evidence either way, and one question genuinely can beat
+#: the first poll - a question raised by the very request that hands a seat
+#: its uid cannot have been seen by that seat yet. So the first question put
+#: to an unproven seat waits this long for that first read, and no longer. A
+#: human at `/play/` polls within milliseconds of the creation response and
+#: clears it every time; a test, `serve.py`'s boot, or an AI seat whose
+#: subprocess has not spawned yet never does, and is defaulted after this one
+#: probe rather than after two full timeouts.
+#:
+#: Deliberately *not* raised to "comfortably long": a seat that fails the
+#: probe is latched absent (see `DecisionMailbox.delivery_bound`), so an
+#: unattended game pays this once, not once per question. Raising it would
+#: buy nothing for a live player - who is proven present in far less - and
+#: cost every unattended game directly. `MCM_DECISION_PRESENCE_SECONDS`
+#: overrides.
+DEFAULT_PRESENCE_SECONDS = float(os.environ.get("MCM_DECISION_PRESENCE_SECONDS", "3"))
+
 #: Every `DecisionKind` that `POST /api/games/{id}/decide` actually knows how
 #: to answer - see `app.py`'s `decide` endpoint, which this set must be kept
 #: in lockstep with. `PAY_ENERGY` and `PAY_ENERGY_AMOUNT` (CR 107.14,
@@ -120,11 +167,11 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "
 #: CR 700.2a instead of CR 614.12a.
 #: `OPENING_HAND_ACTION` (CR 103.6, "some cards allow a player to take actions
 #: with them from their opening hand") joined this set when the API started
-#: running the mulligan process at all (`opening.py`). It was in
-#: `SERVED_ELSEWHERE` before that, on the true-at-the-time grounds that
-#: `decks.load_deck_into_game` stopped at `Match.start_game` and nothing ever
-#: called `Match.run_mulligans`, so the question was never asked of anyone.
-#: Now it is asked, and asked through `Game.take_opening_hand_actions`'s
+#: running CR 103.6 at all. It was in `SERVED_ELSEWHERE` before that, on the
+#: true-at-the-time grounds that `decks.load_deck_into_game` stopped at
+#: `Match.start_game` and nothing ever ran the sequence, so the question was
+#: never asked of anyone. It is asked now, through
+#: `Game.take_opening_hand_actions`'s
 #: `self.ask` - the one path that consults `Game.decisions.provider`, i.e.
 #: this API's mailbox - of a game that is already in the store with its seat
 #: uids handed out. So a live seat really does see it as its
@@ -148,49 +195,59 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.CHOOSE_A_QUALITY,
         DecisionKind.CHOOSE_A_MODE,
         DecisionKind.PUT_ON_TOP_OR_BOTTOM,
+        DecisionKind.MULLIGAN,
     }
 )
 
-#: `DecisionKind.MULLIGAN`, `DECLARE_ATTACKERS`, and `DECLARE_BLOCKERS` are
-#: deliberately absent from `ANSWERABLE_KINDS`. Reading `machines/decisions.py`
-#: and `models/game.py` (`ask_mulligan`, `ask_attackers`, `ask_blockers`, all
-#: of which call `DecisionScript.take` and `default_answer` directly) shows
-#: none of the three ever consults `Game.decisions.provider` - the mailbox
-#: this module publishes to. A live seat cannot answer them through `decide`
-#: no matter what this API supports.
-#:
-#: For attacking and blocking (CR 703.4i, 703.4j) that is fine: both already
-#: have their own actions (`actions/attack`, `actions/declare-blockers`) that
-#: call `Game.declare_attackers` / `Game.declare_blockers` directly, so the
+#: `DECLARE_ATTACKERS` and `DECLARE_BLOCKERS` are deliberately absent from
+#: `ANSWERABLE_KINDS`. `machines/decisions.py`'s `ask_attackers`/`ask_blockers`
+#: call `DecisionScript.take` and `default_answer` directly and never consult
+#: `Game.decisions.provider` - the mailbox this module publishes to - so a
+#: live seat cannot answer either through `decide` no matter what this API
+#: supports. For attacking and blocking (CR 703.4i, 703.4j) that is fine:
+#: both have their own actions (`actions/attack`, `actions/declare-blockers`)
+#: calling `Game.declare_attackers` / `Game.declare_blockers` directly, so the
 #: seat has a real transport, just not this one.
 #:
-#: `MULLIGAN` is the one kind with no live transport at all, and its entry is
-#: no longer the old "settled during `Match.start_game`" claim - since
-#: `opening.py` the API *does* run `Match.run_mulligans`, so CR 103.5's
-#: declaration is genuinely asked of each player. What is missing is the wire
-#: from the asking to a seat: `ask_mulligan` never publishes to this module's
-#: mailbox, so `pending_decision` can never carry a `mulligan` kind and there
-#: is nothing for a seat to answer. Closing that gap is an engine change
-#: (`ask_mulligan` routing through `Game.ask`, the way
-#: `Game.take_opening_hand_actions` already does), not an API one, so until it
-#: is made every declaration takes the engine's own documented default for an
-#: unscripted player - keep the hand as dealt - and `opening.py` records that
-#: in the audit log as `live: false` rather than letting a transcript imply a
-#: player chose it. `OPENING_HAND_ACTION`, asked at the end of that same
-#: sequence, *is* live and has moved to `ANSWERABLE_KINDS`; see its note
-#: there.
+#: `MULLIGAN` used to sit here too, as the one kind with no live transport at
+#: all: CR 103.5's declaration was genuinely asked, but `ask_mulligan` never
+#: published it to this mailbox, so `pending_decision` could not carry it and
+#: every seat silently took the engine default of keeping the hand as dealt.
+#: That engine gap is closed: `ask_mulligan` now consults the provider between
+#: the script and the default, exactly as `Game.ask` does, so `MULLIGAN` has
+#: moved to `ANSWERABLE_KINDS` as an ordinary yes/no.
+#:
+#: Which path reaches it matters, and both exist. `Game.settle_pregame` - the
+#: headless walk of the whole pregame, exposed here as the admin-only
+#: `POST /api/games/{id}/pregame/settle` - goes through `ask_mulligan` and so
+#: really can put a `mulligan` question in this mailbox for a live seat to
+#: answer through `decide`. A seat declaring for *itself* instead uses
+#: `POST /api/games/{id}/pregame/mulligan`, which calls
+#: `Game.declare_mulligan`: told an answer already made, asking nobody,
+#: blocking on nothing. That is the transport a live game here uses, and it is
+#: why the pregame no longer costs a decision timeout at all (`opening.py`).
+#: Both are real; neither makes the other dead code.
+#:
+#: `validate_answer` gives it its own branch even so, because the engine-side
+#: authority for a mulligan answer is `ask_mulligan`'s own `isinstance` check
+#: and *not* `Game.ask` - a `MULLIGAN` decision never reaches `Game.ask` at
+#: all, and would fall through that method's kind dispatch to its trailing
+#: `CardSplit` branch if it did.
+#:
+#: The *bottoming* that follows a kept hand (CR 103.5's "puts a number of
+#: those cards ... on the bottom of their library") needed nothing new here:
+#: the engine asks it as a `CHOOSE_CARDS` decision with `exact=True` and
+#: `amount = cards_to_bottom`, and this API has answered and rendered that
+#: kind since long before. Its unanswered default is already "the back of the
+#: offered cards", which is what `keep_hand(None)` does, so an absent player
+#: behaves exactly as before. On the seat-driven path `opening.py`
+#: pre-provides that choice from the declaration itself, so it never reaches
+#: this mailbox at all.
 #:
 #: Named here, deliberately, rather than left as an absence - the drift test
 #: treats a `DecisionKind` in neither set as the bug, and a kind that belongs
 #: in neither must say why.
 SERVED_ELSEWHERE: dict[DecisionKind, str] = {
-    DecisionKind.MULLIGAN: (
-        "CR 103.5's declaration is asked (opening.py runs Match.run_mulligans) "
-        "but machines/decisions.py's ask_mulligan never publishes it to this "
-        "API's decision mailbox, so no seat is ever shown it and decide has "
-        "nothing to answer; it takes the engine's default, keep the hand as "
-        "dealt. Making it answerable needs an engine change, not an API one"
-    ),
     DecisionKind.DECLARE_ATTACKERS: (
         "use POST /api/games/{game_id}/actions/attack instead of decide"
     ),
@@ -313,6 +370,19 @@ class DecisionMailbox:
         self._delivered = False
         self._answer: object = None
         self._answered = False
+        #: Every seat that has read this game's state at least once, from
+        #: `app.py`'s `get_game`. The evidence that somebody is behind a seat
+        #: at all - see `delivery_bound`.
+        self._watching: set[str] = set()
+        #: Every seat whose presence probe has already expired without them
+        #: reading the game. A latch, cleared the moment they do read it, so
+        #: an unattended game probes once rather than once per question.
+        self._absent: set[str] = set()
+        #: Whether any presence probe has run to expiry on this game yet.
+        #: Until one has, "no seat has read this game" is not yet evidence of
+        #: absence - it is simply too early to tell, and the first question
+        #: of a game routinely beats the first poll (see `delivery_bound`).
+        self._probed = False
 
     def publish(self, pending: PendingDecision, decision: Decision) -> None:
         """A question just became live. Wakes anyone already waiting on it."""
@@ -339,21 +409,81 @@ class DecisionMailbox:
                 self._delivered = True
                 self._condition.notify_all()
 
-    def wait_for_answer(self, timeout_seconds: float) -> object:
-        """Block until an answer is posted or `timeout_seconds` elapses past
-        delivery, whichever comes first.
+    def mark_watching(self, player: str) -> None:
+        """`player` has read this game's state - so somebody is behind that
+        seat, whatever question is or is not pending right now.
+
+        Called from `app.py`'s `get_game` for every recognised seat uid, not
+        only when a decision happens to be pending for that seat (which is
+        what separates this from `mark_delivered`). It is the whole of the
+        evidence `delivery_bound` uses to tell a live player from a game
+        nobody is watching, and it clears the absent latch: a seat that
+        missed one probe and then turns up is present again from then on.
+        """
+        with self._condition:
+            self._watching.add(player)
+            self._absent.discard(player)
+            self._condition.notify_all()
+
+    def is_watching(self, player: str) -> bool:
+        """Whether `player` has ever read this game's state."""
+        with self._condition:
+            return player in self._watching
+
+    def delivery_bound(self, player: str, *, delivery: float, presence: float) -> float:
+        """How long `wait_for_answer`'s first phase should wait for `player`
+        to be shown the next question - see that method, and
+        `DEFAULT_PRESENCE_SECONDS`.
+
+        Three cases, and they are exactly the three states of "is anybody
+        there":
+
+        - **Proven present** (`player` has read this game's state): `delivery`
+          - a handful of that seat's own poll intervals, no more, because a
+          seat that is polling is shown the question on its very next tick.
+        - **Proven absent**: `0.0`. Either `player` failed a probe of their
+          own and has not read the game since, or some probe on this game has
+          already expired and *no* seat has ever read it - a game nobody is
+          watching at all. There is nothing to wait for, and this is what
+          keeps an unattended game - every test, `serve.py`'s boot, an AI
+          seat that has not spawned - paying one probe per game rather than
+          one per question.
+        - **Unproven** (no evidence either way yet): `presence`, the probe.
+          One question really can beat the first poll - a question raised
+          by the same request that mints a seat's uid cannot have been seen
+          by that seat - so an unproven seat is given that one window and no
+          more. The probe cannot simply be zero without writing off every
+          seat whose first read is still in flight.
+        """
+        with self._condition:
+            if player in self._watching:
+                return delivery
+            if player in self._absent:
+                return 0.0
+            if self._probed and not self._watching:
+                return 0.0
+            return presence
+
+    def wait_for_answer(self, timeout_seconds: float, delivery_seconds: float) -> object:
+        """Block until an answer is posted, or the wait runs out.
 
         The clock a seat can fairly be judged against only starts once it has
         had the chance to see the question (`mark_delivered`) - a seat that
         never even got a poll in has not "failed to answer in time", it has
         simply not been asked yet as far as it knows. So this waits, first,
-        up to `timeout_seconds` for delivery-or-answer (whichever is sooner:
-        normally delivery, near-instantly, from the deciding seat's own poll
-        loop), then a fresh `timeout_seconds` for the real answer. Both waits
-        are bounded, so this still never blocks forever - a seat that is
-        simply never polling (no live player behind it) times out on the
-        first wait and then again on the second, exactly as before this was
-        added, just slower to give up.
+        up to `delivery_seconds` for delivery-or-answer, then a fresh
+        `timeout_seconds` for the real answer.
+
+        The two bounds are separate, and that is the whole point. They
+        measure different things: `timeout_seconds` is how long a player may
+        think, which is minutes; `delivery_seconds` is how long until this
+        seat's poll loop comes round, which is a poll interval - or zero,
+        when `delivery_bound` has already established that nobody is behind
+        the seat at all. Giving the first phase the second's budget is what
+        made an unattended game block for two full timeouts per question.
+
+        A first phase that expires undelivered latches `player` absent, so
+        the next question put to the same silent seat is not probed again.
 
         Returns the answer, or `NOT_ANSWERED` on timeout. Either way the
         mailbox is cleared before returning, so a late answer that arrives
@@ -361,10 +491,23 @@ class DecisionMailbox:
         next, unrelated question.
         """
         with self._condition:
-            self._condition.wait_for(
-                lambda: self._delivered or self._answered, timeout=timeout_seconds
-            )
-            answered = self._condition.wait_for(lambda: self._answered, timeout=timeout_seconds)
+            player = self._pending.player if self._pending is not None else None
+            if delivery_seconds > 0:
+                self._condition.wait_for(
+                    lambda: self._delivered or self._answered, timeout=delivery_seconds
+                )
+                self._probed = True
+            shown = self._delivered or self._answered
+            if not shown and player is not None and player not in self._watching:
+                # Never delivered, and this seat has never read the game at
+                # all: there is nobody to wait for, so the second phase is
+                # not entered. A seat that *is* watching still gets its full
+                # thinking time even if the delivery mark somehow missed -
+                # only a proven-absent seat is cut short.
+                self._absent.add(player)
+                answered = False
+            else:
+                answered = self._condition.wait_for(lambda: self._answered, timeout=timeout_seconds)
             value = self._answer if answered else NOT_ANSWERED
             self._pending = None
             self._decision = None
@@ -419,20 +562,43 @@ class GameDecisionProvider:
     whatever request is deep in `Game.ask` - for up to `timeout_seconds`, and
     on timeout logs the default the engine is about to take instead of
     silently letting it happen. `game_id` is carried only for that log line.
+
+    How long it blocks depends on whether anybody is actually behind the
+    deciding seat, which `mailbox.delivery_bound` decides from that seat's
+    own state reads. A proven-present seat gets `delivery_seconds` to be
+    shown the question and then the full `timeout_seconds` to answer it; a
+    seat nobody is sitting at gets one `presence_seconds` probe and, after
+    that, nothing at all. Before this, every seat got `2 * timeout_seconds`
+    whether or not it existed - see `DEFAULT_DELIVERY_SECONDS`.
+
+    All three bounds are clamped to `timeout_seconds`, so a caller that sets
+    a short `timeout_seconds` (every test that wants a fast default) really
+    does get a short total block and does not have to know about the other
+    two constants.
     """
 
     mailbox: DecisionMailbox
     game_id: str
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    delivery_seconds: float = DEFAULT_DELIVERY_SECONDS
+    presence_seconds: float = DEFAULT_PRESENCE_SECONDS
 
     def decide(self, decision: Decision) -> object:
+        # Published before the bound is worked out, not after: a seat whose
+        # own read lands in that window is then already recorded as watching,
+        # and the question it just saw is already the pending one.
         self.mailbox.publish(PendingDecision.from_engine(decision), decision)
-        answer = self.mailbox.wait_for_answer(self.timeout_seconds)
+        bound = self.mailbox.delivery_bound(
+            decision.player,
+            delivery=min(self.delivery_seconds, self.timeout_seconds),
+            presence=min(self.presence_seconds, self.timeout_seconds),
+        )
+        answer = self.mailbox.wait_for_answer(self.timeout_seconds, bound)
         if answer is NOT_ANSWERED:
-            self._log_timeout(decision)
+            self._log_timeout(decision, bound)
         return answer
 
-    def _log_timeout(self, decision: Decision) -> None:
+    def _log_timeout(self, decision: Decision, delivery_bound: float = 0.0) -> None:
         """Never silent: the default taken, and the rule that permits it.
 
         Written to the process log, the game's own audit log, and the game
@@ -465,13 +631,22 @@ class GameDecisionProvider:
         taken_ids = [str(card_id) for card_id in taken] if isinstance(taken, tuple) else str(taken)
         rule = rule_for_kind(decision.kind)
         could_answer = decision.kind in ANSWERABLE_KINDS
-        verb = (
-            "did not answer in time"
-            if could_answer
-            else "could not answer - no transport wires this decision kind to a live seat"
-        )
+        watching = self.mailbox.is_watching(decision.player)
+        if not could_answer:
+            verb = "could not answer - no transport wires this decision kind to a live seat"
+            waited = f"after {self.timeout_seconds}s"
+        elif watching:
+            verb = "did not answer in time"
+            waited = f"after {self.timeout_seconds}s"
+        else:
+            # The third case, and the common one: nobody has ever read this
+            # game's state as this seat, so there was no player to be slow.
+            # Saying "did not answer in time" here would read as an
+            # inattentive human where the truth is an unattended seat.
+            verb = "never showed up - no seat has read this game's state as them"
+            waited = f"after a {delivery_bound}s presence probe"
         line = (
-            f"{decision.prompt} timed out after {self.timeout_seconds}s: "
+            f"{decision.prompt} timed out {waited}: "
             f"{decision.player} {verb}, so defaulted to {taken_ids} ({rule})"
         )
         logger.warning(line)
@@ -481,6 +656,10 @@ class GameDecisionProvider:
             "prompt": decision.prompt,
             "defaulted_to": taken_ids,
             "could_answer": could_answer,
+            #: Whether any seat read this game's state as this player before
+            #: the question expired. `False` is an unattended seat, not a slow
+            #: one - the distinction `verb` above spells out in words.
+            "watched": watching,
             "rule": rule,
         }
         audit.record(self.game_id, "decision_timeout", **record)
@@ -506,8 +685,8 @@ def rule_for_kind(kind: DecisionKind) -> str:
     `OPENING_HAND_ACTION` is the second exception, and a further-out one: no
     effect is applying and nothing is going on the stack, because no turn has
     begun at all. It is CR 103.6's own sequence, put to a seat by
-    `Game.take_opening_hand_actions` once `Match.run_mulligans` has finished
-    CR 103.5 - see `opening.py`.
+    `Game.take_opening_hand_actions` once CR 103.5's mulligan process is
+    complete - see `opening.py`.
 
     This is the single place that decides the citation - `_log_timeout` calls
     it instead of a hardcoded string, which used to print "CR 608.2d" for
@@ -516,6 +695,10 @@ def rule_for_kind(kind: DecisionKind) -> str:
     """
     if kind is DecisionKind.CHOOSE_TARGETS:
         return "CR 603.3d, CR 601.2c (targets chosen while going on the stack)"
+    if kind is DecisionKind.MULLIGAN:
+        # Also before the first turn, and one step earlier than CR 103.6:
+        # the declaration each player makes in the mulligan process itself.
+        return "CR 103.5 (the mulligan declaration, before the first turn)"
     if kind is DecisionKind.OPENING_HAND_ACTION:
         # No effect is applying and no spell is going on the stack: this is
         # CR 103.6's own start-of-game sequence, "once the mulligan process
@@ -736,6 +919,19 @@ def validate_answer(decision: Decision, value: object) -> None:
                 f"{decision.prompt}: that option is illegal, so CR 608.2d "
                 f"does not allow choosing it"
             )
+        return
+
+    if decision.kind is DecisionKind.MULLIGAN:
+        # CR 103.5's declaration. Its engine-side authority is *not*
+        # `Game.ask` - `ask_mulligan` asks and validates this kind itself,
+        # and a `MULLIGAN` decision never reaches `Game.ask` at all - so the
+        # wording below is `ask_mulligan`'s own, word for word, and the drift
+        # test compares this branch against that function rather than against
+        # `Game.ask`'s kind dispatch. Both options are always legal when the
+        # question is put (the engine simply does not ask a player at
+        # CR 103.5's zero-hand ceiling), so there is no option set to check.
+        if not isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
         return
 
     if decision.kind is DecisionKind.OPENING_HAND_ACTION:
