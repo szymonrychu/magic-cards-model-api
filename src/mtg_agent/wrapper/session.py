@@ -356,7 +356,13 @@ class Manager:
         self.metrics.turn_duration_seconds.observe(max(0.0, self.now() - started))
         self.metrics.record_tokens(record.turn_tokens)
         self.metrics.record_cost(record.result_json)
-        log.info("turn complete turn_id=%s", turn_id)
+        log.info(
+            "turn complete turn_id=%s seconds=%.1f stop_reason=%s final_text_chars=%d",
+            turn_id,
+            max(0.0, self.now() - started),
+            record.stop_reason or "-",
+            len(record.final_text),
+        )
         self._deliver(record)
 
     # ---- probing ---------------------------------------------------------
@@ -406,6 +412,10 @@ class Manager:
         return turn_id
 
     def _finish_failed(self, turn_id: str, reason: str) -> None:
+        # A turn that dies here used to be silent in the container log: the
+        # driver was told over the callback, but nobody watching the agent
+        # container saw why its turn stopped.
+        log.error("turn failed turn_id=%s: %s", turn_id, reason)
         record = self.store.fail(turn_id, reason, self.now())
         self.metrics.turn_in_flight.set(0)
         self.metrics.turns_total.labels(result="failed").inc()
