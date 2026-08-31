@@ -423,6 +423,7 @@ function render(state) {
   renderBattlefield(state, you);
   renderHand(state, you);
 
+  renderPregame(state, you);
   renderDecision(state, you);
   renderActionTray(state);
   renderAutopilotBanner();
@@ -731,6 +732,9 @@ function renderHand(state, you) {
 const DECISION_RENDERERS = {
   may: renderYesNoDecision("accept"),
   opening_hand_action: renderYesNoDecision("accept"),
+  // CR 103.5's declaration, when it arrives as a decision rather than through
+  // the pregame panel above - the admin-driven `pregame/settle` path.
+  mulligan: renderYesNoDecision("accept"),
   pay_life: renderYesNoDecision("accept"),
   pay_energy: renderYesNoDecision("accept"),
   pay_mana: renderYesNoDecision("accept"),
@@ -869,6 +873,133 @@ function renderDecision(state, you) {
     : `<div class="error">no UI handler for decision kind ${escapeHtml(pending.kind)} - this is a drift bug, see tests/test_ui_decision_coverage.py</div>`;
   setHtml(box, `<h3>${withSymbols(pending.prompt)}</h3>${body}`);
 }
+
+// ------------------------------------------------------------- pregame ----
+//
+// CR 103.5's mulligan process and CR 103.6's opening-hand actions. A game
+// booted from decklists *rests* in these two steps before turn 1, so this is
+// the first thing a human sees after "Start game": nothing on the board
+// happens until both seats have declared.
+//
+// Every button here posts to one of the `pregame` endpoints (`app.py`), which
+// never block - unlike every other question in this UI, there is no pending
+// decision to answer and no timeout to race.
+
+/** Which cards the player has ticked to put on the bottom when keeping. */
+let pregameBottom = [];
+
+function renderPregame(state, you) {
+  const box = $("#pregame");
+  const pregame = state.pregame;
+  if (!pregame) {
+    box.hidden = true;
+    box.innerHTML = "";
+    pregameBottom = [];
+    return;
+  }
+  box.hidden = false;
+  if (pregame.step === "mulligan") {
+    setHtml(box, renderMulliganStep(state, pregame, you));
+  } else {
+    setHtml(box, renderOpeningHandStep(pregame, you));
+  }
+}
+
+function renderMulliganStep(state, pregame, you) {
+  const waiting = pregame.awaiting_mulligan || [];
+  const taken = (pregame.mulligans_taken || {})[you] || 0;
+  const taking = taken ? ` You have taken ${taken} mulligan${taken > 1 ? "s" : ""}.` : "";
+  if (!waiting.includes(you)) {
+    const others = waiting.filter((name) => name !== you);
+    const who = others.length ? others.map(escapeHtml).join(", ") : "the other seat";
+    return `<span>Mulligans (CR 103.5): waiting on ${who}.${taking}</span>`;
+  }
+  const needed = (pregame.cards_to_bottom || {})[you] || 0;
+  const hand = (state.hands && state.hands[you]) || [];
+  const picker = needed
+    ? `<div class="pregame-bottom">
+         <span>Keeping costs ${needed} card${needed > 1 ? "s" : ""} on the bottom of your
+         library - tick exactly ${needed}:</span>
+         ${hand
+           .map(
+             (card) =>
+               `<label><input type="checkbox" value="${escapeHtml(card.id)}"
+                 ${pregameBottom.includes(card.id) ? "checked" : ""}
+                 onchange="togglePregameBottom('${escapeHtml(card.id)}')" />
+                 ${escapeHtml(card.name)}</label>`
+           )
+           .join("")}
+       </div>`
+    : "";
+  const canKeep = pregameBottom.length === needed;
+  const keepWhy = canKeep ? "" : ` title="tick exactly ${needed} card(s) first"`;
+  const mullButton = pregame.can_mulligan && pregame.can_mulligan[you]
+    ? `<button onclick="declareMulligan(true)">Mulligan</button>`
+    : `<span class="why">no mulligan left - a hand of nothing is the floor (CR 103.5)</span>`;
+  return `<span>Your opening hand (CR 103.5): keep it, or shuffle back for a new seven.${taking}</span>
+    ${picker}
+    <button class="primary"${canKeep ? "" : " disabled"}${keepWhy}
+      onclick="declareMulligan(false)">Keep</button>
+    ${mullButton}`;
+}
+
+function renderOpeningHandStep(pregame, you) {
+  if (pregame.opening_hand_actor !== you) {
+    const who = pregame.opening_hand_actor;
+    return `<span>Opening-hand actions (CR 103.6): waiting on
+      ${escapeHtml(who || "the other seat")}.</span>`;
+  }
+  const options = (pregame.opening_hand_options || {})[you] || [];
+  const buttons = options
+    .map(
+      (option) =>
+        `<button onclick="takeOpeningHandAction('${escapeHtml(option.card_id)}')">
+           ${escapeHtml(option.source)}: ${escapeHtml(option.prompt)}
+         </button>`
+    )
+    .join("");
+  const none = options.length
+    ? ""
+    : "<span class=\"why\">nothing in your opening hand offers one.</span>";
+  return `<span>Opening-hand actions (CR 103.6) - yours to take, in any order.</span>
+    ${none}${buttons}
+    <button class="primary" onclick="finishOpeningHand()">Done</button>`;
+}
+
+function togglePregameBottom(cardId) {
+  pregameBottom = pregameBottom.includes(cardId)
+    ? pregameBottom.filter((id) => id !== cardId)
+    : pregameBottom.concat([cardId]);
+  render(game.state);
+}
+window.togglePregameBottom = togglePregameBottom;
+
+async function pregamePost(path, body) {
+  try {
+    await api("POST", withUid(`/api/games/${game.gameId}/pregame/${path}`), body);
+  } catch (e) {
+    notice(`Refused: ${e.message}`, "bad");
+  }
+  poll();
+}
+
+async function declareMulligan(take) {
+  const body = { player: game.state.you, take };
+  if (!take && pregameBottom.length) body.bottom = pregameBottom;
+  pregameBottom = [];
+  await pregamePost("mulligan", body);
+}
+window.declareMulligan = declareMulligan;
+
+async function takeOpeningHandAction(cardId) {
+  await pregamePost("opening-hand/action", { player: game.state.you, card_id: cardId });
+}
+window.takeOpeningHandAction = takeOpeningHandAction;
+
+async function finishOpeningHand() {
+  await pregamePost("opening-hand/finish", { player: game.state.you });
+}
+window.finishOpeningHand = finishOpeningHand;
 
 async function decide(answer) {
   const body = Object.assign({ player: game.state.you }, answer);

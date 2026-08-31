@@ -16,6 +16,7 @@ from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Z
 from . import scryfall
 from .affordances import cast_hints
 from .engine_api import list_abilities
+from .opening import pregame_view
 from .store import store
 
 StackObject = CardState | AbilityOnStack
@@ -348,8 +349,20 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
     return views
 
 
-def _player_view(player: Player) -> dict[str, Any]:
-    return {
+def _player_view(player: Player, decklist: str | None = None) -> dict[str, Any]:
+    """One seat's own block.
+
+    `decklist` is the raw decklist text this seat was booted from
+    (`store.register_decklists`), and it is the one field here that is not
+    public: CR 100.2a's constructed play is "a way of playing in which each
+    player creates their own deck ahead of time", so a seat knows its own list
+    and nothing entitles it to the opponent's - CR 401.1/401.2 make that deck
+    a library nobody may look at once the game begins. `visibility.redact_view`
+    is what enforces it; this function reports the full truth, exactly as it
+    already does for `hands`. `None` for a game built board-first, which has no
+    decklist to report.
+    """
+    view = {
         "username": player.username,
         "life": player.life,
         "counters": dict(player.counters.root),
@@ -363,6 +376,9 @@ def _player_view(player: Player) -> dict[str, Any]:
         "sideboard_count": len(player.sideboard),
         "maximum_hand_size": player.maximum_hand_size,
     }
+    if decklist is not None:
+        view["decklist"] = decklist
+    return view
 
 
 def snapshot(game: Game) -> dict[str, Any]:
@@ -465,16 +481,28 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     mailbox = store.mailbox(game_id)
     pending = mailbox.snapshot() if mailbox is not None else None
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
+    decklists = store.decklists(game_id)
+    # CR 500.1 makes a phase part of a turn, and the engine's two pregame steps
+    # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) run before CR 103.8's first
+    # turn - so they are in no phase and are deliberately absent from
+    # `PHASE_OF`. `phase` is therefore nullable, and a client that assumes a
+    # string here must handle `null` (see `ui/app.js`'s phase track).
+    phase = PHASE_OF.get(step)
     return {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
         "decision_timeouts": store.decision_timeouts(game_id),
         "turn_number": turn.turn_number if turn is not None else None,
         "step": step.value,
-        "phase": PHASE_OF[step].value,
+        "phase": phase.value if phase is not None else None,
+        # What CR 103.5/CR 103.6 are waiting for, or `None` once the game has
+        # reached its first turn - see `opening.pregame_view`.
+        "pregame": pregame_view(game),
         "active_player": turn.players[turn.active_index] if turn is not None else None,
         "priority_holder": game.priority.holder if game.priority is not None else None,
-        "players": [_player_view(player) for player in game.players],
+        "players": [
+            _player_view(player, decklists.get(player.username)) for player in game.players
+        ],
         "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "stack": _stack_view(game, images),
         "exile": exile_views,

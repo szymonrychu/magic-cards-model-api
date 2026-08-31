@@ -107,7 +107,15 @@ def test_start_game_boots_a_real_game(client: TestClient) -> None:
         state = client.get(
             f"/api/games/{body['game_id']}", params={"uid": body["seat_uids"]["alice"]}
         ).json()
-        assert state["turn_number"] == 1
+        # The boot leaves the game *resting* in CR 103.5's mulligan step, before
+        # CR 103.8's first turn: turn 0, and no phase at all, because CR 500.1
+        # makes a phase part of a turn and no turn has begun. Nothing here
+        # settles the mulligan on the seats' behalf - both seats still owe a
+        # declaration, which is what `pregame` reports.
+        assert state["turn_number"] == 0
+        assert state["step"] == "mulligan"
+        assert state["phase"] is None
+        assert state["pregame"]["awaiting_mulligan"] == ["alice", "bob"]
         assert len(state["hands"]["alice"]) == 7
         # The opponent's hand stays hidden from alice's own filtered view.
         assert state["hands"]["bob"] == []

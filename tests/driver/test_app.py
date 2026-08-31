@@ -332,3 +332,51 @@ def test_settings_read_the_boot_wait_from_the_environment():
     )
     assert settings.agent_boot_wait == 42.0
     assert settings.agent_retry_interval == 0.5
+
+
+# -- the contract this file's fake game server stands in for ------------------
+
+
+def test_the_real_game_server_carries_the_field_seat_decklist_reads():
+    """The fake `get_game` above returns `players[].decklist`, and for a long
+    time nothing else did: the real API's player block carried `counters`,
+    `graveyard_count`, `hand_count`, `library_count`, `life`, `mana_pool`,
+    `maximum_hand_size`, `sideboard_count` and `username`, and no decklist at
+    all. So `seat_decklist` read `None` on every real dispatch, every game was
+    logged as `deck=unknown-deck (match 0.00, 0 cards)`, and the agent never
+    received the matchup guides that are the whole point of it. Every driver
+    test above still passed, because the double and the server disagreed.
+
+    This test is the join: it boots a real game through the real app, reads it
+    exactly as the driver does (`GET /api/games/{id}` with the AI seat's own
+    uid), and asserts the response really carries the field `seat_decklist`
+    looks for - and does not carry the opponent's.
+    """
+    from magic_cards_model_api.main import app as game_app
+
+    with TestClient(game_app) as game_client:
+        booted = game_client.post(
+            "/api/ui/games",
+            json={
+                "players": [
+                    {"username": "alice", "decklist_text": "56 Mountain\n4 Lightning Bolt"},
+                    {"username": "bob", "decklist_text": "56 Forest\n4 Grizzly Bears"},
+                ],
+                "seed": 3,
+            },
+        ).json()
+        try:
+            state = game_client.get(
+                f"/api/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["bob"]}
+            ).json()
+        finally:
+            game_client.delete(f"/api/games/{booted['game_id']}")
+
+    from mtg_agent.driver.guides import parse_decklist
+
+    seats = {player["username"]: player for player in state["players"]}
+    assert seats["bob"].get("decklist") == "56 Forest\n4 Grizzly Bears"
+    assert "decklist" not in seats["alice"]
+    # And it parses to a real list, which is what `GuideLibrary.identify`
+    # scores: an unparseable or empty answer is the "0 cards" symptom.
+    assert parse_decklist(seats["bob"]["decklist"]) == {"Forest": 56, "Grizzly Bears": 4}

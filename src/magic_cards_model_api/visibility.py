@@ -74,6 +74,9 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     view["hands"] = {
         name: (cards if name == viewer else []) for name, cards in view.get("hands", {}).items()
     }
+    view["players"] = [_redact_player(player, viewer) for player in view.get("players", [])]
+    if view.get("pregame") is not None:
+        view["pregame"] = _redact_pregame(view["pregame"], viewer)
     if "exile" in view:
         view["exile"] = [_redact_facedown_card(card, viewer) for card in view["exile"]]
     if "exile_pile" in view:
@@ -96,6 +99,52 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if viewer is not None:
         view["you"] = viewer
     return view
+
+
+def _redact_player(player: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """One entry of `players` (`serialize._player_view`), as `viewer` may see it.
+
+    Everything on that block is public - life, counters, the pool, and the
+    *counts* of each hidden zone - except `decklist`, which is the raw list
+    this seat was booted from. A seat knows its own: CR 100.2a's constructed
+    play is "a way of playing in which each player creates their own deck ahead
+    of time", and CR 401.1 makes that deck their library at the start of the
+    game. Nothing makes it the opponent's knowledge, and CR 401.2 - "players
+    can't look at or change the order of cards in a library" - is the whole
+    reason `libraries` is stripped from this view two lines below; handing over
+    the decklist would give back by name exactly what that strips by object.
+
+    So the field survives only on the viewer's own block. A bystander with no
+    uid (`viewer is None`) reads nobody's, matching every other hidden field
+    here: a caller that presents nothing must never see more than one that
+    presents someone else's seat.
+    """
+    if "decklist" not in player or player.get("username") == viewer:
+        return player
+    return {key: value for key, value in player.items() if key != "decklist"}
+
+
+def _redact_pregame(pregame: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """The CR 103.5/CR 103.6 pregame block (`opening.pregame_view`), as
+    `viewer` may see it.
+
+    Who owes a declaration, how many mulligans each seat has taken, how many
+    cards keeping would cost them, and whose CR 103.6 turn it is are all
+    public - they are the visible half of a mulligan across a real table.
+    `opening_hand_options` is not: it names cards sitting in a player's opening
+    hand, and CR 402.3 says "a player can't look at the cards in another
+    player's hand". Each seat keeps its own list and gets an empty one for
+    everybody else, the same shape `hands` uses.
+    """
+    options = pregame.get("opening_hand_options")
+    if not isinstance(options, dict):
+        return pregame
+    return {
+        **pregame,
+        "opening_hand_options": {
+            name: (offers if name == viewer else []) for name, offers in options.items()
+        },
+    }
 
 
 def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:

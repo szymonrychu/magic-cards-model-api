@@ -28,6 +28,7 @@ from . import (
     decisions,
     decks_api,
     engine_api,
+    opening,
     scryfall,
     seatkit,
     symbology,
@@ -46,7 +47,9 @@ from .schemas import (
     DeclareBlockersRequest,
     ManaPoolUpdate,
     MoveCard,
+    MulliganRequest,
     NewGame,
+    OpeningHandActionRequest,
     PassPriorityRequest,
     PatchCard,
     PatchPlayer,
@@ -393,6 +396,13 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
         # this game currently has a decision pending for `viewer` specifically.
         mailbox = store.mailbox(game_id)
         if mailbox is not None:
+            # And, separately, that somebody is behind this seat at all -
+            # true of this read whether or not a decision happens to be
+            # pending for `viewer` right now, which is exactly the evidence
+            # `DecisionMailbox.delivery_bound` needs to tell a live player
+            # from a game nobody is watching. See `decisions.py`'s
+            # `DEFAULT_PRESENCE_SECONDS`.
+            mailbox.mark_watching(viewer)
             mailbox.mark_delivered(viewer)
     return visibility.redact_view(state_view(game, game_id), viewer)
 
@@ -1067,10 +1077,17 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_MANA,
-        # CR 103.6's "may take any such actions": the same yes/no shape, now
-        # that `opening.py` runs the mulligan process and a seat really is
-        # asked - see `decisions.ANSWERABLE_KINDS`.
+        # CR 103.6's "may take any such actions": the same yes/no shape,
+        # asked through `Game.ask` - see `decisions.ANSWERABLE_KINDS`.
         DecisionKind.OPENING_HAND_ACTION,
+        # CR 103.5's declaration, "will you take a mulligan", which
+        # `machines/decisions.py`'s `ask_mulligan` puts to the provider. Only
+        # `Game.settle_pregame` asks it that way - a seat declaring for itself
+        # uses `POST .../pregame/mulligan`, which blocks on nothing - but that
+        # path is real and reaches a live seat, so this branch is not dead.
+        # Yes/no like the rest of this tuple; the *bottoming* that follows a
+        # kept hand is a separate CHOOSE_CARDS question and needs nothing here.
+        DecisionKind.MULLIGAN,
     ):
         try:
             answer = decisions.bool_answer(req.accept)
@@ -1164,6 +1181,109 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         )
         return {"accepted": False, "reason": reason, "log_seq": seq}
     return {"accepted": True, "log_seq": seq}
+
+
+# -- the pregame: CR 103.5 and CR 103.6 ---------------------------------------
+#
+# A game booted from decklists *rests* in `Step.MULLIGAN` and then in
+# `Step.PREGAME_ACTIONS` before CR 103.8's first turn begins. Nothing in this
+# API settles either one on the seats' behalf: each of the three endpoints
+# below is one seat's own move, told an answer already made, and none of them
+# blocks - which is the whole reason the engine turned the pregame into steps
+# a game rests in. See `opening.py`.
+#
+# Authorization is the same rule `decide` applies to CR 608.2d's "the player
+# announces": the `uid` must open the acting player's own seat. Nobody else
+# declares a mulligan for them (CR 103.5's declaration is each player's own),
+# and nobody else takes a CR 103.6 action with a card in their opening hand.
+
+
+def _pregame_seat(game_id: str, uid: str | None, player: str) -> None:
+    """Refuse unless `uid` opens `player`'s own seat, or is the admin key.
+
+    The admin key stands for whoever created the game - the same operator
+    trust level `visibility.ADMIN` already grants the full board - which is
+    what lets a harness or a boot script drive a seat it owns.
+    """
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer is visibility.ADMIN:
+        return
+    if viewer != player:
+        raise ValueError(f"that uid does not open {player}'s seat")
+
+
+@app.post("/api/games/{game_id}/pregame/mulligan")
+def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None) -> dict[str, Any]:
+    """Declare whether this seat takes a mulligan (CR 103.5).
+
+    "First, the starting player declares whether they will take a mulligan.
+    Then each other player in turn order does the same." Who still owes a
+    declaration is `pregame.awaiting_mulligan` on the state view, and the round
+    resolves - every player who declared a mulligan taking it simultaneously -
+    the moment the last of them has spoken.
+
+    `bottom` names the cards a keeping seat puts on the bottom of its library,
+    one per counted mulligan; it is pre-provided to the engine rather than
+    asked back through `decide`, so this request never blocks. See
+    `opening.py`.
+    """
+    _pregame_seat(game_id, uid, req.player)
+    with store.locked(game_id) as game:
+        game.player(req.player)  # 404 for a player who is not in this game
+        return opening.declare_mulligan(game_id, game, req.player, req.take, req.bottom)
+
+
+@app.post("/api/games/{game_id}/pregame/opening-hand/action")
+def pregame_opening_hand_action(
+    game_id: str, req: OpeningHandActionRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """Take one CR 103.6 action with a card in this seat's opening hand.
+
+    "Once the mulligan process (see rule 103.5) is complete, the starting
+    player may take any such actions in any order." What is on offer, and to
+    whom right now, is `pregame.opening_hand_options` / `pregame.
+    opening_hand_actor` on the state view; a seat that wants none of them calls
+    the `finish` endpoint below instead.
+    """
+    _pregame_seat(game_id, uid, req.player)
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        return opening.take_opening_hand_action(game_id, game, req.player, req.card_id)
+
+
+@app.post("/api/games/{game_id}/pregame/opening-hand/finish")
+def pregame_opening_hand_finish(
+    game_id: str, req: ActorRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """This seat is done taking CR 103.6 actions.
+
+    The next seat is up; when the last one finishes, CR 103.8's first turn
+    begins and the response's `step` is `untap`.
+    """
+    if not req.player:
+        raise ValueError("finishing CR 103.6's actions needs the player who is finishing")
+    _pregame_seat(game_id, uid, req.player)
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        return opening.finish_opening_hand_actions(game_id, game, req.player)
+
+
+@app.post("/api/games/{game_id}/pregame/settle")
+def pregame_settle(game_id: str, uid: str | None = None) -> dict[str, Any]:
+    """Run the whole pregame on the engine's own defaults: every seat keeps the
+    hand it was dealt and declines every CR 103.6 action.
+
+    The headless path, for a harness or a bot that wants a game to *play*
+    rather than a game to start correctly - `Game.settle_pregame`, unchanged
+    engine behaviour, immediate and deterministic because it consults nobody.
+    Admin-key only: it makes both seats' CR 103.5 declarations at once, which
+    is the operator's call over a game they created, never one seat's over the
+    other's.
+    """
+    if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
+        raise ValueError("settling the whole pregame for every seat needs this game's admin key")
+    with store.locked(game_id) as game:
+        return opening.settle_pregame(game_id, game)
 
 
 # -- the play-vs-AI UI --------------------------------------------------------

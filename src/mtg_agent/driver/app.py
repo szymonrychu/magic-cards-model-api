@@ -199,6 +199,19 @@ def build_app(
             return
 
     def seat_decklist(state: dict, player: str) -> str:
+        """This seat's own decklist text, out of its `players` block.
+
+        `state` is `GET /api/games/{id}` read with *this seat's* uid, and the
+        game server puts `decklist` on the viewer's own player block only - a
+        seat knows the deck it registered and never the opponent's (see
+        `visibility._redact_player`). So the loop below can only ever find its
+        own list, and an opponent's entry simply has no `decklist` key.
+
+        Empty for a game the server was not booted from decklists (`POST
+        /api/games` builds a board directly), which is the honest answer: there
+        is no list to identify, and `GuideLibrary.identify` scores an empty
+        list at 0 rather than guessing a guide.
+        """
         for seat in state.get("players") or []:
             if seat.get("username") == player:
                 return seat.get("decklist") or ""

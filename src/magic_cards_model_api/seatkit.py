@@ -29,6 +29,11 @@ left looking like a rule of its own.
 
 A blocked call returns as soon as one of these holds, for this seat:
 
+- the game is still in the pregame - CR 103.5's mulligan step or CR 103.6's
+  opening-hand step, which a game booted from decklists rests in before
+  CR 103.8's first turn. Nobody has priority there, so every other condition
+  below is unreachable and a seat waiting for one would wait out its whole
+  bound while the game waited on it;
 - it has priority *and* the visible board changed since the call began (not
   merely "has priority" - that would also fire the instant this seat's own
   action hands priority right back with nothing new to react to);
@@ -117,7 +122,13 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: at boot, never again" was the defect. See `api_trouble`.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-1"
+PROTOCOL_VERSION = "seatkit-2"
+#: `seatkit-2` added the pregame tools (`mulligan`, `opening_hand_action`) and
+#: the `pregame` block every state view now carries: a game booted from
+#: decklists rests in CR 103.5's mulligan step until its seats declare, and an
+#: MCP process from before this cannot drive one out of it - which looks, from
+#: the seat's side, exactly like a game that never starts. Better a refusal
+#: naming both versions.
 
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
@@ -501,6 +512,18 @@ def compute_wake_reason(
     pending = state.get("pending_decision")
     if state.get("winner") or state.get("drawn"):
         return "game over"
+    pregame = state.get("pregame")
+    if isinstance(pregame, dict):
+        # A game booted from decklists *rests* in CR 103.5's mulligan step and
+        # then in CR 103.6's opening-hand step before CR 103.8's first turn.
+        # Nobody has priority in either (nothing in CR 103.5 or CR 103.6 grants
+        # any), so without this a seat sat in `wait_for_priority` until it timed
+        # out while the game waited on that very seat to declare.
+        if player in (pregame.get("awaiting_mulligan") or []):
+            return "the game is waiting on your CR 103.5 mulligan declaration"
+        if pregame.get("opening_hand_actor") == player:
+            return "it is your turn to take CR 103.6 opening-hand actions, or finish"
+        return "the game has not started yet: another seat owes a pregame declaration"
     if pending is not None and pending.get("player") == player:
         return f"a decision is waiting for you: {pending.get('prompt')}"
     if (

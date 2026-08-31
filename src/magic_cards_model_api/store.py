@@ -44,7 +44,7 @@ class GameStore:
         self._locks: dict[str, threading.Lock] = {}  # game_id -> its mutation lock
         self._mailboxes: dict[str, DecisionMailbox] = {}  # game_id -> its pending decision
         self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
-        self._opening_done: dict[str, threading.Event] = {}  # game_id -> CR 103.5/103.6 finished
+        self._decklists: dict[str, dict[str, str]] = {}  # game_id -> username -> decklist text
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -56,23 +56,35 @@ class GameStore:
             self._admin_keys[game_id] = uuid4().hex
             self._locks[game_id] = threading.Lock()
             self._mailboxes[game_id] = mailbox
-            self._opening_done[game_id] = threading.Event()
         return game_id
 
-    def opening_done(self, game_id: str) -> threading.Event:
-        """The flag `opening.py` sets once this game's CR 103.5 mulligan
-        process and CR 103.6 opening-hand actions have finished.
+    def register_decklists(self, game_id: str, decklists: dict[str, str]) -> None:
+        """Record the decklist text each seat was booted from: username -> text.
 
-        Created with the game and set by whichever thread ran them, so a
-        caller that needs the settled opening hand - a test, a seat that will
-        not act until the game is really ready - can wait for it instead of
-        guessing. It stays unset for a game that has no opening sequence to
-        run at all (`POST /api/games` builds a board with no decks and no
-        opening hand), and for an unknown game id: "not done" is the honest
-        answer in both cases, and neither has a caller that waits on it.
+        Kept beside the game rather than on it, for the same reason the seat
+        uids are: `Game` is the engine's model of a game in progress and a
+        registered decklist is not part of one. The engine's `Match.decks`
+        does hold the parsed lists, but this store keys everything by
+        `game_id` and never sees the `Match` - `decks_api`/`serve` hand it the
+        `Game` alone - so the text is recorded here at boot instead.
+
+        Only games booted from decklists have any (`POST /api/games` builds a
+        board with no decks at all), and a game with none simply has nothing
+        to report.
         """
         with self._lock:
-            return self._opening_done.setdefault(game_id, threading.Event())
+            self._decklists[game_id] = dict(decklists)
+
+    def decklists(self, game_id: str) -> dict[str, str]:
+        """username -> decklist text, for a game booted from decklists.
+
+        Full information: `serialize.state_view` hands each seat only its own
+        entry, and `visibility.redact_view` is what enforces that (CR 100.2a's
+        "each player creates their own deck" is knowledge of one's own deck,
+        not of the opponent's).
+        """
+        with self._lock:
+            return dict(self._decklists.get(game_id, {}))
 
     @contextmanager
     def locked(self, game_id: str) -> Iterator[Game]:
@@ -155,7 +167,7 @@ class GameStore:
             self._locks.pop(game_id, None)
             self._mailboxes.pop(game_id, None)
             self._decision_timeouts.pop(game_id, None)
-            self._opening_done.pop(game_id, None)
+            self._decklists.pop(game_id, None)
             return self._games.pop(game_id, None) is not None
 
     def ids(self) -> list[str]:

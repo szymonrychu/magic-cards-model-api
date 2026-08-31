@@ -63,7 +63,15 @@ def record(game_id: str, action: str, **detail: Any) -> int:
         "detail": dict(detail),
         "turn": turn.turn_number if turn is not None else None,
         "step": step.value if step is not None else None,
-        "phase": PHASE_OF[step].value if step is not None else None,
+        # `.get`, not `[...]`: CR 500.1 makes a phase - and so every step in
+        # one - part of *a turn*, and the engine's two pregame steps
+        # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) happen before CR 103.8's
+        # first turn, so they are in no phase at all and are deliberately
+        # absent from `PHASE_OF`. Subscripting raised `KeyError` for every
+        # entry recorded while a freshly booted game rested in one, which
+        # surfaced as a 500 from `GET /api/games/{id}/log` and a 404 from
+        # `POST /api/ui/games`.
+        "phase": phase.value if step is not None and (phase := PHASE_OF.get(step)) else None,
         "stack_size": len(game.stack) if game is not None else None,
         "snapshot": snapshot(game) if game is not None else None,
     }

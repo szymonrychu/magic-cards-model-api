@@ -333,3 +333,30 @@ class DecideRequest(BaseModel):
     `pending_decision.player`. Not `accept`: this is a top/bottom choice, not
     a yes/no, even though both happen to be booleans. `None` (the default) is
     refused, matching `accept`/`choice`/`energy_amount`."""
+
+
+class MulliganRequest(BaseModel):
+    """One seat's CR 103.5 declaration: "a player who is dissatisfied with
+    their initial hand may take a mulligan"."""
+
+    player: str
+    take: bool
+    bottom: list[UUID] | None = None
+    """Which cards to put on the bottom of the library when keeping.
+
+    CR 103.5 charges one card per counted mulligan, and *which* cards is the
+    keeping player's own choice. Required in length exactly when the seat owes
+    one (`pregame.cards_to_bottom`); `null` takes the engine's own default -
+    the back of the hand - and the audit log records that it was defaulted, not
+    chosen. Ignored when `take` is true, since a mulliganed hand is shuffled
+    back rather than paid for.
+    """
+
+
+class OpeningHandActionRequest(BaseModel):
+    """One CR 103.6 action with a card in this seat's own opening hand -
+    "some cards allow a player to take actions with them from their opening
+    hand"."""
+
+    player: str
+    card_id: UUID

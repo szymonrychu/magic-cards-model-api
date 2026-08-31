@@ -336,6 +336,15 @@ def _setup_pending_discard(live_server: str, block_seconds: float) -> str:
     provider = store.get(game_id).decisions.provider
     assert provider is not None
     provider.timeout_seconds = block_seconds
+    # All three of the provider's bounds, not just `timeout_seconds`: what
+    # these tests need is a server-side block of a known length, and how long
+    # the provider actually blocks depends on which bound applies (see
+    # `DecisionMailbox.delivery_bound`). Nobody polls this game, so the seat is
+    # unproven and it is `presence_seconds` that decides - pinning only
+    # `timeout_seconds` would leave the block's real length set by a module
+    # default these tests never mention.
+    provider.delivery_seconds = block_seconds
+    provider.presence_seconds = block_seconds
     with httpx.Client(base_url=live_server, timeout=10.0) as boot:
         for _ in range(9):  # 7 max hand size + a couple to force the discard
             r = boot.post(

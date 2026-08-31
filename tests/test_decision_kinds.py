@@ -26,21 +26,20 @@ the moment a new one is added without a matching entry in
 `decisions.ANSWERABLE_KINDS` or `decisions.SERVED_ELSEWHERE` - so the next
 `DecisionKind` cannot silently freeze a game the same way.
 
-`mulligan`, `declare_attackers`, and `declare_blockers` are the other three
-`DecisionKind`s and are deliberately not covered here with a live-seat test:
-reading `machines/decisions.py` and `models/game.py` shows `ask_mulligan`,
-`ask_attackers`, and `ask_blockers` all take their answer straight off
-`DecisionScript.take`, never touching `Game.decisions.provider` (the mailbox
-this API publishes to) at all. No request through this API can ever make one
-of them arrive at `POST /decide` - attacking and blocking already have their
-own actions (`actions/attack`, `actions/declare-blockers`) that call
-`Game.declare_attackers`/`Game.declare_blockers` directly, and a mulligan's
-declaration, although the API now really does put it (`opening.py` runs
-`Match.run_mulligans` on every game booted from decklists), is answered by
-`ask_mulligan` off `default_answer` without a seat ever being shown it.
-`OPENING_HAND_ACTION`, asked at the end of that same sequence, is *not* in
-this group: `Game.take_opening_hand_actions` asks it through `Game.ask`, so it
-does reach the mailbox and does have a live-seat test below.
+`declare_attackers` and `declare_blockers` are the two `DecisionKind`s
+deliberately not covered here with a live-seat test: reading
+`machines/decisions.py` shows `ask_attackers` and `ask_blockers` take their
+answer straight off `DecisionScript.take`, never touching
+`Game.decisions.provider` (the mailbox this API publishes to) at all. No
+request through this API can ever make one of them arrive at `POST /decide` -
+and neither needs to, since both already have their own actions
+(`actions/attack`, `actions/declare-blockers`) calling
+`Game.declare_attackers`/`Game.declare_blockers` directly.
+`OPENING_HAND_ACTION` (CR 103.6, through `Game.take_opening_hand_actions`'s
+`self.ask`) and `MULLIGAN` (CR 103.5, which `ask_mulligan` puts to the
+provider from `Game.settle_pregame`) are *not* in this group: both reach the
+mailbox and both are answerable by a live seat - see `tests/test_mulligans.py`,
+which drives each of them end to end.
 `test_an_unwired_kind_is_refused_by_name`
 below proves `decide`'s refusal path for them the only way it can be
 proved - by publishing one by hand to the mailbox, the way a future
@@ -1639,25 +1638,29 @@ def test_every_decision_kind_is_answerable_or_served_elsewhere():
 
 
 def test_an_unwired_kind_is_refused_by_name(client, game):
-    """`mulligan`/`declare_attackers`/`declare_blockers` never reach this
-    mailbox through real play (see the module docstring), so the only way to
+    """`declare_attackers`/`declare_blockers` never reach this mailbox
+    through real play (see the module docstring), so the only way to
     exercise `decide`'s refusal for one is to publish it directly - exactly
     the shape a *future* `DecisionKind` would take if it were routed through
     `Game.ask` without `app.py` and `decisions.ANSWERABLE_KINDS` being taught
-    it. The refusal must name the kind, not silently default or 500."""
+    it. The refusal must name the kind, not silently default or 500.
+
+    `mulligan` used to be this test's subject and no longer can be: the
+    engine wired `ask_mulligan` to the provider, so it is a real, live,
+    answerable kind now - see `decisions.ANSWERABLE_KINDS`."""
     uids = seats_for(client, game)
     mailbox = store.mailbox(game)
     assert mailbox is not None
     mailbox.publish(
         PendingDecision(
             player="alice",
-            kind="mulligan",
-            prompt="take a mulligan",
+            kind="declare_attackers",
+            prompt="declare attackers",
             source=None,
             amount=0,
             cards=(),
         ),
-        Decision(kind=DecisionKind.MULLIGAN, player="alice", prompt="take a mulligan"),
+        Decision(kind=DecisionKind.DECLARE_ATTACKERS, player="alice", prompt="declare attackers"),
     )
     try:
         response = client.post(
@@ -1668,9 +1671,9 @@ def test_an_unwired_kind_is_refused_by_name(client, game):
         assert response.status_code == 200
         body = response.json()
         assert body["accepted"] is False
-        assert "mulligan" in body["reason"]
+        assert "declare_attackers" in body["reason"]
     finally:
-        mailbox.wait_for_answer(0.01)  # drain, so no other test sees it pending
+        mailbox.wait_for_answer(0.01, 0.01)  # drain, so no other test sees it pending
 
 
 def test_log_timeout_wording_for_an_unwired_kind(client, game):
