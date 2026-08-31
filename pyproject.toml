@@ -38,3 +38,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Repo root on sys.path so tests/wrapper/* can import shared helpers as
+# `tests.wrapper.test_session`. A second conftest.py under tests/wrapper/
+# cannot do this job: it collides with the top-level `conftest` module that
+# ~40 existing tests import by bare name.
+pythonpath = ["."]
