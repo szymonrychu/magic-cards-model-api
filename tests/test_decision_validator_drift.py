@@ -227,6 +227,21 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         ["Mode One", "Mode Three", "", None],
     )
 
+    # CR 103.6's opening-hand action: a yes-or-no with both branches always
+    # legal (a card's own restriction stops the question being put at all,
+    # rather than making one answer illegal), so unlike the `bool_kinds` above
+    # there is no `affirmative_is_legal` to set and no illegal-option branch
+    # to hit - only the answer's shape.
+    cases[DecisionKind.OPENING_HAND_ACTION] = (
+        Decision(
+            kind=DecisionKind.OPENING_HAND_ACTION,
+            player="alice",
+            prompt="begin the game with Leyline of the Void on the battlefield",
+            source="Leyline of the Void",
+        ),
+        [True, False, "yes", 1, None],
+    )
+
     cases[DecisionKind.PUT_ON_TOP_OR_BOTTOM] = (
         Decision(kind=DecisionKind.PUT_ON_TOP_OR_BOTTOM, player="alice", prompt="top or bottom"),
         [True, False, "top", None],

@@ -182,8 +182,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("yes", "no"),
         default=None,
         help=(
-            "yes/no, for a may, pay_life, pay_energy, or pay_mana decision "
-            "(CR 608.2d, CR 119.4, CR 107.14, CR 118.12a)"
+            "yes/no, for a may, pay_life, pay_energy, pay_mana, or "
+            "opening_hand_action decision (CR 608.2d, CR 119.4, CR 107.14, "
+            "CR 118.12a, CR 103.6)"
         ),
     )
     decide.add_argument(

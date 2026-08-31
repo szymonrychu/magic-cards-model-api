@@ -42,20 +42,27 @@ _UI_HANDLED_ELSEWHERE = {
 }
 
 #: `MULLIGAN` is the one `DecisionKind` with no live-decision path *at all* -
-#: not a UI gap, an engine/API one: `machines/decisions.py`'s `ask_mulligan`
-#: is settled inside `Match.start_game`, before a game (and its uids) even
-#: exist, so `pending_decision` can never carry a `mulligan` kind for any
-#: seat to see. Nothing in the UI needs to render a form for a question that
-#: can never arrive - recorded here, by name, rather than silently absent,
-#: matching `decisions.SERVED_ELSEWHERE`'s own reasoning for the same kind.
-#: `OPENING_HAND_ACTION` joins `MULLIGAN` here for the same reason and with the
-#: same proof: both are asked only from inside `Match.run_mulligans` (which
-#: calls `Game.take_opening_hand_actions` at its end, CR 103.6), and this API
-#: never calls `run_mulligans` at all - `decks.load_deck_into_game` calls
-#: `Match.start_game` and stops there. So neither kind can be a live seat's
-#: `pending_decision`. If this API ever starts running the mulligan process,
-#: BOTH entries have to move: a seat would then really be asked.
-_NEVER_REACHES_A_LIVE_SEAT = {DecisionKind.MULLIGAN, DecisionKind.OPENING_HAND_ACTION}
+#: not a UI gap, an engine one. The API does now run the mulligan process
+#: (`opening.py` calls `Match.run_mulligans` on every game booted from
+#: decklists), so CR 103.5's declaration is genuinely asked of each player -
+#: but `machines/decisions.py`'s `ask_mulligan` answers it from
+#: `DecisionScript.take`/`default_answer` without ever consulting
+#: `Game.decisions.provider`, which is the mailbox `pending_decision` is
+#: built from. So no seat is ever shown a `mulligan` kind, and nothing in the
+#: UI needs a form for a question that cannot arrive. Recorded here, by name,
+#: rather than silently absent, matching `decisions.SERVED_ELSEWHERE`'s own
+#: reasoning for the same kind. Closing it is an engine change - routing
+#: `ask_mulligan` through `Game.ask` - after which this entry must move and
+#: `ui/app.js` must grow a `mulligan` renderer.
+#:
+#: `OPENING_HAND_ACTION` used to sit here alongside it, on the then-true
+#: ground that nothing called `run_mulligans`. It has moved out: it is asked
+#: through `Game.take_opening_hand_actions`'s `self.ask` (CR 103.6), which
+#: *does* consult the provider, of a game already in the store with its seat
+#: uids handed out. It is in `decisions.ANSWERABLE_KINDS` and has a
+#: `DECISION_RENDERERS` entry, so the two assertions below now cover it the
+#: same way they cover `may`.
+_NEVER_REACHES_A_LIVE_SEAT = {DecisionKind.MULLIGAN}
 
 
 def _decision_renderers_object() -> str:

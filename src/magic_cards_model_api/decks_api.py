@@ -34,7 +34,7 @@ from fastapi import APIRouter
 from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
-from . import audit, scryfall
+from . import audit, opening, scryfall
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
@@ -191,6 +191,10 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     game_id = store.create(game)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
+    # CR 103.5's mulligan process and CR 103.6's opening-hand actions, on a
+    # thread of their own so this response can hand out the seat uids a player
+    # needs before CR 103.6 asks them anything - see `opening.py`.
+    opening.start_opening_sequence(game_id, match, game)
     audit.record(
         game_id,
         "create_game",

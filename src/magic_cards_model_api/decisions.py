@@ -118,9 +118,24 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "
 #: creature type") - so it shares the same request field, `choice`, and
 #: `mode_answer` differs from `quality_answer` only in its error text citing
 #: CR 700.2a instead of CR 614.12a.
+#: `OPENING_HAND_ACTION` (CR 103.6, "some cards allow a player to take actions
+#: with them from their opening hand") joined this set when the API started
+#: running the mulligan process at all (`opening.py`). It was in
+#: `SERVED_ELSEWHERE` before that, on the true-at-the-time grounds that
+#: `decks.load_deck_into_game` stopped at `Match.start_game` and nothing ever
+#: called `Match.run_mulligans`, so the question was never asked of anyone.
+#: Now it is asked, and asked through `Game.take_opening_hand_actions`'s
+#: `self.ask` - the one path that consults `Game.decisions.provider`, i.e.
+#: this API's mailbox - of a game that is already in the store with its seat
+#: uids handed out. So a live seat really does see it as its
+#: `pending_decision` and really can answer it here. A plain yes/no ("you may
+#: begin the game with this card on the battlefield" - CR 103.6a; "you may
+#: reveal it from your opening hand" - CR 103.6b), so it reuses `bool_answer`
+#: and the `accept` field exactly as `MAY` does.
 ANSWERABLE_KINDS = frozenset(
     {
         DecisionKind.MAY,
+        DecisionKind.OPENING_HAND_ACTION,
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_ENERGY_AMOUNT,
@@ -142,30 +157,45 @@ ANSWERABLE_KINDS = frozenset(
 #: of which call `DecisionScript.take` and `default_answer` directly) shows
 #: none of the three ever consults `Game.decisions.provider` - the mailbox
 #: this module publishes to. A live seat cannot answer them through `decide`
-#: no matter what it supports: the mulligan declaration (CR 103.5) is settled
-#: during `Match.start_game`, and attacking/blocking (CR 703.4i, 703.4j)
-#: already have their own actions (`actions/attack`,
-#: `actions/declare-blockers`) that call `Game.declare_attackers` /
-#: `Game.declare_blockers` directly. Building `decide` support for them would
-#: be speculative: nothing can ever reach it. Named here, deliberately,
-#: rather than left as an absence - the drift test treats a `DecisionKind` in
-#: neither set as the bug, and a kind that belongs in neither must say why.
+#: no matter what this API supports.
+#:
+#: For attacking and blocking (CR 703.4i, 703.4j) that is fine: both already
+#: have their own actions (`actions/attack`, `actions/declare-blockers`) that
+#: call `Game.declare_attackers` / `Game.declare_blockers` directly, so the
+#: seat has a real transport, just not this one.
+#:
+#: `MULLIGAN` is the one kind with no live transport at all, and its entry is
+#: no longer the old "settled during `Match.start_game`" claim - since
+#: `opening.py` the API *does* run `Match.run_mulligans`, so CR 103.5's
+#: declaration is genuinely asked of each player. What is missing is the wire
+#: from the asking to a seat: `ask_mulligan` never publishes to this module's
+#: mailbox, so `pending_decision` can never carry a `mulligan` kind and there
+#: is nothing for a seat to answer. Closing that gap is an engine change
+#: (`ask_mulligan` routing through `Game.ask`, the way
+#: `Game.take_opening_hand_actions` already does), not an API one, so until it
+#: is made every declaration takes the engine's own documented default for an
+#: unscripted player - keep the hand as dealt - and `opening.py` records that
+#: in the audit log as `live: false` rather than letting a transcript imply a
+#: player chose it. `OPENING_HAND_ACTION`, asked at the end of that same
+#: sequence, *is* live and has moved to `ANSWERABLE_KINDS`; see its note
+#: there.
+#:
+#: Named here, deliberately, rather than left as an absence - the drift test
+#: treats a `DecisionKind` in neither set as the bug, and a kind that belongs
+#: in neither must say why.
 SERVED_ELSEWHERE: dict[DecisionKind, str] = {
     DecisionKind.MULLIGAN: (
-        "settled automatically by Match.start_game (CR 103.5) - never reaches decide"
+        "CR 103.5's declaration is asked (opening.py runs Match.run_mulligans) "
+        "but machines/decisions.py's ask_mulligan never publishes it to this "
+        "API's decision mailbox, so no seat is ever shown it and decide has "
+        "nothing to answer; it takes the engine's default, keep the hand as "
+        "dealt. Making it answerable needs an engine change, not an API one"
     ),
     DecisionKind.DECLARE_ATTACKERS: (
         "use POST /api/games/{game_id}/actions/attack instead of decide"
     ),
     DecisionKind.DECLARE_BLOCKERS: (
         "use POST /api/games/{game_id}/actions/declare-blockers instead of decide"
-    ),
-    DecisionKind.OPENING_HAND_ACTION: (
-        "asked only inside Match.run_mulligans, which calls "
-        "Game.take_opening_hand_actions at its end (CR 103.6) - and this API "
-        "never calls run_mulligans: decks.load_deck_into_game stops at "
-        "Match.start_game. So it never reaches decide. If the API ever runs "
-        "the mulligan process, this needs a real answer path, as does MULLIGAN"
     ),
 }
 
@@ -473,6 +503,12 @@ def rule_for_kind(kind: DecisionKind) -> str:
     announces their choice of an appropriate object or player for each
     target") for the spell-casting case 603.3d itself delegates to.
 
+    `OPENING_HAND_ACTION` is the second exception, and a further-out one: no
+    effect is applying and nothing is going on the stack, because no turn has
+    begun at all. It is CR 103.6's own sequence, put to a seat by
+    `Game.take_opening_hand_actions` once `Match.run_mulligans` has finished
+    CR 103.5 - see `opening.py`.
+
     This is the single place that decides the citation - `_log_timeout` calls
     it instead of a hardcoded string, which used to print "CR 608.2d" for
     every decision kind including `CHOOSE_TARGETS`, misdescribing exactly the
@@ -480,6 +516,12 @@ def rule_for_kind(kind: DecisionKind) -> str:
     """
     if kind is DecisionKind.CHOOSE_TARGETS:
         return "CR 603.3d, CR 601.2c (targets chosen while going on the stack)"
+    if kind is DecisionKind.OPENING_HAND_ACTION:
+        # No effect is applying and no spell is going on the stack: this is
+        # CR 103.6's own start-of-game sequence, "once the mulligan process
+        # (see rule 103.5) is complete, the starting player may take any such
+        # actions in any order", before the first turn begins.
+        return "CR 103.6 (an action taken from the opening hand, before the first turn)"
     return "CR 608.2d (a choice made while the effect applies)"
 
 
@@ -694,6 +736,18 @@ def validate_answer(decision: Decision, value: object) -> None:
                 f"{decision.prompt}: that option is illegal, so CR 608.2d "
                 f"does not allow choosing it"
             )
+        return
+
+    if decision.kind is DecisionKind.OPENING_HAND_ACTION:
+        # CR 103.6's "may take any such actions": a plain yes/no, like `MAY`,
+        # but its own branch because the rule that governs it is CR 103.6 and
+        # not CR 608.2d - `legal_options` returns both booleans for this kind
+        # (it is not one of the four `affirmative_is_legal` kinds), so there
+        # is no option set to check, only the shape of the answer.
+        # The wording is `Game.ask`'s own, word for word, because
+        # `test_decision_validator_drift` holds the two refusals to parity.
+        if not isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
         return
 
     if decision.kind is DecisionKind.PAY_ENERGY_AMOUNT:
