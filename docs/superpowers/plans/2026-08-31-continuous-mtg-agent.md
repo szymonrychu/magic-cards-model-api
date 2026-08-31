@@ -1483,4 +1483,11 @@ git commit -m "feat(wrapper): spawn interactive claude under a real controlling 
 
 ---
 
-Tasks 7 through 17 continue in `2026-08-31-continuous-mtg-agent-part-2.md`.
+Tasks 7-12 (session manager, probe/interrupt, bootstrap, metrics/webhook, HTTP
+API, integration test) are in `2026-08-31-continuous-mtg-agent-part-2.md`.
+Tasks 13-17 (the driver, the `ai_seat.py` mode, containers and compose) are in
+`2026-08-31-continuous-mtg-agent-part-3.md`.
+
+Note on ordering: Task 7's `session.py` imports `Metrics` from Task 10's
+`metrics.py`. Do Task 10 before Task 7, or stub `metrics.py` when you reach
+Task 7 - Task 10's implementation has no dependency in the other direction.
