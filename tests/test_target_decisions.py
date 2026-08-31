@@ -169,32 +169,54 @@ def test_the_opponent_cannot_see_the_target_candidates(client, game):
         thread.join(timeout=10)
 
 
-def test_giving_no_target_is_legal_and_the_trigger_no_ops(client, game):
-    """ "exile target permanent" is a required target on Devourer's own text,
-    but step 1 of this fix does not yet refuse an empty answer to a mandatory
-    target (that is step 2, left undone - see the module this wave added:
-    `Game._ask_trigger_targets`). An empty answer is accepted and the
-    ability resolves doing nothing, which is the pre-existing, unmoved
-    behaviour for "nobody answered"."""
+def test_giving_no_target_for_a_mandatory_target_is_refused(client, game):
+    """ "exile target permanent" is a required target on Devourer's own text
+    (CR 601.2c, CR 603.3d) - a legal target exists (bob's Grizzly Bears), so
+    declining to name one is not "nobody answered", it is an illegal answer.
+
+    `decisions.validate_answer` refuses the empty `targets: []` synchronously,
+    in this request, using the same `target_minimum` check `Game.ask` itself
+    runs (see
+    `test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed`
+    in `test_decisions.py` for the general regression this is one instance
+    of) - this used to be accepted and silently resolved the ability doing
+    nothing, which is the gap that test closed. The resolving thread stays
+    parked on the same decision, so naming the legal target afterwards still
+    lets it resolve and actually exile the target."""
     uids = seats_for(client, game)
     board = stock_devourer_board(client, game)
 
     thread = cast_devourer_in_background(game, board)
     try:
         wait_for_pending(client, game, uids["alice"])
-        answer = client.post(
+        empty = client.post(
             f"/api/games/{game}/decide",
             params={"uid": uids["alice"]},
             json={"player": "alice", "targets": []},
         )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["accepted"] is False
+        assert "at least 1 target(s) must be chosen" in body["reason"]
+        assert thread.is_alive(), "a refused answer must not have unblocked the resolving thread"
+
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "targets": [board["bears"]["id"]]},
+        )
+        assert answer.status_code == 200, answer.text
         assert answer.json()["accepted"] is True
     finally:
         thread.join(timeout=10)
+    assert not thread.is_alive(), "the casting request never returned"
 
-    client.post(f"/api/games/{game}/resolve-top")
-    client.post(f"/api/games/{game}/resolve-top")
+    client.post(f"/api/games/{game}/resolve-top")  # the trigger, above its own spell
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()  # the spell
+    assert resolved["resolved"] == "Devourer of Destiny"
+
     final = state(client, game)
-    assert "Grizzly Bears" in [c["name"] for c in final["battlefield"]]
+    assert "Grizzly Bears" in [c["name"] for c in final["exile"]], "the named target was exiled"
 
 
 def test_the_seat_cli_flow_answers_a_target_decision(monkeypatch, capsys) -> None:

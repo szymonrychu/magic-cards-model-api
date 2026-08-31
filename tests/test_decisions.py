@@ -125,6 +125,88 @@ def test_a_seat_sees_and_answers_its_pending_decision(client, game):
     assert final.get("pending_decision") is None, "answered decisions do not linger"
 
 
+def test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed(client, game):
+    """The defect this regresses: a `choose_cards` decision that needs
+    exactly 1 card (CR 514.1's cleanup discard, `decision.exact`), answered
+    with an empty `card_ids: []`.
+
+    `Game.ask` (`magic_cards_model/models/game.py`) checks that count and
+    raises "needs 1 card(s) chosen, 0 given" - but only on the resolving
+    thread, which is not this request. Before `decisions.validate_answer`
+    existed, `decide` never looked at the count, so it posted the empty
+    answer to the mailbox, logged `allowed: true`, and returned `accepted:
+    true` to the seat - the engine's own refusal only surfaced later,
+    misattributed to whatever unrelated request next drove the stack
+    forward. This asserts the fix: the refusal reaches this very response,
+    carries the engine's own count-mismatch wording, the audit log records
+    it as a refusal rather than an acceptance, the decision is still
+    pending afterwards, and the same seat can then answer correctly and the
+    game proceeds.
+    """
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    mountains = [card["id"] for card in board["hands"]["alice"]]
+    to_discard = mountains[3]
+
+    thread = advance_into_cleanup(game)
+    assert thread is not None, "the discard should have asked, not defaulted silently"
+    try:
+        pending_view = wait_for_pending(client, game, uids["alice"])
+        pending = pending_view["pending_decision"]
+        assert pending["kind"] == "choose_cards"
+        assert pending["amount"] == 1
+
+        bad_answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "card_ids": []},
+        )
+        assert bad_answer.status_code == 200
+        body = bad_answer.json()
+        assert body["accepted"] is False, "an answer the engine refuses must not be accepted"
+        assert "needs 1 card(s) chosen, 0 given" in body["reason"], body["reason"]
+
+        # The audit log's `decide` entry for this answer must record the
+        # refusal, never `allowed: true` standing in as if it were accepted.
+        log = client.get(f"/api/games/{game}/log", params={"uid": uids["alice"]}).json()["log"]
+        decide_entries = [entry for entry in log if entry["action"] == "decide"]
+        assert decide_entries, "the refused answer must still leave an audit entry"
+        last = decide_entries[-1]
+        assert last["detail"]["allowed"] is False
+        assert last["detail"]["reason"] is not None
+        assert not any(
+            entry["detail"].get("allowed") is True and entry["detail"].get("card_ids") == []
+            for entry in decide_entries
+        ), "no decide entry may claim the empty answer was allowed"
+
+        # The decision must still be pending - the empty answer never
+        # reached the mailbox at all.
+        still_pending = state(client, game, uid=uids["alice"])["pending_decision"]
+        assert still_pending is not None
+        assert still_pending["kind"] == "choose_cards"
+        assert to_discard in still_pending["cards"]
+
+        # The same seat can now answer correctly and the game proceeds.
+        good_answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "card_ids": [to_discard]},
+        )
+        assert good_answer.status_code == 200, good_answer.text
+        assert good_answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive(), "the advancing request never returned"
+
+    final = state(client, game, uid=uids["alice"])
+    assert final["step"] == "cleanup"
+    assert len(final["hands"]["alice"]) == 7
+    discarded_ids = [card["id"] for card in final["graveyards"]["alice"]]
+    assert discarded_ids == [to_discard]
+    assert final.get("pending_decision") is None
+
+
 def test_the_opponent_cannot_see_the_decisions_card_identities(client, game):
     """Security test: bob may see that alice is choosing something, and what
     kind of choice and why, but never which cards are in play for it - CR

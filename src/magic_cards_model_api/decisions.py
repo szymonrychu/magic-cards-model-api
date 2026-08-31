@@ -46,6 +46,7 @@ from magic_cards_model.machines.decisions import (
     Decision,
     DecisionKind,
     default_answer,
+    legal_options,
 )
 from magic_cards_model.models.card_state import TargetRef
 
@@ -264,14 +265,23 @@ class DecisionMailbox:
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
         self._pending: PendingDecision | None = None
+        #: The engine `Decision` behind `_pending` - not just its state-view
+        #: shape. `decide` needs `amount`, `exact`, `target_minimum`, and the
+        #: rest to run `validate_answer` against the same data `Game.ask`
+        #: itself checks, so a malformed or out-of-range answer is refused
+        #: before this mailbox ever carries it to the resolving thread. See
+        #: `validate_answer`'s docstring for why that check has to happen
+        #: here rather than being left to `Game.ask`.
+        self._decision: Decision | None = None
         self._delivered = False
         self._answer: object = None
         self._answered = False
 
-    def publish(self, pending: PendingDecision) -> None:
+    def publish(self, pending: PendingDecision, decision: Decision) -> None:
         """A question just became live. Wakes anyone already waiting on it."""
         with self._condition:
             self._pending = pending
+            self._decision = decision
             self._delivered = False
             self._answer = None
             self._answered = False
@@ -320,6 +330,7 @@ class DecisionMailbox:
             answered = self._condition.wait_for(lambda: self._answered, timeout=timeout_seconds)
             value = self._answer if answered else NOT_ANSWERED
             self._pending = None
+            self._decision = None
             self._delivered = False
             self._answer = None
             self._answered = False
@@ -344,6 +355,24 @@ class DecisionMailbox:
         with self._condition:
             return self._pending
 
+    def current(self) -> tuple[PendingDecision, Decision] | None:
+        """The question on the table right now, and the engine `Decision`
+        behind it, or `None` - both read under the one lock so they always
+        describe the same question, never a `PendingDecision` from one
+        publish paired with a `Decision` from the next.
+
+        `decide` uses this instead of `snapshot` because refusing a
+        malformed answer before it ever reaches the mailbox (see
+        `validate_answer`) needs the raw `Decision`'s `amount`, `exact`, and
+        `target_minimum` - fields `PendingDecision` does not carry because
+        read-only state views (`snapshot`'s only other caller) never needed
+        them.
+        """
+        with self._condition:
+            if self._pending is None or self._decision is None:
+                return None
+            return self._pending, self._decision
+
 
 @dataclass
 class GameDecisionProvider:
@@ -360,7 +389,7 @@ class GameDecisionProvider:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 
     def decide(self, decision: Decision) -> object:
-        self.mailbox.publish(PendingDecision.from_engine(decision))
+        self.mailbox.publish(PendingDecision.from_engine(decision), decision)
         answer = self.mailbox.wait_for_answer(self.timeout_seconds)
         if answer is NOT_ANSWERED:
             self._log_timeout(decision)
@@ -570,7 +599,13 @@ def card_split_answer(moved: list[str], top_order: list[str] | None) -> CardSpli
 def card_ids_answer(card_ids: list[str]) -> tuple[UUID, ...]:
     """A `decide` request body's `card_ids`, in the shape `Game.ask` expects
     for `CHOOSE_CARDS` - a `tuple[UUID, ...]`, so a malformed id is refused
-    with a 400 here rather than reaching the engine at all."""
+    with a 400 here rather than reaching the engine at all. Whether the
+    right *number* was chosen, and whether each id was actually one of the
+    candidates offered, is `validate_answer`'s job, run against the same
+    `Decision` `Game.ask` itself would check - see that function's
+    docstring for why that check happens here now rather than being left
+    to surface, late and misattributed, on the other side of the mailbox.
+    """
     return tuple(UUID(card_id) for card_id in card_ids)
 
 
@@ -581,10 +616,11 @@ def targets_answer(targets: list[str]) -> tuple[TargetRef, ...]:
     Each token is a card or ability id (a UUID string) or a player's username,
     told apart the same way `TargetRef.coerce` already tells a bare UUID from
     a bare string apart - no different from `card_ids_answer` in that this
-    is pure parsing and never touches the `Game`. Whether the parsed reference
-    was actually one of the candidates offered is `Game.ask`'s own check, on
-    the other side of the mailbox; a malformed token is refused here with a
-    400 rather than reaching the engine at all, matching `card_ids_answer`.
+    is pure parsing and never touches the `Game`. Whether the parsed
+    reference was actually one of the candidates offered, and whether enough
+    of them were given, is `validate_answer`'s job; a malformed token is
+    refused here with a 400 rather than reaching the engine at all, matching
+    `card_ids_answer`.
     """
     refs = []
     for token in targets:
@@ -593,3 +629,165 @@ def targets_answer(targets: list[str]) -> tuple[TargetRef, ...]:
         except ValueError:
             refs.append(TargetRef.to_player(token))
     return tuple(refs)
+
+
+def validate_answer(decision: Decision, value: object) -> None:
+    """Refuse `value` with a `ValueError` if `Game.ask` (in
+    `magic_cards_model.models.game`) would refuse it too - run from `decide`
+    *before* the answer ever reaches `DecisionMailbox`, so the refusal is
+    synchronous, reaches the answering seat directly, and the mailbox is
+    never told an answer arrived that the engine was always going to reject.
+
+    This exists because of exactly the shape of bug it closes: a
+    `choose_cards` answer with the wrong number of cards used to sail past
+    every check in this module (`card_ids_answer` only parses UUIDs), get
+    posted to the mailbox, get logged `allowed: true`, and get handed to the
+    thread parked in `Game.ask` - which *does* check the count, and raises
+    "needs 1 card(s) chosen, 0 given". But `Game.ask` runs on the resolving
+    thread, not this request, so by the time it raised, `decide` had already
+    told the answering seat "accepted", the mailbox had already moved on, and
+    the `ValueError` surfaced only later, attached to whatever unrelated
+    request next drove the stack forward - the opponent's next
+    `pass_priority`, in the game that exposed this. That is corruption by
+    misattribution as much as it is a lost refusal: the seat who actually
+    answered wrong never saw why, and the seat who happened to be running the
+    engine next inherited a crash that was not theirs.
+
+    `Game.ask`'s validation itself cannot be called from here - `decide` must
+    never touch the `Game` object (see the module docstring's deadlock
+    invariant), and `Game.ask` is not reentrant from a second thread while
+    the first is still parked inside it. But `machines/decisions.py`'s own
+    `Decision` is "deliberately stateless" (its own docstring) - every bound
+    `Game.ask` checks (`amount`, `exact`, `cards`, `targets`,
+    `target_maximum`, `target_minimum`, `options`, `affirmative_is_legal`) is
+    already baked into the `Decision` the engine handed this API when it
+    asked the question, via `legal_options` for the yes/no kinds and plain
+    field comparisons for the rest. So this function runs the identical
+    checks `Game.ask` runs, in the same order, against that same data,
+    without touching the `Game` at all - not a second opinion invented by
+    this API, but the same arithmetic the engine already computed, read back
+    out of the `Decision` it built. `legal_options` itself is imported and
+    called, not re-derived, so at least the yes/no branch can never drift
+    from the engine's own answer to "what may this player pick".
+
+    Only kinds in `ANSWERABLE_KINDS` are ever passed here - `decide` already
+    refuses every other kind before parsing an answer at all - so every
+    branch of `Game.ask`'s own kind dispatch has a match here.
+    """
+    if decision.kind in (
+        DecisionKind.MAY,
+        DecisionKind.PAY_LIFE,
+        DecisionKind.PAY_ENERGY,
+        DecisionKind.PAY_MANA,
+    ):
+        if not isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
+        if value not in legal_options(decision):
+            raise ValueError(
+                f"{decision.prompt}: that option is illegal, so CR 608.2d "
+                f"does not allow choosing it"
+            )
+        return
+
+    if decision.kind is DecisionKind.PAY_ENERGY_AMOUNT:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: needs an integer amount of energy")
+        if value < 0 or value > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: cannot pay {value} energy, only {decision.amount} "
+                f"available (CR 118.3, CR 107.14)"
+            )
+        return
+
+    if decision.kind is DecisionKind.PAY_LIFE_AMOUNT:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: needs an integer amount of life")
+        if value < 0 or value > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: cannot pay {value} life, life total is only "
+                f"{decision.amount} (CR 119.4)"
+            )
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_CARDS:
+        if not isinstance(value, tuple) or not all(isinstance(v, UUID) for v in value):
+            raise ValueError(f"{decision.prompt}: needs a tuple of chosen card ids")
+        offered = set(decision.cards)
+        stray = [str(card_id) for card_id in value if card_id not in offered]
+        if stray:
+            raise ValueError(
+                f"{decision.prompt}: cannot choose a card that was not offered: "
+                f"{', '.join(stray)}"
+            )
+        if decision.exact:
+            if len(value) != decision.amount:
+                raise ValueError(
+                    f"{decision.prompt}: needs {decision.amount} card(s) chosen, "
+                    f"{len(value)} given"
+                )
+        elif len(value) > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: at most {decision.amount} card(s) may be chosen "
+                f"(CR 107.1c), {len(value)} given"
+            )
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_TARGETS:
+        if not isinstance(value, (tuple, list)):
+            raise ValueError(f"{decision.prompt}: needs a tuple of targets")
+        chosen = [TargetRef.coerce(target) for target in value]
+        legal = set(decision.targets)
+        stray = [str(ref) for ref in chosen if ref not in legal]
+        if stray:
+            raise ValueError(f"{decision.prompt}: not a legal target: {', '.join(stray)}")
+        if decision.target_maximum is not None and len(chosen) > decision.target_maximum:
+            raise ValueError(
+                f"{decision.prompt}: too many targets chosen, at most "
+                f"{decision.target_maximum} (CR 115.6)"
+            )
+        if len(chosen) < decision.target_minimum:
+            raise ValueError(
+                f"{decision.prompt}: at least {decision.target_minimum} target(s) "
+                f"must be chosen, {len(chosen)} given, while a legal target exists "
+                f"(CR 601.2c, CR 603.3d)"
+            )
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_A_QUALITY:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{decision.prompt}: needs a chosen value (CR 614.12a)")
+        if decision.options and value not in decision.options:
+            raise ValueError(
+                f"{decision.prompt}: {value!r} is not among the legal choices "
+                f"({', '.join(decision.options)})"
+            )
+        return
+
+    if decision.kind is DecisionKind.CHOOSE_A_MODE:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{decision.prompt}: needs a chosen mode (CR 700.2a)")
+        if decision.options and value not in decision.options:
+            raise ValueError(
+                f"{decision.prompt}: {value!r} is not among the printed modes "
+                f"({', '.join(decision.options)})"
+            )
+        return
+
+    if decision.kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
+        if not isinstance(value, bool):
+            raise ValueError(f"{decision.prompt}: needs a top-or-bottom bool answer")
+        return
+
+    if decision.kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
+        if not isinstance(value, CardSplit):
+            raise ValueError(f"{decision.prompt}: needs a CardSplit answer")
+        looked_at = set(decision.cards)
+        stray = [str(card_id) for card_id in value.moved if card_id not in looked_at]
+        if stray:
+            raise ValueError(
+                f"{decision.prompt}: cannot move a card that was not looked at "
+                f"(CR 701.22a, CR 701.25a): {', '.join(stray)}"
+            )
+        return
+
+    raise ValueError(f"{decision.prompt}: decide does not know how to validate a {decision.kind!r}")

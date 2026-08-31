@@ -941,9 +941,10 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         raise KeyError(f"no game {game_id}")
     if player != req.player or not isinstance(player, str):
         return refuse("that uid does not open the deciding player's seat")
-    pending = mailbox.snapshot()
-    if pending is None or pending.player != req.player:
+    current = mailbox.current()
+    if current is None or current[0].player != req.player:
         return refuse("no pending decision for you")
+    pending, engine_decision = current
     try:
         kind = DecisionKind(pending.kind)
     except ValueError:
@@ -1030,6 +1031,19 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
             f"this endpoint does not know how to answer a {pending.kind!r} decision: {hint}",
             **detail,
         )
+    # The last gate before this answer is trusted: everything `Game.ask`
+    # itself would check (the right number of cards, a target actually
+    # offered, an amount in range, ...) run here first, against the same
+    # `Decision` the engine handed this API when it asked the question. An
+    # answer that fails this is refused right here, synchronously, to the
+    # seat that gave it - never posted to the mailbox, never logged
+    # `allowed: true`, and the decision stays pending so the same seat can
+    # answer again. See `decisions.validate_answer`'s docstring for why this
+    # cannot simply be left to `Game.ask` on the other side of the mailbox.
+    try:
+        decisions.validate_answer(engine_decision, answer)
+    except ValueError as exc:
+        return refuse(str(exc), **detail)
     # Recorded before `answer_if`, not after - see the docstring above on why
     # that ordering is what keeps this read of the `Game` race-free.
     seq = audit.record(game_id, "decide", player=req.player, allowed=True, reason=None, **detail)

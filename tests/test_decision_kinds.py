@@ -51,6 +51,7 @@ from typing import Any
 
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
+from magic_cards_model.machines.decisions import Decision, DecisionKind
 
 from magic_cards_model_api import decisions
 from magic_cards_model_api.decisions import PendingDecision
@@ -823,10 +824,15 @@ def test_pay_life_amount_pays_the_named_amount(client, game):
 def test_pay_life_amount_rejects_paying_more_life_than_the_player_has(client, game):
     """CR 119.4: "only if their life total is greater than or equal to the
     amount of the payment" - trying to pay more life than alice actually has
-    is illegal, and `Game.ask` refuses it (in the resolving request's own
-    thread, not `decide`'s - the same shape
-    `test_choose_a_quality_rejects_a_color_outside_the_five` already proves
-    for `choose_a_quality`), never silently clamped to the maximum."""
+    is illegal. `decisions.validate_answer` refuses it synchronously, in
+    this request, using the same 0..amount range `Game.ask` itself checks -
+    never silently clamped to the maximum, and never posted to the mailbox
+    for the resolving thread to discover late (see
+    `test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed`
+    in `test_decisions.py` for the general regression this is one instance
+    of). The resolving thread is still parked on the same decision
+    afterwards, so a legal answer following the illegal one still lets play
+    proceed."""
     add_card(client, game, "Necrodominance", "alice", "battlefield")
     stock_library_top(client, game, "alice", ["Mountain", "Forest", "Grizzly Bears"])
     uids = seats_for(client, game)
@@ -837,21 +843,30 @@ def test_pay_life_amount_rejects_paying_more_life_than_the_player_has(client, ga
         pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
         assert pending["amount"] == 20
 
-        # `decide` accepts the shape of this answer (a well-formed int) and
-        # hands it to `Game.ask`, which is the layer that actually enforces
-        # the 0..amount range and raises - see `Game.ask`'s own
-        # `PAY_LIFE_AMOUNT` branch.
-        client.post(
+        illegal = client.post(
             f"/api/games/{game}/decide",
             params={"uid": uids["alice"]},
             json={"player": "alice", "life_amount": 25},
         )
+        assert illegal.status_code == 200
+        body = illegal.json()
+        assert body["accepted"] is False
+        assert "cannot pay 25 life" in body["reason"]
+        assert thread.is_alive(), "a refused answer must not have unblocked the resolving thread"
+
+        legal = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "life_amount": 0},
+        )
+        assert legal.status_code == 200, legal.text
+        assert legal.json()["accepted"] is True
     finally:
         thread.join(timeout=10)
     assert not thread.is_alive()
 
     final = state(client, game)
-    assert life_of(final, "alice") == 20, "an illegal payment is never taken"
+    assert life_of(final, "alice") == 20, "an illegal payment is never taken, and 0 paid nothing"
 
 
 # -- pay_mana: "unless its controller pays {N}" (CR 118.12a) ----------------
@@ -1113,8 +1128,16 @@ def test_choose_a_quality_picks_the_named_color(client, game):
 def test_choose_a_quality_rejects_a_color_outside_the_five(client, game):
     """CR 608.2d: "The player can't choose an option that's illegal or
     impossible" - `pending_decision.options` narrows a color choice to the
-    five colors (CR 105.1), and `Game.ask` is what actually enforces it, so a
-    made-up color must not silently become the choice."""
+    five colors (CR 105.1), so a made-up color must not silently become the
+    choice.
+
+    `decisions.validate_answer` refuses it synchronously, in this request -
+    against the same `options` `Game.ask` itself checks - rather than
+    letting it reach the mailbox and surface, late, on the resolving
+    thread's side (see
+    `test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed`
+    in `test_decisions.py`). The resolving thread stays parked on the same
+    decision, so a legal color afterwards still lets the cast resolve."""
     add_card(client, game, "Forest", "alice", "battlefield")
     add_card(client, game, "Forest", "alice", "battlefield")
     add_card(client, game, "Utopia Sprawl", "alice", "hand")
@@ -1128,15 +1151,24 @@ def test_choose_a_quality_rejects_a_color_outside_the_five(client, game):
     )
     try:
         wait_for_pending(client, game, uids["alice"])
-        # `Game.ask` raises inside the *resolving* request's thread (the one
-        # blocked on `cast_and_resolve_in_background`), not this one - the
-        # same shape `test_pay_life_at_too_little_life_offers_no_yes` already
-        # documents for an illegal `pay_life` answer.
-        client.post(
+        illegal = client.post(
             f"/api/games/{game}/decide",
             params={"uid": uids["alice"]},
             json={"player": "alice", "choice": "not-a-color"},
         )
+        assert illegal.status_code == 200
+        body = illegal.json()
+        assert body["accepted"] is False
+        assert "not-a-color" in body["reason"]
+        assert thread.is_alive(), "a refused answer must not have unblocked the resolving thread"
+
+        legal = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": "G"},
+        )
+        assert legal.status_code == 200, legal.text
+        assert legal.json()["accepted"] is True
     finally:
         thread.join(timeout=10)
     assert not thread.is_alive()
@@ -1236,12 +1268,15 @@ def test_choose_a_mode_picks_the_named_mode(client, game):
 
 
 def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
-    """CR 700.2a's printed modes are the only legal answers - `Game.ask`
-    refuses a string that is not one of `pending_decision.options` (in the
-    resolving request's own thread, not `decide`'s - the same shape
-    `test_choose_a_quality_rejects_a_color_outside_the_five` already proves
-    for `choose_a_quality`), never silently substituting the first mode or
-    ignoring the mismatch."""
+    """CR 700.2a's printed modes are the only legal answers.
+    `decisions.validate_answer` refuses a string that is not one of
+    `pending_decision.options` synchronously, in this request, against the
+    same `options` `Game.ask` itself checks - never silently substituting
+    the first mode, never letting the mismatch surface late on the
+    resolving thread's side (see
+    `test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed`
+    in `test_decisions.py`). The resolving thread stays parked on the same
+    decision, so an offered mode afterwards still lets it resolve."""
     uids = seats_for(client, game)
     declare_gargaroth_attacking(client, game, uids)
 
@@ -1254,17 +1289,30 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
             "Draw a card.",
         }
 
-        client.post(
+        illegal = client.post(
             f"/api/games/{game}/decide",
             params={"uid": uids["alice"]},
             json={"player": "alice", "choice": "Deal 3 damage to any target."},
         )
+        assert illegal.status_code == 200
+        body = illegal.json()
+        assert body["accepted"] is False
+        assert "Deal 3 damage to any target." in body["reason"]
+        assert thread.is_alive(), "a refused answer must not have unblocked the resolving thread"
+
+        legal = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": "You gain 3 life."},
+        )
+        assert legal.status_code == 200, legal.text
+        assert legal.json()["accepted"] is True
     finally:
         thread.join(timeout=10)
     assert not thread.is_alive()
 
     final = state(client, game)
-    assert life_of(final, "alice") == 20, "an illegal mode is never taken"
+    assert life_of(final, "alice") == 23, "the offered mode - gain 3 life - actually happened"
     assert [c["name"] for c in final["hands"]["alice"]] == [], "no card drawn either"
     assert [c["name"] for c in final["battlefield"]] == [
         "Elder Gargaroth"
@@ -1602,7 +1650,8 @@ def test_an_unwired_kind_is_refused_by_name(client, game):
             source=None,
             amount=0,
             cards=(),
-        )
+        ),
+        Decision(kind=DecisionKind.MULLIGAN, player="alice", prompt="take a mulligan"),
     )
     try:
         response = client.post(
