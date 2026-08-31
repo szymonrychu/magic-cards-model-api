@@ -48,7 +48,14 @@ _UI_HANDLED_ELSEWHERE = {
 #: seat to see. Nothing in the UI needs to render a form for a question that
 #: can never arrive - recorded here, by name, rather than silently absent,
 #: matching `decisions.SERVED_ELSEWHERE`'s own reasoning for the same kind.
-_NEVER_REACHES_A_LIVE_SEAT = {DecisionKind.MULLIGAN}
+#: `OPENING_HAND_ACTION` joins `MULLIGAN` here for the same reason and with the
+#: same proof: both are asked only from inside `Match.run_mulligans` (which
+#: calls `Game.take_opening_hand_actions` at its end, CR 103.6), and this API
+#: never calls `run_mulligans` at all - `decks.load_deck_into_game` calls
+#: `Match.start_game` and stops there. So neither kind can be a live seat's
+#: `pending_decision`. If this API ever starts running the mulligan process,
+#: BOTH entries have to move: a seat would then really be asked.
+_NEVER_REACHES_A_LIVE_SEAT = {DecisionKind.MULLIGAN, DecisionKind.OPENING_HAND_ACTION}
 
 
 def _decision_renderers_object() -> str:

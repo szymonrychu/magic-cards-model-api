@@ -160,6 +160,13 @@ SERVED_ELSEWHERE: dict[DecisionKind, str] = {
     DecisionKind.DECLARE_BLOCKERS: (
         "use POST /api/games/{game_id}/actions/declare-blockers instead of decide"
     ),
+    DecisionKind.OPENING_HAND_ACTION: (
+        "asked only inside Match.run_mulligans, which calls "
+        "Game.take_opening_hand_actions at its end (CR 103.6) - and this API "
+        "never calls run_mulligans: decks.load_deck_into_game stops at "
+        "Match.start_game. So it never reaches decide. If the API ever runs "
+        "the mulligan process, this needs a real answer path, as does MULLIGAN"
+    ),
 }
 
 
