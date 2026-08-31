@@ -182,6 +182,23 @@ def test_an_evoke_card_reports_its_alternative_cost(client, game):
     assert evoke["available"] is True
 
 
+def test_asking_for_alternative_costs_leaves_the_card_in_hand(client, game):
+    """`affordances.alternative_costs` builds a `Casting` to ask the engine
+    what a card could be cast for, and CR 601.2a moves the card to the stack
+    the moment a cast is proposed - so the question has to be rewound
+    (CR 601.6, CR 733.1) or merely opening a card's row would cast it. The UI
+    polls this endpoint, so the answer must be repeatable.
+    """
+    add_card(client, game, "Subtlety", "alice", "hand")
+    subtlety = find(state(client, game)["hands"]["alice"], "Subtlety")
+
+    for _ in range(3):
+        assert affordances(client, game, subtlety["id"])["alternative_costs"]
+        after = state(client, game)
+        assert after["stack"] == []
+        assert [card["name"] for card in after["hands"]["alice"]] == ["Subtlety"]
+
+
 def test_a_card_with_no_alternative_cost_reports_an_empty_list(client, game):
     add_card(client, game, "Lightning Bolt", "alice", "hand")
     bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")

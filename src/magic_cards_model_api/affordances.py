@@ -308,20 +308,28 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
     pitch cost" and "it has one and it is not your turn" different answers,
     and a UI shown only the legal ones cannot tell them apart.
 
-    Building a `Casting` mutates nothing (only `cast()` moves the card), so
-    this is safe to ask on demand for any card in a castable zone.
+    Building a `Casting` is *not* free: CR 601.2a moves the card to the stack
+    as the proposal begins. This function only ever asks a question - it never
+    completes a cast - so the whole thing runs under a `try/finally` that
+    rewinds the proposal (CR 601.6, CR 733.1) on every path, answer or error
+    alike. Without it, opening the alternative-cost row on a card would put it
+    on the stack and leave it there.
     """
     try:
         casting = Casting(spell=state, caster=caster, origin_zone=state.zone, game=game)
     except ValueError:
         # Not castable from where it is right now (wrong zone, not this
         # player's card). No options rather than an error: the UI simply
-        # shows no alternative-cost row.
+        # shows no alternative-cost row. CR 601.3 refuses before CR 601.2a
+        # moves anything, so there is nothing to rewind here.
         return []
     try:
         options = casting.alternative_costs
     except Exception:
         return []
+    finally:
+        if not casting.is_settled:
+            casting.cancel()
     return [
         {
             "index": option.index,

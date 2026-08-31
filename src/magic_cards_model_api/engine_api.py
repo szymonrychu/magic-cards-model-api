@@ -203,17 +203,73 @@ def locate_castable(game: Game, req: CastRequest) -> CardState:
     raise ValueError(f"no {req.card} in {req.player}'s {zone.value}")
 
 
+def rewind_unfinished(casting: Casting) -> None:
+    """Rewind a proposal that was never completed (CR 601.6, CR 733.1).
+
+    CR 601.2a moves the card to the stack the moment a cast is *proposed*, so
+    an abandoned proposal is not free any more: whoever built the `Casting`
+    owns undoing it. CR 733.1 is the undo - "the entire action is reversed and
+    any payments already made are canceled" - and `Casting.cancel()` is the
+    engine's own implementation of it, restoring the zone, the CR 400.7
+    identity stamp and the exile pile the card had. Reaching into
+    `game.stack` from here instead would restore none of those.
+
+    `cancel()` is not idempotent - it raises once the casting is settled - and
+    the engine's `_refusing` wrapper already cancels for the announcement steps
+    that go through it, so the state is asked before the call rather than the
+    exception being swallowed.
+    """
+    if not casting.is_settled:
+        casting.cancel()
+
+
 def cast_card(game: Game, req: CastRequest) -> Outcome:
-    """Cast a card: the engine is asked at every step and refuses with its text."""
+    """Cast a card: the engine is asked at every step and refuses with its text.
+
+    The proposal is driven by `_drive_cast` under a `finally`, because every
+    exit that is not a completed `cast()` - a refusal, a `dry_run` probe, or a
+    `KeyError` raised half way through announcing - is an action that was
+    started and not legally completed, and CR 733.1 reverses all three the
+    same way. A dry run in particular is *only* ever a probe: it asks the
+    engine what a cast would cost and must leave no trace, which matters
+    because `seatkit.available_actions` issues one per card in hand on every
+    poll.
+    """
     try:
         spell = locate_castable(game, req)
     except (KeyError, ValueError) as exc:
         return refused(exc)
+    origin_zone = spell.zone
+    # CR 601.3 is a question about the moment *before* the proposal: whether a
+    # rule or effect allows this player to cast this card at all. It has to be
+    # asked here, because CR 601.2a moves the card to the stack as the
+    # `Casting` is built, and the object it becomes there is a new one
+    # (CR 400.7) - `spell.zone` afterwards reads `stack`, and the permission
+    # this looks for is recorded against the pre-move CR 400.7 stamp. Asking
+    # after the move silently found no permission and refused Living End and
+    # every suspend free cast.
+    permitted = (
+        origin_zone is Zone.EXILE and game.play_permission_for(spell, req.player) is not None
+    )
     try:
-        casting = Casting(spell=spell, caster=req.player, origin_zone=spell.zone, game=game)
+        # CR 601.3's checks run before CR 601.2a's move, so a `Casting` that
+        # fails to build has moved nothing and leaves nothing to rewind.
+        casting = Casting(spell=spell, caster=req.player, origin_zone=origin_zone, game=game)
     except ValueError as exc:
         return refused(exc)
 
+    try:
+        return _drive_cast(game, req, casting, permitted=permitted)
+    finally:
+        rewind_unfinished(casting)
+
+
+def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bool) -> Outcome:
+    """Announce, pay and cast an already-proposed `Casting` (CR 601.2b-h).
+
+    Every return that is not the final `Outcome` at the bottom leaves the
+    casting unsettled on purpose - `cast_card`'s `finally` rewinds it.
+    """
     try:
         if req.alternative_cost is not None:
             # CR 118.9, announced at CR 601.2b - before targets are chosen at
@@ -233,12 +289,15 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
             # keyword names both the exile pile the card must be in and what
             # is paid instead of the mana cost (`Casting.use_keyword`).
             casting.use_keyword(req.keyword)
-        elif spell.zone is Zone.EXILE and game.play_permission_for(spell, req.player) is not None:
+        elif permitted:
             # CR 601.3's dynamic half: a live `PlayPermission` covering this
             # exact object, player and action - suspend's own free cast
             # (`finish_suspend`) grants one of these rather than a keyword,
             # so it is picked up automatically here instead of needing a
-            # second parameter naming it.
+            # second parameter naming it. `permitted` was read before the
+            # proposal moved the card (see `cast_card`); `use_permission`
+            # itself looks the permission up again against the announced
+            # object, so this only decides *whether* to ask.
             casting.use_permission()
     except ValueError as exc:
         return refused(exc)

@@ -82,6 +82,91 @@ def test_failed_cast_leaves_nothing_tapped(client, game):
     assert [card["name"] for card in board["hands"]["alice"]] == ["Grizzly Bears"]
 
 
+def test_an_allowed_dry_run_leaves_the_stack_clean(client, game):
+    """The mirror of the refused dry run above, and the one nothing covered.
+
+    CR 601.2a moves the card to the stack as the cast is *proposed*, which
+    happens before anything knows whether the cost can be paid - so an
+    affordable probe puts the card on the stack exactly as an unaffordable
+    one does, and has exactly as much to rewind (CR 601.6, CR 733.1). This
+    path is the hot one: `seatkit.available_actions` dry-runs every card in
+    hand on every poll, and the castable ones are the ones that come back
+    `allowed: true`.
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")
+    bolt = find(board["hands"]["alice"], "Lightning Bolt")
+
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": bolt["id"],
+            "targets": ["bob"],
+            "mana_sources": [mountain["id"]],
+            "dry_run": True,
+        },
+    )
+    body = response.json()
+    assert body["allowed"] is True
+    assert body["cost"] == "{R}"
+
+    after = state(client, game)
+    assert after["stack"] == []
+    assert find(after["battlefield"], "Mountain")["tapped"] is False
+    assert [card["name"] for card in after["hands"]["alice"]] == ["Lightning Bolt"]
+    # The probe may be repeated forever: the second answer is the first one.
+    again = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": bolt["id"],
+            "targets": ["bob"],
+            "mana_sources": [mountain["id"]],
+            "dry_run": True,
+        },
+    ).json()
+    assert again["allowed"] is True
+    assert state(client, game)["stack"] == []
+
+
+def test_an_announcement_that_raises_leaves_nothing_on_the_stack(client, game):
+    """Exception safety for CR 601.2a's move.
+
+    A refusal is a `ValueError` the engine raises deliberately; this is the
+    other kind of exit - an announcement that blows up part way through. The
+    request names an `alternative_cost` and, as the objects it is paid with
+    (`choosing`), a card id that is in no zone of this game, so `find_card`
+    raises `KeyError` while CR 601.2b is being announced and after CR 601.2a
+    has already moved the card to the stack. The card must be back in hand
+    regardless: CR 733.1 reverses an action that was started and could not be
+    completed, and it does not care which exception carried the news.
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Subtlety", "alice", "hand")  # prints an evoke cost
+    subtlety = find(state(client, game)["hands"]["alice"], "Subtlety")
+    missing = "00000000-0000-4000-8000-000000000000"
+
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": subtlety["id"],
+            "alternative_cost": 0,
+            "choosing": [missing],
+        },
+    )
+    # The KeyError reaches the app's own handler rather than being swallowed:
+    # the caller asked with a card id that does not exist and should be told.
+    assert response.status_code == 404, response.text
+
+    after = state(client, game)
+    assert after["stack"] == []
+    assert [card["name"] for card in after["hands"]["alice"]] == ["Subtlety"]
+
+
 def test_cast_refused_off_timing(client, game):
     client.put(f"/api/games/{game}/step", json={"step": "declare_attackers"})
     add_card(client, game, "Grizzly Bears", "alice", "hand")
