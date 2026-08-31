@@ -876,9 +876,21 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["energy_amount"] = req.energy_amount
+    elif kind is DecisionKind.PAY_LIFE_AMOUNT:
+        try:
+            answer = decisions.life_amount_answer(req.life_amount)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["life_amount"] = req.life_amount
     elif kind is DecisionKind.CHOOSE_A_QUALITY:
         try:
             answer = decisions.quality_answer(req.choice)
+        except ValueError as exc:
+            return refuse(str(exc), **detail)
+        detail["choice"] = req.choice
+    elif kind is DecisionKind.CHOOSE_A_MODE:
+        try:
+            answer = decisions.mode_answer(req.choice)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["choice"] = req.choice

@@ -151,10 +151,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="integer amount of {E} to pay, for a pay_energy_amount decision (CR 107.14, CR 118.3)",
     )
     decide.add_argument(
+        "--life-amount",
+        type=int,
+        default=None,
+        help="integer amount of life to pay, for a pay_life_amount decision (CR 119.4)",
+    )
+    decide.add_argument(
         "--choice",
         default="",
         help=(
-            "the chosen color/card name/creature type, for a choose_a_quality decision (CR 614.12a)"
+            "the chosen color/card name/creature type, for a choose_a_quality decision "
+            "(CR 614.12a), or the chosen mode's printed text, for a choose_a_mode decision "
+            "(CR 603.3c, CR 700.2a)"
         ),
     )
     decide.add_argument(
@@ -343,6 +351,8 @@ def run(argv: list[str] | None = None) -> int:
                 body["top_order"] = _parse_ids(args.top_order)
             if args.energy_amount is not None:
                 body["energy_amount"] = args.energy_amount
+            if args.life_amount is not None:
+                body["life_amount"] = args.life_amount
             if args.choice:
                 body["choice"] = args.choice
             if args.top is not None:

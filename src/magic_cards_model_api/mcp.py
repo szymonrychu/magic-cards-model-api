@@ -351,6 +351,7 @@ def build_server(seats: Seats) -> MCPServer:
         moved: str = "",
         top_order: str = "",
         energy_amount: int | None = None,
+        life_amount: int | None = None,
         choice: str = "",
         top: bool | None = None,
         hold_priority: bool = False,
@@ -391,6 +392,13 @@ def build_server(seats: Seats) -> MCPServer:
           `pending_decision.amount` (the energy you actually have). Not the
           same question as `pay_energy`'s `accept` - this kind asks how much,
           not whether. 0 always declines and is always legal.
+        - `pay_life_amount` (e.g. Necrodominance's "you may pay any amount of
+          life", CR 119.4): `life_amount` is an integer from 0 up to
+          `pending_decision.amount` (your life total). The variable-amount
+          cousin of `pay_life`'s `accept`, the same way `pay_energy_amount`
+          is `pay_energy`'s - and a distinct field from `energy_amount`,
+          since the two pay from different resources. 0 always declines and
+          is always legal (CR 119.4b).
         - `choose_a_quality` (e.g. Utopia Sprawl's "as this enters, choose a
           color", CR 614.12a): `choice` is the chosen color, card name, or
           creature type. `pending_decision.options` lists the legal colors
@@ -399,6 +407,14 @@ def build_server(seats: Seats) -> MCPServer:
           string is accepted - `Game.ask` is what actually enforces
           legality, so a bad card name or creature type still reaches the
           engine rather than being second-guessed here.
+        - `choose_a_mode` (e.g. Elder Gargaroth's "whenever this creature
+          attacks or blocks, choose one -", CR 603.3c, CR 700.2a): `choice`
+          is the chosen mode's exact printed text, one of
+          `pending_decision.options` (a modal ability's modes are always
+          fully enumerated there, unlike a `choose_a_quality` color choice's
+          five letters standing in for an open universe). Shares the
+          `choice` field with `choose_a_quality` - both are "which of these
+          printed strings did you pick".
         - `scry` and `surveil` (CR 701.22a, CR 701.25a): `moved` is a
           comma-separated list of the `pending_decision.cards` entries to
           move off the top - to the bottom of the library for a scry, to the
@@ -455,6 +471,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["top_order"] = _parse_ids(top_order)
         if energy_amount is not None:
             body["energy_amount"] = energy_amount
+        if life_amount is not None:
+            body["life_amount"] = life_amount
         if choice:
             body["choice"] = choice
         if top is not None:

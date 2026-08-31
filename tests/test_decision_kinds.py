@@ -762,6 +762,98 @@ def test_pay_energy_amount_missing_value_is_refused_not_defaulted(client, game):
         thread.join(timeout=10)
 
 
+# -- pay_life_amount: "you may pay any amount of life" (CR 119.4) -----------
+
+
+def reach_end_step_with_necrodominance_on_the_stack(client: TestClient, game_id: str) -> None:
+    """Jump to `postcombat_main` raw (`PUT /step`, no hooks - see
+    `engine_api.set_step`'s own docstring), then `advance` once through the
+    real turn machine (`Game.advance`) so CR 500.6's beginning-of-step event
+    actually fires and CR 603.3's `put_triggers_on_stack` runs -
+    Necrodominance's end-step trigger only ever reaches the stack through
+    that machinery, never through the raw step jump alone."""
+    client.put(f"/api/games/{game_id}/step", json={"step": "postcombat_main", "player": "alice"})
+    advanced = client.post(f"/api/games/{game_id}/advance", json={"player": "alice"})
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["advanced_to"] == "end_step", advanced.json()
+
+
+def test_pay_life_amount_pays_the_named_amount(client, game):
+    """Necrodominance's end-step trigger: "you may pay any amount of life.
+    If you do, draw that many cards." A `pay_life_amount` decision is an
+    `int`, not a bool - this proves `decide` carries the chosen *amount*
+    through to a real life change and a real draw, not just accepts or
+    refuses the call. This is the exact shape (Necrodominance's end step)
+    the report names as one of the two live-hang cases."""
+    add_card(client, game, "Necrodominance", "alice", "battlefield")
+    stock_library_top(client, game, "alice", ["Mountain", "Forest", "Grizzly Bears"])
+    uids = seats_for(client, game)
+    reach_end_step_with_necrodominance_on_the_stack(client, game)
+
+    thread = resolve_top_in_background(game)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "pay_life_amount"
+        assert pending["player"] == "alice"
+        assert pending["amount"] == 20  # alice's starting life total
+
+        # 3, not the full 20 or 0: proving `decide` carries through the exact
+        # amount chosen, matching `test_pay_energy_amount_pays_the_named_amount`'s
+        # own reasoning for its variable-amount cousin.
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "life_amount": 3},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    final = state(client, game)
+    assert life_of(final, "alice") == 17, "3 paid, 20 - 3"
+    assert [c["name"] for c in final["hands"]["alice"]] == [
+        "Mountain",
+        "Forest",
+        "Grizzly Bears",
+    ], "3 life paid drew 3 cards"
+
+
+def test_pay_life_amount_rejects_paying_more_life_than_the_player_has(client, game):
+    """CR 119.4: "only if their life total is greater than or equal to the
+    amount of the payment" - trying to pay more life than alice actually has
+    is illegal, and `Game.ask` refuses it (in the resolving request's own
+    thread, not `decide`'s - the same shape
+    `test_choose_a_quality_rejects_a_color_outside_the_five` already proves
+    for `choose_a_quality`), never silently clamped to the maximum."""
+    add_card(client, game, "Necrodominance", "alice", "battlefield")
+    stock_library_top(client, game, "alice", ["Mountain", "Forest", "Grizzly Bears"])
+    uids = seats_for(client, game)
+    reach_end_step_with_necrodominance_on_the_stack(client, game)
+
+    thread = resolve_top_in_background(game)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["amount"] == 20
+
+        # `decide` accepts the shape of this answer (a well-formed int) and
+        # hands it to `Game.ask`, which is the layer that actually enforces
+        # the 0..amount range and raises - see `Game.ask`'s own
+        # `PAY_LIFE_AMOUNT` branch.
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "life_amount": 25},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    final = state(client, game)
+    assert life_of(final, "alice") == 20, "an illegal payment is never taken"
+
+
 # -- pay_mana: "unless its controller pays {N}" (CR 118.12a) ----------------
 
 
@@ -1083,6 +1175,100 @@ def test_choose_a_quality_missing_choice_is_refused_not_defaulted(client, game):
         )
     finally:
         thread.join(timeout=10)
+
+
+# -- choose_a_mode: a modal triggered ability's "choose one -" (CR 603.3c,
+# CR 700.2a) ------------------------------------------------------------
+
+
+def declare_gargaroth_attacking(client: TestClient, game_id: str, uids: dict[str, str]) -> None:
+    """Elder Gargaroth attacking bob puts its own "attacks or blocks, choose
+    one -" trigger on the stack (CR 603.3c) - foreground calls only, since
+    declaring an attacker never itself asks a `choose_a_mode` question; the
+    ability is put on the stack with its mode not yet chosen (CR 603.3c
+    chooses the mode "as part of putting that ability on the stack", but
+    this engine reads it at resolution instead - see `machines/effects.py`'s
+    `_resolve_modal_triggered_ability_clause`), so the question only shows up
+    once something resolves the trigger."""
+    gargaroth = add_card(client, game_id, "Elder Gargaroth", "alice", "battlefield")["added"][
+        "card_id"
+    ]
+    client.patch(f"/api/games/{game_id}/cards/{gargaroth}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game_id}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game_id}/advance", json={"player": "alice"})
+    attack = client.post(
+        f"/api/games/{game_id}/actions/attack",
+        json={"player": "alice", "attackers": [{"card_id": gargaroth, "defender": "bob"}]},
+    )
+    assert attack.status_code == 200, attack.text
+    assert attack.json()["allowed"] is True, attack.json()
+
+
+def test_choose_a_mode_picks_the_named_mode(client, game):
+    """Elder Gargaroth's attack trigger: "choose one - Create a 3/3 green
+    Beast creature token. / You gain 3 life. / Draw a card." A
+    `choose_a_mode` decision's answer is the mode's own printed text, out of
+    `pending_decision.options` - this is the other live-hang case the report
+    names, alongside Necrodominance's `pay_life_amount`."""
+    uids = seats_for(client, game)
+    declare_gargaroth_attacking(client, game, uids)
+
+    thread = resolve_top_in_background(game)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["kind"] == "choose_a_mode"
+        assert pending["player"] == "alice"
+        gain_life_mode = next(mode for mode in pending["options"] if "gain 3 life" in mode)
+
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": gain_life_mode},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    final = state(client, game)
+    assert life_of(final, "alice") == 23, "the chosen mode - gain 3 life - actually happened"
+
+
+def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
+    """CR 700.2a's printed modes are the only legal answers - `Game.ask`
+    refuses a string that is not one of `pending_decision.options` (in the
+    resolving request's own thread, not `decide`'s - the same shape
+    `test_choose_a_quality_rejects_a_color_outside_the_five` already proves
+    for `choose_a_quality`), never silently substituting the first mode or
+    ignoring the mismatch."""
+    uids = seats_for(client, game)
+    declare_gargaroth_attacking(client, game, uids)
+
+    thread = resolve_top_in_background(game)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert set(pending["options"]) == {
+            "Create a 3/3 green Beast creature token.",
+            "You gain 3 life.",
+            "Draw a card.",
+        }
+
+        client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "choice": "Deal 3 damage to any target."},
+        )
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    final = state(client, game)
+    assert life_of(final, "alice") == 20, "an illegal mode is never taken"
+    assert [c["name"] for c in final["hands"]["alice"]] == [], "no card drawn either"
+    assert [c["name"] for c in final["battlefield"]] == [
+        "Elder Gargaroth"
+    ], "no Beast token was created either"
 
 
 # -- put_on_top_or_bottom: Subtlety's ETB (CR 608.2d) ------------------------

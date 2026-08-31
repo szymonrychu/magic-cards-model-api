@@ -101,18 +101,36 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MCM_DECISION_TIMEOUT_SECONDS", "
 #: confuse this top/bottom choice for a yes/no `accept`. Asked of the
 #: targeted spell's *owner* (CR 108.3), never of Subtlety's controller - see
 #: `machines/effects.py`'s `_parse_choose_up_to_one_target_spell_clauses`.
+#: `PAY_LIFE_AMOUNT` (Necrodominance's "you may pay any amount of life", CR
+#: 119.4) and `CHOOSE_A_MODE` (Elder Gargaroth's "attacks or blocks, choose
+#: one -", CR 603.3c/700.2a) are the same gap a fourth time, caught by the
+#: drift test at merge time this time rather than in a live game.
+#: `PAY_LIFE_AMOUNT` reuses `PAY_ENERGY_AMOUNT`'s shape exactly - an `int`
+#: from 0 up to `Decision.amount` (here the payer's life total rather than
+#: their energy) - so `life_amount_answer` is `energy_amount_answer` read
+#: for life; a distinct request field (`life_amount`, not `energy_amount`)
+#: so a client cannot accidentally pay life with an energy-shaped answer or
+#: vice versa. `CHOOSE_A_MODE` reuses `CHOOSE_A_QUALITY`'s shape exactly - a
+#: non-empty `str` that must be one of `Decision.options` when any are
+#: offered (CR 700.2a's modes are always fully enumerated, unlike a color
+#: choice's five letters standing in for an open "any card name"/"any
+#: creature type") - so it shares the same request field, `choice`, and
+#: `mode_answer` differs from `quality_answer` only in its error text citing
+#: CR 700.2a instead of CR 614.12a.
 ANSWERABLE_KINDS = frozenset(
     {
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_ENERGY_AMOUNT,
+        DecisionKind.PAY_LIFE_AMOUNT,
         DecisionKind.PAY_MANA,
         DecisionKind.SCRY,
         DecisionKind.SURVEIL,
         DecisionKind.CHOOSE_CARDS,
         DecisionKind.CHOOSE_TARGETS,
         DecisionKind.CHOOSE_A_QUALITY,
+        DecisionKind.CHOOSE_A_MODE,
         DecisionKind.PUT_ON_TOP_OR_BOTTOM,
     }
 )
@@ -460,6 +478,46 @@ def energy_amount_answer(energy_amount: int | None) -> int:
     if energy_amount is None:
         raise ValueError("this decision needs an integer amount of energy ('energy_amount')")
     return energy_amount
+
+
+def life_amount_answer(life_amount: int | None) -> int:
+    """A `decide` request body's `life_amount`, in the shape `Game.ask`
+    expects for `PAY_LIFE_AMOUNT` - a plain `int` from 0 up to the player's
+    life total (CR 119.4, CR 608.2d). Distinct from `PAY_LIFE` (a fixed-cost
+    yes/no answered by `bool_answer`, same as `MAY`/`PAY_ENERGY`) the same
+    way `PAY_ENERGY_AMOUNT` is distinct from `PAY_ENERGY`: this kind is "pay
+    any amount", so the answer is how much, not whether. Deliberately its
+    own request field (`life_amount`), not shared with `PAY_ENERGY_AMOUNT`'s
+    `energy_amount` - the two pay from different resources and a client that
+    confused them would silently pay the wrong one.
+
+    Refuses a missing amount with a 400-shaped `ValueError` here, matching
+    `energy_amount_answer`'s reasoning - `Game.ask`'s own `isinstance` and
+    range checks (0..`pending_decision.amount`, the life total available)
+    still run on the other side of the mailbox and are not duplicated here.
+    """
+    if life_amount is None:
+        raise ValueError("this decision needs an integer amount of life ('life_amount')")
+    return life_amount
+
+
+def mode_answer(choice: str | None) -> str:
+    """A `decide` request body's `choice`, in the shape `Game.ask` expects
+    for `CHOOSE_A_MODE` (CR 603.3c, CR 700.2a) - a plain, non-empty `str`
+    naming one of `pending_decision.options` (a modal ability's printed
+    modes, always fully enumerated - unlike `CHOOSE_A_QUALITY`'s open "any
+    card name"/"any creature type" shape, so a client can always show every
+    legal mode up front). Shares `CHOOSE_A_QUALITY`'s request field
+    (`choice`) rather than growing its own: both kinds answer with "which of
+    these printed strings did you pick", and `Game.ask` is what actually
+    enforces the printed modes are respected.
+
+    Refuses a missing or empty choice with a 400-shaped `ValueError` here,
+    matching `quality_answer`'s reasoning for `choice`.
+    """
+    if not choice:
+        raise ValueError("this decision needs a chosen mode ('choice'), CR 700.2a")
+    return choice
 
 
 def quality_answer(choice: str | None) -> str:

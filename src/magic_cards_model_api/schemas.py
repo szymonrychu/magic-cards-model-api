@@ -201,7 +201,20 @@ class DecideRequest(BaseModel):
     choose a color/card name/creature type". A color choice is narrowed to
     `pending_decision.options`; a card name or creature type choice offers no
     `options` (the universe is too large to enumerate) and accepts any
-    non-empty string. `None` (the default) is refused, matching `accept`."""
+    non-empty string. `None` (the default) is refused, matching `accept`.
+    Also the `choose_a_mode` kind's answer (CR 603.3c, CR 700.2a) - a modal
+    triggered ability's "choose one -" (Elder Gargaroth's attack/block
+    trigger): one of `pending_decision.options`, the ability's own printed
+    modes, always non-empty for this kind unlike `choose_a_quality`'s open
+    shapes. Shares this field rather than growing its own - both kinds are
+    "which of these printed strings did you pick"."""
+    life_amount: int | None = None
+    """The `pay_life_amount` kind's answer (CR 119.4) - "you may pay any
+    amount of life" (Necrodominance), an integer from 0 up to
+    `pending_decision.amount` (the player's life total). Not the same
+    question as `pay_life`'s `accept`: this kind asks how much, not whether.
+    Distinct from `energy_amount` - the two pay from different resources.
+    `None` (the default) is refused, matching `accept`/`energy_amount`."""
     moved: list[str] = Field(default_factory=list)
     """For the `scry` and `surveil` kinds: which of `pending_decision.cards`
     move off the top - to the bottom of the library for a scry (CR 701.22a),
