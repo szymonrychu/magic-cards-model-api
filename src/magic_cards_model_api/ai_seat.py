@@ -34,6 +34,7 @@ subprocess is still running and has not asked for anything".
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import threading
@@ -41,6 +42,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 #: Root of this repo (`src/magic_cards_model_api/ai_seat.py` -> repo root),
 #: the working directory `seat_cli` must run from, and where `claude` is
@@ -55,6 +58,21 @@ BRIEF_PATH = API_REPO / "docs" / "ai_seat_brief.md"
 #: for a process that, unlike the audit log, is not the source of truth for
 #: what happened in the game.
 TAIL_LINES = 200
+
+
+def ai_seat_mode() -> str:
+    """`subprocess` (the default, a one-shot `claude --print` per game) or
+    `wrapper` (hand the seat to the driver, which drives a long-lived
+    interactive claude that remembers previous games)."""
+    return (os.environ.get("AI_SEAT_MODE") or "subprocess").strip().lower()
+
+
+def driver_url() -> str:
+    return (os.environ.get("DRIVER_URL") or "http://driver:8090").strip()
+
+
+def _driver_client(base_url: str) -> httpx.Client:
+    return httpx.Client(base_url=base_url, timeout=30.0)
 
 
 def claude_available() -> bool:
@@ -192,18 +210,73 @@ class AiSeatRegistry:
 
     def __init__(self) -> None:
         self._runners: dict[str, AiSeatRunner] = {}
+        self._dispatched: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
+
+    def _dispatch_to_driver(
+        self, *, uid: str, game_id: str, player: str, api_base: str
+    ) -> dict[str, Any]:
+        """Hand this seat to the driver. Never raises: an unreachable driver
+        comes back as a fallback, exactly like a missing `claude` binary, so
+        the UI has something to show and the game stays playable."""
+        base = driver_url()
+        payload = {
+            "uid": uid,
+            "game_id": game_id,
+            "player": player,
+            "api_base": api_base,
+        }
+        try:
+            with _driver_client(base) as client:
+                response = client.post("/dispatch", json=payload)
+                response.raise_for_status()
+                answer = response.json()
+        except Exception as exc:  # report, never raise - see the docstring
+            return {
+                "uid": uid,
+                "player": player,
+                "mechanism": "fallback",
+                "state": "not_started",
+                "reason": f"the driver at {base} could not be reached: {exc}",
+            }
+        return {
+            "uid": uid,
+            "player": player,
+            "mechanism": "wrapper",
+            "state": "dispatched",
+            "deck": answer.get("deck"),
+            "turn_id": answer.get("turnId"),
+            "match_score": answer.get("matchScore"),
+            "driver": base,
+        }
 
     def start(self, *, uid: str, game_id: str, player: str, api_base: str) -> dict[str, Any]:
         """Start (or report the existing) AI seat for `uid`.
 
-        Never raises: an unavailable `claude` binary, or one that fails to
-        spawn, both come back as `mechanism: "fallback"` with the exact
-        command and prompt a human would run instead - see the module
-        docstring. Calling this again for a uid whose runner already exists
-        returns its current status rather than spawning a second process for
-        the same seat.
+        Two mechanisms, chosen by `AI_SEAT_MODE`. `subprocess` (the default)
+        spawns a one-shot `claude --print` that forgets the game the moment it
+        ends. `wrapper` hands the seat to the driver, which pushes turns into a
+        long-lived interactive claude that carries guides and notes across
+        games.
+
+        Never raises in either mode: an unavailable `claude` binary, one that
+        fails to spawn, or an unreachable driver all come back as
+        `mechanism: "fallback"` - see the module docstring. Calling this again
+        for a uid already started returns its current status rather than
+        starting a second seat.
         """
+        if ai_seat_mode() == "wrapper":
+            with self._lock:
+                if uid in self._dispatched:
+                    return self._dispatched[uid]
+            status = self._dispatch_to_driver(
+                uid=uid, game_id=game_id, player=player, api_base=api_base
+            )
+            if status["mechanism"] == "wrapper":
+                with self._lock:
+                    self._dispatched[uid] = status
+            return status
+
         with self._lock:
             existing = self._runners.get(uid)
         if existing is not None:
@@ -237,7 +310,10 @@ class AiSeatRegistry:
 
     def status(self, uid: str) -> dict[str, Any] | None:
         with self._lock:
+            dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
+        if dispatched is not None:
+            return dispatched
         return runner.status() if runner is not None else None
 
     def stop(self, uid: str) -> bool:
