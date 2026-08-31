@@ -24,10 +24,23 @@ ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && claude --version
 
-RUN mkdir -p /workspace /agent-home
+# claude REFUSES to run in bypass-permissions mode as root ("cannot be used
+# with root/sudo privileges for security reasons") and exits 1, which the
+# wrapper reports as `claude exited code=1`. So the agent runs as an ordinary
+# user. Everything above this line needs root (apt, npm -g, uv sync); nothing
+# below it does.
+ARG AGENT_UID=1000
+ARG AGENT_GID=1000
+RUN groupadd -g "${AGENT_GID}" agent \
+ && useradd -u "${AGENT_UID}" -g "${AGENT_GID}" -m -s /bin/bash agent \
+ && mkdir -p /workspace /agent-home \
+ && chown -R agent:agent /workspace /agent-home /app
+
 ENV HOME=/agent-home \
     HOME_DIR=/agent-home \
     WORKSPACE=/workspace
+
+USER agent
 
 EXPOSE 8080
 CMD ["python", "-m", "mtg_agent.wrapper"]

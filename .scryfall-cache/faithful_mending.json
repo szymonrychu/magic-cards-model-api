@@ -1,0 +1,143 @@
+{
+  "arena_id": 78586,
+  "artist": "Caroline Gariba",
+  "artist_ids": [
+    "61a4c572-3d1b-4b71-aeb0-1a5a6b82c524"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 574790,
+  "cmc": 2.0,
+  "collector_number": "221",
+  "color_identity": [
+    "U",
+    "W"
+  ],
+  "colors": [
+    "U",
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 3721,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "flavor_text": "\"What has been looted can be restored. The church lives on within us.\"",
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "arena",
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "50752ca9-ea85-4c4b-9bf5-4f8759a7dcec",
+  "illustration_id": "4777e601-b26e-4521-8338-97cdae3c2b78",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T06:52:43Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.webp?1783925563",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.jpg?1783925563",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.jpg?1783925563",
+    "crop": "https://cards.scryfall.io/crop/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.webp?1783925563",
+    "display": "https://cards.scryfall.io/display/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.webp?1783925563",
+    "grid": "https://cards.scryfall.io/grid/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.webp?1783925563",
+    "large": "https://cards.scryfall.io/large/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.jpg?1783925563",
+    "normal": "https://cards.scryfall.io/normal/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.jpg?1783925563",
+    "png": "https://cards.scryfall.io/png/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.png?1783925563",
+    "small": "https://cards.scryfall.io/small/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.jpg?1783925563",
+    "thumb": "https://cards.scryfall.io/thumb/front/5/0/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec.webp?1783925563"
+  },
+  "keywords": [
+    "Flashback"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{W}{U}",
+  "mtgo_id": 93444,
+  "multiverse_ids": [
+    535015
+  ],
+  "name": "Faithful Mending",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "b997a982-09e1-4ae1-a972-3c2e5f101e8c",
+  "oracle_text": "You gain 2 life, draw two cards, then discard two cards.\nFlashback {1}{W}{U} (You may cast this card from your graveyard for its flashback cost. Then exile it.)",
+  "oversized": false,
+  "penny_rank": 707,
+  "preview": {
+    "previewed_at": "2021-09-04",
+    "source": "Yahoo!",
+    "source_uri": "https://www.facebook.com/YahooEsportsSEA/photos/a.140092234371679/371562321224668/"
+  },
+  "prices": {
+    "eur": "1.29",
+    "eur_foil": "3.07",
+    "tix": "0.03",
+    "usd": "1.58",
+    "usd_etched": null,
+    "usd_foil": "3.73"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ab997a982-09e1-4ae1-a972-3c2e5f101e8c&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/93444?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=574790&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F247968%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Faithful+Mending",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=535015&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DFaithful%2BMending",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DFaithful%2BMending"
+  },
+  "released_at": "2021-09-24",
+  "reprint": false,
+  "reserved": false,
+  "resource_id": "06D27C7C58C31A9CADD483B861D670F8972F5CDB6005CF05AE3C20F18221CB3F",
+  "rulings_uri": "https://api.scryfall.com/cards/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/mid?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/mid/221/faithful-mending?utm_source=api",
+  "set": "mid",
+  "set_id": "44b8eb8f-fa23-401a-98b5-1fbb9871128e",
+  "set_name": "Innistrad: Midnight Hunt",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amid&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/44b8eb8f-fa23-401a-98b5-1fbb9871128e",
+  "story_spotlight": false,
+  "tcgplayer_id": 247968,
+  "textless": false,
+  "type_line": "Instant",
+  "uri": "https://api.scryfall.com/cards/50752ca9-ea85-4c4b-9bf5-4f8759a7dcec",
+  "variation": false
+}
