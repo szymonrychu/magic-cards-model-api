@@ -214,7 +214,20 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
         return refused(exc)
 
     try:
-        if req.keyword:
+        if req.alternative_cost is not None:
+            # CR 118.9, announced at CR 601.2b - before targets are chosen at
+            # CR 601.2c, which is why this runs ahead of `choose_targets`
+            # below. `use_alternative_cost` is the engine's one front door
+            # over all four origins (a printed pitch offer, a keyword, a
+            # granted permission, another permanent's static ability), so
+            # this needs no branch per origin.
+            casting.use_alternative_cost(
+                req.alternative_cost,
+                choosing=[find_card(game, card_id) for card_id in req.choosing]
+                if req.choosing
+                else None,
+            )
+        elif req.keyword:
             # CR 601.2b: plot and foretell are announced this way - the
             # keyword names both the exile pile the card must be in and what
             # is paid instead of the mana cost (`Casting.use_keyword`).
@@ -695,6 +708,8 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
         abilities = game.activated_abilities(state)
     except Exception:
         return []
+    from .affordances import ability_hints
+
     listed = []
     for index, ability in enumerate(abilities):
         listed.append(
@@ -702,6 +717,14 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "index": index,
                 "text": ability.text,
                 "mana": getattr(ability, "mana", None) is not None,
+                # What activating it actually asks the player for: its cost, a
+                # loyalty symbol (CR 606.2), an X to announce, and whether it
+                # targets at all. A UI without this cannot tell Karn's `+1`
+                # (which targets) from his `-2` (which does not), and sending
+                # an empty target list for the one that targets is read by the
+                # engine as "I choose none" rather than "not chosen yet" - see
+                # `affordances.py`'s module docstring.
+                **ability_hints(ability),
             }
         )
     if any(entry["mana"] for entry in listed):
@@ -712,6 +735,7 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "index": len(abilities) + offset,
                 "text": _mana_ability_text(ability),
                 "mana": True,
+                **ability_hints(ability),
             }
         )
     return listed

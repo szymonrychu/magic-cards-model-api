@@ -21,13 +21,25 @@ from magic_cards_model.machines.decisions import DecisionKind
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 
-from . import ai_seat_api, audit, decisions, decks_api, engine_api, scryfall, seatkit, visibility
+from . import (
+    affordances,
+    ai_seat_api,
+    audit,
+    decisions,
+    decks_api,
+    engine_api,
+    scryfall,
+    seatkit,
+    symbology,
+    visibility,
+)
 from .schemas import (
     ActivateRequest,
     ActorRequest,
     AdvanceRequest,
     AttackRequest,
     CastRequest,
+    ConcedeRequest,
     CycleRequest,
     DecideRequest,
     DeclareBlockersRequest,
@@ -50,6 +62,7 @@ from .store import new_seat_uids, store
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 app.include_router(decks_api.router)
 app.include_router(ai_seat_api.router)
+app.include_router(symbology.router)
 
 
 def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
@@ -715,6 +728,66 @@ def action_target(game_id: str, req: TargetRequest) -> dict[str, Any]:
         ability_index=req.ability_index,
         mode_index=req.mode_index,
     )
+
+
+@app.get("/api/games/{game_id}/affordances/{card_id}")
+def get_affordances(
+    game_id: str,
+    card_id: UUID,
+    player: str,
+    ability_index: int | None = None,
+    modes: str | None = None,
+    x_value: int | None = None,
+) -> dict[str, Any]:
+    """Which objects this announcement could legally target right now.
+
+    The expensive half of `affordances.py` - it walks every object in the
+    public zones against every requirement - so it is asked for on demand,
+    when the player picks a card up, rather than folded into the 1.2s state
+    poll for the whole board. The cheap half (does it target, how many, is
+    there an X, is it modal) already rides along on each card view.
+
+    `modes` is a comma-separated list of 1-based mode numbers: a modal
+    spell's targeting is unanswerable until the modes are chosen (CR 700.2f),
+    so the UI asks again with them once the player has picked.
+
+    Nothing here is hidden information: every candidate is an object in a
+    public zone (`affordances.CANDIDATE_ZONES`) or a player, so this needs no
+    `visibility.redact_view` pass of its own.
+    """
+    game = game_or_404(game_id)
+    try:
+        state = affordances.find_source(game, card_id)
+    except ValueError as exc:
+        raise KeyError(str(exc)) from exc
+    mode_numbers = [int(part) for part in modes.split(",") if part.strip()] if modes else None
+    result = affordances.candidates(
+        game,
+        state,
+        player,
+        ability_index=ability_index,
+        modes=mode_numbers,
+        x_value=x_value,
+    )
+    if ability_index is None:
+        # CR 118.9's alternative costs, for a cast only - an ability has no
+        # such thing. Included here rather than on the state view because
+        # discovering one means building a `Casting`, which is per-card work
+        # not worth doing for every card on the board on every poll.
+        result["alternative_costs"] = affordances.alternative_costs(game, state, player)
+    return result
+
+
+@app.post("/api/games/{game_id}/actions/concede")
+def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
+    """Concede (CR 104.3a). A player may do this at any time, and leaves the
+    game immediately - there is no priority check and nothing to refuse, which
+    is why this takes no `Outcome` the way the other actions do."""
+    with store.locked(game_id) as game:
+        game.player(req.player)
+        game.concede(req.player, by=req.player)
+        seq = audit.record(game_id, "concede", player=req.player, allowed=True)
+        return {"allowed": True, "winner": game.winner, "log_seq": seq}
 
 
 @app.post("/api/games/{game_id}/actions/activate")

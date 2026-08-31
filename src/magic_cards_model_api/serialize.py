@@ -14,6 +14,7 @@ from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
 
 from . import scryfall
+from .affordances import cast_hints
 from .engine_api import list_abilities
 from .store import store
 
@@ -294,6 +295,19 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "art_crop": image.get("art_crop"),
         "abilities": list_abilities(game, state),
     }
+    # CR 614.12a's "as this enters, choose ..." answer, recorded on the object
+    # that carries it - Pithing Needle's and Disruptor Flute's named card,
+    # Cavern of Souls' creature type, Utopia Sprawl's colour. Without this the
+    # board shows a permanent whose whole function is the name it chose and
+    # never says which name that was.
+    if state.choice is not None:
+        view["choice"] = {"kind": state.choice.kind.value, "value": state.choice.value}
+    if state.zone in (Zone.HAND, Zone.EXILE):
+        # What announcing this card would ask for: X, modes, targets. Read off
+        # the printed card, so it is answerable before any `Casting` exists -
+        # which is what lets the UI show an X box only for a spell that has an
+        # X, and a target picker only for a spell that targets.
+        view["cast"] = cast_hints(state)
     if state.zone is Zone.HAND:
         special_actions = _special_actions(game, state)
         if special_actions:

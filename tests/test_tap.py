@@ -70,9 +70,10 @@ def test_activate_a_forest_adds_green_to_the_pool(client, game):
     other activated ability."""
     add_card(client, game, "Forest", "alice", "battlefield")
     forest = find(state(client, game)["battlefield"], "Forest")
-    assert find(state(client, game)["battlefield"], "Forest")["abilities"] == [
-        {"index": 0, "text": "{T}: Add {G}.", "mana": True}
-    ]
+    assert [
+        (a["index"], a["text"], a["mana"])
+        for a in find(state(client, game)["battlefield"], "Forest")["abilities"]
+    ] == [(0, "{T}: Add {G}.", True)]
 
     response = client.post(
         f"/api/games/{game}/actions/activate",

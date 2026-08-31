@@ -26,9 +26,13 @@ def test_nurturing_peatlands_life_cost_is_visible_on_the_battlefield(client, gam
     add_card(client, game, "Nurturing Peatland", "alice", "battlefield")
     peatland = find(state(client, game)["battlefield"], "Nurturing Peatland")
 
-    assert peatland["abilities"] == [
-        {"index": 0, "text": "{T}, Pay 1 life: Add {B} or {G}.", "mana": True},
-        {"index": 1, "text": "{1}, {T}, Sacrifice this land: Draw a card.", "mana": False},
+    # Asserted on the identifying fields rather than by whole-dict equality:
+    # `list_abilities` also carries each ability's `affordances.ability_hints`
+    # (cost, loyalty, X, targeting) for the UI, and this test is about the
+    # printed line being visible, not about that shape never growing.
+    assert [(a["index"], a["text"], a["mana"]) for a in peatland["abilities"]] == [
+        (0, "{T}, Pay 1 life: Add {B} or {G}.", True),
+        (1, "{1}, {T}, Sacrifice this land: Draw a card.", False),
     ]
     # The full printed line is there too, life cost included, so a player
     # need not call `resolve_cards` to learn what the source will cost.
@@ -43,9 +47,11 @@ def test_the_life_cost_is_visible_to_a_seat_that_does_not_control_it(client, gam
     peatland_for_alice = find(state(client, game, uid="alice")["battlefield"], "Nurturing Peatland")
     peatland_for_bob = find(state(client, game, uid="bob")["battlefield"], "Nurturing Peatland")
 
-    expected = [
-        {"index": 0, "text": "{T}, Pay 1 life: Add {B} or {G}.", "mana": True},
-        {"index": 1, "text": "{1}, {T}, Sacrifice this land: Draw a card.", "mana": False},
+    # Whole-dict equality between the two seats is the real assertion here -
+    # it is exactly the claim being made (the opponent's view is not reduced),
+    # and unlike a hard-coded literal it stays true as the ability view grows.
+    assert peatland_for_alice["abilities"] == peatland_for_bob["abilities"]
+    assert [(a["index"], a["text"], a["mana"]) for a in peatland_for_alice["abilities"]] == [
+        (0, "{T}, Pay 1 life: Add {B} or {G}.", True),
+        (1, "{1}, {T}, Sacrifice this land: Draw a card.", False),
     ]
-    assert peatland_for_alice["abilities"] == expected
-    assert peatland_for_bob["abilities"] == expected

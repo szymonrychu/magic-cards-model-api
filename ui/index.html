@@ -7,95 +7,108 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header>
-  <h1>magic-cards-model</h1>
-  <div id="conn-status" class="pill"></div>
-</header>
 
-<main>
-  <!-- ================= LOBBY ================= -->
-  <section id="lobby">
-    <h2>Start a game</h2>
-    <p class="hint">
-      You play one seat by clicking. The other seat is played by a headless
-      Claude Sonnet agent (or, if that is not available on this server, by a
-      human you dispatch yourself with a copy-pasted prompt).
-    </p>
+<!-- ================================ LOBBY ================================ -->
+<section id="lobby">
+  <header class="lobby-header">
+    <h1>magic-cards-model</h1>
+    <div id="conn-status" class="pill"></div>
+  </header>
 
-    <div class="deck-pickers">
-      <div class="deck-picker" id="picker-you">
-        <h3>Your deck</h3>
-        <label>Name <input type="text" id="you-name" value="you" /></label>
-        <label>Bundled deck
-          <select id="you-bundled"><option value="">(none - paste/upload below)</option></select>
-        </label>
-        <label>Or upload a .txt <input type="file" id="you-upload" accept=".txt" /></label>
-        <label>Or paste a decklist
-          <textarea id="you-text" rows="10" placeholder="4 Lightning Bolt&#10;..."></textarea>
-        </label>
-        <button id="you-validate">Validate</button>
-        <div class="validation" id="you-validation"></div>
-      </div>
+  <p class="hint">
+    You play one seat by clicking. The other seat is played by a headless
+    Claude agent, or - if this server cannot spawn one - by a human you
+    dispatch yourself with a copy-pasted prompt.
+  </p>
 
-      <div class="deck-picker" id="picker-ai">
-        <h3>AI opponent's deck</h3>
-        <label>Name <input type="text" id="ai-name" value="claude" /></label>
-        <label>Bundled deck
-          <select id="ai-bundled"><option value="">(none - paste/upload below)</option></select>
-        </label>
-        <label>Or upload a .txt <input type="file" id="ai-upload" accept=".txt" /></label>
-        <label>Or paste a decklist
-          <textarea id="ai-text" rows="10" placeholder="4 Lightning Bolt&#10;..."></textarea>
-        </label>
-        <button id="ai-validate">Validate</button>
-        <div class="validation" id="ai-validation"></div>
-      </div>
+  <div class="deck-pickers">
+    <div class="deck-picker" id="picker-you">
+      <h3>Your deck</h3>
+      <label>Name <input type="text" id="you-name" value="you" /></label>
+      <label>Bundled deck
+        <select id="you-bundled"><option value="">(none - paste or upload below)</option></select>
+      </label>
+      <label>Or upload a .txt <input type="file" id="you-upload" accept=".txt" /></label>
+      <label>Or paste a decklist
+        <textarea id="you-text" rows="9" placeholder="4 Lightning Bolt&#10;20 Mountain&#10;..."></textarea>
+      </label>
+      <button id="you-validate">Validate</button>
+      <div class="validation" id="you-validation"></div>
     </div>
 
-    <label>Seed (optional, for a replayable shuffle)
+    <div class="deck-picker" id="picker-ai">
+      <h3>Opponent's deck</h3>
+      <label>Name <input type="text" id="ai-name" value="claude" /></label>
+      <label>Bundled deck
+        <select id="ai-bundled"><option value="">(none - paste or upload below)</option></select>
+      </label>
+      <label>Or upload a .txt <input type="file" id="ai-upload" accept=".txt" /></label>
+      <label>Or paste a decklist
+        <textarea id="ai-text" rows="9" placeholder="4 Lightning Bolt&#10;20 Mountain&#10;..."></textarea>
+      </label>
+      <button id="ai-validate">Validate</button>
+      <div class="validation" id="ai-validation"></div>
+    </div>
+  </div>
+
+  <div class="lobby-footer">
+    <label class="seed">Seed (optional, for a replayable shuffle)
       <input type="number" id="seed" placeholder="random" />
     </label>
+    <button id="start-game" class="primary big">Start game</button>
+  </div>
+  <div id="start-error" class="error"></div>
+</section>
 
-    <button id="start-game" class="primary">Start game</button>
-    <div id="start-error" class="error"></div>
-  </section>
+<!-- ================================= GAME ================================ -->
+<section id="game" hidden>
 
-  <!-- ================= GAME ================= -->
-  <section id="game" hidden>
-    <div class="game-header">
-      <div id="turn-info"></div>
+  <!-- top bar: turn, phase track, connection, AI seat, leave -->
+  <header id="topbar">
+    <div id="turn-info"></div>
+    <ol id="phase-track"></ol>
+    <div class="topbar-right">
       <div id="ai-panel"></div>
-      <button id="leave-game">Back to lobby</button>
+      <div id="conn-status-game" class="pill"></div>
+      <button id="open-zones" class="ghost" title="Graveyards, exile, and what you may still cast from it">Zones</button>
+      <button id="leave-game" class="ghost">Lobby</button>
     </div>
+  </header>
 
-    <div id="decision-box" hidden></div>
+  <div id="banners">
+    <div id="game-over" hidden></div>
     <div id="autopilot-banner" hidden></div>
+  </div>
 
-    <!-- Mirrored MTGO/Arena-style board: opponent on top, shared stack in
-         the middle, you on the bottom. -->
-    <div id="mtg-board">
-      <div id="opp-info" class="info-row"></div>
-      <div id="opp-hand" class="hand-row hand-row-opp"></div>
-      <div id="opp-battlefield" class="battlefield-row"></div>
+  <!-- the board: opponent on top, shared stack in the middle, you at the
+       bottom, mirrored the way MTGO and Arena lay it out -->
+  <div id="mtg-board">
+    <div id="opp-info" class="info-row opp"></div>
+    <div id="opp-hand" class="hand-row hand-row-opp"></div>
+    <div id="opp-battlefield" class="battlefield-row"></div>
 
-      <div id="stack-row" class="stack-row"></div>
+    <div id="stack-row" class="stack-row"></div>
 
-      <div id="my-battlefield" class="battlefield-row"></div>
-      <div id="my-hand" class="hand-row"></div>
-      <div id="you-info" class="info-row"></div>
+    <div id="my-battlefield" class="battlefield-row"></div>
+    <div id="my-hand" class="hand-row"></div>
+    <div id="you-info" class="info-row you"></div>
+  </div>
 
-      <div id="action-bar"></div>
-    </div>
+  <!-- the one place anything is ever asked of the player -->
+  <aside id="side-panel">
+    <div id="decision-box" hidden></div>
+    <div id="action-tray" hidden></div>
+    <div id="action-bar"></div>
+  </aside>
 
-    <div id="card-preview" class="card-preview" hidden></div>
-    <div id="action-modal" class="modal" hidden></div>
+  <div id="card-preview" class="card-preview" hidden></div>
+  <div id="modal" class="modal" hidden></div>
 
-    <details id="raw-state-details">
-      <summary>Raw state (debug)</summary>
-      <pre id="raw-state"></pre>
-    </details>
-  </section>
-</main>
+  <details id="raw-state-details">
+    <summary>Raw state (debug)</summary>
+    <pre id="raw-state"></pre>
+  </details>
+</section>
 
 <script src="app.js"></script>
 </body>

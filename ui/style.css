@@ -1,14 +1,29 @@
+/* magic-cards-model play UI.
+ *
+ * One dark board, laid out the way MTGO and Arena lay one out: the opponent
+ * mirrored across the top, the shared stack through the middle, you along the
+ * bottom, and everything that is ever *asked* of the player in one side panel
+ * rather than scattered across modals. No framework, no build step.
+ */
+
 :root {
-  --bg: #14161a;
-  --panel: #1e2127;
-  --panel2: #262a32;
-  --border: #383e49;
-  --text: #e6e8ec;
-  --muted: #9aa1ad;
-  --accent: #5aa9ff;
-  --good: #4caf7d;
-  --bad: #e0616b;
-  --warn: #d9a441;
+  --bg: #10131a;
+  --bg-raised: #181d27;
+  --bg-sunken: #0b0e14;
+  --line: #2a3140;
+  --line-bright: #3c465a;
+  --ink: #e6e9ef;
+  --ink-dim: #97a0b3;
+  --ink-faint: #6b7488;
+  --accent: #6ba4ff;
+  --accent-ink: #0b0e14;
+  --good: #4ec98a;
+  --warn: #e8b44c;
+  --bad: #f2695f;
+  --you: #4ec98a;
+  --opp: #d4685f;
+  --card-radius: 5px;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -16,378 +31,510 @@
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
+  color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
 }
-
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.6em 1em;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
-header h1 { font-size: 1em; margin: 0; }
-
-.pill {
-  padding: 0.2em 0.7em;
-  border-radius: 1em;
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  font-size: 0.85em;
-}
-.pill.ok { color: var(--good); }
-.pill.bad { color: var(--bad); }
-
-main { padding: 1em; max-width: 1400px; margin: 0 auto; }
-
-h2, h3 { margin-top: 0; }
-
-.hint { color: var(--muted); max-width: 60em; }
-
-.deck-pickers {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1em;
-}
-
-.deck-picker {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1em;
-}
-
-label {
-  display: block;
-  margin: 0.6em 0;
-  color: var(--muted);
-  font-size: 0.85em;
-}
-
-input[type="text"], input[type="number"], select, textarea {
-  display: block;
-  width: 100%;
-  margin-top: 0.3em;
-  background: var(--panel2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.4em;
-  font-family: inherit;
-  font-size: 1em;
-}
-
-textarea { font-family: ui-monospace, monospace; font-size: 0.85em; }
 
 button {
-  background: var(--panel2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.5em 1em;
+  font: inherit;
+  background: var(--bg-raised);
+  color: var(--ink);
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  padding: 5px 11px;
   cursor: pointer;
-  font-size: 0.9em;
 }
-button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); color: #05131f; border-color: var(--accent); font-weight: 600; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: default; }
+button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
 button.danger { border-color: var(--bad); color: var(--bad); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.ghost { background: transparent; }
+button.big { padding: 9px 22px; font-size: 15px; }
 
-.validation { margin-top: 0.6em; font-size: 0.85em; }
-.validation .ok { color: var(--good); }
-.validation .card-error { color: var(--bad); }
-.validation .card-warning { color: var(--warn); }
+input, select, textarea {
+  font: inherit;
+  background: var(--bg-sunken);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 5px 7px;
+}
+textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 
-.error { color: var(--bad); margin-top: 0.6em; white-space: pre-wrap; }
+h1, h2, h3 { margin: 0 0 8px; font-weight: 600; }
+h1 { font-size: 19px; }
+h3 { font-size: 14px; }
 
-#start-game { margin-top: 1em; }
+.hint { color: var(--ink-dim); font-size: 12px; margin: 4px 0; }
+.error, .card-error { color: var(--bad); font-size: 12px; }
+.ok { color: var(--good); font-size: 12px; }
+.card-warning { color: var(--warn); font-size: 12px; }
 
-/* ---------------- game ---------------- */
+.pill {
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line-bright);
+  white-space: nowrap;
+}
+.pill.ok { color: var(--good); border-color: var(--good); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
 
-.game-header {
+/* ------------------------------------------------------------- lobby ---- */
+
+#lobby { max-width: 1000px; margin: 0 auto; padding: 24px 20px 60px; }
+.lobby-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.deck-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+.deck-picker {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px;
+}
+.deck-picker label { display: block; margin: 8px 0; font-size: 12px; color: var(--ink-dim); }
+.deck-picker label input[type="text"], .deck-picker label select { width: 100%; margin-top: 3px; }
+.validation { margin-top: 8px; min-height: 18px; }
+.lobby-footer { display: flex; align-items: flex-end; gap: 16px; }
+.seed { font-size: 12px; color: var(--ink-dim); }
+
+/* -------------------------------------------------------------- game ---- */
+
+#game {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas: "top top" "banner banner" "board side" "debug debug";
+  height: 100vh;
+  gap: 8px;
+  padding: 8px;
+}
+
+#topbar {
+  grid-area: top;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1em;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.6em 1em;
-  margin-bottom: 0.8em;
+  gap: 14px;
   flex-wrap: wrap;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 12px;
 }
+#turn-info { font-size: 13px; white-space: nowrap; }
+#turn-info .prio { color: var(--accent); font-weight: 600; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
-#turn-info { font-weight: 600; }
-#turn-info .prio { color: var(--accent); }
+/* The turn structure as a track, so "which step am I in" is a glance, not a
+   line of text to read. CR 500.1's phases and steps, in order. */
+#phase-track { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+#phase-track li {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--ink-faint);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+#phase-track li.current {
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-weight: 700;
+}
+#phase-track li.done { color: var(--ink-dim); }
+#phase-track li.target { border-color: var(--accent); color: var(--accent); }
 
-#ai-panel {
+#banners { grid-area: banner; display: flex; flex-direction: column; gap: 6px; }
+/* `[hidden]` only sets `display: none` at the UA level, so any `display`
+   rule here would override it and leave an empty bordered box on the board -
+   which is exactly what happened. Re-assert it. */
+#banners > div[hidden], #side-panel > div[hidden] { display: none; }
+#banners > div {
+  border-radius: 8px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
-  gap: 0.6em;
-  font-size: 0.85em;
-  color: var(--muted);
+  gap: 12px;
+  font-size: 13px;
 }
-#ai-panel .state-thinking { color: var(--accent); }
-#ai-panel .state-error { color: var(--bad); }
-#ai-panel .state-stopped { color: var(--muted); }
+#autopilot-banner { background: #1c2536; border: 1px solid var(--accent); }
+#autopilot-banner .why { color: var(--ink-dim); }
+#game-over { background: #2a1c1c; border: 1px solid var(--warn); font-weight: 600; }
 
-/* -------- mirrored MTGO/Arena-style board -------- */
+/* --------------------------------------------------------- the board ---- */
 
 #mtg-board {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35em;
+  grid-area: board;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto 1fr auto auto;
+  gap: 5px;
+  min-height: 0;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px;
+  overflow-y: auto;
 }
 
 .info-row {
   display: flex;
-  gap: 1.2em;
   align-items: center;
-  padding: 0.4em 0.8em;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.9em;
+  gap: 14px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   cursor: pointer;
-}
-.info-row:hover { border-color: var(--accent); }
-.info-row .name { font-weight: 700; }
-.info-row .life { font-weight: 700; font-size: 1.15em; }
-.info-row .life.low { color: var(--bad); }
-.info-row .pool { color: var(--muted); }
-.info-row .counts { color: var(--muted); }
-
-.battlefield-row, .hand-row, .stack-row {
-  display: flex;
   flex-wrap: wrap;
-  gap: 0.5em;
-  align-items: flex-end;
-  padding: 0.5em;
-  min-height: 108px;
+}
+.info-row.you { border-left: 3px solid var(--you); }
+.info-row.opp { border-left: 3px solid var(--opp); }
+.info-row.targetable { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.info-row.chosen { outline: 2px solid var(--accent); outline-offset: 2px; }
+.info-row .name { font-weight: 600; }
+.info-row .life { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.info-row .life.low { color: var(--bad); }
+.info-row .counts { color: var(--ink-dim); font-size: 12px; margin-left: auto; }
+.info-row .pool { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.info-row .pool.empty { color: var(--ink-faint); }
+.info-row .pcounter {
+  font-size: 11px;
+  border: 1px solid var(--line-bright);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 
-.battlefield-row {
-  background: #0f1720;
-  border: 1px dashed var(--border);
-  border-radius: 6px;
+.hand-row, .battlefield-row, .stack-row {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  min-height: 44px;
+  padding: 4px;
+  border-radius: 7px;
 }
-
+.battlefield-row { background: rgba(255, 255, 255, 0.017); align-content: flex-start; }
+.hand-row { background: rgba(107, 164, 255, 0.05); }
+.hand-row-opp { opacity: 0.75; }
 .stack-row {
-  background: #1a1420;
-  border: 1px solid #4a3a5c;
-  border-radius: 6px;
-  min-height: 30px;
+  border: 1px dashed var(--line-bright);
   align-items: center;
-  justify-content: center;
+  padding: 6px;
 }
-.stack-row:empty::before,
-.stack-row.empty::before {
-  content: "stack empty";
-  color: var(--muted);
-  font-size: 0.8em;
+.stack-row.empty { min-height: 26px; border-color: var(--line); }
+.stack-row::before {
+  content: "stack";
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-right: 6px;
 }
 
-.hand-row {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  align-items: flex-end;
-}
-.hand-row-opp { background: #16181d; }
-
-/* -------- one card, as an image or a text fallback -------- */
+/* --------------------------------------------------------- the cards ---- */
 
 .card {
   position: relative;
+  border-radius: var(--card-radius);
   cursor: pointer;
-  border-radius: 8px;
-  transition: transform 0.08s ease;
+  transition: transform 0.09s ease, filter 0.09s ease;
+  flex: 0 0 auto;
 }
-.card:hover { transform: translateY(-6px); z-index: 2; }
-.card.tapped { transform: rotate(20deg); }
-.card.tapped:hover { transform: rotate(20deg) translateY(-6px); }
-.card.selected .card-visual, .card.selected .card-fallback {
-  outline: 3px solid var(--good);
-  outline-offset: 1px;
-}
-.card.attacking .card-visual, .card.attacking .card-fallback { outline: 3px solid var(--bad); }
-.card.blocking .card-visual, .card.blocking .card-fallback { outline: 3px solid var(--accent); }
-.card.summoning-sick .card-visual, .card.summoning-sick .card-fallback { opacity: 0.7; }
-.card.opponent-card { cursor: default; }
+.card:hover { transform: translateY(-3px); z-index: 3; }
+.card.tapped { transform: rotate(90deg) scale(0.92); }
+.card.tapped:hover { transform: rotate(90deg) scale(0.96); }
+.card.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card.targetable { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.card.chosen { outline: 3px solid var(--good); outline-offset: 2px; }
+.card.dimmed { filter: brightness(0.45) saturate(0.5); }
+.card.attacking { box-shadow: 0 0 0 2px var(--bad); }
+.card.blocking { box-shadow: 0 0 0 2px var(--accent); }
 
-.card-visual {
-  display: block;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: #000;
-}
-
-/* compact: battlefield + stack. bigger: hand. Both classes land on the same
-   element (`<img class="card-visual card-sm">` / `<div class="card-fallback
-   card-sm">`), so these are compound selectors, not descendant ones. */
-.card-visual.card-sm, .card-fallback.card-sm { width: 84px; height: 117px; }
-.card-visual.card-md, .card-fallback.card-md { width: 130px; height: 181px; }
+.card-visual { display: block; border-radius: var(--card-radius); }
+.card-sm { width: 76px; }
+.card-md { width: 108px; }
+.card-lg { width: 150px; }
 
 .card-fallback {
   display: flex;
   flex-direction: column;
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.4em;
-  font-size: 0.72em;
+  gap: 2px;
+  padding: 5px;
+  background: linear-gradient(160deg, #232a38, #171c26);
+  border: 1px solid var(--line-bright);
+  border-radius: var(--card-radius);
   overflow: hidden;
 }
-.card-fallback .name { font-weight: 700; display: block; margin-bottom: 0.15em; }
-.card-fallback .type { color: var(--muted); display: block; font-size: 0.9em; }
-.card-fallback .oracle { color: var(--text); font-size: 0.85em; margin-top: 0.3em; flex: 1; overflow: hidden; }
-.card-fallback .pt { align-self: flex-end; font-weight: 700; margin-top: auto; }
+.card-fallback.card-sm { width: 76px; height: 106px; font-size: 8px; }
+.card-fallback.card-md { width: 108px; height: 151px; font-size: 10px; }
+.card-fallback .name { font-weight: 700; line-height: 1.15; }
+.card-fallback .type { color: var(--ink-dim); }
+.card-fallback .oracle { color: var(--ink-dim); flex: 1; overflow: hidden; }
+.card-fallback .pt { align-self: flex-end; font-weight: 700; }
 
-.card .badge-pt {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  background: rgba(0,0,0,0.75);
-  border-radius: 4px;
-  padding: 0 0.3em;
-  font-size: 0.72em;
-  font-weight: 700;
-}
-.card .badge-counters {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  background: var(--warn);
-  color: #201700;
-  border-radius: 4px;
-  padding: 0 0.3em;
-  font-size: 0.68em;
-  font-weight: 700;
-}
-
-/* opponent hand: card backs, count only - the visibility filter already
-   hides the contents, so the UI must not invent what it cannot see. */
 .card-back {
-  width: 84px;
-  height: 117px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
+  width: 76px;
+  height: 106px;
+  border-radius: var(--card-radius);
   background:
-    repeating-linear-gradient(45deg, #2a1440, #2a1440 6px, #391a57 6px, #391a57 12px);
-  box-shadow: inset 0 0 0 4px #1a0d2a;
+    radial-gradient(circle at 50% 40%, #3a3050 0%, #201a2c 62%, #14101c 100%);
+  border: 2px solid #4a3f63;
+  flex: 0 0 auto;
 }
 
-/* -------- hover/click large preview -------- */
+/* Badges. Everything the art itself cannot tell you: what the card *is* now
+   (P/T after layers), what is on it (counters, loyalty), whether it can act
+   (summoning sickness), and what it named as it entered (CR 614.12a). */
+.badge {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+}
+.badge-pt {
+  right: 2px;
+  bottom: 2px;
+  background: rgba(8, 10, 15, 0.9);
+  border: 1px solid var(--line-bright);
+}
+.badge-pt.buffed { color: var(--good); border-color: var(--good); }
+.badge-damage {
+  left: 2px;
+  bottom: 2px;
+  background: rgba(150, 30, 24, 0.94);
+  color: #fff;
+}
+/* A planeswalker's loyalty gets the shield it has on the real card, in the
+   corner the real card puts it, instead of being one of `counters` in a list -
+   it is the resource its abilities are paid with, not a note about it. */
+.badge-loyalty {
+  left: 2px;
+  bottom: 2px;
+  min-width: 20px;
+  text-align: center;
+  font-size: 12px;
+  padding: 3px 5px;
+  background: #16181d;
+  color: #fff;
+  border: 2px solid #c9c4b4;
+  border-radius: 4px 4px 8px 8px;
+}
+.counter-strip {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+}
+.counter-chip {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(8, 10, 15, 0.9);
+  border: 1px solid var(--line-bright);
+  text-shadow: 0 1px 2px #000;
+}
+.counter-chip.plus { border-color: var(--good); color: var(--good); }
+.counter-chip.minus { border-color: var(--bad); color: var(--bad); }
+.counter-chip.time { border-color: var(--warn); color: var(--warn); }
+/* Summoning sickness reads as a state of the card, not a label on it: the
+   permanent is greyed and carries the swirl, the way a client shows one. */
+.card.summoning-sick .card-visual, .card.summoning-sick .card-fallback { filter: grayscale(0.55) brightness(0.8); }
+.badge-sick {
+  right: 2px;
+  top: 2px;
+  background: rgba(8, 10, 15, 0.9);
+  border: 1px solid var(--line-bright);
+  color: var(--ink-dim);
+  font-size: 11px;
+}
+/* The name a Pithing Needle or a Disruptor Flute chose as it entered - the
+   whole point of the permanent, so it goes across the art, not in a tooltip. */
+.badge-named {
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  font-size: 9px;
+  padding: 3px 2px;
+  background: rgba(8, 10, 15, 0.92);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.badge-ability {
+  right: 2px;
+  top: 2px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  font-size: 9px;
+  padding: 2px 5px;
+}
+
+/* ------------------------------------------------------ mana symbols ---- */
+
+.ms { height: 0.95em; width: 0.95em; vertical-align: -0.11em; }
+.ms-lg { height: 1.25em; width: 1.25em; }
+.ms-text {
+  display: inline-block;
+  min-width: 1.05em;
+  padding: 0 2px;
+  text-align: center;
+  font-size: 0.85em;
+  font-weight: 700;
+  border-radius: 999px;
+  background: #cfc6b8;
+  color: #17161a;
+}
+.pool-group { display: inline-flex; align-items: center; gap: 1px; }
+.pool-group .n { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* -------------------------------------------------------- side panel ---- */
+
+#side-panel {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+#side-panel > div {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+#decision-box { border-color: var(--warn); }
+#decision-box h3 { color: var(--warn); }
+#action-tray { border-color: var(--accent); }
+
+.tray-step { margin: 10px 0; }
+.tray-step > .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-dim);
+  margin-bottom: 4px;
+}
+.tray-step.satisfied > .label::after { content: " ✓"; color: var(--good); }
+.option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 3px 0;
+  font-size: 12px;
+}
+label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  font-size: 11px;
+  border: 1px solid var(--line-bright);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+  background: var(--bg-sunken);
+}
+.chip.on { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.chip.player { border-style: dashed; }
+
+.pass-controls { display: flex; flex-direction: column; gap: 7px; }
+.pass-controls .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pass-controls select { flex: 1; min-width: 0; }
+.pass-controls label { font-size: 12px; color: var(--ink-dim); display: flex; gap: 5px; align-items: center; }
+#action-bar .group { border-top: 1px solid var(--line); margin-top: 9px; padding-top: 9px; }
+#action-bar .group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+#action-bar .group > .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-faint);
+  margin-bottom: 5px;
+}
+#action-bar .buttons { display: flex; flex-wrap: wrap; gap: 5px; }
+
+/* --------------------------------------------------- preview & modal ---- */
 
 .card-preview {
   position: fixed;
-  top: 4.2em;
-  right: 1em;
-  width: 300px;
-  z-index: 60;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0.6em;
+  right: 344px;
+  bottom: 14px;
+  z-index: 40;
   pointer-events: none;
+  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.75));
 }
-.card-preview img { width: 100%; border-radius: 8px; display: block; }
-.card-preview .fallback-text { font-size: 0.85em; }
-.card-preview .fallback-text .name { font-weight: 700; }
-.card-preview .fallback-text .oracle { white-space: pre-wrap; margin-top: 0.4em; }
-
-#action-bar {
-  display: flex;
-  gap: 0.5em;
-  flex-wrap: wrap;
-  margin-top: 0.6em;
-  padding: 0.6em;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.card-preview img { width: 260px; border-radius: 11px; display: block; }
+.card-preview .fallback-text {
+  width: 260px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 11px;
+  padding: 12px;
+  font-size: 12px;
 }
-
-#autopilot-banner {
-  background: #10202a;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  padding: 0.6em 1em;
-  margin-bottom: 0.6em;
-  display: flex;
-  align-items: center;
-  gap: 1em;
-  justify-content: space-between;
-}
-#autopilot-banner .why { color: var(--muted); font-size: 0.85em; }
-
-.pass-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  padding: 0.3em 0.6em;
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.pass-controls label { display: inline-flex; align-items: center; gap: 0.3em; margin: 0; }
-.pass-controls input[type="checkbox"] { width: auto; display: inline; margin: 0; }
-
-#decision-box {
-  background: #241a10;
-  border: 1px solid var(--warn);
-  border-radius: 8px;
-  padding: 1em;
-  margin-bottom: 0.8em;
-}
-#decision-box h3 { color: var(--warn); margin-top: 0; }
-#decision-box .option {
-  display: inline-block;
-  margin: 0.2em 0.3em 0.2em 0;
-}
-
-.modal[hidden] {
-  /* The page's own `.modal { display: flex }` below has the same
-     specificity as the UA stylesheet's `[hidden] { display: none }`, so
-     without this the later rule in this file would win and the modal would
-     stay visible even while `hidden` is set. */
-  display: none;
-}
+.card-preview .fallback-text .name { font-weight: 700; font-size: 14px; }
+.card-preview .fallback-text .type { color: var(--ink-dim); }
+.card-preview .fallback-text .oracle { margin-top: 7px; white-space: pre-wrap; }
 
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(4, 6, 10, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  z-index: 60;
+  padding: 20px;
 }
-.modal .modal-inner {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1.2em;
-  max-width: 40em;
-  width: 90%;
-  max-height: 80vh;
-  overflow: auto;
+.modal-inner {
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 11px;
+  padding: 18px;
+  max-width: 860px;
+  max-height: 86vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
 }
-
-pre { white-space: pre-wrap; word-break: break-word; }
-
-#raw-state-details { margin-top: 1em; color: var(--muted); }
-#raw-state { background: var(--panel); border: 1px solid var(--border); padding: 0.6em; border-radius: 6px; max-height: 40em; overflow: auto; }
-
-.fallback-box {
-  background: var(--panel2);
-  border: 1px solid var(--warn);
-  border-radius: 6px;
-  padding: 0.8em;
-  margin-top: 0.5em;
-  font-size: 0.85em;
+.modal-inner label { display: block; margin: 7px 0; font-size: 12px; }
+.modal-inner > .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-dim);
+  margin-top: 14px;
 }
-.fallback-box code, .fallback-box textarea { font-family: ui-monospace, monospace; font-size: 0.8em; }
+.zone-grid { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 14px; }
+.zone-empty { color: var(--ink-faint); font-size: 12px; }
+
+#raw-state-details { grid-area: debug; font-size: 11px; color: var(--ink-dim); }
+#raw-state { max-height: 220px; overflow: auto; background: var(--bg-sunken); padding: 8px; border-radius: 7px; }
+
+.state-error { color: var(--bad); }
+.state-running { color: var(--good); }
+.state-exited { color: var(--ink-dim); }
+
+@media (max-width: 1100px) {
+  #game { grid-template-columns: 1fr; grid-template-areas: "top" "banner" "board" "side" "debug"; height: auto; }
+  .card-preview { right: 14px; }
+  .deck-pickers { grid-template-columns: 1fr; }
+}

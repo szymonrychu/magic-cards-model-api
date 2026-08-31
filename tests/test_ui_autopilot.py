@@ -77,9 +77,11 @@ def call_stop_reason(
     simplified stand-in for it."""
     settings = settings if settings is not None else {"stopOnStack": True}
     known = json.dumps(list(autopilot.get("knownStackIds", [])))
-    autopilot_literal = (
-        f"{{target: {json.dumps(autopilot['target'])}, knownStackIds: new Set({known})}}"
-    )
+    fields = [f"knownStackIds: new Set({known})"]
+    for key in ("target", "step", "who"):
+        if key in autopilot:
+            fields.append(f"{key}: {json.dumps(autopilot[key])}")
+    autopilot_literal = "{" + ", ".join(fields) + "}"
     return run_js(
         f"autopilotStopReason({json.dumps(state)}, {autopilot_literal}, "
         f"{json.dumps(you)}, {json.dumps(settings)})"
@@ -92,7 +94,7 @@ AUTOPILOT_UNTIL_UPKEEP = {"target": "upkeep", "knownStackIds": []}
 def test_module_exports_the_two_pure_functions() -> None:
     assert APP_JS.is_file(), "ui/app.js is missing"
     exported = run_js("Object.keys(require(" + json.dumps(str(APP_JS)) + "))")
-    assert set(exported) == {"autopilotStopReason", "interpretPassOutcome"}
+    assert set(exported) == {"autopilotStopReason", "interpretPassOutcome", "sendTargets"}
 
 
 # -- stop condition: a pending decision addressed to this seat --------------
@@ -212,3 +214,68 @@ def test_interpret_pass_outcome_halts_on_a_refusal() -> None:
 def test_interpret_pass_outcome_continues_on_success() -> None:
     reason = run_js('interpretPassOutcome({"allowed": true, "outcome": "passed"})')
     assert reason is None
+
+
+# -- reaching a *named* destination: "auto-pass until <step>" (feature 3) -----
+#
+# The picker offers every step in the turn, for either player's turn, not just
+# "my upkeep". `who` says whose turn the step has to be in; a run built the
+# older way (`target` alone) still means "in my own turn", which the
+# `AUTOPILOT_UNTIL_UPKEEP` cases above already pin.
+
+
+def until(step: str, who: str) -> dict:
+    return {"step": step, "who": who, "knownStackIds": []}
+
+
+def test_halts_on_reaching_a_named_step_in_your_own_turn() -> None:
+    state = base_state(step="postcombat_main", active_player="alice")
+    reason = call_stop_reason(state, until("postcombat_main", "you"))
+    assert reason is not None
+    assert "postcombat main" in reason
+
+
+def test_does_not_halt_on_that_step_in_the_opponents_turn() -> None:
+    state = base_state(step="postcombat_main", active_player="bob")
+    assert call_stop_reason(state, until("postcombat_main", "you")) is None
+
+
+def test_halts_on_a_named_step_in_the_opponents_turn() -> None:
+    state = base_state(step="end_step", active_player="bob")
+    reason = call_stop_reason(state, until("end_step", "opponent"))
+    assert reason is not None
+    assert "opponent" in reason
+
+
+def test_does_not_halt_on_the_opponents_step_during_your_own_turn() -> None:
+    state = base_state(step="end_step", active_player="alice")
+    assert call_stop_reason(state, until("end_step", "opponent")) is None
+
+
+def test_who_any_halts_in_either_players_turn() -> None:
+    for active in ("alice", "bob"):
+        state = base_state(step="upkeep", active_player=active)
+        assert call_stop_reason(state, until("upkeep", "any")) is not None
+
+
+def test_a_different_step_does_not_halt() -> None:
+    state = base_state(step="draw", active_player="alice")
+    assert call_stop_reason(state, until("upkeep", "you")) is None
+
+
+def test_the_game_ending_outranks_the_destination() -> None:
+    """Stop conditions are checked in order, and the game being over wins -
+    a run must never keep passing into a finished game."""
+    state = base_state(step="upkeep", active_player="alice", winner="bob")
+    reason = call_stop_reason(state, until("upkeep", "you"))
+    assert "bob" in reason
+
+
+def test_a_decision_outranks_the_destination() -> None:
+    state = base_state(
+        step="upkeep",
+        active_player="alice",
+        pending_decision={"player": "alice", "kind": "may", "prompt": "Pay 2 life?"},
+    )
+    reason = call_stop_reason(state, until("upkeep", "you"))
+    assert "Pay 2 life?" in reason

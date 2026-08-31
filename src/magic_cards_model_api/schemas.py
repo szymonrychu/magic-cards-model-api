@@ -109,6 +109,19 @@ class CastRequest(BaseModel):
     freshly granted a `PlayPermission` (suspend's own free cast, CR 702.62a's
     third ability) needs no `keyword`: that permission is found and used
     automatically whenever one is live for this player and card."""
+    alternative_cost: int | str | None = None
+    """The CR 118.9 alternative cost this spell is announced under, as either
+    its `index` in `GET .../affordances/{card_id}`'s `alternative_costs` list
+    or the option's keyword/source name. This is how Force of Negation gets
+    pitched: a seat had no way to *find* an alternative cost before, and so
+    could not announce one - see `affordances.alternative_costs`. Announced
+    at CR 601.2b, ahead of targets, and mutually exclusive with `keyword`
+    (which is the same announcement for the specific keyword origin).
+    Only one alternative cost may ever be paid (CR 118.9a)."""
+    choosing: list[UUID] | None = None
+    """The objects an alternative cost requires the caster to supply - the
+    cards pitched to Force of Negation, the Mountains sacrificed to Fireblast.
+    `alternative_costs[i].requires` says how many are needed."""
     dry_run: bool = False
 
 
@@ -188,6 +201,15 @@ class PlayLandRequest(BaseModel):
 
 
 class PassPriorityRequest(BaseModel):
+    player: str
+
+
+class ConcedeRequest(BaseModel):
+    """CR 104.3a: a player may concede at any time, and leaves the game
+    immediately. No priority is required and nothing can refuse it, so unlike
+    every other action request this one has no `dry_run` - there is nothing to
+    ask permission for."""
+
     player: str
 
 
