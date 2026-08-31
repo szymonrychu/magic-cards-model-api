@@ -105,20 +105,33 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
     return "\n".join(lines)
 
 
-def turn_zero(assignment: Assignment, current_game_path: Path) -> str:
+def turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "") -> str:
+    """Turn 0. `briefing` is the rendered `current-game.md`.
+
+    It is inlined rather than referenced because the driver and the agent are
+    separate containers with separate filesystems: `current_game_path` names a
+    file only the driver can open. The guides stay as paths - `/guides` is
+    mounted in both containers, and they run to hundreds of lines each.
+    """
     guide = assignment.guide
     matchups = (
         f"`{guide.matchups_dir}/<archetype>.json`"
         if guide is not None and guide.matchups_dir is not None
         else "(none for this deck)"
     )
+    briefing_block = (
+        f"1. Here is everything about this game (the driver wrote the same text to "
+        f"`{current_game_path}` on its own disk):\n\n{briefing}\n"
+        if briefing
+        else f"1. Read `{current_game_path}`. It names your seat, your uid, your "
+        "decklist and your guides.\n"
+    )
     return f"""You are playing a real game of Magic: the Gathering against a human,
 who is playing through a web UI against the same game server you act on.
 
 ## Before you take a single action
 
-1. Read `{current_game_path}`. It names your seat, your uid, your decklist and
-   your guides.
+{briefing_block}
 2. Read your deck's gameplan guide, and any notes you have already written
    about this deck. You are expected to arrive at the first action already
    knowing what this deck is trying to do.

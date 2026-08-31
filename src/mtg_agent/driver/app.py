@@ -113,9 +113,13 @@ def build_app(
         settings.workspace.mkdir(parents=True, exist_ok=True)
         settings.memory_root.mkdir(parents=True, exist_ok=True)
         current_game_path = settings.workspace / "current-game.md"
-        current_game_path.write_text(render_current_game(assignment, settings.memory_root))
+        # The agent lives in another container and cannot open this file, so
+        # turn 0 carries its contents; the path is kept for the driver's own
+        # operators to read.
+        briefing = render_current_game(assignment, settings.memory_root)
+        current_game_path.write_text(briefing)
 
-        turn_id = push_turn(turn_zero(assignment, current_game_path))
+        turn_id = push_turn(turn_zero(assignment, current_game_path, briefing))
         with lock:
             current.update(
                 assignment=assignment,

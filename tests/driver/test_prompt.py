@@ -149,3 +149,14 @@ def test_reflection_turn_for_an_unguided_deck_still_writes_notes(tmp_path):
     memory = tmp_path / "memory"
     text = reflection_turn(assignment(None, 0.1), memory, outcome="alice won")
     assert str(memory / "unknown-deck" / "games" / "g-1.md") in text
+
+
+def test_turn_zero_inlines_the_briefing_when_given_one(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md", briefing="# This game\nBODY")
+    assert "BODY" in text
+
+
+def test_turn_zero_without_a_briefing_still_points_at_the_file(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert str(tmp_path / "current-game.md") in text
+    assert "BODY" not in text

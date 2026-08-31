@@ -1,0 +1,84 @@
+# Bring the whole thing up from the magic-cards-model-api directory:
+#
+#     cp .env.example .env   # then put your real ANTHROPIC_API_KEY in it
+#     docker compose up --build
+#
+# Then play at http://127.0.0.1:8000/play/ and pick a deck. The AI seat is
+# the continuous agent: it keeps its context across games and writes what it
+# learned into ./memory.
+#
+# Every build context is `..` because the engine is a path dependency at
+# ../magic-cards-model.
+
+services:
+  game:
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - AI_SEAT_MODE=wrapper
+      - DRIVER_URL=http://driver:8090
+    volumes:
+      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      - scryfall-cache:/app/.scryfall-cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx;httpx.get('http://127.0.0.1:8000/api/health').raise_for_status()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  agent:
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile.agent
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+    depends_on:
+      game:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      - MODEL=${CLAUDE_MODEL:-sonnet}
+      - HTTP_ADDR=:8080
+      - INTERNAL_ADDR=127.0.0.1:8090
+      - WORKSPACE=/workspace
+      - HOME_DIR=/agent-home
+      - HOOK_COMMAND=/app/.venv/bin/cc-stop-hook
+      - CCW_INTERNAL_URL=http://127.0.0.1:8090/internal/turn-complete
+      - CCW_RESULT_JSON=/workspace/result.json
+      - BASE_MCP_PATH=/app/deploy/mcp.base.json
+      - TURN_TIMEOUT_SECONDS=1800
+      - BOOT_TIMEOUT_SECONDS=120
+      - LOG_LEVEL=info
+    volumes:
+      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      - ./memory:/workspace/memory
+    restart: unless-stopped
+
+  driver:
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile
+    command: ["python", "-m", "mtg_agent.driver"]
+    depends_on:
+      - agent
+    ports:
+      - "8090:8090"
+    environment:
+      - GAME_API=http://game:8000
+      - WRAPPER_API=http://agent:8080
+      - DRIVER_SELF_URL=http://driver:8090
+      - GUIDES_ROOT=/guides
+      - MEMORY_ROOT=/workspace/memory
+      - DRIVER_WORKSPACE=/driver-workspace
+      - HTTP_ADDR=:8090
+    volumes:
+      - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
+      - ./memory:/workspace/memory
+
+volumes:
+  scryfall-cache:

@@ -103,7 +103,9 @@ def test_dispatch_pushes_turn_zero_with_its_own_callback_url(world):
 def test_turn_zero_never_carries_the_opponents_list(world):
     client, _, submitted, _ = world
     dispatch(client)
-    lowered = submitted[0]["text"].lower()
+    text = submitted[0]["text"]
+    assert "alice" in text, "the opponent's seat NAME is public at a real table"
+    lowered = text.lower()
     assert "opponent's decklist" not in lowered
     assert "opponent's deck" not in lowered
 
@@ -176,3 +178,9 @@ def test_settings_from_env_reads_the_container_wiring():
     assert settings.game_api == "http://game:8000"
     assert settings.guides_root == Path("/guides")
     assert settings.memory_root == Path("/workspace/memory")
+
+
+def test_turn_zero_inlines_the_decklist_because_containers_share_no_disk(world):
+    client, _, submitted, _ = world
+    dispatch(client)
+    assert "4 Psychic Frog" in submitted[0]["text"]
