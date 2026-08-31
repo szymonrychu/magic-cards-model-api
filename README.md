@@ -19,6 +19,42 @@ prompt to run by hand in another terminal - the game is fully playable either
 way. See `ai_seat.py` and `docs/ai_seat_brief.md` for the mechanism and the
 brief the agent is given.
 
+## Play against a continuous agent
+
+`docker compose up --build` brings up three containers: the game (this repo,
+with the `/play/` UI), an **agent** running one long-lived interactive
+`claude` under a PTY, and a **driver** that tells the agent what it is
+playing.
+
+The difference from the bundled AI seat is memory. The bundled seat is a
+one-shot `claude --print` that forgets the game when it ends. The agent
+container keeps one claude session alive across games, so it builds a read on
+a matchup and can act on what happened last time.
+
+What it knows before its first action:
+
+- its own decklist, and which guided deck under `$MTG_DECKS/decks/` that is;
+- that deck's `GAMEPLAN_GUIDE.md`, `SIDEBOARD_GUIDE.md` and per-matchup files;
+- every note it has written itself, under `./memory/<deck>/`.
+
+What it is deliberately NOT told: anything about your deck. It works the
+matchup out from the cards you play, then opens the matching guide. Getting
+that read right sooner is what the notes are for.
+
+After the game it writes `./memory/<deck>/games/<game-id>.md` and revises
+`./memory/<deck>/vs-<archetype>.md`. That directory is a host bind-mount, so
+it survives every rebuild - and you can read and edit it yourself.
+
+| what | where |
+|---|---|
+| play | http://127.0.0.1:8000/play/ |
+| agent turns, probe, interrupt | http://127.0.0.1:8080/v1/... |
+| which deck the driver identified | http://127.0.0.1:8090/status |
+| the agent's notes | `./memory/` |
+
+Set `AI_SEAT_MODE=subprocess` (the default outside compose) to go back to the
+one-shot seat.
+
 ## Run it
 
 One command, from this repo:

@@ -1,0 +1,9 @@
+# Paths are relative to the build context, which is the PARENT directory -
+# see docker-compose.yml. Keeping the host virtualenvs and caches out of the
+# context matters twice over: they are large, and a copied-in .venv points at
+# host paths that `uv sync` inside the image would then have to fight.
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+**/.git

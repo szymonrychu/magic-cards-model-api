@@ -1,0 +1,33 @@
+# The agent: the wrapper as PID 1, supervising an interactive claude.
+FROM python:3.13-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    NODE_MAJOR=22
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates git gnupg \
+ && curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+COPY magic-cards-model /magic-cards-model
+COPY magic-cards-model-api /app
+RUN uv sync --frozen --no-dev || uv sync --no-dev
+ENV PATH="/app/.venv/bin:${PATH}"
+
+# claude gets its own layer so bumping it rebuilds only this step.
+ARG CLAUDE_CODE_VERSION=latest
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && claude --version
+
+RUN mkdir -p /workspace /agent-home
+ENV HOME=/agent-home \
+    HOME_DIR=/agent-home \
+    WORKSPACE=/workspace
+
+EXPOSE 8080
+CMD ["python", "-m", "mtg_agent.wrapper"]

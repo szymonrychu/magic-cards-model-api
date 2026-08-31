@@ -26,3 +26,7 @@ run = "uv run ruff check ."
 [tasks.fmt]
 description = "Ruff format and fix"
 run = "uv run ruff format . && uv run ruff check --fix ."
+
+[tasks.compose]
+description = "Bring up game + continuous agent + driver"
+run = "docker compose up --build"

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "mtg": {
+      "command": "python",
+      "args": [
+        "-m",
+        "magic_cards_model_api.mcp",
+        "--api",
+        "http://game:8000"
+      ]
+    },
+    "spellslinger": {
+      "type": "http",
+      "url": "https://mcp.szymonrichert.pl/mcp"
+    }
+  }
+}
