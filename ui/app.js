@@ -90,6 +90,11 @@ let game = {
     // with attackers on the board. Declaring blockers is a turn-based action
     // that does not use the stack (CR 509.1), so `stopOnStack` never sees it.
     stopWhenAttacked: true,
+    // The same shape for the other half of combat: stop in your own
+    // declare-attackers step. Declaring attackers is a turn-based action that
+    // does not use the stack either (CR 508.1), and passing through it simply
+    // produces no attack, silently.
+    stopWhenYouCanAttack: true,
     // Casting releases priority so the spell resolves, unless the player
     // asks to keep it (CR 117.3c). Remembered across casts this session.
     holdPriority: false,
@@ -1290,6 +1295,11 @@ function toggleStopWhenAttackedSetting(checked) {
 }
 window.toggleStopWhenAttackedSetting = toggleStopWhenAttackedSetting;
 
+function toggleStopWhenYouCanAttackSetting(checked) {
+  game.settings.stopWhenYouCanAttack = checked;
+}
+window.toggleStopWhenYouCanAttackSetting = toggleStopWhenYouCanAttackSetting;
+
 /**
  * Show a refusal or an error in the page, never in a native dialog.
  *
@@ -1361,9 +1371,12 @@ function autopilotLabel(autopilot) {
  *
  * Returns a human-readable stop reason, or `null` to keep running. Checked
  * in order: the game ending, a decision addressed to this seat, the named
- * destination being reached, then (gated by `settings.stopWhenAttacked`, on
- * by default) this seat being the defending player in a declare-blockers step
- * with attackers declared, then (gated by `settings.stopOnStack`, on by
+ * destination being reached, then (gated by `settings.stopWhenYouCanAttack`,
+ * on by default) this seat's own declare-attackers step, then (gated by
+ * `settings.stopWhenAttacked`, on by default) this seat being the defending
+ * player in a declare-blockers step with attackers declared - the two halves
+ * of combat, neither of which the stack condition can ever see - then (gated
+ * by `settings.stopOnStack`, on by
  * default) a new object having arrived on the stack, which covers "the
  * opponent cast something" and "a trigger went on the stack" identically -
  * from this seat's point of view both are just "something new is here".
@@ -1381,28 +1394,77 @@ function autopilotStopReason(state, autopilot, you, settings) {
   if (state.pending_decision && state.pending_decision.player === you) {
     return `a decision is waiting for you: ${state.pending_decision.prompt}`;
   }
+  // "Until my precombat main", asked while standing in your precombat main,
+  // means the NEXT one - a run that stopped where it started would be a
+  // no-op, which is never what the player meant. `startedTurn`/`startedStep`
+  // (stamped by `startAutopilot`, cleared by `forgetStartingStep` the moment
+  // the board leaves that occurrence) name the one occurrence this run began
+  // inside, and only that one is declined as a stopping point. A target the
+  // player was not already standing in never matches the pair at all, so it
+  // behaves exactly as it always did - nothing is skipped unconditionally,
+  // and an autopilot object built without the pair (the older shape) matches
+  // nothing here either.
+  //
+  // The same "not the occurrence you started in" applies to the two combat
+  // conditions below, for the same reason and not merely by analogy: clicking
+  // "auto-pass until my main 2" while standing in your own declare-attackers
+  // step is the player having looked at combat and chosen to move on, and a
+  // condition that fired on that very state would stop the run before it
+  // moved at all - a dead button rather than a safeguard. The next combat is
+  // still stopped for, because by then the stamp is long cleared.
+  const sameOccurrenceThisRunStartedIn =
+    autopilot.startedStep !== undefined &&
+    state.step === autopilot.startedStep &&
+    state.turn_number === autopilot.startedTurn;
   const wantedStep = autopilot.step || autopilot.target;
   const who = autopilot.who || "you";
   if (wantedStep && state.step === wantedStep) {
     const isYours = state.active_player === you;
     const whoMatches = who === "any" || (who === "you") === isYours;
-    // "Until my precombat main", asked while standing in your precombat main,
-    // means the NEXT one - a run that stopped where it started would be a
-    // no-op, which is never what the player meant. `startedTurn`/`startedStep`
-    // (stamped by `startAutopilot`, cleared by `forgetStartingStep` the moment
-    // the board leaves that occurrence) name the one occurrence this run began
-    // inside, and only that one is declined as a stopping point. A target the
-    // player was not already standing in never matches the pair at all, so it
-    // behaves exactly as it always did - nothing is skipped unconditionally,
-    // and an autopilot object built without the pair (the older shape) matches
-    // nothing here either.
-    const sameOccurrenceThisRunStartedIn =
-      autopilot.startedStep !== undefined &&
-      state.step === autopilot.startedStep &&
-      state.turn_number === autopilot.startedTurn;
     if (whoMatches && !sameOccurrenceThisRunStartedIn) {
       return `reached ${autopilotLabel(autopilot)}`;
     }
+  }
+  // Your own declare-attackers step, with nothing on the stack to notice it
+  // by either.
+  //
+  // Declaring attackers is a turn-based action and "doesn't use the stack"
+  // (CR 508.1; CR 703.4i puts it immediately after the step begins - both
+  // looked up with `knowledge_search` in the session that wrote this), and
+  // `decisions.py` keeps `DECLARE_ATTACKERS` out of `ANSWERABLE_KINDS` for
+  // the same reason it keeps `DECLARE_BLOCKERS` out: attacking has its own
+  // action (`actions/attack`) rather than the decision mailbox. So the two
+  // conditions above cannot see this one any more than they can blocking.
+  //
+  // The cost is milder than the blockers case, and worth stating plainly
+  // rather than overstating: passing through your own declare-attackers step
+  // loses you an attack, not the game. What makes it worth stopping for is
+  // that it is silent - the engine's `_ask_declaration` falls through to
+  // `default_answer`, documented as "an unscripted player declares nobody,
+  // which is always legal", so the turn just produces no attack and nothing
+  // anywhere says why.
+  //
+  // A run aimed past combat - "until my main 2", "until my end step" - is
+  // stopped here every turn, and that is the intended behaviour rather than
+  // an oversight: the default is on precisely so the player is asked before
+  // the chance goes by, and one click on the checkbox clears it for the rest
+  // of the session if they meant to skip combat all along.
+  //
+  // Deliberately NOT checked here: whether you control any creature that
+  // could legally attack, or whether attacking is a good idea. Summoning
+  // sickness, defender, tap state, and attack restrictions and requirements
+  // are engine questions, and this file defers to the engine rather than
+  // reimplementing its rules in JS (see the two rules in the header comment
+  // at the top of this file). "It is your declare-attackers step" is the
+  // right granularity; the player decides whether there is anything to do
+  // with it.
+  if (
+    settings.stopWhenYouCanAttack &&
+    !sameOccurrenceThisRunStartedIn &&
+    state.step === "declare_attackers" &&
+    state.active_player === you
+  ) {
+    return "your declare attackers step - declare attackers or carry on";
   }
   // Being attacked, with nothing on the stack to notice it by.
   //
@@ -1426,6 +1488,7 @@ function autopilotStopReason(state, autopilot, you, settings) {
   // granularity; the player decides whether they can do anything about it.
   if (
     settings.stopWhenAttacked &&
+    !sameOccurrenceThisRunStartedIn &&
     state.step === "declare_blockers" &&
     state.active_player !== you
   ) {
@@ -2319,6 +2382,10 @@ function renderActionBar(state, you) {
       <label title="Stop when the opponent attacks and it is your declare-blockers step - the safe default. Blocking is a turn-based action that never touches the stack, so the setting above cannot catch it. Turn it off to run through the opponent's whole turn, attack included.">
         <input type="checkbox" ${game.settings.stopWhenAttacked ? "checked" : ""} onchange="toggleStopWhenAttackedSetting(this.checked)" />
         stop when you are being attacked
+      </label>
+      <label title="Stop in your own declare-attackers step - the safe default. Attacking is a turn-based action that never touches the stack, and passing through it declares no attackers without saying so. Turn it off to run past your own combat.">
+        <input type="checkbox" ${game.settings.stopWhenYouCanAttack ? "checked" : ""} onchange="toggleStopWhenYouCanAttackSetting(this.checked)" />
+        stop when you could attack
       </label>
     </div></div>`);
 

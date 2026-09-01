@@ -131,12 +131,16 @@ what "until my upkeep" means when you say it out loud. `untap` and `cleanup`
 are not offered: nobody receives priority in either (CR 502.4, CR 514.3).
 
 It stops early, and tells you which of these stopped it: the destination is
-reached, something new lands on the stack, a decision is addressed to you, you
-are being attacked in your own declare-blockers step, a pass is refused, the
-game ends, or the time bound runs out (call it again).
+reached, something new lands on the stack, a decision is addressed to you, it
+is your own declare-attackers step, you are being attacked in your own
+declare-blockers step, a pass is refused, the game ends, or the time bound runs
+out (call it again). A combat stop never fires on the step you were standing in
+when you started the run - asking to pass past combat from inside it is you
+having already looked at combat.
 
-Two of those stops can be switched off, and both defend you against losing the
-game, so leave them on unless you have a reason you could say out loud:
+Three of those stops can be switched off, and each defends you against
+something you cannot see going wrong, so leave them on unless you have a reason
+you could say out loud:
 
 - `--no-stop-on-stack` runs through the opponent's spells and every trigger.
   You will not get to respond to any of it.
@@ -145,6 +149,16 @@ game, so leave them on unless you have a reason you could say out loud:
   turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
   cannot catch it for you. Only for a board that cannot block anyway, or a
   life total the attack cannot reach.
+- `--no-stop-when-you-can-attack` runs through your own declare-attackers
+  step. You will attack with nothing that turn. Declaring attackers is a
+  turn-based action too (CR 508.1), so again the stack stop cannot see it, and
+  skipping it is silent: the engine treats a player who never declares as
+  declaring nobody, which is always legal, so the turn produces no attack and
+  nothing says why. Expect this one to stop you every turn on a run aimed past
+  combat - `--until postcombat_main`, `--until end_step` - and expect that,
+  because it is asking you before your attack goes by. Switching it off is the
+  deliberate "I am not attacking this turn", never a way to make the command
+  quieter.
 
 **Do not reach for this every time.** How you pass is information your opponent
 is reading. Sitting on your priority with mana up represents a trick whether or

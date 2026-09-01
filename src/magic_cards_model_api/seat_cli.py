@@ -382,6 +382,20 @@ def build_parser() -> argparse.ArgumentParser:
             "the attack cannot reach"
         ),
     )
+    passer.add_argument(
+        "--no-stop-when-you-can-attack",
+        action="store_true",
+        help=(
+            "with --until: run straight through your own declare-attackers "
+            "step. YOU WILL ATTACK WITH NOTHING that turn. Declaring attackers "
+            "does not use the stack either (CR 508.1), and skipping it is "
+            "silent - the engine treats a player who never declares as "
+            "declaring nobody, so the turn just produces no attack and nothing "
+            "says why. Left on, a run aimed past combat stops in your "
+            "declare-attackers step every turn, which is the point. Switching "
+            "it off is the deliberate 'I am not attacking this turn'"
+        ),
+    )
 
     resolve = sub.add_parser(
         "resolve", help="resolve the top of the stack (only if a pass left it unresolved)"
@@ -633,6 +647,7 @@ def run(argv: list[str] | None = None) -> int:
             whose_turn=args.until_whose_turn,
             stop_on_stack=not args.no_stop_on_stack,
             stop_when_attacked=not args.no_stop_when_attacked,
+            stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
             max_seconds=args.max_seconds,
         )
         print(json.dumps(result, indent=1, sort_keys=True))

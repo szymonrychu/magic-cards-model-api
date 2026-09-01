@@ -244,7 +244,13 @@ def test_the_attacking_player_is_not_stopped_in_the_same_step() -> None:
         board("postcombat_main", 3, "alice", combat={"attacks": TWO_ATTACKS}),
     ]
 
-    result = run_until_stop(start, "postcombat_main", "you", timeline)
+    # `stopWhenYouCanAttack` off: this timeline crosses alice's own
+    # declare-attackers step, which that setting stops for by design, and this
+    # test is about the blockers condition rather than that one. See
+    # `tests/test_ui_autopilot_attackers.py` for its own coverage.
+    result = run_until_stop(
+        start, "postcombat_main", "you", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"]["step"] == "postcombat_main", result
     assert "declare_blockers@3" in result["passed_through"], result
@@ -365,8 +371,17 @@ def test_the_checkbox_is_rendered_next_to_the_stop_on_stack_one() -> None:
     assert "stop when anything lands on the stack" in html, html
     priority_group = html.split("Priority")[1].split('<div class="label">')[0]
     assert "toggleStopWhenAttackedSetting" in priority_group, priority_group
-    # Checked by default, so a player who never opens the panel is protected.
-    assert priority_group.count('type="checkbox" checked') == 2, priority_group
+    # Each safe default is checked by default, so a player who never opens the
+    # panel gets all of them. Asserted by name rather than by counting checked
+    # boxes: a count breaks on the next setting added and says nothing about
+    # which one is wrong, which is exactly what happened when the
+    # declare-attackers setting arrived.
+    for toggle in (
+        "toggleStopOnStackSetting",
+        "toggleStopWhenAttackedSetting",
+        "toggleStopWhenYouCanAttackSetting",
+    ):
+        assert f'type="checkbox" checked onchange="{toggle}' in priority_group, priority_group
 
 
 # -- the three existing stop conditions, and the next-occurrence guard -------
@@ -442,7 +457,12 @@ def test_unticking_stop_on_stack_still_lets_the_run_continue() -> None:
 def test_reaching_the_destination_still_stops_the_run() -> None:
     timeline = [board(step, 1) for step in TURN_STEPS[TURN_STEPS.index("draw") :]]
 
-    result = run_until_stop(board("upkeep", 1), "end_step", "you", timeline)
+    # `stopWhenYouCanAttack` off: this timeline crosses alice's own
+    # declare-attackers step, which that setting stops for by design, and this
+    # test is about the destination check rather than that one.
+    result = run_until_stop(
+        board("upkeep", 1), "end_step", "you", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"]["reason"] == "reached your end step", result
     assert result["stopped"]["step"] == "end_step"
@@ -459,7 +479,12 @@ def test_the_next_occurrence_guard_still_holds() -> None:
         + turn_cycle(3, "alice")
     )
 
-    result = run_until_stop(start, "precombat_main", "you", timeline)
+    # `stopWhenYouCanAttack` off: this timeline crosses alice's own
+    # declare-attackers step twice, which that setting stops for by design, and
+    # this test is about the next-occurrence guard rather than that one.
+    result = run_until_stop(
+        start, "precombat_main", "you", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"]["turn"] == 3, result
     assert result["stopped"]["step"] == "precombat_main"

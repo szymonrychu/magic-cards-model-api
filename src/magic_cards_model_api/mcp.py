@@ -810,6 +810,7 @@ def build_server(seats: Seats) -> MCPServer:
         until_whose_turn: str = "mine",
         stop_on_stack: bool = True,
         stop_when_attacked: bool = True,
+        stop_when_you_can_attack: bool = True,
     ) -> str:
         """Pass priority - "I am done for now". If everyone passes with
         spells on the stack, the top of the stack resolves. If everyone
@@ -844,16 +845,22 @@ def build_server(seats: Seats) -> MCPServer:
 
         The run stops, and the answer's `stopped_because` says which of these
         it was: the destination is reached; a decision is addressed to you
-        (CR 608.2d); something new lands on the stack; you are being attacked
-        and it is your declare-blockers step; a pass is refused; the game
-        ends; or `max_seconds` runs out, which comes back as an ordinary
-        answer with `finished: false` - call again to keep going. `passes`
-        counts the priorities it actually gave up.
+        (CR 608.2d); something new lands on the stack; it is your own
+        declare-attackers step; you are being attacked and it is your
+        declare-blockers step; a pass is refused; the game ends; or
+        `max_seconds` runs out, which comes back as an ordinary answer with
+        `finished: false` - call again to keep going. `passes` counts the
+        priorities it actually gave up.
 
-        ## The two stop conditions you can switch off
+        A combat stop never fires on the step the run *started* in, the same
+        way the destination never does: asking to auto-pass past combat while
+        already standing in that step is you having looked at combat and moved
+        on, and stopping there would make the call do nothing at all.
 
-        Both default to true, because both defend against something that can
-        lose the game outright. They are the same two checkboxes the human
+        ## The three stop conditions you can switch off
+
+        All three default to true, because each defends against something you
+        cannot see going wrong. They are the same three checkboxes the human
         player has in their own auto-pass panel, and they mean the same thing
         there, so you and your opponent never stop in different places.
 
@@ -874,6 +881,23 @@ def build_server(seats: Seats) -> MCPServer:
           whether any block would be *legal* (evasion, menace, protection,
           CR 509.1b) - that is the engine's job, and you decide what to do
           with the stop.
+        - `stop_when_you_can_attack=false` runs straight through your own
+          declare-attackers step. **You will attack with nothing that turn.**
+          Declaring attackers is a turn-based action that "doesn't use the
+          stack" too (CR 508.1), so again nothing lands on the stack to catch.
+          This costs you an attack rather than the game, and the reason it
+          still stops by default is that skipping it is *silent*: the engine
+          treats a player who never declares as declaring nobody, which is
+          always legal, so the turn simply produces no attack and nothing
+          anywhere tells you why. Leaving it on means a run aimed past combat
+          - `until="postcombat_main"`, `until="end_step"` - stops in your
+          declare-attackers step every one of your turns. That is the point:
+          you are being asked before the attack goes by. Switching it off is
+          the deliberate statement "I am not attacking this turn", not a way
+          to make the call quieter. It does not check whether you control a
+          creature that could legally attack (summoning sickness, defender,
+          tap state, CR 508.1's restrictions and requirements) - that is the
+          engine's job too.
 
         ## Passing by hand is still a play
 
@@ -898,6 +922,7 @@ def build_server(seats: Seats) -> MCPServer:
                     whose_turn=until_whose_turn,
                     stop_on_stack=stop_on_stack,
                     stop_when_attacked=stop_when_attacked,
+                    stop_when_you_can_attack=stop_when_you_can_attack,
                     max_seconds=max_seconds,
                 ),
                 indent=1,

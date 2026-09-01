@@ -1106,6 +1106,7 @@ def autopass_stop_reason(
     *,
     stop_on_stack: bool = True,
     stop_when_attacked: bool = True,
+    stop_when_you_can_attack: bool = True,
 ) -> str | None:
     """Whether this auto-pass run must stop, and why - a pure function of the
     board, so both transports and the tests exercise the real conditions
@@ -1122,29 +1123,54 @@ def autopass_stop_reason(
        until answered, and answering is the only legal move;
     3. the named destination is reached (next occurrence, never the one the
        run started in);
-    4. this seat is the defending player in a declare-blockers step with
+    4. this seat is the active player in its own declare-attackers step,
+       unless `stop_when_you_can_attack` is off;
+    5. this seat is the defending player in a declare-blockers step with
        attackers declared, unless `stop_when_attacked` is off;
-    5. something new is on the stack, unless `stop_on_stack` is off.
+    6. something new is on the stack, unless `stop_on_stack` is off.
 
-    Condition 4 is the one that is not merely convenience. **Declaring blockers
-    is a turn-based action that "doesn't use the stack" (CR 509.1, verified
-    with `knowledge_search` in the session that wrote this), so condition 5 can
-    never see it** - nothing lands on the stack when the opponent attacks. Nor
-    can condition 2: `decisions.py` keeps `DECLARE_BLOCKERS` out of
-    `ANSWERABLE_KINDS` because blocking has its own action
-    (`actions/declare-blockers`) rather than the decision mailbox, so
-    `pending_decision` is never set for it. Without this check a seat running
-    "until my upkeep" through the opponent's turn sails through its own
-    declare-blockers step and takes the whole attack unblocked - a lost game,
-    not a slow-play annoyance.
+    Conditions 4 and 5 are the two that are not merely convenience, and they
+    exist for one shared reason: **both declarations are turn-based actions
+    that "doesn't use the stack" (CR 508.1 for attackers, CR 509.1 for
+    blockers; CR 703.4i and CR 703.4j put each immediately after its step
+    begins - all verified with `knowledge_search` in the session that wrote
+    this), so condition 6 can never see either of them.** Nor can condition 2:
+    `decisions.py` keeps `DECLARE_ATTACKERS` and `DECLARE_BLOCKERS` out of
+    `ANSWERABLE_KINDS` because each has its own action (`actions/attack`,
+    `actions/declare-blockers`) rather than the decision mailbox, so
+    `pending_decision` is never set for either.
 
-    Deliberately NOT checked in condition 4: whether any creature this seat
-    controls could legally block any of these attackers. Evasion, menace,
-    protection and blocking restrictions (CR 509.1b) are engine questions, and
-    guessing at them here would be a worse bug than the one this prevents.
-    "You are being attacked and the game is asking you to block" is the right
-    granularity - the same granularity `ui/app.js` uses, so the human's
-    checkbox and this parameter mean exactly the same thing.
+    The two costs are different and worth stating separately rather than
+    lumping together:
+
+    - without condition 5, a seat running "until my upkeep" through the
+      opponent's turn sails through its own declare-blockers step and takes
+      the whole attack unblocked - a lost game, not a slow-play annoyance;
+    - without condition 4, a seat running "until my postcombat main" passes
+      its own declare-attackers step and simply does not attack. That loses an
+      attack rather than the game, and what makes it worth stopping for is
+      that it is *silent*: the engine's `_ask_declaration`
+      (`machines/decisions.py`) falls through to its default answer, and "an
+      unscripted player declares nobody, which is always legal", so the turn
+      produces no attack and nothing anywhere says why.
+
+    Both are skipped for the occurrence the run *started in*, exactly as
+    condition 3 is, and not merely by analogy: asking to auto-pass past combat
+    while already standing in that very step is a seat that has looked at
+    combat and chosen to move on, and a condition firing on that state would
+    stop the run before it moved at all - a dead call rather than a safeguard.
+    The next combat is still stopped for, because by then
+    `forget_starting_occurrence` has cleared the stamp.
+
+    Deliberately NOT checked in either: whether this seat controls a creature
+    that could legally attack, or block any of these attackers. Summoning
+    sickness, defender, tap state, evasion, menace, protection and the whole
+    of CR 508.1's and CR 509.1's restrictions and requirements are engine
+    questions, and guessing at them here would be a worse bug than the ones
+    this prevents. "It is your declare-attackers step" and "you are being
+    attacked and the game is asking you to block" are the right granularity -
+    the same granularity `ui/app.js` uses, so the human's two checkboxes and
+    these two parameters mean exactly the same thing.
     """
     if state.get("winner"):
         return f"game over - {state['winner']} won"
@@ -1156,21 +1182,39 @@ def autopass_stop_reason(
     if pending is not None and pending.get("player") == player:
         return f"a decision is waiting for you: {pending.get('prompt')}"
 
+    # Hoisted above all three conditions that use it - the destination and
+    # both combat stops - rather than computed inside the destination check,
+    # because "not the occurrence this run started in" is one rule that all
+    # three obey. `ui/app.js` hoists the same value for the same reason.
+    same_occurrence_this_run_started_in = (
+        run.get("started_step") is not None
+        and state.get("step") == run["started_step"]
+        and state.get("turn_number") == run["started_turn"]
+    )
+
     wanted = run.get("step")
     whose = run.get("whose_turn") or "mine"
     if wanted and state.get("step") == wanted:
         is_yours = state.get("active_player") == player
         whose_matches = whose == "any" or (whose == "mine") == is_yours
-        same_occurrence_this_run_started_in = (
-            run.get("started_step") is not None
-            and state.get("step") == run["started_step"]
-            and state.get("turn_number") == run["started_turn"]
-        )
         if whose_matches and not same_occurrence_this_run_started_in:
             return f"reached {autopass_label(run)}"
 
     if (
+        stop_when_you_can_attack
+        and not same_occurrence_this_run_started_in
+        and state.get("step") == "declare_attackers"
+        and state.get("active_player") == player
+    ):
+        return (
+            "it is your declare-attackers step: declaring attackers does not use "
+            "the stack (CR 508.1), so nothing else here would have woken you - "
+            "attack, or carry on"
+        )
+
+    if (
         stop_when_attacked
+        and not same_occurrence_this_run_started_in
         and state.get("step") == "declare_blockers"
         and state.get("active_player") is not None
         and state.get("active_player") != player
@@ -1204,6 +1248,7 @@ def pass_until(
     whose_turn: str = "mine",
     stop_on_stack: bool = True,
     stop_when_attacked: bool = True,
+    stop_when_you_can_attack: bool = True,
     max_seconds: float = DEFAULT_MAX_SECONDS,
     poll_seconds: float = POLL_SECONDS,
 ) -> dict[str, Any]:
@@ -1258,6 +1303,7 @@ def pass_until(
             seat.player,
             stop_on_stack=stop_on_stack,
             stop_when_attacked=stop_when_attacked,
+            stop_when_you_can_attack=stop_when_you_can_attack,
         )
         if reason is not None:
             return answer(state, reason)

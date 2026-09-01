@@ -151,7 +151,13 @@ def test_naming_the_step_you_are_standing_in_means_the_next_one() -> None:
         + turn_cycle(3, "alice")
     )
 
-    result = run_until_stop(start, "precombat_main", "you", timeline)
+    # `stopWhenYouCanAttack` off: this timeline crosses alice's own
+    # declare-attackers step, which that setting stops for by design, and this
+    # test is about which occurrence of the target the run stops at rather than
+    # that one. See `tests/test_ui_autopilot_attackers.py` for its coverage.
+    result = run_until_stop(
+        start, "precombat_main", "you", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"] is not None, "the run never stopped at all"
     assert result["stopped"]["turn"] == 3, result
@@ -171,7 +177,12 @@ def test_a_step_you_are_not_standing_in_still_stops_at_its_first_occurrence() ->
         turn_cycle(2, "bob")
     )
 
-    result = run_until_stop(start, "end_step", "you", timeline)
+    # `stopWhenYouCanAttack` off: this timeline crosses alice's own
+    # declare-attackers step, which that setting stops for by design, and this
+    # test is about the target's first occurrence rather than that one.
+    result = run_until_stop(
+        start, "end_step", "you", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"]["turn"] == 1, result
     assert result["stopped"]["step"] == "end_step"
@@ -198,7 +209,12 @@ def test_any_still_means_whichever_comes_first() -> None:
     start = board("upkeep", 1)
     timeline = turn_cycle(1, "alice") + turn_cycle(2, "bob")
 
-    result = run_until_stop(start, "upkeep", "any", timeline)
+    # `stopWhenYouCanAttack` off: this timeline crosses alice's own
+    # declare-attackers step, which that setting stops for by design, and this
+    # test is about what "any" means rather than that one.
+    result = run_until_stop(
+        start, "upkeep", "any", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"]["turn"] == 2, result
     assert result["stopped"]["active"] == "bob"
@@ -211,7 +227,13 @@ def test_an_opponents_step_you_are_standing_in_also_means_the_next_one() -> None
     start = board("end_step", 2, "bob")
     timeline = [board("end_step", 2, "bob")] + turn_cycle(3, "alice") + turn_cycle(4, "bob")
 
-    result = run_until_stop(start, "end_step", "opponent", timeline)
+    # `stopWhenYouCanAttack` off: alice's turn 3 lies between bob's two end
+    # steps, so this timeline crosses her own declare-attackers step, which
+    # that setting stops for by design; this test is about the occurrence guard
+    # rather than that one.
+    result = run_until_stop(
+        start, "end_step", "opponent", timeline, settings={"stopWhenYouCanAttack": False}
+    )
 
     assert result["stopped"]["turn"] == 4, result
     assert result["stopped"]["active"] == "bob"

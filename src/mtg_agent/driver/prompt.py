@@ -260,12 +260,15 @@ Naming the step you are standing in means its NEXT occurrence, never this one -
 `until="upkeep"` asked during your upkeep is a whole turn of passing, which is
 what "until my upkeep" means when you say it out loud. The answer's
 `stopped_because` names what stopped it: the destination, something new on the
-stack, a decision addressed to you, being attacked in your own declare-blockers
-step, a refused pass, the game ending, or the time bound (call it again).
+stack, a decision addressed to you, your own declare-attackers step, being
+attacked in your own declare-blockers step, a refused pass, the game ending, or
+the time bound (call it again). A combat stop never fires on the step you were
+standing in when you started the run - asking to pass past combat from inside
+it is you having already looked at combat.
 
-Two of those stops are yours to switch off, and both defend you against losing
-the game outright, so leave them on unless you have a reason you could say out
-loud:
+Three of those stops are yours to switch off, and each defends you against
+something you cannot see going wrong, so leave them on unless you have a reason
+you could say out loud:
 
 - `stop_on_stack=False` runs through the opponent's spells and every trigger.
   You will not get to respond to any of it.
@@ -274,6 +277,16 @@ loud:
   turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
   cannot catch it for you. Only for a board that cannot block anyway, or a life
   total the attack cannot reach.
+- `stop_when_you_can_attack=False` runs through your own declare-attackers
+  step. You will attack with nothing that turn. Declaring attackers is a
+  turn-based action too (CR 508.1), so again the stack stop cannot see it, and
+  skipping it is silent: the engine treats a player who never declares as
+  declaring nobody, which is always legal, so the turn produces no attack and
+  nothing says why. Expect this one to stop you every turn on a run aimed past
+  combat - `until="postcombat_main"`, `until="end_step"` - and expect that,
+  because it is asking you before your attack goes by. Switching it off is the
+  deliberate "I am not attacking this turn", never a way to make the call
+  quieter.
 
 **Do not reach for this every time.** How you pass is information your opponent
 is reading. Sitting on your priority with mana up represents a trick whether or
