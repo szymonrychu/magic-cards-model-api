@@ -790,6 +790,11 @@ const DECISION_RENDERERS = {
   choose_a_quality: renderChoiceDecision,
   choose_a_mode: renderChoiceDecision,
   put_on_top_or_bottom: renderTopOrBottomDecision,
+  // CR 603.3b: "each player, in APNAP order, puts each triggered ability they
+  // control on the stack in any order they choose" - picked here as a
+  // resolution order, which is the way round a player actually thinks about
+  // it, and reversed on submit into the stack order the engine wants.
+  order_triggers: renderOrderTriggersDecision,
 };
 
 function renderYesNoDecision(field) {
@@ -899,6 +904,61 @@ function renderChooseTargetsDecision(pending) {
 
 function submitChooseTargets() {
   decide({ targets: $$("#decision-box input[type=checkbox]:checked").map((el) => el.value) });
+}
+
+// CR 603.3b's ordering. `pending.cards` holds `AbilityOnStack` ids, not card
+// ids, so `card_details` cannot name them the way it names a scry's cards -
+// the server has ids and nothing else to send. The player clicks them in the
+// order they want them to *resolve*, which is the only order anybody reasons
+// in ("Harrier's trigger first"), and `submitTriggerOrder` reverses that into
+// the stack order the engine asked for: bottom of the stack first, so the
+// last id sent is the first to resolve.
+
+/** Ability ids picked so far, in resolution order (first clicked resolves first). */
+let triggerOrderPicks = [];
+
+function renderOrderTriggersDecision(pending) {
+  const ids = pending.cards || [];
+  triggerOrderPicks = triggerOrderPicks.filter((id) => ids.includes(id));
+  const names = {};
+  (pending.card_details || []).forEach((card) => {
+    names[card.id] = card.name;
+  });
+  const label = (id) => names[id] || `trigger ${String(id).slice(0, 8)}`;
+  const rows = ids
+    .map((id) => {
+      const at = triggerOrderPicks.indexOf(id);
+      const rank = at === -1 ? "" : ` <em>resolves ${at + 1}${at === 0 ? "st" : at === 1 ? "nd" : at === 2 ? "rd" : "th"}</em>`;
+      return `<button class="option" ${at === -1 ? "" : "disabled"}
+        onclick="pickTriggerOrder('${escapeHtml(id)}')">${escapeHtml(label(id))}${rank}</button>`;
+    })
+    .join("");
+  const done = triggerOrderPicks.length === ids.length && ids.length > 0;
+  return `
+    <div>${rows || "(no triggers offered)"}</div>
+    <div class="hint">click your triggers in the order they should resolve -
+      first click resolves first (CR 603.3b)</div>
+    <button class="primary" ${done ? "" : "disabled"} onclick="submitTriggerOrder()">Confirm</button>
+    <button onclick="resetTriggerOrder()">Start over</button>
+  `;
+}
+
+function pickTriggerOrder(abilityId) {
+  if (!triggerOrderPicks.includes(abilityId)) triggerOrderPicks.push(abilityId);
+  render(game.state);
+}
+
+function resetTriggerOrder() {
+  triggerOrderPicks = [];
+  render(game.state);
+}
+
+function submitTriggerOrder() {
+  // Reversed: the engine wants bottom of the stack first, and the last thing
+  // put on the stack is the first thing to resolve.
+  const order = triggerOrderPicks.slice().reverse();
+  triggerOrderPicks = [];
+  decide({ order: order });
 }
 
 function renderDecision(state, you) {
@@ -1081,6 +1141,9 @@ window.decide = decide;
 window.submitChooseCards = submitChooseCards;
 window.submitCardSplit = submitCardSplit;
 window.submitChooseTargets = submitChooseTargets;
+window.pickTriggerOrder = pickTriggerOrder;
+window.resetTriggerOrder = resetTriggerOrder;
+window.submitTriggerOrder = submitTriggerOrder;
 
 // --------------------------------------------------- priority automation ----
 //

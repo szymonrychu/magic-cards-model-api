@@ -230,6 +230,15 @@ def build_parser() -> argparse.ArgumentParser:
             "(Subtlety) - asked of the targeted spell's owner, not its caster"
         ),
     )
+    decide.add_argument(
+        "--order",
+        default="",
+        help=(
+            "comma-separated triggered-ability ids, for an order_triggers decision "
+            "(CR 603.3b) - a permutation of pending_decision.cards, bottom of the "
+            "stack first, so the last id listed is the one that resolves first"
+        ),
+    )
     blocking(decide)
 
     passer = sub.add_parser("pass", help="pass priority - 'I am done for now'")
@@ -469,6 +478,8 @@ def run(argv: list[str] | None = None) -> int:
                 body["choice"] = args.choice
             if args.top is not None:
                 body["top"] = args.top == "top"
+            if args.order:
+                body["order"] = _parse_ids(args.order)
             answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
             if isinstance(answer, dict) and answer.get("accepted") is False:
                 return {"allowed": False, **answer}

@@ -1003,8 +1003,9 @@ def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
 @app.post("/api/games/{game_id}/decide")
 def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str, Any]:
     """Answer this game's pending decision - most kinds CR 608.2d, `choose_targets`
-    CR 603.3d/601.2c instead (`decisions.rule_for_kind`) - such as the cleanup
-    discard's choice of which card to put in the graveyard.
+    CR 603.3d/601.2c and `order_triggers` CR 603.3b instead
+    (`decisions.rule_for_kind`) - such as the cleanup discard's choice of
+    which card to put in the graveyard.
 
     Deliberately does not call `store.locked(game_id)` or touch the `Game`
     object at all - only the mailbox. It cannot: the request that published
@@ -1072,6 +1073,20 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(f"bad target: {exc}", **detail)
         detail["targets"] = req.targets
+    elif kind is DecisionKind.ORDER_TRIGGERS:
+        # CR 603.3b: "each player, in APNAP order, puts each triggered ability
+        # they control on the stack in any order they choose". The answer is
+        # an order, not a selection - a permutation of the ability ids in
+        # `pending_decision.cards`, bottom of the stack first, so the last id
+        # given is the ability that resolves first. Its own field because
+        # those ids are `AbilityOnStack` ids, not card ids; the permutation
+        # itself is checked by `validate_answer` below, against the same
+        # `Decision` `ask_trigger_order` will check it against.
+        try:
+            answer = decisions.order_answer(req.order)
+        except ValueError as exc:
+            return refuse(f"bad ability id: {exc}", **detail)
+        detail["order"] = req.order
     elif kind in (
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,

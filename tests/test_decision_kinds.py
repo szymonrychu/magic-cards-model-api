@@ -1584,6 +1584,121 @@ def test_the_caster_cannot_answer_a_put_on_top_or_bottom_decision_asked_of_the_o
         client.delete(f"/api/games/{game_id}")
 
 
+# -- order_triggers: CR 603.3b's "in any order they choose" -----------------
+#
+# The kind that made this file's own drift test fail: the engine grew
+# `DecisionKind.ORDER_TRIGGERS` and `machines/decisions.ask_trigger_order`,
+# and nothing in this API could answer either. The ask site is not wired in
+# the engine yet - `Game._put_pending_triggers_on_stack` still places its
+# CR 603.3b batch in `apnap_order` without asking anybody - so a live seat
+# cannot be driven into this question through an ordinary request the way the
+# shockland above drives `pay_life`. What *can* be driven, with no mock
+# anywhere, is the real asker: `ask_trigger_order` is the function that engine
+# commit will call, it is called here with the real `AbilityOnStack` ids and
+# source names of two abilities the engine really did trigger simultaneously,
+# and it consults `Game.decisions.provider` - this API's mailbox - exactly as
+# it will then. So the seat below answers the same question, published the
+# same way, through the same `POST /decide`.
+
+
+def two_simultaneous_upkeep_triggers(client: TestClient, game_id: str) -> tuple:
+    """Two real triggered abilities, triggered at once, as the engine makes
+    them: two Delver of Secrets on the battlefield and one real untap-to-upkeep
+    advance fires both "at the beginning of your upkeep" abilities in the same
+    batch - CR 603.3b's own premise, "multiple abilities have triggered since
+    the last time a player received priority". Returns their
+    `(AbilityOnStack.id, source_name)` pairs, which is what `ask_trigger_order`
+    takes."""
+    add_card(client, game_id, "Delver of Secrets", "alice", "battlefield")
+    add_card(client, game_id, "Delver of Secrets", "alice", "battlefield")
+    client.put(f"/api/games/{game_id}/step", json={"step": "untap", "player": "alice"})
+    client.post(f"/api/games/{game_id}/advance", json={"player": "alice"})
+    abilities = tuple((a.id, a.source_name) for a in store.get(game_id).stack)
+    assert len(abilities) == 2, f"expected two simultaneous upkeep triggers, got {abilities}"
+    return abilities
+
+
+def ask_trigger_order_in_background(game_id: str, abilities: tuple, chosen: list) -> Any:
+    """Put CR 603.3b's ordering to the live seat, on its own thread, and stash
+    the order that comes back in `chosen`."""
+    from magic_cards_model.machines.decisions import ask_trigger_order
+
+    def post() -> None:
+        chosen.append(ask_trigger_order(store.get(game_id).decisions, "alice", abilities))
+
+    return run_in_background(post)
+
+
+def test_order_triggers_puts_the_chosen_order_back_to_the_engine(client, game):
+    """CR 603.3b: "each player, in APNAP order, puts each triggered ability
+    they control on the stack in any order they choose". The seat answers with
+    a permutation of the ability ids it was offered, bottom of the stack
+    first, and that exact order is what the asker returns - reversed from the
+    order they triggered in, so this cannot pass by the default (which is the
+    triggered order unchanged) standing in for an answer nobody gave."""
+    uids = seats_for(client, game)
+    abilities = two_simultaneous_upkeep_triggers(client, game)
+    first, second = (str(ability_id) for ability_id, _ in abilities)
+    set_short_timeout(game, 5.0)
+
+    chosen: list = []
+    thread = ask_trigger_order_in_background(game, abilities, chosen)
+    try:
+        pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+        assert pending["player"] == "alice"
+        assert pending["kind"] == "order_triggers"
+        assert pending["cards"] == [first, second]
+
+        answer = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "order": [second, first]},
+        )
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["accepted"] is True, answer.text
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert [str(ability_id) for ability_id in chosen[0]] == [second, first]
+
+
+def test_order_triggers_refuses_an_order_that_is_not_a_permutation(client, game):
+    """Dropping one of the offered abilities is CR 603.3's "its controller
+    puts it on the stack" going unperformed, so it is refused - synchronously,
+    to the seat that sent it, with the decision left pending so the same seat
+    can answer again (which it then does, proving the question really did
+    survive the refusal)."""
+    uids = seats_for(client, game)
+    abilities = two_simultaneous_upkeep_triggers(client, game)
+    first, second = (str(ability_id) for ability_id, _ in abilities)
+    set_short_timeout(game, 5.0)
+
+    chosen: list = []
+    thread = ask_trigger_order_in_background(game, abilities, chosen)
+    try:
+        wait_for_pending(client, game, uids["alice"])
+        refused = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "order": [first]},
+        )
+        assert refused.status_code == 200, refused.text
+        body = refused.json()
+        assert body["accepted"] is False
+        assert "order exactly the abilities offered" in body["reason"]
+
+        accepted = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "order": [first, second]},
+        )
+        assert accepted.json()["accepted"] is True, accepted.text
+    finally:
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert [str(ability_id) for ability_id in chosen[0]] == [first, second]
+
+
 # -- the drift test: every DecisionKind is answerable or named elsewhere ----
 
 

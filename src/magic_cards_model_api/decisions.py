@@ -179,6 +179,29 @@ DEFAULT_PRESENCE_SECONDS = float(os.environ.get("MCM_DECISION_PRESENCE_SECONDS",
 #: begin the game with this card on the battlefield" - CR 103.6a; "you may
 #: reveal it from your opening hand" - CR 103.6b), so it reuses `bool_answer`
 #: and the `accept` field exactly as `MAY` does.
+#: `ORDER_TRIGGERS` (CR 603.3b: "if multiple abilities have triggered since
+#: the last time a player received priority ... each player, in APNAP order,
+#: puts each triggered ability they control on the stack in any order they
+#: choose") joined this set the moment the *engine* grew the kind - caught by
+#: the drift test, not by a frozen game, which is the whole reason it was
+#: caught early. The engine defines `DecisionKind.ORDER_TRIGGERS` and
+#: `machines/decisions.ask_trigger_order`, but `Game._put_pending_triggers_on_stack`
+#: still places its CR 603.3b batch in `apnap_order` without asking anybody,
+#: so nothing raises the question *yet*. It is wired here anyway, because the
+#: one-line engine commit that adds that `ask_trigger_order` call would
+#: otherwise turn every multi-trigger board into a hang, on a kind no seat
+#: could answer.
+#:
+#: The answer is an *order*, not a selection: a permutation of exactly the
+#: ability ids offered in `Decision.cards`, **bottom of the stack first**, so
+#: the last id in the answer is the ability that resolves first. Its own
+#: request field (`order`), not `card_ids`: those ids are `AbilityOnStack.id`s
+#: and name no card at all, and "these, in this sequence" is a different
+#: question from `CHOOSE_CARDS`'s "these, out of those". Anything that is not
+#: a permutation - a dropped ability, a duplicate, a stray id - is refused,
+#: matching `ask_trigger_order`'s own refusal: dropping one would be CR 603.3's
+#: "its controller puts it on the stack" going unperformed, and adding one
+#: would put an ability on the stack that never triggered.
 ANSWERABLE_KINDS = frozenset(
     {
         DecisionKind.MAY,
@@ -196,6 +219,7 @@ ANSWERABLE_KINDS = frozenset(
         DecisionKind.CHOOSE_A_MODE,
         DecisionKind.PUT_ON_TOP_OR_BOTTOM,
         DecisionKind.MULLIGAN,
+        DecisionKind.ORDER_TRIGGERS,
     }
 )
 
@@ -705,6 +729,13 @@ def rule_for_kind(kind: DecisionKind) -> str:
         # (see rule 103.5) is complete, the starting player may take any such
         # actions in any order", before the first turn begins.
         return "CR 103.6 (an action taken from the opening hand, before the first turn)"
+    if kind is DecisionKind.ORDER_TRIGGERS:
+        # No effect is applying here either: this is the two-part process that
+        # *puts* a batch of simultaneous triggers on the stack, one step
+        # before any of them resolves. CR 603.3b, the same family of exception
+        # `CHOOSE_TARGETS` is - a choice made while going on the stack, which
+        # CR 608.2d's own wording excludes.
+        return "CR 603.3b (the order simultaneous triggers go on the stack)"
     return "CR 608.2d (a choice made while the effect applies)"
 
 
@@ -841,6 +872,24 @@ def card_ids_answer(card_ids: list[str]) -> tuple[UUID, ...]:
     return tuple(UUID(card_id) for card_id in card_ids)
 
 
+def order_answer(order: list[str]) -> tuple[UUID, ...]:
+    """A `decide` request body's `order`, in the shape
+    `machines/decisions.ask_trigger_order` expects for `ORDER_TRIGGERS` - a
+    `tuple[UUID, ...]`, bottom of the stack first (CR 603.3b).
+
+    Ids only, never source names. `ask_trigger_order` also accepts a printed
+    source name, because a *scenario* has to be able to state the order before
+    the abilities exist; a live seat is looking at
+    `pending_decision.cards` and has the real `AbilityOnStack.id`s in front of
+    it, and this API could not resolve a name anyway - `Decision.cards` carries
+    the ids and nothing carries the names alongside them. So a non-UUID token
+    is refused here with a 400 rather than reaching the engine, exactly as
+    `card_ids_answer` refuses a malformed card id. Whether the ids given are a
+    *permutation* of the ones offered is `validate_answer`'s job.
+    """
+    return tuple(UUID(ability_id) for ability_id in order)
+
+
 def targets_answer(targets: list[str]) -> tuple[TargetRef, ...]:
     """A `decide` request body's `targets`, in the shape `Game.ask` expects
     for `CHOOSE_TARGETS` - a `tuple[TargetRef, ...]`.
@@ -904,7 +953,10 @@ def validate_answer(decision: Decision, value: object) -> None:
 
     Only kinds in `ANSWERABLE_KINDS` are ever passed here - `decide` already
     refuses every other kind before parsing an answer at all - so every
-    branch of `Game.ask`'s own kind dispatch has a match here.
+    branch of `Game.ask`'s own kind dispatch has a match here. Two kinds do
+    not go through `Game.ask` at all and are matched against their own asker
+    in `machines/decisions.py` instead: `MULLIGAN` against `ask_mulligan`, and
+    `ORDER_TRIGGERS` (CR 603.3b) against `ask_trigger_order`.
     """
     if decision.kind in (
         DecisionKind.MAY,
@@ -932,6 +984,40 @@ def validate_answer(decision: Decision, value: object) -> None:
         # CR 103.5's zero-hand ceiling), so there is no option set to check.
         if not isinstance(value, bool):
             raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
+        return
+
+    if decision.kind is DecisionKind.ORDER_TRIGGERS:
+        # CR 603.3b's "in any order they choose". Like `MULLIGAN`, its
+        # engine-side authority is not `Game.ask` at all but its own asker,
+        # `machines/decisions.ask_trigger_order`, so the checks and the
+        # wording below are that function's, in its order: the shape first,
+        # then each token, then the permutation. The drift test compares this
+        # branch against `ask_trigger_order` rather than `Game.ask`'s dispatch.
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(f"{decision.prompt}: the answer is a sequence of ability ids or names")
+        order: list[UUID] = []
+        for item in value:
+            if isinstance(item, UUID):
+                order.append(item)
+                continue
+            if not isinstance(item, str):
+                raise ValueError(f"{decision.prompt}: {item!r} is neither an ability id nor a name")
+            # The one place this validator is deliberately *stricter* than the
+            # engine, and it cannot be otherwise: `ask_trigger_order` reads a
+            # `str` as a printed source name and matches it against the
+            # `(id, name)` pairs it was called with, but a `Decision` carries
+            # only the ids (`decision.cards`) - the names never cross the
+            # mailbox - so there is nothing here to match a name against.
+            # Refused by name rather than guessed at, and a live seat never
+            # needs it: it is looking at `pending_decision.cards`.
+            raise ValueError(
+                f"{decision.prompt}: {item!r} is a name, not an ability id - answer "
+                f"with the ids in pending_decision.cards"
+            )
+        if sorted(order, key=str) != sorted(decision.cards, key=str):
+            raise ValueError(
+                f"{decision.prompt}: the answer must order exactly the abilities offered"
+            )
         return
 
     if decision.kind is DecisionKind.OPENING_HAND_ACTION:

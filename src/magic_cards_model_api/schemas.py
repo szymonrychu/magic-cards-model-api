@@ -333,6 +333,16 @@ class DecideRequest(BaseModel):
     `pending_decision.player`. Not `accept`: this is a top/bottom choice, not
     a yes/no, even though both happen to be booleans. `None` (the default) is
     refused, matching `accept`/`choice`/`energy_amount`."""
+    order: list[str] = Field(default_factory=list)
+    """The `order_triggers` kind's answer (CR 603.3b) - the order this
+    player's simultaneously triggered abilities go on the stack, "in any order
+    they choose".
+
+    A permutation of exactly `pending_decision.cards`, which for this kind
+    holds `AbilityOnStack` ids rather than card ids - hence its own field
+    rather than `card_ids`. **Bottom of the stack first**, so the last id
+    listed is the ability that resolves first. Anything that is not a
+    permutation (a dropped ability, a duplicate, a stray id) is refused."""
 
 
 class MulliganRequest(BaseModel):

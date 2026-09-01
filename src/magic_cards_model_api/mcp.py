@@ -520,6 +520,7 @@ def build_server(seats: Seats) -> MCPServer:
         life_amount: int | None = None,
         choice: str = "",
         top: bool | None = None,
+        order: str = "",
         hold_priority: bool = False,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
@@ -612,6 +613,15 @@ def build_server(seats: Seats) -> MCPServer:
           the *targeted spell's owner* here, not Subtlety's controller
           (CR 108.3) - check it before answering, since in a two-player game
           it is easy to assume it is always the caster.
+        - `order_triggers` (CR 603.3b: "if multiple abilities have triggered
+          since the last time a player received priority ... each player, in
+          APNAP order, puts each triggered ability they control on the stack
+          in any order they choose"): `order` is a comma-separated
+          permutation of exactly `pending_decision.cards` - which for this
+          kind holds triggered-ability ids, not card ids - **bottom of the
+          stack first**, so the *last* id you list is the ability that
+          resolves *first*. Every offered id must appear exactly once;
+          dropping or repeating one is refused.
 
         `may`, `pay_life`, `scry`, and `surveil` were not answerable through
         this tool before this wave: the request simply parked until its
@@ -661,6 +671,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["choice"] = choice
         if top is not None:
             body["top"] = top
+        if order:
+            body["order"] = _parse_ids(order)
 
         def perform() -> Any:
             answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/decide", body)

@@ -44,6 +44,7 @@ from magic_cards_model.machines.decisions import (
     DecisionKind,
     ScriptedAnswer,
     ask_mulligan,
+    ask_trigger_order,
 )
 from magic_cards_model.models import Game
 from magic_cards_model.models.card_state import TargetRef
@@ -57,7 +58,16 @@ from magic_cards_model_api.store import store
 def board(client: TestClient, game: str) -> dict[str, Any]:
     """A real board with enough real cards to build every `Decision` below:
     three library cards (scry/surveil/choose_cards candidates), a battlefield
-    creature and a player (choose_targets candidates)."""
+    creature and a player (choose_targets candidates), and two real
+    simultaneously triggered abilities (the `order_triggers` batch).
+
+    The triggers are made the way the engine makes them, not written down:
+    two Delver of Secrets on the battlefield and one real untap-to-upkeep
+    advance, which fires both "at the beginning of your upkeep" abilities at
+    once - CR 603.3b's own premise, "multiple abilities have triggered since
+    the last time a player received priority". Their real `AbilityOnStack`
+    ids and source names are what the `ORDER_TRIGGERS` case below orders.
+    """
     library_ids = [
         UUID(add_card(client, game, "Mountain", "alice", "library")["added"]["card_id"])
         for _ in range(3)
@@ -65,7 +75,13 @@ def board(client: TestClient, game: str) -> dict[str, Any]:
     bears_id = UUID(
         add_card(client, game, "Grizzly Bears", "alice", "battlefield")["added"]["card_id"]
     )
-    return {"library_ids": library_ids, "bears_id": bears_id}
+    add_card(client, game, "Delver of Secrets", "alice", "battlefield")
+    add_card(client, game, "Delver of Secrets", "alice", "battlefield")
+    client.put(f"/api/games/{game}/step", json={"step": "untap", "player": "alice"})
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    triggers = tuple((ability.id, ability.source_name) for ability in _game(game).stack)
+    assert len(triggers) == 2, f"expected two simultaneous upkeep triggers, got {triggers}"
+    return {"library_ids": library_ids, "bears_id": bears_id, "triggers": triggers}
 
 
 def _game(game_id: str) -> Game:
@@ -87,6 +103,17 @@ def _engine_ask(engine_game: Game, decision: Decision) -> object:
     """
     if decision.kind is DecisionKind.MULLIGAN:
         return ask_mulligan(engine_game.decisions, decision.player, prompt=decision.prompt)
+    if decision.kind is DecisionKind.ORDER_TRIGGERS:
+        # CR 603.3b's ordering is the second kind that never reaches
+        # `Game.ask`: `ask_trigger_order` puts it and validates the answer
+        # itself, so that is the other side of the mailbox for this kind. It
+        # is called with the same `(id, source_name)` pairs the board fixture
+        # read straight off the real triggers now on the stack, and the same
+        # prompt, so both sides refuse in identical words.
+        abilities = tuple((ability.id, ability.source_name) for ability in engine_game.stack)
+        return ask_trigger_order(
+            engine_game.decisions, decision.player, abilities, prompt=decision.prompt
+        )
     return engine_game.ask(decision)
 
 
@@ -267,6 +294,34 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
     cases[DecisionKind.MULLIGAN] = (
         Decision(kind=DecisionKind.MULLIGAN, player="alice", prompt="take a mulligan"),
         [True, False, "yes", 1, None],
+    )
+
+    # CR 603.3b: a permutation of exactly the abilities offered, bottom of the
+    # stack first. The engine side is `ask_trigger_order`, not `Game.ask`; see
+    # `_engine_ask`. A source *name* is deliberately not among the candidates:
+    # `ask_trigger_order` accepts one (a scenario has to be able to state the
+    # order before the abilities exist) and `validate_answer` cannot, because
+    # a `Decision` carries the ability ids and nothing carries their names
+    # across the mailbox. That one-way strictness is documented in
+    # `validate_answer`'s `ORDER_TRIGGERS` branch, and it can only ever refuse
+    # an answer the engine would have taken - never accept one it would not.
+    first_id, second_id = (ability_id for ability_id, _ in board["triggers"])
+    cases[DecisionKind.ORDER_TRIGGERS] = (
+        Decision(
+            kind=DecisionKind.ORDER_TRIGGERS,
+            player="alice",
+            prompt="order your triggered abilities on the stack",
+            cards=(first_id, second_id),
+        ),
+        [
+            (second_id, first_id),
+            (first_id, second_id),
+            (first_id,),
+            (first_id, first_id),
+            (first_id, second_id, stray_id),
+            "not a sequence",
+            (5,),
+        ],
     )
 
     cases[DecisionKind.PUT_ON_TOP_OR_BOTTOM] = (
