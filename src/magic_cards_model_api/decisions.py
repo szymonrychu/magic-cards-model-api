@@ -338,6 +338,24 @@ class PendingDecision:
     #: enumerate (`machines/replacement.py`'s `_choose_a_quality`). Also
     #: empty for every other kind.
     options: tuple[str, ...] = ()
+    #: Where the two halves of a `SCRY`/`SURVEIL` answer actually end up, in
+    #: the asking card's own words: `moved_label` for the cards the answer
+    #: names, `kept_label` for the ones it does not. CR 701.22a and CR 701.25a
+    #: each fix their own pair ("on the bottom of your library" / "on top",
+    #: and "into your graveyard" / "on top"), but the engine reuses
+    #: `DecisionKind.SCRY` for the generalised look-then-split whose
+    #: destinations belong entirely to the calling card - Devourer of
+    #: Destiny's first-upkeep trigger keeps one card *on top* and exiles the
+    #: rest (CR 406.1's holding area), which is neither rule's pair and is the
+    #: exact opposite of scry's. A client that assumes the pair from the kind
+    #: tells the deciding player the reverse of what will happen, so the
+    #: engine stamps the destinations here and clients read them.
+    #:
+    #: Empty when the engine did not stamp them; a client then falls back to
+    #: the CR 701.22a/701.25a wording its kind implies, which is right for
+    #: every decision `scry`/`surveil` themselves raise.
+    moved_label: str = ""
+    kept_label: str = ""
 
     @classmethod
     def from_engine(cls, decision: Decision) -> PendingDecision:
@@ -352,6 +370,12 @@ class PendingDecision:
             target_maximum=decision.target_maximum,
             affirmative_is_legal=decision.affirmative_is_legal,
             options=decision.options,
+            # `getattr` rather than attribute access: an engine older than the
+            # `moved_label`/`kept_label` contract still has to serve, and the
+            # empty string is the same "no label was stamped" the fields
+            # themselves default to, which every client already falls back on.
+            moved_label=getattr(decision, "moved_label", ""),
+            kept_label=getattr(decision, "kept_label", ""),
         )
 
     def to_view(self) -> dict[str, Any]:
@@ -366,6 +390,8 @@ class PendingDecision:
             "target_maximum": self.target_maximum,
             "affirmative_is_legal": self.affirmative_is_legal,
             "options": list(self.options),
+            "moved_label": self.moved_label,
+            "kept_label": self.kept_label,
         }
 
 

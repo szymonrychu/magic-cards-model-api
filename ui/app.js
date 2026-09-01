@@ -855,18 +855,43 @@ function submitChooseCards() {
   decide({ card_ids: $$("#decision-box input[type=checkbox]:checked").map((el) => el.value) });
 }
 
+// A look-then-split question, and where each half of the answer really goes.
+//
+// The destinations are NOT implied by the kind. CR 701.22a fixes scry's pair
+// ("put any number of them on the bottom of your library ... and the rest on
+// top") and CR 701.25a fixes surveil's ("put any number of them into your
+// graveyard and the rest on top"), but the engine reuses `DecisionKind.SCRY`
+// for a generalised look-then-split whose two destinations belong to the
+// calling card. Devourer of Destiny's first-upkeep trigger is the case that
+// broke this: "look at the top four cards of your library. You may put one of
+// those cards back on top of your library. Exile the rest." The ticked card
+// stays on TOP and the unticked ones are EXILED (CR 406.1's holding area) -
+// so the old hardcoded `toGraveyard ? "to graveyard" : "to bottom"` told the
+// player the exact reverse of what would happen, and never said exile at all.
+//
+// `pending.moved_label` / `pending.kept_label` are the engine's own words for
+// the two destinations. `toGraveyard` survives only as the fallback for a
+// decision that stamps neither - which is every scry and surveil the two
+// rules above raise themselves, so those render exactly as they always did.
 function renderCardSplitDecision(toGraveyard) {
   return (pending) => {
-    const label = toGraveyard ? "to graveyard" : "to bottom";
+    const movedLabel = pending.moved_label
+      ? escapeHtml(pending.moved_label)
+      : toGraveyard
+        ? "to graveyard"
+        : "to bottom";
+    const keptHint = pending.kept_label
+      ? `unchecked cards: ${escapeHtml(pending.kept_label)}`
+      : "unchecked cards stay on top, in the order shown";
     const boxes = (pending.card_details || [])
       .map(
         (c) =>
-          `<label class="option"><input type="checkbox" value="${escapeHtml(c.id)}" /> ${escapeHtml(c.name)} <em>(${label})</em></label>`
+          `<label class="option"><input type="checkbox" value="${escapeHtml(c.id)}" /> ${escapeHtml(c.name)} <em>(${movedLabel})</em></label>`
       )
       .join("");
     return `
       <div>${boxes || "(nothing to look at)"}</div>
-      <div class="hint">unchecked cards stay on top, in the order shown</div>
+      <div class="hint">${keptHint}</div>
       <button class="primary" onclick="submitCardSplit()">Confirm</button>
     `;
   };
@@ -1216,6 +1241,13 @@ function startAutopilot(step, who) {
     // Kept for the shape the older single-target runs used, and read by
     // `autopilotStopReason` as the step name when `step` is absent.
     target: step,
+    // The occurrence the run *starts* in, so naming the step you are already
+    // standing in means the next one rather than this one - see
+    // `autopilotStopReason`, which declines to stop here while the stamp is
+    // set, and `forgetStartingStep`, which clears it the moment the board
+    // leaves this (turn, step) pair.
+    startedTurn: game.state.turn_number,
+    startedStep: game.state.step,
     knownStackIds: new Set((game.state.stack || []).map((o) => o.id)),
   };
   renderAutopilotBanner();
@@ -1342,7 +1374,21 @@ function autopilotStopReason(state, autopilot, you, settings) {
   if (wantedStep && state.step === wantedStep) {
     const isYours = state.active_player === you;
     const whoMatches = who === "any" || (who === "you") === isYours;
-    if (whoMatches) {
+    // "Until my precombat main", asked while standing in your precombat main,
+    // means the NEXT one - a run that stopped where it started would be a
+    // no-op, which is never what the player meant. `startedTurn`/`startedStep`
+    // (stamped by `startAutopilot`, cleared by `forgetStartingStep` the moment
+    // the board leaves that occurrence) name the one occurrence this run began
+    // inside, and only that one is declined as a stopping point. A target the
+    // player was not already standing in never matches the pair at all, so it
+    // behaves exactly as it always did - nothing is skipped unconditionally,
+    // and an autopilot object built without the pair (the older shape) matches
+    // nothing here either.
+    const sameOccurrenceThisRunStartedIn =
+      autopilot.startedStep !== undefined &&
+      state.step === autopilot.startedStep &&
+      state.turn_number === autopilot.startedTurn;
+    if (whoMatches && !sameOccurrenceThisRunStartedIn) {
       return `reached ${autopilotLabel(autopilot)}`;
     }
   }
@@ -1353,6 +1399,31 @@ function autopilotStopReason(state, autopilot, you, settings) {
     return `something new went on the stack: ${obj ? obj.name : arrived[0]}`;
   }
   return null;
+}
+
+/**
+ * Clear a run's starting-occurrence stamp once the board has actually left
+ * that occurrence, so the *next* time that step comes round the run stops
+ * there. The one piece of per-tick bookkeeping `autopilotStopReason`'s
+ * "not this occurrence" guard needs, kept out of that function to leave it
+ * free of mutation, and exported so the tests drive the real thing.
+ *
+ * Comparing the whole `(turn, step)` pair rather than the step alone is what
+ * makes this right even where one turn holds two of the same step - CR 500.8
+ * lets an effect add a phase to a turn, and a second combat phase brings a
+ * second declare-attackers step with it, on the same turn number.
+ *
+ * Returns the same run object, so a caller can assign it back or ignore it.
+ */
+function forgetStartingStep(autopilot, state) {
+  if (!autopilot || autopilot.startedStep === undefined) return autopilot;
+  const stillThere =
+    state.step === autopilot.startedStep && state.turn_number === autopilot.startedTurn;
+  if (!stillThere) {
+    autopilot.startedStep = undefined;
+    autopilot.startedTurn = undefined;
+  }
+  return autopilot;
 }
 
 /** Whether a `pass-priority` outcome should stop a running autopilot, and
@@ -1379,6 +1450,7 @@ async function tickAutopilot(state) {
     return;
   }
   game.autopilot.knownStackIds = new Set((state.stack || []).map((o) => o.id));
+  forgetStartingStep(game.autopilot, state);
 
   if (state.priority_holder !== you) return; // not ours to act on this tick
   try {
@@ -1508,6 +1580,14 @@ if (typeof module !== "undefined" && module.exports) {
     sendTargets,
     setHtml,
     triggerOrderOptions,
+    renderCardSplitDecision,
+    renderActionBar,
+    startAutopilot,
+    forgetStartingStep,
+    // The module's own live state object, so a test can start a real
+    // autopilot run through `startAutopilot` and then read the run the
+    // browser would actually be driving, rather than hand-building one.
+    game,
     aiStallNotice,
     AI_STALL_SECONDS,
   };
@@ -2162,7 +2242,6 @@ window.chooseAbility = chooseAbility;
 
 function renderActionBar(state, you) {
   const bar = $("#action-bar");
-  const isYourPriority = state.priority_holder === you;
   const isActive = state.active_player === you;
   const groups = [];
 
@@ -2171,12 +2250,14 @@ function renderActionBar(state, you) {
   const current = game.autopilot
     ? `${game.autopilot.step}|${game.autopilot.who}`
     : game.settings.autopilotTarget;
+  // No "Pass priority" and no "Resolve top" button. Both are gone from every
+  // game, deliberately: the two of them were the manual half of a control the
+  // "Auto-pass until…" picker below already does properly, and a player
+  // clicking them one at a time is doing by hand what the picker does in one
+  // go. `passPriority()` itself is untouched and still runs on the cast path
+  // (CR 117.3c's "releasing priority is what makes the spell resolve").
   groups.push(`<div class="group"><div class="label">Priority</div>
     <div class="pass-controls">
-      <div class="row">
-        <button class="primary" ${isYourPriority ? "" : "disabled"} onclick="passPriority()">Pass priority</button>
-        ${state.stack.length ? '<button onclick="resolveTop()">Resolve top</button>' : ""}
-      </div>
       <div class="row">
         <select id="autopilot-target" onchange="rememberAutopilotTarget(this.value)">
           ${targets

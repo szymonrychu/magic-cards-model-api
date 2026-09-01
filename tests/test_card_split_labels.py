@@ -1,0 +1,313 @@
+"""Where a look-then-split answer's two halves actually go, from the engine's
+own words to the DOM the deciding player reads.
+
+**The bug, as reported from a real game.** Devourer of Destiny's opening-hand
+rider ("You may reveal this card from your opening hand. If you do, at the
+beginning of your first upkeep, look at the top four cards of your library.
+You may put one of those cards back on top of your library. Exile the rest."
+- oracle text verified with `resolve_cards` in the session that wrote this
+file) reaches a seat as a `scry` decision, because the engine reuses
+`DecisionKind.SCRY` for the generalised look-then-split question. The browser
+then told the player the cards they ticked went "to bottom" and that the
+unticked ones "stay on top". Both are false, and in the worst possible way:
+the ticked card is the one kept on TOP, and the unticked ones are EXILED
+(CR 406.1, "the exile zone is essentially a holding area for objects").
+
+The destinations are not a function of the kind. CR 701.22a fixes scry's pair
+("look at the top N cards of your library, then put any number of them on the
+bottom of your library in any order and the rest on top of your library in any
+order") and CR 701.25a fixes surveil's ("put any number of them into your
+graveyard and the rest on top of your library in any order"), but a card whose
+own text names a different pair is answerable to its text, not to either rule.
+So the engine stamps `Decision.moved_label` / `Decision.kept_label`, this API
+carries them on `pending_decision`, and `ui/app.js` renders them.
+
+Two halves, both covered here:
+
+- the API payload, from a real game: a real decklist of real Scryfall
+  printings, dealt by the engine's own seeded shuffle (CR 103.3), kept through
+  CR 103.5's mulligan process, revealed through CR 103.6b's opening-hand
+  action, and advanced to CR 103.7's first upkeep where CR 603.7's delayed
+  trigger goes on the stack. Nothing is hand-built and nothing is mocked.
+- the renderer, by loading the shipped `ui/app.js` under Node the way
+  `tests/test_ui_pregame_panel.py` and `tests/test_ui_autopilot.py` do - the
+  exact file the browser is served, no build step, no Python re-description.
+
+Every CR number in this module was verified with `knowledge_search(type="rules")`
+in the session that wrote it.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from magic_cards_model.models.zone import Zone
+
+from magic_cards_model_api.main import app
+from magic_cards_model_api.store import store
+
+APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
+
+#: 56 Swamp + 4 Devourer of Destiny: a legal sixty (CR 100.2a exempts basic
+#: lands from the four-copy limit), every card a recorded Scryfall printing
+#: from `tests/fixtures/scryfall`, and Devourer of Destiny is Modern legal
+#: (checked with `resolve_cards(format="modern")` in this session).
+DEVOURER_DECK = "56 Swamp\n4 Devourer of Destiny"
+PLAIN_DECK = "60 Forest"
+
+#: With this seed the engine's own shuffle deals alice exactly one Devourer of
+#: Destiny in her opening seven and makes her the starting player, so CR 103.6b's
+#: reveal is offered to her and "your first upkeep" is turn 1's. Seeded staging
+#: of a real shuffle, not a hand-built hand.
+SEED_WITH_A_DEVOURER_IN_ALICES_HAND = 4
+
+
+# -- the API payload, from a real game ---------------------------------------
+
+
+def boot(client: TestClient) -> dict[str, Any]:
+    response = client.post(
+        "/api/ui/games",
+        json={
+            "players": [
+                {"username": "alice", "decklist_text": DEVOURER_DECK, "ai": False},
+                {"username": "bob", "decklist_text": PLAIN_DECK, "ai": False},
+            ],
+            "seed": SEED_WITH_A_DEVOURER_IN_ALICES_HAND,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def reach_the_devourer_upkeep(client: TestClient, info: dict[str, Any]) -> None:
+    """Keep both hands (CR 103.5), take CR 103.6b's reveal with the Devourer,
+    and let both seats finish so the game settles into CR 103.7's first
+    upkeep with the delayed trigger (CR 603.7) on the stack."""
+    game_id = info["game_id"]
+    uids = info["seat_uids"]
+    for player in ("alice", "bob"):
+        kept = client.post(
+            f"/api/games/{game_id}/pregame/mulligan",
+            params={"uid": uids[player]},
+            json={"player": player, "take": False},
+        )
+        assert kept.status_code == 200, kept.text
+
+    options = client.get(f"/api/games/{game_id}", params={"uid": uids["alice"]}).json()
+    (offer,) = options["pregame"]["opening_hand_options"]["alice"]
+    assert offer["source"] == "Devourer of Destiny"
+    taken = client.post(
+        f"/api/games/{game_id}/pregame/opening-hand/action",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_id": offer["card_id"]},
+    )
+    assert taken.status_code == 200, taken.text
+
+    for player in ("alice", "bob"):
+        done = client.post(
+            f"/api/games/{game_id}/pregame/opening-hand/finish",
+            params={"uid": uids[player]},
+            json={"player": player},
+        )
+        assert done.status_code == 200, done.text
+    assert done.json()["step"] == "upkeep"
+
+
+def resolve_top_in_background(game_id: str) -> threading.Thread:
+    """Resolving the trigger is what asks the question, and the ask blocks the
+    resolving request until an answer lands on the mailbox - so it has to run
+    off the thread that is going to answer it."""
+
+    def post() -> None:
+        stepping_client = TestClient(app)
+        resolved = stepping_client.post(f"/api/games/{game_id}/resolve-top")
+        assert resolved.status_code == 200, resolved.text
+
+    thread = threading.Thread(target=post)
+    thread.start()
+    return thread
+
+
+def wait_for_pending(client: TestClient, game_id: str, uid: str) -> dict[str, Any]:
+    for _ in range(500):
+        view = client.get(f"/api/games/{game_id}", params={"uid": uid}).json()
+        if view.get("pending_decision") is not None:
+            return view["pending_decision"]
+        time.sleep(0.01)
+    raise AssertionError("the Devourer trigger never published its decision")
+
+
+def test_the_devourer_decision_says_exile_and_never_says_bottom(client: TestClient) -> None:
+    """The reported bug, at the API boundary. The payload a seat reads must
+    name the card's own two destinations - kept on top, rest exiled - and must
+    not carry CR 701.22a's bottom-of-library anywhere, because this decision
+    puts nothing on the bottom of anything."""
+    info = boot(client)
+    game_id, uids = info["game_id"], info["seat_uids"]
+    try:
+        reach_the_devourer_upkeep(client, info)
+        thread = resolve_top_in_background(game_id)
+        try:
+            pending = wait_for_pending(client, game_id, uids["alice"])
+            # Answer before asserting anything: the resolving request is parked
+            # inside `Game.ask` holding this game's lock, so a failed assertion
+            # left unanswered would hang the teardown behind a decision timeout
+            # rather than reporting the failure.
+            answered = client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["alice"]},
+                json={"player": "alice", "moved": [pending["cards"][0]], "top_order": None},
+            )
+        finally:
+            thread.join(timeout=15)
+        assert not thread.is_alive()
+        assert answered.status_code == 200, answered.text
+
+        assert pending["kind"] == "scry", (
+            "the engine reuses DecisionKind.SCRY for the generalised "
+            "look-then-split, which is exactly why the kind cannot be read "
+            "as CR 701.22a's pair of destinations"
+        )
+        assert pending["source"] == "Devourer of Destiny"
+        assert len(pending["cards"]) == 4
+
+        assert pending.get("moved_label") == "top of your library"
+        assert "exile" in pending.get("kept_label", ""), (
+            f"the cards not chosen are exiled (CR 406.1); the payload says "
+            f"{pending.get('kept_label')!r}"
+        )
+        assert "bottom" not in (pending.get("moved_label", "") + pending.get("kept_label", "")), (
+            "nothing about this decision puts a card on the bottom of a library"
+        )
+
+        # And the labels told the truth: the one card named stayed on top, the
+        # other three were exiled (CR 406.1), none went to the bottom.
+        game = store.get(game_id)
+        alice = game.player("alice")
+        exiled = [state.id for state in alice.cards_in(Zone.EXILE)]
+        assert len(exiled) == 3, f"three of the four should be exiled, got {len(exiled)}"
+        assert str(alice.library[0].id) == pending["cards"][0], (
+            "the card the answer named is the one kept on top, not one sent to the bottom"
+        )
+        assert {str(card_id) for card_id in exiled} == set(pending["cards"][1:])
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+# -- the renderer, running the shipped ui/app.js ------------------------------
+
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+
+
+def render_split(pending: dict[str, Any], *, kind: str) -> str:
+    """The HTML `ui/app.js` really produces for this pending decision, from the
+    renderer the decision's own kind is wired to (`scry` or `surveil`)."""
+    to_graveyard = {"scry": "false", "surveil": "true"}[kind]
+    script = f"""
+    const {{ renderCardSplitDecision }} = require({json.dumps(str(APP_JS))});
+    const html = renderCardSplitDecision({to_graveyard})({json.dumps(pending)});
+    process.stdout.write(JSON.stringify(html));
+    """
+    proc = subprocess.run(
+        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
+    )
+    assert proc.returncode == 0, f"node failed: {proc.stderr}"
+    return json.loads(proc.stdout)
+
+
+def looked_at(**extra: Any) -> dict[str, Any]:
+    """A pending look-then-split decision over two named cards."""
+    return {
+        "kind": "scry",
+        "cards": ["card-1", "card-2"],
+        "card_details": [
+            {"id": "card-1", "name": "Swamp"},
+            {"id": "card-2", "name": "Devourer of Destiny"},
+        ],
+        **extra,
+    }
+
+
+@needs_node
+def test_the_browser_tags_each_card_with_the_destination_the_engine_named() -> None:
+    """Devourer of Destiny's own pair, rendered: ticking a card keeps it on
+    top, and the hint says the rest are exiled. Neither of the two words the
+    old hardcoded renderer used ("bottom", "graveyard") may appear."""
+    html = render_split(
+        looked_at(moved_label="top of your library", kept_label="exiled"), kind="scry"
+    )
+
+    assert html.count("(top of your library)") == 2, html
+    assert "unchecked cards: exiled" in html, html
+    assert "bottom" not in html, "the old renderer's lie, still in the DOM"
+    assert "stay on top" not in html, "the unticked cards do not stay on top here - they are exiled"
+    assert "undefined" not in html
+
+
+@needs_node
+def test_a_plain_scry_renders_exactly_as_it_always_did() -> None:
+    """No labels stamped - an older engine, or any decision CR 701.22a itself
+    raises - falls back to the wording that has always been right for it."""
+    html = render_split(looked_at(), kind="scry")
+
+    assert html.count("(to bottom)") == 2, html
+    assert "unchecked cards stay on top, in the order shown" in html, html
+    assert "undefined" not in html
+
+
+@needs_node
+def test_a_plain_surveil_renders_exactly_as_it_always_did() -> None:
+    """CR 701.25a's own pair, on the same fallback path."""
+    html = render_split(looked_at(kind="surveil"), kind="surveil")
+
+    assert html.count("(to graveyard)") == 2, html
+    assert "unchecked cards stay on top, in the order shown" in html, html
+    assert "undefined" not in html
+
+
+@needs_node
+def test_each_label_falls_back_on_its_own() -> None:
+    """A decision that stamps one label and not the other gets the stamped one
+    and the fallback for the other - never a blank tag or an `undefined`."""
+    only_moved = render_split(looked_at(moved_label="your hand", kept_label=""), kind="scry")
+    assert only_moved.count("(your hand)") == 2, only_moved
+    assert "unchecked cards stay on top, in the order shown" in only_moved
+    assert "undefined" not in only_moved
+
+    only_kept = render_split(
+        looked_at(moved_label="", kept_label="bottom of your library"), kind="surveil"
+    )
+    assert only_kept.count("(to graveyard)") == 2, only_kept
+    assert "unchecked cards: bottom of your library" in only_kept
+    assert "undefined" not in only_kept
+
+
+@needs_node
+def test_a_label_is_escaped_like_every_other_string_in_the_box() -> None:
+    """Labels are engine text reaching innerHTML, so they go through the same
+    escaping the card names already do."""
+    html = render_split(
+        looked_at(moved_label="<b>top</b>", kept_label="<i>exiled</i>"), kind="scry"
+    )
+
+    assert "<b>" not in html and "<i>" not in html, html
+    assert "&lt;b&gt;top&lt;/b&gt;" in html
+    assert "&lt;i&gt;exiled&lt;/i&gt;" in html
+
+
+@needs_node
+def test_an_empty_look_still_renders_its_placeholder() -> None:
+    """Nothing to look at (an empty library) keeps the placeholder rather than
+    an empty box, labels or no labels."""
+    empty = {"kind": "scry", "cards": [], "card_details": [], "moved_label": "top of your library"}
+    assert "(nothing to look at)" in render_split(empty, kind="scry")
