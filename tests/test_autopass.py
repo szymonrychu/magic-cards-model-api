@@ -6,19 +6,23 @@ A seat that must call `pass` for every priority it is handed spends most of a
 game answering "no" to questions it could never answer any other way, and the
 human on the other side watches it think about each one. One call that passes a
 whole stretch fixes that - but only if it stops for the things that matter, and
-the two that matter most are not symmetrical:
+the three that matter most are not symmetrical:
 
 - something new landing on the stack is visible in the state, and a run that
   ignores it has thrown away the seat's chance to respond;
-- **being attacked is not.** Declaring blockers is a turn-based action and
-  "doesn't use the stack" (CR 509.1), so nothing arrives on the stack when the
-  opponent attacks, and the decision mailbox never carries it either
-  (`decisions.py` keeps `DECLARE_BLOCKERS` out of `ANSWERABLE_KINDS` because
-  blocking has its own action). A run that only watched the stack would pass a
-  seat straight through its own declare-blockers step and take the whole attack
-  unblocked. That is a lost game, so it is the condition this file spends the
-  most tests on - including the counterweight that a seat which deliberately
-  switches the stop off really does run through.
+- **neither combat declaration is.** Declaring blockers (CR 509.1) and
+  declaring attackers (CR 508.1) are turn-based actions, and each "doesn't use
+  the stack", so nothing arrives on the stack for either; the decision mailbox
+  never carries them either, because `decisions.py` keeps `DECLARE_BLOCKERS`
+  and `DECLARE_ATTACKERS` out of `ANSWERABLE_KINDS` - each has its own action.
+  A run that only watched the stack passes a seat straight through both. The
+  blockers one takes the whole attack unblocked, which loses games; the
+  attackers one costs an attack and does it *silently*, since a player who
+  never declares is treated as declaring nobody and nothing anywhere says why.
+  Both get the bulk of this file's tests, each with the counterweight that a
+  seat which deliberately switches the stop off really does run through, and
+  the guard that neither fires on the step a run started in - which would make
+  "auto-pass past combat", asked from inside combat, a call that does nothing.
 
 Every CR number here was verified with `knowledge_search(type="rules")` in the
 session that wrote this file: CR 509.1 (declaring blockers is a turn-based
@@ -183,7 +187,15 @@ def test_a_run_stops_at_the_named_step(client, game, monkeypatch):
 
     with Opponent(game, "bob"):
         result = pass_until(
-            alice, until_step="end_step", whose_turn="mine", max_seconds=20, poll_seconds=FAST_POLL
+            alice,
+            until_step="end_step",
+            whose_turn="mine",
+            # This run crosses alice's own combat, and the CR 508.1 stop would
+            # halt it there - correctly, and with its own tests below. Switched
+            # off so this test is about the destination and nothing else.
+            stop_when_you_can_attack=False,
+            max_seconds=20,
+            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
@@ -208,7 +220,15 @@ def test_naming_the_step_you_are_standing_in_means_the_next_one(client, game, mo
 
     with Opponent(game, "bob"):
         result = pass_until(
-            alice, until_step="upkeep", whose_turn="mine", max_seconds=60, poll_seconds=FAST_POLL
+            alice,
+            until_step="upkeep",
+            whose_turn="mine",
+            # Two of alice's own combats lie between here and her next upkeep;
+            # the CR 508.1 stop has its own tests, and this one is about the
+            # off-by-one.
+            stop_when_you_can_attack=False,
+            max_seconds=60,
+            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your upkeep"
@@ -234,7 +254,12 @@ def test_whose_turn_any_takes_whichever_comes_first(client, game, monkeypatch):
 
     with Opponent(game, "bob"):
         result = pass_until(
-            alice, until_step="upkeep", whose_turn="any", max_seconds=30, poll_seconds=FAST_POLL
+            alice,
+            until_step="upkeep",
+            whose_turn="any",
+            stop_when_you_can_attack=False,  # alice's own combat is on the way
+            max_seconds=30,
+            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached the next upkeep"
@@ -337,6 +362,7 @@ def test_a_run_told_not_to_stop_on_the_stack_runs_through_it(client, game, monke
             until_step="end_step",
             whose_turn="mine",
             stop_on_stack=False,
+            stop_when_you_can_attack=False,  # alice's own combat is on the way
             max_seconds=20,
             poll_seconds=FAST_POLL,
         )
@@ -423,6 +449,223 @@ def test_the_attacked_stop_does_not_fire_on_the_attacking_seat(client, game, mon
 
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
     assert result["state"]["step"] == "end_step"
+
+
+# -- CR 508.1: your own attack, which the stack cannot tell you about either --
+
+
+def test_a_run_stops_in_your_own_declare_attackers_step(client, game, monkeypatch):
+    """The sibling condition to the blockers one, and the same shape of hole:
+    declaring attackers is a turn-based action that "doesn't use the stack"
+    (CR 508.1), and `decisions.py` keeps `DECLARE_ATTACKERS` out of
+    `ANSWERABLE_KINDS`, so a run aimed past combat would pass its own attack by.
+
+    It costs an attack rather than the game - what earns it a stop is that it is
+    silent: the engine's `_ask_declaration` falls through to its default, an
+    unscripted player declares nobody, and the turn simply produces no attack.
+
+    Note the board: a real creature that really could attack, so the stop lands
+    on a turn where skipping it would genuinely have cost something.
+    """
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    a_bear_that_can_attack(client, game, "alice")
+    set_step(client, game, "precombat_main")
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            alice,
+            until_step="postcombat_main",
+            whose_turn="mine",
+            max_seconds=20,
+            poll_seconds=FAST_POLL,
+        )
+
+    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
+    assert result["state"]["active_player"] == "alice"
+    assert "it is your declare-attackers step" in result["stopped_because"]
+    assert "CR 508.1" in result["stopped_because"], (
+        "the stop reason has to say why nothing else woke this seat"
+    )
+    assert result["available_actions"]["attackers_requested"] is True
+
+
+def test_the_attackers_stop_does_not_guess_whether_anything_could_attack(client, game, monkeypatch):
+    """Deliberately no creature on the board at all, and the run still stops.
+
+    Summoning sickness, defender, tap state and CR 508.1's restrictions and
+    requirements are engine questions; this file defers to the engine rather
+    than reimplementing them, exactly as `ui/app.js` does, so the human's
+    checkbox and this parameter cannot mean two different things. "It is your
+    declare-attackers step" is the whole condition.
+    """
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "precombat_main")
+    assert state(client, game)["battlefield"] == [], "the point is an empty board"
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            alice,
+            until_step="postcombat_main",
+            whose_turn="mine",
+            max_seconds=20,
+            poll_seconds=FAST_POLL,
+        )
+
+    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
+
+
+def test_a_run_told_not_to_stop_when_you_can_attack_runs_through_its_own_combat(
+    client, game, monkeypatch
+):
+    """The deliberate "I am not attacking this turn". It has to really work, and
+    the cost has to really land: the run reaches its destination and the bear
+    that could have attacked is still untapped at the end of it, having done
+    nothing."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    a_bear_that_can_attack(client, game, "alice")
+    set_step(client, game, "precombat_main")
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            alice,
+            until_step="postcombat_main",
+            whose_turn="mine",
+            stop_when_you_can_attack=False,
+            max_seconds=20,
+            poll_seconds=FAST_POLL,
+        )
+
+    assert result["stopped_because"] == "reached your postcombat main", result["stopped_because"]
+    assert result["state"]["combat"]["attacks"] == [], "nothing attacked, which is the cost"
+    bear = find(result["state"]["battlefield"], "Grizzly Bears")
+    assert bear["tapped"] is False, "an attacker taps (CR 508.1f); this one never attacked"
+
+
+def test_the_attackers_stop_does_not_fire_on_the_defending_seat(client, game, monkeypatch):
+    """CR 508.1: "the active player declares attackers". bob is not the active
+    player, so alice's declare-attackers step is not a step bob owes anything
+    in, and stopping him there would be a run that halts on every one of his
+    opponent's turns for nothing."""
+    seats, uids = wired(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    stock_libraries(client, game)
+    a_bear_that_can_attack(client, game, "alice")
+    set_step(client, game, "precombat_main")
+
+    with Opponent(game, "alice"):
+        result = pass_until(
+            bob, until_step="upkeep", whose_turn="mine", max_seconds=30, poll_seconds=FAST_POLL
+        )
+
+    assert result["stopped_because"] == "reached your upkeep", result["stopped_because"]
+    assert result["state"]["active_player"] == "bob"
+
+
+# -- a combat stop must not fire on the step the run started in ---------------
+
+
+def test_a_run_started_in_its_own_declare_attackers_step_still_moves(client, game, monkeypatch):
+    """The dead-call defect. Without the guard, a combat condition fires on the
+    very state the run starts on, so "auto-pass past combat", asked while
+    standing in combat, stops before it moves and the caller is handed back the
+    board it already had. Asking from inside that step is the seat having
+    looked at combat and chosen to move on."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    a_bear_that_can_attack(client, game, "alice")
+    set_step(client, game, "beginning_of_combat")
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert state(client, game)["step"] == "declare_attackers"
+
+    with Opponent(game, "bob"):
+        result = pass_until(
+            alice,
+            until_step="postcombat_main",
+            whose_turn="mine",
+            max_seconds=20,
+            poll_seconds=FAST_POLL,
+        )
+
+    assert result["stopped_because"] == "reached your postcombat main", result["stopped_because"]
+    assert result["passes"] > 0, "the run stopped on the state it started on - a dead call"
+
+
+def test_a_run_started_in_its_own_declare_blockers_step_still_moves(client, game, monkeypatch):
+    """The same guard on the same wart in the blockers condition, which shipped
+    with it. Both seats pass out of declare attackers first, so the run really
+    does begin inside a declare-blockers step with a live attack on it."""
+    seats, uids = wired(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    stock_libraries(client, game)
+    stage_an_attack_on_bob(client, game)
+    for player in ("alice", "bob"):
+        client.post(f"/api/games/{game}/actions/pass-priority", json={"player": player})
+    board = state(client, game)
+    assert board["step"] == "declare_blockers" and board["combat"]["attacks"]
+
+    with Opponent(game, "alice"):
+        result = pass_until(
+            bob,
+            until_step="postcombat_main",
+            whose_turn="any",
+            max_seconds=20,
+            poll_seconds=FAST_POLL,
+        )
+
+    assert result["stopped_because"] == "reached the next postcombat main", result[
+        "stopped_because"
+    ]
+    assert result["passes"] > 0
+
+
+def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, monkeypatch):
+    """And the guard is scoped, not a blanket exemption: once the board leaves
+    the starting occurrence the stop comes back.
+
+    Both states here are real states fetched from one real game, one turn
+    apart - the same `(turn_number, step)` pair comparison the run itself makes
+    (CR 500.8 and CR 500.9 let an effect add a phase or a step, so one turn can
+    hold two of the same step, which is why the pair and not the step alone).
+    """
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    a_bear_that_can_attack(client, game, "alice")
+    set_step(client, game, "beginning_of_combat")
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    started_in = alice.fetch_state()
+    assert started_in["step"] == "declare_attackers"
+
+    run = seatkit.start_autopass(started_in, "postcombat_main", "mine")
+    assert seatkit.autopass_stop_reason(started_in, run, "alice") is None, (
+        "the step the run began in is exempt"
+    )
+
+    # Let the game really leave that occurrence, then hand the run the board it
+    # would have seen on the way past.
+    with Opponent(game, "bob"):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            board = alice.fetch_state()
+            if board["step"] != "declare_attackers":
+                break
+            client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+            time.sleep(FAST_POLL)
+    later = alice.fetch_state()
+    assert later["step"] != "declare_attackers", "the board never left the starting step"
+
+    seatkit.forget_starting_occurrence(run, later)
+    assert run["started_step"] is None, "the stamp survived the board leaving its occurrence"
+    assert seatkit.autopass_stop_reason(started_in, run, "alice") is not None, (
+        "with the stamp cleared, a declare-attackers board must stop the run again"
+    )
 
 
 # -- the other stops ---------------------------------------------------------
@@ -609,17 +852,25 @@ def test_both_front_ends_refuse_the_same_bad_destination(client, game, monkeypat
     assert "CR 514.3" in from_cli
 
 
-def test_the_cli_and_the_tool_default_the_two_stops_to_on():
-    """Both stops defend against something that loses the game, so both default
-    on in both front ends. Read off the live signature and the live parser, not
-    off a list kept by hand."""
+#: Every stop a caller may switch off, as (MCP parameter, CLI flag). Each
+#: defends against something the caller cannot see going wrong, so each
+#: defaults on, and neither front end may offer one the other does not.
+SWITCHABLE_STOPS = (
+    ("stop_on_stack", "--no-stop-on-stack"),
+    ("stop_when_attacked", "--no-stop-when-attacked"),
+    ("stop_when_you_can_attack", "--no-stop-when-you-can-attack"),
+)
+
+
+def test_the_cli_and_the_tool_default_every_stop_to_on():
+    """Each stop defends against something a seat cannot see going wrong, so
+    each defaults on in both front ends. Read off the live signature and the
+    live parser, not off a list kept by hand."""
     import inspect
 
     server = build_server(a_server_only_introspected())
     tool = server._tool_manager._tools["pass_priority"].fn
     parameters = inspect.signature(tool).parameters
-    assert parameters["stop_on_stack"].default is True
-    assert parameters["stop_when_attacked"].default is True
     assert parameters["until_whose_turn"].default == "mine"
 
     sub = next(a for a in seat_cli.build_parser()._actions if getattr(a, "choices", None))
@@ -628,8 +879,18 @@ def test_the_cli_and_the_tool_default_the_two_stops_to_on():
         for action in sub.choices["pass"]._actions
         for option in getattr(action, "option_strings", ())
     }
-    assert "--no-stop-on-stack" in flags, "the CLI cannot switch off what the tool can"
-    assert "--no-stop-when-attacked" in flags
+    for parameter, flag in SWITCHABLE_STOPS:
+        assert parameters[parameter].default is True, f"{parameter} must default on"
+        assert flag in flags, f"the CLI cannot switch off {parameter}, which the tool can"
+
+    # And the tool exposes nothing switchable that the pairs above missed - a
+    # fourth stop added to one front end only would be exactly this bug again.
+    switchable = {
+        name
+        for name, parameter in parameters.items()
+        if name.startswith("stop_") and parameter.default is True
+    }
+    assert switchable == {name for name, _ in SWITCHABLE_STOPS}
 
 
 def test_the_tool_docstring_says_what_switching_each_stop_off_costs():
@@ -646,8 +907,15 @@ def test_the_tool_docstring_says_what_switching_each_stop_off_costs():
 
     assert "CR 509.1" in docstring, "the reason the stack stop cannot cover blocking"
     assert "block nothing and take the whole attack" in docstring
+    assert "CR 508.1" in docstring, "the reason the stack stop cannot cover attacking"
+    assert "attack with nothing that turn" in docstring
+    assert "I am not attacking this turn" in docstring, (
+        "switching the attackers stop off is a decision, not a speed setting"
+    )
     assert "NEXT occurrence" in docstring
     assert "stopped_because" in docstring
+    for parameter, _ in SWITCHABLE_STOPS:
+        assert f"`{parameter}=false`" in docstring, f"{parameter} is undocumented"
     # The bluffing half of the feature: auto-passing everything is itself a tell.
     assert "represents a trick" in docstring
     assert "pass by hand" in docstring
@@ -670,5 +938,13 @@ def test_the_two_briefs_tell_a_player_when_not_to_auto_pass():
         flat = " ".join(text.split())
         assert "CR 509.1" in flat, f"{name} never says why the blocking stop exists"
         assert "block nothing and take the whole attack" in flat, name
+        assert "CR 508.1" in flat, f"{name} never says why the attacking stop exists"
+        assert "attack with nothing that turn" in flat, name
+        assert "I am not attacking this turn" in flat, (
+            f"{name} lets a seat read the attackers stop as a speed setting"
+        )
+        assert "stop you every turn" in flat, (
+            f"{name} never warns that a run past combat stops every turn by default"
+        )
         assert "represents a trick" in flat, f"{name} never says a pass can be a bluff"
         assert "NEXT occurrence" in flat, f"{name} never says naming this step means the next"
