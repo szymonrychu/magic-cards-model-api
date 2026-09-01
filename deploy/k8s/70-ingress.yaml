@@ -78,9 +78,27 @@ spec:
                 name: mtg-stack
                 port:
                   number: 8000
+    - host: pl.szymonrichert.pl
+      http:
+        paths:
+          # PORT 8000 ONLY. The Service also carries 8080 (agent) and 8090
+          # (driver), and neither is routed here on purpose: as 60-service.yaml
+          # says, NEITHER HAS ANY AUTHENTICATION OF ITS OWN. The agent port
+          # exposes full turn transcripts and an /v1/interrupt that anyone
+          # could call; the driver port exposes match control. Basic auth in
+          # front of them would be the only thing between the internet and
+          # that, and this password is public. Use port-forward for those two.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mtg-stack
+                port:
+                  number: 8000
   tls:
     - hosts:
         - play-magic.szymonrichert.pl
+        - pl.szymonrichert.pl
       # Its own certificate and its own Secret; cert-manager creates this from
       # the letsencrypt-prod ClusterIssuer on first apply.
       secretName: play-magic-tls
