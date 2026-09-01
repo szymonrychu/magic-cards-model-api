@@ -136,16 +136,31 @@ function withUid(path) {
  * when the focused element lives inside this container. The panel refreshes
  * on the next tick after the player moves on, so nothing goes stale for long.
  */
+// Repaint `el`, unless a control inside it is mid-edit and the repaint would
+// throw away what the player is typing.
+//
+// A checkbox or radio is deliberately NOT mid-edit: it holds no typed text,
+// and ticking one is exactly what asks for the repaint. Skipping there is how
+// the CR 103.5 bottoming picker wedged - tick the card you are bottoming, the
+// panel refuses to repaint because that very checkbox now has focus, and the
+// "Keep" button stays `disabled` forever no matter how many cards you tick.
+// From the player's chair the mulligan simply does not work. So repaint, and
+// put the focus back on the same control afterwards.
 function setHtml(el, html) {
   if (!el) return;
   if (el.innerHTML === html) return;
   const active = document.activeElement;
-  if (
-    active &&
-    active !== document.body &&
-    el.contains(active) &&
-    /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName)
-  ) {
+  const inside =
+    active && active !== document.body && el.contains(active) ? active : null;
+  if (inside && /^(INPUT|SELECT|TEXTAREA)$/.test(inside.tagName)) {
+    const toggle = /^(checkbox|radio)$/.test(inside.type || "");
+    if (!toggle) return;
+    const value = inside.value;
+    el.innerHTML = html;
+    const again = value
+      ? el.querySelector(`input[value="${(window.CSS && CSS.escape ? CSS.escape(value) : value)}"]`)
+      : null;
+    if (again) again.focus();
     return;
   }
   el.innerHTML = html;
@@ -329,7 +344,26 @@ async function startGame() {
   const aiUid = created.seat_uids[aiName];
   game.aiUid = aiUid;
   enterGame(created.game_id, youUid);
-  api("POST", `/api/ui/games/${created.game_id}/ai-seat/start`, { uid: aiUid }).catch(() => {});
+  // Never swallowed: if the opponent's agent does not start, the human is in
+  // a game whose opponent will not act, and the only thing worse than that is
+  // not being told. The pregame is playable regardless - `ai_pregame.py` makes
+  // the bot seat's CR 103.5/103.6 default moves once its grace lapses - so say
+  // what happened and let them keep going.
+  api("POST", `/api/ui/games/${created.game_id}/ai-seat/start`, { uid: aiUid })
+    .then((status) => {
+      game.aiStatus = status;
+      renderAiPanel(status);
+      if (status && status.mechanism === "fallback") {
+        notice(
+          `AI seat not running: ${status.reason || "unknown reason"}. The game still starts - ` +
+            `its pregame moves are made automatically.`,
+          "bad"
+        );
+      }
+    })
+    .catch((e) => {
+      notice(`Could not start the AI seat: ${e.message}. The game still starts.`, "bad");
+    });
   localStorage.setItem(LS_KEY, JSON.stringify({ gameId: created.game_id, uid: youUid, aiUid }));
 }
 
@@ -393,6 +427,7 @@ async function pollAiStatus() {
       "GET",
       `/api/ui/games/${game.gameId}/ai-seat/status?uid=${game.aiUid}`
     );
+    game.aiStatus = status;
     renderAiPanel(status);
   } catch {
     /* transient - the next poll tries again */
@@ -912,7 +947,7 @@ function renderMulliganStep(state, pregame, you) {
   if (!waiting.includes(you)) {
     const others = waiting.filter((name) => name !== you);
     const who = others.length ? others.map(escapeHtml).join(", ") : "the other seat";
-    return `<span>Mulligans (CR 103.5): waiting on ${who}.${taking}</span>`;
+    return `<span>Mulligans (CR 103.5): waiting on ${who}.${taking}</span>${opponentSeatNote()}`;
   }
   const needed = (pregame.cards_to_bottom || {})[you] || 0;
   const hand = (state.hands && state.hands[you]) || [];
@@ -947,7 +982,7 @@ function renderOpeningHandStep(pregame, you) {
   if (pregame.opening_hand_actor !== you) {
     const who = pregame.opening_hand_actor;
     return `<span>Opening-hand actions (CR 103.6): waiting on
-      ${escapeHtml(who || "the other seat")}.</span>`;
+      ${escapeHtml(who || "the other seat")}.</span>${opponentSeatNote()}`;
   }
   const options = (pregame.opening_hand_options || {})[you] || [];
   const buttons = options
@@ -964,6 +999,30 @@ function renderOpeningHandStep(pregame, you) {
   return `<span>Opening-hand actions (CR 103.6) - yours to take, in any order.</span>
     ${none}${buttons}
     <button class="primary" onclick="finishOpeningHand()">Done</button>`;
+}
+
+// What the opponent's agent is doing, said in the pregame panel itself rather
+// than only in the AI strip at the top - "waiting on claude" with no way to
+// tell whether claude is alive is the panel that reads as broken. The server
+// backstop (`ai_pregame.py`) moves a quiet bot seat along on its own, so this
+// is a status line, never a dead end.
+function opponentSeatNote() {
+  const status = game.aiStatus;
+  if (!status) return "";
+  if (status.mechanism === "fallback" || status.state === "not_started") {
+    return `<div class="why">Its agent is not running (${escapeHtml(
+      status.reason || "not started"
+    )}) - the server will make its pregame moves shortly.</div>`;
+  }
+  if (status.state === "error") {
+    return `<div class="why">Its agent stopped with an error - the server will make its
+      pregame moves shortly.</div>`;
+  }
+  if (status.state === "stopped") {
+    return `<div class="why">Its agent has exited - the server will make its pregame moves
+      shortly.</div>`;
+  }
+  return `<div class="why">Its agent is ${escapeHtml(status.state)}.</div>`;
 }
 
 function togglePregameBottom(cardId) {
@@ -1223,11 +1282,12 @@ async function tickAutopilot(state) {
 }
 
 // Node-loadable for tests (`tests/test_ui_autopilot.py`,
-// `tests/test_ui_targets.py`) - a no-op in the browser, where `module` does
-// not exist. `sendTargets` is defined further down the file; a function
-// declaration is hoisted, so naming it here is fine.
+// `tests/test_ui_targets.py`, `tests/test_ui_pregame_panel.py`) - a no-op in
+// the browser, where `module` does not exist. `sendTargets` is defined
+// further down the file; a function declaration is hoisted, so naming it here
+// is fine.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { autopilotStopReason, interpretPassOutcome, sendTargets };
+  module.exports = { autopilotStopReason, interpretPassOutcome, sendTargets, setHtml };
 }
 
 // -------------------------------------------------------- the action tray ----

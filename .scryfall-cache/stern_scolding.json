@@ -1,0 +1,132 @@
+{
+  "arena_id": 107999,
+  "artist": "Valera Lutfullina",
+  "artist_ids": [
+    "76bc57c7-47c6-40c5-8797-8ffcce430ac7"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 900701,
+  "cmc": 1.0,
+  "collector_number": "183",
+  "color_identity": [
+    "U"
+  ],
+  "colors": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 10810,
+  "finishes": [
+    "nonfoil"
+  ],
+  "flavor_text": "\"Fool of a Took! This is a serious journey, not a Hobbit walking-party. Throw yourself in next time, and then you will be no further nuisance. Now be quiet!\"",
+  "foil": false,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "arena",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "b2dee261-e02f-47ab-8468-3ef055004c8c",
+  "illustration_id": "ce00f957-f2cd-4b68-a114-778303930a0a",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-31T11:31:19Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.webp?1785497479",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.jpg?1785497479",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.jpg?1785497479",
+    "crop": "https://cards.scryfall.io/crop/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.webp?1785497479",
+    "display": "https://cards.scryfall.io/display/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.webp?1785497479",
+    "grid": "https://cards.scryfall.io/grid/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.webp?1785497479",
+    "large": "https://cards.scryfall.io/large/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.jpg?1785497479",
+    "normal": "https://cards.scryfall.io/normal/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.jpg?1785497479",
+    "png": "https://cards.scryfall.io/png/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.png?1785497479",
+    "small": "https://cards.scryfall.io/small/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.jpg?1785497479",
+    "thumb": "https://cards.scryfall.io/thumb/front/b/2/b2dee261-e02f-47ab-8468-3ef055004c8c.webp?1785497479"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{U}",
+  "mtgo_id": 154782,
+  "multiverse_ids": [],
+  "name": "Stern Scolding",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "3bc8a406-3ae7-4f56-a33c-b4a2c115b917",
+  "oracle_text": "Counter target creature spell with power or toughness 2 or less.",
+  "oversized": false,
+  "prices": {
+    "eur": "5.00",
+    "eur_foil": null,
+    "tix": "0.02",
+    "usd": "2.04",
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A3bc8a406-3ae7-4f56-a33c-b4a2c115b917&unique=prints",
+  "promo": false,
+  "promo_types": [
+    "universesbeyond"
+  ],
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/154782?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=900701&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F709596%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Stern+Scolding",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DStern%2BScolding",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DStern%2BScolding"
+  },
+  "released_at": "2026-08-14",
+  "reprint": true,
+  "reserved": false,
+  "resource_id": "31AC545AE23FEE440B6FB57F229F8EAFAE7699985DD369C8DF7799D74EFE83D6",
+  "rulings_uri": "https://api.scryfall.com/cards/b2dee261-e02f-47ab-8468-3ef055004c8c/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/hoc?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/hoc/183/stern-scolding?utm_source=api",
+  "set": "hoc",
+  "set_id": "a185c905-5359-4f40-85c3-a3eae2ca4ff0",
+  "set_name": "The Hobbit Eternal",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Ahoc&unique=prints",
+  "set_type": "eternal",
+  "set_uri": "https://api.scryfall.com/sets/a185c905-5359-4f40-85c3-a3eae2ca4ff0",
+  "story_spotlight": false,
+  "tcgplayer_id": 709596,
+  "textless": false,
+  "type_line": "Instant",
+  "uri": "https://api.scryfall.com/cards/b2dee261-e02f-47ab-8468-3ef055004c8c",
+  "variation": false
+}

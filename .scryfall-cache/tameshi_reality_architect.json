@@ -1,0 +1,144 @@
+{
+  "arena_id": 79507,
+  "artist": "Scott M. Fischer",
+  "artist_ids": [
+    "23b0cf43-3e43-44c6-8329-96446eca5bce"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 607157,
+  "cmc": 3.0,
+  "collector_number": "82",
+  "color_identity": [
+    "U",
+    "W"
+  ],
+  "colors": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 10037,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "frame_effects": [
+    "legendary"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "26594b52-3e9c-4cde-88df-1f4e9e16676e",
+  "illustration_id": "6d27c482-e808-4fa9-801f-30d801df0892",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T06:24:54Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.webp?1783923894",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.jpg?1783923894",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.jpg?1783923894",
+    "crop": "https://cards.scryfall.io/crop/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.webp?1783923894",
+    "display": "https://cards.scryfall.io/display/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.webp?1783923894",
+    "grid": "https://cards.scryfall.io/grid/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.webp?1783923894",
+    "large": "https://cards.scryfall.io/large/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.jpg?1783923894",
+    "normal": "https://cards.scryfall.io/normal/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.jpg?1783923894",
+    "png": "https://cards.scryfall.io/png/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.png?1783923894",
+    "small": "https://cards.scryfall.io/small/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.jpg?1783923894",
+    "thumb": "https://cards.scryfall.io/thumb/front/2/6/26594b52-3e9c-4cde-88df-1f4e9e16676e.webp?1783923894"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{2}{U}",
+  "mtgo_id": 97084,
+  "multiverse_ids": [
+    548380
+  ],
+  "name": "Tameshi, Reality Architect",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "b47b3cfe-7005-4b33-9d41-83b60808e12b",
+  "oracle_text": "Whenever one or more noncreature permanents are returned to hand, draw a card. This ability triggers only once each turn.\n{X}{W}, Return a land you control to its owner's hand: Return target artifact or enchantment card with mana value X or less from your graveyard to the battlefield. Activate only as a sorcery.",
+  "oversized": false,
+  "penny_rank": 2969,
+  "power": "2",
+  "preview": {
+    "previewed_at": "2022-01-27",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://www.twitch.tv/videos/1277767538"
+  },
+  "prices": {
+    "eur": "0.34",
+    "eur_foil": "0.84",
+    "tix": "0.02",
+    "usd": "0.33",
+    "usd_etched": null,
+    "usd_foil": "0.58"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Ab47b3cfe-7005-4b33-9d41-83b60808e12b&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/97084?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=607157&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F262160%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Tameshi%2C+Reality+Architect",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=548380&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DTameshi%252C%2BReality%2BArchitect",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DTameshi%252C%2BReality%2BArchitect"
+  },
+  "released_at": "2022-02-18",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/26594b52-3e9c-4cde-88df-1f4e9e16676e/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/neo?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/neo/82/tameshi-reality-architect?utm_source=api",
+  "security_stamp": "oval",
+  "set": "neo",
+  "set_id": "59a2059f-5482-433f-8761-eb2e17859b71",
+  "set_name": "Kamigawa: Neon Dynasty",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Aneo&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/59a2059f-5482-433f-8761-eb2e17859b71",
+  "story_spotlight": false,
+  "tcgplayer_id": 262160,
+  "textless": false,
+  "toughness": "3",
+  "type_line": "Legendary Creature \u2014 Moonfolk Wizard",
+  "uri": "https://api.scryfall.com/cards/26594b52-3e9c-4cde-88df-1f4e9e16676e",
+  "variation": false
+}

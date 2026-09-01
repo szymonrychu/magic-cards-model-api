@@ -34,7 +34,7 @@ from fastapi import APIRouter
 from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
-from . import audit, scryfall
+from . import ai_pregame, audit, scryfall
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
@@ -206,6 +206,13 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
         seed=str(match.seed),
     )
     seat_uids = {name: uid for uid, name in uids.items()}
+    ai_players = [player.username for player in req.players if player.ai]
+    # The bot seats' pregame backstop. CR 103.5 needs every seat's declaration
+    # and CR 103.6 hands the window to one seat at a time, so a bot seat that
+    # goes quiet - and the headless `claude` subprocess demonstrably does,
+    # exiting once it decides the pregame is "nothing to act on" - strands the
+    # human at a panel no button of theirs can move. See `ai_pregame.py`.
+    ai_pregame.start(game_id, ai_players)
     return {
         "game_id": game_id,
         "seat_uids": seat_uids,

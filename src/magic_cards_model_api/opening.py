@@ -157,7 +157,13 @@ def _bottom_answer(
 
 
 def declare_mulligan(
-    game_id: str, game: Game, username: str, take: bool, bottom: list[UUID] | None = None
+    game_id: str,
+    game: Game,
+    username: str,
+    take: bool,
+    bottom: list[UUID] | None = None,
+    *,
+    automatic: bool = False,
 ) -> dict[str, Any]:
     """One seat's CR 103.5 declaration - "first, the starting player declares
     whether they will take a mulligan; then each other player in turn order
@@ -190,7 +196,11 @@ def declare_mulligan(
         # `live` is the honest half: a seat really made this declaration
         # through its own request, unlike the engine default the old blocking
         # path recorded. `bottom_chosen` is None when nothing was owed.
-        live=True,
+        # `automatic` is `ai_pregame.py`'s backstop declaring for a bot seat
+        # that did not declare for itself - a real declaration, but not the
+        # seat's own choice, so the transcript must not claim it was.
+        live=not automatic,
+        automatic=automatic,
         bottom_chosen=chose_bottom,
         step=step.value,
     )
@@ -209,11 +219,20 @@ def take_opening_hand_action(
     return {"taken": name, "step": game.turn.step.value, "pregame": pregame_view(game)}
 
 
-def finish_opening_hand_actions(game_id: str, game: Game, username: str) -> dict[str, Any]:
+def finish_opening_hand_actions(
+    game_id: str, game: Game, username: str, *, automatic: bool = False
+) -> dict[str, Any]:
     """This seat is done taking CR 103.6 actions; the next seat is up, and
     when the last one finishes CR 103.8's first turn begins."""
     step = game.finish_opening_hand_actions(username)
-    audit.record(game_id, "opening_hand_done", player=username, step=step.value, live=True)
+    audit.record(
+        game_id,
+        "opening_hand_done",
+        player=username,
+        step=step.value,
+        live=not automatic,
+        automatic=automatic,
+    )
     return {"step": step.value, "pregame": pregame_view(game)}
 
 

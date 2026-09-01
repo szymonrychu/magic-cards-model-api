@@ -92,9 +92,17 @@ AUTOPILOT_UNTIL_UPKEEP = {"target": "upkeep", "knownStackIds": []}
 
 
 def test_module_exports_the_two_pure_functions() -> None:
+    """`setHtml` joined them for `tests/test_ui_pregame_panel.py`: its repaint
+    rule is what decides whether the CR 103.5 "Keep" button ever leaves
+    `disabled`, and that has to be tested against the shipped file too."""
     assert APP_JS.is_file(), "ui/app.js is missing"
     exported = run_js("Object.keys(require(" + json.dumps(str(APP_JS)) + "))")
-    assert set(exported) == {"autopilotStopReason", "interpretPassOutcome", "sendTargets"}
+    assert set(exported) == {
+        "autopilotStopReason",
+        "interpretPassOutcome",
+        "sendTargets",
+        "setHtml",
+    }
 
 
 # -- stop condition: a pending decision addressed to this seat --------------

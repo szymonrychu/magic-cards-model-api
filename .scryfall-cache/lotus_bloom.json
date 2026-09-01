@@ -1,0 +1,141 @@
+{
+  "artist": "Mark Zug",
+  "artist_ids": [
+    "48e2b98c-5467-4671-bd42-4c3746115117"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 542701,
+  "cmc": 0.0,
+  "collector_number": "270",
+  "color_identity": [],
+  "colors": [],
+  "digital": false,
+  "edhrec_rank": 4030,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "db89ae4d-1cc2-41d8-a4de-a54b958c4429",
+  "illustration_id": "2cc790c6-7d15-439a-b604-be95c23e0d81",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T07:29:14Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.webp?1783927754",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.jpg?1783927754",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.jpg?1783927754",
+    "crop": "https://cards.scryfall.io/crop/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.webp?1783927754",
+    "display": "https://cards.scryfall.io/display/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.webp?1783927754",
+    "grid": "https://cards.scryfall.io/grid/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.webp?1783927754",
+    "large": "https://cards.scryfall.io/large/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.jpg?1783927754",
+    "normal": "https://cards.scryfall.io/normal/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.jpg?1783927754",
+    "png": "https://cards.scryfall.io/png/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.png?1783927754",
+    "small": "https://cards.scryfall.io/small/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.jpg?1783927754",
+    "thumb": "https://cards.scryfall.io/thumb/front/d/b/db89ae4d-1cc2-41d8-a4de-a54b958c4429.webp?1783927754"
+  },
+  "keywords": [
+    "Suspend"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "not_legal",
+    "commander": "legal",
+    "competitivebrawl": "not_legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "not_legal",
+    "historic": "not_legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "legal",
+    "pioneer": "not_legal",
+    "predh": "legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "not_legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "",
+  "mtgo_id": 86915,
+  "multiverse_ids": [
+    509635
+  ],
+  "name": "Lotus Bloom",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "04cf02dc-f053-414e-87d8-1537f25bcbf4",
+  "oracle_text": "Suspend 3\u2014{0} (Rather than cast this card from your hand, pay {0} and exile it with three time counters on it. At the beginning of your upkeep, remove a time counter. When the last is removed, you may cast it without paying its mana cost.)\n{T}, Sacrifice this artifact: Add three mana of any one color.",
+  "oversized": false,
+  "penny_rank": 207,
+  "preview": {
+    "previewed_at": "2021-02-25",
+    "source": "Wizards of the Coast",
+    "source_uri": "https://magic.wizards.com/en/articles/archive/card-image-gallery/time-spiral-remastered"
+  },
+  "prices": {
+    "eur": "1.99",
+    "eur_foil": "3.67",
+    "tix": "0.78",
+    "usd": "4.16",
+    "usd_etched": null,
+    "usd_foil": "5.75"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A04cf02dc-f053-414e-87d8-1537f25bcbf4&unique=prints",
+  "produced_mana": [
+    "B",
+    "G",
+    "R",
+    "U",
+    "W"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/86915?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=542701&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F234341%3Fpage%3D1"
+  },
+  "rarity": "rare",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Lotus+Bloom",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=509635&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DLotus%2BBloom",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DLotus%2BBloom"
+  },
+  "released_at": "2021-03-19",
+  "reprint": true,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/db89ae4d-1cc2-41d8-a4de-a54b958c4429/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/tsr?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/tsr/270/lotus-bloom?utm_source=api",
+  "security_stamp": "oval",
+  "set": "tsr",
+  "set_id": "11e90d1b-0502-43e6-b056-e24836523c13",
+  "set_name": "Time Spiral Remastered",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Atsr&unique=prints",
+  "set_type": "masters",
+  "set_uri": "https://api.scryfall.com/sets/11e90d1b-0502-43e6-b056-e24836523c13",
+  "story_spotlight": false,
+  "tcgplayer_id": 234341,
+  "textless": false,
+  "type_line": "Artifact",
+  "uri": "https://api.scryfall.com/cards/db89ae4d-1cc2-41d8-a4de-a54b958c4429",
+  "variation": false
+}

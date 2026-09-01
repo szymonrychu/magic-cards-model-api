@@ -1,0 +1,170 @@
+{
+  "arena_id": 73254,
+  "artist": "Cliff Childs",
+  "artist_ids": [
+    "ed6f7e03-20ba-4c73-bdda-4a4928480721"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_faces": [
+    {
+      "artist": "Cliff Childs",
+      "artist_id": "ed6f7e03-20ba-4c73-bdda-4a4928480721",
+      "colors": [
+        "U"
+      ],
+      "flavor_text": "\"You worry too much.\"\n\u2014Nys Dal, Sea Gate trapfinder",
+      "illustration_id": "9658aadf-bb95-4d45-8fe2-a0f7f2f7e262",
+      "image_uris": {
+        "art": "https://cards.scryfall.io/art/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "art_crop": "https://cards.scryfall.io/art_crop/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "border_crop": "https://cards.scryfall.io/border_crop/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "crop": "https://cards.scryfall.io/crop/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "display": "https://cards.scryfall.io/display/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "grid": "https://cards.scryfall.io/grid/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "large": "https://cards.scryfall.io/large/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "normal": "https://cards.scryfall.io/normal/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "png": "https://cards.scryfall.io/png/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.png?1783929400",
+        "small": "https://cards.scryfall.io/small/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "thumb": "https://cards.scryfall.io/thumb/front/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400"
+      },
+      "mana_cost": "{1}{U}",
+      "name": "Jwari Disruption",
+      "object": "card_face",
+      "oracle_text": "Counter target spell unless its controller pays {1}.",
+      "type_line": "Instant"
+    },
+    {
+      "artist": "Cliff Childs",
+      "artist_id": "ed6f7e03-20ba-4c73-bdda-4a4928480721",
+      "colors": [],
+      "flavor_text": "\"The Ondu Skyclave was a center for rebellion against the capital in Makindi. Of course they built in deadly traps.\"\n\u2014Nys Dal, Sea Gate trapfinder",
+      "illustration_id": "af2c8d11-3179-48c7-aed3-8957c04220c2",
+      "image_uris": {
+        "art": "https://cards.scryfall.io/art/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "art_crop": "https://cards.scryfall.io/art_crop/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "border_crop": "https://cards.scryfall.io/border_crop/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "crop": "https://cards.scryfall.io/crop/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "display": "https://cards.scryfall.io/display/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "grid": "https://cards.scryfall.io/grid/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400",
+        "large": "https://cards.scryfall.io/large/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "normal": "https://cards.scryfall.io/normal/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "png": "https://cards.scryfall.io/png/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.png?1783929400",
+        "small": "https://cards.scryfall.io/small/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.jpg?1783929400",
+        "thumb": "https://cards.scryfall.io/thumb/back/3/0/301750a7-d1fd-435e-bfa8-9d2fb22ad627.webp?1783929400"
+      },
+      "mana_cost": "",
+      "name": "Jwari Ruins",
+      "object": "card_face",
+      "oracle_text": "This land enters tapped.\n{T}: Add {U}.",
+      "type_line": "Land"
+    }
+  ],
+  "cardmarket_id": 496395,
+  "cmc": 2.0,
+  "collector_number": "64",
+  "color_identity": [
+    "U"
+  ],
+  "digital": false,
+  "edhrec_rank": 2686,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2015",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "arena",
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "301750a7-d1fd-435e-bfa8-9d2fb22ad627",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T07:56:40Z",
+  "keywords": [],
+  "lang": "en",
+  "layout": "modal_dfc",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "legal",
+    "predh": "not_legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mtgo_id": 83079,
+  "multiverse_ids": [
+    491693,
+    491694
+  ],
+  "name": "Jwari Disruption // Jwari Ruins",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "941a4b14-ea2a-4bd0-8cc2-d609f80df32c",
+  "oversized": false,
+  "penny_rank": 938,
+  "prices": {
+    "eur": "0.36",
+    "eur_foil": "0.72",
+    "tix": "0.03",
+    "usd": "0.42",
+    "usd_etched": null,
+    "usd_foil": "2.57"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A941a4b14-ea2a-4bd0-8cc2-d609f80df32c&unique=prints",
+  "produced_mana": [
+    "U"
+  ],
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/83079?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=496395&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F222101%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Jwari+Disruption",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=491693&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DJwari%2BDisruption%2B%252F%252F%2BJwari%2BRuins",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DJwari%2BDisruption%2B%252F%252F%2BJwari%2BRuins"
+  },
+  "released_at": "2020-09-25",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/301750a7-d1fd-435e-bfa8-9d2fb22ad627/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/znr?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/znr/64/jwari-disruption-jwari-ruins?utm_source=api",
+  "set": "znr",
+  "set_id": "f4e01fa7-b254-42dd-849f-69b58027a8c4",
+  "set_name": "Zendikar Rising",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Aznr&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/f4e01fa7-b254-42dd-849f-69b58027a8c4",
+  "story_spotlight": false,
+  "tcgplayer_id": 222101,
+  "textless": false,
+  "type_line": "Instant // Land",
+  "uri": "https://api.scryfall.com/cards/301750a7-d1fd-435e-bfa8-9d2fb22ad627",
+  "variation": false
+}

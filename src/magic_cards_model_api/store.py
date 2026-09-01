@@ -45,6 +45,7 @@ class GameStore:
         self._mailboxes: dict[str, DecisionMailbox] = {}  # game_id -> its pending decision
         self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
         self._decklists: dict[str, dict[str, str]] = {}  # game_id -> username -> decklist text
+        self._ai_players: dict[str, set[str]] = {}  # game_id -> usernames driven by a bot
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -85,6 +86,26 @@ class GameStore:
         """
         with self._lock:
             return dict(self._decklists.get(game_id, {}))
+
+    def register_ai_players(self, game_id: str, players: list[str]) -> None:
+        """Record which seats are meant to be driven by a bot rather than a
+        human at a browser.
+
+        Kept beside the game for the same reason the seat uids are: "this seat
+        has a subprocess playing it" is a fact about *this deployment*, not
+        about the game, and `Game` must not learn it. The one thing the server
+        does with it is `ai_pregame.py`'s backstop, which will make a seat's
+        own CR 103.5 declaration for it - and must therefore never be able to
+        confuse a bot seat with the human's.
+        """
+        with self._lock:
+            self._ai_players[game_id] = set(players)
+
+    def ai_players(self, game_id: str) -> set[str]:
+        """The usernames registered as bot-driven. Empty for every game that
+        did not say so - a human seat is never inferred into this set."""
+        with self._lock:
+            return set(self._ai_players.get(game_id, set()))
 
     @contextmanager
     def locked(self, game_id: str) -> Iterator[Game]:
@@ -168,6 +189,7 @@ class GameStore:
             self._mailboxes.pop(game_id, None)
             self._decision_timeouts.pop(game_id, None)
             self._decklists.pop(game_id, None)
+            self._ai_players.pop(game_id, None)
             return self._games.pop(game_id, None) is not None
 
     def ids(self) -> list[str]:

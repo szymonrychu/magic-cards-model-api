@@ -56,16 +56,31 @@ SEED_WITH_A_LEYLINE_IN_ALICES_HAND = 4
 PREGAME_WITHIN_SECONDS = 20.0
 
 
-def boot(client: TestClient, *, alice_deck: str, bob_deck: str, seed: int) -> dict[str, Any]:
+def boot(
+    client: TestClient,
+    *,
+    alice_deck: str,
+    bob_deck: str,
+    seed: int,
+    ai_players: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """A real game from two real decklists, through the endpoint the browser
     UI itself posts to. Returns the creation response: game id, seat uids,
-    admin key."""
+    admin key.
+
+    `ai_players` sets the same `ai: true` flag the play UI sets on its
+    opponent seat - the flag `ai_pregame.py`'s backstop keys off.
+    """
     response = client.post(
         "/api/ui/games",
         json={
             "players": [
-                {"username": "alice", "decklist_text": alice_deck},
-                {"username": "bob", "decklist_text": bob_deck},
+                {
+                    "username": "alice",
+                    "decklist_text": alice_deck,
+                    "ai": "alice" in ai_players,
+                },
+                {"username": "bob", "decklist_text": bob_deck, "ai": "bob" in ai_players},
             ],
             "seed": seed,
         },
@@ -702,3 +717,130 @@ def test_the_whole_pregame_is_reachable_from_the_cli_alone(monkeypatch, client, 
     assert state["pregame"] is None, "CR 103.8's first turn never began from the CLI alone"
     assert state["step"] == "untap"
     capsys.readouterr()
+
+
+# -- a bot seat that goes quiet must not hang the human ----------------------
+#
+# The seat CLI above gives an AI seat a *door* to the pregame. It does not
+# make the AI walk through it. Driven live against a real server, the headless
+# `claude` subprocess declared its CR 103.5 keep, then decided the pregame was
+# "nothing to act on yet", exited 0, and left the game resting in
+# `Step.PREGAME_ACTIONS` with `opening_hand_actor` naming a seat whose process
+# was gone. CR 103.6 hands that window to one seat at a time, so nothing the
+# human could press would ever move it: their panel said "waiting on claude"
+# for as long as they cared to watch.
+#
+# `ai_pregame.py` is the backstop. These two tests pin both halves of it: it
+# unblocks the human, and it never plays the human's seat.
+
+
+def play_alone_until_the_game_starts(
+    client: TestClient, info: dict[str, Any], *, within: float
+) -> dict[str, Any]:
+    """Drive ONLY alice's seat - exactly the buttons the human's browser has -
+    until the pregame is over or `within` seconds elapse. Returns her final
+    view."""
+    deadline = time.monotonic() + within
+    state = view(client, info, "alice")
+    while state["pregame"] is not None and time.monotonic() < deadline:
+        pregame = state["pregame"]
+        if "alice" in (pregame["awaiting_mulligan"] or []):
+            declare(client, info, "alice", take=False)
+        elif pregame["opening_hand_actor"] == "alice":
+            finish_opening_hand(client, info, "alice")
+        else:
+            time.sleep(0.05)
+        state = view(client, info, "alice")
+    return state
+
+
+def test_a_human_reaches_turn_one_though_the_ai_seat_never_moves(
+    client: TestClient, monkeypatch
+) -> None:
+    """Nobody drives bob at all - no CLI, no subprocess, nothing. The human
+    still gets to CR 103.8's first turn.
+
+    Without `ai_pregame.py` this hangs: alice's own declaration lands, and then
+    CR 103.5's round never resolves because bob still owes one.
+    """
+    monkeypatch.setenv("AI_PREGAME_GRACE_SECONDS", "0")
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1, ai_players=("bob",))
+    try:
+        state = play_alone_until_the_game_starts(client, info, within=PREGAME_WITHIN_SECONDS)
+
+        assert state["pregame"] is None, (
+            "the human was left in the pregame by a bot seat that never declared - "
+            "this is the reported bug"
+        )
+        assert state["step"] == "untap"
+        assert state["turn_number"] == 1
+    finally:
+        delete(client, info)
+
+
+def test_the_backstop_never_declares_for_the_human(client: TestClient, monkeypatch) -> None:
+    """With the grace period at zero and both seats owing CR 103.5, only the
+    seat flagged `ai` is moved. Alice's declaration is hers to make, however
+    long she takes over it - the backstop must never take it."""
+    monkeypatch.setenv("AI_PREGAME_GRACE_SECONDS", "0")
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1, ai_players=("bob",))
+    try:
+        deadline = time.monotonic() + 5.0
+        pregame = view(client, info, "alice")["pregame"]
+        while pregame is not None and "bob" in pregame["awaiting_mulligan"]:
+            if time.monotonic() > deadline:
+                raise AssertionError("the backstop never made the bot seat's declaration")
+            time.sleep(0.05)
+            pregame = view(client, info, "alice")["pregame"]
+
+        assert pregame is not None, "the pregame ended without alice ever declaring"
+        assert pregame["awaiting_mulligan"] == ["alice"], (
+            "alice's own CR 103.5 declaration was taken from her"
+        )
+        # CR 103.5's round resolves only once every player has declared, so
+        # `hand_kept` is still false for both here - what the backstop did is
+        # remove bob from the list of seats still owed, and nothing else.
+        assert pregame["mulligans_taken"] == {"alice": 0, "bob": 0}
+    finally:
+        delete(client, info)
+
+
+def test_the_backstop_records_that_the_seat_did_not_choose(client: TestClient, monkeypatch) -> None:
+    """A transcript must not claim the bot chose to keep. `opening.py` records
+    a seat's own declaration as `live`; the backstop's is `automatic`."""
+    monkeypatch.setenv("AI_PREGAME_GRACE_SECONDS", "0")
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1, ai_players=("bob",))
+    try:
+        play_alone_until_the_game_starts(client, info, within=PREGAME_WITHIN_SECONDS)
+        log = client.get(
+            f"/api/games/{info['game_id']}/log", params={"uid": info["admin_key"]}
+        ).json()["log"]
+        declarations = {
+            entry["detail"]["player"]: entry["detail"]
+            for entry in log
+            if entry["action"] == "mulligan_declared"
+        }
+
+        assert declarations["alice"]["live"] is True
+        assert declarations["alice"]["automatic"] is False
+        assert declarations["bob"]["automatic"] is True
+        assert declarations["bob"]["live"] is False
+    finally:
+        delete(client, info)
+
+
+def test_a_game_with_no_ai_seat_gets_no_backstop(client: TestClient, monkeypatch) -> None:
+    """The flag is the whole trigger. Two human seats wait for each other for
+    as long as it takes, exactly as CR 103.5 says they should."""
+    monkeypatch.setenv("AI_PREGAME_GRACE_SECONDS", "0")
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
+    try:
+        assert store.ai_players(info["game_id"]) == set()
+        assert declare(client, info, "alice", take=False).status_code == 200
+        time.sleep(1.0)
+
+        assert view(client, info, "alice")["pregame"]["awaiting_mulligan"] == ["bob"], (
+            "nobody declared for bob, and nobody should have"
+        )
+    finally:
+        delete(client, info)
