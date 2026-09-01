@@ -74,6 +74,13 @@ let game = {
   action: null,
   autopilot: null,
   autopilotStoppedReason: null,
+  aiStatus: null,
+  // How long the board has looked exactly like this, for the stall notice.
+  // `aiPriorityKey` is what "exactly like this" means, so that an agent
+  // taking a legitimately long turn is only accused once it has stopped
+  // changing anything at all.
+  aiPriorityKey: null,
+  aiPrioritySince: null,
   settings: {
     // The safe default: stop and ask whenever anything the player could
     // respond to goes on the stack, rather than blow through it.
@@ -462,6 +469,7 @@ function render(state) {
   renderDecision(state, you);
   renderActionTray(state);
   renderAutopilotBanner();
+  renderAiStallBanner(state);
   renderActionBar(state, you);
 
   $("#raw-state").textContent = JSON.stringify(state, null, 1);
@@ -1281,13 +1289,124 @@ async function tickAutopilot(state) {
   }
 }
 
+// ------------------------------------------------------- the AI seat is stuck ----
+//
+// The freeze this exists for, seen live: the agent container's claude hit
+// `API Error: 401 API key is invalid` mid-turn and sat at its prompt. The
+// wrapper's only timer is `mark_stall_suspected`, which reports and re-arms
+// rather than failing the turn, so the seat stayed "busy" for its 30-minute
+// timeout; the driver still said `pending: false, lastError: null`; and this
+// UI, which read only the dispatch-time snapshot, showed "AI (claude):
+// dispatched" forever. The human had auto-pass running, it correctly stopped
+// the moment priority left them, and from the outside the whole page looked
+// frozen with nothing to click.
+
+/** How long the AI seat may hold priority with nothing changing before this
+ * says so. Long enough that an agent genuinely thinking through a turn is
+ * never accused; short enough that a dead one is not mistaken for a hung
+ * browser tab. */
+const AI_STALL_SECONDS = 45;
+
+/**
+ * What to tell the human about a silent AI seat, or null when there is
+ * nothing to say. A pure function of (state, the seat's name, the seat's
+ * server-reported status, how long the board has been unchanged) - no DOM,
+ * no fetch, no clock of its own - so `tests/test_ui_ai_stall.py` can run the
+ * real shipped function under Node the way the autopilot tests do.
+ *
+ * An error the server already knows about beats the timer: there is no point
+ * waiting 45 seconds to report something the driver reported at second one.
+ */
+function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace) {
+  if (!state || !aiPlayer) return null;
+  if (state.winner || state.drawn) return null;
+  if (state.priority_holder !== aiPlayer) return null;
+  const error = aiStatus && aiStatus.last_error;
+  if (error) return `${aiPlayer}'s agent reported an error: ${error}`;
+  if (aiStatus && aiStatus.state === "unreachable") {
+    return `${aiPlayer}'s agent cannot be reached by the game server`;
+  }
+  const limit = grace === undefined ? AI_STALL_SECONDS : grace;
+  if (!(unchangedSeconds >= limit)) return null;
+  return `${aiPlayer} has held priority for ${Math.floor(unchangedSeconds)}s without acting`;
+}
+
+/** Seconds the board has looked exactly like this. Any real progress - a new
+ * step, a new turn, priority moving, anything arriving on or leaving the
+ * stack - restarts the clock, so only a seat that has changed nothing at all
+ * accumulates time here. */
+function aiUnchangedSeconds(state, now) {
+  const key = [
+    state.priority_holder,
+    state.turn_number,
+    state.step,
+    (state.stack || []).length,
+  ].join("|");
+  if (game.aiPriorityKey !== key) {
+    game.aiPriorityKey = key;
+    game.aiPrioritySince = now;
+  }
+  return (now - game.aiPrioritySince) / 1000;
+}
+
+function renderAiStallBanner(state) {
+  const banner = $("#ai-stall-banner");
+  if (!banner) return;
+  const aiPlayer = game.aiUid && game.aiStatus ? game.aiStatus.player : null;
+  const seconds = aiUnchangedSeconds(state, Date.now());
+  const message = aiStallNotice(state, aiPlayer, game.aiStatus, seconds);
+  if (!message) {
+    banner.hidden = true;
+    banner.innerHTML = "";
+    return;
+  }
+  banner.hidden = false;
+  setHtml(
+    banner,
+    `<span>${escapeHtml(message)}.</span>` +
+      `<span class="why">Nothing is wrong with your game - its opponent is an agent, and it has gone quiet.</span>` +
+      `<button onclick="passForAiSeat()">Pass priority for ${escapeHtml(aiPlayer)}</button>`
+  );
+}
+
+/** The way out. Passes priority as the AI seat, using the seat uid this page
+ * was given when it created the game - the same call the agent would make,
+ * so the engine sees an ordinary pass (CR 117.3d: "if a player has priority
+ * and chooses not to take any actions, that player passes... then the next
+ * player in turn order receives priority") and not a special case. */
+async function passForAiSeat() {
+  const aiPlayer = game.aiStatus && game.aiStatus.player;
+  if (!aiPlayer || !game.aiUid) return;
+  const path =
+    `/api/games/${game.gameId}/actions/pass-priority` +
+    `?uid=${encodeURIComponent(game.aiUid)}`;
+  try {
+    const res = await api("POST", path, { player: aiPlayer });
+    if (res && res.allowed === false) {
+      notice(`pass for ${aiPlayer} refused: ${res.reason}`, "bad");
+    }
+  } catch (e) {
+    notice(`pass for ${aiPlayer} failed: ${e.message}`, "bad");
+  } finally {
+    poll();
+  }
+}
+window.passForAiSeat = passForAiSeat;
+
 // Node-loadable for tests (`tests/test_ui_autopilot.py`,
 // `tests/test_ui_targets.py`, `tests/test_ui_pregame_panel.py`) - a no-op in
 // the browser, where `module` does not exist. `sendTargets` is defined
 // further down the file; a function declaration is hoisted, so naming it here
 // is fine.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { autopilotStopReason, interpretPassOutcome, sendTargets, setHtml };
+  module.exports = {
+    autopilotStopReason,
+    interpretPassOutcome,
+    sendTargets,
+    setHtml,
+    aiStallNotice,
+    AI_STALL_SECONDS,
+  };
 }
 
 // -------------------------------------------------------- the action tray ----
@@ -2313,16 +2432,28 @@ function renderAiPanel(status) {
     `;
     return;
   }
+  const bad = status.state === "error" || status.state === "unreachable";
   panel.innerHTML =
-    `<span class="pill state-${escapeHtml(status.state)}">AI (${escapeHtml(status.player)}): ${escapeHtml(status.state)}</span>` +
-    (status.state === "error"
-      ? `<button class="ghost" onclick='showAiError(${JSON.stringify(status)})'>error</button>`
+    `<span class="pill ${bad ? "bad " : ""}state-${escapeHtml(status.state)}">AI (${escapeHtml(status.player)}): ${escapeHtml(status.state)}</span>` +
+    (bad
+      ? `<button class="ghost" onclick='showAiError(${JSON.stringify(status)})'>why</button>`
       : "");
 }
 
 function showAiError(status) {
-  showModal(`<h3>AI seat error (returncode ${escapeHtml(status.returncode)})</h3>
-    <textarea rows="12" readonly>${escapeHtml((status.stderr_tail || []).join("\n"))}</textarea>
+  // Two shapes reach here: the subprocess seat, which has a returncode and a
+  // captured stderr, and the wrapper seat, whose reason comes back from the
+  // driver as `last_error`. Show whichever the status actually carries -
+  // this used to print "returncode undefined" over an empty box for the
+  // wrapper seat, which is the mechanism the play UI actually runs.
+  const detail =
+    status.last_error || (status.stderr_tail || []).join("\n") || "no detail was reported";
+  const heading =
+    status.returncode === undefined || status.returncode === null
+      ? "AI seat error"
+      : `AI seat error (returncode ${escapeHtml(status.returncode)})`;
+  showModal(`<h3>${heading}</h3>
+    <textarea rows="12" readonly>${escapeHtml(detail)}</textarea>
     <button onclick="closeModal()">Close</button>`);
 }
 window.showAiError = showAiError;

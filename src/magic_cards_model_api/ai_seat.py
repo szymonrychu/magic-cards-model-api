@@ -248,7 +248,36 @@ class AiSeatRegistry:
             "turn_id": answer.get("turnId"),
             "match_score": answer.get("matchScore"),
             "driver": base,
+            "dispatched_at": time.time(),
         }
+
+    def _live_driver_status(self, dispatched: dict[str, Any]) -> dict[str, Any]:
+        """`dispatched` refreshed from the driver's own `/status`.
+
+        The dispatch answer is a snapshot of one instant - the instant the
+        seat was handed over - and returning it unchanged for the rest of the
+        game is how an agent that died, hit an auth error, or simply gave up
+        kept reporting `state: "dispatched"` to the play UI forever. The
+        driver knows better, so ask it; an unreachable driver is itself worth
+        reporting, and never raises past here, because this is on the UI's
+        poll path.
+        """
+        status = dict(dispatched)
+        try:
+            with _driver_client(status.get("driver") or driver_url()) as client:
+                answer = client.get("/status").json()
+        except Exception as exc:  # noqa: BLE001 - a poll must not 500 the panel
+            return status | {"state": "unreachable", "last_error": f"driver unreachable: {exc}"}
+        last_error = answer.get("lastError")
+        status["last_error"] = last_error
+        status["last_turn_id"] = answer.get("lastTurnId")
+        status["reflected"] = bool(answer.get("reflected"))
+        if last_error:
+            # The one state the UI paints red and offers a way out of.
+            status["state"] = "error"
+        elif answer.get("pending"):
+            status["state"] = "pending"
+        return status
 
     def start(self, *, uid: str, game_id: str, player: str, api_base: str) -> dict[str, Any]:
         """Start (or report the existing) AI seat for `uid`.
@@ -327,7 +356,7 @@ class AiSeatRegistry:
             dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
         if dispatched is not None:
-            return dispatched
+            return self._live_driver_status(dispatched)
         return runner.status() if runner is not None else None
 
     def stop(self, uid: str) -> bool:

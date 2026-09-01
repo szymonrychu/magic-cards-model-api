@@ -35,6 +35,31 @@ DEFAULT_SUBMIT = "\r"
 #: The bypass-permissions warning is not seedable and appears on every boot.
 BYPASS_NEEDLE = "Bypass Permissions mode"
 
+#: Errors claude prints into the TUI and then *sits* at its prompt for: the
+#: process does not exit, so `_watch` never fires, and no Stop hook runs, so
+#: `complete` never fires either. Before this list the turn simply hung, and
+#: the only timer on it was `mark_stall_suspected`, which by its own
+#: docstring is a report and not a verdict - it logs, re-arms, and leaves the
+#: seat busy forever.
+#:
+#: Observed live in this stack: an ANTHROPIC_API_KEY the API rejected made
+#: the agent print "Please run /login - API Error: 401 API key is invalid."
+#: three minutes into a turn and go quiet. `GET /v1/session` still said
+#: `state: busy, stallSuspectedSince: null` half an hour later, the driver
+#: still said `pending: false, lastError: null`, and the human in the play UI
+#: sat at "AI (claude): dispatched" with an opponent that would never move.
+#:
+#: These are all terminal for the session, not for one turn - a turn failed
+#: on one of them will fail on the next one too, and that is the point: the
+#: reason reaches the driver and the UI on the first turn instead of never.
+FATAL_NEEDLES = (
+    "API Error: 401",
+    "API Error: 403",
+    "Please run /login",
+    "Credit balance is too low",
+    "OAuth token has expired",
+)
+
 #: Boot is declared over on output quiescence, never on a fixed delay: claude
 #: paints its first frame in ~2s but is still initialising, and submitting
 #: then exits it.
@@ -129,6 +154,8 @@ class Manager:
         self._current_started = 0.0
         self._timer: threading.Timer | None = None
         self._stall_suspected_since: float | None = None
+        self._fatal_turn: str | None = None
+        self._last_fatal: str = ""
         self._stopping = False
         self._threads: list[threading.Thread] = []
 
@@ -165,6 +192,41 @@ class Manager:
             if not chunk:
                 return
             self.ring.write(chunk)
+            self.fail_on_fatal_output()
+
+    def fail_on_fatal_output(self) -> None:
+        """Fail the in-flight turn if the TUI has printed a fatal error.
+
+        Called on every PTY chunk, so the reason reaches the driver's
+        callback within a read of claude giving up, rather than never. Scans
+        the whole ring rather than only the new chunk: a needle can straddle
+        a 4 KiB boundary, and `boot_wait` already reads the ring the same way
+        for its dialog. A needle left in the ring by an earlier turn is not a
+        false positive - every entry in `FATAL_NEEDLES` is fatal to the
+        *session*, so failing the next turn on it too is the truth, and the
+        ring is cleared on relaunch by `Ring.reset`.
+
+        At most one failure per turn id, so the rest of a chunky error
+        message does not fail an already-failed turn a second time.
+        """
+        with self._lock:
+            turn_id = self._current
+            if turn_id is None or turn_id == self._fatal_turn:
+                return
+        hit = next((needle for needle in FATAL_NEEDLES if self.ring.contains(needle)), None)
+        if hit is None:
+            return
+        with self._lock:
+            if self._current != turn_id:
+                return
+            self._fatal_turn = turn_id
+            self._last_fatal = hit
+            self._current = None
+            self._cancel_timer_locked()
+            self._stall_suspected_since = None
+            if self._state is not State.DEAD:
+                self._state = State.READY
+        self._finish_failed(turn_id, f"claude reported a fatal error: {hit}")
 
     def boot_wait(self, proc: ClaudeProcess) -> None:
         """Accept the bypass warning, then wait for the TUI to settle.
@@ -447,5 +509,6 @@ class Manager:
                 "model": self.settings.model,
                 "currentTurnId": self._current,
                 "stallSuspectedSince": self._stall_suspected_since,
+                "lastFatal": self._last_fatal,
                 "transcriptPath": self.transcript_path,
             }

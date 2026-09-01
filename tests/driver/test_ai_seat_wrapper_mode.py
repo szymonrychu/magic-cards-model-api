@@ -86,3 +86,82 @@ def test_status_and_stop_are_harmless_for_a_wrapper_seat(driver):
     registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
     assert registry.status("u")["mechanism"] == "wrapper"
     assert registry.stop("u") is False
+
+
+# ---- the status the play UI reads has to be live, not a dispatch snapshot ----
+#
+# The freeze: the agent's claude hit `API Error: 401` mid-game and stopped.
+# `AiSeatRegistry.status` returned the dict built at dispatch time, so
+# `GET /api/ui/games/{id}/ai-seat/status` said `state: "dispatched"` for the
+# rest of the game no matter what became of the agent, and the play UI had
+# nothing to show the human but a seat that was, as far as it knew, fine.
+
+
+@pytest.fixture
+def driver_with_status(monkeypatch):
+    """The driver stand-in, plus a dict the test uses to move `/status`."""
+    reported = {"lastTurnId": "turn-1", "reflected": False, "pending": False, "lastError": None}
+    app = FastAPI()
+
+    @app.post("/dispatch", status_code=202)
+    def dispatch(body: dict):
+        return {"deck": "dimir-frog", "turnId": "turn-1", "matchScore": 0.98}
+
+    @app.get("/status")
+    def status():
+        return reported
+
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv("DRIVER_URL", "http://driver:8090")
+    monkeypatch.setattr(ai_seat, "_driver_client", lambda base: TestClient(app, base_url=base))
+    return reported
+
+
+def started(uid: str = "u") -> ai_seat.AiSeatRegistry:
+    registry = ai_seat.AiSeatRegistry()
+    registry.start(uid=uid, game_id="g", player="claude", api_base="http://game:8000")
+    return registry
+
+
+def test_status_reports_a_healthy_seat_as_dispatched(driver_with_status):
+    status = started().status("u")
+    assert status["state"] == "dispatched"
+    assert status["last_error"] is None
+    assert status["last_turn_id"] == "turn-1"
+
+
+def test_status_turns_red_once_the_driver_knows_the_turn_failed(driver_with_status):
+    registry = started()
+    assert registry.status("u")["state"] == "dispatched"
+    driver_with_status["lastError"] = "turn turn-1 failed: API Error: 401"
+    status = registry.status("u")
+    assert status["state"] == "error"
+    assert "401" in status["last_error"], "the UI has to be able to say why"
+
+
+def test_an_unreachable_driver_is_reported_rather_than_raised(monkeypatch):
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+    monkeypatch.setenv("DRIVER_URL", "http://driver:8090")
+    app = FastAPI()
+
+    @app.post("/dispatch", status_code=202)
+    def dispatch(body: dict):
+        return {"deck": None, "turnId": "turn-1", "matchScore": 0.0}
+
+    monkeypatch.setattr(ai_seat, "_driver_client", lambda base: TestClient(app, base_url=base))
+    registry = started()
+
+    def broken(base):
+        raise httpx.ConnectError("no route to driver")
+
+    monkeypatch.setattr(ai_seat, "_driver_client", broken)
+    status = registry.status("u")
+    assert status["state"] == "unreachable"
+    assert "driver unreachable" in status["last_error"]
+
+
+def test_a_status_read_never_dispatches_a_second_seat(driver_with_status):
+    registry = started()
+    for _ in range(3):
+        registry.status("u")
+    assert registry.status("u")["turn_id"] == "turn-1"

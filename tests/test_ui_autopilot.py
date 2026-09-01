@@ -91,18 +91,24 @@ def call_stop_reason(
 AUTOPILOT_UNTIL_UPKEEP = {"target": "upkeep", "knownStackIds": []}
 
 
-def test_module_exports_the_two_pure_functions() -> None:
+def test_module_exports_the_pure_functions_the_tests_drive() -> None:
     """`setHtml` joined them for `tests/test_ui_pregame_panel.py`: its repaint
     rule is what decides whether the CR 103.5 "Keep" button ever leaves
-    `disabled`, and that has to be tested against the shipped file too."""
+    `disabled`, and that has to be tested against the shipped file too.
+    `aiStallNotice` joined for `tests/test_ui_ai_stall.py`.
+
+    A subset assertion, not an equality: this guards that nothing the tests
+    drive stops being reachable, while leaving the next pure function free to
+    arrive with its own test rather than by editing this one."""
     assert APP_JS.is_file(), "ui/app.js is missing"
-    exported = run_js("Object.keys(require(" + json.dumps(str(APP_JS)) + "))")
-    assert set(exported) == {
+    exported = set(run_js("Object.keys(require(" + json.dumps(str(APP_JS)) + "))"))
+    assert {
         "autopilotStopReason",
         "interpretPassOutcome",
         "sendTargets",
         "setHtml",
-    }
+        "aiStallNotice",
+    } <= exported
 
 
 # -- stop condition: a pending decision addressed to this seat --------------

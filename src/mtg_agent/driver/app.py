@@ -348,8 +348,17 @@ def build_app(
         turn_id = record.get("turnId") or "?"
         state = record.get("state") or "?"
         if state == "failed" or record.get("error"):
-            log.error("turn %s failed: %s", turn_id, record.get("error") or state)
+            reason = str(record.get("error") or state)
+            log.error("turn %s failed: %s", turn_id, reason)
+            # `/status` is the only thing the game server reads about this
+            # seat, and a failed turn used to leave `lastError` at None -
+            # so a seat whose agent had given up was indistinguishable from
+            # one still thinking, for as long as the human cared to wait.
+            with lock:
+                current["lastError"] = f"turn {turn_id} failed: {reason}"
             return
+        with lock:
+            current["lastError"] = None
         stop = record.get("stopReason") or ""
         head = f"turn {turn_id} done ({state}{', stop=' + stop if stop else ''}); the agent says:"
         log.info("%s\n%s", head, trim_final_text(str(record.get("finalText") or "")))

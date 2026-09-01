@@ -380,3 +380,39 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
     # And it parses to a real list, which is what `GuideLibrary.identify`
     # scores: an unparseable or empty answer is the "0 cards" symptom.
     assert parse_decklist(seats["bob"]["decklist"]) == {"Forest": 56, "Grizzly Bears": 4}
+
+
+# ---- a failed turn has to be visible to whoever asks the driver ------------
+#
+# The live freeze this covers: the agent stopped acting mid-game, and the
+# game server - whose only window onto this seat is `GET /status` - kept
+# telling the play UI the seat was fine, because `lastError` was only ever
+# set on a dispatch that could not reach the agent, never on a turn that came
+# back failed. The human sat in front of an opponent that would never move,
+# with nothing on the page to say why.
+
+
+def test_a_failed_turn_is_reported_by_status(world):
+    client, _, _, _ = world
+    dispatch(client)
+    client.post(
+        "/turn-done",
+        json={
+            "turnId": "turn-1",
+            "state": "failed",
+            "error": "claude reported a fatal error: API Error: 401",
+        },
+    )
+    status = client.get("/status").json()
+    assert status["lastError"] is not None
+    assert "401" in status["lastError"]
+    assert "turn-1" in status["lastError"]
+
+
+def test_a_turn_that_succeeds_clears_a_previous_failure(world):
+    client, _, _, _ = world
+    dispatch(client)
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "failed", "error": "boom"})
+    assert client.get("/status").json()["lastError"] is not None
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "ok"})
+    assert client.get("/status").json()["lastError"] is None
