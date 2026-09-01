@@ -41,14 +41,16 @@ run = "git rev-parse --short HEAD"
 [tasks."docker:build:api"]
 description = "Build the api image (game + driver) locally, tagged with the sha"
 # Context is `..` because the engine at ../magic-cards-model is a path
-# dependency. The tag is this repo's sha, but the engine repo also lands in the
-# image, so its sha is stamped as a label to trace an image back to both.
+# dependency. `--file` is resolved relative to the CWD, not to the context, so
+# it stays a bare `Dockerfile` even though the context is the parent. The tag is
+# this repo's sha, but the engine repo also lands in the image, so its sha is
+# stamped as a label to trace an image back to both.
 run = """
 set -eu
 TAG="$(git rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build \
-  --file magic-cards-model-api/Dockerfile \
+  --file Dockerfile \
   --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
   --tag "${HARBOR}/magic-cards-model-api:${TAG}" \
   --load ..
@@ -61,7 +63,7 @@ set -eu
 TAG="$(git rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build \
-  --file magic-cards-model-api/Dockerfile.agent \
+  --file Dockerfile.agent \
   --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-latest}" \
   --build-arg "AGENT_UID=${AGENT_UID:-1000}" \
   --build-arg "AGENT_GID=${AGENT_GID:-1000}" \
@@ -80,7 +82,7 @@ set -eu
 TAG="$(git rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
-  --file magic-cards-model-api/Dockerfile \
+  --file Dockerfile \
   --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
   --tag "${HARBOR}/magic-cards-model-api:${TAG}" \
   --push ..
@@ -94,7 +96,7 @@ set -eu
 TAG="$(git rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
-  --file magic-cards-model-api/Dockerfile.agent \
+  --file Dockerfile.agent \
   --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-latest}" \
   --build-arg "AGENT_UID=${AGENT_UID:-1000}" \
   --build-arg "AGENT_GID=${AGENT_GID:-1000}" \
