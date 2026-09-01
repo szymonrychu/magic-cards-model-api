@@ -1,12 +1,16 @@
-# Two PersistentVolumeClaims and one hostPath (the hostPath lives on the Pod,
-# see 50-pod.yaml).
+# Two PersistentVolumeClaims. The deck guides are NOT here: they are an
+# emptyDir filled by an initContainer that clones the guide repo on every Pod
+# start (see 50-pod.yaml), so there is nothing to provision for them.
 #
 # Neither claim names a storageClassName, so both take the cluster's DEFAULT
-# StorageClass. If the cluster has no default, both PVCs stay `Pending`
-# forever and the Pod never starts - `kubectl -n mtg get pvc` shows it, and
-# `kubectl -n mtg describe pvc mtg-agent-memory` says "no persistent volumes
-# available for this claim and no storage class is set". Fix it either by
-# marking a StorageClass default:
+# StorageClass. In this cluster that is `rook-ceph-rwx` (CephFS), verified with
+# `kubectl get sc` - both claims bind to it as written, no edit needed.
+#
+# On a cluster with no default StorageClass both PVCs stay `Pending` forever
+# and the Pod never starts - `kubectl -n mtg-engine get pvc` shows it, and
+# `kubectl -n mtg-engine describe pvc mtg-agent-memory` says "no persistent
+# volumes available for this claim and no storage class is set". Fix it either
+# by marking a StorageClass default:
 #
 #     kubectl annotate storageclass <name> \
 #       storageclass.kubernetes.io/is-default-class=true
@@ -21,11 +25,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mtg-agent-memory
-  namespace: mtg
+  namespace: mtg-engine
 spec:
   accessModes:
     - ReadWriteOnce
-  # storageClassName: local-path
+  # storageClassName: rook-ceph-rwx
   resources:
     requests:
       storage: 1Gi
@@ -37,11 +41,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mtg-scryfall-cache
-  namespace: mtg
+  namespace: mtg-engine
 spec:
   accessModes:
     - ReadWriteOnce
-  # storageClassName: local-path
+  # storageClassName: rook-ceph-rwx
   resources:
     requests:
       storage: 2Gi

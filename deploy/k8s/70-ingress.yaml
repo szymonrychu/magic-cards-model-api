@@ -1,0 +1,76 @@
+# The front door: https://play-magic.szymonrichert.pl/play/
+#
+# *.szymonrichert.pl resolves to the LAN IP at home and to the public IP from
+# outside, so this host works from both with NO extra DNS record. That also
+# means this is genuinely reachable from the internet - hence the basic auth
+# below, and hence the fact that only port 8000 is routed.
+---
+# The basic-auth credentials, in the htpasswd format nginx-ingress expects
+# (Secret key `auth`, one `user:hash` line).
+#
+# THESE CREDENTIALS ARE PUBLIC BY DESIGN. user `play`, password `magic`, asked
+# for explicitly and deliberately weak. Because the password is intentionally
+# public there is no point hiding the hash, so it is committed and
+# `kubectl apply` is one step instead of two. Treat this as a speed bump
+# against crawlers and drive-by scanners, NOT as security. Anyone who wants in
+# is in. Do not put anything behind this host that you would mind a stranger
+# clicking, and if that ever changes, change the password first.
+#
+# The hash is bcrypt, generated with `htpasswd -nbB play magic` and verified
+# with `htpasswd -vb` before being committed.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: play-magic-auth
+  namespace: mtg-engine
+type: Opaque
+stringData:
+  auth: "play:$2y$05$BrvggN09btljyXYK9nww9e1YqFO/JIPRfeP.e6kRoEThvfhwcytBq"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mtg-stack
+  namespace: mtg-engine
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    kubernetes.io/tls-acme: "true"
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: play-magic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "play-magic - user play, password magic"
+    # The game UI polls a couple of routes about every 1.2s for as long as a
+    # browser tab is open, and a turn the agent is thinking through can hold a
+    # request open for a while. The nginx default 60s read timeout would cut
+    # those off, so both directions get an hour. Nothing else here throttles:
+    # deliberately NO rate-limit, NO limit-connections, NO auth-cache
+    # annotations - a per-second poll would trip a rate limit almost
+    # immediately, and basic auth is re-evaluated per request cheaply.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: play-magic.szymonrichert.pl
+      http:
+        paths:
+          # PORT 8000 ONLY. The Service also carries 8080 (agent) and 8090
+          # (driver), and neither is routed here on purpose: as 60-service.yaml
+          # says, NEITHER HAS ANY AUTHENTICATION OF ITS OWN. The agent port
+          # exposes full turn transcripts and an /v1/interrupt that anyone
+          # could call; the driver port exposes match control. Basic auth in
+          # front of them would be the only thing between the internet and
+          # that, and this password is public. Use port-forward for those two.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mtg-stack
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - play-magic.szymonrichert.pl
+      # Its own certificate and its own Secret; cert-manager creates this from
+      # the letsencrypt-prod ClusterIssuer on first apply.
+      secretName: play-magic-tls

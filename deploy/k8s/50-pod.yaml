@@ -20,7 +20,7 @@
 #    between the agent and the driver. The internal listener is moved to
 #    127.0.0.1:8099 below, and CCW_INTERNAL_URL (the URL the stop hook posts
 #    the finished turn to) is moved with it. Final port map:
-#      8000 game (public)   8080 agent (public)   8090 driver (public)
+#      8000 game (public)   8080 agent (debug)   8090 driver (debug)
 #      8099 agent internal (loopback only, not a containerPort)
 #
 # 3. `restartPolicy: Always`. The agent EXITS ON PURPOSE at the end of every
@@ -33,39 +33,51 @@
 #    other two, and the driver's next dispatch is answered `pending: true`
 #    until the fresh claude has booted. This is the same behaviour compose gets
 #    from `restart: unless-stopped`.
+#
+# IMAGES come from Harbor, and `__TAG__` is a LITERAL PLACEHOLDER, not a tag
+# that exists. `mise run k8s:deploy` in this repo substitutes it with
+# `git rev-parse --short HEAD` and pipes the result to `kubectl apply -f -`.
+# Applying this file straight from the repo with plain kubectl will fail to
+# pull; sed it yourself first (the README has the one-liner).
 apiVersion: v1
 kind: Pod
 metadata:
   name: mtg-stack
-  namespace: mtg
+  namespace: mtg-engine
   labels:
     app: mtg-stack
 spec:
   restartPolicy: Always
 
+  # harbor.szymonrichert.pl is a private registry. Every other namespace in
+  # this cluster carries a `regcred` docker-registry Secret for it (robot
+  # account `robot$kubernetes`); this namespace needs its own copy, because
+  # imagePullSecrets are namespaced. See the README for the copy command.
+  imagePullSecrets:
+    - name: regcred
+
   # The agent image creates a uid/gid 1000 `agent` user and does `USER agent`
   # because claude REFUSES bypass-permissions mode as root and exits 1 - which
   # surfaces as `claude exited code=1`. Do not "fix" a permission error by
   # putting runAsUser: 0 here; fix the volume ownership instead. fsGroup makes
-  # the two PVCs group-writable by 1000 so the agent can write its memory.
+  # the two PVCs - and the guides emptyDir the initContainer has to write -
+  # group-writable by gid 1000.
   securityContext:
     runAsNonRoot: true
     runAsUser: 1000
     runAsGroup: 1000
     fsGroup: 1000
 
-  # hostPath pins this Pod to whichever node holds the guides. Uncomment and
-  # set the node once you have put them somewhere. See deploy/k8s/README.md.
-  # nodeSelector:
-  #   kubernetes.io/hostname: my-node
-
   volumes:
-    # The deck guides, compose's `${MTG_DECKS}:/guides:ro` bind mount.
-    # hostPath, honestly: see the README for what that costs.
+    # The deck guides. Compose bind-mounts a host directory (`${MTG_DECKS}`);
+    # an earlier draft of this file used `hostPath: /srv/mtg-decks`, which
+    # PINNED THE POD TO ONE NODE and needed a nodeSelector to be safe. This is
+    # an emptyDir filled by the `guides` initContainer below, which is a strict
+    # improvement on both counts: the Pod schedules anywhere, and the guides
+    # are re-cloned fresh on every Pod start instead of being whatever was last
+    # copied onto one node by hand.
     - name: guides
-      hostPath:
-        path: /srv/mtg-decks
-        type: Directory
+      emptyDir: {}
     - name: memory
       persistentVolumeClaim:
         claimName: mtg-agent-memory
@@ -80,10 +92,84 @@ spec:
     - name: driver-workspace
       emptyDir: {}
 
+  initContainers:
+    # ------------------------------------------------------------- guides --
+    # Clone the private deck-guide repo into the `guides` emptyDir before any
+    # app container starts. All three containers then mount it read-only at
+    # /guides, exactly where compose's bind mount put it.
+    #
+    # WHY THE AGENT IMAGE: it is the only one of the two that has git.
+    # Dockerfile.agent apt-installs `git` (it needs it for the nodesource
+    # setup layer and keeps it); the game/driver Dockerfile installs nothing
+    # beyond uv. Reusing an image the kubelet is already pulling for the agent
+    # container means no second registry, no second pull, and no third thing
+    # to keep tagged in step.
+    #
+    # UID: runs as 1000 under the Pod securityContext, same as everything else.
+    # The emptyDir is created for the Pod and chowned to fsGroup 1000 with the
+    # setgid bit, so uid 1000 can write into it. Nothing here needs root.
+    #
+    # TOKEN HYGIENE: the token has to be in the clone URL, and `git clone`
+    # PERSISTS whatever URL it was given into .git/config as remote.origin.url.
+    # That file would then sit inside /guides for the life of the Pod with the
+    # PAT in cleartext, readable by the agent - which is a claude session that
+    # can read files. So the remote is immediately reset to the tokenless URL.
+    # That is the whole mitigation and it is deliberate: git writes the
+    # credential in exactly one place, and this removes it from that place. The
+    # clone is --depth 1, so there is no fetch history carrying it either.
+    #
+    # FAILURE IS LOUD ON PURPOSE: `set -e` plus a non-zero exit leaves the Pod
+    # in Init:Error / Init:CrashLoopBackOff, visible in `kubectl get pod`. The
+    # alternative - swallowing the error and starting with an empty /guides -
+    # would look healthy and play badly, with the driver unable to identify a
+    # deck and nobody knowing why. GIT_TERMINAL_PROMPT=0 makes a bad or expired
+    # PAT fail immediately instead of blocking on a credential prompt.
+    - name: guides
+      image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -euc
+        - |
+          test -n "${GH_PAT}" || { echo "GH_PAT is empty - is the mtg-decks-git Secret created?" >&2; exit 1; }
+          git clone --depth 1 \
+            "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git" \
+            /guides
+          # Drop the credential out of .git/config, the only place git kept it.
+          git -C /guides remote set-url origin \
+            https://github.com/szymonrychu/mtg-decks.git
+          ! grep -rq "x-access-token" /guides/.git/config
+          echo "guides cloned at $(git -C /guides rev-parse --short HEAD)"
+      env:
+        - name: GH_PAT
+          valueFrom:
+            secretKeyRef:
+              name: mtg-decks-git
+              key: GH_PAT
+        - name: GIT_TERMINAL_PROMPT
+          value: "0"
+        # git wants a HOME it can read; the agent image sets /agent-home and
+        # owns it as uid 1000.
+        - name: HOME
+          value: /agent-home
+      volumeMounts:
+        - name: guides
+          mountPath: /guides
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+
   containers:
     # ---------------------------------------------------------------- game --
     - name: game
-      image: mtg-game:dev
+      image: harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__
+      # IfNotPresent, not Always: __TAG__ is substituted with an immutable
+      # short commit sha, so a tag never means two different images and there
+      # is nothing for Always to re-check.
       imagePullPolicy: IfNotPresent
       # CMD from the Dockerfile: uvicorn magic_cards_model_api.main:app.
       ports:
@@ -94,6 +180,12 @@ spec:
           value: wrapper
         - name: DRIVER_URL
           value: http://127.0.0.1:8090
+        # The browser re-reads the game and the AI seat's status every ~1.2s.
+        # Successful reads of those two routes, and of the healthcheck, are
+        # kept out of uvicorn's access log; POSTs and any non-2xx always print.
+        # Set to "0" to get the full access log back.
+        - name: ACCESS_LOG_QUIET
+          value: "1"
       volumeMounts:
         - name: guides
           mountPath: /guides
@@ -129,7 +221,7 @@ spec:
 
     # --------------------------------------------------------------- agent --
     - name: agent
-      image: mtg-agent:dev
+      image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__
       imagePullPolicy: IfNotPresent
       # CMD from Dockerfile.agent: python -m mtg_agent.wrapper, as PID 1 of
       # this container, supervising one interactive claude over a PTY.
@@ -137,11 +229,24 @@ spec:
         - name: agent
           containerPort: 8080
       env:
+        # Either credential, from the same Secret, BOTH optional. `claude
+        # setup-token` produces an OAuth token, which is NOT an API key: the
+        # CLI reads them from different variables, and a setup-token placed in
+        # ANTHROPIC_API_KEY is sent as an API key and gets a 401. The token is
+        # the recommended one. `optional: true` on both is what makes setting
+        # only one work - without it, the missing key would block Pod start.
+        - name: CLAUDE_CODE_OAUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: mtg-agent
+              key: CLAUDE_CODE_OAUTH_TOKEN
+              optional: true
         - name: ANTHROPIC_API_KEY
           valueFrom:
             secretKeyRef:
               name: mtg-agent
               key: ANTHROPIC_API_KEY
+              optional: true
         - name: MODEL
           value: sonnet
         - name: HTTP_ADDR
@@ -160,7 +265,8 @@ spec:
           value: http://127.0.0.1:8099/internal/turn-complete
         - name: CCW_RESULT_JSON
           value: /workspace/result.json
-        # The k8s copy, with the mtg MCP server pointed at loopback.
+        # The k8s copy, with the mtg MCP server pointed at loopback and
+        # spellslinger pointed at its in-cluster Service.
         - name: BASE_MCP_PATH
           value: /etc/mtg/mcp.base.json
         - name: TURN_TIMEOUT_SECONDS
@@ -169,6 +275,13 @@ spec:
           value: "120"
         - name: LOG_LEVEL
           value: info
+        # What the agent itself prints while it plays, tailed off the live
+        # transcript: off | turns | messages | tools (default). See
+        # `wrapper/activity.py`.
+        - name: AGENT_LOG_LEVEL
+          value: tools
+        - name: ACCESS_LOG_QUIET
+          value: "1"
       volumeMounts:
         - name: guides
           mountPath: /guides
@@ -223,7 +336,7 @@ spec:
 
     # -------------------------------------------------------------- driver --
     - name: driver
-      image: mtg-game:dev
+      image: harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__
       imagePullPolicy: IfNotPresent
       command: ["python", "-m", "mtg_agent.driver"]
       ports:
@@ -244,6 +357,10 @@ spec:
           value: /driver-workspace
         - name: HTTP_ADDR
           value: ":8090"
+        # The game server polls `GET /status` for as long as a seat is
+        # dispatched. Same filter, same escape hatch.
+        - name: ACCESS_LOG_QUIET
+          value: "1"
       volumeMounts:
         - name: guides
           mountPath: /guides

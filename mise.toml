@@ -5,6 +5,9 @@ uv = "latest"
 [env]
 _.python.venv = { path = ".venv", create = true }
 UV_PYTHON_DOWNLOADS = "never"
+# Images live in harbor under the `containers` project. One image serves both
+# the game and the driver - the driver only overrides the command.
+HARBOR = "harbor.szymonrichert.pl/containers"
 
 [tasks.install]
 description = "Install into the venv (engine comes from ../magic-cards-model)"
@@ -30,3 +33,102 @@ run = "uv run ruff format . && uv run ruff check --fix ."
 [tasks.compose]
 description = "Bring up game + continuous agent + driver"
 run = "docker compose up --build"
+
+[tasks.image-tag]
+description = "Print the short git sha the image tasks would tag with"
+run = "git rev-parse --short HEAD"
+
+[tasks."docker:build:api"]
+description = "Build the api image (game + driver) locally, tagged with the sha"
+# Context is `..` because the engine at ../magic-cards-model is a path
+# dependency. The tag is this repo's sha, but the engine repo also lands in the
+# image, so its sha is stamped as a label to trace an image back to both.
+run = """
+set -eu
+TAG="$(git rev-parse --short HEAD)"
+ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
+docker buildx build \
+  --file magic-cards-model-api/Dockerfile \
+  --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
+  --tag "${HARBOR}/magic-cards-model-api:${TAG}" \
+  --load ..
+"""
+
+[tasks."docker:build:agent"]
+description = "Build the agent image locally, tagged with the sha"
+run = """
+set -eu
+TAG="$(git rev-parse --short HEAD)"
+ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
+docker buildx build \
+  --file magic-cards-model-api/Dockerfile.agent \
+  --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-latest}" \
+  --build-arg "AGENT_UID=${AGENT_UID:-1000}" \
+  --build-arg "AGENT_GID=${AGENT_GID:-1000}" \
+  --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
+  --tag "${HARBOR}/magic-cards-model-agent:${TAG}" \
+  --load ..
+"""
+
+# The cluster is x86 and the dev machine is Apple Silicon, so the push tasks
+# pin the platform - a plain build here would produce an arm64 image that will
+# not run there.
+[tasks."docker:push:api"]
+description = "Build the api image for the cluster platform and push to harbor"
+run = """
+set -eu
+TAG="$(git rev-parse --short HEAD)"
+ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
+docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
+  --file magic-cards-model-api/Dockerfile \
+  --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
+  --tag "${HARBOR}/magic-cards-model-api:${TAG}" \
+  --push ..
+echo "${HARBOR}/magic-cards-model-api:${TAG}"
+"""
+
+[tasks."docker:push:agent"]
+description = "Build the agent image for the cluster platform and push to harbor"
+run = """
+set -eu
+TAG="$(git rev-parse --short HEAD)"
+ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
+docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
+  --file magic-cards-model-api/Dockerfile.agent \
+  --build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-latest}" \
+  --build-arg "AGENT_UID=${AGENT_UID:-1000}" \
+  --build-arg "AGENT_GID=${AGENT_GID:-1000}" \
+  --label "pl.szymonrichert.engine-revision=${ENGINE_TAG}" \
+  --tag "${HARBOR}/magic-cards-model-agent:${TAG}" \
+  --push ..
+echo "${HARBOR}/magic-cards-model-agent:${TAG}"
+"""
+
+[tasks."docker:push"]
+description = "Push both images to harbor"
+depends = ["docker:push:api", "docker:push:agent"]
+
+# The manifests carry the literal placeholder __TAG__ on every image: line.
+[tasks."k8s:render"]
+description = "Render deploy/k8s with the sha substituted, to stdout"
+run = """
+set -eu
+TAG="$(git rev-parse --short HEAD)"
+for f in deploy/k8s/*.yaml; do
+  case "$f" in *.template.yaml) continue ;; esac
+  echo "---"
+  sed "s|__TAG__|${TAG}|g" "$f"
+done
+"""
+
+[tasks."k8s:deploy"]
+description = "Render deploy/k8s with the sha and kubectl apply it"
+run = """
+set -eu
+TAG="$(git rev-parse --short HEAD)"
+for f in deploy/k8s/*.yaml; do
+  case "$f" in *.template.yaml) continue ;; esac
+  echo "---"
+  sed "s|__TAG__|${TAG}|g" "$f"
+done | kubectl apply -f -
+"""

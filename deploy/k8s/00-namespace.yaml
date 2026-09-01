@@ -1,6 +1,9 @@
-# Everything in these manifests lives in one namespace. Drop this file and add
-# `-n <ns>` to the kubectl commands if you would rather use an existing one.
+# Everything in these manifests lives in one namespace: `mtg-engine`.
+#
+# NOT `mtg`. That namespace already exists in this cluster (57 days old, empty
+# at the time of writing) and belongs to something else - it is deliberately
+# left alone rather than reused, so an apply here can never disturb it.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: mtg
+  name: mtg-engine

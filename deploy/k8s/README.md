@@ -1,95 +1,211 @@
 # The agent stack on Kubernetes - one Pod, three containers
 
 **Status: a draft. These manifests have never been applied to a running
-cluster.** They validate (see [Validation](#what-was-actually-validated)) and
-the wiring below was derived from `docker-compose.yml` and the code, not
+cluster.** They validate (see [What was actually validated](#what-was-actually-validated))
+and the wiring below was derived from `docker-compose.yml` and the code, not
 guessed - but nothing here has served a game. Treat the first `kubectl apply`
 as the real test. `docker compose up` remains the supported way to run this.
 
 This is the compose topology with the network collapsed onto loopback: the
-game, the agent and the driver as three containers in a single Pod. Plain
-YAML, no Helm, no Kustomize, no operator.
+game, the agent and the driver as three containers in a single Pod, plus one
+initContainer that clones the deck guides. Plain YAML, no Helm, no Kustomize,
+no operator.
 
 | file | what it is |
 |---|---|
-| `00-namespace.yaml` | the `mtg` namespace |
-| `10-secret.template.yaml` | template for the `ANTHROPIC_API_KEY` Secret - placeholder only, never a real key |
-| `20-configmap-mcp.yaml` | `mcp.base.json` with the `mtg` MCP server re-pointed at `127.0.0.1:8000` |
+| `00-namespace.yaml` | the `mtg-engine` namespace (NOT `mtg` - see below) |
+| `10-secret.template.yaml` | templates for the Claude credential and the GitHub PAT - placeholders only, never real values |
+| `20-configmap-mcp.yaml` | `mcp.base.json` with `mtg` re-pointed at `127.0.0.1:8000` and spellslinger at its in-cluster Service |
 | `30-storage.yaml` | PVCs for the agent's memory and the Scryfall cache |
-| `50-pod.yaml` | the Pod: game + agent + driver, ports, env, probes, resources |
-| `60-service.yaml` | NodePort Service for 8000 (play), 8090 (driver status), 8080 (agent API) |
+| `50-pod.yaml` | the Pod: guides initContainer, then game + agent + driver, ports, env, probes, resources |
+| `60-service.yaml` | ClusterIP Service for 8000 (play), 8080 (agent API), 8090 (driver status) |
+| `70-ingress.yaml` | the basic-auth Secret and the TLS ingress on `play-magic.szymonrichert.pl`, routing port 8000 only |
 
-## Build and load the images
+## The three things you have to supply
 
-Both Dockerfiles take the **parent directory** as build context, because the
-engine at `../magic-cards-model` is a path dependency. Run these from this
-repo's root:
+Everything else applies as-is. These three do not exist until you create them,
+and the Pod will not run without the first two.
 
-```sh
-docker build -f Dockerfile       -t mtg-game:dev  ..
-docker build -f Dockerfile.agent -t mtg-agent:dev ..
+| what | where it goes | how |
+|---|---|---|
+| **Claude OAuth token** (`claude setup-token`) | Secret `mtg-agent`, key `CLAUDE_CODE_OAUTH_TOKEN`, namespace `mtg-engine` | [Create the Secrets](#create-the-secrets) |
+| **GitHub PAT** for the deck guides | Secret `mtg-decks-git`, key `GH_PAT`, namespace `mtg-engine` | [Create the Secrets](#create-the-secrets) |
+| **Harbor pull secret** | Secret `regcred`, namespace `mtg-engine` | [The registry pull secret](#the-registry-pull-secret) |
+
+The full ordered sequence is under [Apply](#apply).
+
+## Namespace: `mtg-engine`, not `mtg`
+
+A namespace called `mtg` already exists in this cluster (57 days old, empty at
+the time of writing) and belongs to something else. These manifests deliberately
+use a new `mtg-engine` namespace and never touch `mtg`.
+
+## Images: Harbor, and the `__TAG__` placeholder
+
+The three app containers and the initContainer pull from Harbor:
+
+```
+harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__     # game, driver
+harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__   # agent, guides init
 ```
 
-`imagePullPolicy: IfNotPresent` and the `:dev` tags mean the kubelet uses a
-locally present image and never contacts a registry. That only works if the
-image is present *on the node*. Pick whichever applies:
-
-- **kind**: `kind load docker-image mtg-game:dev mtg-agent:dev`
-- **k3s/containerd**: `docker save mtg-game:dev mtg-agent:dev | sudo k3s ctr images import -`
-- **a real cluster**: push to a registry and change the two `image:` lines.
-
-## Create the Secret
-
-Do not put the key in a file. Create it imperatively:
+**`__TAG__` is a literal placeholder, not a tag that exists.** The intended way
+to deploy is:
 
 ```sh
-kubectl -n mtg create secret generic mtg-agent \
+mise run k8s:deploy
+```
+
+which substitutes `__TAG__` with `git rev-parse --short HEAD` and pipes the
+result to `kubectl apply -f -`. Nothing rendered is written back into the repo.
+
+If you are not using mise, do the same thing by hand:
+
+```sh
+TAG=$(git rev-parse --short HEAD)
+sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -
+```
+
+`imagePullPolicy: IfNotPresent` throughout: a short commit sha is immutable, so
+one tag always means one image and `Always` would only add a registry round
+trip per container start. If you ever push a mutable tag (`latest`), change the
+policy with it.
+
+### The registry pull secret
+
+Harbor is private, so the Pod carries `imagePullSecrets: [{name: regcred}]`.
+`imagePullSecrets` are namespaced, and the new namespace starts without one.
+Every other namespace in this cluster already has a `regcred`
+docker-registry Secret for `harbor.szymonrichert.pl` (robot account
+`robot$kubernetes`). The easy path is to copy one:
+
+```sh
+kubectl -n default get secret regcred -o yaml \
+  | sed 's/namespace: default/namespace: mtg-engine/' \
+  | kubectl apply -f -
+```
+
+That carries stale `resourceVersion`/`uid` fields; `kubectl apply` ignores them.
+If you would rather build it from the robot credentials directly:
+
+```sh
+kubectl -n mtg-engine create secret docker-registry regcred \
+  --docker-server=harbor.szymonrichert.pl \
+  --docker-username='robot$kubernetes' \
+  --docker-password="$HARBOR_ROBOT_TOKEN"
+```
+
+Without it the containers sit in `ImagePullBackOff` with
+`unauthorized to access repository`.
+
+## Create the Secrets
+
+Do not put credentials in a file in the repo. Create both imperatively.
+
+### The Claude credential - `CLAUDE_CODE_OAUTH_TOKEN` is the recommended one
+
+```sh
+kubectl -n mtg-engine create secret generic mtg-agent \
+  --from-literal=CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"
+```
+
+Get the value from `claude setup-token`. **It is not an API key.** The CLI
+reads OAuth tokens and API keys from different variables, and a setup-token
+placed in `ANTHROPIC_API_KEY` is sent as an API key and gets a 401 -
+`docker-compose.yml` says the same thing.
+
+If you would rather use a real `sk-ant-...` key:
+
+```sh
+kubectl -n mtg-engine create secret generic mtg-agent \
   --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 ```
 
-`10-secret.template.yaml` exists for people who want it declarative; copy it to
-`10-secret.yaml` (gitignored) and fill in the placeholder.
+Set exactly one. The agent container declares **both** env vars from **the same
+Secret**, each with `optional: true` on the `secretKeyRef`, so whichever key you
+did not create is simply absent instead of blocking Pod start. The wrapper
+prefers the token and clears the other so they cannot shadow each other.
 
-## Put the deck guides on the node
+### The GitHub PAT for the deck guides
 
-`50-pod.yaml` mounts `hostPath: /srv/mtg-decks` read-only at `/guides` in all
-three containers. Copy your `~/Documents/mtg-decks` there on the node that will
-run the Pod, then uncomment `nodeSelector` in the Pod and name that node.
+```sh
+kubectl -n mtg-engine create secret generic mtg-decks-git \
+  --from-literal=GH_PAT="$GH_PAT"
+```
+
+Scope: read access to **one private repo**, `szymonrychu/mtg-decks`, and nothing
+else. A classic PAT with the `repo` scope works; a fine-grained PAT scoped to
+that single repository with `Contents: Read-only` is tighter and preferred.
+
+`10-secret.template.yaml` exists for people who want either declarative; copy it
+to `10-secret.yaml` (gitignored) and fill in the placeholders.
+
+### The basic-auth Secret is already in git, on purpose
+
+`70-ingress.yaml` carries `play-magic-auth` with a real, verified bcrypt hash
+for user `play` / password `magic`. That password was asked for explicitly and
+is deliberately weak, so there is nothing to protect by hiding the hash, and
+committing it makes `kubectl apply` one step. It is a speed bump against
+crawlers, not security. See the blunt comment on the Secret itself.
 
 ## Apply
 
+In order. Steps 1-3 are the ones you only do once per cluster.
+
 ```sh
+# 1. namespace
 kubectl apply -f deploy/k8s/00-namespace.yaml
-kubectl -n mtg create secret generic mtg-agent --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
-kubectl apply -f deploy/k8s/20-configmap-mcp.yaml -f deploy/k8s/30-storage.yaml
-kubectl apply -f deploy/k8s/50-pod.yaml -f deploy/k8s/60-service.yaml
-kubectl -n mtg get pod mtg-stack -w
+
+# 2. registry pull secret (copied from an existing namespace)
+kubectl -n default get secret regcred -o yaml \
+  | sed 's/namespace: default/namespace: mtg-engine/' \
+  | kubectl apply -f -
+
+# 3. the two credentials
+kubectl -n mtg-engine create secret generic mtg-agent \
+  --from-literal=CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"
+kubectl -n mtg-engine create secret generic mtg-decks-git \
+  --from-literal=GH_PAT="$GH_PAT"
+
+# 4. everything else, with the image tag substituted
+mise run k8s:deploy
+#   or, without mise:
+#   sed "s/__TAG__/$(git rev-parse --short HEAD)/g" deploy/k8s/*.yaml | kubectl apply -f -
+
+# 5. watch it come up
+kubectl -n mtg-engine get pod mtg-stack -w
 ```
 
-The Pod is not ready until claude has booted, which takes up to about two
-minutes.
+The Pod goes `Init:0/1` (cloning the guides) then `Running` but **not ready**
+until claude has booted, which takes up to about two minutes.
 
 ## Reach it
 
 | what | where |
 |---|---|
-| play | `http://<node-ip>:30800/play/` |
-| which deck the driver identified | `http://<node-ip>:30890/status` |
-| agent turns, probe, interrupt | `http://<node-ip>:30880/v1/...` |
-
-Or skip the node ports entirely:
+| play | `https://play-magic.szymonrichert.pl/play/` - user `play`, password `magic` |
+| which deck the driver identified | port-forward, then `http://127.0.0.1:8090/status` |
+| agent turns, probe, interrupt | port-forward, then `http://127.0.0.1:8080/v1/...` |
 
 ```sh
-kubectl -n mtg port-forward pod/mtg-stack 8000 8080 8090
+kubectl -n mtg-engine port-forward pod/mtg-stack 8000 8080 8090
 ```
+
+`*.szymonrichert.pl` resolves to the LAN IP at home and to the public IP from
+outside, so the host works from both with no extra DNS record - and is really
+on the internet, which is why only 8000 is routed and why it has basic auth in
+front of it. cert-manager issues the certificate from the `letsencrypt-prod`
+ClusterIssuer into the `play-magic-tls` Secret on first apply; the first request
+can 502 or serve a self-signed cert for the minute that takes.
 
 ## Logs
 
 ```sh
-kubectl -n mtg logs mtg-stack -c agent -f       # session boot, turns, a dead claude
-kubectl -n mtg logs mtg-stack -c agent --previous  # the match that just ended
-kubectl -n mtg logs mtg-stack -c driver -f      # the match lifecycle
-kubectl -n mtg logs mtg-stack -c game -f | grep "PROBLEM REPORTED"
+kubectl -n mtg-engine logs mtg-stack -c guides           # the deck-guide clone
+kubectl -n mtg-engine logs mtg-stack -c agent -f         # session boot, turns, a dead claude
+kubectl -n mtg-engine logs mtg-stack -c agent --previous # the match that just ended
+kubectl -n mtg-engine logs mtg-stack -c driver -f        # the match lifecycle
+kubectl -n mtg-engine logs mtg-stack -c game -f | grep "PROBLEM REPORTED"
 ```
 
 `--previous` matters here more than usual: the agent container is *replaced*
@@ -108,7 +224,7 @@ One Pod is one network namespace.
 | `GAME_API=http://game:8000` (driver) | `http://127.0.0.1:8000` |
 | `WRAPPER_API=http://agent:8080` (driver) | `http://127.0.0.1:8080` |
 | `DRIVER_SELF_URL=http://driver:8090` (driver) | `http://127.0.0.1:8090` |
-| `mcp.base.json` -> `--api http://game:8000` | `--api http://127.0.0.1:8000` |
+| `mcp.base.json` `--api http://game:8000` | `--api http://127.0.0.1:8000` |
 
 The MCP one is the easy one to miss. The `mtg` MCP server is not a container:
 the agent spawns it itself over stdio, inside the agent container, and it
@@ -124,6 +240,23 @@ untouched and compose keeps using it. That was preferred over a ConfigMap
 overmount of `/app/deploy/mcp.base.json`: same effect, but pointing an env var
 at a new file is visible in the Pod spec, while an overmount silently replaces
 a file that looks unchanged in the image.
+
+### Spellslinger MCP goes in-cluster, not through the public ingress
+
+Still enabled, different address:
+
+```
+https://mcp.szymonrichert.pl/mcp
+  ->  http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
+```
+
+The public ingress for that server (`magic-cards-model/deploy/mcp-ingress.yaml`)
+carries `whitelist-source-range` limited to the LAN ranges. A Pod's source
+address as seen by that ingress is a cluster pod IP, so the old URL was both a
+pointless round trip out and back and a good way to eat a 403. The Service
+address skips the ingress entirely. Plain HTTP is fine: it never leaves the
+cluster network. Verified present: Service `spellslinger-mcp-http`, port 8080,
+namespace `spellslinger-development`.
 
 ### A port collision that compose was hiding
 
@@ -182,12 +315,23 @@ restart backoff doing its job, not a failure.
   does **not** use `/readyz`, because a dead claude already takes the container
   down by exiting, and that is the designed recycle path.
 
+### Env carried over from compose
+
+Everything compose sets is set here, including the four that an earlier draft of
+these manifests had dropped: `ACCESS_LOG_QUIET=1` on all three containers (it
+keeps the ~1.2s UI polls and the driver's `/status` polls out of the access
+log), and `AGENT_LOG_LEVEL=tools` on the agent (what the agent prints off its
+own live transcript). `MODEL=sonnet` and `GUIDES_ROOT=/guides` were already
+there. Compose reads these from `.env` with defaults; here they are the
+defaults, written out literally.
+
 ### Resources
 
 Conservative, and requests deliberately well under limits:
 
 | container | requests | limits | why |
 |---|---|---|---|
+| guides (init) | 50m / 64Mi | 500m / 256Mi | one shallow git clone |
 | game | 100m / 256Mi | 1 CPU / 1Gi | one uvicorn app serving one game |
 | agent | 250m / 1Gi | 2 CPU / 3Gi | node plus an interactive claude holding a long transcript; a turn is bursty |
 | driver | 50m / 128Mi | 500m / 512Mi | bookkeeping and HTTP calls |
@@ -197,28 +341,47 @@ raise its memory limit first.
 
 ## Storage choices, honestly
 
-### Deck guides: `hostPath`, and what that costs
+### Deck guides: an initContainer that clones them, every Pod start
 
-There is no bind mount in Kubernetes. The three candidates:
+There is no bind mount in Kubernetes. An earlier draft used
+`hostPath: /srv/mtg-decks`, which worked but **pinned the Pod to one node**:
+you had to copy the guides onto that node by hand and pin the Pod with a
+`nodeSelector`, or the scheduler would place it somewhere `/srv/mtg-decks` did
+not exist. `hostPath` is also restricted by policy on a lot of clusters.
 
-- **`hostPath`** (chosen). Simple, zero copying, and you keep editing guides
-  in place and having the agent see them next match. **The cost: it pins the
-  Pod to one node.** You must put the guides on that node and pin the Pod with
-  `nodeSelector`, or the scheduler will happily place the Pod on a node where
-  `/srv/mtg-decks` does not exist - and with `type: Directory` the Pod then
-  fails to start rather than silently mounting an empty dir. `hostPath` is also
-  a privileged-ish thing that many clusters restrict by policy. For a
-  single-node homelab this is the right trade; for anything multi-tenant it is
-  not.
-- **ConfigMap**: does not fit. A ConfigMap is capped near 1MiB total, and the
-  gameplan guides run to ~500 lines each plus per-matchup JSON. It would break
-  the moment the guides grew.
-- **Baking them into the image**: works, survives scheduling anywhere, and
-  loses live editing - every guide edit becomes an image rebuild and a Pod
-  recreate. That is the wrong loop for something you tune between games.
+That is gone. The guides now live in an `emptyDir` that an initContainer fills
+by cloning `github.com/szymonrychu/mtg-decks` before any app container starts.
+Strictly better on two axes: **no node pinning at all**, and the guides are
+**current at every restart** rather than being whatever was last copied onto
+one node. The `nodeSelector` and the hostPath are both deleted.
 
-An honest fourth option if you outgrow the single node: put the guides on an
-RWX PVC (NFS, CephFS) and sync them there. More moving parts, no node pinning.
+Details worth knowing:
+
+- **The image is the agent image**, `magic-cards-model-agent:__TAG__`.
+  `Dockerfile.agent` apt-installs `git`; the game/driver `Dockerfile` installs
+  nothing beyond `uv` and has no git, so it could not do this job. Reusing an
+  image the kubelet is already pulling for the agent container avoids a second
+  registry and a second pull.
+- **It runs as uid 1000**, under the Pod `securityContext` like everything
+  else. The `emptyDir` is chowned to `fsGroup` 1000 with the setgid bit, so
+  uid 1000 can write into it. Nothing in the clone needs root.
+- **The PAT does not stay in the repo it cloned.** The token has to be in the
+  clone URL (`https://x-access-token:${GH_PAT}@github.com/...`), and `git clone`
+  persists whatever URL it was given into `.git/config` as
+  `remote.origin.url` - which would then sit inside `/guides` for the life of
+  the Pod, in cleartext, readable by a claude session that can read files. So
+  the remote is immediately reset to the tokenless URL, and the script greps
+  `.git/config` afterwards to prove the token is gone. The clone is `--depth 1`,
+  so there is no fetch history carrying it either.
+- **A failed clone fails the Pod, loudly.** `set -e` and a non-zero exit leave
+  the Pod in `Init:Error` / `Init:CrashLoopBackOff`, plainly visible in
+  `kubectl get pod`. It never starts with a silently empty `/guides`, which
+  would look healthy and play badly. `GIT_TERMINAL_PROMPT=0` makes a bad or
+  expired PAT fail immediately instead of hanging on a credential prompt.
+
+The cost, versus the hostPath it replaced: you can no longer edit a guide on
+the node and have the agent see it next match. Push to the repo and restart the
+Pod instead. For a repo you already keep in git, that is the right loop.
 
 ### Agent memory: a PVC, and it is the important one
 
@@ -233,37 +396,47 @@ ReadWriteOnce PVC.
 a cold cache measured 34.5s for a single decklist, and without a volume every
 Pod recreate pays it again.
 
-### If the cluster has no default StorageClass
+### StorageClass
 
-Neither PVC names a `storageClassName`, so both take the cluster default. With
-no default, both stay `Pending` forever and the Pod never starts (`kubectl -n
-mtg describe pvc mtg-agent-memory` says so explicitly). Either mark a class
-default:
-
-```sh
-kubectl annotate storageclass <name> storageclass.kubernetes.io/is-default-class=true
-```
-
-or uncomment `storageClassName:` on both claims in `30-storage.yaml`.
+Neither PVC names a `storageClassName`, so both take the cluster default. In
+this cluster that is **`rook-ceph-rwx`** (CephFS), confirmed with
+`kubectl get sc` - both claims bind to it as written, no edit needed. On a
+cluster with no default they would stay `Pending` forever and the Pod would
+never start; `30-storage.yaml` explains the fix.
 
 ## What was actually validated
 
-Run on these manifests:
+Run on these manifests, with `__TAG__` substituted with a dummy value into a
+temp directory (nothing rendered was left in the repo, and nothing was applied
+for real):
 
-- `kubectl apply --dry-run=client -f deploy/k8s/` - all seven objects accepted.
-- `kubectl apply --dry-run=server -f deploy/k8s/` against the live cluster on
-  the `kubernetes-admin@kubernetes` context - all seven accepted. Server dry-run
-  runs real schema validation, defaulting and admission, and it allocates-checks
-  the NodePorts, so 30800/30880/30890 were free at that moment. Nothing was
-  created: server dry-run does not persist.
+- `kubectl apply --dry-run=client -f <rendered>/` - all 10 objects accepted.
+- `kubectl apply --dry-run=server -f <rendered>/` against the live cluster on
+  the `kubernetes-admin@kubernetes` context - all 10 accepted. Server dry-run
+  runs real schema validation, defaulting and admission. Nothing was created:
+  server dry-run does not persist.
+  One wrinkle worth recording: a server dry-run of the namespaced objects
+  fails with `namespaces "mtg-engine" not found`, because the namespace's own
+  dry-run creation does not persist for the objects that follow it. So the
+  namespaced objects were re-rendered into the existing `mtg` namespace purely
+  to get them admitted by the API server, and all 10 passed that way. That is
+  a validation artifact only - nothing was written to `mtg`, and the committed
+  manifests all say `mtg-engine`.
+- Server-side defaulting confirmed both PVCs resolve to
+  `storageClassName: rook-ceph-rwx`.
+- The initContainer script parses clean under `sh -n`.
+- The committed basic-auth hash was generated with `htpasswd -nbB play magic`
+  and then **verified**: `htpasswd -vb` accepts `magic` and rejects a wrong
+  password.
 
-Two things that dry-run surfaced and you should know:
+Cluster facts checked directly, not assumed:
 
-- the `mtg` namespace **already exists** in that cluster (57 days old). Applying
-  `00-namespace.yaml` will patch it, not create it. Check what is already in
-  there before you apply the rest.
-- the cluster's default StorageClass is `rook-ceph-rwx`, so both PVCs would
-  bind to it as written.
+- ClusterIssuer `letsencrypt-prod` exists and is Ready.
+- Service `spellslinger-mcp-http` exists in `spellslinger-development` on port
+  8080.
+- Default StorageClass is `rook-ceph-rwx`.
+- Secret `regcred` exists in `default` and is `kubernetes.io/dockerconfigjson`.
+- Namespace `mtg` exists (57 days old) and `mtg-engine` does not.
 
 `kubeval` and `kubectl-validate` are not installed here; no other linter ran.
 
@@ -273,9 +446,23 @@ Everything that needs the workload to actually run:
 
 - **The Pod has never been applied for real.** No container has started from
   these manifests. Schema-valid is not working.
-- The images were **not built or loaded** as part of this; the two `docker
-  build` commands above are transcribed from `docker-compose.yml`, not
-  executed here.
+- **The Harbor images may not exist at the tag you deploy.** Nothing here built
+  or pushed `magic-cards-model-api` or `magic-cards-model-agent`, and no tag was
+  checked against the registry. If the CI that pushes them has not run for your
+  commit, you get `ImagePullBackOff`.
+- **The `regcred` copy has not been done.** The copy command is transcribed, not
+  executed; the `mtg-engine` namespace does not exist yet, so nothing could be
+  copied into it.
+- **The guides clone has never run.** The PAT, the repo's private-ness, the
+  emptyDir ownership under `fsGroup`, and the `.git/config` grep are all
+  reasoned from how git and the kubelet behave, not observed. If the guide repo
+  has submodules, `--depth 1` without `--recurse-submodules` will not bring
+  them.
+- **The ingress has never served a request.** No certificate has been issued for
+  `play-magic.szymonrichert.pl`, no basic-auth challenge has been seen in a
+  browser, and the claim that nothing in the annotations breaks a 1.2s poll is
+  reasoned (no rate limit, no connection limit, generous timeouts) rather than
+  measured.
 - Running **game and driver as uid 1000** (they run as root under compose) is
   untested. If either needs to write a path that is not a mounted volume, it
   will fail with EACCES and want either an extra volume or a per-container
@@ -284,15 +471,15 @@ Everything that needs the workload to actually run:
 - The **8099 move** is untested end to end. It is consistent across
   `INTERNAL_ADDR` and `CCW_INTERNAL_URL`, and nothing else in the repo
   hardcodes 8090 for the wrapper, but no turn has been completed through it.
-- The **MCP re-point** is untested: no MCP tool call has been made against
-  `http://127.0.0.1:8000` from inside the agent container.
+- The **MCP re-points** are untested: no MCP tool call has been made against
+  `http://127.0.0.1:8000` or against the spellslinger Service DNS name from
+  inside the agent container.
 - **Probe timings** are reasoned from the code and the documented ~2 minute
   boot, not measured. If claude boots slower on your node, raise the
   startupProbe `failureThreshold`.
 - **Resource requests and limits** are estimates. None were profiled.
 - The **restart-per-match cycle** has not been observed under Kubernetes; the
   backoff behaviour described above is expected, not seen.
-- **hostPath, PVC binding, fsGroup ownership** - none exercised. The guides
-  path `/srv/mtg-decks` is a placeholder that exists on no node yet.
-- The NodePorts passed a dry-run allocation check once; that is a point-in-time
-  result, not a reservation.
+- **PVC binding and fsGroup ownership** - not exercised.
+- `mise run k8s:deploy` is written by a sibling change in this repo and was not
+  run from here.
