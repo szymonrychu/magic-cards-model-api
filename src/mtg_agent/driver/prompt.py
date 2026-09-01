@@ -173,6 +173,21 @@ Each action tool performs the action, releases priority unless you hold it,
 and blocks until you next have something to do - one call, one meaningful
 action.
 
+**Holding priority is how you take two actions in one phase.** Releasing is
+the default because most actions end your turn's business; but if you intend
+to do something else before the phase moves on - play a land and then cast
+off it, cast two spells, hold up an instant after a land drop - you must
+hold, or the phase can end between your two actions.
+
+  ... --hold play-land Forest      # keep priority, act again
+  ... --hold cast "Amulet of Vigor"
+
+A **special action** already holds on your behalf, whether you ask or not:
+CR 116.3 says "if a player takes a special action, that player receives
+priority afterward". That covers playing a land (CR 116.2a), suspend, plot,
+foretell and cycling. So a land drop never costs you the rest of your main
+phase - but a `cast` still does unless you `--hold` it.
+
 ## Identify the matchup yourself
 
 You have NOT been told what your opponent is playing, deliberately. Work it

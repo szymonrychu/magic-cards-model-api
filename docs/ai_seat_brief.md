@@ -16,6 +16,20 @@ Subcommands: state, wait, mulligan, opening-hand-done, cast, play-land,
 activate, attackers, blockers, decide, pass, resolve, advance, set-step, log,
 report. Run `<subcommand> --help` when unsure of arguments.
 
+**`--hold` is how you take two actions in one phase.** Every action releases
+priority by default and blocks until you next have something to do. If you
+mean to act again before the phase moves on - play a land and then cast off
+it, cast two spells, hold up an instant after your land drop - pass `--hold`,
+or the phase can end between your two actions:
+
+    ... --uid U --game G --hold play-land Forest
+    ... --uid U --game G --hold cast "Amulet of Vigor"
+
+A **special action** holds on your behalf whether you ask or not: CR 116.3
+says "if a player takes a special action, that player receives priority
+afterward". That is playing a land (CR 116.2a), suspend, plot, foretell and
+cycling. A `cast` is not a special action and still releases unless held.
+
 ## FIRST, before anything else: the pregame (CR 103.5 and CR 103.6)
 
 A game booted from decklists does not start on turn 1. It *rests* in the

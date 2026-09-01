@@ -298,3 +298,38 @@ def test_special_action_refused_for_a_card_without_the_ability(client, game):
         json={"player": "alice", "card": "Grizzly Bears"},
     ).json()
     assert cycle["allowed"] is False
+
+
+# -- CR 116.3: a special action does not cost you the rest of your phase -----
+
+
+def test_the_seat_cli_keeps_priority_after_a_land_drop(monkeypatch, client, game):
+    """CR 116.3: "If a player takes a special action, that player receives
+    priority afterward." Playing a land is CR 116.2a's special action.
+
+    Reported live: the agent played a Forest in its precombat main and then
+    could not cast off it until the postcombat main. `seat_cli`'s shared
+    release-and-wait flow passed priority after every action, so a land drop
+    threw away the rest of the seat's own main phase - and nothing in either
+    agent brief mentioned the `--hold` flag that would have avoided it.
+    """
+    import httpx
+
+    from magic_cards_model_api import seat_cli
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: client)
+    game_id = game
+    uid = next(u for u, who in store._seats[game_id].items() if who == "alice")
+    add_card(client, game_id, "Forest", "alice", "hand")
+
+    rc = seat_cli.run(
+        ["--uid", uid, "--game", game_id, "play-land", "Forest", "--max-seconds", "2"]
+    )
+
+    assert rc == 0
+    after = state(client, game_id, uid)
+    assert after["priority_holder"] == "alice", (
+        "CR 116.3 gives priority back after a special action - a land drop must "
+        "not release it, or the seat loses the rest of its own main phase"
+    )
+    assert any(c["name"] == "Forest" for c in after["battlefield"])

@@ -319,13 +319,26 @@ def run(argv: list[str] | None = None) -> int:
             return _parse_ids(value)
         return seat.my_untapped_sources(seat.fetch_state())
 
+    #: CR 116.3: "If a player takes a special action, that player receives
+    #: priority afterward." So these must NOT release priority - a seat that
+    #: plays a land and then passes has thrown away the rest of its own main
+    #: phase, which is what a live game showed: a Forest in precombat main and
+    #: the Amulet of Vigor it should have paid for stranded until postcombat.
+    #: Playing a land is CR 116.2a's special action; suspend, plot, foretell
+    #: and cycling name their own rules in their help text above.
+    SPECIAL_ACTIONS = {"play-land", "suspend", "plot", "foretell", "cycle"}
+
     def act(perform: Any, dry_run: bool = False) -> None:
         """Every non-dry-run action shares this: perform it, then run the
-        shared release-and-wait flow, printing the combined answer."""
+        shared release-and-wait flow, printing the combined answer.
+
+        `--hold` forces holding; a special action holds by default under
+        CR 116.3 whether it was asked for or not."""
         if dry_run:
             print(json.dumps(perform(), indent=1, sort_keys=True))
             return
-        result = run_action(seat, perform, hold_priority=args.hold, max_seconds=args.max_seconds)
+        hold = args.hold or args.command in SPECIAL_ACTIONS
+        result = run_action(seat, perform, hold_priority=hold, max_seconds=args.max_seconds)
         print(json.dumps(result, indent=1, sort_keys=True))
 
     if args.command == "state":
