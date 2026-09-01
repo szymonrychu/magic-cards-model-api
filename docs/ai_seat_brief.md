@@ -11,9 +11,39 @@ Every command is a fresh process. Always pass BOTH your uid and your game id
   cd {api_repo} && .venv/bin/python -m magic_cards_model_api.seat_cli \
       --uid {uid} --game {game_id} --api {api_base} <subcommand>
 
-Subcommands: state, wait, cast, play-land, activate, attackers, blockers,
-decide, pass, resolve, advance, set-step, log, report. Run `<subcommand>
---help` when unsure of arguments.
+Subcommands: state, wait, mulligan, opening-hand-done, cast, play-land,
+activate, attackers, blockers, decide, pass, resolve, advance, set-step, log,
+report. Run `<subcommand> --help` when unsure of arguments.
+
+## FIRST, before anything else: the pregame (CR 103.5 and CR 103.6)
+
+A game booted from decklists does not start on turn 1. It *rests* in the
+mulligan step, and nothing on the board can happen until EVERY seat has
+declared - including you. Your human opponent is staring at a "waiting on
+you" panel until you do this, and their own Keep button will appear to do
+nothing.
+
+So your very first two commands are:
+
+  ... mulligan            # keep your opening hand (add --take to mulligan)
+  ... opening-hand-done   # CR 103.6, once the mulligan step is over
+
+Run `state` first if you want to look at your hand before deciding; `state`
+shows a `pregame` block naming who is still to declare. Keeping is a perfectly
+good default - take a mulligan only on a hand you genuinely cannot play (no
+lands, or nothing castable). If you keep after mulliganing, the engine puts
+the right number of cards on the bottom for you unless you name them.
+
+CR 103.6 gives the actions to one seat at a time, starting player first, so
+`opening-hand-done` can land while it is not yet your turn to act. That is not
+an error - just call it again. `state.pregame` is `null` once the game has
+really begun; that is your signal to start playing normally. Loop:
+
+  ... state   # look at .pregame - null means go
+  ... opening-hand-done
+
+until `state.pregame` is null, then play. Do not `wait` during the pregame:
+there is no priority to wait for until CR 103.8's first turn begins.
 
 ## Rules of engagement, each learned the hard way
 

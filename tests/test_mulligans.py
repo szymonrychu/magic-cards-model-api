@@ -629,3 +629,76 @@ def test_a_seat_cannot_settle_the_pregame_for_the_whole_table(client: TestClient
         assert view(client, info, "alice")["pregame"]["awaiting_mulligan"] == ["alice", "bob"]
     finally:
         delete(client, info)
+
+
+# -- the seat CLI, which is the only pregame door an AI seat has -------------
+#
+# Everything above drives the HTTP endpoints directly. An AI seat cannot: its
+# entire vocabulary is `seat_cli` (see `ai_seat.py`, which spawns a headless
+# Claude whose one tool is that CLI). So a pregame that works over HTTP but has
+# no CLI subcommand is a pregame an AI seat can never finish - and because the
+# mulligan step is one every seat must declare in, that hangs the game for the
+# HUMAN too: their own "Keep" lands fine and then waits forever on an opponent
+# that has no way to answer. That is exactly the bug these two tests pin.
+
+
+def run_cli(monkeypatch, client: TestClient, argv: list[str]) -> int:
+    """`seat_cli.run` against the in-process test app."""
+    import httpx
+
+    from magic_cards_model_api import seat_cli
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: client)
+    return seat_cli.run(argv)
+
+
+def test_a_seat_can_declare_its_mulligan_through_the_cli(monkeypatch, client, capsys) -> None:
+    """CR 103.5's declaration, reachable from the AI seat's only tool."""
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
+
+    rc = run_cli(
+        monkeypatch,
+        client,
+        ["--uid", info["seat_uids"]["bob"], "--game", info["game_id"], "mulligan"],
+    )
+
+    assert rc == 0, capsys.readouterr().out
+    assert view(client, info, "alice")["pregame"]["awaiting_mulligan"] == ["alice"], (
+        "bob's CLI declaration should have left only alice to declare"
+    )
+
+
+def test_the_whole_pregame_is_reachable_from_the_cli_alone(monkeypatch, client, capsys) -> None:
+    """Both seats, mulligan through CR 103.6, using nothing but `seat_cli`.
+
+    CR 103.6 hands the actions to one seat at a time starting with the starting
+    player, so `opening-hand-done` may land before this seat is the actor; the
+    brief tells an AI seat to call it again, and this test does the same.
+    """
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
+    game_id = info["game_id"]
+
+    for player in ("alice", "bob"):
+        assert (
+            run_cli(
+                monkeypatch,
+                client,
+                ["--uid", info["seat_uids"][player], "--game", game_id, "mulligan"],
+            )
+            == 0
+        )
+
+    for _ in range(4):
+        if view(client, info, "alice")["pregame"] is None:
+            break
+        for player in ("alice", "bob"):
+            run_cli(
+                monkeypatch,
+                client,
+                ["--uid", info["seat_uids"][player], "--game", game_id, "opening-hand-done"],
+            )
+
+    state = view(client, info, "alice")
+    assert state["pregame"] is None, "CR 103.8's first turn never began from the CLI alone"
+    assert state["step"] == "untap"
+    capsys.readouterr()

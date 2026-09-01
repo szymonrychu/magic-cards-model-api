@@ -251,6 +251,34 @@ def build_parser() -> argparse.ArgumentParser:
     step = sub.add_parser("set-step", help="jump the turn marker to a named step")
     step.add_argument("step")
 
+    # CR 103.5 and CR 103.6. A game booted from decklists *rests* in these two
+    # steps before turn 1, and nothing on the board can happen until every seat
+    # has declared - so a seat with no way to declare is a seat that hangs the
+    # whole game for everyone, which is exactly what happened: the AI seat had
+    # no pregame command at all, so a human opponent's "Keep" appeared to do
+    # nothing forever.
+    mulligan = sub.add_parser(
+        "mulligan", help="CR 103.5: declare whether you take a mulligan (do this first)"
+    )
+    mulligan.add_argument(
+        "--take",
+        action="store_true",
+        help="take a mulligan; omit to keep the hand you have",
+    )
+    mulligan.add_argument(
+        "--bottom",
+        default="",
+        help=(
+            "comma-separated card ids to put on the bottom when keeping - CR 103.5 "
+            "wants one per mulligan already taken. Omit to let the engine pick."
+        ),
+    )
+
+    sub.add_parser(
+        "opening-hand-done",
+        help="CR 103.6: finish your opening-hand actions, starting the game",
+    )
+
     log = sub.add_parser("log", help="the game's action log")
     log.add_argument("limit", nargs="?", type=int, default=40)
 
@@ -447,6 +475,34 @@ def run(argv: list[str] | None = None) -> int:
             return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
         act(perform_decide)
+    elif args.command == "mulligan":
+        # Deliberately NOT through `act`: the pregame endpoints answer
+        # immediately and block on nothing (see `opening.py`), so there is no
+        # priority to release and nothing to wait for. Wrapping them in the
+        # release-and-wait flow would make a seat sit waiting for a priority
+        # that cannot arrive until the pregame it is trying to finish is over.
+        body: dict[str, Any] = {"player": seat.player, "take": bool(args.take)}
+        if args.bottom:
+            body["bottom"] = _parse_ids(args.bottom)
+        print(
+            json.dumps(
+                seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
+                indent=1,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "opening-hand-done":
+        print(
+            json.dumps(
+                seat.call_json(
+                    "POST",
+                    f"/api/games/{gid}/pregame/opening-hand/finish",
+                    {"player": seat.player},
+                ),
+                indent=1,
+                sort_keys=True,
+            )
+        )
     elif args.command == "log":
         # `uid` here, not the bare debugger's-eye default: a real seat reading
         # its own log must not see the opponent's hidden-zone card names any
