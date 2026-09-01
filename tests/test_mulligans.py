@@ -124,6 +124,14 @@ def finish_opening_hand(client: TestClient, info: dict[str, Any], player: str) -
     )
 
 
+#: Where CR 103.8's first turn actually leaves a game somebody can play.
+#: The turn begins at its untap step, but no player receives priority there
+#: (CR 502.4) and CR 500.3 ends such a step of its own accord - so the API
+#: settles straight on to the first step a seat can act in
+#: (`engine_api.settle_priorityless_steps`), which is the upkeep.
+FIRST_PLAYABLE_STEP = "upkeep"
+
+
 def keep_both_and_start(client: TestClient, info: dict[str, Any]) -> str:
     """The whole pregame the way a pair of seats plays it: both keep, neither
     takes a CR 103.6 action. Returns the step the game ends in."""
@@ -183,7 +191,7 @@ def test_the_whole_pregame_runs_over_http_inside_its_bound(client: TestClient) -
     started = time.monotonic()
     info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
     try:
-        assert keep_both_and_start(client, info) == "untap"
+        assert keep_both_and_start(client, info) == FIRST_PLAYABLE_STEP
         elapsed = time.monotonic() - started
         assert elapsed < PREGAME_WITHIN_SECONDS, (
             f"the pregame took {elapsed:.1f}s - it must not block on a decision timeout"
@@ -428,7 +436,7 @@ def test_a_seat_begins_the_game_with_a_leyline_on_the_battlefield(client: TestCl
         assert len(game.player("alice").hand) == 6
 
         assert finish_opening_hand(client, info, "alice").status_code == 200
-        assert finish_opening_hand(client, info, "bob").json()["step"] == "untap"
+        assert finish_opening_hand(client, info, "bob").json()["step"] == FIRST_PLAYABLE_STEP
     finally:
         delete(client, info)
 
@@ -444,7 +452,7 @@ def test_declining_the_opening_hand_action_leaves_the_card_in_hand(client: TestC
         seed=SEED_WITH_A_LEYLINE_IN_ALICES_HAND,
     )
     try:
-        assert keep_both_and_start(client, info) == "untap"
+        assert keep_both_and_start(client, info) == FIRST_PLAYABLE_STEP
         game = store.get(info["game_id"])
         assert game.battlefield == []
         assert "Leyline of the Void" in [card.name for card in game.player("alice").hand]
@@ -533,7 +541,7 @@ def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> N
         )
         assert settled.status_code == 200, settled.text
         assert time.monotonic() - started < PREGAME_WITHIN_SECONDS
-        assert settled.json()["step"] == "untap"
+        assert settled.json()["step"] == FIRST_PLAYABLE_STEP
         assert settled.json()["pregame"] is None
 
         game = store.get(info["game_id"])
@@ -715,7 +723,7 @@ def test_the_whole_pregame_is_reachable_from_the_cli_alone(monkeypatch, client, 
 
     state = view(client, info, "alice")
     assert state["pregame"] is None, "CR 103.8's first turn never began from the CLI alone"
-    assert state["step"] == "untap"
+    assert state["step"] == FIRST_PLAYABLE_STEP
     capsys.readouterr()
 
 

@@ -873,7 +873,15 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     """Pass priority - "I am done for now". `outcome` tells the caller what
     the pass caused: `resolve_top` (the stack's top resolved, priority goes
     round again) or `end_step` (everyone passed on an empty stack, so the
-    step ended and the next has already begun - CR 117.4, 405.5)."""
+    step ended and the next has already begun - CR 117.4, 405.5).
+
+    If that next step is one in which no player receives priority, this does
+    not stop there: `engine_api.settle_priorityless_steps` runs the game on to
+    the first step somebody can act in (CR 500.3), and `settled_through` lists
+    the steps crossed. A player who has passed has said "I am done for now",
+    and nothing in CR 500.3's untap or cleanup steps is waiting on them - so
+    handing the pass back with `priority_holder: null` would be handing back a
+    state no client, human or otherwise, is allowed to move."""
     with store.locked(game_id) as game:
         resolving_obj = game.stack[-1] if game.stack else None
         resolving = resolving_obj.name if resolving_obj is not None else None
@@ -897,10 +905,19 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
             if resolving_spell_id is not None:
                 after = _without_own_arrival(game, resolving_spell_id, after)
             detail["changed"] = after != before
+        settled = engine_api.settle_priorityless_steps(game)
+        if settled:
+            detail["settled_through"] = settled
         seq = audit.record(
             game_id, "pass_priority", player=req.player, allowed=True, reason=None, **detail
         )
-        return {"allowed": True, "reason": None, "outcome": outcome.value, "log_seq": seq}
+        return {
+            "allowed": True,
+            "reason": None,
+            "outcome": outcome.value,
+            "settled_through": settled,
+            "log_seq": seq,
+        }
 
 
 @app.post("/api/games/{game_id}/actions/declare-blockers")
@@ -1227,6 +1244,21 @@ def _pregame_seat(game_id: str, uid: str | None, player: str) -> None:
         raise ValueError(f"that uid does not open {player}'s seat")
 
 
+def _settled(game: Game, result: dict[str, Any]) -> dict[str, Any]:
+    """Run the game past any step nobody receives priority in, and correct the
+    `step` this pregame response reports to where it actually ended up.
+
+    CR 103.8's first turn begins at the untap step, which grants nobody
+    priority (CR 502.4) and which CR 500.3 ends of its own accord. Without
+    this, the last pregame call hands back `untap` with `priority_holder:
+    null` - the state the user reported as a frozen page, with no move any
+    client is allowed to make. See `engine_api.settle_priorityless_steps`."""
+    crossed = engine_api.settle_priorityless_steps(game)
+    if crossed and game.turn is not None:
+        result = {**result, "step": game.turn.step.value, "settled_through": crossed}
+    return result
+
+
 @app.post("/api/games/{game_id}/pregame/mulligan")
 def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None) -> dict[str, Any]:
     """Declare whether this seat takes a mulligan (CR 103.5).
@@ -1273,14 +1305,18 @@ def pregame_opening_hand_finish(
     """This seat is done taking CR 103.6 actions.
 
     The next seat is up; when the last one finishes, CR 103.8's first turn
-    begins and the response's `step` is `untap`.
+    begins - at its untap step, in which no player receives priority (CR
+    502.4). Nobody has to be asked to leave that step (CR 500.3), so the
+    response's `step` is the first one somebody can act in: `upkeep`. See
+    `engine_api.settle_priorityless_steps`.
     """
     if not req.player:
         raise ValueError("finishing CR 103.6's actions needs the player who is finishing")
     _pregame_seat(game_id, uid, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)
-        return opening.finish_opening_hand_actions(game_id, game, req.player)
+        result = opening.finish_opening_hand_actions(game_id, game, req.player)
+        return _settled(game, result)
 
 
 @app.post("/api/games/{game_id}/pregame/settle")
@@ -1298,7 +1334,8 @@ def pregame_settle(game_id: str, uid: str | None = None) -> dict[str, Any]:
     if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
     with store.locked(game_id) as game:
-        return opening.settle_pregame(game_id, game)
+        result = opening.settle_pregame(game_id, game)
+        return _settled(game, result)
 
 
 # -- the play-vs-AI UI --------------------------------------------------------

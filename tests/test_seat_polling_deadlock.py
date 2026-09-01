@@ -166,11 +166,16 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
 
     # The abandoned background call (alice's own original pass-priority)
     # finishes on its own now that it has an answer - nothing left watching
-    # it here, but the server-side effect is real: cleanup completed.
+    # it here, but the server-side effect is real: CR 514.1's discard happened,
+    # so alice is down to seven. The step it lands in is no longer `cleanup`:
+    # that pass settles on past every step nobody receives priority in
+    # (CR 500.3, `engine_api.settle_priorityless_steps`), so what the board
+    # shows is the next turn's upkeep, with a priority holder.
     for _ in range(100):
         board = client.get(f"/api/games/{game}", params={"uid": uids["alice"]}).json()
-        if board["step"] == "cleanup" and len(board["hands"]["alice"]) == 7:
+        if board["step"] == "upkeep" and len(board["hands"]["alice"]) == 7:
             break
         time.sleep(0.02)
     else:
         raise AssertionError("alice's own abandoned pass-priority call never completed cleanup")
+    assert board["priority_holder"] is not None

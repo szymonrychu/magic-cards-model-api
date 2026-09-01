@@ -141,6 +141,9 @@ def test_pass_priority_outcomes(client, game):
         "allowed": True,
         "reason": None,
         "outcome": PriorityOutcome.PASSED.value,
+        # Nothing to settle: `precombat_main` grants priority (CR 500.3's two
+        # exceptions are the untap and cleanup steps, and this is neither).
+        "settled_through": [],
     }
     assert state(client, game)["priority_holder"] == "bob"
 
@@ -153,6 +156,7 @@ def test_pass_priority_outcomes(client, game):
         "allowed": True,
         "reason": None,
         "outcome": PriorityOutcome.END_STEP.value,
+        "settled_through": [],
     }
     assert state(client, game)["step"] == "beginning_of_combat"
 

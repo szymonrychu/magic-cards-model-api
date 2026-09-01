@@ -76,7 +76,10 @@ def booted_game(client: TestClient) -> dict:
             json={"player": player},
         )
         assert done.status_code == 200, done.text
-    assert done.json()["step"] == "untap", "CR 103.8's first turn should have begun"
+    # CR 103.8's first turn has begun. Its untap step grants nobody priority
+    # (CR 502.4) and ends on its own (CR 500.3), so the API has already
+    # settled past it to the first step a seat can act in.
+    assert done.json()["step"] == "upkeep", "CR 103.8's first turn should have begun"
     elapsed = time.monotonic() - started
     assert elapsed < PREGAME_WITHIN_SECONDS, (
         f"the pregame took {elapsed:.1f}s - no pregame call may block on a decision"

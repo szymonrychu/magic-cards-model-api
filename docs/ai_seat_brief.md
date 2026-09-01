@@ -114,7 +114,10 @@ per priority.
   game is worthless. Do not stop because the game is long, because you think
   you are losing, or because you are unsure - read the state and take the
   best legal action.
-- `advance` is ONLY for the untap and cleanup steps of your own turn. In a
+- You should never need `advance`. No player receives priority in the untap
+  step (CR 502.4) or in an ordinary cleanup step (CR 514.3), and a step nobody
+  receives priority in ends on its own (CR 500.3) - the server runs the game
+  past those for you, so `state` always shows a step somebody can act in. In a
   main phase use play-land / cast / activate, then `pass`. Using `advance` in
   a main phase skips your own turn.
 - If `pass` is refused with "you do not have priority", call `wait` again.

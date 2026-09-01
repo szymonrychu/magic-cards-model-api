@@ -785,6 +785,71 @@ def resolve_top(game: Game) -> dict[str, Any]:
     return {"resolved": f"ability from {resolved.source_name}", "zone": None}
 
 
+#: How many priorityless steps in a row `settle_priorityless_steps` will cross
+#: before it gives up. CR 500.3 names only two such steps, and the longest real
+#: run is cleanup -> untap -> (upkeep, which grants priority): two crossings.
+#: Four is that with room to spare, and a hard stop so a mis-read of
+#: `step_grants_priority` can never spin a request for ever.
+MAX_PRIORITYLESS_STEPS = 4
+
+
+def settle_priorityless_steps(game: Game) -> list[str]:
+    """Run the game on past any step in which nobody receives priority.
+
+    CR 500.3: "A step in which no players receive priority ends when all
+    specified actions that take place during that step are completed. The only
+    such steps are the untap step (see rule 502) and certain cleanup steps (see
+    rule 514)." Nothing has to *ask* a player to leave such a step - the step
+    ending is the next thing that happens, not a move somebody makes.
+
+    The engine deliberately rests in those steps: they are observable places
+    its own suite steps into, and `Game.pass_priority` refuses there outright
+    (CR 502.4: "No player receives priority during the untap step"). That is
+    right for the engine and wrong for a live game, where resting in a step
+    that grants nobody priority is a frozen page: `priority_holder` is `None`,
+    so no seat - human, `seat_cli`, MCP, or the AI seat - has anything it is
+    allowed to do, and nothing will ever change that. This is where that gets
+    settled, so every client is handed a state somebody can act on.
+
+    Returns the steps crossed into, in order, so a caller can report and log
+    what moved. Deliberately conservative - it stops, leaving the game exactly
+    where it is, on any of:
+
+    - the game being over, or still in CR 103.8's pregame;
+    - `Game.step_grants_priority` being true, which is the honest answer for
+      the step in progress and covers CR 514.3a's cleanup exception - a cleanup
+      step with a trigger or a state-based action waiting *does* grant priority
+      and must not be crossed;
+    - a non-empty stack, which is something waiting on a player rather than on
+      the step ending;
+    - a step outside CR 500.3's two, which cannot be priorityless at all;
+    - the engine refusing the advance, which is then left as it was.
+
+    A trigger held over from the untap step by CR 502.4's second sentence
+    ("Any ability that triggers during this step will be held until the next
+    time a player would receive priority") is not dropped here: it stays in
+    `pending_triggers`, and `Game.advance` puts it on the stack on arriving at
+    the first step that does grant priority - which is where this loop stops.
+
+    A pending decision is the caller's guard, not this one's: every call site
+    holds the game lock, so a decision that was asked has already been answered
+    (or defaulted) by the time control reaches here.
+    """
+    crossed: list[str] = []
+    for _ in range(MAX_PRIORITYLESS_STEPS):
+        if game.is_over or game.turn is None or game.turn.in_pregame:
+            break
+        if game.step_grants_priority or not game.stack_is_empty:
+            break
+        if game.turn.step not in (Step.UNTAP, Step.CLEANUP):
+            break
+        try:
+            crossed.append(game.advance().value)
+        except ValueError:  # the engine's own refusal - leave the game as it is
+            break
+    return crossed
+
+
 def set_step(game: Game, step: Step) -> None:
     """Set the step. Forward goes through the engine; backward is raw.
 
