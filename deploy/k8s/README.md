@@ -17,7 +17,7 @@ no operator.
 | `10-secret.template.yaml` | templates for the Claude credential and the GitHub PAT - placeholders only, never real values |
 | `20-configmap-mcp.yaml` | `mcp.base.json` with `mtg` re-pointed at `127.0.0.1:8000` and spellslinger at its in-cluster Service |
 | `30-storage.yaml` | PVCs for the agent's memory and the Scryfall cache |
-| `50-pod.yaml` | the Pod: guides initContainer, then game + agent + driver, ports, env, probes, resources |
+| `50-deployment.yaml` | the Deployment - one replica, `Recreate` strategy, owning a Pod with the guides initContainer, then game + agent + driver: ports, env, probes, resources |
 | `60-service.yaml` | ClusterIP Service for 8000 (play), 8080 (agent API), 8090 (driver status) |
 | `70-ingress.yaml` | the basic-auth Secret and the TLS ingress on `play-magic.szymonrichert.pl`, routing port 8000 only |
 
@@ -188,7 +188,7 @@ until claude has booted, which takes up to about two minutes.
 | agent turns, probe, interrupt | port-forward, then `http://127.0.0.1:8080/v1/...` |
 
 ```sh
-kubectl -n mtg-engine port-forward pod/mtg-stack 8000 8080 8090
+kubectl -n mtg-engine port-forward deploy/mtg-stack 8000 8080 8090
 ```
 
 `*.szymonrichert.pl` resolves to the LAN IP at home and to the public IP from
@@ -201,11 +201,11 @@ can 502 or serve a self-signed cert for the minute that takes.
 ## Logs
 
 ```sh
-kubectl -n mtg-engine logs mtg-stack -c guides           # the deck-guide clone
-kubectl -n mtg-engine logs mtg-stack -c agent -f         # session boot, turns, a dead claude
-kubectl -n mtg-engine logs mtg-stack -c agent --previous # the match that just ended
-kubectl -n mtg-engine logs mtg-stack -c driver -f        # the match lifecycle
-kubectl -n mtg-engine logs mtg-stack -c game -f | grep "PROBLEM REPORTED"
+kubectl -n mtg-engine logs deploy/mtg-stack -c guides           # the deck-guide clone
+kubectl -n mtg-engine logs deploy/mtg-stack -c agent -f         # session boot, turns, a dead claude
+kubectl -n mtg-engine logs deploy/mtg-stack -c agent --previous # the match that just ended
+kubectl -n mtg-engine logs deploy/mtg-stack -c driver -f        # the match lifecycle
+kubectl -n mtg-engine logs deploy/mtg-stack -c game -f | grep "PROBLEM REPORTED"
 ```
 
 `--previous` matters here more than usual: the agent container is *replaced*
