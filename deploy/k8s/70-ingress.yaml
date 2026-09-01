@@ -37,7 +37,17 @@ metadata:
     kubernetes.io/tls-acme: "true"
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: play-magic-auth
-    nginx.ingress.kubernetes.io/auth-realm: "play-magic - user play, password magic"
+    # KEEP THIS BORING. ingress-nginx runs annotation values through a
+    # risk-based validator, and a realm carrying punctuation ("play-magic -
+    # user play, password magic") is REJECTED - not the annotation, the whole
+    # Ingress. It is then dropped from the controller's store, so it gets no
+    # ADDRESS, serves nginx's fake certificate, and answers 404 with no auth
+    # challenge at all. That failure looks nothing like a bad annotation; the
+    # only place it is visible is the controller log:
+    #   validation error on ingress mtg-engine/mtg-stack:
+    #   annotation auth-realm contains invalid value
+    # The credentials belong in the README, not in the realm string.
+    nginx.ingress.kubernetes.io/auth-realm: "Authentication Required"
     # The game UI polls a couple of routes about every 1.2s for as long as a
     # browser tab is open, and a turn the agent is thinking through can hold a
     # request open for a while. The nginx default 60s read timeout would cut

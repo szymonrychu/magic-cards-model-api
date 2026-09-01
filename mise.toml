@@ -124,7 +124,14 @@ done
 """
 
 [tasks."k8s:deploy"]
-description = "Render deploy/k8s with the sha and kubectl apply it"
+description = "Push both images at the current sha, then render and apply"
+# `depends` on the push because the tag IS the sha: every commit - including a
+# commit that only touches a manifest or the README - moves HEAD, and the
+# rendered image reference then names a tag nobody has built. The Pod sits in
+# ImagePullBackOff and the cause is three commits back. The push is cached, so
+# a manifest-only change re-pushes in seconds; correctness is worth those
+# seconds. Use `k8s:render` if you only want to look.
+depends = ["docker:push"]
 run = """
 set -eu
 TAG="$(git rev-parse --short HEAD)"
