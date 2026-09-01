@@ -239,7 +239,43 @@ def build_parser() -> argparse.ArgumentParser:
 
     decide = sub.add_parser("decide", help="answer your pending decision (CR 608.2d)")
     decide.add_argument(
-        "card_ids", nargs="?", default="", help="comma-separated card ids to discard/choose"
+        "card_ids",
+        nargs="?",
+        default="",
+        help=(
+            "comma-separated card ids, for a choose_cards decision - a discard, "
+            "a bottoming, or a library search (a fetchland, a tutor). How many "
+            "you must name is pending_decision.exact, never the kind: exact=true "
+            "means exactly pending_decision.amount ids (CR 701.23d's quantity "
+            "search, where you choose which and never whether), exact=false means "
+            "any number from zero up to amount (CR 107.1c, and CR 701.23b's "
+            "declinable search). A search is ONE choice over every legal "
+            "candidate at once (CR 701.23a: look at all cards in that zone, even "
+            "if it is a hidden zone), never a card-by-card walk - so name the "
+            "card you want, reading pending_decision.card_labels, which names "
+            "each pending_decision.cards entry positionally and is what a "
+            "hidden-zone candidate has instead of a card you can look up "
+            "(CR 400.2 makes the library hidden, and `state` strips your own). "
+            "pending_decision.source is the card asking, and says what it may "
+            "find. OMITTING THIS ARGUMENT SENDS THE EMPTY ANSWER, which is the "
+            "decline where exact=false and is refused where exact=true - use "
+            "--decline to say so out loud. pending_decision.default_cards is "
+            "what silence costs instead: what the engine takes if the decision "
+            "times out unanswered"
+        ),
+    )
+    decide.add_argument(
+        "--decline",
+        action="store_true",
+        help=(
+            "answer a choose_cards decision with no cards at all - CR 701.23b's "
+            "decline, legal only where pending_decision.exact is false. Exactly "
+            "the same request as an omitted card_ids (both post the empty "
+            "answer), and refused by the same check where exact is true; it "
+            "exists so a deliberate decline reads as one in a transcript rather "
+            "than as a forgotten argument. Refused outright if card_ids is also "
+            "given"
+        ),
     )
     decide.add_argument(
         "--targets",
@@ -686,6 +722,22 @@ def run(argv: list[str] | None = None) -> int:
             seat.call("PUT", f"/api/games/{gid}/step", {"step": args.step, "player": seat.player})
         )
     elif args.command == "decide":
+        # `--decline` and an omitted `card_ids` post the identical request -
+        # the empty answer, which for a CR 701.23b search ("that player isn't
+        # required to find some or all of those cards even if they're present
+        # in that zone") is a real answer and not a missing one. The flag adds
+        # no contract the API did not already have; it exists so that a
+        # deliberate decline is distinguishable from a forgotten argument in a
+        # transcript, which is the whole ambiguity of a defaulted positional.
+        # Giving both is a seat saying two different things at once, so it is
+        # refused here rather than silently resolved one way.
+        if args.decline and _parse_ids(args.card_ids):
+            print(
+                "--decline names no cards, so it cannot be combined with card_ids. "
+                "Drop one: --decline alone is the empty answer (CR 701.23b's "
+                "decline, legal only where pending_decision.exact is false)."
+            )
+            return 1
 
         def perform_decide() -> Any:
             body: dict[str, Any] = {

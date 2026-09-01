@@ -172,7 +172,18 @@ def build_server(seats: Seats) -> MCPServer:
         "bottom of your library"). They are authoritative whenever they are
         non-empty, and the `scry`/`surveil` kind alone is not - the engine
         reuses that kind for any look-then-split, including Devourer of
-        Destiny's, which keeps the named card on top and exiles the rest."""
+        Destiny's, which keeps the named card on top and exiles the rest.
+
+        Three more of its fields carry a `choose_cards` - a discard, and
+        every library search (CR 701.23a's find, asked as one choice over
+        every legal candidate at once). `exact` says whether your answer
+        must name exactly `amount` cards (CR 701.23d's quantity search) or
+        may name any number from zero up to it (CR 701.23b's declinable
+        search, where finding nothing is a real answer). `card_labels` names
+        each `cards` entry positionally, and is what you read a hidden-zone
+        candidate by - your own library is stripped from this state.
+        `default_cards`, when non-null, is what the engine takes if you
+        never answer."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -609,15 +620,72 @@ def build_server(seats: Seats) -> MCPServer:
         """Answer your pending decision (CR 608.2d) - `my_state`'s
         `pending_decision` field says what is being asked, by `kind`.
 
-        - `choose_cards` (e.g. the cleanup discard): `card_ids` is a
-          comma-separated list of the card id(s) to discard, exactly as many
-          as `pending_decision.amount` names, chosen from
-          `pending_decision.cards`. A hand-sourced `choose_cards` (the
-          cleanup discard, a "discard N" effect) is already resolvable
-          against your own `hand` in `my_state`; a library-sourced one (a
-          "reveal the top N, choose among them" effect) instead resolves
-          through `pending_decision.card_details` - see the `scry`/`surveil`
-          bullet below, which explains that field.
+        - `choose_cards` (the cleanup discard, a "discard N" effect, a
+          "reveal the top N, choose among them" effect - and **every
+          library search**, a fetchland or a tutor): `card_ids` is a
+          comma-separated list of ids chosen from `pending_decision.cards`.
+
+          **How many you must name is `pending_decision.exact`, never the
+          kind.** `True` means exactly `pending_decision.amount` ids - the
+          cleanup discard, a bottoming. `False` means any number from zero
+          up to `amount` (CR 107.1c: "if a rule or ability instructs a
+          player to choose 'any number,' that player may choose any positive
+          number or zero"). When `exact` is `False`, **the empty answer is a
+          real answer, not a missing one**: leaving `card_ids` empty finds
+          nothing, and that is the legal decline. When `exact` is `True`, an
+          empty answer is refused, and so is any count other than `amount`.
+
+          **A search is one choice over the whole zone, not a walk.**
+          CR 701.23a: "to search for a card in a zone, look at all cards in
+          that zone (even if it's a hidden zone) and find a card that matches
+          the given description." So a search arrives as a *single*
+          `choose_cards` whose `cards` holds **every legal candidate at
+          once**, and your answer names the ones you actually want. You are
+          never shown one card at a time and asked to accept or decline it,
+          so never treat a candidate you do not want as the whole question:
+          name the card you do want.
+
+          Which branch you are in is `exact` again. CR 701.23b - "if a player
+          is searching a hidden zone for cards with a stated quality, such as
+          a card with a certain card type or color, that player isn't
+          required to find some or all of those cards even if they're present
+          in that zone" - is `exact` `False`: any 0..`amount` is legal, and
+          finding nothing is a choice you may make. CR 701.23d - "if a player
+          is searching a hidden zone simply for a quantity of cards, such as
+          'a card' or 'three cards,' that player must find that many cards
+          (or as many as possible, if the zone doesn't contain that many)" -
+          is `exact` `True`: there you choose *which*, never *whether*.
+
+          `pending_decision.source` names the card asking, and it is what
+          tells you which find you are entitled to. A Wooded Foothills
+          ("{T}, Pay 1 life, Sacrifice this land: Search your library for a
+          Mountain or Forest card, put it onto the battlefield, then
+          shuffle.") offers every card that matches, and a Breeding Pool is
+          one of them - its type line is "Land - Forest Island", so it is a
+          Forest card as surely as a basic Forest is. Read `source`, then
+          pick the best candidate, not the first.
+
+          **Read `pending_decision.card_labels` to know what the ids are.**
+          It is one name per `cards` entry, positionally aligned with it -
+          entry N of `card_labels` names entry N of `cards`. For a candidate
+          in a hidden zone (CR 400.2: "public zones are zones in which all
+          players can see the cards' faces ... graveyard, battlefield, stack,
+          exile, ante, and command are public zones" - the library and the
+          hand are not among them) your own state carries no detail to look
+          the id up against: `my_state` strips every library, including your
+          own. `pending_decision.card_details` carries the fuller view of the
+          same ids where the server can resolve them, and is worth reading
+          for oracle text; `card_labels` is the naming that is always there
+          and always aligned. Answering off bare ids is playing the search
+          blind, which is how the wrong land gets fetched.
+
+          `pending_decision.default_cards`, when it is not null, is what
+          your *silence* costs: the ids the engine takes if this decision
+          times out unanswered, in place of the kind's generic default. For a
+          search it is the first `amount` candidates in zone order - so an
+          unanswered fetch still fetches, but it fetches whatever happened to
+          sit nearest the top rather than the card you wanted. Check it
+          before deciding a decision is not worth answering.
         - `choose_targets` (a triggered ability's targets, CR 603.3d, or a
           targeted ability being activated with no targets supplied,
           CR 602.2b/601.2c): `targets` is a comma-separated list of up to

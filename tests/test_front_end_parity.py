@@ -579,3 +579,146 @@ def test_the_cli_says_nothing_extra_when_there_is_no_split_to_describe(
     assert captured.err == ""
     assert seat_cli.split_destinations({"pending_decision": None}) == ""
     assert seat_cli.split_destinations({"pending_decision": {"kind": "scry", "cards": []}}) == ""
+
+
+# -- a search's shape, in both front ends -------------------------------------
+#
+# The sibling of the section above, and the same failure one wave later. A
+# search used to be a walk - the engine offered each matching card in zone
+# order and asked yes or no - so a searcher could only decline what it was
+# shown and never name what it wanted. A live seat activated Wooded Foothills
+# ("{T}, Pay 1 life, Sacrifice this land: Search your library for a Mountain or
+# Forest card, put it onto the battlefield, then shuffle.", verified with
+# `resolve_cards`) meaning to fetch Breeding Pool ("Land - Forest Island", a
+# Forest card, verified the same way) and was handed a basic Forest.
+#
+# It is one `choose_cards` over every legal candidate now, and three fields on
+# `pending_decision` carry that shape: `exact` (is `amount` a count or a
+# ceiling), `card_labels` (what the hidden-zone ids are called), and
+# `default_cards` (what silence costs). Both front ends' instructions have to
+# name all three, for the same reason the labels above did: an AI seat reads a
+# docstring and a `--help` line the way a human reads the board, and the engine
+# and the browser moved while these two did not.
+#
+# Every CR number below was verified with `knowledge_search(type="rules")` in
+# the session that wrote this section: CR 701.23a (the find is a look at all
+# cards in the zone), CR 701.23b (a search for a stated quality is declinable),
+# CR 701.23d (a search for a quantity must find that many, or as many as
+# possible), CR 107.1c ("any number" includes zero), CR 400.2 (the library is
+# not a public zone).
+
+THE_OLD_DISCARD_ONLY_TEXT = (
+    "the card id(s) to discard, exactly as many",
+    "comma-separated card ids to discard/choose",
+)
+
+
+def test_the_decide_docstring_makes_exact_the_switch_and_the_empty_answer_real():
+    """`exact` is what decides whether an answer must name `amount` cards or
+    may name fewer, and the old bullet stated the exact case as the only one -
+    so a seat obeying it could never take CR 701.23b's decline."""
+    docstring = " ".join(decide_docstring().split())
+
+    assert "`exact`" in docstring, "the field that decides the count is never named"
+    assert "CR 701.23b" in docstring and "CR 701.23d" in docstring, (
+        "the declinable search and the quantity search are the two branches `exact` "
+        "picks between - a seat cannot tell them apart without them"
+    )
+    assert "CR 107.1c" in docstring
+    assert "the empty answer is a real answer" in docstring, (
+        "finding nothing is a legal answer where `exact` is false, and a seat that "
+        "is not told so will never decline a fetch"
+    )
+    for lie in THE_OLD_DISCARD_ONLY_TEXT:
+        assert lie not in docstring, (
+            f"the docstring still states one count as the only one: {lie!r}"
+        )
+
+
+def test_the_decide_docstring_teaches_a_search_as_one_choice_over_the_whole_zone():
+    """The misplay itself: a walk lets a searcher decline, a single choice lets
+    it *name*. The bullet has to say which one this is, name the card that is
+    asking, and send the seat to the labels for what the ids are."""
+    docstring = " ".join(decide_docstring().split())
+
+    assert "CR 701.23a" in docstring
+    assert "not a walk" in docstring, "the shape of the question is never stated"
+    assert "every legal candidate" in docstring
+    assert "card_labels" in docstring, "the only naming a hidden-zone candidate has is never named"
+    assert "CR 400.2" in docstring, "why a library id resolves to nothing is never given"
+    assert "default_cards" in docstring and "silence" in docstring, (
+        "what an unanswered search takes instead is never stated"
+    )
+    assert "source` names the card asking" in docstring
+    assert "Wooded Foothills" in docstring and "Breeding Pool" in docstring, (
+        "the reported misplay is the shortest way to teach the difference"
+    )
+
+
+def test_my_state_tells_a_seat_the_three_search_fields_are_there():
+    """A seat that never reads `decide`'s bullet still reads its own state, the
+    same argument the `moved_label` guard above makes."""
+    docstring = " ".join(
+        (inspect.getdoc(_tool_functions(build_a_server())["my_state"]) or "").split()
+    )
+
+    assert "`exact` says whether" in docstring
+    assert "card_labels" in docstring
+    assert "default_cards" in docstring
+    assert "CR 701.23b" in docstring and "CR 701.23d" in docstring
+
+
+def card_ids_help() -> str:
+    action = next(entry for entry in subcommand("decide")._actions if entry.dest == "card_ids")
+    return " ".join((action.help or "").split())
+
+
+def test_the_cli_card_ids_help_carries_the_same_three_fields():
+    """The other front end's only instructions, and they were one line about
+    discarding - no search, no `exact`, nothing about declining."""
+    help_text = card_ids_help()
+
+    assert "pending_decision.exact" in help_text
+    assert "card_labels" in help_text
+    assert "default_cards" in help_text
+    assert "CR 701.23a" in help_text
+    assert "CR 701.23b" in help_text and "CR 701.23d" in help_text
+    assert "CR 107.1c" in help_text and "CR 400.2" in help_text
+    for lie in THE_OLD_DISCARD_ONLY_TEXT:
+        assert lie not in help_text, f"the old discard-only line survives: {lie!r}"
+
+
+def test_the_cli_says_out_loud_what_an_omitted_card_ids_means():
+    """The ambiguity a defaulted positional carries: an omitted `card_ids` and
+    a deliberate CR 701.23b decline post the identical empty answer. The
+    contract is unchanged - both front ends still send the empty list - so the
+    fix is to say so, and to give the decline a name it can be read by."""
+    help_text = card_ids_help()
+
+    assert "OMITTING THIS ARGUMENT SENDS THE EMPTY ANSWER" in help_text
+    assert "--decline" in help_text
+
+    decline = next(
+        entry
+        for entry in subcommand("decide")._actions
+        if "--decline" in getattr(entry, "option_strings", ())
+    )
+    said = " ".join((decline.help or "").split())
+    assert "CR 701.23b" in said
+    assert "same request as an omitted card_ids" in said, (
+        "the flag must not read as a second, different wire contract - it is an alias"
+    )
+
+
+def test_the_cli_refuses_a_decline_that_also_names_cards(client, game, monkeypatch, capsys):
+    """Two different answers in one command. Refused before any request, so no
+    half-meant answer reaches a decision that cannot be taken back."""
+    wire(monkeypatch)
+    rc = seat_cli.run(
+        ["--uid", uid_for(game, "alice"), "--game", game, "decide", "some-id", "--decline"]
+    )
+
+    assert rc == 1
+    said = capsys.readouterr().out
+    assert "--decline names no cards" in said
+    assert "CR 701.23b" in said
