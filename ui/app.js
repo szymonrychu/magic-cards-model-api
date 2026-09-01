@@ -2356,14 +2356,28 @@ function renderActionBar(state, you) {
   const current = game.autopilot
     ? `${game.autopilot.step}|${game.autopilot.who}`
     : game.settings.autopilotTarget;
-  // No "Pass priority" and no "Resolve top" button. Both are gone from every
-  // game, deliberately: the two of them were the manual half of a control the
-  // "Auto-pass until…" picker below already does properly, and a player
-  // clicking them one at a time is doing by hand what the picker does in one
-  // go. `passPriority()` itself is untouched and still runs on the cast path
-  // (CR 117.3c's "releasing priority is what makes the spell resolve").
+  // "Pass priority" is offered only where it is the answer to a question the
+  // board is actually asking: you hold priority AND there is something on the
+  // stack. That is the state where nothing else on the panel can move the game
+  // - the turn buttons render only in untap and cleanup, and a triggered
+  // ability sitting in your own precombat main leaves you holding priority with
+  // no decision pending - and it is exactly the state CR 117.4 describes, where
+  // all players passing in succession is what resolves the top of the stack.
+  // Passing with an empty stack ends the step instead, which is what the
+  // "Auto-pass until…" picker below is for, so the button stays hidden there.
+  //
+  // When it shows it is always enabled: the only reason it ever rendered
+  // disabled was not holding priority, and that case no longer renders at all.
+  //
+  // "Resolve top" is not coming back. The top of the stack resolving is what
+  // CR 117.4 makes happen once everyone passes - it is not an action a player
+  // takes, so there is no button for it. `resolveTop()` keeps its `window`
+  // export for the console; nothing in the page calls it.
+  const isYourPriority = state.priority_holder === you;
+  const showPassPriority = isYourPriority && (state.stack || []).length > 0;
   groups.push(`<div class="group"><div class="label">Priority</div>
     <div class="pass-controls">
+      ${showPassPriority ? '<div class="row"><button class="primary" onclick="passPriority()">Pass priority</button></div>' : ""}
       <div class="row">
         <select id="autopilot-target" onchange="rememberAutopilotTarget(this.value)">
           ${targets
