@@ -35,19 +35,26 @@ description = "Bring up game + continuous agent + driver"
 run = "docker compose up --build"
 
 [tasks.image-tag]
-description = "Print the short git sha the image tasks would tag with"
-run = "git rev-parse --short HEAD"
+description = "Print the tag the image tasks would use: <api sha>-<engine sha>"
+# BOTH shas, because BOTH repos are baked into the image. With the api sha
+# alone, an engine-only change produced an identical tag: `kubectl apply` saw
+# no diff, said "unchanged", and `imagePullPolicy: IfNotPresent` meant even a
+# restart reused the stale cached image. The pod then ran old engine code while
+# every check said it was up to date. The engine sha is also kept as a label,
+# but a label cannot make Kubernetes notice a change - only the tag can.
+run = "echo \"$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)\""
 
 [tasks."docker:build:api"]
 description = "Build the api image (game + driver) locally, tagged with the sha"
 # Context is `..` because the engine at ../magic-cards-model is a path
 # dependency. `--file` is resolved relative to the CWD, not to the context, so
-# it stays a bare `Dockerfile` even though the context is the parent. The tag is
-# this repo's sha, but the engine repo also lands in the image, so its sha is
-# stamped as a label to trace an image back to both.
+# it stays a bare `Dockerfile` even though the context is the parent. The tag
+# carries BOTH shas, `<api>-<engine>`, because both repos are baked in - see
+# `image-tag` for the stale-pod bug that an api-only tag caused. The engine sha
+# is also kept as a label, for tooling that reads labels rather than tags.
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)"
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build \
   --file Dockerfile \
@@ -60,7 +67,7 @@ docker buildx build \
 description = "Build the agent image locally, tagged with the sha"
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)"
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build \
   --file Dockerfile.agent \
@@ -79,7 +86,7 @@ docker buildx build \
 description = "Build the api image for the cluster platform and push to harbor"
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)"
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
   --file Dockerfile \
@@ -93,7 +100,7 @@ echo "${HARBOR}/magic-cards-model-api:${TAG}"
 description = "Build the agent image for the cluster platform and push to harbor"
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)"
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 ENGINE_TAG="$(git -C ../magic-cards-model rev-parse --short HEAD)"
 docker buildx build --platform "${DOCKER_PLATFORM:-linux/amd64}" \
   --file Dockerfile.agent \
@@ -115,7 +122,7 @@ depends = ["docker:push:api", "docker:push:agent"]
 description = "Render deploy/k8s with the sha substituted, to stdout"
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)"
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 for f in deploy/k8s/*.yaml; do
   case "$f" in *.template.yaml) continue ;; esac
   echo "---"
@@ -134,7 +141,7 @@ description = "Push both images at the current sha, then render and apply"
 depends = ["docker:push"]
 run = """
 set -eu
-TAG="$(git rev-parse --short HEAD)"
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 for f in deploy/k8s/*.yaml; do
   case "$f" in *.template.yaml) continue ;; esac
   echo "---"
