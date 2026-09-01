@@ -968,3 +968,335 @@ def run_action(
     if pass_outcome is not None:
         result["pass_outcome"] = pass_outcome
     return result
+
+
+# ------------------------------------------------------------- auto-passing --
+#
+# One call that keeps passing priority until a *named* point in the turn,
+# shared by `mcp.pass_priority(until=...)` and `seat_cli pass --until`, so the
+# two transports cannot drift on it. That sharing is the whole finding of this
+# repo's front-end parity audit: the mana-ability hold was wrong in one
+# transport and right in the other precisely because the behaviour lived in the
+# transports instead of here.
+#
+# The shape is the web UI's, deliberately. `ui/app.js`'s "Feature 3" autopilot
+# already shipped this for the human player - `autopilotTargets`,
+# `startAutopilot`, `autopilotStopReason`, `forgetStartingStep` - and it is the
+# proven design, including the two stop toggles a player ticks in the Priority
+# panel. A player and an agent stopping in different places would be a bug in
+# itself, so the conditions below are the same conditions in the same order.
+#
+# A seat must still be able to pass one priority at a time. Auto-passing is a
+# convenience for stretches where this seat genuinely cannot act; a pass the
+# opponent is watching is part of the game (see `docs/ai_seat_brief.md`), and
+# nothing here takes that away.
+
+#: The steps a run may be told to stop at, in turn order (CR 500.1's phases and
+#: their steps). `untap` and `cleanup` are deliberately absent: no player
+#: receives priority in either (CR 502.4, CR 514.3), so a run that passed its
+#: way toward one would be naming a point it can never be given priority in.
+#: The same list, and the same two omissions, as `ui/app.js`'s `STEPS` feeding
+#: `autopilotTargets`.
+AUTOPASS_STEPS = (
+    "upkeep",
+    "draw",
+    "precombat_main",
+    "beginning_of_combat",
+    "declare_attackers",
+    "declare_blockers",
+    "combat_damage",
+    "end_of_combat",
+    "postcombat_main",
+    "end_step",
+)
+
+#: Whose turn the named step has to belong to. `mine` and `opponent` are read
+#: against `active_player`; `any` stops at the first occurrence either way.
+AUTOPASS_WHOSE_TURN = ("mine", "opponent", "any")
+
+
+def autopass_target_error(until_step: str, whose_turn: str) -> str | None:
+    """Why this destination cannot be run to, or `None` if it can.
+
+    Returned as an ordinary refusal string by both transports rather than
+    raised: a mistyped step name is a caller error to correct, not a crash to
+    take a long-lived MCP server down with.
+    """
+    if until_step not in AUTOPASS_STEPS:
+        legal = ", ".join(AUTOPASS_STEPS)
+        extra = ""
+        if until_step in ("untap", "cleanup"):
+            extra = (
+                f" No player receives priority in the {until_step} step "
+                "(CR 502.4, CR 514.3), so no run can ever stop there - name the "
+                "step after it instead."
+            )
+        return f"'{until_step}' is not a step this can stop at. Legal steps: {legal}.{extra}"
+    if whose_turn not in AUTOPASS_WHOSE_TURN:
+        return (
+            f"'{whose_turn}' is not a turn to stop in. "
+            f"Legal values: {', '.join(AUTOPASS_WHOSE_TURN)}."
+        )
+    return None
+
+
+def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> dict[str, Any]:
+    """The bookkeeping one auto-pass run carries, stamped from the board it
+    starts on. Mirrors `ui/app.js`'s `startAutopilot`.
+
+    `started_turn`/`started_step` are the reason this is a function and not a
+    literal: naming the step you are *already standing in* means the NEXT
+    occurrence of it, never this one. A run that stopped where it started
+    would be a no-op, which is never what the caller meant - "keep passing
+    until my next upkeep", asked in an upkeep, is a whole turn of passing.
+    `autopass_stop_reason` declines that one occurrence, and
+    `forget_starting_occurrence` clears the stamp the moment the board leaves
+    it.
+
+    `known_stack_ids` is the same idea for the stack: only objects that arrive
+    *after* the run began count as "something new landed", or a run started
+    with a spell already resolving would stop immediately on it.
+    """
+    return {
+        "step": until_step,
+        "whose_turn": whose_turn,
+        "started_turn": state.get("turn_number"),
+        "started_step": state.get("step"),
+        "known_stack_ids": {obj.get("id") for obj in (state.get("stack") or [])},
+    }
+
+
+def forget_starting_occurrence(run: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Drop the starting-occurrence stamp once the board has actually left that
+    occurrence, so the next time that step comes round the run stops there.
+
+    Compares the whole `(turn_number, step)` pair rather than the step alone,
+    which is what makes it right even where one turn holds two of the same
+    step: CR 500.8 lets an effect add a phase to a turn and CR 500.9 lets one
+    add a step, so a second combat phase brings a second declare-attackers step
+    on the same turn number. `ui/app.js`'s `forgetStartingStep` is the same
+    function for the same reason.
+    """
+    if run.get("started_step") is None:
+        return run
+    still_there = (
+        state.get("step") == run["started_step"] and state.get("turn_number") == run["started_turn"]
+    )
+    if not still_there:
+        run["started_step"] = None
+        run["started_turn"] = None
+    return run
+
+
+def autopass_label(run: dict[str, Any]) -> str:
+    """How a run names its own destination, for the stop reason it reports."""
+    step = (run.get("step") or "").replace("_", " ")
+    whose = run.get("whose_turn") or "mine"
+    if whose == "mine":
+        return f"your {step}"
+    if whose == "opponent":
+        return f"your opponent's {step}"
+    return f"the next {step}"
+
+
+def autopass_stop_reason(
+    state: dict[str, Any],
+    run: dict[str, Any],
+    player: str,
+    *,
+    stop_on_stack: bool = True,
+    stop_when_attacked: bool = True,
+) -> str | None:
+    """Whether this auto-pass run must stop, and why - a pure function of the
+    board, so both transports and the tests exercise the real conditions
+    without a game in the loop.
+
+    Checked in the same order `ui/app.js`'s `autopilotStopReason` checks them,
+    so a human's autopilot and an agent's run stop in the same places:
+
+    1. the game is over, or has not started yet (CR 103.5's mulligan step and
+       CR 103.6's opening-hand step grant nobody priority, so a run that kept
+       "passing" through them would burn its whole bound while the game waited
+       on this very seat to declare);
+    2. a decision is addressed to this seat (CR 608.2d) - it freezes the game
+       until answered, and answering is the only legal move;
+    3. the named destination is reached (next occurrence, never the one the
+       run started in);
+    4. this seat is the defending player in a declare-blockers step with
+       attackers declared, unless `stop_when_attacked` is off;
+    5. something new is on the stack, unless `stop_on_stack` is off.
+
+    Condition 4 is the one that is not merely convenience. **Declaring blockers
+    is a turn-based action that "doesn't use the stack" (CR 509.1, verified
+    with `knowledge_search` in the session that wrote this), so condition 5 can
+    never see it** - nothing lands on the stack when the opponent attacks. Nor
+    can condition 2: `decisions.py` keeps `DECLARE_BLOCKERS` out of
+    `ANSWERABLE_KINDS` because blocking has its own action
+    (`actions/declare-blockers`) rather than the decision mailbox, so
+    `pending_decision` is never set for it. Without this check a seat running
+    "until my upkeep" through the opponent's turn sails through its own
+    declare-blockers step and takes the whole attack unblocked - a lost game,
+    not a slow-play annoyance.
+
+    Deliberately NOT checked in condition 4: whether any creature this seat
+    controls could legally block any of these attackers. Evasion, menace,
+    protection and blocking restrictions (CR 509.1b) are engine questions, and
+    guessing at them here would be a worse bug than the one this prevents.
+    "You are being attacked and the game is asking you to block" is the right
+    granularity - the same granularity `ui/app.js` uses, so the human's
+    checkbox and this parameter mean exactly the same thing.
+    """
+    if state.get("winner"):
+        return f"game over - {state['winner']} won"
+    if state.get("drawn"):
+        return "game over - drawn"
+    if isinstance(state.get("pregame"), dict):
+        return "the game has not started yet: the pregame (CR 103.5, CR 103.6) is still open"
+    pending = state.get("pending_decision")
+    if pending is not None and pending.get("player") == player:
+        return f"a decision is waiting for you: {pending.get('prompt')}"
+
+    wanted = run.get("step")
+    whose = run.get("whose_turn") or "mine"
+    if wanted and state.get("step") == wanted:
+        is_yours = state.get("active_player") == player
+        whose_matches = whose == "any" or (whose == "mine") == is_yours
+        same_occurrence_this_run_started_in = (
+            run.get("started_step") is not None
+            and state.get("step") == run["started_step"]
+            and state.get("turn_number") == run["started_turn"]
+        )
+        if whose_matches and not same_occurrence_this_run_started_in:
+            return f"reached {autopass_label(run)}"
+
+    if (
+        stop_when_attacked
+        and state.get("step") == "declare_blockers"
+        and state.get("active_player") is not None
+        and state.get("active_player") != player
+    ):
+        attacks = ((state.get("combat") or {}).get("attacks")) or []
+        if attacks:
+            creatures = "creature" if len(attacks) == 1 else "creatures"
+            return (
+                f"you are being attacked by {len(attacks)} {creatures} and it is your "
+                "declare-blockers step: declaring blockers does not use the stack "
+                "(CR 509.1), so nothing else here would have woken you"
+            )
+
+    if stop_on_stack:
+        arrived = [
+            obj
+            for obj in (state.get("stack") or [])
+            if obj.get("id") not in run.get("known_stack_ids", set())
+        ]
+        if arrived:
+            return (
+                f"something new went on the stack: {arrived[0].get('name') or arrived[0].get('id')}"
+            )
+    return None
+
+
+def pass_until(
+    seat: Seat,
+    *,
+    until_step: str,
+    whose_turn: str = "mine",
+    stop_on_stack: bool = True,
+    stop_when_attacked: bool = True,
+    max_seconds: float = DEFAULT_MAX_SECONDS,
+    poll_seconds: float = POLL_SECONDS,
+) -> dict[str, Any]:
+    """Keep passing priority until a named point in the turn, or until
+    something worth this seat's attention happens.
+
+    One pass per poll tick, exactly like the UI's autopilot: check the stop
+    conditions, then at most one `pass-priority` call, then look again. Never
+    holds `store.locked` (it only reads state and posts ordinary actions), so
+    it cannot deadlock against the opponent's own moves - the same invariant
+    `block_until_wake` documents.
+
+    Always returns within `max_seconds`, never raises for a timeout and never
+    hangs: running out of budget is reported as its own stop reason with
+    "call again to keep going", the way `block_until_wake` reports it. The
+    answer carries `stopped_because` (which condition fired), `passes` (how
+    many priorities this call actually gave up), `finished` (`False` only for
+    the timeout), the state it stopped on, and this seat's
+    `available_actions` in it.
+
+    A pass refused mid-run stops the run and reports the refusal rather than
+    hammering the same refused call for the rest of the bound.
+    """
+    before = seat.fetch_state()
+    run = start_autopass(before, until_step, whose_turn)
+    deadline = time.monotonic() + max(0.0, max_seconds)
+    passes = 0
+
+    def answer(state: dict[str, Any], reason: str, finished: bool = True) -> dict[str, Any]:
+        return {
+            "stopped_because": reason,
+            "passes": passes,
+            "finished": finished,
+            "until": {"step": until_step, "whose_turn": whose_turn},
+            "state": state,
+            "available_actions": available_actions(seat, state),
+        }
+
+    def timed_out(state: dict[str, Any]) -> dict[str, Any]:
+        return answer(
+            state,
+            f"timed out after {max_seconds}s with {passes} priorities passed - "
+            "call again to keep going",
+            finished=False,
+        )
+
+    while True:
+        state = seat.fetch_state()
+        reason = autopass_stop_reason(
+            state,
+            run,
+            seat.player,
+            stop_on_stack=stop_on_stack,
+            stop_when_attacked=stop_when_attacked,
+        )
+        if reason is not None:
+            return answer(state, reason)
+
+        run["known_stack_ids"] = {obj.get("id") for obj in (state.get("stack") or [])}
+        forget_starting_occurrence(run, state)
+
+        if state.get("priority_holder") == seat.player:
+
+            def perform_pass() -> Any:
+                return seat.call_json(
+                    "POST",
+                    f"/api/games/{seat.game_id()}/actions/pass-priority",
+                    {"player": seat.player},
+                )
+
+            # Same shape as `run_action`'s auto-pass: releasing priority runs
+            # `put_triggers_on_stack` (CR 603.3) and can raise a decision only
+            # this seat can ever answer, which this seat's own single in-flight
+            # call could never get to. Hand it back rather than sit behind it.
+            outcome, self_decision = _call_watching_for_self_decision(seat, perform_pass)
+            if self_decision is not None:
+                return answer(
+                    seat.fetch_state(),
+                    "passing priority raised a decision only you can answer: "
+                    f"{self_decision.get('prompt')} - answer it with decide() now",
+                )
+            if _unknown_outcome(outcome):
+                return answer(seat.fetch_state(), UNKNOWN_OUTCOME)
+            if _refused(outcome):
+                return answer(
+                    seat.fetch_state(),
+                    f"a pass was refused, so the run stopped: {outcome.get('reason')}",
+                )
+            passes += 1
+            if time.monotonic() < deadline:
+                continue
+            return timed_out(seat.fetch_state())
+
+        if time.monotonic() >= deadline:
+            return timed_out(state)
+        time.sleep(poll_seconds)

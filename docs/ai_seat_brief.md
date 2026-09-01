@@ -117,6 +117,48 @@ Sequencing is most of the skill: land drops first when they cost you nothing,
 threats in the order that plays around their answers, and commit only as much
 board as one card can punish.
 
+## Passing a whole stretch at once, and when not to
+
+`pass --until <step>` keeps passing every priority you are given until a named
+point in the turn, instead of handing you back one priority at a time:
+
+    ... pass --until upkeep                        # round to your next upkeep
+    ... pass --until precombat_main --until-whose-turn opponent
+
+Naming the step you are standing in means its NEXT occurrence, never this one -
+`--until upkeep` asked during your upkeep is a whole turn of passing, which is
+what "until my upkeep" means when you say it out loud. `untap` and `cleanup`
+are not offered: nobody receives priority in either (CR 502.4, CR 514.3).
+
+It stops early, and tells you which of these stopped it: the destination is
+reached, something new lands on the stack, a decision is addressed to you, you
+are being attacked in your own declare-blockers step, a pass is refused, the
+game ends, or the time bound runs out (call it again).
+
+Two of those stops can be switched off, and both defend you against losing the
+game, so leave them on unless you have a reason you could say out loud:
+
+- `--no-stop-on-stack` runs through the opponent's spells and every trigger.
+  You will not get to respond to any of it.
+- `--no-stop-when-attacked` runs through your own declare-blockers step. You
+  will block nothing and take the whole attack. Declaring blockers is a
+  turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
+  cannot catch it for you. Only for a board that cannot block anyway, or a
+  life total the attack cannot reach.
+
+**Do not reach for this every time.** How you pass is information your opponent
+is reading. Sitting on your priority with mana up represents a trick whether or
+not you have one, and blowing through a window where they were expecting your
+flash threat throws away a bluff you were being given for free. Auto-passing
+every single turn tells them "I have nothing in hand" just as loudly. So:
+
+- Use it for the stretches you genuinely cannot act in - their untap through
+  their draw, a turn where your hand is all sorceries, a turn you are tapped
+  out and holding nothing.
+- Pass by hand when the pass is part of the game: any window where you want
+  them to play around a card, whether or not you hold it; the turn you really
+  do have the counterspell; the end step where you want them to think twice.
+
 ## Investigate before you commit
 
 Thinking is cheaper than a lost game. Before a decision that matters, read

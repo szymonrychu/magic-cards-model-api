@@ -806,6 +806,10 @@ def build_server(seats: Seats) -> MCPServer:
     def pass_priority(
         player_uid: str,
         max_seconds: float = DEFAULT_MAX_SECONDS,
+        until: str = "",
+        until_whose_turn: str = "mine",
+        stop_on_stack: bool = True,
+        stop_when_attacked: bool = True,
     ) -> str:
         """Pass priority - "I am done for now". If everyone passes with
         spells on the stack, the top of the stack resolves. If everyone
@@ -816,10 +820,89 @@ def build_server(seats: Seats) -> MCPServer:
         Blocks until you next have something to do, bounded by
         `max_seconds` - there is no `hold_priority` here (passing already is
         giving priority up); a refusal (it was not your turn to decide)
-        returns immediately without blocking."""
+        returns immediately without blocking.
+
+        ## `until`: pass repeatedly, up to a named point in the turn
+
+        Set `until` to a step name and this keeps passing every priority it
+        is given until it gets there, instead of handing you back one
+        priority at a time. `until_whose_turn` says whose turn that step has
+        to be in: "mine" (default), "opponent", or "any" for whichever comes
+        first. Legal steps, in turn order:
+
+            upkeep, draw, precombat_main, beginning_of_combat,
+            declare_attackers, declare_blockers, combat_damage,
+            end_of_combat, postcombat_main, end_step
+
+        (`untap` and `cleanup` are not offered: no player receives priority
+        in either, CR 502.4 and CR 514.3, so a run could never stop there.)
+
+        Naming the step you are standing in right now means its NEXT
+        occurrence, never this one: `until="upkeep"` asked during your upkeep
+        passes a whole turn round to your next one, which is what "until my
+        upkeep" means when you say it out loud.
+
+        The run stops, and the answer's `stopped_because` says which of these
+        it was: the destination is reached; a decision is addressed to you
+        (CR 608.2d); something new lands on the stack; you are being attacked
+        and it is your declare-blockers step; a pass is refused; the game
+        ends; or `max_seconds` runs out, which comes back as an ordinary
+        answer with `finished: false` - call again to keep going. `passes`
+        counts the priorities it actually gave up.
+
+        ## The two stop conditions you can switch off
+
+        Both default to true, because both defend against something that can
+        lose the game outright. They are the same two checkboxes the human
+        player has in their own auto-pass panel, and they mean the same thing
+        there, so you and your opponent never stop in different places.
+
+        - `stop_on_stack=false` runs straight through anything the opponent
+          casts or any trigger that goes on the stack. You will not get the
+          chance to respond to it, so this is only for a stretch where you
+          have decided you are not responding to anything - no instant, no
+          activated ability, nothing worth holding up.
+        - `stop_when_attacked=false` runs straight through your own
+          declare-blockers step. **You will block nothing and take the whole
+          attack.** Declaring blockers is a turn-based action that "doesn't
+          use the stack" (CR 509.1), so nothing lands on the stack when you
+          are attacked and `stop_on_stack` cannot catch it for you. Switch
+          this off only when you have genuinely decided not to block - an
+          empty board, or a life total the attack cannot reach. The run stops
+          whenever you are the defending player in a declare-blockers step
+          with at least one attacker declared; it does not try to work out
+          whether any block would be *legal* (evasion, menace, protection,
+          CR 509.1b) - that is the engine's job, and you decide what to do
+          with the stop.
+
+        ## Passing by hand is still a play
+
+        Do not reach for `until` every time. A pass your opponent watches you
+        make is information: holding priority with mana up represents a trick
+        whether or not you have one, and auto-passing a window where they
+        expect a flash threat throws that away. Auto-passing every time also
+        tells them "I have nothing" just as reliably. Use `until` for the
+        stretches where you genuinely cannot act, and pass by hand where the
+        pass itself is part of the game."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
+        if until:
+            problem = seatkit.autopass_target_error(until, until_whose_turn)
+            if problem:
+                return problem
+            return json.dumps(
+                seatkit.pass_until(
+                    seat,
+                    until_step=until,
+                    whose_turn=until_whose_turn,
+                    stop_on_stack=stop_on_stack,
+                    stop_when_attacked=stop_when_attacked,
+                    max_seconds=max_seconds,
+                ),
+                indent=1,
+                sort_keys=True,
+            )
         body = {"player": seat.player}
 
         def perform() -> Any:

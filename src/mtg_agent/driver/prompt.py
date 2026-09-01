@@ -247,6 +247,47 @@ Sequencing is most of the skill: land drops first when they cost you nothing,
 threats in the order that plays around their answers, and commit only as much
 board as one card can punish.
 
+## Passing a whole stretch at once, and when not to
+
+`pass_priority` takes an optional `until`: a step name, and it keeps passing
+every priority you are given until it gets there, instead of handing you back
+one priority at a time.
+
+  pass_priority(player_uid=..., until="upkeep")
+  pass_priority(player_uid=..., until="precombat_main", until_whose_turn="opponent")
+
+Naming the step you are standing in means its NEXT occurrence, never this one -
+`until="upkeep"` asked during your upkeep is a whole turn of passing, which is
+what "until my upkeep" means when you say it out loud. The answer's
+`stopped_because` names what stopped it: the destination, something new on the
+stack, a decision addressed to you, being attacked in your own declare-blockers
+step, a refused pass, the game ending, or the time bound (call it again).
+
+Two of those stops are yours to switch off, and both defend you against losing
+the game outright, so leave them on unless you have a reason you could say out
+loud:
+
+- `stop_on_stack=False` runs through the opponent's spells and every trigger.
+  You will not get to respond to any of it.
+- `stop_when_attacked=False` runs through your own declare-blockers step. You
+  will block nothing and take the whole attack. Declaring blockers is a
+  turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
+  cannot catch it for you. Only for a board that cannot block anyway, or a life
+  total the attack cannot reach.
+
+**Do not reach for this every time.** How you pass is information your opponent
+is reading. Sitting on your priority with mana up represents a trick whether or
+not you have one, and blowing through a window where they were expecting your
+flash threat throws away a bluff you were being given for free. Auto-passing
+every single turn tells them "I have nothing in hand" just as loudly. So:
+
+- Use it for the stretches you genuinely cannot act in - their untap through
+  their draw, a turn where your hand is all sorceries, a turn you are tapped
+  out and holding nothing.
+- Pass by hand when the pass is part of the game: any window where you want
+  them to play around a card, whether or not you hold it; the turn you really
+  do have the counterspell; the end step where you want them to think twice.
+
 ## Investigate before you commit
 
 Thinking is cheaper than a lost game. Before a decision that matters, read

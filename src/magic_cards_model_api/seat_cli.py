@@ -42,13 +42,17 @@ from typing import Any
 
 from .seatkit import (
     _UUID,
+    AUTOPASS_STEPS,
+    AUTOPASS_WHOSE_TURN,
     DEFAULT_API,
     DEFAULT_MAX_SECONDS,
     Seats,
     _parse_ids,
     _parse_pairs,
     api_trouble,
+    autopass_target_error,
     block_until_wake,
+    pass_until,
     run_action,
 )
 
@@ -333,6 +337,51 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_SECONDS,
         help="bound on the block that follows",
     )
+    passer.add_argument(
+        "--until",
+        default="",
+        metavar="STEP",
+        help=(
+            f"one of: {', '.join(AUTOPASS_STEPS)}. "
+            "Keep passing every priority you are given until this step, "
+            "instead of handing back one priority at a time. Naming the step "
+            "you are standing in means its NEXT occurrence, never this one - "
+            "'--until upkeep' asked in your upkeep passes a whole turn round. "
+            "untap and cleanup are not offered: nobody receives priority in "
+            "either (CR 502.4, CR 514.3), so a run could never stop there"
+        ),
+    )
+    passer.add_argument(
+        "--until-whose-turn",
+        default="mine",
+        metavar="WHOSE",
+        help=(
+            f"one of: {', '.join(AUTOPASS_WHOSE_TURN)}. Whose turn --until's "
+            "step must be in; 'any' takes whichever comes first"
+        ),
+    )
+    passer.add_argument(
+        "--no-stop-on-stack",
+        action="store_true",
+        help=(
+            "with --until: run straight through anything that lands on the "
+            "stack instead of stopping to respond to it. You will not get the "
+            "chance to answer the opponent's spell or a trigger, so use it "
+            "only where you have decided you are responding to nothing"
+        ),
+    )
+    passer.add_argument(
+        "--no-stop-when-attacked",
+        action="store_true",
+        help=(
+            "with --until: run straight through your own declare-blockers "
+            "step. YOU WILL BLOCK NOTHING AND TAKE THE WHOLE ATTACK. "
+            "Declaring blockers is a turn-based action that does not use the "
+            "stack (CR 509.1), so --no-stop-on-stack's condition cannot catch "
+            "it for you. Only for a board that cannot block or a life total "
+            "the attack cannot reach"
+        ),
+    )
 
     resolve = sub.add_parser(
         "resolve", help="resolve the top of the stack (only if a pass left it unresolved)"
@@ -568,6 +617,26 @@ def run(argv: list[str] | None = None) -> int:
             ],
         }
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/declare-blockers", body))
+    elif args.command == "pass" and args.until:
+        # The shared loop and the shared validator, not a second copy of
+        # either: `mcp.pass_priority(until=)` calls the same two functions with
+        # the same defaults, so the two front ends cannot stop in different
+        # places or disagree about what a legal destination is. See
+        # `seatkit.pass_until`.
+        problem = autopass_target_error(args.until, args.until_whose_turn)
+        if problem:
+            print(problem)
+            return 1
+        result = pass_until(
+            seat,
+            until_step=args.until,
+            whose_turn=args.until_whose_turn,
+            stop_on_stack=not args.no_stop_on_stack,
+            stop_when_attacked=not args.no_stop_when_attacked,
+            max_seconds=args.max_seconds,
+        )
+        print(json.dumps(result, indent=1, sort_keys=True))
+        note(result.get("state"))
     elif args.command == "pass":
         result = run_action(
             seat,
