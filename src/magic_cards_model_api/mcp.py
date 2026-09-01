@@ -257,7 +257,7 @@ def build_server(seats: Seats) -> MCPServer:
         card: str,
         mana_sources: str = "",
         dry_run: bool = False,
-        hold_priority: bool = False,
+        hold_priority: bool = True,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
         """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
@@ -268,9 +268,12 @@ def build_server(seats: Seats) -> MCPServer:
         Once N reaches zero (removed one per your own upkeep - see `advance`'s
         `suspend_upkeep`), you may cast it without paying its mana cost: call
         `cast` on it with no `keyword`, the permission is picked up
-        automatically. Releases priority and blocks for your next moment to
-        act unless `hold_priority` is true - see `cast`'s docstring for the
-        shape."""
+        automatically. HOLDS PRIORITY BY DEFAULT, unlike `cast`: CR 116.3, "if a
+        player takes a special action, that player receives priority
+        afterward". Releasing here would end your own main phase - you would
+        play a land and never get to spend the mana it just made. Pass
+        `hold_priority=false` only when you really do want to hand priority
+        over. See `cast`'s docstring for the answer's shape."""
         return _special_action_tool("suspend")(
             player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
         )
@@ -282,7 +285,7 @@ def build_server(seats: Seats) -> MCPServer:
         card: str,
         mana_sources: str = "",
         dry_run: bool = False,
-        hold_priority: bool = False,
+        hold_priority: bool = True,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
         """CR 116.2k/702.170b: exile a card with plot from your hand, paying
@@ -291,9 +294,13 @@ def build_server(seats: Seats) -> MCPServer:
         all your untapped mana sources.
 
         On any later turn, cast it from exile without paying its mana cost:
-        call `cast` on it with `keyword="Plot"`. Releases priority and blocks
-        for your next moment to act unless `hold_priority` is true - see
-        `cast`'s docstring for the shape."""
+        call `cast` on it with `keyword="Plot"`. HOLDS PRIORITY BY DEFAULT,
+        unlike `cast`: CR 116.3, "if a
+        player takes a special action, that player receives priority
+        afterward". Releasing here would end your own main phase - you would
+        play a land and never get to spend the mana it just made. Pass
+        `hold_priority=false` only when you really do want to hand priority
+        over. See `cast`'s docstring for the answer's shape."""
         return _special_action_tool("plot")(
             player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
         )
@@ -305,7 +312,7 @@ def build_server(seats: Seats) -> MCPServer:
         card: str,
         mana_sources: str = "",
         dry_run: bool = False,
-        hold_priority: bool = False,
+        hold_priority: bool = True,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
         """CR 116.2h/702.143b: pay {2} and exile a card with foretell from
@@ -316,8 +323,12 @@ def build_server(seats: Seats) -> MCPServer:
 
         On any later turn, cast it from exile for its printed foretell cost
         (not its mana cost): call `cast` on it with `keyword="Foretell"`.
-        Releases priority and blocks for your next moment to act unless
-        `hold_priority` is true - see `cast`'s docstring for the shape."""
+        HOLDS PRIORITY BY DEFAULT, unlike `cast`: CR 116.3, "if a
+        player takes a special action, that player receives priority
+        afterward". Releasing here would end your own main phase - you would
+        play a land and never get to spend the mana it just made. Pass
+        `hold_priority=false` only when you really do want to hand priority
+        over. See `cast`'s docstring for the answer's shape."""
         return _special_action_tool("foretell")(
             player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
         )
@@ -330,7 +341,7 @@ def build_server(seats: Seats) -> MCPServer:
         ability_index: int = 0,
         mana_sources: str = "",
         dry_run: bool = False,
-        hold_priority: bool = False,
+        hold_priority: bool = True,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
         """CR 702.29a: discard a card with cycling from your hand, paying its
@@ -343,9 +354,12 @@ def build_server(seats: Seats) -> MCPServer:
 
         Unlike a mana ability, cycling uses the stack (CR 605.1a does not
         apply to it) and can be responded to - it does not resolve as part of
-        this call. Releases priority and blocks for your next moment to act
-        unless `hold_priority` is true - see `cast`'s docstring for the
-        shape."""
+        this call. HOLDS PRIORITY BY DEFAULT, unlike `cast`: CR 116.3, "if a
+        player takes a special action, that player receives priority
+        afterward". Releasing here would end your own main phase - you would
+        play a land and never get to spend the mana it just made. Pass
+        `hold_priority=false` only when you really do want to hand priority
+        over. See `cast`'s docstring for the answer's shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -375,13 +389,21 @@ def build_server(seats: Seats) -> MCPServer:
     def play_land(
         player_uid: str,
         card: str,
-        hold_priority: bool = False,
+        hold_priority: bool = True,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
         """Play a land from your hand (your one-per-turn allowance, unless an
-        effect says otherwise). `card` is the card's name or id. Releases
-        priority and blocks for your next moment to act unless
-        `hold_priority` is true - see `cast`'s docstring for the shape."""
+        effect says otherwise). `card` is the card's name or id.
+
+        HOLDS PRIORITY BY DEFAULT, unlike `cast`. Playing a land is the special
+        action of CR 116.2a, and CR 116.3 says "if a player takes a special
+        action, that player receives priority afterward" - so releasing here
+        throws away the rest of your own main phase. That is not theoretical:
+        a seat played Flagstones of Trokair in precombat main, released, and
+        concluded it would have to wait until postcombat to cast the one-drop
+        the land had just paid for. Pass `hold_priority=false` only when you
+        really do mean to hand priority over. See `cast`'s docstring for the
+        answer's shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT

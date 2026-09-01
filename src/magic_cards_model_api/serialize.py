@@ -80,15 +80,54 @@ def _current_characteristics(game: Game, state: CardState) -> tuple[str, int | N
     return type_line, characteristics.power, characteristics.toughness
 
 
+#: name -> image links, remembered across requests. POSITIVE RESULTS ONLY, so
+#: a miss is retried on the next poll: a card can be absent now and present a
+#: moment later, because validating a decklist writes fresh printings into the
+#: cache while the game is running. An `lru_cache` here would pin that miss for
+#: the life of the process and the art would never appear.
+_image_memo: dict[str, dict[str, str]] = {}
+
+
+def _image_links(name: str) -> dict[str, str]:
+    """Image links for one card name, from LOCAL DISK ONLY.
+
+    Two tiers, both local: the Scryfall disk cache, then the engine's fixture
+    pool. Reading only the cache - which is what this did - is wrong wherever
+    the cache is cold, and the cache is cold by design for pooled cards:
+    `fetch_card` returns a pooled printing WITHOUT copying it into
+    `cache_dir()`, deliberately, so that the cache does not go stale against a
+    moving engine checkout. A card served out of the pool therefore never
+    appears in the cache at all, and this returned `{}` for it forever. On a
+    dev box with a long-warm cache that is invisible; on a fresh deploy with an
+    empty cache volume it is every card in the game, and the UI renders name
+    plates with no art.
+
+    Tier 3, Scryfall itself, is deliberately NOT used: this runs for every card
+    in the game on every poll of the state, about once a second per open tab,
+    and a network round trip per unknown card in that path would be a hang, not
+    a picture. A name in neither tier gets no image, same as before.
+
+    Memoised because a printing's image links never change, and without it a
+    hundred-card board reparses a hundred JSON files on every poll.
+    """
+    hit = _image_memo.get(name)
+    if hit is not None:
+        return hit
+    raw = scryfall.load_cached(name) or scryfall.load_pooled(name)
+    links = scryfall.image_uris(raw) if raw else {}
+    if links:
+        _image_memo[name] = links
+    return links
+
+
 def _images_for(game: Game) -> dict[str, dict[str, str]]:
-    """Card name -> image links, out of the Scryfall cache. Best effort."""
+    """Card name -> image links. Best effort, local disk only."""
     images: dict[str, dict[str, str]] = {}
     for state in _all_cards(game):
         name = state.card.name
         if name in images:
             continue
-        raw = scryfall.load_cached(name)
-        images[name] = scryfall.image_uris(raw) if raw else {}
+        images[name] = dict(_image_links(name))
     return images
 
 

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import add_card, find, state
 from magic_cards_model.models import Card
 
 from magic_cards_model_api import scryfall
@@ -174,3 +175,27 @@ def test_every_bundled_deck_is_almost_entirely_pooled(pool):
         if scryfall.load_pooled(name) is None
     }
     assert unpooled == {"Fire Magic"}
+
+
+def test_the_board_view_shows_art_for_a_pooled_card_on_a_cold_cache(pool, cold_cache, client, game):
+    """The bug this pins: card art vanished on any deploy with a fresh cache
+    volume, while a long-warm dev box looked fine.
+
+    `serialize._images_for` read `load_cached` and nothing else. But a pooled
+    card is deliberately never written into the cache - `fetch_card` returns
+    the pool copy as-is so the cache cannot go stale against a moving engine
+    checkout - so for every card the pool serves, the cache is permanently
+    empty and the view carried `{}`. The UI has no art to draw and falls back
+    to a bare name plate.
+
+    A cold cache that STAYS empty is again the whole proof: the links have to
+    come out of the pool, not out of a cache this test quietly warmed, and not
+    off the network.
+    """
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+
+    card = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
+
+    assert card["image"].startswith("https://cards.scryfall.io")
+    assert card["small_image"].startswith("https://cards.scryfall.io")
+    assert list(cold_cache.iterdir()) == [], "the links must come from the pool, not a warmed cache"
