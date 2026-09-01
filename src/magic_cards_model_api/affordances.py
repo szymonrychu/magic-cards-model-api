@@ -230,16 +230,38 @@ def _profile_for(
     - the whole card otherwise, with X substituted first when the caster has
       announced one, so "X target creatures" is read with a real count rather
       than left `variable_count` (CR 107.3a).
+
+    The X branch is guarded on the card NOT being modal, and that guard is the
+    whole reason this function is worth reading twice. It is the same defect
+    engine commit 859e540 fixed inside `Casting`, which lived here too and
+    outlived the engine's fix, because the two conditions that reach it are
+    independent: `modes` empty and `x_value` set. The browser produces exactly
+    that pair on its own. `ui/app.js` calls `refreshAffordance()` from
+    `setXValue()` as well as from `toggleMode()`, and sends `modes` only when
+    `action.modes.length` - so a player who types X before picking their modes
+    asked this the un-modal way. For Kozilek's Command (`{X}{C}{C}`, four
+    bullets) reading the whole text as one blob answered `understood=True`
+    with FOUR requirements and a minimum of four, which is not a number that
+    card can ever want: it chooses two modes and needs at most two targets.
+    The UI believes that answer - `isPickingTargets()` reads it straight - so
+    the board dimmed and demanded four targets, graveyard cards included, for
+    a two-target spell.
+
+    CR 700.2c is the rule both copies walked past: "If a spell or ability
+    targets one or more targets only if a particular mode is chosen for it,
+    its controller will need to choose those targets only if they chose that
+    mode." A modal card with no modes chosen therefore falls through to
+    `targeting_profile`, which answers `understood=False` - "ask me again once
+    you have chosen" - and X changes nothing about that.
     """
     if ability_index is not None:
         ability = game.activated_abilities(state)[ability_index]
         effect = getattr(ability, "effect", None) or getattr(ability, "text", "")
         return profile_for_text(substitute_x(effect, x_value))
-    if modes:
-        modal = modal_profile(state.card)
-        if modal is not None:
-            return profile_for_modes(state.card, modal.resolve(modes), x_value)
-    if x_value is not None and state.card.oracle_text:
+    modal = modal_profile(state.card)
+    if modes and modal is not None:
+        return profile_for_modes(state.card, modal.resolve(modes), x_value)
+    if modal is None and x_value is not None and state.card.oracle_text:
         return profile_for_text(substitute_x(state.card.oracle_text, x_value))
     return targeting_profile(state.card)
 
