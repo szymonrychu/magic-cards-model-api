@@ -25,7 +25,12 @@ Meant for subagents that play through Bash rather than through an MCP client:
     uv run --directory <api repo> python -m magic_cards_model_api.seat_cli \\
         --uid <seat-uid> cast "Lightning Bolt" --target bob
 
-Every command prints the API's answer (or the filtered state) as JSON text.
+Every command prints the API's answer (or the filtered state) as JSON text on
+stdout. Stderr carries one extra note: when the answer arrives with a pending
+look-then-split (`scry`/`surveil`), `split_destinations` says where each half
+of that answer actually goes, in the asking card's own words. Two short
+strings inside a whole state dump are easy to miss, and these two decide
+which zone the cards end up in - the decision's kind does not.
 """
 
 from __future__ import annotations
@@ -46,6 +51,43 @@ from .seatkit import (
     block_until_wake,
     run_action,
 )
+
+
+def split_destinations(state: dict[str, Any] | None) -> str:
+    """One line naming where each half of a pending look-then-split answer
+    goes, or "" when there is nothing to say.
+
+    A seat reading a whole state dump can miss two short strings buried in
+    it, and these two are the ones it cannot afford to miss: the engine
+    reuses the `scry` kind for every look-then-split, so the kind does not
+    say where anything goes. Devourer of Destiny's first-upkeep trigger keeps
+    the card named in `--moved` on top of the library and exiles the rest,
+    which is the reverse of a scry on both halves. `moved_label` and
+    `kept_label` carry the asking card's own words, so they are said out
+    loud here rather than left for the reader to find.
+
+    Printed to stderr by the caller, never to stdout: every command's stdout
+    is JSON another program may parse, and this is a note to the human or
+    agent at the keyboard.
+    """
+    pending = (state or {}).get("pending_decision")
+    if not isinstance(pending, dict):
+        return ""
+    moved, kept = pending.get("moved_label") or "", pending.get("kept_label") or ""
+    if not moved and not kept:
+        return ""
+    halves = []
+    if moved:
+        halves.append(f'the ids you pass to --moved: "{moved}"')
+    if kept:
+        halves.append(f'the ones you do not name: "{kept}"')
+    source = pending.get("source")
+    asking = f" from {source}" if source else ""
+    return (
+        f"[{pending.get('kind')} decision{asking}] " + "; ".join(halves) + "."
+        " These are pending_decision.moved_label/kept_label, the asking card's"
+        " own words - they outrank anything the decision's kind implies."
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -219,8 +261,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--moved",
         default="",
         help=(
-            "comma-separated card ids to move off the top, for a scry (to the "
-            "bottom, CR 701.22a) or surveil (to the graveyard, CR 701.25a) decision"
+            "comma-separated card ids you opt into, for a scry or surveil "
+            "decision - the rest go to the other half. Where each half goes is "
+            "pending_decision.moved_label (the ids you name) and "
+            "pending_decision.kept_label (the ones you do not): short phrases "
+            "in the asking card's own words, printed by `state` when present "
+            "and authoritative when they are. The kind is not the destination "
+            "- the engine reuses scry for any look-then-split, and Devourer of "
+            "Destiny's keeps the named card on TOP and exiles the rest. Only "
+            "when both labels are absent may you assume the keyword's own pair: "
+            "scry bottoms the named cards (CR 701.22a), surveil puts them in "
+            "the graveyard (CR 701.25a), each leaving the rest on top"
         ),
     )
     decide.add_argument(
@@ -397,6 +448,13 @@ def run(argv: list[str] | None = None) -> int:
     #: in step with `mcp.py`'s per-tool defaults, which say the same.
     SPECIAL_ACTIONS = {"play-land", "suspend", "plot", "foretell", "cycle"}
 
+    def note(state: dict[str, Any] | None) -> None:
+        """Say a pending look-then-split's two destinations out loud, on
+        stderr, after the JSON that carries them."""
+        line = split_destinations(state)
+        if line:
+            print(line, file=sys.stderr)
+
     def act(perform: Any, dry_run: bool = False) -> None:
         """Every non-dry-run action shares this: perform it, then run the
         shared release-and-wait flow, printing the combined answer.
@@ -409,13 +467,17 @@ def run(argv: list[str] | None = None) -> int:
         hold = args.hold or args.command in SPECIAL_ACTIONS
         result = run_action(seat, perform, hold_priority=hold, max_seconds=args.max_seconds)
         print(json.dumps(result, indent=1, sort_keys=True))
+        note(result.get("state") if isinstance(result, dict) else None)
 
     if args.command == "state":
-        print(json.dumps(seat.fetch_state(), indent=1, sort_keys=True))
+        current = seat.fetch_state()
+        print(json.dumps(current, indent=1, sort_keys=True))
+        note(current)
     elif args.command == "wait":
         woken = block_until_wake(seat, before=None, max_seconds=args.max_seconds)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         print(json.dumps(woken["state"], indent=1, sort_keys=True))
+        note(woken["state"])
     elif args.command == "cast":
         body: dict[str, Any] = {"player": seat.player, "dry_run": args.dry_run}
         if _UUID.match(args.card.strip()):

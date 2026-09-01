@@ -161,7 +161,18 @@ def build_server(seats: Seats) -> MCPServer:
         """The game as you may see it: your hand, both sides of the public
         board (battlefield, stack, graveyards, exile), life and mana pools,
         turn/step, priority, and combat. The opponent's hand and both
-        libraries are hidden - only their sizes are shown."""
+        libraries are hidden - only their sizes are shown.
+
+        `pending_decision` is the question you are being asked right now,
+        answered with `decide` - see that tool for the field each `kind`
+        wants. Two of its fields are easy to miss and matter most on a
+        look-then-split (`scry`/`surveil`): `moved_label` and `kept_label`
+        name where each half of your answer actually goes, in the asking
+        card's own words ("top of your library", "exiled", "your graveyard",
+        "bottom of your library"). They are authoritative whenever they are
+        non-empty, and the `scry`/`surveil` kind alone is not - the engine
+        reuses that kind for any look-then-split, including Devourer of
+        Destiny's, which keeps the named card on top and exiles the rest."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -654,13 +665,40 @@ def build_server(seats: Seats) -> MCPServer:
           five letters standing in for an open universe). Shares the
           `choice` field with `choose_a_quality` - both are "which of these
           printed strings did you pick".
-        - `scry` and `surveil` (CR 701.22a, CR 701.25a): `moved` is a
-          comma-separated list of the `pending_decision.cards` entries to
-          move off the top - to the bottom of the library for a scry, to the
-          graveyard for a surveil. Every card not named stays on top, in
-          `top_order` (comma-separated ids, topmost first) if given, or
-          unchanged otherwise. Leaving `moved` empty is a real answer: keep
-          everything on top. `pending_decision.cards` is still bare ids
+        - `scry` and `surveil`: a look-then-split. `moved` is a
+          comma-separated list of the `pending_decision.cards` entries you
+          opt into; every card not named goes to the other half, in
+          `top_order` (comma-separated ids, topmost first) if that half is
+          ordered on top, or unchanged otherwise. Leaving `moved` empty is a
+          real answer: it opts into nothing and is the decline.
+
+          **Where the two halves go is read off
+          `pending_decision.moved_label` and `pending_decision.kept_label`,
+          never off the kind.** They are short phrases in the asking card's
+          own words - "top of your library", "exiled", "your graveyard",
+          "bottom of your library" - `moved_label` for the cards you named,
+          `kept_label` for the ones you did not. When they are present they
+          are authoritative; read them before answering, and quote them if
+          you explain the choice.
+
+          The kind is not the destination, because the engine reuses the
+          `scry` kind for any look-then-split. Devourer of Destiny's
+          first-upkeep trigger ("look at the top four cards of your library.
+          You may put one of those cards back on top of your library. Exile
+          the rest.") arrives as `scry`, and its `moved` half is kept *on
+          top* while the rest is *exiled* - the reverse of a scry on both
+          halves. `moved` is the pile you opt into, not "the cards that leave
+          the top".
+
+          Only when both labels are absent or empty may you assume the
+          keyword's own pair: to "scry N" is to put any number of the looked
+          at cards on the bottom of your library and the rest on top
+          (CR 701.22a), and to "surveil N" is to put any number of them into
+          your graveyard and the rest on top (CR 701.25a). That fallback is
+          right for a decision scry or surveil itself raised and wrong for
+          everything else, so prefer the labels.
+
+          `pending_decision.cards` is still bare ids
           (`moved`/`top_order` answer by id), but `pending_decision.card_details`
           - present only for the deciding player - carries the full card view
           (name, oracle text, etc.) for exactly those ids, so a `scry`/`surveil`

@@ -25,6 +25,12 @@ from typing import Any
 import httpx
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
+from test_card_split_labels import boot as boot_the_devourer  # noqa: E402  (the Devourer board)
+from test_card_split_labels import (
+    reach_the_devourer_upkeep,
+    resolve_top_in_background,
+    wait_for_pending,
+)
 from test_mulligans import (  # noqa: E402  (a sibling test module's real-deck helpers)
     LEYLINE_DECK,
     PLAIN_DECK,
@@ -396,3 +402,180 @@ def test_cycling_is_not_described_as_a_special_action():
     assert "CR 702.29a" in docstring
     assert "CR 117.3c" in docstring
     assert "not a special action" in docstring
+
+
+# -- a look-then-split's destinations, in both front ends ---------------------
+#
+# The same bug `tests/test_card_split_labels.py` fixed for the browser, one
+# layer over: an AI seat reads these docstrings and this help text the way a
+# human reads the DOM, and both of them stated CR 701.22a's bottom-of-library
+# and CR 701.25a's graveyard as the only two places a split's halves can go.
+# The engine reuses `DecisionKind.SCRY` for any look-then-split, so that pair
+# is a property of the *keyword*, never of the kind - Devourer of Destiny's
+# first-upkeep trigger keeps the named card on top of the library and exiles
+# the rest, the reverse of a scry on both halves. `pending_decision`'s
+# `moved_label`/`kept_label` carry the asking card's own words, and every seat
+# has to be told to read them.
+#
+# CR 701.22a ("To 'scry N' means to look at the top N cards of your library,
+# then put any number of them on the bottom of your library in any order and
+# the rest on top of your library in any order") and CR 701.25a ("... put any
+# number of them into your graveyard and the rest on top of your library in any
+# order") were both re-verified with `knowledge_search(type="rules")` in the
+# session that wrote this section. They stay in the text - as the fallback for
+# a decision the keywords themselves raise, which is the only thing they are.
+
+THE_OLD_HARDCODED_PAIR = (
+    "to the bottom of the library for a scry",
+    "to the graveyard for a surveil",
+    "Every card not named stays on top",
+)
+
+
+def decide_docstring() -> str:
+    return inspect.getdoc(_tool_functions(build_a_server())["decide"]) or ""
+
+
+def test_the_decide_docstring_sends_a_seat_to_the_labels_for_the_destinations():
+    """`decide` is an AI seat's only instructions for answering a split. It
+    must name the two fields, say they are authoritative, and no longer state
+    the scry/surveil pair as the only possibility."""
+    docstring = decide_docstring()
+
+    assert "moved_label" in docstring, "the field a seat has to read is never named"
+    assert "kept_label" in docstring
+    for lie in THE_OLD_HARDCODED_PAIR:
+        assert lie not in docstring, (
+            f"the docstring still states one pair of destinations as the only one: {lie!r}"
+        )
+    assert "authoritative" in docstring
+    assert "Devourer of Destiny" in docstring, (
+        "the card that breaks the assumption is the shortest way to teach it"
+    )
+    assert "exiled" in docstring
+
+
+def test_the_decide_docstring_keeps_the_keyword_pair_only_as_the_fallback():
+    """CR 701.22a and CR 701.25a are still right for a decision `scry` or
+    `surveil` itself raised, so the numbers stay - but only as what to assume
+    when no label was stamped."""
+    docstring = " ".join(decide_docstring().split())
+
+    assert "CR 701.22a" in docstring and "CR 701.25a" in docstring
+    fallback = docstring.index("Only when both labels are absent or empty")
+    assert fallback < docstring.index("CR 701.22a"), (
+        "both keyword rules must sit inside the fallback sentence, not before it"
+    )
+
+
+def test_my_state_tells_a_seat_the_two_label_fields_are_there():
+    """A seat that never reads `decide`'s bullet still reads its own state.
+    `my_state` describes what that payload holds, so it has to mention the two
+    fields that decide where a split's cards go."""
+    docstring = inspect.getdoc(_tool_functions(build_a_server())["my_state"]) or ""
+
+    assert "pending_decision" in docstring
+    assert "moved_label" in docstring and "kept_label" in docstring
+    assert "authoritative" in docstring
+
+
+def subcommand(name: str) -> Any:
+    """The `argparse` sub-parser for one command, off the live parser - so the
+    help pinned here is the help `seat_cli <command> --help` prints."""
+    sub = next(
+        action for action in seat_cli.build_parser()._actions if getattr(action, "choices", None)
+    )
+    return sub.choices[name]
+
+
+def moved_help() -> str:
+    action = next(
+        entry
+        for entry in subcommand("decide")._actions
+        if "--moved" in getattr(entry, "option_strings", ())
+    )
+    return " ".join((action.help or "").split())
+
+
+def test_the_cli_moved_help_sends_a_seat_to_the_labels_too():
+    """`seat_cli --help` is the other front end's only instructions, and it
+    told the same lie in one line."""
+    help_text = moved_help()
+
+    assert "moved_label" in help_text and "kept_label" in help_text
+    assert "to the bottom, CR 701.22a) or surveil (to the graveyard" not in help_text, (
+        "the old one-line hardcoded pair is still the whole answer"
+    )
+    assert "CR 701.22a" in help_text and "CR 701.25a" in help_text, (
+        "the keyword rules are still right for the keywords - keep them"
+    )
+    assert "Devourer of Destiny" in help_text
+    assert "Only when both labels are absent" in help_text
+
+
+def test_the_cli_state_prints_the_devourer_splits_two_destinations(client, monkeypatch, capsys):
+    """Telling a seat the fields exist is not the same as showing them. A CLI
+    seat gets a whole state dump; two short strings inside it are exactly what
+    a reader skims past, and getting them wrong is what sent the reported game
+    the wrong way. So `state` says them out loud.
+
+    The board is the real one `tests/test_card_split_labels.py` builds: a real
+    decklist of real Scryfall printings, the engine's own seeded shuffle
+    (CR 103.3), CR 103.5's mulligan kept, CR 103.6b's opening-hand reveal
+    taken, run to CR 103.7's first upkeep where Devourer of Destiny's delayed
+    trigger (CR 603.7) asks the question. Nothing here is mocked.
+
+    Stdout stays pure JSON - other programs parse it - so the note goes to
+    stderr, and both halves are asserted.
+    """
+    wire(monkeypatch)
+    info = boot_the_devourer(client)
+    game_id, uid = info["game_id"], info["seat_uids"]["alice"]
+    try:
+        reach_the_devourer_upkeep(client, info)
+        thread = resolve_top_in_background(game_id)
+        try:
+            pending = wait_for_pending(client, game_id, uid)
+            rc = seat_cli.run(["--uid", uid, "--game", game_id, "state"])
+            captured = capsys.readouterr()
+            # Answer before asserting: the resolving request is parked inside
+            # `Game.ask` holding this game's lock, so a failed assertion left
+            # unanswered would hang teardown behind a decision timeout.
+            answered = client.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uid},
+                json={"player": "alice", "moved": [pending["cards"][0]], "top_order": None},
+            )
+        finally:
+            thread.join(timeout=15)
+        assert not thread.is_alive()
+        assert answered.status_code == 200, answered.text
+        assert rc == 0, captured.out
+
+        printed = json.loads(captured.out)
+        assert printed["pending_decision"]["kind"] == "scry"
+
+        said = captured.err
+        assert "top of your library" in said, f"the kept half is never named: {said!r}"
+        assert "exiled" in said, f"the exiled half is never named: {said!r}"
+        assert "bottom" not in said, "nothing about this decision uses the bottom of a library"
+        assert "Devourer of Destiny" in said, "the note never says which card is asking"
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_the_cli_says_nothing_extra_when_there_is_no_split_to_describe(
+    client, game, monkeypatch, capsys
+):
+    """The counterweight: the note is not noise on every command. A state with
+    no pending decision - and a decision carrying no labels, which is what an
+    older engine or a plain CR 701.22a scry gives - leaves stderr empty and
+    stdout untouched."""
+    wire(monkeypatch)
+    assert seat_cli.run(["--uid", uid_for(game, "alice"), "--game", game, "state"]) == 0
+    captured = capsys.readouterr()
+
+    assert json.loads(captured.out)["pending_decision"] is None
+    assert captured.err == ""
+    assert seat_cli.split_destinations({"pending_decision": None}) == ""
+    assert seat_cli.split_destinations({"pending_decision": {"kind": "scry", "cards": []}}) == ""
