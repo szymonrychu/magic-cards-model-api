@@ -68,7 +68,7 @@ from uuid import UUID
 from magic_cards_model.machines.decisions import DecisionKind, ScriptedAnswer
 from magic_cards_model.models import Game
 
-from . import audit
+from . import audit, engine_api
 
 
 def in_pregame(game: Game) -> bool:
@@ -223,7 +223,18 @@ def finish_opening_hand_actions(
     game_id: str, game: Game, username: str, *, automatic: bool = False
 ) -> dict[str, Any]:
     """This seat is done taking CR 103.6 actions; the next seat is up, and
-    when the last one finishes CR 103.8's first turn begins."""
+    when the last one finishes CR 103.8's first turn begins.
+
+    The settling of CR 500.3's priorityless steps happens *here*, not in the
+    HTTP handler, because two callers reach this and only one of them is a
+    request. `ai_pregame.settle` - the backstop that makes an AI seat's
+    pregame moves when its agent does not - calls this directly, so a game
+    whose LAST pregame move came from the backstop was left parked at
+    CR 103.8's untap step with `priority_holder: None` and no move any client
+    is allowed to make. That is a reported freeze, and it was the common case
+    rather than the corner one: a seat whose agent is failing is exactly the
+    seat the backstop moves for.
+    """
     step = game.finish_opening_hand_actions(username)
     audit.record(
         game_id,
@@ -233,7 +244,12 @@ def finish_opening_hand_actions(
         live=not automatic,
         automatic=automatic,
     )
-    return {"step": step.value, "pregame": pregame_view(game)}
+    result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game)}
+    crossed = engine_api.settle_priorityless_steps(game)
+    if crossed and game.turn is not None:
+        result["step"] = game.turn.step.value
+        result["settled_through"] = crossed
+    return result
 
 
 def settle_pregame(game_id: str, game: Game) -> dict[str, Any]:

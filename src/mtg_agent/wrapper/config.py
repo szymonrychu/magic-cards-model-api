@@ -60,6 +60,14 @@ class Settings:
     default_callback_url: str = ""
     shared_secret: str = ""
     anthropic_api_key: str = ""
+    claude_code_oauth_token: str = ""
+    """A token from `claude setup-token`, which is NOT an API key.
+
+    The two authenticate differently and the CLI reads them from different
+    variables. Putting a setup-token in `ANTHROPIC_API_KEY` sends it as an
+    API key and the API answers 401 - observed live in this stack, where it
+    presented as an AI seat that booted fine and then failed every turn.
+    """
     enable_all_mcp: bool = True
     base_mcp_path: Path | None = None
     mcp_overlay_dir: Path | None = None
@@ -91,6 +99,7 @@ class Settings:
             default_callback_url=_str(env, "DEFAULT_CALLBACK_URL", ""),
             shared_secret=_str(env, "WRAPPER_SHARED_SECRET", ""),
             anthropic_api_key=_str(env, "ANTHROPIC_API_KEY", ""),
+            claude_code_oauth_token=_str(env, "CLAUDE_CODE_OAUTH_TOKEN", ""),
             enable_all_mcp=_bool(env, "ENABLE_ALL_PROJECT_MCP_SERVERS", True),
             base_mcp_path=_path(env, "BASE_MCP_PATH"),
             mcp_overlay_dir=_path(env, "MCP_OVERLAY_DIR"),

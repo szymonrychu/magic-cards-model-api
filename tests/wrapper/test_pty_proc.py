@@ -72,3 +72,75 @@ def test_the_child_runs_in_the_workspace_directory(tmp_path):
     finally:
         proc.close()
         proc.wait()
+
+
+def _credential_probe(tmp_path):
+    """A stub 'claude' that prints which credential variables it can see."""
+    script = tmp_path / "creds.py"
+    script.write_text(
+        "import os, sys\n"
+        "sys.stdout.write('KEY=%s TOKEN=%s\\n' % ("
+        "os.environ.get('ANTHROPIC_API_KEY', '-'),"
+        "os.environ.get('CLAUDE_CODE_OAUTH_TOKEN', '-')))\n"
+        "sys.stdout.flush()\n"
+    )
+    return script
+
+
+def test_a_setup_token_is_passed_as_a_token_and_never_as_an_api_key(tmp_path, monkeypatch):
+    """`claude setup-token` produces an OAuth token, not an API key.
+
+    They authenticate differently and the CLI reads them from different
+    variables, so a token placed in ANTHROPIC_API_KEY is sent as an API key
+    and the API answers 401. That was seen live in this stack: an AI seat that
+    booted fine and then failed every turn with `API Error: 401`.
+
+    An ANTHROPIC_API_KEY inherited from the environment must not survive
+    either - it takes precedence over the token, so leaving it set makes a
+    valid token fail.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-inherited-and-stale")
+    script = _credential_probe(tmp_path)
+    settings = Settings.from_env(
+        {
+            "CLAUDE_PATH": sys.executable,
+            "WORKSPACE": str(tmp_path),
+            "HOME_DIR": str(tmp_path),
+            "MODEL": "",
+            "CLAUDE_CODE_OAUTH_TOKEN": "oauth-token-from-setup-token",
+        }
+    )
+    proc = spawn_claude(settings, resume=False, extra_args=[str(script)])
+    try:
+        seen = read_until(proc, b"KEY=").decode(errors="replace")
+    finally:
+        proc.close()
+        proc.wait()
+
+    assert "TOKEN=oauth-token-from-setup-token" in seen
+    assert "KEY=-" in seen, "the stale inherited API key must not shadow the token"
+
+
+def test_an_api_key_still_works_on_its_own(tmp_path, monkeypatch):
+    """The other credential, unchanged - and the token variable cleared for
+    the same shadowing reason in reverse."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stale-token")
+    script = _credential_probe(tmp_path)
+    settings = Settings.from_env(
+        {
+            "CLAUDE_PATH": sys.executable,
+            "WORKSPACE": str(tmp_path),
+            "HOME_DIR": str(tmp_path),
+            "MODEL": "",
+            "ANTHROPIC_API_KEY": "sk-ant-real-key",
+        }
+    )
+    proc = spawn_claude(settings, resume=False, extra_args=[str(script)])
+    try:
+        seen = read_until(proc, b"KEY=").decode(errors="replace")
+    finally:
+        proc.close()
+        proc.wait()
+
+    assert "KEY=sk-ant-real-key" in seen
+    assert "TOKEN=-" in seen

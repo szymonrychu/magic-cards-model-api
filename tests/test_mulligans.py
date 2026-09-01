@@ -780,7 +780,14 @@ def test_a_human_reaches_turn_one_though_the_ai_seat_never_moves(
             "the human was left in the pregame by a bot seat that never declared - "
             "this is the reported bug"
         )
-        assert state["step"] == "untap"
+        # Not "untap": CR 502.4 grants nobody priority there and CR 500.3 ends
+        # the step of its own accord, so the API settles past it rather than
+        # handing back a state no client may act on. The backstop making the
+        # LAST pregame move is exactly the case that used to park here, because
+        # ai_pregame calls opening.finish_opening_hand_actions directly rather
+        # than through the HTTP handler where settling was first wired.
+        assert state["step"] == "upkeep"
+        assert state["priority_holder"] == "alice", "the human can actually act now"
         assert state["turn_number"] == 1
     finally:
         delete(client, info)

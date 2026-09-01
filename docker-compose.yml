@@ -1,6 +1,8 @@
 # Bring the whole thing up from the magic-cards-model-api directory:
 #
-#     cp .env.example .env   # then put your real ANTHROPIC_API_KEY in it
+#     cp .env.example .env   # then put ONE of these in it:
+#                            #   CLAUDE_CODE_OAUTH_TOKEN  (from `claude setup-token`)
+#                            #   ANTHROPIC_API_KEY        (a real sk-ant-... key)
 #     docker compose up --build
 #
 # Then play at http://127.0.0.1:8000/play/ and pick a deck. The AI seat is
@@ -54,7 +56,14 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      # Either credential. `claude setup-token` produces an OAuth token, which
+      # is NOT an API key: the CLI reads them from different variables, and a
+      # setup-token placed in ANTHROPIC_API_KEY is sent as an API key and gets
+      # a 401. Neither is required here so that setting only one works; the
+      # wrapper prefers the token and clears the other so they cannot shadow
+      # each other.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - MODEL=${CLAUDE_MODEL:-sonnet}
       - HTTP_ADDR=:8080
       - INTERNAL_ADDR=127.0.0.1:8090

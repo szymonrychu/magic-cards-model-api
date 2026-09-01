@@ -94,8 +94,17 @@ def spawn_claude(
     argv = [settings.claude_path, *(extra_args or []), *settings.claude_args(resume)]
     env = dict(os.environ)
     env.setdefault("HOME", str(settings.home_dir))
-    if settings.anthropic_api_key:
+    # Either credential, never both: a `claude setup-token` OAuth token and an
+    # API key authenticate differently, and an ANTHROPIC_API_KEY left in the
+    # environment takes precedence over the token, so passing both makes a
+    # valid token fail. The token wins when it is set, and the key is cleared
+    # out of the inherited environment so it cannot shadow it.
+    if settings.claude_code_oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = settings.claude_code_oauth_token
+        env.pop("ANTHROPIC_API_KEY", None)
+    elif settings.anthropic_api_key:
         env["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
 
     pid, master_fd = pty.fork()
     if pid == 0:  # child
