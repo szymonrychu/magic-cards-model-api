@@ -85,6 +85,11 @@ let game = {
     // The safe default: stop and ask whenever anything the player could
     // respond to goes on the stack, rather than blow through it.
     stopOnStack: true,
+    // The other safe default, for the half of combat the stack cannot cover:
+    // stop when this seat is the defending player in a declare-blockers step
+    // with attackers on the board. Declaring blockers is a turn-based action
+    // that does not use the stack (CR 509.1), so `stopOnStack` never sees it.
+    stopWhenAttacked: true,
     // Casting releases priority so the spell resolves, unless the player
     // asks to keep it (CR 117.3c). Remembered across casts this session.
     holdPriority: false,
@@ -1280,6 +1285,11 @@ function toggleStopOnStackSetting(checked) {
 }
 window.toggleStopOnStackSetting = toggleStopOnStackSetting;
 
+function toggleStopWhenAttackedSetting(checked) {
+  game.settings.stopWhenAttacked = checked;
+}
+window.toggleStopWhenAttackedSetting = toggleStopWhenAttackedSetting;
+
 /**
  * Show a refusal or an error in the page, never in a native dialog.
  *
@@ -1351,7 +1361,9 @@ function autopilotLabel(autopilot) {
  *
  * Returns a human-readable stop reason, or `null` to keep running. Checked
  * in order: the game ending, a decision addressed to this seat, the named
- * destination being reached, then (gated by `settings.stopOnStack`, on by
+ * destination being reached, then (gated by `settings.stopWhenAttacked`, on
+ * by default) this seat being the defending player in a declare-blockers step
+ * with attackers declared, then (gated by `settings.stopOnStack`, on by
  * default) a new object having arrived on the stack, which covers "the
  * opponent cast something" and "a trigger went on the stack" identically -
  * from this seat's point of view both are just "something new is here".
@@ -1390,6 +1402,37 @@ function autopilotStopReason(state, autopilot, you, settings) {
       state.turn_number === autopilot.startedTurn;
     if (whoMatches && !sameOccurrenceThisRunStartedIn) {
       return `reached ${autopilotLabel(autopilot)}`;
+    }
+  }
+  // Being attacked, with nothing on the stack to notice it by.
+  //
+  // Declaring blockers is a turn-based action and "doesn't use the stack"
+  // (CR 509.1, looked up with `knowledge_search` in the session that wrote
+  // this), so the stack condition below can never see it. Nor can the
+  // pending-decision condition above: `decisions.py` deliberately keeps
+  // `DECLARE_BLOCKERS` out of `ANSWERABLE_KINDS` because blocking has its own
+  // action (`actions/declare-blockers`) rather than the decision mailbox, so
+  // `state.pending_decision` is never set for it. Without this check a run
+  // auto-passes the defending player straight through their own
+  // declare-blockers step and takes the whole attack unblocked.
+  //
+  // Deliberately NOT checked here: whether any creature you control could
+  // legally block any of these attackers. Evasion, menace, protection and
+  // blocking restrictions are engine questions, and this file defers to the
+  // engine rather than reimplementing its rules in JS (see the two rules in
+  // the header comment at the top of this file). Guessing at blocking
+  // legality here would be a worse bug than the one this fixes. "You are
+  // being attacked and the game is asking you to block" is the right
+  // granularity; the player decides whether they can do anything about it.
+  if (
+    settings.stopWhenAttacked &&
+    state.step === "declare_blockers" &&
+    state.active_player !== you
+  ) {
+    const attackers = ((state.combat && state.combat.attacks) || []).length;
+    if (attackers) {
+      const creatures = attackers === 1 ? "creature" : "creatures";
+      return `you are being attacked by ${attackers} ${creatures} - declare blockers`;
     }
   }
   const currentIds = new Set((state.stack || []).map((o) => o.id));
@@ -2272,6 +2315,10 @@ function renderActionBar(state, you) {
       <label title="Stop and ask whenever a spell or a triggered ability lands on the stack while auto-passing - the safe default. Turn it off to run through the opponent's whole turn.">
         <input type="checkbox" ${game.settings.stopOnStack ? "checked" : ""} onchange="toggleStopOnStackSetting(this.checked)" />
         stop when anything lands on the stack
+      </label>
+      <label title="Stop when the opponent attacks and it is your declare-blockers step - the safe default. Blocking is a turn-based action that never touches the stack, so the setting above cannot catch it. Turn it off to run through the opponent's whole turn, attack included.">
+        <input type="checkbox" ${game.settings.stopWhenAttacked ? "checked" : ""} onchange="toggleStopWhenAttackedSetting(this.checked)" />
+        stop when you are being attacked
       </label>
     </div></div>`);
 
