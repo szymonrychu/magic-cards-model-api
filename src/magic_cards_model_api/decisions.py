@@ -356,6 +356,56 @@ class PendingDecision:
     #: every decision `scry`/`surveil` themselves raise.
     moved_label: str = ""
     kept_label: str = ""
+    #: A name per `cards` entry, positionally aligned with it, or empty when
+    #: the engine stamped none.
+    #:
+    #: `cards` is a list of ids, and for a decision drawn from a *hidden* zone
+    #: (CR 400.2 makes the library and the hand hidden) an id is all a client
+    #: would otherwise have: `redact_view` strips `libraries` from every
+    #: non-admin viewer, including that viewer's own. `card_details` covers
+    #: that for a viewer whose ids the *server* can resolve
+    #: (`visibility.redact_pending_decision`), but the engine's own labels are
+    #: the only naming for candidates the board cannot find - CR 603.3b's
+    #: `ORDER_TRIGGERS` batch is in no zone at all when it is asked - so both
+    #: travel, and a client reads `card_details` first and falls back here.
+    #:
+    #: A library search is the case that made this worth carrying: CR 701.23a
+    #: has the searcher "look at all cards in that zone (even if it's a hidden
+    #: zone)", so the candidate names are exactly what the searcher is
+    #: entitled to see, and a picker that cannot print them is a picker played
+    #: blind.
+    card_labels: tuple[str, ...] = ()
+    #: `choose_cards` only: whether `amount` is a count or a ceiling.
+    #:
+    #: `True` (the default, and every question that existed before searching
+    #: became one choice) means the answer must name exactly `amount` cards -
+    #: the cleanup discard, CR 103.5's bottoming. `False` means any count from
+    #: zero up to `amount` is legal: CR 107.1c's "any number", and CR 701.23b's
+    #: declinable search - "If a player is searching a hidden zone for cards
+    #: with a stated quality... that player isn't required to find some or all
+    #: of those cards even if they're present in that zone." Finding nothing
+    #: is a real answer there, and a client that renders every `choose_cards`
+    #: as "choose up to N" or as "choose exactly N" is wrong about half of
+    #: them.
+    #:
+    #: Not enforced again here: `validate_answer` already runs `Game.ask`'s own
+    #: `exact`/`amount` arithmetic against this same `Decision` before an
+    #: answer reaches the mailbox, and the engine runs it once more when the
+    #: parked `Game.ask` returns. This field exists so a client can *ask the
+    #: right question*, not so a second count check can drift from those two.
+    exact: bool = True
+    #: `choose_cards` only: what an unanswered question resolves to, in place
+    #: of the kind's documented default, or `None` when the engine stamped no
+    #: deviation.
+    #:
+    #: `Game.search_library` is the caller that stamps one. Its question is
+    #: `exact=False` (CR 701.23b, above), whose generic default would be to
+    #: find nothing - so an unscripted fetchland would pay the life, sacrifice
+    #: itself and fetch no land. The engine's stated default is instead the
+    #: first `amount` candidates in zone order, and it is published here so a
+    #: seat - or an autopilot answering on one's behalf - can see what
+    #: *silence* would cost before it decides to stay silent.
+    default_cards: tuple[str, ...] | None = None
 
     @classmethod
     def from_engine(cls, decision: Decision) -> PendingDecision:
@@ -376,6 +426,18 @@ class PendingDecision:
             # themselves default to, which every client already falls back on.
             moved_label=getattr(decision, "moved_label", ""),
             kept_label=getattr(decision, "kept_label", ""),
+            card_labels=tuple(getattr(decision, "card_labels", ()) or ()),
+            exact=getattr(decision, "exact", True),
+            # `default_cards` is `None` on the engine for "no deviation
+            # stamped", and that is not the same as "the empty answer" - which
+            # for an `exact=False` question is a legal answer a player may
+            # actually give. So the distinction survives the crossing rather
+            # than being flattened into `()`.
+            default_cards=(
+                None
+                if getattr(decision, "default_cards", None) is None
+                else tuple(str(card_id) for card_id in decision.default_cards or ())
+            ),
         )
 
     def to_view(self) -> dict[str, Any]:
@@ -392,6 +454,9 @@ class PendingDecision:
             "options": list(self.options),
             "moved_label": self.moved_label,
             "kept_label": self.kept_label,
+            "card_labels": list(self.card_labels),
+            "exact": self.exact,
+            "default_cards": None if self.default_cards is None else list(self.default_cards),
         }
 
 

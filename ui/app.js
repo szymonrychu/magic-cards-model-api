@@ -848,21 +848,117 @@ function renderTopOrBottomDecision() {
   `;
 }
 
+// "Choose N of these cards", and - since the engine made a search one choice
+// over every legal find - the picker a fetchland is answered through.
+//
+// Three things this has to get right, all three of which it used to get
+// wrong, and all three of which cost a real game a real misplay.
+//
+// 1. NAME THE CANDIDATES. The boxes were built from `pending.card_details`
+//    alone. That is the server resolving each id against the board, and it is
+//    the right first choice - but the engine also stamps `card_labels`, a
+//    name per `pending.cards` entry, precisely because an id a decision names
+//    is not always something the board can find. Anything `card_details`
+//    misses used to render as no box at all, so a picker over a hidden zone
+//    could come up empty or short. Precedence here is the trigger-order
+//    picker's, unchanged: `card_details` first, then `card_labels` by
+//    position, then the raw id, which nobody can act on but which at least
+//    never silently drops a candidate.
+//
+// 2. ASK THE RIGHT QUESTION. `pending.exact` says whether `amount` is a count
+//    or a ceiling, and the hint was hardcoded to the ceiling reading ("choose
+//    up to N") for both. CR 701.23d is the count: "If a player is searching a
+//    hidden zone simply for a quantity of cards, such as 'a card' or 'three
+//    cards,' that player must find that many cards (or as many as possible,
+//    if the zone doesn't contain that many)" - whether is not on offer there,
+//    only which. CR 701.23b is the ceiling: "If a player is searching a
+//    hidden zone for cards with a stated quality... that player isn't
+//    required to find some or all of those cards even if they're present in
+//    that zone" - so finding NOTHING is a real answer, and it gets its own
+//    button rather than being reachable only by ticking nothing and hoping
+//    Confirm means it.
+//
+// 3. SAY WHAT THE SEARCH IS FOR. `pending.source` is the card that asked.
+//    A list of land names with no heading is a guess; "Wooded Foothills" over
+//    the same list is a decision.
+
+/**
+ * The candidates a `choose_cards` question offers, as `{id, label}` in the
+ * order the engine listed them (zone order, for a search). Pure, and
+ * exported, so `tests/test_ui_choose_cards_search.py` can hold the shipped
+ * labelling to the rule rather than re-describing it.
+ */
+function chooseCardsOptions(pending) {
+  const ids = (pending && pending.cards) || [];
+  const details = {};
+  ((pending && pending.card_details) || []).forEach((obj) => {
+    details[obj.id] = obj;
+  });
+  const labels = (pending && pending.card_labels) || [];
+  return ids.map((id, index) => {
+    const obj = details[id];
+    return { id: id, label: (obj && obj.name) || labels[index] || id };
+  });
+}
+
 function renderChooseCardsDecision(pending) {
-  const boxes = (pending.card_details || [])
+  const options = chooseCardsOptions(pending);
+  const boxes = options
     .map(
-      (c) => `<label class="option"><input type="checkbox" value="${escapeHtml(c.id)}" /> ${escapeHtml(c.name)}</label>`
+      (option) =>
+        `<label class="option"><input type="checkbox" value="${escapeHtml(option.id)}" /> ` +
+        `${escapeHtml(option.label)}</label>`
     )
     .join("");
+  // `exact` absent (an older server) reads as `true`, which is the engine's
+  // own default for the field and the shape every question had before a
+  // search became one of them.
+  const exact = pending.exact !== false;
+  const heading = pending.source
+    ? `<div class="hint">searching for: ${escapeHtml(pending.source)}</div>`
+    : "";
+  const hint = exact
+    ? `choose exactly ${pending.amount} - no more, no fewer`
+    : `choose up to ${pending.amount}, or find nothing at all (CR 701.23b)`;
+  const decline = exact
+    ? ""
+    : `<button onclick="declineChooseCards()">Find nothing</button>`;
   return `
+    ${heading}
     <div>${boxes || "(no candidates shown)"}</div>
-    <div class="hint">choose up to ${pending.amount}</div>
+    <div class="hint">${hint}</div>
     <button class="primary" onclick="submitChooseCards()">Confirm</button>
+    ${decline}
   `;
 }
 
+/** The ids ticked in the box right now. */
+function chooseCardsPicks() {
+  return $$("#decision-box input[type=checkbox]:checked").map((el) => el.value);
+}
+
 function submitChooseCards() {
-  decide({ card_ids: $$("#decision-box input[type=checkbox]:checked").map((el) => el.value) });
+  const picks = chooseCardsPicks();
+  const pending = (game.state && game.state.pending_decision) || {};
+  // CR 701.23d's count, refused here rather than sent. The server refuses it
+  // too (`decisions.validate_answer` runs `Game.ask`'s own arithmetic), so
+  // this is not the rule's enforcement - it is the difference between telling
+  // the player what is wrong with their answer and bouncing it off the API
+  // to say the same thing one round trip later.
+  if (pending.exact !== false && picks.length !== pending.amount) {
+    notice(
+      `This choice needs exactly ${pending.amount} card(s); ${picks.length} ticked.`,
+      "bad"
+    );
+    return;
+  }
+  decide({ card_ids: picks });
+}
+
+/** CR 701.23b's decline: a stated-quality search of a hidden zone may find
+ * nothing at all, which is an answer, not an absence of one. */
+function declineChooseCards() {
+  decide({ card_ids: [] });
 }
 
 // A look-then-split question, and where each half of the answer really goes.
@@ -1214,6 +1310,7 @@ async function decide(answer) {
 }
 window.decide = decide;
 window.submitChooseCards = submitChooseCards;
+window.declineChooseCards = declineChooseCards;
 window.submitCardSplit = submitCardSplit;
 window.submitChooseTargets = submitChooseTargets;
 window.pickTriggerOrder = pickTriggerOrder;
@@ -1686,6 +1783,9 @@ if (typeof module !== "undefined" && module.exports) {
     sendTargets,
     setHtml,
     triggerOrderOptions,
+    chooseCardsOptions,
+    renderChooseCardsDecision,
+    submitChooseCards,
     renderCardSplitDecision,
     renderActionBar,
     startAutopilot,
