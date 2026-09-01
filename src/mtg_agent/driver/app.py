@@ -135,7 +135,18 @@ def build_app(
                 retryable=response.status_code in BOOTING_STATUSES,
             )
         turn_id = response.json()["turnId"]
-        log.info("turn %s pushed to the agent (%d chars)", turn_id, len(text))
+        # Named seat and game, because the compose log interleaves three
+        # services and "turn pushed" alone does not say who is playing what.
+        with lock:
+            assignment = current["assignment"]
+        log.info(
+            "turn %s started: game=%s seat=%s deck=%s (%d chars of prompt)",
+            turn_id,
+            assignment.game_id if assignment else "?",
+            assignment.player if assignment else "?",
+            assignment.deck_slug if assignment else "?",
+            len(text),
+        )
         return turn_id
 
     def retire(assignment: Assignment) -> bool:

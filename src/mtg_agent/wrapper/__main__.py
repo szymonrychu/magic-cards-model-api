@@ -19,7 +19,10 @@ import threading
 
 import uvicorn
 
+from magic_cards_model_api import access_log
+
 from . import bootstrap
+from .activity import ActivityWatcher
 from .api import build_internal_app, build_public_app
 from .config import Settings
 from .metrics import Metrics
@@ -40,6 +43,8 @@ def main() -> None:
     logging.basicConfig(
         level=settings.log_level.upper(), format="%(levelname)s %(name)s %(message)s"
     )
+    # `/healthz` and `/readyz` are polled; the turns are not. See access_log.py.
+    access_log.install()
 
     bootstrap.render(settings)
 
@@ -102,12 +107,19 @@ def main() -> None:
     manager.start()
     log.info("session state=%s", manager.state)
 
+    # Started after the session, so the transcript it follows is this
+    # container's. Daemon thread, read-only, and exempt from the exit path:
+    # nothing it does can hold up a turn or a shutdown.
+    watcher = ActivityWatcher(settings.home_dir, settings.agent_log_level)
+    watcher.start()
+
     def stop(_signum, _frame) -> None:
         request_exit("signal")
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     server.run()
+    watcher.stop()
     manager.shutdown()
 
 

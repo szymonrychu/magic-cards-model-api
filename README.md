@@ -84,18 +84,36 @@ Three containers, three different things worth watching:
   WARNING, every `report_problem` a seat files, its text included. That call
   is the agent saying the engine got a rule wrong while it was playing, so it
   is deliberately the loudest thing in the log. `grep "PROBLEM REPORTED"`.
-  The five-second healthcheck's `GET /api/health` is filtered out of uvicorn's
-  access log (`access_log.py`); every other request, and any health probe that
-  *fails*, still prints.
 - **driver** - the whole match lifecycle: which deck it identified and how well
-  it matched, each turn pushed, the agent's own account of every finished turn
-  (trimmed - the full text is on `GET /v1/messages/{turnId}` in the agent), the
-  game ending, the reflection turn, and the retirement that stops the agent.
+  it matched, `turn ... started: game=... seat=... deck=...` for every turn it
+  pushes, the agent's own account of every finished turn (trimmed - the full
+  text is on `GET /v1/messages/{turnId}` in the agent), the game ending, the
+  reflection turn, and the retirement that stops the agent.
 - **agent** - session boot, turn submitted/complete with its stop reason,
-  suspected stalls, interrupts, and a dead `claude` with the tail of its
-  terminal.
+  suspected stalls, interrupts, a dead `claude` with the tail of its terminal,
+  and - on the `agent` logger - a running account of what the seat is doing:
+
+      INFO agent says: Bolting the Ragavan before it connects.
+      INFO agent calls Bash mtg-seat cast 'Lightning Bolt' --target ragavan
+      WARNING agent tool failed: Exit code 1 it is not your priority
+
+  That comes from tailing the JSONL transcript claude writes as it goes
+  (`wrapper/activity.py`), not from scraping the terminal. Every line is
+  collapsed to one line and truncated with a `[+N chars]` marker; `thinking`
+  blocks and successful tool *results* are left out on purpose, and anything
+  shaped like an API key or bearer token is redacted.
 
 Nothing here needs `LOG_LEVEL=debug`; that is for the wrapper's own internals.
+
+### Turning the volume up or down
+
+| env var | default | what it does |
+|---|---|---|
+| `ACCESS_LOG_QUIET` | `1` | Drops uvicorn access lines for *successful reads* of the polled routes on all three services: `/api/health`, `/healthz`, `/readyz`, `/status`, `/api/games/{id}` and `/api/ui/games/{id}/ai-seat/status`. Those four polls are the whole of the idle log. A POST is never dropped, and neither is any response that is not 2xx/3xx - a poll answering 404 or 500 is the thing worth reading. Set to `0` for uvicorn's unfiltered log. (`access_log.py`) |
+| `AGENT_LOG_LEVEL` | `tools` | How much of the agent's activity the agent container prints: `off`, `turns` (boundaries only), `messages` (+ the agent's prose), `tools` (+ every tool call and every tool failure). (`wrapper/activity.py`) |
+
+Both are read from `.env` by `docker compose`, so
+`ACCESS_LOG_QUIET=0 docker compose up` is enough to get everything back.
 
 ## Run it
 

@@ -7,6 +7,8 @@ import os
 
 import uvicorn
 
+from magic_cards_model_api import access_log
+
 from .app import build_app
 from .config import DriverSettings
 
@@ -18,6 +20,10 @@ def main() -> None:
     # driver's own log already says what it pushed and what came back, so this
     # is pure padding between the lines an operator is reading for.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # The game server re-reads `GET /status` for as long as a seat is
+    # dispatched, which was one uvicorn access line per poll. See
+    # access_log.py; a `/status` that starts failing still prints.
+    access_log.install()
     settings = DriverSettings.from_env(os.environ)
     host, _, port = settings.http_addr.rpartition(":")
     uvicorn.run(build_app(settings), host=host or "0.0.0.0", port=int(port))

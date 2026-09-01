@@ -23,6 +23,11 @@ services:
     environment:
       - AI_SEAT_MODE=wrapper
       - DRIVER_URL=http://driver:8090
+      # The browser re-reads the game and the AI seat's status every ~1.2s.
+      # Successful reads of those two routes, and of the healthcheck, are kept
+      # out of uvicorn's access log; POSTs and any non-2xx always print.
+      # ACCESS_LOG_QUIET=0 gives the full access log back on any service.
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
     volumes:
       - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
       - scryfall-cache:/app/.scryfall-cache
@@ -62,6 +67,11 @@ services:
       - TURN_TIMEOUT_SECONDS=1800
       - BOOT_TIMEOUT_SECONDS=120
       - LOG_LEVEL=info
+      # What the agent itself prints while it plays, tailed off the live
+      # transcript: off | turns | messages | tools (default). See
+      # `wrapper/activity.py`.
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-tools}
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
     volumes:
       - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
       - ./memory:/workspace/memory
@@ -87,6 +97,9 @@ services:
       - MEMORY_ROOT=/workspace/memory
       - DRIVER_WORKSPACE=/driver-workspace
       - HTTP_ADDR=:8090
+      # The game server polls `GET /status` for as long as a seat is
+      # dispatched. Same filter, same escape hatch.
+      - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
     volumes:
       - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro
       - ./memory:/workspace/memory

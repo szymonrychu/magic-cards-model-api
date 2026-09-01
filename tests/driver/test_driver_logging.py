@@ -71,11 +71,15 @@ def test_a_failed_turn_is_logged_as_an_error(world, driver_log):  # noqa: F811
     assert "claude exited with code 1" in driver_log.text
 
 
-def test_pushing_a_turn_is_logged(world, driver_log):  # noqa: F811
+def test_pushing_a_turn_names_the_game_and_the_seat(world, driver_log):  # noqa: F811
+    """Three services share one compose log, so "turn started" on its own says
+    nothing about which game or which seat it belongs to."""
     client, _, _, _ = world
     driver_log.clear()
     dispatch(client)
-    assert "turn turn-1 pushed to the agent" in driver_log.text
+    assert "turn turn-1 started" in driver_log.text
+    assert "seat=bob" in driver_log.text
+    assert "game=g-1" in driver_log.text
 
 
 def test_dispatch_logs_the_deck_it_identified_and_how_well_it_matched(world, driver_log):  # noqa: F811

@@ -67,6 +67,9 @@ class Settings:
     global_claude_md_path: Path | None = None
     skills_dirs: list[Path] = field(default_factory=list)
     log_level: str = "info"
+    #: How much of the agent's own activity reaches stdout: off, turns,
+    #: messages, tools. See `activity.py`.
+    agent_log_level: str = "tools"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -95,6 +98,7 @@ class Settings:
             global_claude_md_path=_path(env, "GLOBAL_CLAUDE_MD_PATH"),
             skills_dirs=skills,
             log_level=_str(env, "LOG_LEVEL", "info"),
+            agent_log_level=_str(env, "AGENT_LOG_LEVEL", "tools"),
         )
 
     def claude_args(self, resume: bool) -> list[str]:
