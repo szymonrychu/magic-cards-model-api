@@ -132,6 +132,19 @@ spec:
         - -euc
         - |
           test -n "${GH_PAT}" || { echo "GH_PAT is empty - is the mtg-decks-git Secret created?" >&2; exit 1; }
+          # The emptyDir's own directory stays owned by root: fsGroup sets the
+          # group and the setgid bit so uid 1000 can write INTO it, but it does
+          # not change the owner. git then refuses the repo with "detected
+          # dubious ownership", because the repo's top directory is owned by
+          # somebody other than the euid running git. Declaring it trusted is
+          # the fix that does not need root; a chown would.
+          git config --global --add safe.directory /guides
+          # A restarted initContainer finds the previous attempt's partial
+          # clone, and `git clone` refuses a destination that is not empty. Wipe
+          # it first so a retry is a clean retry. `find -delete` rather than
+          # `rm -rf /guides/*`, because an unmatched glob under `set -e` would
+          # hand rm a literal `*` and fail the whole script on the happy path.
+          find /guides -mindepth 1 -delete
           git clone --depth 1 \
             "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git" \
             /guides
