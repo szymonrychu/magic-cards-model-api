@@ -6,6 +6,7 @@ from mtg_agent.driver.guides import DeckGuide
 from mtg_agent.driver.prompt import (
     Assignment,
     memory_index,
+    plan_path,
     reflection_turn,
     render_current_game,
     turn_zero,
@@ -128,6 +129,28 @@ def test_turn_zero_carries_the_uid_and_the_hard_won_rules_of_engagement(tmp_path
     assert "secret-uid" in text
     assert "winner" in text
     assert "never state" in text.lower()
+
+
+def test_turn_zero_says_that_declining_to_act_can_be_the_play(tmp_path, guide):
+    """The seat used to dump its hand and pass; passing with a purpose is a play."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    lowered = text.lower()
+    assert "not playing is a play" in lowered
+    assert "117.3d" in text
+    assert "beatdown" in lowered
+    assert "passing with purpose is not stalling" in lowered
+
+
+def test_current_game_names_the_running_plan_file(tmp_path, guide):
+    memory = tmp_path / "memory"
+    text = render_current_game(assignment(guide), memory)
+    assert str(plan_path(memory, assignment(guide))) in text
+    assert str(memory / "dimir-frog" / "games" / "g-1.md") in text
+
+
+def test_turn_zero_tells_it_to_write_the_plan_down(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert "plan file" in text.lower()
 
 
 def test_turn_zero_tells_it_to_deduce_the_matchup(tmp_path, guide):

@@ -45,6 +45,16 @@ def memory_index(memory_root: Path, deck_slug: str) -> list[Path]:
     return sorted(p for p in deck_dir.rglob("*.md") if p.is_file())
 
 
+def plan_path(memory_root: Path, assignment: Assignment) -> Path:
+    """Where the agent keeps this game's running plan.
+
+    Deliberately the same file the reflection turn asks it to finish: a plan
+    written while playing and a write-up written afterwards are the same note
+    at two points in time, and one file means no bookkeeping mid-game.
+    """
+    return Path(memory_root) / assignment.deck_slug / "games" / f"{assignment.game_id}.md"
+
+
 def _decklist_block(decklist: dict[str, int]) -> str:
     return "\n".join(f"{count} {name}" for name, count in sorted(decklist.items()))
 
@@ -101,7 +111,14 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         lines += [f"- `{path}`" for path in notes]
     else:
         lines.append("Nothing yet - this is your first recorded game on it.")
-    lines.append("")
+    lines += [
+        "",
+        "## Your plan file for this game",
+        "",
+        f"`{plan_path(memory_root, assignment)}` - yours to write and rewrite while "
+        "you play. Keep it short; you will finish it after the game.",
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -135,7 +152,9 @@ who is playing through a web UI against the same game server you act on.
 2. Read your deck's gameplan guide, and any notes you have already written
    about this deck. You are expected to arrive at the first action already
    knowing what this deck is trying to do.
-3. Only then call `wait_for_priority`.
+3. Write your opening plan into the plan file named in the briefing (see
+   "Keep a plan, in writing" below).
+4. Only then call `wait_for_priority`.
 
 ## How you act
 
@@ -162,6 +181,63 @@ out from the cards they actually play, then read the matching matchup file:
 the first time you commit to a read. Getting this right earlier, game after
 game, is the point of the notes you keep.
 
+## Win the game, do not merely make legal moves
+
+Decide three things before your first action, and revisit them whenever the
+board changes:
+
+- **How this deck wins this game** - the clock, the engine, the lock.
+- **Your role in this matchup**: beatdown or control. The faster deck attacks
+  and forces the issue; the other one answers, trades, and stabilises. Getting
+  this backwards loses games that no single misplay would have.
+- **What beats you**, and which of your cards answer it. Hold those answers
+  for what they are for.
+
+Then play toward that plan across turns, not one priority at a time.
+
+## Not playing is a play
+
+Taking no action is a deliberate, legal choice, not a failure to act
+(CR 117.3d: a player who chooses to take no actions passes). Expect to do it
+often, and for a reason you could state out loud:
+
+- Hold up mana for an instant instead of tapping out on your own main phase.
+- Keep removal or a counterspell live for the card that actually beats you
+  rather than spending it on the first legal target.
+- Decline an attack that trades badly; attack when the race maths says to.
+- Keep a land in hand when the card matters more than the mana - but never
+  miss a land drop your curve needs.
+- Hold a creature back to rebuild after a sweeper once they have shown one, or
+  shown the mana for one.
+- Play around what their open mana and their archetype let them have. If you
+  cannot beat it, play as though it is not there.
+
+Sequencing is most of the skill: land drops first when they cost you nothing,
+threats in the order that plays around their answers, and commit only as much
+board as one card can punish.
+
+## Investigate before you commit
+
+Thinking is cheaper than a lost game. Before a decision that matters, read
+`my_state`, read `game_log` for everything they have already shown, count their
+untapped mana and their cards in hand, and look up anything you are not certain
+of. Spend that effort on the decisions that turn the game, not on every land
+drop.
+
+## Keep a plan, in writing
+
+The briefing names a plan file for this game. Keep a handful of lines there and
+update it as the game moves:
+
+- your read on their archetype and your confidence in it,
+- your role and how you intend to win,
+- what you are holding, and what you are holding it for,
+- the next two or three turns as you currently intend to play them.
+
+Rewrite lines rather than appending; this is a working plan, not a diary. A few
+seconds per turn, and only when something changed - never an essay per
+priority. After the game you will be asked to finish this same file.
+
 ## Rules of engagement, each learned the hard way
 
 - Play until the state shows a `winner`, or a drawn game, or until you file a
@@ -175,11 +251,15 @@ game, is the point of the notes you keep.
   stack.
 - A pending decision FREEZES the game. Answering it is the only legal move,
   and an unanswered decision times out to a default and wastes the card.
-- Play your deck's mechanics ACTIVELY, not merely legally: attack, block,
-  activate abilities, let triggers resolve, use the whole board.
+- Use the whole board: attack, block, activate abilities, let triggers
+  resolve, respond on the stack. An idle permanent and an uncast trick are
+  wasted resources - decline them only for a reason you can name.
+- Passing with purpose is not stalling. Stalling is being unable to say what
+  you are waiting for. Every wait is bounded, every pending decision is
+  answered, and the human never sits in front of a game where nothing is
+  happening because you did not choose.
 - NEVER state card text or a rule from memory. Use the `spellslinger` MCP
   server's `knowledge_search` and `resolve_cards` to look them up.
-- The human is watching a UI update as you play. Act promptly.
 
 Begin."""
 
@@ -191,7 +271,8 @@ def reflection_turn(assignment: Assignment, memory_root: Path, outcome: str) -> 
 
 Write up what you learned, so the next game on this deck starts from it.
 
-1. `{deck_dir / "games" / f"{assignment.game_id}.md"}` - this game: the result,
+1. `{deck_dir / "games" / f"{assignment.game_id}.md"}` - the plan file you kept
+   while playing. Finish it: the result,
    what your opponent turned out to be playing and how early you knew, the two
    or three decisions that actually decided it, and what you would do
    differently.
