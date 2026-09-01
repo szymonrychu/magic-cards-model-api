@@ -30,6 +30,14 @@ no guessing about the shape of Claude's stdout. What this module *does* track
 per uid is process liveness (`running`), its exit code once it has one, and a
 tail of stdout/stderr for surfacing a crash - "thinking" is simply "the
 subprocess is still running and has not asked for anything".
+
+That same liveness has a second reader, and a stricter one: `activity` (and
+`why_gone` beside it) answers `WORKING` / `STARTING` / `GONE` for
+`ai_pregame.py`, which will take a seat's own CR 103.5 declaration away from
+it when nothing is playing that seat. `status` is written for a human reading
+a panel and may hedge; `activity` may not, so it is a separate method with
+three defined answers, and it errs towards `GONE` for anything it cannot
+establish - see its docstring for which way each failure falls and why.
 """
 
 from __future__ import annotations
@@ -58,6 +66,22 @@ BRIEF_PATH = API_REPO / "docs" / "ai_seat_brief.md"
 #: for a process that, unlike the audit log, is not the source of truth for
 #: what happened in the game.
 TAIL_LINES = 200
+
+#: What `AiSeatRegistry.activity` is allowed to conclude about one seat. Three
+#: values, not two, because "has not answered yet" splits into two cases that
+#: want opposite treatment from `ai_pregame.py`'s backstop:
+#:
+#: - `WORKING` - a process or an agent holds this seat and is mid-turn. It is
+#:   thinking, and however long that takes it is going to answer for itself.
+#: - `STARTING` - the seat has been handed over but is not yet able to act
+#:   (the container is still booting). It has not had its chance yet, so no
+#:   grace period should be running against it.
+#: - `GONE` - nothing is playing this seat: never started, failed to start,
+#:   exited, errored, or finished its turn without acting. Only this one is
+#:   evidence that the human is waiting on nobody.
+WORKING = "working"
+STARTING = "starting"
+GONE = "gone"
 
 
 def ai_seat_mode() -> str:
@@ -211,6 +235,11 @@ class AiSeatRegistry:
     def __init__(self) -> None:
         self._runners: dict[str, AiSeatRunner] = {}
         self._dispatched: dict[str, dict[str, Any]] = {}
+        #: uid -> why this seat could not be handed to anything at all (no
+        #: `claude` on PATH, a driver that did not answer). A seat here is
+        #: `GONE` and will stay `GONE`: nothing was started, so nothing is
+        #: coming.
+        self._unavailable: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def _dispatch_to_driver(
@@ -315,6 +344,8 @@ class AiSeatRegistry:
                 )
             else:
                 note = f"NOT STARTED - {status.get('reason')}"
+                with self._lock:
+                    self._unavailable[uid] = str(status.get("reason") or "the seat did not start")
             from . import audit  # lazy: ai_seat is imported by modules audit imports
 
             audit.record(game_id, "ai_seat", player=player, note=note)
@@ -327,6 +358,8 @@ class AiSeatRegistry:
 
         prompt = build_prompt(uid=uid, game_id=game_id, player=player, api_base=api_base)
         if not claude_available():
+            with self._lock:
+                self._unavailable[uid] = "the `claude` CLI is not on PATH in this server process"
             return {
                 "uid": uid,
                 "player": player,
@@ -350,6 +383,85 @@ class AiSeatRegistry:
             status["command"] = " ".join(command_for(prompt))
             status["prompt"] = prompt
         return status
+
+    def _driver_activity(self, dispatched: dict[str, Any]) -> str:
+        """What the driver says about a seat it was handed.
+
+        `pending` is the driver still trying to reach an agent container that
+        is restarting (up to `AGENT_BOOT_WAIT_SECONDS`) - handed over, not yet
+        able to act, so `STARTING`. `turn_active` is the honest "claude has
+        this turn and has not finished it" signal: the wrapper plays a whole
+        match inside one long turn, so a turn that has *finished* while the
+        game is still in its pregame means the agent stopped playing - which
+        is the exact shape of the hang `ai_pregame.py` exists for, and is
+        `GONE` however healthy the container still looks.
+        """
+        try:
+            with _driver_client(dispatched.get("driver") or driver_url()) as client:
+                answer = client.get("/status").json()
+        except Exception:  # noqa: BLE001 - an unreachable driver is a gone seat
+            return GONE
+        if answer.get("lastError"):
+            return GONE
+        if answer.get("pending"):
+            return STARTING
+        if answer.get("turnActive"):
+            return WORKING
+        # An older driver that does not report `turnActive` at all: fall back
+        # to "it was dispatched and has not errored", which is the most this
+        # can honestly claim. Never silently upgraded to WORKING on a missing
+        # key - `lastTurnId` being set is what says a turn was ever pushed.
+        return WORKING if answer.get("lastTurnId") and "turnActive" not in answer else GONE
+
+    def activity(self, uid: str) -> str:
+        """Is anything actually playing this seat right now: `WORKING`,
+        `STARTING` or `GONE`.
+
+        The question `ai_pregame.py`'s backstop needs answered before it takes
+        a decision away from a seat. It is deliberately *not* the same as
+        `status`, which is written for a human reading a panel: this returns
+        one of three words with a defined meaning for that one caller, and
+        errs towards `GONE` for anything it cannot establish - a seat nobody
+        ever started, a driver that does not answer - because the failure of
+        `GONE` is a bot's default keep, while the failure of `WORKING` is a
+        human stranded at a panel with no button that moves.
+        """
+        with self._lock:
+            dispatched = self._dispatched.get(uid)
+            runner = self._runners.get(uid)
+        if dispatched is not None:
+            return self._driver_activity(dispatched)
+        if runner is None:
+            # Never started, or started and refused (`_unavailable`). Either
+            # way nothing is playing this seat.
+            return GONE
+        if runner.error is not None or runner.returncode is not None:
+            return GONE
+        return WORKING if runner.running() else STARTING
+
+    def why_gone(self, uid: str) -> str:
+        """One line of evidence for a `GONE` verdict, for the audit log.
+
+        The backstop declaring for a seat is a decision taken away from a
+        player; a transcript that says only "automatic" leaves nobody able to
+        tell a crashed agent from a missing binary from an agent that quietly
+        gave up.
+        """
+        with self._lock:
+            dispatched = self._dispatched.get(uid)
+            runner = self._runners.get(uid)
+            unavailable = self._unavailable.get(uid)
+        if dispatched is not None:
+            return "the driver reports no live turn for this seat"
+        if runner is not None:
+            if runner.error is not None:
+                return runner.error
+            if runner.returncode is not None:
+                return f"the seat's claude subprocess exited {runner.returncode}"
+            return "the seat's claude subprocess is not running"
+        if unavailable is not None:
+            return unavailable
+        return "no process or agent was ever started for this seat"
 
     def status(self, uid: str) -> dict[str, Any] | None:
         with self._lock:

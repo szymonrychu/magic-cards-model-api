@@ -100,7 +100,13 @@ def test_status_and_stop_are_harmless_for_a_wrapper_seat(driver):
 @pytest.fixture
 def driver_with_status(monkeypatch):
     """The driver stand-in, plus a dict the test uses to move `/status`."""
-    reported = {"lastTurnId": "turn-1", "reflected": False, "pending": False, "lastError": None}
+    reported = {
+        "lastTurnId": "turn-1",
+        "reflected": False,
+        "pending": False,
+        "turnActive": True,
+        "lastError": None,
+    }
     app = FastAPI()
 
     @app.post("/dispatch", status_code=202)
@@ -165,3 +171,67 @@ def test_a_status_read_never_dispatches_a_second_seat(driver_with_status):
     for _ in range(3):
         registry.status("u")
     assert registry.status("u")["turn_id"] == "turn-1"
+
+
+# ---- activity: the three-way answer the pregame backstop settles seats on ---
+#
+# `status` above is written for a human reading a panel. `activity` answers one
+# question for one caller (`ai_pregame.py`): is anything actually playing this
+# seat. It has to distinguish a booting container from a thinking agent from a
+# seat nothing holds any more, because the backstop treats those three
+# completely differently - and getting it wrong in either direction either
+# overrules a live agent mid-decision or strands a human at a dead panel.
+
+
+def test_a_seat_with_a_live_turn_is_working(driver_with_status):
+    driver_with_status["turnActive"] = True
+    assert started().activity("u") == ai_seat.WORKING
+
+
+def test_a_seat_whose_agent_is_still_booting_is_starting(driver_with_status):
+    """Handed over but not yet able to act - no clock should run against it."""
+    driver_with_status["pending"] = True
+    driver_with_status["turnActive"] = False
+    assert started().activity("u") == ai_seat.STARTING
+
+
+def test_a_seat_whose_turn_has_finished_is_gone(driver_with_status):
+    """One turn covers the whole match, so a finished turn mid-game is an
+    agent that stopped playing - the reported hang."""
+    driver_with_status["turnActive"] = False
+    assert started().activity("u") == ai_seat.GONE
+
+
+def test_a_seat_whose_turn_failed_is_gone(driver_with_status):
+    driver_with_status["turnActive"] = True
+    driver_with_status["lastError"] = "turn turn-1 failed: API Error: 401"
+    assert started().activity("u") == ai_seat.GONE
+
+
+def test_a_seat_behind_an_unreachable_driver_is_gone(driver_with_status, monkeypatch):
+    registry = started()
+
+    def broken(base):
+        raise httpx.ConnectError("no route to driver")
+
+    monkeypatch.setattr(ai_seat, "_driver_client", broken)
+    assert registry.activity("u") == ai_seat.GONE
+
+
+def test_a_seat_nobody_ever_started_is_gone():
+    """Not "starting". Nothing has claimed this seat, and a human waiting on
+    it is waiting on nobody."""
+    assert ai_seat.AiSeatRegistry().activity("never-seen") == ai_seat.GONE
+
+
+def test_a_seat_that_could_not_start_says_why(monkeypatch):
+    monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
+
+    def broken(base):
+        raise httpx.ConnectError("no route to driver")
+
+    monkeypatch.setattr(ai_seat, "_driver_client", broken)
+    registry = ai_seat.AiSeatRegistry()
+    registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
+    assert registry.activity("u") == ai_seat.GONE
+    assert "driver" in registry.why_gone("u")

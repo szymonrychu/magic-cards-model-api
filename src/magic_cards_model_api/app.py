@@ -214,6 +214,20 @@ def _key_error(_: Request, exc: KeyError) -> JSONResponse:
     )
 
 
+@app.exception_handler(opening.PregameOverruled)
+def _pregame_overruled(_: Request, exc: opening.PregameOverruled) -> JSONResponse:
+    """409, not 400. Registered above the `ValueError` handler because
+    `PregameOverruled` is one, and the more specific handler must win.
+
+    The seat's request was perfectly well formed - it lost a race to the
+    backstop that moves for a seat gone quiet, and the difference matters to
+    the caller: a 400 invites an agent to fix its request and retry, which
+    cannot work, while this says what happened and that the decision is gone.
+    See `opening.PregameOverruled` and `ai_pregame.py`.
+    """
+    return JSONResponse(status_code=409, content={"detail": str(exc), "overruled": True})
+
+
 @app.exception_handler(ValueError)
 def _value_error(_: Request, exc: ValueError) -> JSONResponse:
     """Setup requests that name an unknown zone, counter, color, or card."""

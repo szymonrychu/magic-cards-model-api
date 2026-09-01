@@ -416,3 +416,49 @@ def test_a_turn_that_succeeds_clears_a_previous_failure(world):
     assert client.get("/status").json()["lastError"] is not None
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "ok"})
     assert client.get("/status").json()["lastError"] is None
+
+
+# ---- "is the agent mid-turn" - the signal the game server settles seats on --
+#
+# The game server's pregame backstop takes a seat's CR 103.5 declaration for
+# it when nothing is playing that seat. It used to do that on a timer alone,
+# and once the agent's prompts made it think for longer than the timer, the
+# backstop began declaring over a live agent - see `ai_pregame.py`. What makes
+# a liveness answer possible is this flag: one wrapper turn covers a whole
+# match, so a turn that has *finished* while the game is still running is an
+# agent that stopped playing, however healthy the container looks.
+
+
+def test_a_dispatched_turn_is_reported_as_in_flight(world):
+    client, _, _, _ = world
+    assert client.get("/status").json()["turnActive"] is False
+    dispatch(client)
+    assert client.get("/status").json()["turnActive"] is True
+
+
+def test_a_finished_turn_is_no_longer_in_flight(world):
+    """The exact shape of the reported hang: the agent's turn ended, the game
+    is still running, and nothing is playing the seat."""
+    client, _, _, _ = world
+    dispatch(client)
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
+    assert client.get("/status").json()["turnActive"] is False
+
+
+def test_a_pushed_reflection_turn_is_in_flight_again(world):
+    client, _, _, state = world
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    assert client.get("/status").json()["turnActive"] is True, (
+        "the agent is writing its notes - that is a live turn"
+    )
+
+
+def test_a_dispatch_that_is_still_reaching_the_agent_has_no_live_turn(world):
+    client, _, _, state = world
+    state["agent"] = "booting"
+    dispatch(client)
+    body = client.get("/status").json()
+    assert body["pending"] is True
+    assert body["turnActive"] is False, "a booting agent is not holding a turn"

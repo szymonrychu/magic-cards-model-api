@@ -25,6 +25,22 @@ _lock = threading.Lock()
 #: here because this module treats it specially - see `record`.
 PROBLEM_ACTION = "report_problem"
 
+#: A seat's own pregame move refused because something had already made it for
+#: that seat (`opening.PregameOverruled`). Treated like a problem report: it
+#: means the game took a decision away from a player, and a line at INFO among
+#: a hundred routine ones is not how that should surface.
+OVERRULE_ACTION = "pregame_overruled"
+
+#: The actions that get a banner at WARNING rather than one compact line.
+LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION)
+
+#: The heading each loud action's banner carries, preposition included: one
+#: is something the seat did, the other something done to it.
+_LOUD_HEADINGS = {
+    PROBLEM_ACTION: "PROBLEM REPORTED by",
+    OVERRULE_ACTION: "PREGAME DECISION OVERRULED for",
+}
+
 logger = logging.getLogger("mcm.audit")
 if not logger.handlers:  # import-guarded: no duplicate handlers on re-import
     handler = logging.StreamHandler(sys.stderr)
@@ -79,14 +95,14 @@ def record(game_id: str, action: str, **detail: Any) -> int:
         log = _logs.setdefault(game_id, [])
         entry["seq"] = len(log) + 1
         log.append(entry)
-    if action == PROBLEM_ACTION:
+    if action in LOUD_ACTIONS:
         # A seat filing an engine bug is the single most valuable thing in this
         # log, and it used to be indistinguishable from the hundred routine
         # lines around it: the compact line below prints only card/target, so
         # the report's *text* - the whole point of the call - never reached the
         # console at all. It gets its own banner and WARNING level so it stands
         # out in `docker compose logs`.
-        logger.warning(_problem_block(entry))
+        logger.warning(_loud_block(entry))
     else:
         logger.info(_console_line(entry))
     return entry["seq"]
@@ -98,21 +114,23 @@ def entries(game_id: str) -> list[dict[str, Any]]:
         return [dict(entry, detail=dict(entry["detail"])) for entry in _logs.get(game_id, [])]
 
 
-def _problem_block(entry: dict[str, Any]) -> str:
-    """The console form of `report_problem`: a banner, the seat and position,
-    and the report text itself, one indented line per line of it.
+def _loud_block(entry: dict[str, Any]) -> str:
+    """The console form of a `LOUD_ACTIONS` entry: a banner, the seat and
+    position, and the entry's own `text`, one indented line per line of it.
 
-    Deliberately louder and taller than every other entry. It is the agent
-    telling us the engine is wrong, live, and a person watching the container
-    log should not have to be looking for it to notice."""
+    Deliberately louder and taller than every other entry. One of these is the
+    agent telling us the engine is wrong, live; the other is the server
+    telling us it took a decision away from a seat. A person watching the
+    container log should not have to be looking for either to notice."""
     detail = entry["detail"]
     turn = entry["turn"] if entry["turn"] is not None else "?"
     step = entry["step"] or "?"
     who = detail.get("player") or "?"
     text = str(detail.get("text") or "").strip() or "(no text)"
+    heading = _LOUD_HEADINGS.get(entry["action"], f"{entry['action'].upper()} by")
     lines = [
         "=" * 72,
-        f"PROBLEM REPORTED by {who} - #{entry['seq']} [turn {turn} / {step}]",
+        f"{heading} {who} - #{entry['seq']} [turn {turn} / {step}]",
     ]
     lines += [f"  {line}" for line in text.splitlines()]
     lines.append("=" * 72)

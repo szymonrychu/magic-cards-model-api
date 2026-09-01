@@ -1012,7 +1012,13 @@ def build_server(seats: Seats) -> MCPServer:
         Keeping costs one card on the bottom of your library per mulligan you
         took (`pregame.cards_to_bottom`). `bottom` is a comma-separated list of
         that many card ids from your hand; leave it empty to let the back of
-        your hand go. Does not block."""
+        your hand go. Does not block.
+
+        An `HTTP 409` with `overruled` means an automatic backstop had already
+        declared for this seat because it had gone quiet, and this declaration
+        was NOT applied. Retrying cannot help and nothing you can send will
+        change it - if you meant to mulligan, that decision is gone and you are
+        holding the dealt hand; say so with `report_problem` and play on."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -1035,7 +1041,12 @@ def build_server(seats: Seats) -> MCPServer:
 
         `card` is one card id from that list. Call with no `card` when you are
         done - that passes to the next seat, and the last seat finishing starts
-        turn 1. Does not block."""
+        turn 1. Does not block.
+
+        An `HTTP 409` with `overruled` means an automatic backstop had already
+        declined this window for the seat because it had gone quiet, and your
+        action was NOT taken - the card is still in your hand and will stay
+        there. Retrying cannot reopen the window; report it and play on."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT

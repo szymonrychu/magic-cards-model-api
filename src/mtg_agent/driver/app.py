@@ -93,6 +93,13 @@ def build_app(
         "reflectionTurnId": None,
         "reflected": False,
         "pending": False,
+        # True from the moment a turn is pushed to the agent until its
+        # `/turn-done` callback lands: "claude has this turn and has not
+        # finished it". The game server reads it off `/status` to tell a seat
+        # that is thinking from a seat that has stopped playing - one long
+        # turn covers a whole match here, so a *finished* turn in a game that
+        # is still running is an agent that gave up, not a healthy idle.
+        "turnActive": False,
         "lastError": None,
     }
 
@@ -103,6 +110,7 @@ def build_app(
             reflectionTurnId=None,
             reflected=False,
             pending=False,
+            turnActive=False,
         )
 
     def game_state(game_id: str, uid: str) -> dict:
@@ -205,7 +213,9 @@ def build_app(
                 continue
             with lock:
                 if current["assignment"] is assignment:
-                    current.update(lastTurnId=turn_id, pending=False, lastError=None)
+                    current.update(
+                        lastTurnId=turn_id, pending=False, turnActive=True, lastError=None
+                    )
             log.info("game %s reached the agent on retry, turn %s", assignment.game_id, turn_id)
             return
 
@@ -301,6 +311,7 @@ def build_app(
                 reflectionTurnId=None,
                 reflected=False,
                 pending=True,
+                turnActive=False,
                 lastError=None,
             )
 
@@ -331,7 +342,7 @@ def build_app(
 
         with lock:
             if current["assignment"] is assignment:
-                current.update(lastTurnId=turn_id, pending=False)
+                current.update(lastTurnId=turn_id, pending=False, turnActive=True)
         log.info(
             "dispatched game=%s player=%s vs=%s deck=%s (match %.2f, %d cards) turn=%s",
             body.game_id,
@@ -378,6 +389,11 @@ def build_app(
     def turn_done(record: dict) -> dict:
         log_turn_result(record)
         with lock:
+            # The turn the agent just finished is no longer in flight. Set
+            # before anything else here, so a reflection push below can turn
+            # it back on and a game that is still running reports the truth:
+            # nothing is playing this seat at the moment.
+            current["turnActive"] = False
             assignment = current["assignment"]
             reflected = current["reflected"]
             reflection_id = current["reflectionTurnId"]
@@ -414,7 +430,7 @@ def build_app(
             retire(assignment)
             return {"retired": True, "gameId": assignment.game_id, "reflected": False}
         with lock:
-            current.update(reflected=True, reflectionTurnId=turn_id)
+            current.update(reflected=True, reflectionTurnId=turn_id, turnActive=True)
         log.info("game %s over (%s), reflection turn %s", assignment.game_id, outcome, turn_id)
         return {"reflectionTurnId": turn_id, "outcome": outcome}
 
@@ -429,6 +445,7 @@ def build_app(
                 "lastTurnId": current["lastTurnId"],
                 "reflected": current["reflected"],
                 "pending": current["pending"],
+                "turnActive": current["turnActive"],
                 "lastError": current["lastError"],
             }
 

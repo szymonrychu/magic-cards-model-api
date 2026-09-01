@@ -78,6 +78,29 @@ def test_a_problem_report_is_louder_than_an_ordinary_action(client, game):
     assert record.getMessage().startswith("=" * 72)
 
 
+def test_an_overruled_pregame_decision_is_just_as_loud(client, game):
+    """The other thing a person watching the log must not miss: the server
+    took a decision away from a seat, because a backstop had already made that
+    seat's pregame move when its own arrived (`ai_pregame.py`). A compact INFO
+    line among a hundred routine ones is not how that surfaces."""
+    with capturing("mcm.audit") as printed:
+        audit.record(
+            game,
+            audit.OVERRULE_ACTION,
+            player="claude",
+            allowed=False,
+            reason="the backstop had already made this pregame move for this seat",
+            kind="mulligan",
+            text="this CR 103.5 declaration was NOT applied",
+        )
+
+    (record,) = [r for r in printed.records if "OVERRULED" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert record.getMessage().startswith("=" * 72)
+    assert "PREGAME DECISION OVERRULED for claude" in record.getMessage()
+    assert "this CR 103.5 declaration was NOT applied" in record.getMessage()
+
+
 def test_ordinary_actions_stay_at_info(client, game):
     with capturing("mcm.audit") as printed:
         client.post(
@@ -90,8 +113,14 @@ def test_ordinary_actions_stay_at_info(client, game):
 
 def test_a_report_with_no_text_still_prints_a_banner():
     """A report is never swallowed, however empty."""
-    entry = {"seq": 3, "turn": 1, "step": "upkeep", "detail": {"player": "alice", "text": "  "}}
-    block = audit._problem_block(entry)
+    entry = {
+        "seq": 3,
+        "turn": 1,
+        "step": "upkeep",
+        "action": audit.PROBLEM_ACTION,
+        "detail": {"player": "alice", "text": "  "},
+    }
+    block = audit._loud_block(entry)
     assert "PROBLEM REPORTED by alice" in block
     assert "(no text)" in block
 

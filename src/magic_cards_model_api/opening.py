@@ -69,6 +69,54 @@ from magic_cards_model.machines.decisions import DecisionKind, ScriptedAnswer
 from magic_cards_model.models import Game
 
 from . import audit, engine_api
+from .store import store
+
+
+class PregameOverruled(ValueError):
+    """A seat's own pregame move arrived after something had already made the
+    default one for it, and was therefore not applied.
+
+    A `ValueError` so nothing that already handles a refusal has to learn a
+    new type, but its own class so `app.py` can answer 409 rather than 400:
+    the request was not malformed, it lost a race, and the two want different
+    words to a caller whose only feedback is the response body.
+
+    The reason this exists at all: `ai_pregame.py`'s backstop makes a bot
+    seat's CR 103.5 declaration when the seat has gone quiet. If the seat then
+    declares for itself, the engine refuses with "has already kept a hand" -
+    true of the game, false of the seat, and actively misleading to an agent
+    reading it, which will conclude it declared twice by mistake. Worse, a
+    declaration that was a *mulligan* has now been silently replaced by a
+    keep: the seat is playing a hand it rejected. That is worth saying out
+    loud, in the response and in the audit log, rather than answering 400 and
+    moving on.
+    """
+
+
+def _overruled(game_id: str, username: str, kind: str, what: str, exc: ValueError) -> None:
+    """Turn the engine's refusal into the truth, loudly, when the backstop is
+    why the seat is being refused. Raises, or returns and lets the caller
+    re-raise the engine's own refusal unchanged."""
+    if kind not in store.automatic_pregame(game_id, username):
+        return
+    text = (
+        f"{what} was NOT applied: {username} is an AI seat, and the automatic "
+        f"backstop had already taken this pregame move for that seat because it "
+        f"had gone quiet (`ai_pregame.py`). The backstop's default stands and "
+        f"cannot be replaced - the engine refused with: {exc}. If the move you "
+        f"were making differs from the default (keep the dealt hand, decline "
+        f"CR 103.6's actions), that decision has been lost."
+    )
+    audit.record(
+        game_id,
+        audit.OVERRULE_ACTION,
+        player=username,
+        allowed=False,
+        reason="the backstop had already made this pregame move for this seat",
+        kind=kind,
+        text=text,
+    )
+    raise PregameOverruled(text) from exc
 
 
 def in_pregame(game: Game) -> bool:
@@ -164,6 +212,7 @@ def declare_mulligan(
     bottom: list[UUID] | None = None,
     *,
     automatic: bool = False,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """One seat's CR 103.5 declaration - "first, the starting player declares
     whether they will take a mulligan; then each other player in turn order
@@ -175,11 +224,12 @@ def declare_mulligan(
     made instead of reaching the mailbox - see the module docstring.
     """
     chose_bottom: bool | None = None
+    scripted: ScriptedAnswer | None = None
     if not take:
         answer = _bottom_answer(game, username, bottom)
         if answer is not None:
             cards, chose_bottom = answer
-            game.decisions.add(
+            scripted = game.decisions.add(
                 ScriptedAnswer(
                     kind=DecisionKind.CHOOSE_CARDS,
                     value=cards,
@@ -187,7 +237,21 @@ def declare_mulligan(
                     uses=1,
                 )
             )
-    step = game.declare_mulligan(username, take)
+    try:
+        step = game.declare_mulligan(username, take)
+    except ValueError as exc:
+        # The bottoming answer above was queued for a declaration that did not
+        # happen. Left in the script it is a live answer with a use on it,
+        # waiting to be spent by the next `CHOOSE_CARDS` this player is asked -
+        # a refused mulligan silently pre-answering some later question. Take
+        # it back out before reporting the refusal.
+        if scripted is not None and scripted in game.decisions.answers:
+            game.decisions.answers.remove(scripted)
+        if not automatic:
+            _overruled(game_id, username, "mulligan", "this CR 103.5 declaration", exc)
+        raise
+    if automatic:
+        store.record_automatic_pregame(game_id, username, "mulligan")
     audit.record(
         game_id,
         "mulligan_declared",
@@ -201,6 +265,9 @@ def declare_mulligan(
         # seat's own choice, so the transcript must not claim it was.
         live=not automatic,
         automatic=automatic,
+        # Why the backstop was entitled to move for this seat - see
+        # `ai_pregame.settle`. None for a seat's own declaration.
+        reason=reason,
         bottom_chosen=chose_bottom,
         step=step.value,
     )
@@ -213,14 +280,30 @@ def take_opening_hand_action(
     """One CR 103.6 action with a card in this seat's own opening hand."""
     card = game.find_by_id(card_id)
     name = card.name if card is not None else str(card_id)
-    game.take_opening_hand_action(username, card_id)
+    try:
+        game.take_opening_hand_action(username, card_id)
+    except ValueError as exc:
+        # The worst loss in this whole module: the backstop declines CR 103.6's
+        # window, and a seat that wanted to put Leyline of the Void onto the
+        # battlefield (CR 103.6a) or reveal Gemstone Caverns (CR 103.6b) finds
+        # the window shut. Nothing about the resulting board looks wrong - the
+        # card is simply still in hand - so this has to be said out loud here
+        # or it is invisible. That is the "it was shown after mulligans but I
+        # could not use it" report, from the other side.
+        _overruled(game_id, username, "opening_hand", f"this CR 103.6 action with {name}", exc)
+        raise
     assert game.turn is not None
     audit.record(game_id, "opening_hand_action", player=username, card=name, live=True)
     return {"taken": name, "step": game.turn.step.value, "pregame": pregame_view(game)}
 
 
 def finish_opening_hand_actions(
-    game_id: str, game: Game, username: str, *, automatic: bool = False
+    game_id: str,
+    game: Game,
+    username: str,
+    *,
+    automatic: bool = False,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """This seat is done taking CR 103.6 actions; the next seat is up, and
     when the last one finishes CR 103.8's first turn begins.
@@ -235,7 +318,14 @@ def finish_opening_hand_actions(
     rather than the corner one: a seat whose agent is failing is exactly the
     seat the backstop moves for.
     """
-    step = game.finish_opening_hand_actions(username)
+    try:
+        step = game.finish_opening_hand_actions(username)
+    except ValueError as exc:
+        if not automatic:
+            _overruled(game_id, username, "opening_hand", "this CR 103.6 pass", exc)
+        raise
+    if automatic:
+        store.record_automatic_pregame(game_id, username, "opening_hand")
     audit.record(
         game_id,
         "opening_hand_done",
@@ -243,6 +333,7 @@ def finish_opening_hand_actions(
         step=step.value,
         live=not automatic,
         automatic=automatic,
+        reason=reason,
     )
     result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game)}
     crossed = engine_api.settle_priorityless_steps(game)
@@ -279,6 +370,7 @@ def settle_pregame(game_id: str, game: Game) -> dict[str, Any]:
 
 
 __all__ = [
+    "PregameOverruled",
     "declare_mulligan",
     "finish_opening_hand_actions",
     "in_pregame",

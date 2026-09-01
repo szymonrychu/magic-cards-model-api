@@ -46,6 +46,10 @@ class GameStore:
         self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
         self._decklists: dict[str, dict[str, str]] = {}  # game_id -> username -> decklist text
         self._ai_players: dict[str, set[str]] = {}  # game_id -> usernames driven by a bot
+        # game_id -> username -> the pregame moves something made *for* that
+        # seat rather than the seat making them itself. See
+        # `record_automatic_pregame`.
+        self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -106,6 +110,24 @@ class GameStore:
         did not say so - a human seat is never inferred into this set."""
         with self._lock:
             return set(self._ai_players.get(game_id, set()))
+
+    def record_automatic_pregame(self, game_id: str, player: str, kind: str) -> None:
+        """Remember that `kind` (`"mulligan"` or `"opening_hand"`) was taken
+        *for* `player` by `ai_pregame.py`'s backstop rather than by the seat.
+
+        This is what lets a late declaration from the seat itself be refused
+        with the truth instead of the engine's bare "has already kept a hand".
+        The seat did not already keep a hand; something kept one on its
+        behalf, and those are different sentences to an agent whose only
+        feedback is the response body. See `opening.py`'s `PregameOverruled`.
+        """
+        with self._lock:
+            self._automatic_pregame.setdefault(game_id, {}).setdefault(player, set()).add(kind)
+
+    def automatic_pregame(self, game_id: str, player: str) -> set[str]:
+        """The pregame moves the backstop made for this seat, if any."""
+        with self._lock:
+            return set(self._automatic_pregame.get(game_id, {}).get(player, set()))
 
     @contextmanager
     def locked(self, game_id: str) -> Iterator[Game]:
@@ -190,6 +212,7 @@ class GameStore:
             self._decision_timeouts.pop(game_id, None)
             self._decklists.pop(game_id, None)
             self._ai_players.pop(game_id, None)
+            self._automatic_pregame.pop(game_id, None)
             return self._games.pop(game_id, None) is not None
 
     def ids(self) -> list[str]:
