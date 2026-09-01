@@ -183,7 +183,7 @@ until claude has booted, which takes up to about two minutes.
 
 | what | where |
 |---|---|
-| play | `https://play-magic.szymonrichert.pl/play/` - user `play`, password `magic` |
+| play | `https://play-magic.szymonrichert.pl/` - user `play`, password `magic`. `/play/` redirects here |
 | which deck the driver identified | port-forward, then `http://127.0.0.1:8090/status` |
 | agent turns, probe, interrupt | port-forward, then `http://127.0.0.1:8080/v1/...` |
 

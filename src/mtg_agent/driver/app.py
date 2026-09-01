@@ -58,6 +58,17 @@ class DispatchIn(BaseModel):
     api_base: str = ""
 
 
+class ReleaseIn(BaseModel):
+    """Who is giving the agent back. Both fields are optional so a caller that
+    knows only one of them can still release the seat it dispatched, but a
+    caller that names a game the agent is not playing is refused rather than
+    allowed to retire somebody else's match."""
+
+    uid: str = ""
+    game_id: str = ""
+    reason: str = ""
+
+
 def _default_client_factory(base_url: str) -> httpx.Client:
     return httpx.Client(base_url=base_url, timeout=30.0)
 
@@ -433,6 +444,57 @@ def build_app(
             current.update(reflected=True, reflectionTurnId=turn_id, turnActive=True)
         log.info("game %s over (%s), reflection turn %s", assignment.game_id, outcome, turn_id)
         return {"reflectionTurnId": turn_id, "outcome": outcome}
+
+    @app.post("/release", status_code=202)
+    def release(body: ReleaseIn) -> dict:
+        """Give the agent back before its game ended.
+
+        The lobby starting a new game abandons the old one, and without this
+        the driver kept the old assignment: every dispatch for the new game
+        got the 409 "this agent is already playing game <old>", so the human's
+        second game had no opponent at all until the container was restarted
+        by hand.
+
+        It runs the same `retire` the end of a match runs - the assignment is
+        dropped and the agent's session ends, so the next dispatch starts on a
+        fresh conversation instead of one full of the abandoned game. Nothing
+        under `MEMORY_ROOT` is touched: what the continuous agent learned is
+        on a mounted volume that neither this endpoint nor `retire` writes to,
+        and it is still there for the next match. The one thing lost is the
+        reflection turn, because the game was abandoned rather than played to
+        an outcome - said here, in the log, rather than left to be inferred.
+        """
+        with lock:
+            assignment = current["assignment"]
+        if assignment is None:
+            return {"released": False, "reason": "this agent has no assignment"}
+        if body.uid and assignment.uid != body.uid:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"this agent is playing game {assignment.game_id} as "
+                    f"{assignment.player}, not the seat you named"
+                ),
+            )
+        if body.game_id and assignment.game_id != body.game_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"this agent is playing game {assignment.game_id}, not {body.game_id}",
+            )
+        log.info(
+            "releasing game %s (%s) without a reflection turn: %s",
+            assignment.game_id,
+            assignment.player,
+            body.reason or "no reason given",
+        )
+        stopped = retire(assignment)
+        return {
+            "released": True,
+            "gameId": assignment.game_id,
+            "player": assignment.player,
+            "agentStopped": stopped,
+            "reflected": False,
+        }
 
     @app.get("/status")
     def status() -> dict:

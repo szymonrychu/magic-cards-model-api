@@ -271,6 +271,7 @@ class AiSeatRegistry:
         return {
             "uid": uid,
             "player": player,
+            "game_id": game_id,
             "mechanism": "wrapper",
             "state": "dispatched",
             "deck": answer.get("deck"),
@@ -478,6 +479,65 @@ class AiSeatRegistry:
             return False
         runner.stop()
         return True
+
+    def _release_from_driver(self, dispatched: dict[str, Any]) -> dict[str, Any]:
+        """Tell the driver this seat is over, so the agent is free for the
+        next game.
+
+        This is the same end-of-match path the driver already runs when a game
+        finishes (`retire`): the assignment is dropped and the agent's session
+        ends, so the next dispatch gets a container with no memory of the
+        abandoned game. It does NOT touch anything the continuous agent keeps
+        on disk - the notes under `./memory` are a mounted volume neither this
+        call nor the driver ever writes to. Never raises: a driver we cannot
+        reach is reported, not propagated into the lobby's request.
+        """
+        base = dispatched.get("driver") or driver_url()
+        payload = {"uid": dispatched.get("uid"), "game_id": dispatched.get("game_id")}
+        try:
+            with _driver_client(base) as client:
+                response = client.post("/release", json=payload)
+                if response.status_code >= 400:
+                    return {
+                        "released": False,
+                        "reason": f"the driver answered {response.status_code}",
+                    }
+                return {"released": True, "driver": base, **response.json()}
+        except Exception as exc:  # noqa: BLE001 - an unreachable driver is a released seat
+            return {
+                "released": False,
+                "reason": f"the driver at {base} could not be reached: {exc}",
+            }
+
+    def release(self, uid: str) -> dict[str, Any]:
+        """Forget this seat entirely, and stop whatever was playing it.
+
+        What "reset the AI seat" means for one uid: a `subprocess`-mode runner
+        is terminated, a `wrapper`-mode dispatch is handed back to the driver,
+        and every record this registry kept under the uid - runner, dispatch,
+        the reason it was unavailable - is dropped, so a stale status can
+        never be polled back out of a finished game. The agent's own memory on
+        disk is untouched; see `_release_from_driver`.
+        """
+        with self._lock:
+            runner = self._runners.pop(uid, None)
+            dispatched = self._dispatched.pop(uid, None)
+            unavailable = self._unavailable.pop(uid, None)
+        released: dict[str, Any] = {
+            "uid": uid,
+            "mechanism": "wrapper" if dispatched is not None else "subprocess",
+            "subprocess_stopped": False,
+            "driver": None,
+            "was_unavailable": unavailable,
+        }
+        if runner is not None:
+            released["subprocess_stopped"] = runner.running()
+            runner.stop()
+        if dispatched is not None:
+            released["driver"] = self._release_from_driver(dispatched)
+        if runner is None and dispatched is None:
+            released["mechanism"] = None
+        return released
 
 
 registry = AiSeatRegistry()

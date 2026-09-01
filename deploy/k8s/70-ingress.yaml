@@ -1,4 +1,8 @@
-# The front door: https://play-magic.szymonrichert.pl/play/
+# The front door: https://play-magic.szymonrichert.pl/
+#
+# The lobby is served at / (it used to be at /play/, which now redirects), and
+# this Ingress already routes / as a Prefix to port 8000, so the move needed no
+# change here: /, /app.js, /style.css and /play/* all take the same rule.
 #
 # *.szymonrichert.pl resolves to the LAN IP at home and to the public IP from
 # outside, so this host works from both with NO extra DNS record. That also

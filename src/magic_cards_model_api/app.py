@@ -1,8 +1,10 @@
 """The FastAPI app: session setup, state, legality questions, and the frontend.
 
-Everything lives under /api; / serves the sibling frontend repo when it exists.
-There is deliberately no CORS: the frontend is served by this app itself, so
-there is exactly one origin.
+Everything lives under /api; / serves this repo's own play UI (`ui/`), and the
+sibling frontend repo, when it is checked out next to this one, sits at
+/frontend. /play/ - where the play UI used to live - redirects to /. There is
+deliberately no CORS: the UI is served by this app itself, so there is exactly
+one origin.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import DecisionKind
@@ -1355,21 +1357,38 @@ def pregame_settle(game_id: str, uid: str | None = None) -> dict[str, Any]:
 # -- the play-vs-AI UI --------------------------------------------------------
 #
 # Server-rendered HTML plus plain JS, served from this repo (`ui/`) - no
-# build step, no npm. Mounted at /play, not /, so it never fights with the
-# sibling `magic-cards-model-test-frontend` repo's own mount at / below (that
-# mount matches every otherwise-unclaimed path, so /play only stays ours
-# because this include happens first - route/mount order decides the match).
+# build step, no npm. The lobby is the front door of this deployment, so it is
+# mounted at /, and the sibling `magic-cards-model-test-frontend` repo (a
+# developer tool, present only when that repo is checked out next to this one)
+# moves to /frontend rather than holding the root.
+#
+# Mount order is what keeps this safe. A StaticFiles mount at / matches every
+# otherwise-unclaimed path, so it must be the LAST thing registered: every
+# /api route, /docs, and the /play redirects below are already on the router by
+# the time it is added, and a route that is already registered always wins.
 
 _ui_dir = Path(__file__).resolve().parents[2] / "ui"
-if _ui_dir.is_dir():
-    app.mount("/play", StaticFiles(directory=_ui_dir, html=True), name="play-ui")
-
-
-# -- the frontend ------------------------------------------------------------
-
 _frontend = frontend_dir()
+
 if _frontend is not None:
-    app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
+    app.mount("/frontend", StaticFiles(directory=_frontend, html=True), name="frontend")
+
+if _ui_dir.is_dir():
+    # /play/ was where this UI lived until the lobby moved to /. Redirected
+    # rather than 404ed, because the people most likely to hit it are the ones
+    # who used it - a bookmark, an open tab, a link in a note. 307 and not 308:
+    # the redirect is permanent in intent, but a browser caches a 308 for the
+    # host indefinitely, and that is an expensive thing to be wrong about for a
+    # path this deployment might want back. The whole subpath is carried over,
+    # so /play/app.js lands on /app.js.
+    @app.get("/play", include_in_schema=False)
+    @app.get("/play/{rest:path}", include_in_schema=False)
+    def play_moved(rest: str = "") -> RedirectResponse:
+        return RedirectResponse(url=f"/{rest}", status_code=307)
+
+    app.mount("/", StaticFiles(directory=_ui_dir, html=True), name="play-ui")
+elif _frontend is not None:
+    app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend-root")
 else:
 
     @app.get("/", include_in_schema=False)

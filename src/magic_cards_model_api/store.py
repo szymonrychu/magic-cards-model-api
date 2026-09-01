@@ -50,6 +50,12 @@ class GameStore:
         # seat rather than the seat making them itself. See
         # `record_automatic_pregame`.
         self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
+        # The games the play UI's lobby booted, oldest first. Only those are
+        # ever reset when the lobby boots another one (`lobby.py`): a game
+        # booted by `serve.py --match` or by `POST /api/games` belongs to
+        # whoever booted it, and the browser starting a game must not delete
+        # somebody else's concurrent one.
+        self._ui_games: list[str] = []
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -62,6 +68,21 @@ class GameStore:
             self._locks[game_id] = threading.Lock()
             self._mailboxes[game_id] = mailbox
         return game_id
+
+    def register_ui_game(self, game_id: str) -> None:
+        """Record that the play UI's lobby booted this game.
+
+        `lobby.reset_previous_games` resets exactly these and nothing else, so
+        the marker is set only by `POST /api/ui/games` - never inferred.
+        """
+        with self._lock:
+            if game_id not in self._ui_games:
+                self._ui_games.append(game_id)
+
+    def ui_games(self) -> list[str]:
+        """The lobby-booted games still in the store, oldest first."""
+        with self._lock:
+            return [game_id for game_id in self._ui_games if game_id in self._games]
 
     def register_decklists(self, game_id: str, decklists: dict[str, str]) -> None:
         """Record the decklist text each seat was booted from: username -> text.
@@ -213,6 +234,8 @@ class GameStore:
             self._decklists.pop(game_id, None)
             self._ai_players.pop(game_id, None)
             self._automatic_pregame.pop(game_id, None)
+            if game_id in self._ui_games:
+                self._ui_games.remove(game_id)
             return self._games.pop(game_id, None) is not None
 
     def ids(self) -> list[str]:

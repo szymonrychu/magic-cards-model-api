@@ -108,8 +108,8 @@ DEFAULT_DELIVERY_SECONDS = float(os.environ.get("MCM_DECISION_DELIVERY_SECONDS",
 #: the first poll - a question raised by the very request that hands a seat
 #: its uid cannot have been seen by that seat yet. So the first question put
 #: to an unproven seat waits this long for that first read, and no longer. A
-#: human at `/play/` polls within milliseconds of the creation response and
-#: clears it every time; a test, `serve.py`'s boot, or an AI seat whose
+#: human at the play UI (`/`) polls within milliseconds of the creation
+#: response and clears it every time; a test, `serve.py`'s boot, or an AI seat whose
 #: subprocess has not spawned yet never does, and is defaulted after this one
 #: probe rather than after two full timeouts.
 #:

@@ -116,6 +116,38 @@ POLL_SECONDS = 0.25
 MAX_LIFETIME_SECONDS = 3600.0
 
 
+#: game_id -> the event that ends that game's watcher thread early.
+#:
+#: Without this, a watcher only ever stopped by finishing the pregame, by its
+#: game disappearing from the store, or by `MAX_LIFETIME_SECONDS` - an hour of
+#: a thread polling a game nobody is playing. `lobby.py` sets the event when
+#: the lobby abandons a game, so the old game's watcher is gone *before* the
+#: new game exists rather than an hour after it.
+_watchers: dict[str, threading.Event] = {}
+_watchers_lock = threading.Lock()
+
+
+def stop(game_id: str) -> bool:
+    """End this game's watcher thread. `True` if one was running.
+
+    The thread is asked to stop rather than killed - it checks the event once
+    per `POLL_SECONDS` and between every step of a pass, so it can never be
+    interrupted half way through settling an obligation.
+    """
+    with _watchers_lock:
+        event = _watchers.pop(game_id, None)
+    if event is None:
+        return False
+    event.set()
+    return True
+
+
+def is_watching(game_id: str) -> bool:
+    """Whether a watcher thread is registered for this game right now."""
+    with _watchers_lock:
+        return game_id in _watchers
+
+
 def _seconds(name: str, fallback: float) -> float:
     raw = os.environ.get(name)
     if not raw:
@@ -234,6 +266,7 @@ def watch(
     max_wait: float | None = None,
     poll: float = POLL_SECONDS,
     max_lifetime: float = MAX_LIFETIME_SECONDS,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Block until this game's pregame is over, settling for a bot seat that
     has gone. Blocking on purpose: `start` runs it on a thread, and a test runs
@@ -243,6 +276,10 @@ def watch(
     it; if the grace window on that obligation has elapsed, ask - without the
     lock - whether anything is still playing that seat; settle only for a seat
     that is `GONE`, or for any seat at all once `max_wait` has run out.
+
+    `stop_event`, set by `stop()`, ends the loop between passes - the lobby
+    abandoning this game must not leave a thread that can still take a seat's
+    pregame move in a game the human has walked away from.
     """
     if not ai_players:
         return
@@ -255,6 +292,8 @@ def watch(
     look_again = 0.0
     give_up = 0.0
     while time.monotonic() - started < max_lifetime:
+        if stop_event is not None and stop_event.is_set():
+            return
         try:
             with store.locked(game_id) as game:
                 if not game.in_pregame:
@@ -295,7 +334,11 @@ def watch(
                 # Visibly still working. Leave its move to it and look again
                 # after another grace period.
                 look_again = now + grace
-        time.sleep(poll)
+        if stop_event is not None:
+            if stop_event.wait(poll):
+                return
+        else:
+            time.sleep(poll)
 
 
 def start(game_id: str, ai_players: list[str]) -> None:
@@ -307,18 +350,33 @@ def start(game_id: str, ai_players: list[str]) -> None:
     if not ai_players:
         return
     store.register_ai_players(game_id, ai_players)
-    threading.Thread(
-        target=watch, args=(game_id, set(ai_players)), daemon=True, name=f"ai-pregame-{game_id}"
-    ).start()
+    event = threading.Event()
+    with _watchers_lock:
+        _watchers[game_id] = event
+
+    def run() -> None:
+        try:
+            watch(game_id, set(ai_players), stop_event=event)
+        finally:
+            # Deregister only if this thread's own event is still the one
+            # registered: a `stop()` that already popped it, or a later
+            # watcher for the same id, must not be forgotten by this one.
+            with _watchers_lock:
+                if _watchers.get(game_id) is event:
+                    del _watchers[game_id]
+
+    threading.Thread(target=run, daemon=True, name=f"ai-pregame-{game_id}").start()
 
 
 __all__ = [
     "grace_seconds",
+    "is_watching",
     "max_wait_seconds",
     "obligation",
     "seat_activity",
     "settle",
     "settle_now",
     "start",
+    "stop",
     "watch",
 ]

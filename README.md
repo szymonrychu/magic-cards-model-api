@@ -2,13 +2,14 @@
 
 A self-test API over the [magic-cards-model](../magic-cards-model) rules
 engine. Set up any board state, ask whether an action is allowed, and get the
-engine's own refusal text back when it is not. A crude MTGO-style frontend is
-served at `/` from the sibling repo `../magic-cards-model-test-frontend` when
-it exists.
+engine's own refusal text back when it is not. The play UI is served at `/`;
+the crude MTGO-style frontend from the sibling repo
+`../magic-cards-model-test-frontend`, when that repo exists next to this one,
+is served at `/frontend`.
 
 ## Play it - Human vs AI
 
-`http://127.0.0.1:8000/play/` is a small, buildless, server-rendered UI
+`http://127.0.0.1:8000/` is a small, buildless, server-rendered UI
 (`ui/`, plain HTML/CSS/JS - no npm, no framework) over exactly the seat API
 below: load a bundled decklist from `decks/` or paste/upload your own,
 validate it (`Deck.check_legality`, CR 100.2a/100.4a), and start a game where
@@ -19,10 +20,19 @@ prompt to run by hand in another terminal - the game is fully playable either
 way. See `ai_seat.py` and `docs/ai_seat_brief.md` for the mechanism and the
 brief the agent is given.
 
+Starting a game from the lobby is a clean slate: the previous lobby game is
+ended and deleted, its seat uids stop opening anything, its pregame watcher
+thread stops, and its AI seat is stopped - a subprocess is terminated, a
+wrapper-mode seat is handed back to the driver so the agent is free for the
+new game. Both games' audit logs record it (`game_reset` in the old one,
+`reset_previous_games` in the new one), so a transcript never silently spans
+two games. What the continuous agent has learned is untouched: that lives in
+`./memory`, and nothing in the reset writes there. See `lobby.py`.
+
 ## Play against a continuous agent
 
 `docker compose up --build` brings up three containers: the game (this repo,
-with the `/play/` UI), an **agent** running one interactive `claude` under a
+with the play UI at `/`), an **agent** running one interactive `claude` under a
 PTY for the length of one match, and a **driver** that tells the agent what it
 is playing and recycles it between matches.
 
@@ -68,7 +78,7 @@ yourself.
 
 | what | where |
 |---|---|
-| play | http://127.0.0.1:8000/play/ |
+| play | http://127.0.0.1:8000/ (`/play/` redirects here) |
 | agent turns, probe, interrupt | http://127.0.0.1:8080/v1/... |
 | which deck the driver identified | http://127.0.0.1:8090/status |
 | the agent's notes | `./memory/` |

@@ -34,7 +34,7 @@ from fastapi import APIRouter
 from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
-from . import ai_pregame, audit, scryfall
+from . import ai_pregame, audit, lobby, scryfall
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
@@ -174,6 +174,11 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     registered in `app.py`) with the same per-card detail
     `validate_decklist_text` reports, rather than booting a broken game -
     both decks are validated before either is registered.
+
+    Starting a game here also *ends* the last one the lobby started - its
+    game, its seat uids, its pregame watcher and its AI seat - and says so in
+    both games' audit logs and in the `reset` key of this response. See
+    `lobby.py`; the continuous agent's notes on disk are not touched.
     """
     problems: dict[str, Any] = {}
     for player in req.players:
@@ -183,12 +188,23 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     if problems:
         raise ValueError(f"decklist(s) failed validation: {problems}")
 
+    # A new game from the lobby is a clean slate: the previous lobby game, its
+    # seat uids, its pregame watcher and its AI seat all stop existing here,
+    # before anything of the new game is built. After validation on purpose -
+    # a decklist typo must not cost a human the game they are still playing -
+    # and before `load_deck_into_game`, so the driver is free by the time the
+    # new game's seat is dispatched to it. See `lobby.py`; the agent's memory
+    # volume is not touched.
+    reset = lobby.reset_previous_games()
+
     match = load_deck_into_game(
         [(player.username, player.decklist_text) for player in req.players],
         seed=req.seed,
     )
     game = match.games[-1]
     game_id = store.create(game)
+    store.register_ui_game(game_id)
+    lobby.record_reset(game_id, reset)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
     store.register_decklists(
@@ -218,4 +234,8 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
         "seat_uids": seat_uids,
         "admin_key": store.admin_key(game_id),
         "ai_players": [player.username for player in req.players if player.ai],
+        # What starting this game reset, so the browser (and anyone reading
+        # the response by hand) can see that the previous game was ended
+        # rather than left running somewhere.
+        "reset": reset,
     }

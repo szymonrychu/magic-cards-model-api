@@ -5,7 +5,7 @@
 #                            #   ANTHROPIC_API_KEY        (a real sk-ant-... key)
 #     docker compose up --build
 #
-# Then play at http://127.0.0.1:8000/play/ and pick a deck. The AI seat is
+# Then play at http://127.0.0.1:8000/ and pick a deck. The AI seat is
 # the continuous agent: it keeps its context across games and writes what it
 # learned into ./memory.
 #

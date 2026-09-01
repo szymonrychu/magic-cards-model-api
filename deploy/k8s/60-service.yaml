@@ -1,6 +1,6 @@
 # One Service, three ports - the same three things compose published.
 #
-# 8000 is the point of the whole stack: it serves /play/, so without it you
+# 8000 is the point of the whole stack: it serves the play UI at /, so without it you
 # cannot play. 8090 and 8080 are kept because they are how you see what the
 # agent is doing: `GET /status` on the driver says which deck it identified and
 # how confidently, and the agent's `/v1/messages/{turnId}` carries the full
