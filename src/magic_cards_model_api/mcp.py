@@ -622,6 +622,16 @@ def build_server(seats: Seats) -> MCPServer:
           stack first**, so the *last* id you list is the ability that
           resolves *first*. Every offered id must appear exactly once;
           dropping or repeating one is refused.
+          Do not answer this one off the ids alone. Read each id in
+          `pending_decision.card_details` first, the same way you would for a
+          `scry`: for this kind that block carries the ability's *source*
+          name and the ability's own printed text (CR 113.1c makes an ability
+          on the stack an object, so it has no card of its own to name it
+          by). When an id is missing from `card_details` - CR 603.3b is asked
+          one step before CR 603.3's "its controller puts it on the stack",
+          so a batch of triggers can be in no zone yet - fall back to
+          `pending_decision.prompt`, which numbers each source positionally
+          against `cards`: entry N of the prompt is entry N of `cards`.
 
         `may`, `pay_life`, `scry`, and `surveil` were not answerable through
         this tool before this wave: the request simply parked until its

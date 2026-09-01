@@ -196,13 +196,34 @@ def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
 
 
 def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Every card on the board right now, by id, from the *unredacted* view.
+    """Every *object* a pending decision can name, by id, from the
+    *unredacted* view.
 
     Used only to resolve the specific ids a pending decision names for the
     player it names them to - never exposed wholesale. Includes hidden zones
     (hands, libraries, sideboards) precisely because those are the zones a
     `SCRY`/`SURVEIL`/library-sourced `CHOOSE_CARDS` decision draws its
     candidates from.
+
+    The stack is walked alongside them, and it is the one zone here that is
+    not a list of cards. CR 113.1c: "an ability can be an activated or
+    triggered ability on the stack. This kind of ability is an object", and
+    CR 603.3 puts a triggered ability there "as an object that's not a card" -
+    so an id a decision names can be an `AbilityOnStack.id`, which no card
+    index can ever match. `CHOOSE_TARGETS` already offers one (CR 115.2 lets a
+    spell or ability target an ability on the stack, and `decisions.
+    _target_view` carries it as a `card`-kinded ref for exactly that reason),
+    and `ORDER_TRIGGERS` (CR 603.3b) names nothing else. Without this, every
+    such id resolved to nothing and the deciding seat was shown bare hex.
+
+    Nothing is widened by including it: CR 400.2 lists the stack among the
+    public zones - "public zones are zones in which all players can see the
+    cards' faces ... graveyard, battlefield, stack, exile, ante, and command
+    are public zones" - so a stack object's identity is already visible to
+    everyone at the table, unlike the hands and libraries above it. The entry
+    is `serialize._stack_view`'s own, so an ability arrives carrying its
+    source's printed name and the ability's own text, which is what tells two
+    triggers of the *same* permanent apart.
     """
     lookup: dict[str, dict[str, Any]] = {}
     for zone_key in ("hands", "libraries", "sideboards", "graveyards"):
@@ -211,6 +232,10 @@ def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 lookup[card["id"]] = card
     for card in view.get("battlefield", []):
         lookup[card["id"]] = card
+    for obj in view.get("stack", []) or ():
+        object_id = obj.get("id")
+        if object_id is not None:
+            lookup[object_id] = obj
     return lookup
 
 
@@ -240,6 +265,18 @@ def redact_pending_decision(
     that viewer's own. `card_details` is scoped to only the ids this decision
     actually names - never the rest of the zone they came from - so this
     grants exactly the visibility the effect itself grants, no more.
+
+    An id that names an object on the *stack* rather than a card resolves
+    here too (see `_card_lookup`), so a decision whose candidates are
+    abilities - `ORDER_TRIGGERS` (CR 603.3b), a `CHOOSE_TARGETS` aimed at an
+    ability (CR 115.2) - is answered against source names and ability text
+    rather than against bare ids. An id that resolves to nothing is left out,
+    which is what an `ORDER_TRIGGERS` batch still looks like today: CR 603.3b
+    is asked *before* CR 603.3's "its controller puts it on the stack" has
+    happened, so those abilities are in no zone yet and nothing here can find
+    them. Clients fall back to the prompt's own numbering, which
+    `machines/decisions.ask_trigger_order` writes positionally against
+    `cards`.
     """
     if viewer == pending.get("player"):
         cards = pending.get("cards") or ()

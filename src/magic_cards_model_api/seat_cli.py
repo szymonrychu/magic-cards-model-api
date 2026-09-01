@@ -236,7 +236,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "comma-separated triggered-ability ids, for an order_triggers decision "
             "(CR 603.3b) - a permutation of pending_decision.cards, bottom of the "
-            "stack first, so the last id listed is the one that resolves first"
+            "stack first, so the last id listed is the one that resolves first. "
+            "Read each id in pending_decision.card_details before choosing: for "
+            "this kind it names the ability's source and its printed text, since "
+            "an ability on the stack is an object with no card of its own "
+            "(CR 113.1c). An id missing from card_details is one CR 603.3b is "
+            "asking about before CR 603.3 has put it on the stack - "
+            "pending_decision.prompt numbers those positionally against cards"
         ),
     )
     blocking(decide)

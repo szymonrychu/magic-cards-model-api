@@ -907,30 +907,70 @@ function submitChooseTargets() {
 }
 
 // CR 603.3b's ordering. `pending.cards` holds `AbilityOnStack` ids, not card
-// ids, so `card_details` cannot name them the way it names a scry's cards -
-// the server has ids and nothing else to send. The player clicks them in the
-// order they want them to *resolve*, which is the only order anybody reasons
-// in ("Harrier's trigger first"), and `submitTriggerOrder` reverses that into
-// the stack order the engine asked for: bottom of the stack first, so the
-// last id sent is the first to resolve.
+// ids: CR 113.1c makes an ability on the stack an object, and CR 603.3 puts a
+// triggered ability there "as an object that's not a card", so a card index
+// can never match one. `visibility._card_lookup` walks the stack alongside
+// the card zones now (CR 400.2 makes the stack public), so whenever the
+// object is *findable* `card_details` names it - source name plus the
+// ability's own text, which is what tells two triggers of the same permanent
+// apart. When it is not findable - CR 603.3b is asked one step before
+// CR 603.3's "its controller puts it on the stack", so this batch is in no
+// zone yet - the label falls back to the position in `pending.cards`, which
+// is exactly what the prompt numbers ("1. Delver of Secrets, 2. ...").
+// Never a raw id: nobody can act on eight hex digits.
+//
+// The player clicks them in the order they want them to *resolve*, which is
+// the only order anybody reasons in ("Harrier's trigger first"), and
+// `submitTriggerOrder` reverses that into the stack order the engine asked
+// for: bottom of the stack first, so the last id sent is the first to
+// resolve.
 
 /** Ability ids picked so far, in resolution order (first clicked resolves first). */
 let triggerOrderPicks = [];
 
+/** How much of an ability's own text to show beside its source's name. Enough
+ * to tell two different triggers of one permanent apart without turning a row
+ * of buttons into a wall of oracle text. */
+const TRIGGER_TEXT_CHARS = 80;
+
+/**
+ * The options a CR 603.3b question offers, as `{id, label}` in the order they
+ * triggered. Pure, and exported, so `tests/test_ui_trigger_order.py` can hold
+ * the real shipped labelling to the rule rather than re-describing it.
+ */
+function triggerOrderOptions(pending) {
+  const ids = (pending && pending.cards) || [];
+  const details = {};
+  ((pending && pending.card_details) || []).forEach((obj) => {
+    details[obj.id] = obj;
+  });
+  return ids.map((id, index) => {
+    const obj = details[id];
+    const position = `#${index + 1}`;
+    if (!obj) return { id: id, label: `trigger ${position}` };
+    const name = obj.name || `trigger ${position}`;
+    const text = (obj.text || "").replace(/\s+/g, " ").trim();
+    const clipped =
+      text.length > TRIGGER_TEXT_CHARS ? `${text.slice(0, TRIGGER_TEXT_CHARS - 1)}…` : text;
+    // The position stays on every label even when the name is known: two
+    // copies of one card is the normal case here (two Delver of Secrets both
+    // read "at the beginning of your upkeep"), so name and text alone can be
+    // identical for two genuinely different objects.
+    return { id: id, label: clipped ? `${position} ${name} - ${clipped}` : `${position} ${name}` };
+  });
+}
+
 function renderOrderTriggersDecision(pending) {
   const ids = pending.cards || [];
   triggerOrderPicks = triggerOrderPicks.filter((id) => ids.includes(id));
-  const names = {};
-  (pending.card_details || []).forEach((card) => {
-    names[card.id] = card.name;
-  });
-  const label = (id) => names[id] || `trigger ${String(id).slice(0, 8)}`;
-  const rows = ids
-    .map((id) => {
+  const options = triggerOrderOptions(pending);
+  const rows = options
+    .map((option) => {
+      const id = option.id;
       const at = triggerOrderPicks.indexOf(id);
       const rank = at === -1 ? "" : ` <em>resolves ${at + 1}${at === 0 ? "st" : at === 1 ? "nd" : at === 2 ? "rd" : "th"}</em>`;
       return `<button class="option" ${at === -1 ? "" : "disabled"}
-        onclick="pickTriggerOrder('${escapeHtml(id)}')">${escapeHtml(label(id))}${rank}</button>`;
+        onclick="pickTriggerOrder('${escapeHtml(id)}')">${escapeHtml(option.label)}${rank}</button>`;
     })
     .join("");
   const done = triggerOrderPicks.length === ids.length && ids.length > 0;
@@ -1467,6 +1507,7 @@ if (typeof module !== "undefined" && module.exports) {
     interpretPassOutcome,
     sendTargets,
     setHtml,
+    triggerOrderOptions,
     aiStallNotice,
     AI_STALL_SECONDS,
   };

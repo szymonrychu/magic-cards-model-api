@@ -81,7 +81,27 @@ def board(client: TestClient, game: str) -> dict[str, Any]:
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})
     triggers = tuple((ability.id, ability.source_name) for ability in _game(game).stack)
     assert len(triggers) == 2, f"expected two simultaneous upkeep triggers, got {triggers}"
-    return {"library_ids": library_ids, "bears_id": bears_id, "triggers": triggers}
+    # The wording the engine really used, read off the `Decision` that advance
+    # made it build, never written down here. `ask_trigger_order` rewrites the
+    # prompt it is handed - it appends each source's printed name, numbered
+    # against `cards`, because `Decision.cards` for this kind holds
+    # `AbilityOnStack` ids and an ability on the stack is an object that is not
+    # a card (CR 113.1c, CR 603.3), so nothing downstream could otherwise name
+    # them. A refusal quotes the prompt, so the `ORDER_TRIGGERS` case below has
+    # to carry that rewritten wording or the two sides refuse in different
+    # words over a difference that is not drift.
+    asked = [
+        decision
+        for decision in _game(game).decisions.asked
+        if decision.kind is DecisionKind.ORDER_TRIGGERS
+    ]
+    assert asked, "the advance should have put CR 603.3b's ordering to alice"
+    return {
+        "library_ids": library_ids,
+        "bears_id": bears_id,
+        "triggers": triggers,
+        "trigger_prompt": asked[-1].prompt,
+    }
 
 
 def _game(game_id: str) -> Game:
@@ -108,12 +128,15 @@ def _engine_ask(engine_game: Game, decision: Decision) -> object:
         # `Game.ask`: `ask_trigger_order` puts it and validates the answer
         # itself, so that is the other side of the mailbox for this kind. It
         # is called with the same `(id, source_name)` pairs the board fixture
-        # read straight off the real triggers now on the stack, and the same
-        # prompt, so both sides refuse in identical words.
+        # read straight off the real triggers now on the stack, and with its
+        # own default prompt - the one the real advance already used, which
+        # the fixture read back off the `Decision` that advance built and put
+        # on the case below, so both sides refuse in identical words. Passing
+        # `decision.prompt` here instead would re-run `ask_trigger_order`'s
+        # own prompt rewrite over an already-rewritten prompt and name every
+        # source twice.
         abilities = tuple((ability.id, ability.source_name) for ability in engine_game.stack)
-        return ask_trigger_order(
-            engine_game.decisions, decision.player, abilities, prompt=decision.prompt
-        )
+        return ask_trigger_order(engine_game.decisions, decision.player, abilities)
     return engine_game.ask(decision)
 
 
@@ -310,7 +333,7 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         Decision(
             kind=DecisionKind.ORDER_TRIGGERS,
             player="alice",
-            prompt="order your triggered abilities on the stack",
+            prompt=board["trigger_prompt"],
             cards=(first_id, second_id),
         ),
         [
