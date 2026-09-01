@@ -12,23 +12,37 @@ Every command is a fresh process. Always pass BOTH your uid and your game id
   cd {api_repo} && .venv/bin/python -m magic_cards_model_api.seat_cli \
       --uid {uid} --game {game_id} --api {api_base} <subcommand>
 
-Subcommands: state, wait, mulligan, opening-hand-done, cast, play-land,
-activate, attackers, blockers, decide, pass, resolve, advance, set-step, log,
-report. Run `<subcommand> --help` when unsure of arguments.
+Subcommands: state, wait, mulligan, opening-hand-action, opening-hand-done,
+cast, play-land, suspend, plot, foretell, cycle, activate, attackers,
+blockers, decide, pass, resolve, advance, set-step, log, report. Run
+`<subcommand> --help` when unsure of arguments.
 
-**`--hold` is how you take two actions in one phase.** Every action releases
+**`--hold` is how you take two actions in one phase.** A `cast` releases
 priority by default and blocks until you next have something to do. If you
-mean to act again before the phase moves on - play a land and then cast off
-it, cast two spells, hold up an instant after your land drop - pass `--hold`,
-or the phase can end between your two actions:
+mean to act again before the phase moves on - cast two spells, hold up an
+instant - pass `--hold`, or the phase can end between your two actions:
 
-    ... --uid U --game G --hold play-land Forest
+    ... --uid U --game G --hold cast "Sakura-Tribe Elder"
     ... --uid U --game G --hold cast "Amulet of Vigor"
 
-A **special action** holds on your behalf whether you ask or not: CR 116.3
-says "if a player takes a special action, that player receives priority
-afterward". That is playing a land (CR 116.2a), suspend, plot, foretell and
-cycling. A `cast` is not a special action and still releases unless held.
+Two kinds of action hold on your behalf whether you ask or not, because
+neither uses the stack, so there is nothing releasing priority would let
+resolve:
+
+- a **special action** - CR 116.3, "if a player takes a special action, that
+  player receives priority afterward". That is playing a land (CR 116.2a),
+  suspend (CR 116.2f), plot (CR 116.2k) and foretell (CR 116.2h). `cycle`
+  holds with them, but note it is *not* a special action: CR 702.29a makes
+  cycling an ordinary activated ability, so what keeps priority with you there
+  is CR 117.3c.
+- a **mana ability** - `activate` on a land or other mana source. CR 605.3b:
+  it "doesn't go on the stack ... it resolves immediately after it is
+  activated". Releasing would be half of "all players pass in succession", the
+  step could end (CR 500.2), and the mana you just made empties with it
+  (CR 500.5). So tap for mana and then spend it in the same command sequence;
+  nothing passes underneath you.
+
+A `cast` is neither, and still releases unless held.
 
 ## FIRST, before anything else: the pregame (CR 103.5 and CR 103.6)
 

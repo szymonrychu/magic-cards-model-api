@@ -15,13 +15,30 @@ unredacted state - it could not leak it if it tried, which is the point:
 before, this file computed the correct answer and anything that talked to
 the API directly (skipping this process) got the unfiltered one instead.
 
-Every action tool below - `cast`, `play_land`, `activate`, `declare_attackers`,
-`declare_blockers`, `resolve_top`, `advance`, `decide`, `pass_priority` - is
-"one call, one meaningful action": it performs the action, releases priority
-unless told to hold, blocks until this seat next has something to do, and
+Every action tool below - `cast`, `play_land`, `suspend`, `plot`, `foretell`,
+`cycle`, `activate`, `declare_attackers`, `declare_blockers`, `resolve_top`,
+`advance`, `decide`, `pass_priority` - is "one call, one meaningful action":
+it performs the action, blocks until this seat next has something to do, and
 returns the outcome plus the state it woke into, all in one answer. The whole
 flow (wake conditions, `hold_priority`, the no-deadlock invariant) lives in
 `seatkit.run_action`, shared with `seat_cli.py` - see that module's docstring.
+
+Whether the harness auto-passes priority on the seat's behalf is NOT uniform,
+and the tools that differ say so in capitals in their own docstrings:
+
+- `play_land`, `suspend`, `plot`, `foretell` and `cycle` **hold priority by
+  default** (`hold_priority=True`). The first four are special actions, and
+  CR 116.3 says "if a player takes a special action, that player receives
+  priority afterward"; cycling is an activated ability (CR 702.29a) that
+  earns the same treatment through CR 117.3c. Releasing after one of these
+  throws away the rest of the seat's own main phase, which is exactly the bug
+  that put this paragraph here.
+- `activate` **holds priority whenever the ability turned out to be a mana
+  ability**, whatever `hold_priority` said - a mana ability does not use the
+  stack (CR 605.3b) and the auto-pass could end the step (CR 500.2) and empty
+  the mana it just made (CR 500.5). See `seatkit.added_mana`.
+- everything else releases priority unless told to hold, which is right for
+  them: they use the stack, and releasing is how what you just did resolves.
 
 This process is spawned once for the life of a whole playtest session and
 never reloads its code - editing this file after that does not change what a
@@ -197,7 +214,7 @@ def build_server(seats: Seats) -> MCPServer:
             body["card"] = card
         if targets:
             body["targets"] = _parse_ids(targets)
-        sources = _parse_ids(mana_sources) or seat.my_untapped_sources(state)
+        sources = seat.sources_or_all(mana_sources, state)
         if sources:
             body["mana_sources"] = sources
         if modes:
@@ -237,7 +254,7 @@ def build_server(seats: Seats) -> MCPServer:
                 body["card_id"] = card.strip()
             else:
                 body["card"] = card
-            sources = _parse_ids(mana_sources) or seat.my_untapped_sources(state)
+            sources = seat.sources_or_all(mana_sources, state)
             if sources:
                 body["mana_sources"] = sources
             if dry_run:
@@ -268,12 +285,16 @@ def build_server(seats: Seats) -> MCPServer:
         Once N reaches zero (removed one per your own upkeep - see `advance`'s
         `suspend_upkeep`), you may cast it without paying its mana cost: call
         `cast` on it with no `keyword`, the permission is picked up
-        automatically. HOLDS PRIORITY BY DEFAULT, unlike `cast`: CR 116.3, "if a
-        player takes a special action, that player receives priority
-        afterward". Releasing here would end your own main phase - you would
-        play a land and never get to spend the mana it just made. Pass
-        `hold_priority=false` only when you really do want to hand priority
-        over. See `cast`'s docstring for the answer's shape."""
+        automatically.
+
+        HOLDS PRIORITY BY DEFAULT, unlike `cast`: suspending is a special
+        action (CR 116.2f), and CR 116.3 says "if a player takes a special
+        action, that player receives priority afterward". A special action
+        does not use the stack (CR 116.1), so there is nothing to release
+        priority for - releasing would just end your own main phase with the
+        rest of your plan unplayed. Pass `hold_priority=false` only when you
+        really do want to hand priority over. See `cast`'s docstring for the
+        answer's shape."""
         return _special_action_tool("suspend")(
             player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
         )
@@ -294,13 +315,16 @@ def build_server(seats: Seats) -> MCPServer:
         all your untapped mana sources.
 
         On any later turn, cast it from exile without paying its mana cost:
-        call `cast` on it with `keyword="Plot"`. HOLDS PRIORITY BY DEFAULT,
-        unlike `cast`: CR 116.3, "if a
-        player takes a special action, that player receives priority
-        afterward". Releasing here would end your own main phase - you would
-        play a land and never get to spend the mana it just made. Pass
-        `hold_priority=false` only when you really do want to hand priority
-        over. See `cast`'s docstring for the answer's shape."""
+        call `cast` on it with `keyword="Plot"`.
+
+        HOLDS PRIORITY BY DEFAULT, unlike `cast`: plotting is a special action
+        (CR 116.2k, CR 702.170b), and CR 116.3 says "if a player takes a
+        special action, that player receives priority afterward". A special
+        action does not use the stack (CR 116.1), so there is nothing to
+        release priority for - releasing would just end your own main phase
+        with the rest of your plan unplayed. Pass `hold_priority=false` only
+        when you really do want to hand priority over. See `cast`'s docstring
+        for the answer's shape."""
         return _special_action_tool("plot")(
             player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
         )
@@ -323,12 +347,15 @@ def build_server(seats: Seats) -> MCPServer:
 
         On any later turn, cast it from exile for its printed foretell cost
         (not its mana cost): call `cast` on it with `keyword="Foretell"`.
-        HOLDS PRIORITY BY DEFAULT, unlike `cast`: CR 116.3, "if a
-        player takes a special action, that player receives priority
-        afterward". Releasing here would end your own main phase - you would
-        play a land and never get to spend the mana it just made. Pass
-        `hold_priority=false` only when you really do want to hand priority
-        over. See `cast`'s docstring for the answer's shape."""
+
+        HOLDS PRIORITY BY DEFAULT, unlike `cast`: foretelling is a special
+        action (CR 116.2h, CR 702.143b), and CR 116.3 says "if a player takes
+        a special action, that player receives priority afterward". A special
+        action does not use the stack (CR 116.1), so there is nothing to
+        release priority for - releasing would just end your own main phase
+        with the rest of your plan unplayed. Pass `hold_priority=false` only
+        when you really do want to hand priority over. See `cast`'s docstring
+        for the answer's shape."""
         return _special_action_tool("foretell")(
             player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
         )
@@ -352,14 +379,22 @@ def build_server(seats: Seats) -> MCPServer:
         always 0. `mana_sources` is comma-separated source ids; leave it
         empty to offer all your untapped mana sources.
 
-        Unlike a mana ability, cycling uses the stack (CR 605.1a does not
-        apply to it) and can be responded to - it does not resolve as part of
-        this call. HOLDS PRIORITY BY DEFAULT, unlike `cast`: CR 116.3, "if a
-        player takes a special action, that player receives priority
-        afterward". Releasing here would end your own main phase - you would
-        play a land and never get to spend the mana it just made. Pass
-        `hold_priority=false` only when you really do want to hand priority
-        over. See `cast`'s docstring for the answer's shape."""
+        Unlike a mana ability, cycling uses the stack (it cannot add mana, so
+        CR 605.1a's definition never catches it) and can be responded to - it
+        does not resolve as part of this call.
+
+        HOLDS PRIORITY BY DEFAULT, unlike `cast`. Note the warrant is NOT the
+        one `suspend`/`plot`/`foretell` cite: cycling is not a special action
+        at all, CR 702.29a makes it an ordinary activated ability
+        ("'Cycling [cost]' means '[Cost], Discard this card: Draw a card.'").
+        It is CR 117.3c that keeps priority with you - "if a player has
+        priority when they cast a spell, activate an ability, or take a
+        special action, that player receives priority afterward" - and the
+        default is set here because a seat that cycles in its own main phase
+        almost always means to keep playing, not to hand the turn over before
+        the draw has even resolved. Pass `hold_priority=false` when you really
+        do want to release (and note that the cycling ability only resolves
+        once someone does). See `cast`'s docstring for the answer's shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -373,7 +408,7 @@ def build_server(seats: Seats) -> MCPServer:
             body["card_id"] = card.strip()
         else:
             body["card"] = card
-        sources = _parse_ids(mana_sources) or seat.my_untapped_sources(state)
+        sources = seat.sources_or_all(mana_sources, state)
         if sources:
             body["mana_sources"] = sources
         if dry_run:
@@ -439,11 +474,25 @@ def build_server(seats: Seats) -> MCPServer:
         the ability offers a choice of color to add - an "any color" source
         such as Birds of Paradise or Mox Diamond, or a dual/shockland; it is
         ignored by abilities that do not need one.
-        Mana abilities resolve immediately; others go on the stack.
 
-        Releases priority and blocks for your next moment to act unless
-        `hold_priority` is true (a dry run never blocks) - see `cast`'s
-        docstring for the full shape of the answer."""
+        Mana abilities resolve immediately and never touch the stack
+        (CR 605.3b); every other ability goes on the stack and needs priority
+        to be released before it resolves. This tool follows that split rather
+        than a fixed default, because only the answer says which kind the
+        ability was:
+
+        - a MANA ability ALWAYS HOLDS PRIORITY, even with
+          `hold_priority=false`. Releasing is half of "all players pass in
+          succession while the stack is empty", which ends the step or phase
+          (CR 500.2, CR 505.2), and "any unspent mana left in a player's mana
+          pool empties" as it does (CR 500.5) - so an auto-pass here could
+          bin the mana this very call just made. Spend it, or `pass_priority`
+          deliberately to throw it away.
+        - any other ability releases priority and blocks for your next moment
+          to act unless `hold_priority` is true.
+
+        A dry run never blocks. See `cast`'s docstring for the full shape of
+        the answer."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -456,7 +505,7 @@ def build_server(seats: Seats) -> MCPServer:
         }
         if targets:
             body["targets"] = _parse_ids(targets)
-        sources = _parse_ids(mana_sources) or seat.my_untapped_sources(state)
+        sources = seat.sources_or_all(mana_sources, state)
         if sources:
             body["mana_sources"] = sources
         if color:

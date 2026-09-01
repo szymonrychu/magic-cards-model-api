@@ -165,28 +165,44 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   moment and hands you the board. ALWAYS bound it and call it in a loop. A
   bare unbounded wait strands your turn.
 - `my_state(player_uid)` is the board as you are allowed to see it.
-- `cast`, `play_land`, `activate`, `declare_attackers`, `declare_blockers`,
-  `decide`, `pass_priority`, `resolve_top`, `advance`, `set_step` act.
+- `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
+  `declare_attackers`, `declare_blockers`, `decide`, `pass_priority`,
+  `resolve_top`, `advance`, `set_step` act.
+- `mulligan` and `opening_hand_action` are the pregame (CR 103.5, CR 103.6).
+  A game dealt from decklists *rests* there before turn 1 and nothing on the
+  board can happen until every seat has declared, so these come first: declare
+  your mulligan, then take or decline your opening-hand actions. Until you do,
+  the game sits still and your opponent is waiting on you.
 - `game_log` is the history; `report_problem` files an engine bug.
 
-Each action tool performs the action, releases priority unless you hold it,
-and blocks until you next have something to do - one call, one meaningful
-action.
+Each action tool performs the action and blocks until you next have something
+to do - one call, one meaningful action.
 
-**Holding priority is how you take two actions in one phase.** Releasing is
-the default because most actions end your turn's business; but if you intend
-to do something else before the phase moves on - play a land and then cast
-off it, cast two spells, hold up an instant after a land drop - you must
-hold, or the phase can end between your two actions.
+**Holding priority is how you take two actions in one phase.** For a `cast`,
+releasing is the default, because releasing is how the spell you just cast
+gets to resolve; but if you intend to do something else before the phase moves
+on - cast two spells, hold up an instant - pass `hold_priority=true`, or the
+phase can end between your two actions.
 
-  ... --hold play-land Forest      # keep priority, act again
-  ... --hold cast "Amulet of Vigor"
+  cast(player_uid=..., card="Amulet of Vigor", hold_priority=True)
 
-A **special action** already holds on your behalf, whether you ask or not:
-CR 116.3 says "if a player takes a special action, that player receives
-priority afterward". That covers playing a land (CR 116.2a), suspend, plot,
-foretell and cycling. So a land drop never costs you the rest of your main
-phase - but a `cast` still does unless you `--hold` it.
+Two kinds of action hold on your behalf whether you ask or not, because
+neither uses the stack, so there is nothing releasing priority would let
+resolve:
+
+- a **special action**: CR 116.3 says "if a player takes a special action,
+  that player receives priority afterward". That covers `play_land`
+  (CR 116.2a), `suspend` (CR 116.2f), `plot` (CR 116.2k) and `foretell`
+  (CR 116.2h). `cycle` holds with them, but it is *not* a special action -
+  CR 702.29a makes cycling an ordinary activated ability, and CR 117.3c is
+  what keeps priority with you there.
+- a **mana ability**: `activate` on a land or other mana source holds
+  whatever you passed for `hold_priority`. CR 605.3b: it "doesn't go on the
+  stack ... it resolves immediately after it is activated". Releasing could
+  end the step (CR 500.2) and empty the mana you just made (CR 500.5).
+
+So a land drop, or tapping for mana, never costs you the rest of your main
+phase - but a `cast` still does unless you hold it.
 
 ## Identify the matchup yourself
 

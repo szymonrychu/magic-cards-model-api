@@ -4,10 +4,23 @@ The same seat `mcp.py` exposes, sharing the same "one call, one meaningful
 action" flow (`seatkit.run_action`): the same hidden-information filter - the
 opponent's hand and both libraries never appear - and the same
 cast/play-land/activate/attackers/blockers/resolve/advance/decide/pass
-behaviour: perform the action, release priority unless `--hold` is given,
-then block until this seat next has something to do, printing the outcome
-and the state it woke into together. Meant for subagents that play through
-Bash rather than through an MCP client:
+behaviour: perform the action, then block until this seat next has something
+to do, printing the outcome and the state it woke into together.
+
+Whether priority is released on your behalf first is NOT uniform, and this
+file and `mcp.py` must agree on it command for command:
+
+- `play-land`, `suspend`, `plot`, `foretell` and `cycle` HOLD priority
+  whether `--hold` was given or not (`SPECIAL_ACTIONS`, below, carries the
+  rules for why);
+- `activate` holds whenever the ability turned out to be a mana ability,
+  because a mana ability never uses the stack (CR 605.3b) - decided on the
+  answer, in `seatkit.run_action`, since the command cannot know in advance;
+- everything else releases priority unless `--hold` is given, which is right
+  for them: they use the stack, and releasing is how what you just did
+  resolves.
+
+Meant for subagents that play through Bash rather than through an MCP client:
 
     uv run --directory <api repo> python -m magic_cards_model_api.seat_cli \\
         --uid <seat-uid> cast "Lightning Bolt" --target bob
@@ -28,6 +41,8 @@ from .seatkit import (
     DEFAULT_MAX_SECONDS,
     Seats,
     _parse_ids,
+    _parse_pairs,
+    api_trouble,
     block_until_wake,
     run_action,
 )
@@ -58,7 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help=(
                 "keep priority instead of releasing it (CR 117.3c: you already "
-                "keep it after acting) - never blocks"
+                "keep it after acting) - never blocks. play-land, suspend, plot, "
+                "foretell and cycle hold with or without this; activate holds "
+                "with or without it when the ability was a mana ability"
             ),
         )
         command.add_argument(
@@ -140,7 +157,16 @@ def build_parser() -> argparse.ArgumentParser:
     land.add_argument("card", help="card name or id")
     blocking(land)
 
-    activate = sub.add_parser("activate", help="activate a permanent's ability")
+    activate = sub.add_parser(
+        "activate",
+        help=(
+            "activate a permanent's ability. A mana ability does not use the "
+            "stack (CR 605.3b) and so keeps priority with or without --hold: "
+            "releasing could end the step (CR 500.2) and empty the mana you "
+            "just made (CR 500.5). Any other ability goes on the stack and "
+            "releases unless --hold"
+        ),
+    )
     activate.add_argument("card_id", help="the permanent's id")
     activate.add_argument(
         "index", type=int, help="ability index, from the state view's abilities list"
@@ -152,7 +178,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="color letter (W/U/B/R/G/C) for a mana ability that offers a choice",
     )
-    activate.add_argument("--dry-run", action="store_true")
+    activate.add_argument(
+        "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
+    )
     blocking(activate)
 
     attackers = sub.add_parser("attackers", help="declare attackers (JSON list)")
@@ -294,6 +322,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="CR 103.6: finish your opening-hand actions, starting the game",
     )
 
+    # CR 103.6a/b: some cards act from the opening hand - Leyline of the Void
+    # begins the game on the battlefield, Gemstone Caverns is revealed. This
+    # command was missing for a whole wave while `mcp.py`'s `opening_hand_action`
+    # had it, so a CLI seat could only ever *decline* what its own opening hand
+    # offered: it could finish the window, never use it. `state.pregame.
+    # opening_hand_options` is where the ids come from.
+    opening_action = sub.add_parser(
+        "opening-hand-action",
+        help="CR 103.6: take one card's opening-hand action (see pregame.opening_hand_options)",
+    )
+    opening_action.add_argument("card", help="one card id from pregame.opening_hand_options")
+
     log = sub.add_parser("log", help="the game's action log")
     log.add_argument("limit", nargs="?", type=int, default=40)
 
@@ -311,6 +351,17 @@ def build_parser() -> argparse.ArgumentParser:
 def run(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     seats = Seats(args.api, args.game)
+    # The same check every MCP tool makes through `_guarded`, which this
+    # transport simply did not have: an API speaking a different
+    # `seatkit.PROTOCOL_VERSION` answers with a different shape, and without
+    # this a seat found that out as a stray KeyError or, worse, as an answer
+    # it quietly misread. Fatal here, unlike in `mcp.py`, because a command is
+    # a fresh short-lived process rather than a server that has to survive the
+    # API restarting under it.
+    trouble = api_trouble(seats.http, seats.api)
+    if trouble:
+        print(trouble)
+        return 1
     seat = seats.seat_for(args.uid)
     if seat is None:
         print(
@@ -320,18 +371,30 @@ def run(argv: list[str] | None = None) -> int:
         return 1
     gid = seat.game_id()
 
-    def sources_or_all(value: str) -> list[str] | None:
-        if value:
-            return _parse_ids(value)
-        return seat.my_untapped_sources(seat.fetch_state())
+    # "no --sources given means offer every untapped source" is one rule, and
+    # it lives in `seatkit` so this file and `mcp.py` cannot drift on it - they
+    # already had: this used to branch on the raw string, so `--sources ","`
+    # offered the engine nothing at all while the MCP tool, branching on the
+    # parsed list, offered everything.
+    def sources_or_all(value: str) -> list[str]:
+        return seat.sources_or_all(value)
 
     #: CR 116.3: "If a player takes a special action, that player receives
     #: priority afterward." So these must NOT release priority - a seat that
     #: plays a land and then passes has thrown away the rest of its own main
     #: phase, which is what a live game showed: a Forest in precombat main and
     #: the Amulet of Vigor it should have paid for stranded until postcombat.
-    #: Playing a land is CR 116.2a's special action; suspend, plot, foretell
-    #: and cycling name their own rules in their help text above.
+    #: A special action does not use the stack at all (CR 116.1), so there is
+    #: nothing releasing priority would let resolve.
+    #:
+    #: Four of these five really are special actions: playing a land
+    #: (CR 116.2a), suspend (CR 116.2f), plot (CR 116.2k, CR 702.170b) and
+    #: foretell (CR 116.2h, CR 702.143b). `cycle` is NOT - CR 702.29a makes
+    #: cycling an ordinary activated ability, and it belongs here on CR 117.3c
+    #: instead ("if a player has priority when they cast a spell, activate an
+    #: ability, or take a special action, that player receives priority
+    #: afterward"). The name of the set is a shorthand, not a claim; keep it
+    #: in step with `mcp.py`'s per-tool defaults, which say the same.
     SPECIAL_ACTIONS = {"play-land", "suspend", "plot", "foretell", "cycle"}
 
     def act(perform: Any, dry_run: bool = False) -> None:
@@ -430,7 +493,7 @@ def run(argv: list[str] | None = None) -> int:
             "player": seat.player,
             "attackers": [
                 {"card_id": pair["card"], "defender": pair["defender"]}
-                for pair in json.loads(args.pairs)
+                for pair in _parse_pairs(args.pairs)
             ],
         }
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/attack", body))
@@ -439,7 +502,7 @@ def run(argv: list[str] | None = None) -> int:
             "player": seat.player,
             "blocks": [
                 {"blocker": pair["blocker"], "blocked": pair["blocked"]}
-                for pair in json.loads(args.pairs)
+                for pair in _parse_pairs(args.pairs)
             ],
         }
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/declare-blockers", body))
@@ -521,6 +584,18 @@ def run(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+    elif args.command == "opening-hand-action":
+        print(
+            json.dumps(
+                seat.call_json(
+                    "POST",
+                    f"/api/games/{gid}/pregame/opening-hand/action",
+                    {"player": seat.player, "card_id": args.card.strip()},
+                ),
+                indent=1,
+                sort_keys=True,
+            )
+        )
     elif args.command == "opening-hand-done":
         print(
             json.dumps(
@@ -538,7 +613,14 @@ def run(argv: list[str] | None = None) -> int:
         # its own log must not see the opponent's hidden-zone card names any
         # more than the state endpoint shows them.
         answer = seat.http.get(f"/api/games/{gid}/log", params={"uid": seat.uid})
-        entries = answer.json().get("log", [])[-args.limit :]
+        try:
+            entries = answer.json().get("log", [])[-args.limit :]
+        except ValueError:
+            # Same tolerance `mcp.py`'s `game_log` has: a non-JSON body (an
+            # error page from something in front of the API) is shown rather
+            # than raised as a traceback out of a player's command.
+            print(answer.text)
+            return 1
         print(json.dumps(entries, indent=1, sort_keys=True))
     elif args.command == "report":
         # A report is long prose full of quotes, braces and backticks. Passing

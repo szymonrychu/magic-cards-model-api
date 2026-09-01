@@ -25,6 +25,25 @@ same as a human player would after casting a spell they mean to protect.
 Recorded honestly in `magic-cards-model/docs/engine-coverage.md` rather than
 left looking like a rule of its own.
 
+The convenience is only ever right for an action that *uses the stack*, where
+releasing is how the thing you just did gets to resolve. Two families of
+action do not use the stack, and auto-passing after one of them costs the
+seat the rest of its own phase for nothing:
+
+- **special actions** (CR 116.1: "special actions are actions a player may
+  take when they have priority that don't use the stack"), which CR 116.3
+  answers directly - "if a player takes a special action, that player receives
+  priority afterward". Both transports therefore default those tools to
+  holding: `play_land` (CR 116.2a), `suspend` (CR 116.2f), `plot` (CR 116.2k),
+  `foretell` (CR 116.2h). `cycle` holds with them, though cycling is *not* a
+  special action - CR 702.29a makes it an ordinary activated ability, so its
+  warrant is CR 117.3c rather than CR 116.3.
+- **mana abilities** (CR 605.3b: an activated mana ability "doesn't go on the
+  stack ... it resolves immediately after it is activated"). `activate` cannot
+  default on that, since it is one tool for every ability and only the answer
+  says which kind it was, so `run_action` holds on the outcome instead - see
+  `added_mana`.
+
 ## Wake conditions
 
 A blocked call returns as soon as one of these holds, for this seat:
@@ -356,6 +375,22 @@ class Seat:
         _trim_images(state)
         return state
 
+    def sources_or_all(self, given: str, state: dict[str, Any] | None = None) -> list[str]:
+        """Which mana sources to offer: the ones named, else all untapped ones.
+
+        Shared by both transports so "empty means all of them" can only ever
+        mean one thing. It used to be written out twice, and the two copies
+        already disagreed: `mcp.py` fell back to every untapped source
+        whenever the parsed list came back empty, while `seat_cli.py` decided
+        on the raw string, so a `--sources` value that parsed to nothing (a
+        bare comma, stray whitespace) offered the engine *no* sources at all
+        and the action was refused for mana it plainly had.
+        """
+        named = _parse_ids(given)
+        if named:
+            return named
+        return self.my_untapped_sources(state if state is not None else self.fetch_state())
+
     def my_untapped_sources(self, state: dict[str, Any]) -> list[str]:
         """Every untapped mana source I control, the set the UI offers too.
 
@@ -671,6 +706,27 @@ def _refused(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("allowed") is False
 
 
+def added_mana(outcome: Any) -> bool:
+    """Whether `outcome` is a successful activation of a *mana* ability -
+    `engine_api.activate_ability` marks exactly those `mana_ability: True`,
+    because `Game.activate_ability` returns no stack object for them.
+
+    Why `run_action` treats that as "hold priority" no matter what the caller
+    asked for: a mana ability does not use the stack and resolves immediately
+    (CR 605.3b), so there is nothing to release priority *for* - and releasing
+    it is actively destructive. The auto-pass here is one half of "all players
+    pass in succession while the stack is empty", which ends the phase or step
+    (CR 500.2, CR 505.2); as it ends, "any unspent mana left in a player's mana
+    pool empties" (CR 500.5). So the harness's convenience pass could throw
+    away the very mana the call had just made, along with the rest of the
+    seat's own main phase. CR 117.3c gives the activating player priority back
+    ("if a player has priority when they cast a spell, activate an ability, or
+    take a special action, that player receives priority afterward"); for a
+    mana ability, keeping it is the only sane default.
+    """
+    return isinstance(outcome, dict) and outcome.get("mana_ability") is True
+
+
 def _unknown_outcome(outcome: Any) -> bool:
     """Whether `outcome` is `call_json`'s ambiguous-timeout marker, not an
     ordinary rules refusal - see `UNKNOWN_OUTCOME`. Checked before
@@ -772,6 +828,12 @@ def run_action(
     construction - the check happens before `block_until_wake` is ever
     reached, not by timing or luck.
 
+    One outcome overrides `hold_priority=False` and holds anyway: an activated
+    *mana* ability (`added_mana`, see there for the CR 605.3b/500.2/500.5
+    reasoning). Both transports get that from here rather than from their own
+    defaults, because neither can know whether the ability was a mana ability
+    until the answer comes back.
+
     `perform` itself, and the auto-pass below, both go through
     `_call_watching_for_self_decision` rather than being called directly:
     either can cross a decision addressed to this very seat (an ETB trigger
@@ -827,12 +889,21 @@ def run_action(
             "available_actions": available_actions(seat, state),
         }
 
-    if hold_priority:
+    if hold_priority or added_mana(outcome):
         state = seat.fetch_state()
         return {
             "outcome": outcome,
             "held_priority": True,
-            "wake_reason": "hold_priority=true: kept priority, not blocking",
+            "wake_reason": (
+                "hold_priority=true: kept priority, not blocking"
+                if hold_priority
+                else (
+                    "a mana ability does not use the stack (CR 605.3b), so this kept "
+                    "priority for you whatever you asked for: releasing it can end the "
+                    "step (CR 500.2), and the mana you just made empties as it does "
+                    "(CR 500.5). Spend it now, or pass explicitly to throw it away"
+                )
+            ),
             "state": state,
             "available_actions": available_actions(seat, state),
         }
