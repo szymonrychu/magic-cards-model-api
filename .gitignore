@@ -6,3 +6,4 @@ players/
 *.log
 .env
 memory/
+.DS_Store
