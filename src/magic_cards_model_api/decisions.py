@@ -184,13 +184,14 @@ DEFAULT_PRESENCE_SECONDS = float(os.environ.get("MCM_DECISION_PRESENCE_SECONDS",
 #: puts each triggered ability they control on the stack in any order they
 #: choose") joined this set the moment the *engine* grew the kind - caught by
 #: the drift test, not by a frozen game, which is the whole reason it was
-#: caught early. The engine defines `DecisionKind.ORDER_TRIGGERS` and
-#: `machines/decisions.ask_trigger_order`, but `Game._put_pending_triggers_on_stack`
-#: still places its CR 603.3b batch in `apnap_order` without asking anybody,
-#: so nothing raises the question *yet*. It is wired here anyway, because the
-#: one-line engine commit that adds that `ask_trigger_order` call would
-#: otherwise turn every multi-trigger board into a hang, on a kind no seat
-#: could answer.
+#: caught early. It was wired here before the engine had an ask site at all,
+#: because the commit that added one would otherwise have turned every
+#: multi-trigger board into a hang, on a kind no seat could answer. That commit
+#: has since landed: `Game._put_pending_triggers_on_stack` hands each
+#: controller's block of simultaneous triggers to
+#: `_order_triggers_by_controller`, which asks `ask_trigger_order` wherever a
+#: controller has two or more, so a live seat reaches this question in ordinary
+#: play.
 #:
 #: The answer is an *order*, not a selection: a permutation of exactly the
 #: ability ids offered in `Decision.cards`, **bottom of the stack first**, so
