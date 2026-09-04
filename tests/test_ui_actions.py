@@ -569,6 +569,43 @@ def test_an_up_to_slot_needs_done_before_it_can_fire_empty() -> None:
     assert result == [False, True]
 
 
+def test_needs_explicit_fire_covers_pinned_division_and_up_to_slots() -> None:
+    """`needsExplicitFire` is the one predicate `ribbon.js`'s Cast button and
+    `readyToFire`'s own open-slot gate both read - pinned mana, a division,
+    or any "up to"/unbounded slot (CR 115.6, CR 601.2d) all mean "wait for
+    the player to say so" rather than auto-firing the moment the
+    announcement becomes legal. The filled-to-capacity "up to one" case is
+    the one that regressed: an "up to one" slot that already has its one
+    target chosen is still not exact, and must still ask for an explicit
+    Cast rather than firing on its own."""
+    result = run_module(
+        "actions.js",
+        """[
+          m.needsExplicitFire({
+            pinned: [{ card_id: 'd1', color: 'R' }], affordance: null, slots: [],
+          }),
+          m.needsExplicitFire({ pinned: [], affordance: { division: { amount: 2 } },
+            slots: [{ count: 1, minimum: 1, targets: ['a'] }] }),
+          m.needsExplicitFire({ pinned: [], affordance: null,
+            slots: [{ count: 1, minimum: 0, targets: [] }] }),
+          m.needsExplicitFire({ pinned: [], affordance: null,
+            slots: [{ count: 1, minimum: 0, targets: ['a'] }] }),
+          m.needsExplicitFire({ pinned: [], affordance: null,
+            slots: [{ count: null, minimum: 0, targets: [] }] }),
+          m.needsExplicitFire({ pinned: [], affordance: null,
+            slots: [{ count: 1, minimum: 1, targets: ['a'] }] }),
+        ]""",
+    )
+    assert result == [
+        True,  # pinned mana alone
+        True,  # a division alone, slot itself exact
+        True,  # "up to one", empty
+        True,  # "up to one", already filled to its cap - the regression case
+        True,  # unbounded (count: null), empty
+        False,  # an ordinary exact slot, nothing else in play
+    ]
+
+
 # -- crew (CR 702.122a): the Vehicle's own action kind ----------------------
 
 SMUGGLERS_COPTER = {

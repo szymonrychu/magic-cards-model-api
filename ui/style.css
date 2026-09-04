@@ -672,9 +672,9 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 
 /* -------------------------------------------------------- ribbon (ribbon.js) */
 
-/* A toggled-on chip, wherever it appears: a chosen mode, colour, alternative
-   cost, convoke/delve/pitch candidate, or a decision's `options` control. */
-.chip.selected { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+/* A chosen mode, colour, alternative cost, convoke/delve/pitch candidate, or
+   a decision's `options` control all reuse the existing `.chip.on` toggle
+   look above rather than a second near-identical rule. */
 /* The one target slot a click would fill next (`targeting.js`'s
    `activeSlotIndex`), on the casting strip's own slot chips. */
 .chip.active-slot { outline: 2px solid var(--warn); outline-offset: 1px; }

@@ -3,16 +3,24 @@
 `textContent` getter that aggregates the whole subtree, since `ribbon.js`
 builds several levels of nested nodes per section).
 
-Two scenarios, matching the task brief: a `may` decision (the simplest
-`decisions.js` view model - no controls, just yes/no) and a Kozilek's
-Command cast with two target slots (one filled, one open) exercising the
-casting strip's mode chips, X input, and slot chips together. Both assert
-only that mounting does not throw and that the rendered `#prompt-box`/
-`#casting-strip` fakes contain the labels a player would need to see -
-`ribbon.js`'s own unit-level correctness (which draft field each control
-patches, `readyToFire`'s exact gating) is exercised indirectly through the
-modules it composes (`decisions.js`, `actions.js`, `targeting.js`), which
-already have their own direct tests.
+Two structural scenarios, matching the task brief: a `may` decision (the
+simplest `decisions.js` view model - no controls, just yes/no) and a
+Kozilek's Command cast with two target slots (one filled, one open)
+exercising the casting strip's mode chips, X input, and slot chips together.
+Both assert only that mounting does not throw and that the rendered
+`#prompt-box`/`#casting-strip` fakes contain the labels a player would need
+to see.
+
+Two more scenarios exercise an actual handler end to end: the fake DOM's
+`addEventListener` records the listener `h()` wires up, and `click(el)`
+(found via `findByText`) invokes it - a `choose_cards` decision's option
+button reports `{card_ids: [...]}` back through `onDecisionDraft`, and a
+scry's split control's "Move" button reports `{moved: [...]}`. Everything
+else about a control's own correctness (which draft field each kind reads
+back, `readyToFire`'s exact gating) belongs to `decisions.js`/`actions.js`/
+`targeting.js`'s own direct tests - these two just confirm the wiring
+between a rendered button and the handler it is supposed to call is real,
+not merely plausible-looking markup.
 """
 
 from __future__ import annotations
@@ -25,9 +33,11 @@ pytestmark = requires_node
 # `test_ui_dom.py` shape) plus what `ribbon.js` itself needs: `querySelector`
 # by id (`mountRibbon` looks up its four boxes that way), a `textContent`
 # getter that walks the whole subtree (real DOM's own behaviour - `ribbon.js`
-# nests several `h()` calls deep per section), and `contains`/
-# `getBoundingClientRect`/`style` for the popover code path, even though
-# neither scenario below calls it.
+# nests several `h()` calls deep per section), `contains`/
+# `getBoundingClientRect`/`style` for the popover code path, and an
+# `addEventListener` that actually records the listener (keyed by event
+# type) instead of discarding it, so a test can find a rendered button and
+# invoke the handler `h()` wired to it - `click(el)` below does exactly that.
 FAKE_DOM = """
 class El {
   constructor(tag) {
@@ -37,6 +47,7 @@ class El {
     this.attrs = {};
     this.style = {};
     this.hidden = false;
+    this.listeners = {};
     this.classList = {
       set: new Set(),
       add: (c) => this.classList.set.add(c),
@@ -54,8 +65,8 @@ class El {
   }
   removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
   setAttribute(k, v) { this.attrs[k] = v; if (k === "id") this.id = v; }
-  addEventListener() {}
-  removeEventListener() {}
+  addEventListener(type, fn) { this.listeners[type] = fn; }
+  removeEventListener(type, fn) { if (this.listeners[type] === fn) delete this.listeners[type]; }
   contains(other) {
     if (other === this) return true;
     return this.children.some((c) => (c.contains ? c.contains(other) : false));
@@ -81,6 +92,27 @@ class El {
     return walk(this);
   }
 }
+
+// The first `tag` element (depth-first, document order) whose own
+// `textContent` includes `text` - enough to find "the button labelled
+// Brainstorm" or "the first Move button" without a class/id to key off.
+function findByText(node, tag, text) {
+  const content = typeof node.textContent === "string" ? node.textContent : "";
+  if (node.tagName === tag && content.includes(text)) return node;
+  for (const c of node.children || []) {
+    const found = findByText(c, tag, text);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Invoke whatever `h()` wired to this element's "click" via
+// `addEventListener` - a no-op if nothing is listening (a disabled button,
+// or the element wasn't found at all).
+function click(el) {
+  if (el && el.listeners && el.listeners.click) el.listeners.click({ target: el });
+}
+
 globalThis.window = { scrollX: 0, scrollY: 0 };
 globalThis.document = new El("#document");
 document.createElement = (t) => new El(t);
@@ -325,3 +357,61 @@ def test_mounting_a_kozilek_command_action_renders_strip_with_two_slots() -> Non
     assert "Mode 2: target player" in strip
     assert "Announce X" in strip
     assert "keep priority" in strip
+
+
+def test_clicking_a_choose_cards_option_reports_card_ids() -> None:
+    calls = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onDecisionDraft: (patch) => calls.push(patch) };
+          const pending = {
+            kind: "choose_cards", player: "alice", source: "Merchant Scroll",
+            prompt: "Search your library for an instant card.",
+            cards: ["c1", "c2"],
+            card_details: [
+              { id: "c1", name: "Brainstorm" },
+              { id: "c2", name: "Ponder" },
+            ],
+            amount: 1, exact: true,
+          };
+          const state = baseState({ pending_decision: pending });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          click(findByText(document, "button", "Brainstorm"));
+          return calls;
+        })()
+        """,
+    )
+    assert calls == [{"card_ids": ["c1"]}]
+
+
+def test_clicking_the_split_controls_move_button_reports_moved() -> None:
+    calls = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const calls = [];
+          const handlers = { ...HANDLERS, onDecisionDraft: (patch) => calls.push(patch) };
+          const pending = {
+            kind: "scry", player: "alice", source: "Scry", prompt: "Scry 2.",
+            cards: ["a", "b"],
+            card_details: [
+              { id: "a", name: "Card A" },
+              { id: "b", name: "Card B" },
+            ],
+          };
+          const state = baseState({ pending_decision: pending });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          click(findByText(document, "button", "Move"));
+          return calls;
+        })()
+        """,
+    )
+    assert calls == [{"moved": ["a"]}]

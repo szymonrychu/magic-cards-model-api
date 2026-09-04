@@ -213,6 +213,33 @@ function targeting(action) {
   return ability ? ability.targeting || {} : castHints(action.card).targeting || {};
 }
 
+// A slot with no fixed count ("up to N", or an unbounded "any number of") -
+// CR 601.2c's "the player announces their choice" never forces every such
+// slot to be filled all the way. Shared by `needsExplicitFire` (which cares
+// only about the slot's *shape*, filled or not) and `readyToFire` (which
+// additionally cares whether it still has room).
+function isUnboundedSlot(s) {
+  return s.count === null || s.minimum < (s.count || 0);
+}
+
+/**
+ * Whether firing this action needs an explicit confirmation rather than
+ * happening automatically the moment it is legal: pinned mana was chosen by
+ * hand, the cost divides across targets (CR 601.2d), or any target slot is
+ * "up to"/unbounded. That last one holds whether or not the slot is
+ * currently filled to its cap - a spell offering "up to three targets" that
+ * already has three chosen is still one the player might have meant to stop
+ * short on, so it is never auto-fired just because `readyToFire` agrees the
+ * announcement would already be legal.
+ */
+export function needsExplicitFire(action) {
+  return Boolean(
+    action.pinned.length > 0 ||
+      (action.affordance && action.affordance.division) ||
+      action.slots.some(isUnboundedSlot)
+  );
+}
+
 export function readyToFire(action) {
   if (action.kind === "crew") return action.crewing.length > 0;
   // A special action (foretell, plot, suspend, CR 116.2) exiles the card
@@ -227,9 +254,7 @@ export function readyToFire(action) {
     if (!action.affordance) return false;
     if (!isSatisfied(action.slots)) return false;
     const open = action.slots.some(
-      (s) =>
-        (s.count === null || s.minimum < (s.count || 0)) &&
-        s.targets.length < (s.count === null ? Infinity : s.count)
+      (s) => isUnboundedSlot(s) && s.targets.length < (s.count === null ? Infinity : s.count)
     );
     if (open && !action.done) return false;
     if (action.affordance.division) {

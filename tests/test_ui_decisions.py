@@ -133,3 +133,25 @@ def test_scry_answer_agrees_with_the_view_model_about_which_cards_stay_on_top() 
     vm_answer = run_module("decisions.js", "m.viewModel(p, d).submit.answer", p=SCRY, d=draft)
     assert answer == {"moved": ["a"], "top_order": ["b"]}
     assert answer == vm_answer
+
+
+def test_a_card_moved_and_kept_again_returns_to_the_order() -> None:
+    """`split`'s `order` used to be `(draft.order || kept).filter(kept.includes)`
+    - once an explicit order had been drawn while a card sat in `moved`, that
+    stale `draft.order` never mentioned it, so filtering down to it alone
+    silently dropped the card the moment it was kept again: not offered a
+    row to reorder, and missing from the `top_order` the player would go on
+    to submit. Move "b", draw an explicit order over what's left ("a"
+    alone), then keep "b" back - it must reappear, appended rather than
+    lost."""
+    after_move = run_module(
+        "decisions.js", "m.viewModel(p, d).controls[0].order", p=SCRY, d={"moved": ["b"]}
+    )
+    assert after_move == ["a"]
+    after_keep = run_module(
+        "decisions.js",
+        "m.viewModel(p, d).controls[0].order",
+        p=SCRY,
+        d={"moved": [], "order": ["a"]},
+    )
+    assert after_keep == ["a", "b"]

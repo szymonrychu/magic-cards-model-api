@@ -27,7 +27,7 @@ function renderOptionsControl(control, handlers) {
       h(
         "button",
         {
-          class: `chip ${item.selected ? "selected" : ""}`,
+          class: `chip ${item.selected ? "on" : ""}`,
           disabled: item.disabled,
           onClick: () => {
             if (control.multi) {
@@ -136,7 +136,7 @@ function renderOrderControl(control, handlers) {
         h(
           "button",
           {
-            class: `chip ${item.selected ? "selected" : ""}`,
+            class: `chip ${item.selected ? "on" : ""}`,
             disabled: item.selected,
             onClick: () => handlers.onDecisionDraft({ order: [...current(), item.id] }),
           },

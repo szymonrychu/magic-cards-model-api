@@ -36,7 +36,7 @@ import { clear, h } from "../dom.js";
 import { activeSlotIndex, flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
 import { withSymbols } from "../symbols.js";
-import { readyToFire } from "../actions.js";
+import { needsExplicitFire, readyToFire } from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
 
@@ -128,7 +128,16 @@ function renderMulliganStep(state, app, handlers) {
   );
   if (pregame.can_mulligan && pregame.can_mulligan[you]) {
     box.appendChild(
-      h("button", { onClick: () => handlers.onPregame("mulligan", { player: you, take: true }) }, "Mulligan")
+      h(
+        "button",
+        {
+          onClick: () => {
+            handlers.onDecisionDraft({ bottom: [] });
+            handlers.onPregame("mulligan", { player: you, take: true });
+          },
+        },
+        "Mulligan"
+      )
     );
   } else {
     box.appendChild(h("span", { class: "hint" }, "no mulligan left - a hand of nothing is the floor (CR 103.5)"));
@@ -294,7 +303,7 @@ function renderModeChips(card, action, handlers, symbols) {
       ...modes.options.map((m) =>
         h(
           "button",
-          { class: `chip ${action.modes.includes(m.number) ? "selected" : ""}`, onClick: () => handlers.onToggleMode(m.number) },
+          { class: `chip ${action.modes.includes(m.number) ? "on" : ""}`, onClick: () => handlers.onToggleMode(m.number) },
           `${m.number}. `,
           withSymbols(symbols, m.text)
         )
@@ -315,7 +324,7 @@ function renderColorChips(card, action, handlers, symbols) {
       "div",
       { class: "chip-row" },
       ...colors.map((c) =>
-        h("button", { class: `chip ${action.color === c ? "selected" : ""}`, onClick: () => handlers.onChooseColor(c) }, withSymbols(symbols, `{${c}}`, true))
+        h("button", { class: `chip ${action.color === c ? "on" : ""}`, onClick: () => handlers.onChooseColor(c) }, withSymbols(symbols, `{${c}}`, true))
       )
     )
   );
@@ -348,7 +357,7 @@ function renderAltCosts(action, app, handlers) {
     return h(
       "button",
       {
-        class: `chip ${action.altCost === alt.index ? "selected" : ""}`,
+        class: `chip ${action.altCost === alt.index ? "on" : ""}`,
         title: alt.rule,
         onClick: () => handlers.onChooseAltCost(action.altCost === alt.index ? null : alt.index),
       },
@@ -365,7 +374,7 @@ function renderAltCosts(action, app, handlers) {
         "div",
         { class: "chip-row" },
         ...hand.map((c) =>
-          h("button", { class: `chip ${action.choosing.includes(c.id) ? "selected" : ""}`, onClick: () => handlers.onTogglePitch(c.id) }, c.name)
+          h("button", { class: `chip ${action.choosing.includes(c.id) ? "on" : ""}`, onClick: () => handlers.onTogglePitch(c.id) }, c.name)
         )
       )
     );
@@ -379,7 +388,7 @@ function renderObjectCostStep(action, offer, field, label, onToggle) {
         "div",
         { class: "chip-row" },
         ...offer.candidates.map((c) =>
-          h("button", { class: `chip ${action[field].includes(c.id) ? "selected" : ""}`, onClick: () => onToggle(c.id) }, c.name)
+          h("button", { class: `chip ${action[field].includes(c.id) ? "on" : ""}`, onClick: () => onToggle(c.id) }, c.name)
         )
       )
     : h("div", { class: "hint" }, "nothing eligible right now");
@@ -399,7 +408,7 @@ function renderCrewProgress(action, offer) {
     "div",
     { class: "tray-step" },
     h("div", { class: "label" }, `Crew ${offer.number} - power ${total}/${offer.number}`),
-    h("div", { class: "hint" }, "click creatures on the board to crew (CR 702.122a)")
+    h("div", { class: "hint" }, `click creatures on the board to crew (${offer.rule})`)
   );
 }
 
@@ -512,7 +521,12 @@ function renderCastingStrip(el, app, handlers) {
     el.appendChild(h("button", { onClick: handlers.onDone }, "Done"));
   }
 
-  if (readyToFire(action) && (action.pinned.length > 0 || (action.affordance && action.affordance.division))) {
+  // `needsExplicitFire` fires whenever pinned mana, a division, or any
+  // "up to"/unbounded slot is in play - the last one holds even once that
+  // slot is filled to its cap (an "up to three targets" spell sitting at
+  // three chosen still waits for Cast, not an automatic fire), which is why
+  // this is a separate check from `slotIsOpen`'s "Done" gate above.
+  if (readyToFire(action) && needsExplicitFire(action)) {
     el.appendChild(h("button", { class: "primary", onClick: handlers.onCast }, title));
   }
 
@@ -623,7 +637,9 @@ export function showPopover(anchorEl, items) {
           disabled: Boolean(item.disabled),
           title: item.title || "",
           onClick: () => {
-            if (!item.disabled) item.onSelect();
+            if (item.disabled) return;
+            hidePopover();
+            item.onSelect();
           },
         },
         item.label,

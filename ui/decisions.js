@@ -204,7 +204,20 @@ function chooseTargets(pending, draft) {
 function split(pending, draft) {
   const moved = draft.moved || [];
   const kept = (pending.cards || []).filter((id) => !moved.includes(id));
-  const order = (draft.order || kept).filter((id) => kept.includes(id));
+  // The drafted order, restricted to still-kept cards, with any kept card
+  // `draftOrder` doesn't yet mention appended at the end, rather than
+  // dropped. Filtering `draftOrder` down to `kept` alone (this function's
+  // previous behaviour) lost exactly that card: once the player had drawn
+  // an explicit order (up/down on the split control writes back the
+  // *current* `order` this function returned, per-id), a card moved and
+  // then kept again was back in `kept` but still absent from that stale
+  // `draftOrder`, so it silently vanished from the list the player would
+  // submit as `top_order` - never offered a row to reorder, never included.
+  const draftOrder = draft.order || [];
+  const order = [
+    ...draftOrder.filter((id) => kept.includes(id)),
+    ...kept.filter((id) => !draftOrder.includes(id)),
+  ];
   return {
     kind: pending.kind,
     title: pending.source || pending.kind,
