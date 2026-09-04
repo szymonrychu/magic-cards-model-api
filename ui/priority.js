@@ -16,14 +16,17 @@
 export const STEPS = [
   "untap", "upkeep", "draw", "precombat_main", "beginning_of_combat",
   "declare_attackers", "declare_blockers", "combat_damage", "end_of_combat",
-  "postcombat_main", "end", "cleanup",
+  "postcombat_main", "end_step", "cleanup",
 ];
 
+// Mirrors the engine's own `Phase` (machines/turn.py) exactly, string for
+// string - `precombat_main`/`postcombat_main` included, not display labels.
 export const PHASE_OF = {
   untap: "beginning", upkeep: "beginning", draw: "beginning",
-  precombat_main: "precombat main", beginning_of_combat: "combat",
+  precombat_main: "precombat_main", beginning_of_combat: "combat",
   declare_attackers: "combat", declare_blockers: "combat", combat_damage: "combat",
-  end_of_combat: "combat", postcombat_main: "postcombat main", end: "ending", cleanup: "ending",
+  end_of_combat: "combat", postcombat_main: "postcombat_main", end_step: "ending",
+  cleanup: "ending",
 };
 
 export const VERBS = ["pass", "pass_turn", "pass_turn_regardless", "until_my_turn", "until_castable"];
@@ -38,19 +41,24 @@ export const VERB_LABELS = {
 
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
-  theirs: ["declare_attackers", "end"],
+  theirs: ["declare_attackers", "end_step"],
 };
 
 const STOPS_KEY = "mcm.stops.v1";
 
 export function loadStops(storage) {
+  const defaults = { mine: [...DEFAULT_STOPS.mine], theirs: [...DEFAULT_STOPS.theirs] };
   try {
     const raw = storage.getItem(STOPS_KEY);
-    if (!raw) return { mine: [...DEFAULT_STOPS.mine], theirs: [...DEFAULT_STOPS.theirs] };
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw);
+    // "[]" and "7" both parse cleanly but are not a {mine, theirs} object -
+    // the wrong shape is exactly as unusable as invalid JSON, so it gets the
+    // same fallback rather than silently becoming empty stops.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaults;
     return { mine: parsed.mine || [], theirs: parsed.theirs || [] };
   } catch {
-    return { mine: [...DEFAULT_STOPS.mine], theirs: [...DEFAULT_STOPS.theirs] };
+    return defaults;
   }
 }
 
@@ -101,6 +109,16 @@ export function forgetStartingStep(run, state) {
   return { ...run, stillAtStart: false };
 }
 
+// Records one successful pass against a run: `passes` up (the `pass` verb's
+// own stop condition), `knownStackIds` refreshed from the state the pass
+// left behind (every verb's stack-arrival check). The caller runs this after
+// each `pass-priority` call that actually went through - `interpretPassOutcome`
+// says whether it did - and threads the result back in for the next
+// `stopReason` call, the same shape `forgetStartingStep` already has.
+export function recordPass(run, state) {
+  return { ...run, passes: run.passes + 1, knownStackIds: (state.stack || []).map((o) => o.id) };
+}
+
 // Declaring blockers is a turn-based action that doesn't use the stack (CR
 // 509.1, verified with knowledge_search in the session that wrote this) -
 // this is where the defending player actually has something to do about an
@@ -109,9 +127,24 @@ export function forgetStartingStep(run, state) {
 // opponent's declare-attackers step would keep re-triggering this on every
 // later tick of the same combat (combat damage, end of combat, ...), since
 // `state.combat.attacks` stays populated well past declare blockers.
+//
+// `serialize.py` writes an attack's `defender` as `str(attack.defender)`,
+// which is your player id for an attack on you, but a card id for an attack
+// on a planeswalker or battle you control - so `defender === state.you`
+// alone misses those. This checks both, and then falls back to the old
+// app.js:1590-1598 disjunct: in a declare-blockers step where you are not
+// the active player and at least one attack has been declared, you are the
+// defending player, whatever the attack's `defender` field actually names -
+// the same assumption the old `stopWhenAttacked` made.
 function attackedNow(state) {
   if (state.step !== "declare_blockers") return false;
-  return ((state.combat && state.combat.attacks) || []).some((a) => a.defender === state.you);
+  const attacks = (state.combat && state.combat.attacks) || [];
+  if (attacks.length === 0) return false;
+  const yours = new Set(
+    (state.battlefield || []).filter((card) => card.controller === state.you).map((card) => card.id)
+  );
+  if (attacks.some((a) => a.defender === state.you || yours.has(a.defender))) return true;
+  return state.active_player !== state.you;
 }
 
 // True while `state` is still the very occurrence `run` began in - the
@@ -144,7 +177,8 @@ export function stopReason(state, run, stops, castable) {
   const turnChanged = state.turn_number !== run.startedTurn;
   switch (run.verb) {
     case "pass":
-      return run.passes >= 1 ? "passed once" : null;
+      if (run.passes >= 1) return "passed once";
+      break;
     case "pass_turn":
       if (newObject) return "something new is on the stack";
       if (turnChanged) return "the turn ended";

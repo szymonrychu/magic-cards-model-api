@@ -40,7 +40,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from ui_node import requires_node, run_module
 
 pytestmark = requires_node
@@ -109,21 +108,22 @@ def test_the_pass_button_is_offered_when_you_hold_priority_over_a_full_stack() -
     assert buttons == run_module("priority.js", "m.VERBS"), buttons
 
 
-@pytest.mark.parametrize("name", sorted(BOARDS))
-def test_resolve_top_is_never_offered(name: str) -> None:
+def test_resolve_top_is_never_offered() -> None:
     """Priority held or not, stack full or empty - "resolve the top of the
     stack yourself" was never a verb to begin with. Under CR 117.4 the top
     of the stack resolves because everyone passed, so it was never a player
-    action, and this is pinned once rather than per board since `VERBS` does
-    not vary with `state`."""
+    action. Pinned once, not per board (the three old boards this file
+    exercises) - `VERBS` does not vary with `state`, so parametrizing over
+    boards that cannot change the answer would only pin the same assertion
+    three times."""
     assert "resolve" not in run_module("priority.js", "m.VERBS")
 
 
-@pytest.mark.parametrize("name", sorted(BOARDS))
-def test_the_rest_of_the_priority_group_is_untouched(name: str) -> None:
+def test_the_rest_of_the_priority_group_is_untouched() -> None:
     """The old picker's markup and its three toggle checkboxes do not exist
     to check any more - `ui/priority.js` renders nothing, that is a later
-    panel's job. What survives, board-state independent exactly as before,
+    panel's job. What survives, board-state independent exactly as before
+    (again pinned once rather than per board, for the same reason as above),
     is the data a panel would render from: every verb still has a label, and
     the stops panel still covers both the picker's `who` halves - your own
     side (`mine`, "my main 1" and its kin) and the opponent's (`theirs`,

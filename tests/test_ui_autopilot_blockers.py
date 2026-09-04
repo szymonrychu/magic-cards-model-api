@@ -28,7 +28,7 @@ unconditionally, with no `stops` entry or verb choice able to disable it -
 "being attacked" is one of the rules the port brief calls out as needing to
 survive as a rule, not a UI choice, and here it survives as one with no
 opt-out. Several old tests exercised turning it off
-(`test_unticking_the_setting_lets_the_run_continue`,
+(`test_there_is_no_setting_left_to_untick_being_attacked_still_stops`,
 `test_the_toggle_really_writes_the_setting`,
 `test_the_checkbox_is_rendered_next_to_the_stop_on_stack_one`); each is
 rewritten below to what is actually still true, with a docstring saying so.
@@ -52,6 +52,7 @@ from __future__ import annotations
 from typing import Any
 
 from ui_node import requires_node, run_module
+from ui_priority_driver import run_until_stop, stops_for
 
 pytestmark = requires_node
 
@@ -111,18 +112,6 @@ def under_attack(turn: int, **overrides: Any) -> dict[str, Any]:
     return board("declare_blockers", turn, "bob", combat={"attacks": TWO_ATTACKS}, **overrides)
 
 
-def stops_for(target_step: str, who: str, *, can_attack_stop: bool = True) -> dict[str, list[str]]:
-    mine: list[str] = []
-    theirs: list[str] = []
-    if who in ("you", "any"):
-        mine.append(target_step)
-    if who in ("opponent", "any"):
-        theirs.append(target_step)
-    if can_attack_stop and "declare_attackers" not in mine:
-        mine.append("declare_attackers")
-    return {"mine": mine, "theirs": theirs}
-
-
 def call_stop_reason(
     state: dict[str, Any],
     verb: str = "until_castable",
@@ -142,50 +131,6 @@ def call_stop_reason(
         start=start,
         verb=verb,
         stops=stops,
-        castable=castable,
-    )
-
-
-def run_until_stop(
-    start: dict[str, Any],
-    verb: str,
-    stops: dict[str, list[str]],
-    timeline: list[dict[str, Any]],
-    *,
-    castable: bool = False,
-) -> dict[str, Any]:
-    """Start a real run standing in `start`, then feed it `timeline` one
-    board state at a time, reporting the first state that stopped it - the
-    same two lines the old `tickAutopilot` ran on every state that did not
-    stop it (`knownStackIds` refreshed, `forgetStartingStep` called) are run
-    here too, threaded back into `run` for the next tick."""
-    expr = """
-    (() => {
-      let run = m.startRun(verb, start);
-      const seen = [];
-      let stopped = null;
-      for (const state of timeline) {
-        const reason = m.stopReason(state, run, stops, castable);
-        if (reason) {
-          stopped = {
-            reason, step: state.step, turn: state.turn_number, active: state.active_player,
-          };
-          break;
-        }
-        run = { ...run, knownStackIds: (state.stack || []).map((o) => o.id) };
-        run = m.forgetStartingStep(run, state);
-        seen.push(state.step + "@" + state.turn_number);
-      }
-      return { stopped, passed_through: seen };
-    })()
-    """
-    return run_module(
-        "priority.js",
-        expr,
-        start=start,
-        verb=verb,
-        stops=stops,
-        timeline=timeline,
         castable=castable,
     )
 
@@ -250,6 +195,28 @@ def test_it_stops_for_a_single_attacker_too() -> None:
     one = [{"attacker": "att-1", "defender": "alice", "blockers": []}]
     reason = call_stop_reason(board("declare_blockers", 2, "bob", combat={"attacks": one}))
     assert reason == "you are being attacked"
+
+
+def test_a_run_stops_when_a_planeswalker_you_control_is_attacked() -> None:
+    """`serialize.py` writes an attack's `defender` as `str(attack.defender)`,
+    which for a planeswalker or battle is a card id, not a player name -
+    `defender === state.you` alone would miss it. The attacked check has to
+    catch it anyway: any attack naming a card you control as its defender is
+    you being attacked, for every verb, exactly as one naming you by player
+    id is."""
+    planeswalker = {
+        "id": "pw-1",
+        "controller": "alice",
+        "type_line": "Legendary Planeswalker - Gideon",
+    }
+    attack = [{"attacker": "att-1", "defender": "pw-1", "blockers": []}]
+    state = board(
+        "declare_blockers", 2, "bob", combat={"attacks": attack}, battlefield=[planeswalker]
+    )
+
+    for verb in run_module("priority.js", "m.VERBS"):
+        reason = call_stop_reason(state, verb=verb, stops={"mine": [], "theirs": []})
+        assert reason == "you are being attacked", (verb, reason)
 
 
 def test_the_setting_defaults_on() -> None:
@@ -325,7 +292,7 @@ def test_it_does_not_fire_in_other_steps_of_a_combat_you_are_defending() -> None
     assert result["stopped"]["step"] == "precombat_main", result
 
 
-def test_unticking_the_setting_lets_the_run_continue() -> None:
+def test_there_is_no_setting_left_to_untick_being_attacked_still_stops() -> None:
     """There is nothing left to untick: being attacked has no `stops` entry
     or verb able to disable it in the new model, so this now pins the
     stronger claim the old toggle's absence implies - even with every other

@@ -50,6 +50,7 @@ from __future__ import annotations
 from typing import Any
 
 from ui_node import requires_node, run_module
+from ui_priority_driver import run_until_stop, stops_for
 
 pytestmark = requires_node
 
@@ -95,68 +96,6 @@ def board(step: str, turn: int, active: str = "alice", **overrides: Any) -> dict
     }
     state.update(overrides)
     return state
-
-
-def stops_for(target_step: str, who: str, *, can_attack_stop: bool = True) -> dict[str, list[str]]:
-    """The old picker's `(target_step, who)` plus `stopWhenYouCanAttack`,
-    expressed as a `stops` object: the destination goes on the side `who`
-    names, and `declare_attackers` goes on `mine` (your own attack step is
-    never conditional on any destination's `who`) when the safety net is
-    on."""
-    mine: list[str] = []
-    theirs: list[str] = []
-    if who in ("you", "any"):
-        mine.append(target_step)
-    if who in ("opponent", "any"):
-        theirs.append(target_step)
-    if can_attack_stop and "declare_attackers" not in mine:
-        mine.append("declare_attackers")
-    return {"mine": mine, "theirs": theirs}
-
-
-def run_until_stop(
-    start: dict[str, Any],
-    verb: str,
-    stops: dict[str, list[str]],
-    timeline: list[dict[str, Any]],
-    *,
-    castable: bool = False,
-) -> dict[str, Any]:
-    """Start a real run standing in `start`, then feed it `timeline` one
-    board state at a time - the way a real poll loop feeds `stopReason` -
-    and report the first state that stopped it. Mirrors exactly what the
-    driver does with a state that did not stop it: refresh `knownStackIds`
-    and call `forgetStartingStep`, both threaded back into `run` for the
-    next tick, the same two lines the old `tickAutopilot` ran every poll."""
-    expr = """
-    (() => {
-      let run = m.startRun(verb, start);
-      const seen = [];
-      let stopped = null;
-      for (const state of timeline) {
-        const reason = m.stopReason(state, run, stops, castable);
-        if (reason) {
-          stopped = {
-            reason, step: state.step, turn: state.turn_number, active: state.active_player,
-          };
-          break;
-        }
-        run = { ...run, knownStackIds: (state.stack || []).map((o) => o.id) };
-        run = m.forgetStartingStep(run, state);
-        seen.push(state.step + "@" + state.turn_number);
-      }
-      return { stopped, passed_through: seen };
-    })()
-    """
-    return run_module(
-        "priority.js",
-        expr,
-        start=start,
-        verb=verb,
-        stops=stops,
-        timeline=timeline,
-        castable=castable,
-    )
 
 
 def turn_cycle(turn: int, active: str, **overrides: Any) -> list[dict[str, Any]]:
