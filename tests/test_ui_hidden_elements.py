@@ -19,10 +19,10 @@ What that cost, in increasing severity:
   translucent dark background) covered the entire viewport while "hidden" and
   swallowed every click - the greyed-out, dead-button symptom exactly.
 
-`ui/app.js` toggles visibility with the `hidden` property throughout
-(`el.hidden = true`), so the fix is asserted once, globally, rather than
-per-element - a per-element fix is what let the second and third cases
-through in the first place.
+`ui/app.js` and the buildless ES modules under `ui/` and `ui/render/` toggle
+visibility with the `hidden` property throughout (`el.hidden = true`), so the
+fix is asserted once, globally, rather than per-element - a per-element fix
+is what let the second and third cases through in the first place.
 """
 
 from __future__ import annotations
@@ -32,7 +32,12 @@ from pathlib import Path
 
 UI = Path(__file__).resolve().parents[1] / "ui"
 STYLE_CSS = UI / "style.css"
-APP_JS = UI / "app.js"
+
+#: Every module that can toggle `.hidden` - the still-classic `app.js` plus
+#: the buildless ES modules under `ui/` and `ui/render/` (`board.js` and
+#: whatever else joins it). Globbed rather than named one by one, so a new
+#: module that starts hiding an element is covered without editing this file.
+JS_MODULES = sorted(UI.glob("*.js")) + sorted(UI.glob("render/*.js"))
 
 #: The global rule, as a regex tolerant of whitespace but not of the
 #: `!important` being dropped - without it, any later `display` rule in the
@@ -50,15 +55,22 @@ def test_style_css_asserts_hidden_globally() -> None:
 
 
 def test_the_elements_the_js_hides_are_all_covered_by_that_rule() -> None:
-    """Every element `ui/app.js` toggles with `.hidden` relies on the rule
-    above, so this pins the coupling rather than leaving it implicit: if the
-    JS starts hiding something new, the global rule already covers it, and
-    this test explains why no per-element rule is needed."""
-    hidden_toggles = set(re.findall(r"\$\(\"#([\w-]+)\"\)\.hidden\s*=", APP_JS.read_text()))
-    hidden_toggles |= set(
-        re.findall(r"(?:\bconst\s+)?(\w+)\.hidden\s*=\s*(?:true|false)", APP_JS.read_text())
+    """Every element any `ui/*.js` or `ui/render/*.js` module toggles with
+    `.hidden` relies on the rule above, so this pins the coupling rather than
+    leaving it implicit: if a module starts hiding something new, the global
+    rule already covers it, and this test explains why no per-element rule is
+    needed."""
+    hidden_toggles: set[str] = set()
+    for module in JS_MODULES:
+        text = module.read_text()
+        hidden_toggles |= set(re.findall(r"\$\(\"#([\w-]+)\"\)\.hidden\s*=", text))
+        hidden_toggles |= set(
+            re.findall(r"(?:\bconst\s+)?(\w+)\.hidden\s*=\s*(?:true|false)", text)
+        )
+    assert hidden_toggles, (
+        "no `ui/*.js` or `ui/render/*.js` module toggles anything with `.hidden` any more - "
+        "update this test"
     )
-    assert hidden_toggles, "ui/app.js no longer toggles anything with `.hidden` - update this test"
     # The point is only that the global rule exists to serve them; the
     # per-element names are informational, and deliberately not hard-coded
     # into an allowlist that would need editing on every UI change.

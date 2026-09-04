@@ -247,6 +247,51 @@ h3 { font-size: 14px; }
   color: var(--ink-faint);
   margin-right: 6px;
 }
+.stack-object {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  cursor: pointer;
+  font-size: 12px;
+}
+.stack-object .name { font-weight: 600; }
+.stack-object .targets { color: var(--ink-dim); font-size: 11px; }
+.stack-object.targetable { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.stack-object.chosen { outline: 3px solid var(--good); outline-offset: 2px; }
+
+/* The row of attackers, mirroring MTGO's "red zone" - shown only while
+   there is at least one attacker to show (CR 508's declare attackers step
+   onward). */
+.red-zone {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  min-height: 40px;
+  padding: 4px 6px;
+  border: 1px solid var(--bad);
+  border-radius: 7px;
+  background: rgba(242, 105, 95, 0.06);
+}
+
+/* The row above the hand where a spell being cast or an ability being
+   activated stages its choices before it is fired (CR 601.2's announcement
+   sequence). */
+.casting-strip {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+}
 
 /* --------------------------------------------------------- the cards ---- */
 
@@ -266,6 +311,33 @@ h3 { font-size: 14px; }
 .card.dimmed { filter: brightness(0.45) saturate(0.5); }
 .card.attacking { box-shadow: 0 0 0 2px var(--bad); }
 .card.blocking { box-shadow: 0 0 0 2px var(--accent); }
+/* A tap this card would take if the in-flight action resolved right now
+   (`state.preview.tapped`) - a translucent rotation, distinct from the
+   opaque `.tapped` a card already committed to. */
+.card.preview-tap { transform: rotate(90deg) scale(0.92); opacity: 0.55; }
+.card.preview-tap:hover { transform: rotate(90deg) scale(0.96); opacity: 0.75; }
+/* A mana source pinned to pay a specific color for the in-flight action
+   (`action.pinned`). */
+.card.pinned { outline: 2px solid var(--warn); outline-offset: 2px; }
+/* The one card the in-flight action is actually about (`action.cardId`) -
+   raised above its row so it reads as "in your hand, about to move". */
+.card.lifted { transform: translateY(-10px); z-index: 4; box-shadow: var(--shadow); }
+/* How many targeting slots the same object currently sits in - CR 115.3
+   forbids a repeat only within one instance of the word "target", so one
+   object legally fills two different slots of a modal spell. */
+.held-count {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  pointer-events: none;
+}
+.info-row .held-count { position: static; }
 
 .card-visual { display: block; border-radius: var(--card-radius); }
 .card-sm { width: 76px; }
@@ -438,6 +510,53 @@ h3 { font-size: 14px; }
 #decision-box { border-color: var(--warn); }
 #decision-box h3 { color: var(--warn); }
 #action-tray { border-color: var(--accent); }
+
+/* The new side panel's four stacked sections: what is being asked
+   (`#prompt-box`), the priority controls (`#priority-box`), the stop
+   conditions autopilot will halt for (`#stops-box`), and the game log
+   (`#log-box`) - which alone takes whatever height the other three leave, so
+   a long log scrolls in place instead of pushing the panel taller than the
+   viewport. */
+#prompt-box { border-color: var(--warn); }
+#priority-box { border-color: var(--accent); }
+#log-box {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+/* A short-lived message that appears near an action and fades - a refusal
+   or confirmation that does not need a whole `.notice` banner. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 70;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+.toast.bad { border-color: var(--bad); color: var(--bad); }
+
+/* A small floating menu anchored to whatever opened it via `style.left` /
+   `style.top`, rather than a fixed position - a card's context actions, a
+   mana source's color choice. */
+.popover {
+  position: absolute;
+  z-index: 50;
+  min-width: 140px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+}
+.popover button.option { display: block; width: 100%; text-align: left; }
 
 .tray-step { margin: 10px 0; }
 .tray-step > .label {
