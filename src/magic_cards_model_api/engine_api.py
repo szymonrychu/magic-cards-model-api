@@ -181,6 +181,15 @@ def shortfall_reason(payment: Any) -> str:
     return f"pool {pool} cannot pay {payment.cost}"
 
 
+def tapped_view(payment: Any) -> list[dict[str, str]]:
+    """Which sources this payment has tapped so far, oldest first - read
+    before `rewind()` on a dry run, so a client can preview auto-pay."""
+    return [
+        {"card_id": str(source.id), "name": source.name}
+        for source in getattr(payment, "tapped_for_mana", [])
+    ]
+
+
 # -- casting ---------------------------------------------------------------
 
 
@@ -324,12 +333,13 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             # The offered sources are activated into the payment's working
             # copy - the engine's own affordability answer, CR 601.2g and all -
             # and the whole thing is rewound, so a dry run leaves no trace.
+            tapped = tapped_view(payment)
             if payment.unpayable or payment.shortfall:
                 reason = shortfall_reason(payment)
                 payment.rewind()
-                return Outcome(False, reason, {"cost": str(payment.cost)})
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
             payment.rewind()
-            return Outcome(True, detail={"cost": str(payment.cost)})
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
         payment.pay()
     except ValueError as exc:
         if payment is not None:
@@ -664,12 +674,13 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
         if req.dry_run:
             # As with casting: the offered sources are evaluated through the
             # engine's payment and the attempt is rewound without a trace.
+            tapped = tapped_view(payment)
             if payment.unpayable or payment.shortfall:
                 reason = shortfall_reason(payment)
                 payment.rewind()
-                return Outcome(False, reason, {"cost": str(payment.cost)})
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
             payment.rewind()
-            return Outcome(True, detail={"cost": str(payment.cost)})
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
         payment.pay()
     except ValueError as exc:
         if payment is not None:
