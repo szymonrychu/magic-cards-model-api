@@ -324,6 +324,11 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
     payment = None
     try:
         payment = casting.determine_cost(x_value=req.x_value)
+        if req.shares is not None:
+            # CR 601.2d: announced after targets and after the cost is
+            # determined, since a variable (X) division needs `x_value`
+            # already settled - `announce_division`'s own docstring says so.
+            casting.announce_division(req.shares)
         # CR 702.51b/702.66a: convoke and delve are neither additional nor
         # alternative costs - they "apply only after the total cost ... is
         # determined" - so they are spliced in exactly here, between

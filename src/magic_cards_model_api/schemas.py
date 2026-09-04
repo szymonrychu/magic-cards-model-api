@@ -100,6 +100,10 @@ class CastRequest(BaseModel):
     """Card ids or player names."""
     modes: list[int] | None = None
     x_value: int | None = None
+    shares: list[int] | None = None
+    """CR 601.2d: how a divided effect (Electrolyze's damage, distributed
+    counters) is split among `targets`, one entry per target in the same
+    order. Only for a card whose affordance carries `division`."""
     mana_sources: list[UUID | ManaSource] | None = None
     keyword: str | None = None
     """The keyword permission this cast is announced under (CR 601.2b), e.g.
