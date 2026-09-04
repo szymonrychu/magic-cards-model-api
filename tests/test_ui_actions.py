@@ -286,7 +286,7 @@ def test_alt_cost_and_pitch_choices_appear_in_the_body() -> None:
 
 
 def test_convoke_and_delve_choices_appear_in_the_body() -> None:
-    """`toggleConvoke` (CR 702.51a) and `toggleDelve` (CR 702.65a) each toggle
+    """`toggleConvoke` (CR 702.51a) and `toggleDelve` (CR 702.66a) each toggle
     an id into their own list; a second click on the same id removes it."""
     body = run_module(
         "actions.js",
