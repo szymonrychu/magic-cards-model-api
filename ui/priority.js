@@ -101,7 +101,16 @@ export function forgetStartingStep(run, state) {
   return { ...run, stillAtStart: false };
 }
 
+// Declaring blockers is a turn-based action that doesn't use the stack (CR
+// 509.1, verified with knowledge_search in the session that wrote this) -
+// this is where the defending player actually has something to do about an
+// attack, so it is the one step this checks, exactly as the old
+// `stopWhenAttacked` did. Without the step gate, an attack declared in your
+// opponent's declare-attackers step would keep re-triggering this on every
+// later tick of the same combat (combat damage, end of combat, ...), since
+// `state.combat.attacks` stays populated well past declare blockers.
 function attackedNow(state) {
+  if (state.step !== "declare_blockers") return false;
   return ((state.combat && state.combat.attacks) || []).some((a) => a.defender === state.you);
 }
 

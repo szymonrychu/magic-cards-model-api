@@ -1,54 +1,37 @@
-"""The priority-automation stop conditions in `ui/app.js`, exercised for
-real, not reimplemented in Python.
+"""The priority-automation stop conditions, ported from the old
+`autopilotStopReason`/`interpretPassOutcome` in `ui/app.js` onto the new
+`ui/priority.js`'s `stopReason`/`interpretPassOutcome`.
 
-`autopilotStopReason` and `interpretPassOutcome` are the two pure functions
-`tickAutopilot` (the "pass until my upkeep" driver, run once per `poll()`
-tick - never an unbounded loop of its own) consults before ever calling
-`pass-priority`. They cover the four required stop conditions: a pending
-decision addressed to this seat, the game ending, anything landing on the
-stack (gated by a setting that defaults to the safe "stop and ask"), and the
-pass itself being refused. These are exactly the paths that "cost games" if
-they silently stop working - the same class of bug a decision-timeout has
-already caused in this project - so this loads and runs the actual shipped
-JS under Node (`ui/app.js` is `require()`-able specifically for this; see
-its own `module.exports` guard and the `window`/`document` shims at its top
-and bottom), rather than asserting against a Python re-description of what
-the JS is supposed to do.
+The old picker ran to one named `(step, who)` destination under three
+toggles (`stopOnStack`, `stopWhenAttacked`, `stopWhenYouCanAttack`). The new
+model has five fixed verbs and a `stops` panel: a destination is now `stops`
+containing exactly that one step on the right side (`mine` for "you",
+`theirs` for "opponent", both for "any"); `settings.stopOnStack: true` (the
+old default, used by every test below that does not say otherwise) maps to
+the verb `until_castable` with `castable` always `false` - the one verb
+whose own per-tick logic reduces to "stop on a new stack object, then check
+the stops panel", exactly the old shape - and `settings.stopOnStack: false`
+maps to `pass_turn_regardless` per the port brief.
 
-`ui/app.js` has no build step and is not otherwise transpiled or bundled -
-this test runs the exact file the browser is served (`GET /play/app.js`).
+Several old reason strings do not survive: the new messages are terser and
+uniform across verbs (no card name, no prompt text, no winner's name), so
+those assertions are rewritten to the new text with a note explaining why -
+each one is a UI wording choice the verb model replaces, not a rule the old
+code enforced. Where an old assertion only checked a substring that the new
+wording still contains, it is left exactly as it was.
+
+This still runs the real shipped `ui/priority.js` under Node via
+`tests/ui_node.py`'s `run_module` - no build step, no Python
+reimplementation of the logic under test.
 """
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
-from pathlib import Path
 from typing import Any
 
-import pytest
+from ui_node import requires_node, run_module
 
-APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
-
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
-
-
-def run_js(expression: str) -> Any:
-    """Load the real `ui/app.js` under Node and evaluate `expression` against
-    its exported `{autopilotStopReason, interpretPassOutcome}`, printing the
-    result as JSON so this stays a black-box call across the process
-    boundary - no Python reimplementation of the JS logic anywhere here."""
-    script = f"""
-    const {{ autopilotStopReason, interpretPassOutcome }} = require({json.dumps(str(APP_JS))});
-    const result = ({expression});
-    process.stdout.write(JSON.stringify(result === undefined ? null : result));
-    """
-    proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
+pytestmark = requires_node
 
 
 def base_state(**overrides: Any) -> dict:
@@ -58,56 +41,67 @@ def base_state(**overrides: Any) -> dict:
         "drawn": False,
         "pending_decision": None,
         "step": "draw",
+        "turn_number": 1,
         "active_player": "bob",
         "priority_holder": "bob",
         "stack": [],
+        "combat": {"attacks": []},
     }
     state.update(overrides)
     return state
 
 
 def call_stop_reason(
-    state: dict, autopilot: dict, you: str = "alice", settings: dict | None = None
-):
-    """Calls the real `autopilotStopReason`. `autopilot["knownStackIds"]` is
-    given here as a plain list (JSON has no Set type) and rebuilt into a real
-    JS `Set` in the generated script - the same shape `game.autopilot` itself
-    carries in `ui/app.js` (`new Set((state.stack || []).map((o) => o.id))`),
-    so this exercises the function against its real input shape, not a
-    simplified stand-in for it."""
-    settings = settings if settings is not None else {"stopOnStack": True}
-    known = json.dumps(list(autopilot.get("knownStackIds", [])))
-    fields = [f"knownStackIds: new Set({known})"]
-    for key in ("target", "step", "who"):
-        if key in autopilot:
-            fields.append(f"{key}: {json.dumps(autopilot[key])}")
-    autopilot_literal = "{" + ", ".join(fields) + "}"
-    return run_js(
-        f"autopilotStopReason({json.dumps(state)}, {autopilot_literal}, "
-        f"{json.dumps(you)}, {json.dumps(settings)})"
+    state: dict,
+    known_stack_ids: list[str] | None = None,
+    verb: str = "until_castable",
+    stops: dict | None = None,
+    castable: bool = False,
+) -> Any:
+    """Calls the real `stopReason` against `state`, with a `run` built from a
+    synthetic starting state that never coincides with any `state` this file
+    passes in - its `step` ("cleanup") is not one any test below uses, so the
+    "declined as the occurrence the run started in" guard `priority.js`
+    added later (ported in `tests/test_ui_autopilot_next_occurrence.py`)
+    never accidentally suppresses a stop this file is testing. Its
+    `turn_number` mirrors `state`'s so the verbs that watch for a turn
+    change (`pass_turn_regardless` among them) see none by surprise."""
+    stops = stops if stops is not None else {"mine": [], "theirs": []}
+    known_stack_ids = known_stack_ids or []
+    start = base_state(
+        step="cleanup",
+        turn_number=state.get("turn_number", 1),
+        active_player=state.get("active_player", "bob"),
+        stack=[{"id": i} for i in known_stack_ids],
+    )
+    return run_module(
+        "priority.js",
+        "m.stopReason(state, m.startRun(verb, start), stops, castable)",
+        state=state,
+        start=start,
+        verb=verb,
+        stops=stops,
+        castable=castable,
     )
 
 
-AUTOPILOT_UNTIL_UPKEEP = {"target": "upkeep", "knownStackIds": []}
+UPKEEP_STOPS = {"mine": ["upkeep"], "theirs": []}
 
 
 def test_module_exports_the_pure_functions_the_tests_drive() -> None:
-    """`setHtml` joined them for `tests/test_ui_pregame_panel.py`: its repaint
-    rule is what decides whether the CR 103.5 "Keep" button ever leaves
-    `disabled`, and that has to be tested against the shipped file too.
-    `aiStallNotice` joined for `tests/test_ui_ai_stall.py`.
-
-    A subset assertion, not an equality: this guards that nothing the tests
-    drive stops being reachable, while leaving the next pure function free to
-    arrive with its own test rather than by editing this one."""
-    assert APP_JS.is_file(), "ui/app.js is missing"
-    exported = set(run_js("Object.keys(require(" + json.dumps(str(APP_JS)) + "))"))
+    """The old test guarded `sendTargets`/`setHtml`/`aiStallNotice` too -
+    other files' pure functions sharing `ui/app.js`'s single module surface.
+    `ui/priority.js` is its own module with its own surface, so this now
+    guards exactly what this file (and its four siblings) drives: nothing
+    reachable here stops being exported without a test noticing."""
+    exported = set(run_module("priority.js", "Object.keys(m)"))
     assert {
-        "autopilotStopReason",
+        "stopReason",
         "interpretPassOutcome",
-        "sendTargets",
-        "setHtml",
-        "aiStallNotice",
+        "startRun",
+        "forgetStartingStep",
+        "passButtonsFor",
+        "DEFAULT_STOPS",
     } <= exported
 
 
@@ -115,15 +109,18 @@ def test_module_exports_the_pure_functions_the_tests_drive() -> None:
 
 
 def test_halts_on_a_pending_decision_for_this_seat() -> None:
+    """The old message echoed the prompt (`"Pay 2 life?" in reason`); the new
+    one is a fixed string with no prompt text - a UI wording choice, not a
+    rule change, since the rule under test (a decision addressed to you
+    halts the run) still holds and is what the assertion below checks."""
     state = base_state(pending_decision={"player": "alice", "kind": "may", "prompt": "Pay 2 life?"})
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
-    assert reason is not None
-    assert "Pay 2 life?" in reason
+    reason = call_stop_reason(state, stops=UPKEEP_STOPS)
+    assert reason == "a decision is pending"
 
 
 def test_does_not_halt_on_a_decision_addressed_to_the_opponent() -> None:
     state = base_state(pending_decision={"player": "bob", "kind": "may", "prompt": "Pay 2 life?"})
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
+    reason = call_stop_reason(state, stops=UPKEEP_STOPS)
     assert reason is None
 
 
@@ -131,38 +128,43 @@ def test_does_not_halt_on_a_decision_addressed_to_the_opponent() -> None:
 
 
 def test_halts_when_this_seat_wins() -> None:
+    """The old message named the winner (`"alice" in reason`); the new one
+    is the same fixed string for every ending - win, loss, or draw alike -
+    another UI wording choice, not a rule change."""
     state = base_state(winner="alice")
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
-    assert reason is not None
-    assert "alice" in reason
+    reason = call_stop_reason(state)
+    assert reason == "the game is over"
 
 
 def test_halts_when_the_opponent_wins() -> None:
     state = base_state(winner="bob")
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
-    assert reason is not None
-    assert "bob" in reason
+    reason = call_stop_reason(state)
+    assert reason == "the game is over"
 
 
 def test_halts_on_a_draw() -> None:
     state = base_state(drawn=True)
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
-    assert reason is not None
-    assert "draw" in reason
+    reason = call_stop_reason(state)
+    assert reason == "the game is over"
 
 
 # -- reaching the target: "pass until my upkeep" -----------------------------
 
 
 def test_halts_on_reaching_the_players_own_upkeep() -> None:
+    """The old exact string was "reached your upkeep"; the new stops panel
+    reports "stop at your upkeep" for every checked stop, destination or not
+    - terser and uniform, a wording choice, not a rule change. The rule
+    (stopping exactly at your own named step) still holds, which is what
+    this test is actually pinning."""
     state = base_state(step="upkeep", active_player="alice")
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
-    assert reason == "reached your upkeep"
+    reason = call_stop_reason(state, stops=UPKEEP_STOPS)
+    assert reason == "stop at your upkeep"
 
 
 def test_does_not_halt_on_the_opponents_upkeep() -> None:
     state = base_state(step="upkeep", active_player="bob")
-    reason = call_stop_reason(state, AUTOPILOT_UNTIL_UPKEEP)
+    reason = call_stop_reason(state, stops=UPKEEP_STOPS)
     assert reason is None
 
 
@@ -170,126 +172,159 @@ def test_does_not_halt_on_the_opponents_upkeep() -> None:
 
 
 def test_halts_on_a_new_stack_object_when_the_safe_default_is_on() -> None:
+    """The old message named the card (`"Lightning Bolt" in reason`); the new
+    one is a fixed string with no card name - a wording choice, not a rule
+    change, since the rule (a new stack object halts the run) is what the
+    exact-match assertion below still pins."""
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
-    autopilot = {"target": "upkeep", "knownStackIds": []}
-    reason = call_stop_reason(state, autopilot, settings={"stopOnStack": True})
-    assert reason is not None
-    assert "Lightning Bolt" in reason
+    reason = call_stop_reason(state, known_stack_ids=[], stops=UPKEEP_STOPS)
+    assert reason == "something new is on the stack"
 
 
 def test_does_not_halt_on_a_new_stack_object_when_the_setting_is_off() -> None:
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
-    autopilot = {"target": "upkeep", "knownStackIds": []}
-    reason = call_stop_reason(state, autopilot, settings={"stopOnStack": False})
+    reason = call_stop_reason(
+        state, known_stack_ids=[], verb="pass_turn_regardless", stops=UPKEEP_STOPS
+    )
     assert reason is None
 
 
 def test_does_not_halt_on_a_stack_object_already_known() -> None:
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
-    autopilot = {"target": "upkeep", "knownStackIds": ["spell-1"]}
-    reason = call_stop_reason(state, autopilot, settings={"stopOnStack": True})
+    reason = call_stop_reason(state, known_stack_ids=["spell-1"], stops=UPKEEP_STOPS)
     assert reason is None
 
 
 def test_the_safe_default_is_stop_and_ask() -> None:
-    """`game.settings` in `ui/app.js` initializes `stopOnStack: true` - this
-    is the actual default value that constant carries, exercised the same
-    way any other call site would, with `stopOnStack: true` passed exactly
-    as the running app always does at start-up."""
+    """`until_castable` (the verb `settings.stopOnStack: true` maps to here)
+    checks a new stack object on every tick with no opt-out short of
+    choosing a different verb - the actual value this pins is that the
+    default mapping (`call_stop_reason`'s own default `verb="until_castable"`)
+    is the stack-checking one, exercised the same way any other call site
+    would."""
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
-    reason = call_stop_reason(
-        state, {"target": "upkeep", "knownStackIds": []}, settings={"stopOnStack": True}
-    )
+    reason = call_stop_reason(state, known_stack_ids=[], stops=UPKEEP_STOPS)
     assert reason is not None
 
 
 # -- no autopilot running -----------------------------------------------------
 
 
-def test_returns_null_when_no_autopilot_is_running() -> None:
-    state = base_state(winner="alice")
-    reason = run_js(
-        f"autopilotStopReason({json.dumps(state)}, null, 'alice', {{stopOnStack: true}})"
-    )
-    assert reason is None
+def test_there_is_no_null_run_case_to_return_early_from() -> None:
+    """The old function's very first line, `if (!autopilot) return null`,
+    only existed because a JS `null` stood in for "no automation is
+    running" - a UI state, not a rule. The verb model does not carry that
+    state through `stopReason` at all: a `run` is never optional, and a
+    caller with nothing running simply never calls it. Asserted the only way
+    that is still meaningful here - a real `run` still stops a finished
+    game exactly like every other state does, with nothing special to
+    early-return for."""
+    reason = call_stop_reason(base_state(winner="alice"))
+    assert reason == "the game is over"
 
 
 # -- stop condition: the pass itself is refused ------------------------------
 
 
 def test_interpret_pass_outcome_halts_on_a_refusal() -> None:
-    reason = run_js(
-        'interpretPassOutcome({"allowed": false, "reason": "you do not have priority"})'
+    """The old function returned a bare string or `null`; the new one
+    returns `{ok, reason, ...}` so a caller branches on `.ok` rather than on
+    string truthiness - a shape change, not a rule change: a refusal still
+    halts the run, which `result["ok"] is False` pins."""
+    result = run_module(
+        "priority.js",
+        'm.interpretPassOutcome({"allowed": false, "reason": "you do not have priority"})',
     )
-    assert reason is not None
-    assert "you do not have priority" in reason
+    assert result["ok"] is False
+    assert result["reason"] == "you do not have priority"
 
 
 def test_interpret_pass_outcome_continues_on_success() -> None:
-    reason = run_js('interpretPassOutcome({"allowed": true, "outcome": "passed"})')
-    assert reason is None
+    result = run_module(
+        "priority.js", 'm.interpretPassOutcome({"allowed": true, "outcome": "passed"})'
+    )
+    assert result["ok"] is True
+    assert result["reason"] is None
 
 
 # -- reaching a *named* destination: "auto-pass until <step>" (feature 3) -----
 #
-# The picker offers every step in the turn, for either player's turn, not just
-# "my upkeep". `who` says whose turn the step has to be in; a run built the
-# older way (`target` alone) still means "in my own turn", which the
-# `AUTOPILOT_UNTIL_UPKEEP` cases above already pin.
+# The old picker offered every step in the turn, for either player's turn.
+# `who` says whose turn the step has to be in; the new `stops` panel does the
+# same by which side (`mine`/`theirs`) the step is checked in.
 
 
-def until(step: str, who: str) -> dict:
-    return {"step": step, "who": who, "knownStackIds": []}
+def stops_for(step: str, who: str) -> dict:
+    if who == "you":
+        return {"mine": [step], "theirs": []}
+    if who == "opponent":
+        return {"mine": [], "theirs": [step]}
+    return {"mine": [step], "theirs": [step]}  # "any"
 
 
 def test_halts_on_reaching_a_named_step_in_your_own_turn() -> None:
     state = base_state(step="postcombat_main", active_player="alice")
-    reason = call_stop_reason(state, until("postcombat_main", "you"))
+    reason = call_stop_reason(state, stops=stops_for("postcombat_main", "you"))
     assert reason is not None
     assert "postcombat main" in reason
 
 
 def test_does_not_halt_on_that_step_in_the_opponents_turn() -> None:
     state = base_state(step="postcombat_main", active_player="bob")
-    assert call_stop_reason(state, until("postcombat_main", "you")) is None
+    assert call_stop_reason(state, stops=stops_for("postcombat_main", "you")) is None
 
 
 def test_halts_on_a_named_step_in_the_opponents_turn() -> None:
+    """The old reason named the picker's `who` choice literally
+    (`"opponent" in reason`); the new stops panel says "their" for the
+    non-"mine" side, matching "your" for the other - a wording choice, not
+    a rule change, since the rule (this stop applies to the opponent's
+    occurrence of the step) is what `reason is not None` still pins."""
     state = base_state(step="end_step", active_player="bob")
-    reason = call_stop_reason(state, until("end_step", "opponent"))
+    reason = call_stop_reason(state, stops=stops_for("end_step", "opponent"))
     assert reason is not None
-    assert "opponent" in reason
+    assert "their" in reason
 
 
 def test_does_not_halt_on_the_opponents_step_during_your_own_turn() -> None:
     state = base_state(step="end_step", active_player="alice")
-    assert call_stop_reason(state, until("end_step", "opponent")) is None
+    assert call_stop_reason(state, stops=stops_for("end_step", "opponent")) is None
 
 
 def test_who_any_halts_in_either_players_turn() -> None:
     for active in ("alice", "bob"):
         state = base_state(step="upkeep", active_player=active)
-        assert call_stop_reason(state, until("upkeep", "any")) is not None
+        assert call_stop_reason(state, stops=stops_for("upkeep", "any")) is not None
 
 
 def test_a_different_step_does_not_halt() -> None:
     state = base_state(step="draw", active_player="alice")
-    assert call_stop_reason(state, until("upkeep", "you")) is None
+    assert call_stop_reason(state, stops=stops_for("upkeep", "you")) is None
 
 
 def test_the_game_ending_outranks_the_destination() -> None:
     """Stop conditions are checked in order, and the game being over wins -
-    a run must never keep passing into a finished game."""
+    a run must never keep passing into a finished game. The old assertion
+    checked the winner's name was in the reason (`"bob" in reason"`); the
+    new "the game is over" message is uniform across endings, so that part
+    is a wording change, not a rule change - the ordering itself (game over
+    beats the destination check) is what this test is really pinning, and it
+    still holds: the exact string returned is the game-over one, not the
+    "stop at your upkeep" one the destination would have produced."""
     state = base_state(step="upkeep", active_player="alice", winner="bob")
-    reason = call_stop_reason(state, until("upkeep", "you"))
-    assert "bob" in reason
+    reason = call_stop_reason(state, stops=stops_for("upkeep", "you"))
+    assert reason == "the game is over"
 
 
 def test_a_decision_outranks_the_destination() -> None:
+    """Same ordering point as above, for the decision check: the old reason
+    echoed the prompt; the new one is the fixed "a decision is pending"
+    string, so the wording assertion is rewritten but the ordering (decision
+    beats destination) still holds."""
     state = base_state(
         step="upkeep",
         active_player="alice",
         pending_decision={"player": "alice", "kind": "may", "prompt": "Pay 2 life?"},
     )
-    reason = call_stop_reason(state, until("upkeep", "you"))
-    assert "Pay 2 life?" in reason
+    reason = call_stop_reason(state, stops=stops_for("upkeep", "you"))
+    assert reason == "a decision is pending"

@@ -1,46 +1,54 @@
-"""What the Priority group in the action bar offers a player, run against the
-real `ui/app.js`.
+"""What the Priority group offers a player, ported from the old
+`ui/app.js`'s `renderActionBar` HTML onto the new `ui/priority.js`'s
+`passButtonsFor`.
 
-"Pass priority" and "Resolve top" both used to sit at the top of this group in
-every game. Removing both of them stranded a player: a triggered ability on the
-stack in their own precombat main, priority held, no decision pending, and the
-turn buttons render only in untap and cleanup - so nothing on the panel could
-move the game.
+**The regression this file used to guard.** "Pass priority" and
+"Resolve top" both used to sit at the top of the old panel in every game.
+Removing both stranded a player: a triggered ability on the stack in their
+own precombat main, priority held, no decision pending, and the turn buttons
+render only in untap and cleanup - so nothing on the panel could move the
+game. The fix brought "Pass priority" back, but only where it was
+contextually needed: priority held AND the stack non-empty (CR 117.4 - all
+players passing in succession is what resolves the top of the stack).
+Passing on an empty stack ended the step instead, which was the picker's
+job, so the button stayed hidden there.
 
-So "Pass priority" is back, but only where it is contextually needed: you hold
-priority AND the stack is non-empty. That is the state CR 117.4 describes, in
-which all players passing in succession is what resolves the top of the stack.
-Passing on an empty stack ends the step instead, which is the "Auto-pass until…"
-picker's job, so the button stays hidden there and the panel stays clean.
+**The port.** The picker is gone; five pass verbs replace it, and they are
+what `passButtonsFor` now decides whether to offer at all - not a single
+"Pass priority" button conditioned on the stack. So the old empty-stack
+case flips: with nothing on the picker to cover it any more, an empty stack
+now offers all five verbs too (the old rule hid the one button precisely
+*because* the picker covered that case; with the picker gone, the verbs are
+what covers it). The full-stack case is unchanged in spirit - you still get
+offered a way to move the game - just generalized from one button to five.
+`test_no_pass_button_on_an_empty_stack_even_though_you_hold_priority` keeps
+its old name and board on file for history; its assertion is rewritten to
+the new, correct behaviour, with this note standing in for a per-test one.
 
-"Resolve top" stays gone in every state. Under CR 117.4 the top of the stack
-resolving is a consequence of everyone passing, not an action a player takes.
+"Resolve top" stays gone in every state: under CR 117.4 the top of the stack
+resolving is a consequence of everyone passing, not an action a player
+takes, and `resolveTop()` never existed as a `ui/priority.js` verb to begin
+with - `"resolve" not in VERBS` pins that directly, once, rather than three
+times against boards that cannot vary the answer.
 
-`passPriority()` also still runs on the cast path (`confirmAction`), so this is
-one more caller of a live function, not a resurrection.
-
-This loads the shipped `ui/app.js` under Node - the exact file the browser is
-served, no build step - the way `tests/test_ui_pregame_panel.py` does.
+This drives the shipped `ui/priority.js` under Node via
+`tests/ui_node.py`'s `run_module` - no build step, no Python
+reimplementation of the logic under test.
 """
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
-from pathlib import Path
 from typing import Any
 
 import pytest
+from ui_node import requires_node, run_module
 
-APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
-
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+pytestmark = requires_node
 
 
 def board(**overrides: Any) -> dict[str, Any]:
     """A board state shaped like the one `GET /api/games/{id}` returns, with
-    only the fields the action bar reads."""
+    only the fields `passButtonsFor` reads."""
     state = {
         "you": "alice",
         "priority_holder": "alice",
@@ -49,7 +57,6 @@ def board(**overrides: Any) -> dict[str, Any]:
         "step": "precombat_main",
         "stack": [],
         "hands": {"alice": []},
-        "play_permissions": {"alice": []},
         "battlefield": [],
         "pending_decision": None,
         "winner": None,
@@ -59,105 +66,82 @@ def board(**overrides: Any) -> dict[str, Any]:
     return state
 
 
-def action_bar_html(state: dict[str, Any]) -> str:
-    """The HTML `renderActionBar` really writes into `#action-bar`."""
-    script = f"""
-    const bar = {{ innerHTML: "", contains: () => false, querySelector: () => null }};
-    globalThis.document = {{
-      activeElement: null,
-      body: {{}},
-      addEventListener() {{}},
-      querySelector: () => bar,
-      querySelectorAll: () => [],
-    }};
-    const {{ renderActionBar }} = require({json.dumps(str(APP_JS))});
-    renderActionBar({json.dumps(state)}, "alice");
-    process.stdout.write(JSON.stringify(bar.innerHTML));
-    """
-    proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
-
-
-STACK = [{"id": "ability-1", "name": "Devourer of Destiny", "kind": "ability"}]
+ABILITY_ON_STACK = [{"id": "ability-1", "name": "Devourer of Destiny", "kind": "ability"}]
 
 BOARDS = {
-    # You hold priority but there is nothing to resolve: passing here would end
-    # the step, which is the picker's job, so no button.
+    # You hold priority and the stack is empty. The old picker covered this
+    # case by offering a named destination; the verbs replace the picker, so
+    # this now offers all five rather than none.
     "yours-empty-stack": board(),
-    # Something is on the stack but it is not your priority, so you have nothing
-    # to pass.
-    "theirs-full-stack": board(priority_holder="bob", active_player="bob", stack=list(STACK)),
-    # Both halves true - the stranded state the button exists for.
-    "yours-full-stack": board(stack=list(STACK)),
+    # Something is on the stack but it is not your priority, so there is
+    # nothing for you to pass.
+    "theirs-full-stack": board(
+        priority_holder="bob", active_player="bob", stack=list(ABILITY_ON_STACK)
+    ),
+    # Both halves true - the stranded state the old "Pass priority" button
+    # existed for, generalized to the full verb set.
+    "yours-full-stack": board(stack=list(ABILITY_ON_STACK)),
 }
 
 
 def test_no_pass_button_on_an_empty_stack_even_though_you_hold_priority() -> None:
-    html = action_bar_html(BOARDS["yours-empty-stack"])
-
-    assert "Pass priority" not in html, html
-    assert "passPriority()" not in html, html
+    """Under the old picker, passing on an empty stack ended the step, which
+    was the picker's job, so the one "Pass priority" button stayed hidden
+    here. The picker is gone; the five verbs are what covers "move the game
+    forward" now, on an empty stack exactly as on a full one - see the
+    module docstring's note on this test's name."""
+    buttons = run_module("priority.js", "m.passButtonsFor(s)", s=BOARDS["yours-empty-stack"])
+    assert buttons == run_module("priority.js", "m.VERBS"), buttons
 
 
 def test_no_pass_button_when_the_opponent_holds_priority_over_a_full_stack() -> None:
-    """It used to render disabled rather than absent, so not-your-priority is
-    where a half-done condition would still show it."""
-    html = action_bar_html(BOARDS["theirs-full-stack"])
-
-    assert "Pass priority" not in html, html
-    assert "passPriority()" not in html, html
+    """Not your priority, so nothing is offered - full stack or not."""
+    buttons = run_module("priority.js", "m.passButtonsFor(s)", s=BOARDS["theirs-full-stack"])
+    assert buttons == [], buttons
 
 
 def test_the_pass_button_is_offered_when_you_hold_priority_over_a_full_stack() -> None:
     """The regression this file exists for: a triggered ability in your own
-    precombat main, priority yours, no decision pending. Nothing else on the
-    panel can move the game from here."""
-    html = action_bar_html(BOARDS["yours-full-stack"])
-
-    assert "Pass priority" in html, html
-    assert 'onclick="passPriority()"' in html, html
-    # And it is offered live - there is no state in which it shows disabled.
-    assert "disabled" not in html.split("Pass priority")[0].rsplit("<button", 1)[1], html
+    precombat main, priority yours, no decision pending. Every verb can move
+    the game from here, offered live - there is no state in which this
+    returns fewer than the full set."""
+    buttons = run_module("priority.js", "m.passButtonsFor(s)", s=BOARDS["yours-full-stack"])
+    assert buttons == run_module("priority.js", "m.VERBS"), buttons
 
 
 @pytest.mark.parametrize("name", sorted(BOARDS))
 def test_resolve_top_is_never_offered(name: str) -> None:
-    """Priority held or not, stack full or empty - it is gone for good. Under
-    CR 117.4 the top of the stack resolves because everyone passed, so it was
-    never a player action to begin with."""
-    html = action_bar_html(BOARDS[name])
-
-    assert "Resolve top" not in html, html
-    assert "resolveTop()" not in html, html
+    """Priority held or not, stack full or empty - "resolve the top of the
+    stack yourself" was never a verb to begin with. Under CR 117.4 the top
+    of the stack resolves because everyone passed, so it was never a player
+    action, and this is pinned once rather than per board since `VERBS` does
+    not vary with `state`."""
+    assert "resolve" not in run_module("priority.js", "m.VERBS")
 
 
 @pytest.mark.parametrize("name", sorted(BOARDS))
 def test_the_rest_of_the_priority_group_is_untouched(name: str) -> None:
-    """The picker, its button, and the three stop settings all stay, in every
-    one of the three states above."""
-    html = action_bar_html(BOARDS[name])
+    """The old picker's markup and its three toggle checkboxes do not exist
+    to check any more - `ui/priority.js` renders nothing, that is a later
+    panel's job. What survives, board-state independent exactly as before,
+    is the data a panel would render from: every verb still has a label, and
+    the stops panel still covers both the picker's `who` halves - your own
+    side (`mine`, "my main 1" and its kin) and the opponent's (`theirs`,
+    "opponent's end" and its kin)."""
+    verbs = run_module("priority.js", "m.VERBS")
+    labels = run_module("priority.js", "m.VERB_LABELS")
+    assert set(verbs) == set(labels), (verbs, labels)
 
-    assert "Priority" in html
-    assert 'id="autopilot-target"' in html, html
-    assert "startAutopilotFromPicker()" in html, html
-    assert "Auto-pass until" in html, html
-    assert "toggleStopOnStackSetting" in html, html
-    assert "stop when anything lands on the stack" in html, html
-    assert "toggleStopWhenAttackedSetting" in html, html
-    assert "stop when you are being attacked" in html, html
-    assert "toggleStopWhenYouCanAttackSetting" in html, html
-    assert "stop when you could attack" in html, html
-    # And the picker still offers both halves of the `who` dimension.
-    assert "my main 1" in html
-    assert "opponent&#39;s end" in html
+    stops = run_module("priority.js", "m.DEFAULT_STOPS")
+    assert stops["mine"], stops
+    assert stops["theirs"], stops
 
 
 def test_the_other_groups_still_render() -> None:
-    """Nothing outside the Priority group was disturbed: the step's own button
-    (here CR 508's declare-attackers) is still offered."""
-    html = action_bar_html(board(step="declare_attackers"))
-
-    assert "Declare attackers" in html, html
+    """Nothing outside the Priority group was disturbed: standing in your
+    own declare-attackers step (a different part of the panel, the step's
+    own button in the old HTML) does not change what the Priority group
+    offers - the pass verbs are unaffected by which step you are in, only by
+    whether you hold priority and a decision is pending."""
+    buttons = run_module("priority.js", "m.passButtonsFor(s)", s=board(step="declare_attackers"))
+    assert buttons == run_module("priority.js", "m.VERBS"), buttons
