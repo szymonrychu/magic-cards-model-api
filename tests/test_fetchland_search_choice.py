@@ -38,9 +38,9 @@ Two halves, both real:
 - the API payload and the fetch itself, from a real game on a real board with
   real Scryfall printings out of the engine's own fixture pool. Nothing is
   hand-written and nothing is mocked.
-- the renderer, by loading the shipped `ui/app.js` under Node the way
-  `tests/test_card_split_labels.py` and `tests/test_ui_priority_panel.py` do -
-  the exact file the browser is served, no build step.
+- the view model, by loading the shipped `ui/decisions.js` under Node the way
+  `tests/test_card_split_labels.py` and `tests/test_ui_actions.py` do - the
+  exact file the browser is served, no build step.
 
 Every CR number in this module was verified with `knowledge_search(type="rules")`
 in the session that wrote it.
@@ -48,23 +48,16 @@ in the session that wrote it.
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
-import pytest
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
+from ui_node import requires_node, run_module
 
 from magic_cards_model_api.main import app
 from magic_cards_model_api.store import store
-
-APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
-
 
 # -- the API payload, and the fetch it drives --------------------------------
 
@@ -225,35 +218,22 @@ def test_declining_the_whole_search_is_one_answer_not_one_refusal_per_card(clien
     assert sorted(card.name for card in library) == ["Breeding Pool", "Forest"]
 
 
-# -- the renderer, running the shipped ui/app.js ------------------------------
+# -- the view model, running the shipped ui/decisions.js ---------------------
 
 
-needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+needs_node = requires_node
 
 
-def render_choose_cards(pending: dict[str, Any]) -> str:
-    """The HTML `ui/app.js` really produces for this pending decision."""
-    script = f"""
-    const {{ renderChooseCardsDecision }} = require({json.dumps(str(APP_JS))});
-    process.stdout.write(JSON.stringify(renderChooseCardsDecision({json.dumps(pending)})));
-    """
-    return json.loads(run_node(script))
+def render_choose_cards(
+    pending: dict[str, Any], draft: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The `choose_cards` view model `ui/decisions.js`'s `viewModel` really
+    produces for this pending decision."""
+    return run_module("decisions.js", "m.viewModel(p, d)", p=pending, d=draft or {})
 
 
 def choose_cards_options(pending: dict[str, Any]) -> list[dict[str, str]]:
-    script = f"""
-    const {{ chooseCardsOptions }} = require({json.dumps(str(APP_JS))});
-    process.stdout.write(JSON.stringify(chooseCardsOptions({json.dumps(pending)})));
-    """
-    return json.loads(run_node(script))
-
-
-def run_node(script: str) -> str:
-    proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return proc.stdout
+    return run_module("decisions.js", "m.chooseCardsOptions(p)", p=pending)
 
 
 #: What the fetch really publishes, minus `card_details`: a library card is
@@ -277,38 +257,38 @@ def test_the_picker_names_both_finds_when_only_the_engines_labels_have_them() ->
     candidate the board cannot resolve rendered as no box at all - and the
     seat was offered "(no candidates shown)" for a question with two legal
     answers."""
-    html = render_choose_cards(FETCH_PENDING)
+    vm = render_choose_cards(FETCH_PENDING)
+    (options,) = [c["items"] for c in vm["controls"] if c["type"] == "options"]
+    labels = [item["label"] for item in options]
 
-    assert "Breeding Pool" in html, html
-    assert "Forest" in html, html
-    assert "(no candidates shown)" not in html
-    assert html.count('type="checkbox"') == 2, html
-    assert "undefined" not in html
+    assert "Breeding Pool" in labels
+    assert "Forest" in labels
+    assert len(options) == 2
 
 
 @needs_node
 def test_the_picker_says_which_card_is_searching() -> None:
     """`source` is the difference between an informed choice and a guess."""
-    assert "Wooded Foothills" in render_choose_cards(FETCH_PENDING)
+    assert render_choose_cards(FETCH_PENDING)["title"] == "Wooded Foothills"
 
 
 @needs_node
 def test_a_declinable_search_offers_finding_nothing_as_a_real_answer() -> None:
     """CR 701.23b's decline needs a control of its own. Ticking nothing and
     pressing Confirm is the same answer, but a player cannot see that from a
-    box that says only "choose up to 1"."""
-    html = render_choose_cards(FETCH_PENDING)
+    prompt that says only "choose up to 1"."""
+    vm = render_choose_cards(FETCH_PENDING)
 
-    assert "Find nothing" in html, html
-    assert "up to 1" in html, html
-    assert "declineChooseCards()" in html, html
+    assert vm["secondary"]["label"] == "Find nothing"
+    assert vm["secondary"]["answer"] == {"card_ids": []}
+    assert "up to 1" in vm["prompt"], vm["prompt"]
 
 
 @needs_node
 def test_an_exact_choice_neither_says_up_to_nor_offers_a_decline() -> None:
     """CR 701.23d's branch, and the cleanup discard's: `amount` is a count.
     The old renderer said "choose up to N" for this too."""
-    html = render_choose_cards(
+    vm = render_choose_cards(
         {
             **FETCH_PENDING,
             "exact": True,
@@ -317,9 +297,9 @@ def test_an_exact_choice_neither_says_up_to_nor_offers_a_decline() -> None:
         }
     )
 
-    assert "exactly 2" in html, html
-    assert "up to" not in html, html
-    assert "Find nothing" not in html, html
+    assert vm["submit"]["label"] == "Choose 2"
+    assert "up to" not in vm["prompt"], vm["prompt"]
+    assert vm["secondary"] is None
 
 
 @needs_node
@@ -328,10 +308,10 @@ def test_a_missing_exact_reads_as_the_engines_own_default() -> None:
     engine-side default and the shape every `choose_cards` had before a search
     became one."""
     payload = {key: value for key, value in FETCH_PENDING.items() if key != "exact"}
-    html = render_choose_cards(payload)
+    vm = render_choose_cards(payload)
 
-    assert "exactly 1" in html, html
-    assert "Find nothing" not in html, html
+    assert vm["submit"]["label"] == "Choose 1"
+    assert vm["secondary"] is None
 
 
 @needs_node
@@ -361,51 +341,34 @@ def test_a_candidate_is_named_by_details_then_labels_then_its_id() -> None:
 def test_every_candidate_keeps_a_box_even_with_no_naming_at_all() -> None:
     """No details, no labels: still one box per candidate. Dropping a legal
     find from the picker is how the walk misplayed in the first place."""
-    html = render_choose_cards({**FETCH_PENDING, "card_labels": []})
-    assert html.count('type="checkbox"') == 2, html
+    options = choose_cards_options({**FETCH_PENDING, "card_labels": []})
+    assert len(options) == 2
 
 
 @needs_node
 def test_a_label_is_escaped_like_every_other_string_in_the_box() -> None:
-    """`card_labels` and `source` are engine text reaching innerHTML, so they
-    go through the same escaping the rest of the box does."""
-    html = render_choose_cards(
-        {**FETCH_PENDING, "card_labels": ["<b>Bad</b>", "Forest"], "source": "<i>Foothills</i>"}
-    )
+    """`card_labels` and `source` are engine text; the view model is pure data
+    and does not touch it, so both pass through verbatim - escaping for
+    `innerHTML` is deferred to whatever screen renders this view model."""
+    options = choose_cards_options({**FETCH_PENDING, "card_labels": ["<b>Bad</b>", "Forest"]})
+    vm = render_choose_cards({**FETCH_PENDING, "source": "<i>Foothills</i>"})
 
-    assert "<b>" not in html and "<i>" not in html, html
-    assert "&lt;b&gt;Bad&lt;/b&gt;" in html
-    assert "&lt;i&gt;Foothills&lt;/i&gt;" in html
+    assert options[0]["label"] == "<b>Bad</b>"
+    assert vm["title"] == "<i>Foothills</i>"
 
 
 @needs_node
 def test_confirm_refuses_to_send_fewer_than_an_exact_choice_needs() -> None:
-    """CR 701.23d's count, caught in the box. The server refuses it too
-    (`decisions.validate_answer`), so what this buys is the player being told
-    what is wrong with their answer instead of it bouncing off the API."""
-    script = f"""
-    const box = {{ innerHTML: "", hidden: true, className: "" }};
-    let fetched = 0;
-    globalThis.fetch = () => {{
-      fetched += 1;
-      return Promise.resolve({{ ok: true, json: async () => ({{}}) }});
-    }};
-    globalThis.document = {{
-      activeElement: null,
-      body: {{}},
-      addEventListener() {{}},
-      querySelector: () => box,
-      querySelectorAll: () => [],
-    }};
-    const app = require({json.dumps(str(APP_JS))});
-    app.game.state = {{
-      you: "alice",
-      pending_decision: {{ kind: "choose_cards", exact: true, amount: 2 }},
-    }};
-    app.submitChooseCards();
-    process.stdout.write(JSON.stringify({{ notice: box.innerHTML, fetched: fetched }}));
-    """
-    result = json.loads(run_node(script))
+    """CR 701.23d's count, caught in the view model before a submit ever
+    happens: the server refuses it too (`decisions.validate_answer`), so what
+    this buys is the submit control never reading as enabled for an answer
+    the engine would reject - `ui/decisions.js` has no DOM to send a fetch
+    from at all, that part of the old check moved to whatever screen wires
+    this view model's `submit.enabled` to a button."""
+    vm = render_choose_cards(
+        {"kind": "choose_cards", "exact": True, "amount": 2, "cards": ["card-1", "card-2"]},
+        draft={"card_ids": ["card-1"]},
+    )
 
-    assert result["fetched"] == 0, "an answer the engine will reject was sent anyway"
-    assert "exactly 2" in result["notice"], result["notice"]
+    assert vm["submit"]["enabled"] is False
+    assert vm["submit"]["label"] == "Choose 2"

@@ -20,7 +20,7 @@ Two halves are fixed here, and they are separable on purpose:
   the source's printed name and the ability's own text, which is what tells two
   triggers of the *same* permanent apart. Every surface that prints the state
   view gets this for free: the browser, `mcp.my_state`, `seat_cli state`.
-- **the clients.** `ui/app.js` names each option instead of slicing the id, and
+- **the clients.** `ui/decisions.js` names each option instead of slicing the id, and
   falls back to the position in `pending.cards` - never a raw id - for an
   object it cannot find.
 
@@ -36,9 +36,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
-import subprocess
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -54,6 +51,7 @@ from test_decision_kinds import (
     stage_two_simultaneous_upkeep_triggers,
     wait_for_pending,
 )
+from ui_node import requires_node, run_module
 
 from magic_cards_model_api import seat_cli
 from magic_cards_model_api.decisions import PendingDecision
@@ -61,8 +59,6 @@ from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.seatkit import Seats
 from magic_cards_model_api.store import store
-
-APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
 
 #: Delver of Secrets' printed upkeep trigger, as `serialize._stack_view` would
 #: carry it - both copies read exactly this, which is the point.
@@ -194,22 +190,14 @@ def test_an_agent_sees_the_source_named_through_the_seat_cli(client, game, monke
 # -- what a human sees in the browser ---------------------------------------
 
 
-needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+needs_node = requires_node
 
 
 def trigger_order_options(pending: dict[str, Any]) -> list[dict[str, str]]:
-    """`ui/app.js`'s own `triggerOrderOptions`, run under Node against the
-    exact file the browser is served - never a Python re-description of it.
-    Same trick as `tests/test_ui_autopilot.py`."""
-    script = f"""
-    const {{ triggerOrderOptions }} = require({json.dumps(str(APP_JS))});
-    process.stdout.write(JSON.stringify(triggerOrderOptions({json.dumps(pending)})));
-    """
-    proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
+    """`ui/decisions.js`'s own `triggerOrderOptions`, run under Node against
+    the exact file the browser is served - never a Python re-description of
+    it. Same trick as `tests/test_ui_actions.py`."""
+    return run_module("decisions.js", "m.triggerOrderOptions(p)", p=pending)
 
 
 @needs_node

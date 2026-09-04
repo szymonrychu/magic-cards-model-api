@@ -2,17 +2,17 @@
 
 `decide` (`app.py`, `decisions.ANSWERABLE_KINDS`) is only half of what stops a
 new `DecisionKind` from freezing a *live* game: it also needs a form in
-`ui/app.js`'s `DECISION_RENDERERS`, or a human clicking through the browser UI
-has no way to answer a question the server-side endpoint would gladly accept.
-This test enumerates the engine's own `DecisionKind` members (the same
+`ui/decisions.js`'s `DECISION_KINDS`, or a human clicking through the browser
+UI has no way to answer a question the server-side endpoint would gladly
+accept. This test enumerates the engine's own `DecisionKind` members (the same
 enumeration `test_decision_kinds.py` walks) and fails, by name, the moment one
-of them has no renderer in the UI - so a future engine addition fails a test
+of them has no view model in the UI - so a future engine addition fails a test
 here instead of silently hanging a live browser game the way `decisions.py`'s
 module docstring already documents happening twice server-side.
 
-`ui/app.js` is not Python-importable (there is deliberately no build step,
-`CLAUDE.md`/the task brief both say so), so this reads its source text and
-extracts `DECISION_RENDERERS`' own object-literal keys with a regex tied to
+`ui/decisions.js` is not Python-importable (there is deliberately no build
+step, `CLAUDE.md`/the task brief both say so), so this reads its source text
+and extracts `DECISION_KINDS`' own object-literal keys with a regex tied to
 that object's exact shape - the same "read the real artifact, do not
 re-implement its logic" approach `test_decision_kinds.py` takes reading
 `decisions.ANSWERABLE_KINDS` directly rather than hard-coding a copy of it.
@@ -27,18 +27,19 @@ from magic_cards_model.machines.decisions import DecisionKind
 
 from magic_cards_model_api import decisions
 
-UI_APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
+UI_DECISIONS_JS = Path(__file__).resolve().parents[1] / "ui" / "decisions.js"
+UI_COMBAT_JS = Path(__file__).resolve().parents[1] / "ui" / "combat.js"
 
 #: `declare_attackers`/`declare_blockers` never reach `decide` at all
 #: (`decisions.SERVED_ELSEWHERE`) - the UI answers them through
 #: `POST .../actions/attack` and `POST .../actions/declare-blockers`
-#: instead, via `openAttackModal`/`openBlockModal` in `ui/app.js`. Checked
-#: by name below rather than assumed, the same way `test_decision_kinds.py`
-#: proves `decide`'s refusal for them rather than merely citing the module
+#: instead, via `attackBody`/`blockBody` in `ui/combat.js`. Checked by name
+#: below rather than assumed, the same way `test_decision_kinds.py` proves
+#: `decide`'s refusal for them rather than merely citing the module
 #: docstring.
 _UI_HANDLED_ELSEWHERE = {
-    DecisionKind.DECLARE_ATTACKERS: "openAttackModal",
-    DecisionKind.DECLARE_BLOCKERS: "openBlockModal",
+    DecisionKind.DECLARE_ATTACKERS: "attackBody",
+    DecisionKind.DECLARE_BLOCKERS: "blockBody",
 }
 
 #: Empty, and that is the point: every `DecisionKind` the engine can ask now
@@ -62,38 +63,38 @@ _UI_HANDLED_ELSEWHERE = {
 _NEVER_REACHES_A_LIVE_SEAT: set[DecisionKind] = set()
 
 
-def _decision_renderers_object() -> str:
-    text = UI_APP_JS.read_text()
-    match = re.search(r"const DECISION_RENDERERS = \{(.*?)\n\};", text, re.S)
-    assert match is not None, "ui/app.js no longer defines DECISION_RENDERERS - update this test"
+def _decision_kinds_object() -> str:
+    text = UI_DECISIONS_JS.read_text()
+    match = re.search(r"const DECISION_KINDS = \{(.*?)\n\};", text, re.S)
+    assert match is not None, "ui/decisions.js no longer defines DECISION_KINDS - update this test"
     return match.group(1)
 
 
 def _ui_answerable_kinds() -> set[str]:
-    """Every kind name used as a `DECISION_RENDERERS` object key."""
-    body = _decision_renderers_object()
+    """Every kind name used as a `DECISION_KINDS` object key."""
+    body = _decision_kinds_object()
     return set(re.findall(r"^\s*(\w+):", body, re.M))
 
 
-def test_ui_app_js_exists() -> None:
-    assert UI_APP_JS.is_file(), "ui/app.js is missing - the browser UI was not built"
+def test_ui_decisions_js_exists() -> None:
+    assert UI_DECISIONS_JS.is_file(), "ui/decisions.js is missing - the browser UI was not built"
 
 
-def test_ui_decision_renderers_match_decide_answerable_kinds() -> None:
+def test_ui_decision_kinds_match_decide_answerable_kinds() -> None:
     """Every kind `decide` accepts (`decisions.ANSWERABLE_KINDS`) has a
-    `DECISION_RENDERERS` entry in `ui/app.js`, and vice versa - no kind the
+    `DECISION_KINDS` entry in `ui/decisions.js`, and vice versa - no kind the
     UI claims to handle that the server would actually refuse."""
     server_side = {kind.value for kind in decisions.ANSWERABLE_KINDS}
     ui_side = _ui_answerable_kinds()
     missing_in_ui = server_side - ui_side
     assert not missing_in_ui, (
-        f"decide() answers {sorted(missing_in_ui)} but ui/app.js's DECISION_RENDERERS "
+        f"decide() answers {sorted(missing_in_ui)} but ui/decisions.js's DECISION_KINDS "
         "has no form for it - a human playing through the browser cannot answer this "
         "kind of decision, and the game will sit frozen until it times out"
     )
     stale_in_ui = ui_side - server_side
     assert not stale_in_ui, (
-        f"ui/app.js claims to handle {sorted(stale_in_ui)}, which decide() does not "
+        f"ui/decisions.js claims to handle {sorted(stale_in_ui)}, which decide() does not "
         "accept - dead code or a kind that was removed from ANSWERABLE_KINDS"
     )
 
@@ -105,17 +106,17 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui() -> None:
     (`_UI_HANDLED_ELSEWHERE`), or provably unable to ever reach a live seat
     at all (`_NEVER_REACHES_A_LIVE_SEAT`). A kind in none of the three is the
     exact drift this test exists to catch."""
-    app_js_text = UI_APP_JS.read_text()
+    combat_js_text = UI_COMBAT_JS.read_text()
     for kind in DecisionKind:
         if kind in decisions.ANSWERABLE_KINDS:
             assert kind.value in _ui_answerable_kinds(), (
-                f"{kind} is answerable server-side but ui/app.js has no "
-                "DECISION_RENDERERS entry for it"
+                f"{kind} is answerable server-side but ui/decisions.js has no "
+                "DECISION_KINDS entry for it"
             )
         elif kind in _UI_HANDLED_ELSEWHERE:
             marker = _UI_HANDLED_ELSEWHERE[kind]
-            assert marker in app_js_text, (
-                f"{kind} is supposed to be handled by {marker}() in ui/app.js, "
+            assert marker in combat_js_text, (
+                f"{kind} is supposed to be handled by {marker}() in ui/combat.js, "
                 "but that function is no longer there"
             )
         elif kind in _NEVER_REACHES_A_LIVE_SEAT:
@@ -123,7 +124,7 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui() -> None:
         else:
             raise AssertionError(
                 f"{kind} is a new DecisionKind this test has not been taught about: add "
-                "it to ANSWERABLE_KINDS+DECISION_RENDERERS, to _UI_HANDLED_ELSEWHERE with "
+                "it to ANSWERABLE_KINDS+DECISION_KINDS, to _UI_HANDLED_ELSEWHERE with "
                 "its own dedicated UI, or to _NEVER_REACHES_A_LIVE_SEAT with proof (like "
                 "decisions.SERVED_ELSEWHERE's MULLIGAN case) that it can never reach a "
                 "live seat's pending_decision at all"

@@ -29,9 +29,9 @@ Two halves, both covered here:
   CR 103.5's mulligan process, revealed through CR 103.6b's opening-hand
   action, and advanced to CR 103.7's first upkeep where CR 603.7's delayed
   trigger goes on the stack. Nothing is hand-built and nothing is mocked.
-- the renderer, by loading the shipped `ui/app.js` under Node the way
-  `tests/test_ui_pregame_panel.py` and `tests/test_ui_autopilot.py` do - the
-  exact file the browser is served, no build step, no Python re-description.
+- the view model, by loading the shipped `ui/decisions.js` under Node the way
+  `tests/test_ui_actions.py` does - the exact file the browser is served, no
+  build step, no Python re-description.
 
 Every CR number in this module was verified with `knowledge_search(type="rules")`
 in the session that wrote it.
@@ -39,22 +39,16 @@ in the session that wrote it.
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 from magic_cards_model.models.zone import Zone
+from ui_node import requires_node, run_module
 
 from magic_cards_model_api.main import app
 from magic_cards_model_api.store import store
-
-APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
 
 #: 56 Swamp + 4 Devourer of Destiny: a legal sixty (CR 100.2a exempts basic
 #: lands from the four-copy limit), every card a recorded Scryfall printing
@@ -203,26 +197,20 @@ def test_the_devourer_decision_says_exile_and_never_says_bottom(client: TestClie
         client.delete(f"/api/games/{game_id}")
 
 
-# -- the renderer, running the shipped ui/app.js ------------------------------
+# -- the view model, running the shipped ui/decisions.js ---------------------
 
 
-needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
+needs_node = requires_node
 
 
-def render_split(pending: dict[str, Any], *, kind: str) -> str:
-    """The HTML `ui/app.js` really produces for this pending decision, from the
-    renderer the decision's own kind is wired to (`scry` or `surveil`)."""
-    to_graveyard = {"scry": "false", "surveil": "true"}[kind]
-    script = f"""
-    const {{ renderCardSplitDecision }} = require({json.dumps(str(APP_JS))});
-    const html = renderCardSplitDecision({to_graveyard})({json.dumps(pending)});
-    process.stdout.write(JSON.stringify(html));
-    """
-    proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
+def render_split(pending: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    """The `split` control `ui/decisions.js`'s `viewModel` really produces for
+    this pending decision - `kind` picks `scry` or `surveil`'s own fallback
+    pair the same way the old renderer's explicit `toGraveyard` argument did,
+    decoupled from whatever `pending["kind"]` already says."""
+    vm = run_module("decisions.js", "m.viewModel(p, {})", p={**pending, "kind": kind})
+    (control,) = [c for c in vm["controls"] if c["type"] == "split"]
+    return control
 
 
 def looked_at(**extra: Any) -> dict[str, Any]:
@@ -240,74 +228,76 @@ def looked_at(**extra: Any) -> dict[str, Any]:
 
 @needs_node
 def test_the_browser_tags_each_card_with_the_destination_the_engine_named() -> None:
-    """Devourer of Destiny's own pair, rendered: ticking a card keeps it on
-    top, and the hint says the rest are exiled. Neither of the two words the
-    old hardcoded renderer used ("bottom", "graveyard") may appear."""
-    html = render_split(
+    """Devourer of Destiny's own pair, in the view model: every card carries
+    the engine's own destination words, and neither of the two the old
+    hardcoded renderer used ("bottom", "graveyard") may appear."""
+    control = render_split(
         looked_at(moved_label="top of your library", kept_label="exiled"), kind="scry"
     )
 
-    assert html.count("(top of your library)") == 2, html
-    assert "unchecked cards: exiled" in html, html
-    assert "bottom" not in html, "the old renderer's lie, still in the DOM"
-    assert "stay on top" not in html, "the unticked cards do not stay on top here - they are exiled"
-    assert "undefined" not in html
+    assert control["movedLabel"] == "top of your library"
+    assert control["keptLabel"] == "exiled"
+    assert [c["label"] for c in control["cards"]] == ["Swamp", "Devourer of Destiny"]
+    assert "bottom" not in control["movedLabel"], "the old renderer's lie, still in the payload"
+    assert "stay on top" not in control["keptLabel"], (
+        "the unticked cards do not stay on top here - they are exiled"
+    )
 
 
 @needs_node
 def test_a_plain_scry_renders_exactly_as_it_always_did() -> None:
     """No labels stamped - an older engine, or any decision CR 701.22a itself
-    raises - falls back to the wording that has always been right for it."""
-    html = render_split(looked_at(), kind="scry")
+    raises - falls back to the destination that has always been right for it.
+    The view model carries the bare word (`"bottom"`); composing it into a
+    full sentence ("...stay on top, in the order shown") is the screen's job,
+    not this pure data layer's."""
+    control = render_split(looked_at(), kind="scry")
 
-    assert html.count("(to bottom)") == 2, html
-    assert "unchecked cards stay on top, in the order shown" in html, html
-    assert "undefined" not in html
+    assert control["movedLabel"] == "bottom"
+    assert control["keptLabel"] == "top"
 
 
 @needs_node
 def test_a_plain_surveil_renders_exactly_as_it_always_did() -> None:
     """CR 701.25a's own pair, on the same fallback path."""
-    html = render_split(looked_at(kind="surveil"), kind="surveil")
+    control = render_split(looked_at(kind="surveil"), kind="surveil")
 
-    assert html.count("(to graveyard)") == 2, html
-    assert "unchecked cards stay on top, in the order shown" in html, html
-    assert "undefined" not in html
+    assert control["movedLabel"] == "graveyard"
+    assert control["keptLabel"] == "top"
 
 
 @needs_node
 def test_each_label_falls_back_on_its_own() -> None:
     """A decision that stamps one label and not the other gets the stamped one
-    and the fallback for the other - never a blank tag or an `undefined`."""
+    and the fallback for the other - never a blank field."""
     only_moved = render_split(looked_at(moved_label="your hand", kept_label=""), kind="scry")
-    assert only_moved.count("(your hand)") == 2, only_moved
-    assert "unchecked cards stay on top, in the order shown" in only_moved
-    assert "undefined" not in only_moved
+    assert only_moved["movedLabel"] == "your hand"
+    assert only_moved["keptLabel"] == "top"
 
     only_kept = render_split(
         looked_at(moved_label="", kept_label="bottom of your library"), kind="surveil"
     )
-    assert only_kept.count("(to graveyard)") == 2, only_kept
-    assert "unchecked cards: bottom of your library" in only_kept
-    assert "undefined" not in only_kept
+    assert only_kept["movedLabel"] == "graveyard"
+    assert only_kept["keptLabel"] == "bottom of your library"
 
 
 @needs_node
 def test_a_label_is_escaped_like_every_other_string_in_the_box() -> None:
-    """Labels are engine text reaching innerHTML, so they go through the same
-    escaping the card names already do."""
-    html = render_split(
+    """Labels are engine text; the view model is pure data and does not touch
+    it, so it carries the label through verbatim - escaping for `innerHTML`
+    is deferred to whatever screen renders this view model into the DOM."""
+    control = render_split(
         looked_at(moved_label="<b>top</b>", kept_label="<i>exiled</i>"), kind="scry"
     )
 
-    assert "<b>" not in html and "<i>" not in html, html
-    assert "&lt;b&gt;top&lt;/b&gt;" in html
-    assert "&lt;i&gt;exiled&lt;/i&gt;" in html
+    assert control["movedLabel"] == "<b>top</b>"
+    assert control["keptLabel"] == "<i>exiled</i>"
 
 
 @needs_node
 def test_an_empty_look_still_renders_its_placeholder() -> None:
-    """Nothing to look at (an empty library) keeps the placeholder rather than
-    an empty box, labels or no labels."""
+    """Nothing to look at (an empty library) is an empty card list, labels or
+    no labels - a "(nothing to look at)" placeholder is the screen's job to
+    show for it, not this pure data layer's."""
     empty = {"kind": "scry", "cards": [], "card_details": [], "moved_label": "top of your library"}
-    assert "(nothing to look at)" in render_split(empty, kind="scry")
+    assert render_split(empty, kind="scry")["cards"] == []
