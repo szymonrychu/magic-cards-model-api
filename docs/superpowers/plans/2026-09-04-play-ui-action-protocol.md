@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - No mocks, stubs, or hand-written card data in Python tests: every board is a real game booted through `TestClient` with real Scryfall fixtures via `conftest.add_card` (see `tests/test_modal_x_cast.py` for the pattern). Node tests feed JSON shaped exactly like the API's responses, captured from real calls where the test needs a board.
+- Test harness (`tests/conftest.py`): the `game` fixture boots alice vs bob in alice's precombat main with alice active and holding priority; `add_card(client, game, name, player, zone)` puts a real printing on the board and returns the response JSON, not an id; `state(client, game)` is the admin view; `find(cards, name)` picks a card view by name. Task 1 adds `card_id(client, game, name, player, zone) -> str` to `conftest.py`: `add_card` then `find` in `state(...)["hands"][player]`, `["battlefield"]`, `["graveyards"][player]` or `["exile"]` by zone, returning `["id"]`. Card fixtures come from `tests/fixtures/scryfall` and, as a fallback, the engine's `../magic-cards-model/tests/fixtures/cards` (Kozilek's Command, Memnite, Wastes, Electrolyze live there); no network.
 - Every CR number written into code or a docstring must be verified with `knowledge_search(q=..., type="rules")` in the session that writes it (project rule).
 - Buildless: no `package.json`, no bundler, no framework. `ui/index.html` loads `app.js` as `type="module"`.
 - Additive API only: `seatkit.py`, `mcp.py`, `seat_cli.py` are not modified; `PROTOCOL_VERSION` does not change.
@@ -63,25 +64,23 @@ to mode 1 and the other to mode 2. Board and card fixtures follow
 
 from __future__ import annotations
 
-from conftest import add_card, find
+from conftest import add_card, card_id, find, state
 from fastapi.testclient import TestClient
 
 
-def boot(client: TestClient) -> tuple[str, str]:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    command = add_card(client, game_id, "alice", "Kozilek's Command", zone="hand")
-    add_card(client, game_id, "alice", "Memnite", zone="battlefield")
+def boot(client: TestClient, game: str) -> str:
+    """Alice holds Kozilek's Command over four Wastes, with a Memnite out."""
+    command = card_id(client, game, "Kozilek's Command", "alice", "hand")
+    add_card(client, game, "Memnite", "alice", "battlefield")
     for _ in range(4):
-        add_card(client, game_id, "alice", "Wastes", zone="battlefield")
-    return game_id, command
+        add_card(client, game, "Wastes", "alice", "battlefield")
+    return command
 
 
-def test_requirements_carry_their_mode(client: TestClient) -> None:
-    game_id, command = boot(client)
+def test_requirements_carry_their_mode(client: TestClient, game: str) -> None:
+    command = boot(client, game)
     result = client.get(
-        f"/api/games/{game_id}/affordances/{command}",
+        f"/api/games/{game}/affordances/{command}",
         params={"player": "alice", "modes": "1,2", "x_value": 1},
     ).json()
     assert [r["mode"] for r in result["requirements"]] == [1, 2]
@@ -91,13 +90,10 @@ def test_requirements_carry_their_mode(client: TestClient) -> None:
     assert by_id["bob"] == [0, 1]
 
 
-def test_non_modal_requirements_have_no_mode(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    bolt = add_card(client, game_id, "alice", "Lightning Bolt", zone="hand")
+def test_non_modal_requirements_have_no_mode(client: TestClient, game: str) -> None:
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
     result = client.get(
-        f"/api/games/{game_id}/affordances/{bolt}", params={"player": "alice"}
+        f"/api/games/{game}/affordances/{bolt}", params={"player": "alice"}
     ).json()
     assert [r["mode"] for r in result["requirements"]] == [None]
     assert result["requirements"][0]["mode_text"] is None
@@ -211,20 +207,16 @@ paying)."""
 
 from __future__ import annotations
 
-from conftest import add_card
+from conftest import add_card, card_id, find, state
 from fastapi.testclient import TestClient
 
 
-def test_dry_run_cast_reports_the_lands_it_would_tap(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    bolt = add_card(client, game_id, "alice", "Lightning Bolt", zone="hand")
-    mountain = add_card(client, game_id, "alice", "Mountain", zone="battlefield")
-    island = add_card(client, game_id, "alice", "Island", zone="battlefield")
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
+def test_dry_run_cast_reports_the_lands_it_would_tap(client: TestClient, game: str) -> None:
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
+    mountain = card_id(client, game, "Mountain", "alice", "battlefield")
+    island = card_id(client, game, "Island", "alice", "battlefield")
     res = client.post(
-        f"/api/games/{game_id}/actions/cast",
+        f"/api/games/{game}/actions/cast",
         json={
             "player": "alice",
             "card_id": bolt,
@@ -235,18 +227,14 @@ def test_dry_run_cast_reports_the_lands_it_would_tap(client: TestClient) -> None
     ).json()
     assert res["allowed"] is True, res
     assert res["tapped"] == [{"card_id": mountain, "name": "Mountain"}]
-    board = client.get(f"/api/games/{game_id}").json()
+    board = client.get(f"/api/games/{game}").json()
     assert all(not c["tapped"] for c in board["battlefield"])
 
 
-def test_dry_run_activate_reports_tapped_sources(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    mountain = add_card(client, game_id, "alice", "Mountain", zone="battlefield")
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
+def test_dry_run_activate_reports_tapped_sources(client: TestClient, game: str) -> None:
+    mountain = card_id(client, game, "Mountain", "alice", "battlefield")
     res = client.post(
-        f"/api/games/{game_id}/actions/activate",
+        f"/api/games/{game}/actions/activate",
         json={"player": "alice", "card_id": mountain, "ability_index": 0, "dry_run": True},
     ).json()
     assert res["allowed"] is True, res
@@ -305,7 +293,7 @@ uv run ruff format . && git add -A && git commit -m "Report which sources a dry 
 - Test: `tests/test_play_land_dry_run.py`
 
 **Interfaces:**
-- Consumes: engine `Game.why_cannot_play_land(land, player) -> str | None` if it exists; otherwise `game.play_land` raises `ValueError`. Check with `grep -n "def why_cannot_play_land\|def can_play_land" ../magic-cards-model/src/magic_cards_model/models/game.py`. If neither exists, implement the dry run by snapshotting: `saved = land.zone; try play; then move back` is NOT acceptable (it fires triggers). Instead, use `game.land_plays_remaining(player)`-style checks if present, and if none exist, fall back to the refusal-only probe below.
+- Consumes: engine `Game.why_cannot_play_land(username) -> str | None` (`../magic-cards-model/src/magic_cards_model/models/game.py:7724`), which answers the player-level checks (priority, main phase, empty stack, land drops left). It does not look at the card, so the dry run also checks that `land` is a land in a zone it may be played from (hand, or a live play permission) with the same wording `game.play_land` uses - read `Game.play_land` at `:7862` and mirror only its pre-mutation checks.
 - Produces: `POST .../actions/play-land` with `dry_run: true` returns `{allowed, reason?}` without changing the board.
 
 - [ ] **Step 1: Write the failing test**
@@ -315,44 +303,39 @@ uv run ruff format . && git add -A && git commit -m "Report which sources a dry 
 
 from __future__ import annotations
 
-from conftest import add_card
+from conftest import add_card, card_id, find, state
 from fastapi.testclient import TestClient
 
 
-def boot(client: TestClient) -> tuple[str, str]:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    land = add_card(client, game_id, "alice", "Mountain", zone="hand")
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
-    return game_id, land
+def boot(client: TestClient, game: str) -> str:
+    return card_id(client, game, "Mountain", "alice", "hand")
 
 
-def test_dry_run_allows_without_playing(client: TestClient) -> None:
-    game_id, land = boot(client)
+def test_dry_run_allows_without_playing(client: TestClient, game: str) -> None:
+    land = boot(client, game)
     res = client.post(
-        f"/api/games/{game_id}/actions/play-land",
+        f"/api/games/{game}/actions/play-land",
         json={"player": "alice", "card_id": land, "dry_run": True},
     ).json()
     assert res["allowed"] is True, res
-    board = client.get(f"/api/games/{game_id}").json()
+    board = client.get(f"/api/games/{game}").json()
     assert board["battlefield"] == []
     assert len(board["hands"]["alice"]) == 1
 
 
-def test_dry_run_refuses_a_second_land_with_the_engines_reason(client: TestClient) -> None:
-    game_id, land = boot(client)
-    second = add_card(client, game_id, "alice", "Mountain", zone="hand")
+def test_dry_run_refuses_a_second_land_with_the_engines_reason(client: TestClient, game: str) -> None:
+    land = boot(client, game)
+    second = card_id(client, game, "Mountain", "alice", "hand")
     assert client.post(
-        f"/api/games/{game_id}/actions/play-land", json={"player": "alice", "card_id": land}
+        f"/api/games/{game}/actions/play-land", json={"player": "alice", "card_id": land}
     ).json()["allowed"]
     res = client.post(
-        f"/api/games/{game_id}/actions/play-land",
+        f"/api/games/{game}/actions/play-land",
         json={"player": "alice", "card_id": second, "dry_run": True},
     ).json()
     assert res["allowed"] is False
     assert res["reason"]
-    board = client.get(f"/api/games/{game_id}").json()
+    board = client.get(f"/api/games/{game}").json()
     assert len(board["battlefield"]) == 1
 ```
 
@@ -373,7 +356,7 @@ class PlayLandRequest(BaseModel):
     dry_run: bool = False
 ```
 
-`engine_api.play_land`: find the engine's permission probe. Run `grep -n "def why_cannot_play_land\|def can_play_land\|land_plays" ../magic-cards-model/src/magic_cards_model/models/game.py`. Use whichever probe exists:
+`engine_api.play_land`:
 
 ```python
 def play_land(game: Game, req: PlayLandRequest) -> Outcome:
@@ -382,7 +365,7 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     except (KeyError, ValueError) as exc:
         return refused(exc)
     if req.dry_run:
-        refusal = game.why_cannot_play_land(land, req.player)  # adapt to the probe found
+        refusal = game.why_cannot_play_land(req.player) or _land_card_refusal(game, land, req.player)
         return Outcome(refusal is None, refusal)
     try:
         played = game.play_land(land, req.player)
@@ -391,9 +374,9 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     return Outcome(True, detail={"card_id": str(played.id)})
 ```
 
-If no probe exists in the engine, `game.play_land` itself must be read to see which checks it runs before mutating (CR 305.1, 305.2, 116.2a, priority, main phase, empty stack); reproduce exactly those checks in a `_land_play_refusal(game, land, player) -> str | None` helper in `engine_api.py`, each returning the same wording `game.play_land` raises, and note in its docstring that it mirrors `Game.play_land` and must be kept in step.
+`_land_card_refusal(game, land, player) -> str | None` is a small helper in `engine_api.py` mirroring the card-level checks `Game.play_land` runs before it mutates (is it a land, is it in this player's hand or castable through a live play permission), returning the same wording; its docstring says it mirrors `Game.play_land` and must be kept in step.
 
-`app.py` `action_play_land`: `audit_outcome` already skips logging when `outcome.dry_run`? Check `audit_outcome` (app.py:265). If it keys off a `dry_run` attribute on `Outcome`, set it: `Outcome(..., dry_run=True)` the way `cast_card` does; otherwise pass `dry_run=req.dry_run` the way `action_cast` does.
+`app.py` `action_play_land`: pass `dry_run=req.dry_run` to `audit_outcome` the way `action_cast` does, so a probe is not logged.
 
 - [ ] **Step 4: Run tests**
 
@@ -423,47 +406,39 @@ uv run ruff format . && git add -A && git commit -m "Let play-land be asked as a
 
 from __future__ import annotations
 
-from conftest import add_card
+from conftest import add_card, card_id, find, state
 from fastapi.testclient import TestClient
 
 
-def test_shares_are_announced_and_dealt(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    electrolyze = add_card(client, game_id, "alice", "Electrolyze", zone="hand")
-    memnite = add_card(client, game_id, "bob", "Memnite", zone="battlefield")
+def test_shares_are_announced_and_dealt(client: TestClient, game: str) -> None:
+    electrolyze = card_id(client, game, "Electrolyze", "alice", "hand")
+    memnite = card_id(client, game, "Memnite", "bob", "battlefield")
     for name in ("Island", "Mountain", "Mountain"):
-        add_card(client, game_id, "alice", name, zone="battlefield")
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
+        add_card(client, game, name, "alice", "battlefield")
     res = client.post(
-        f"/api/games/{game_id}/actions/cast",
+        f"/api/games/{game}/actions/cast",
         json={
             "player": "alice",
             "card_id": electrolyze,
             "targets": [memnite, "bob"],
             "shares": [1, 1],
-            "mana_sources": [c["id"] for c in client.get(f"/api/games/{game_id}").json()["battlefield"] if c["controller"] == "alice"],
+            "mana_sources": [c["id"] for c in state(client, game)["battlefield"] if c["controller"] == "alice"],
         },
     ).json()
     assert res["allowed"] is True, res
-    client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": "alice"})
-    client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": "bob"})
-    board = client.get(f"/api/games/{game_id}").json()
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    board = client.get(f"/api/games/{game}").json()
     assert all(c["id"] != memnite for c in board["battlefield"])
     bob = next(p for p in board["players"] if p["username"] == "bob")
     assert bob["life"] == 19
 
 
-def test_shares_that_do_not_add_up_are_refused(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    electrolyze = add_card(client, game_id, "alice", "Electrolyze", zone="hand")
-    memnite = add_card(client, game_id, "bob", "Memnite", zone="battlefield")
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
+def test_shares_that_do_not_add_up_are_refused(client: TestClient, game: str) -> None:
+    electrolyze = card_id(client, game, "Electrolyze", "alice", "hand")
+    memnite = card_id(client, game, "Memnite", "bob", "battlefield")
     res = client.post(
-        f"/api/games/{game_id}/actions/cast",
+        f"/api/games/{game}/actions/cast",
         json={"player": "alice", "card_id": electrolyze, "targets": [memnite, "bob"], "shares": [2, 1], "dry_run": True},
     ).json()
     assert res["allowed"] is False
@@ -524,23 +499,19 @@ uv run ruff format . && git add -A && git commit -m "Announce a divided effect's
 
 from __future__ import annotations
 
-from conftest import add_card
+from conftest import add_card, card_id, find, state
 from fastapi.testclient import TestClient
 
 
-def test_bolt_on_the_stack_names_bob_by_id(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    bolt = add_card(client, game_id, "alice", "Lightning Bolt", zone="hand")
-    mountain = add_card(client, game_id, "alice", "Mountain", zone="battlefield")
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
+def test_bolt_on_the_stack_names_bob_by_id(client: TestClient, game: str) -> None:
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
+    mountain = card_id(client, game, "Mountain", "alice", "battlefield")
     res = client.post(
-        f"/api/games/{game_id}/actions/cast",
+        f"/api/games/{game}/actions/cast",
         json={"player": "alice", "card_id": bolt, "targets": ["bob"], "mana_sources": [mountain]},
     ).json()
     assert res["allowed"], res
-    (spell,) = client.get(f"/api/games/{game_id}").json()["stack"]
+    (spell,) = client.get(f"/api/games/{game}").json()["stack"]
     assert spell["targets"] == ["bob"]
     assert spell["target_refs"] == [{"kind": "player", "id": "bob", "name": "bob"}]
 ```
@@ -606,9 +577,9 @@ uv run ruff format . && git add -A && git commit -m "Carry target ids on stack o
 Find an existing `choose_targets` decision test to copy the board from: `grep -ln "choose_targets" tests/*.py`. `tests/test_activate_target_decisions.py` boots one. Copy its boot helper into this file (do not import a test module's fixtures unless it already exports them), then:
 
 ```python
-def test_choose_targets_decision_says_its_minimum(client: TestClient) -> None:
-    game_id, uid = boot_a_choose_targets_decision(client)  # from the copied helper
-    pending = client.get(f"/api/games/{game_id}", params={"uid": uid}).json()["pending_decision"]
+def test_choose_targets_decision_says_its_minimum(client: TestClient, game: str) -> None:
+    uid = boot_a_choose_targets_decision(client, game)  # from the copied helper, returns alice's uid
+    pending = client.get(f"/api/games/{game}", params={"uid": uid}).json()["pending_decision"]
     assert pending["kind"] == "choose_targets"
     assert pending["target_minimum"] == 1
     assert pending["target_maximum"] == 1
@@ -651,16 +622,16 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def test_since_returns_only_newer_entries(client: TestClient) -> None:
+def test_since_returns_only_newer_entries(client: TestClient, game: str) -> None:
     created = client.post(
         "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
     ).json()
     game_id = created["game_id"]
-    full = client.get(f"/api/games/{game_id}/log").json()
+    full = client.get(f"/api/games/{game}/log").json()
     last = full["last_seq"]
     assert last == full["log"][-1]["seq"]
-    client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": "alice"})
-    newer = client.get(f"/api/games/{game_id}/log", params={"since": last}).json()
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    newer = client.get(f"/api/games/{game}/log", params={"since": last}).json()
     assert newer["log"], newer
     assert all(entry["seq"] > last for entry in newer["log"])
     assert newer["last_seq"] >= last + 1
@@ -674,7 +645,7 @@ Expected: FAIL with `KeyError: 'last_seq'`.
 - [ ] **Step 3: Implement**
 
 ```python
-@app.get("/api/games/{game_id}/log")
+@app.get("/api/games/{game}/log")
 def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, Any]:
     """The action log. ... (keep the existing docstring) ...
 
@@ -2774,33 +2745,29 @@ the word "target"; two modes are two instances)."""
 
 from __future__ import annotations
 
-from conftest import add_card
+from conftest import add_card, card_id, find, state
 from fastapi.testclient import TestClient
 
 
-def test_same_player_for_both_modes_casts_and_resolves(client: TestClient) -> None:
-    game_id = client.post(
-        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
-    ).json()["game_id"]
-    command = add_card(client, game_id, "alice", "Kozilek's Command", zone="hand")
-    lands = [add_card(client, game_id, "alice", "Wastes", zone="battlefield") for _ in range(3)]
-    client.put(f"/api/games/{game_id}/step", json={"step": "precombat_main", "active_player": "alice"})
+def test_same_player_for_both_modes_casts_and_resolves(client: TestClient, game: str) -> None:
+    command = card_id(client, game, "Kozilek's Command", "alice", "hand")
+    lands = [add_card(client, game, "Wastes", "alice", "battlefield") for _ in range(3)]
     aff = client.get(
-        f"/api/games/{game_id}/affordances/{command}",
+        f"/api/games/{game}/affordances/{command}",
         params={"player": "alice", "modes": "1,2", "x_value": 1},
     ).json()
     assert [r["mode"] for r in aff["requirements"]] == [1, 2]
     body = {"player": "alice", "card_id": command, "targets": ["alice", "alice"], "modes": [1, 2], "x_value": 1, "mana_sources": lands}
-    probe = client.post(f"/api/games/{game_id}/actions/cast", json={**body, "dry_run": True}).json()
+    probe = client.post(f"/api/games/{game}/actions/cast", json={**body, "dry_run": True}).json()
     assert probe["allowed"] is True, probe
     assert len(probe["tapped"]) == 3
-    res = client.post(f"/api/games/{game_id}/actions/cast", json=body).json()
+    res = client.post(f"/api/games/{game}/actions/cast", json=body).json()
     assert res["allowed"] is True, res
-    (spell,) = client.get(f"/api/games/{game_id}").json()["stack"]
+    (spell,) = client.get(f"/api/games/{game}").json()["stack"]
     assert spell["target_refs"] == [{"kind": "player", "id": "alice", "name": "alice"}] * 2
     for player in ("alice", "bob"):
-        client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": player})
-    board = client.get(f"/api/games/{game_id}").json()
+        client.post(f"/api/games/{game}/actions/pass-priority", json={"player": player})
+    board = client.get(f"/api/games/{game}").json()
     spawn = [c for c in board["battlefield"] if "Eldrazi Spawn" in (c["name"] or "")]
     assert len(spawn) == 1
     alice = next(p for p in board["players"] if p["username"] == "alice")
