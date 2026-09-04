@@ -2857,16 +2857,13 @@ async function previewAndMaybeFire() {
     return;
   }
   store.set({ preview: { tapped: probe.tapped || [] } });
-  if (action.kind !== "special" && needsExplicitFire(action)) return;
+  if (action.kind !== "special" && A.needsExplicitFire(action)) return;
   await fire();
 }
 
-// An "up to"/unbounded slot or a division waits for the player's Done, and
-// pinning mana waits too: the preview is shown, the player confirms by
-// clicking Cast on the strip.
-function needsExplicitFire(action) {
-  return action.pinned.length > 0 || (action.affordance && action.affordance.division) || action.slots.some((s) => s.count === null || s.minimum < (s.count || 0));
-}
+// `needsExplicitFire` lives in actions.js (Task 15 moved it there so the
+// ribbon's Cast button and this loop agree): pinned mana, a division, or an
+// "up to"/unbounded slot waits for the player's Cast or Done.
 
 async function fire() {
   const app = store.get();
