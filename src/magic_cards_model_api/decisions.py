@@ -326,6 +326,14 @@ class PendingDecision:
     cards: tuple[str, ...]
     targets: tuple[dict[str, str], ...] = ()
     target_maximum: int | None = None
+    #: The floor a mandatory target requirement carries (CR 601.2c, CR
+    #: 115.6) - "a plain 'target permanent' is not a 'you may'", so an
+    #: answer choosing fewer than this many legal targets is refused. `0`
+    #: for a genuinely optional "up to N"/"any number of" requirement
+    #: (CR 115.6, CR 107.1c), same as the engine `Decision.target_minimum`
+    #: this is read from - see that field's own docstring in
+    #: `machines/decisions.py` for the full rule.
+    target_minimum: int | None = None
     #: Whether the yes branch of a `may`/`pay_life`/`pay_energy` question is
     #: legal at all (CR 608.2d, CR 119.4, CR 118.3) - `False` at, say, 1 life
     #: against a 2-life payment, which is what a shockland at 1 life looks
@@ -418,6 +426,7 @@ class PendingDecision:
             cards=tuple(str(card_id) for card_id in decision.cards),
             targets=tuple(_target_view(ref) for ref in decision.targets),
             target_maximum=decision.target_maximum,
+            target_minimum=decision.target_minimum,
             affirmative_is_legal=decision.affirmative_is_legal,
             options=decision.options,
             # `getattr` rather than attribute access: an engine older than the
@@ -450,6 +459,7 @@ class PendingDecision:
             "cards": list(self.cards),
             "targets": [dict(ref) for ref in self.targets],
             "target_maximum": self.target_maximum,
+            "target_minimum": self.target_minimum,
             "affirmative_is_legal": self.affirmative_is_legal,
             "options": list(self.options),
             "moved_label": self.moved_label,
@@ -659,10 +669,9 @@ class DecisionMailbox:
 
         `decide` uses this instead of `snapshot` because refusing a
         malformed answer before it ever reaches the mailbox (see
-        `validate_answer`) needs the raw `Decision`'s `amount`, `exact`, and
-        `target_minimum` - fields `PendingDecision` does not carry because
-        read-only state views (`snapshot`'s only other caller) never needed
-        them.
+        `validate_answer`) needs the raw `Decision`'s `amount` and `exact` -
+        fields `PendingDecision` does not carry because read-only state
+        views (`snapshot`'s only other caller) never needed them.
         """
         with self._condition:
             if self._pending is None or self._decision is None:
