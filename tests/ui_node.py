@@ -22,11 +22,18 @@ requires_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is
 
 def run_module(module: str, expression: str, **bindings: Any) -> Any:
     consts = "\n".join(f"const {name} = {json.dumps(value)};" for name, value in bindings.items())
+    # `expression` is evaluated with a direct `eval` rather than spliced
+    # straight into `await (...)`, so it can be more than one expression - a
+    # fake-DOM preamble (a class declaration, a `globalThis.document =`
+    # assignment) followed by the real expression, as `test_ui_dom.py` does.
+    # Direct eval keeps the enclosing scope (`m`, the bound consts) visible,
+    # and its completion value is that of the last statement, exactly like a
+    # lone expression already worked.
     script = f"""
     import {{ pathToFileURL }} from "node:url";
     const m = await import(pathToFileURL({json.dumps(str(UI / module))}).href);
     {consts}
-    const __result = await ({expression});
+    const __result = await eval({json.dumps(expression)});
     process.stdout.write(JSON.stringify(__result === undefined ? null : __result));
     """
     proc = subprocess.run(

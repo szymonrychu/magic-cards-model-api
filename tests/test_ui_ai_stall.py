@@ -1,6 +1,6 @@
 """The play UI has to say when its opponent has stopped playing.
 
-This runs `aiStallNotice` out of the real `ui/app.js` under Node, the same
+This runs `aiStallNotice` out of the real `ui/store.js` under Node, the same
 black-box way `tests/test_ui_autopilot.py` runs the auto-pass stop
 conditions - no Python restatement of the JS anywhere here.
 
@@ -16,33 +16,18 @@ holds priority - so the page was not broken, it just had no way to say
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-from pathlib import Path
 from typing import Any
 
-import pytest
+from ui_node import requires_node, run_module
 
-APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
-
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
-
-
-def run_js(expression: str) -> Any:
-    script = f"""
-    const {{ aiStallNotice, AI_STALL_SECONDS }} = require({json.dumps(str(APP_JS))});
-    const result = ({expression});
-    process.stdout.write(JSON.stringify(result === undefined ? null : result));
-    """
-    proc = subprocess.run(
-        ["node", "-e", script], capture_output=True, text=True, timeout=15, check=False
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
+pytestmark = requires_node
 
 
 def notice(state: dict, status: dict | None, seconds: float) -> Any:
-    return run_js(f"aiStallNotice({json.dumps(state)}, 'claude', {json.dumps(status)}, {seconds})")
+    return run_module(
+        "store.js",
+        f"m.aiStallNotice({json.dumps(state)}, 'claude', {json.dumps(status)}, {seconds})",
+    )
 
 
 def board(**overrides: Any) -> dict:
@@ -72,7 +57,7 @@ def test_a_seat_that_has_only_just_taken_priority_is_left_alone():
 
 
 def test_the_grace_period_is_long_enough_for_a_real_turn():
-    assert run_js("AI_STALL_SECONDS") >= 30
+    assert run_module("store.js", "m.AI_STALL_SECONDS") >= 30
 
 
 def test_an_error_the_server_already_knows_beats_the_timer():
@@ -105,7 +90,7 @@ def test_nothing_is_said_once_the_game_is_over():
 
 def test_a_game_with_no_ai_seat_is_never_accused():
     state = json.dumps(board())
-    assert run_js(f"aiStallNotice({state}, null, null, 600)") is None
+    assert run_module("store.js", f"m.aiStallNotice({state}, null, null, 600)") is None
 
 
 def test_a_missing_status_still_reports_a_silent_seat():
