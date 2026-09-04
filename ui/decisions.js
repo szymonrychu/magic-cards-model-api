@@ -235,11 +235,11 @@ function split(pending, draft) {
 function choice(pending, draft) {
   const options = pending.options || [];
   // `schemas.py`'s `choice` field also answers `choose_a_quality` for a
-  // color/card-name/creature-type pick (CR 614.12a) whose universe is too
-  // large to enumerate - `pending.options` is empty for that case, unlike
-  // `choose_a_mode`'s always-printed, always non-empty modes (CR 700.2a) -
-  // so there is nothing to offer as a button list and a free-text control
-  // is the only one that can answer it.
+  // card-name (CR 201.4) or creature-type (CR 205.3e's "choose a subtype")
+  // pick whose universe is too large to enumerate - `pending.options` is
+  // empty for that case, unlike `choose_a_mode`'s always-printed, always
+  // non-empty modes (CR 700.2a) - so there is nothing to offer as a button
+  // list and a free-text control is the only one that can answer it.
   if (options.length === 0) {
     const value = draft.choice || "";
     return {
