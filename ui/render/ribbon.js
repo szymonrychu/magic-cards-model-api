@@ -1,0 +1,657 @@
+// The right-hand ribbon: everything the game ever asks of the player that
+// is not "click something on the board" - `#prompt-box` (what is being
+// asked right now, in priority order: game over, pregame, a live decision,
+// the in-flight action's one-line summary, the combat prompt, or the click
+// hint), `#casting-strip` (the in-flight action's own controls, staged above
+// the hand), `#priority-box` (the pass-priority verbs), and `#stops-box`
+// (the autopilot stop conditions). Plus the one floating `#popover` every
+// inline "pick one of these" menu shares.
+//
+// Every button here fires a request the API already documents; nothing in
+// this file invents a rule. `decisions.js`'s `viewModel` is the single
+// source of truth for what a pending decision asks and how a draft becomes
+// an answer - the actual per-`control.type` rendering lives in
+// `decision_controls.js` (split out once this file passed ~500 lines), which
+// only turns `controls` into DOM and reports the player's choices back
+// through `onDecisionDraft`, never re-deriving them.
+//
+// `onDecisionDraft`'s draft field names are the ones `decisions.js` itself
+// reads per kind: `choice` (a single pick or free text), `card_ids` (a
+// multi-select), `amount` (a number), `targets` (a `choose_targets`
+// decision's own slot, separate from the in-flight action's `action.slots`),
+// `moved`/`order` (a scry/surveil split), `order` alone (CR 603.3b's trigger
+// ordering). The pregame mulligan panel reuses the same draft and handler
+// for its "tick which cards go to the bottom" checkboxes, under the key
+// `bottom` - it is not a `pending_decision` at all (CR 103.5/103.6 run before
+// any decision machinery exists), but the shape of the problem ("remember a
+// set of ids until the player submits") is identical, and inventing a
+// second store field for it would only be able to disagree with this one.
+//
+// CR numbers here (verified with `knowledge_search` in the session that
+// wrote this file): 103.5 (mulligans), 103.6 (opening-hand actions), 508.1
+// (declare attackers), 509.1 (declare blockers), 118.9 (alternative costs),
+// 117.3c (holding priority), 700.2 (modal spells).
+
+import { clear, h } from "../dom.js";
+import { activeSlotIndex, flatten } from "../targeting.js";
+import { colorOptions } from "../mana.js";
+import { withSymbols } from "../symbols.js";
+import { readyToFire } from "../actions.js";
+import { VERB_LABELS, STEPS, passButtonsFor } from "../priority.js";
+import { renderDecision } from "./decision_controls.js";
+
+// --------------------------------------------------------------- pregame ---
+
+function opponentSeatNote(status) {
+  if (!status) return null;
+  if (status.mechanism === "fallback" || status.state === "not_started") {
+    return h(
+      "div",
+      { class: "hint" },
+      `Its agent is not running (${status.reason || "not started"}) - the server will make its pregame moves shortly.`
+    );
+  }
+  if (status.state === "error") {
+    return h("div", { class: "hint" }, "Its agent stopped with an error - the server will make its pregame moves shortly.");
+  }
+  if (status.state === "stopped") {
+    return h("div", { class: "hint" }, "Its agent has exited - the server will make its pregame moves shortly.");
+  }
+  return h("div", { class: "hint" }, `Its agent is ${status.state}.`);
+}
+
+function renderMulliganStep(state, app, handlers) {
+  const pregame = state.pregame;
+  const you = state.you;
+  const waiting = pregame.awaiting_mulligan || [];
+  const taken = (pregame.mulligans_taken || {})[you] || 0;
+  const takingText = taken ? ` You have taken ${taken} mulligan${taken > 1 ? "s" : ""}.` : "";
+  if (!waiting.includes(you)) {
+    const others = waiting.filter((n) => n !== you);
+    const who = others.length ? others.join(", ") : "the other seat";
+    const box = h("div", { class: "pregame-step" }, h("span", {}, `Mulligans (CR 103.5): waiting on ${who}.${takingText}`));
+    const note = opponentSeatNote(app.aiStatus);
+    if (note) box.appendChild(note);
+    return box;
+  }
+  const needed = (pregame.cards_to_bottom || {})[you] || 0;
+  const hand = (state.hands && state.hands[you]) || [];
+  const chosenBottom = app.decisionDraft.bottom || [];
+  const box = h(
+    "div",
+    { class: "pregame-step" },
+    h("span", {}, `Your opening hand (CR 103.5): keep it, or shuffle back for a new seven.${takingText}`)
+  );
+  if (needed) {
+    box.appendChild(
+      h(
+        "div",
+        { class: "pregame-bottom" },
+        h("span", {}, `Keeping costs ${needed} card${needed > 1 ? "s" : ""} on the bottom of your library - tick exactly ${needed}:`),
+        ...hand.map((card) =>
+          h(
+            "label",
+            { class: "option" },
+            h("input", {
+              type: "checkbox",
+              checked: chosenBottom.includes(card.id),
+              onChange: () => {
+                const next = chosenBottom.includes(card.id)
+                  ? chosenBottom.filter((id) => id !== card.id)
+                  : [...chosenBottom, card.id];
+                handlers.onDecisionDraft({ bottom: next });
+              },
+            }),
+            card.name
+          )
+        )
+      )
+    );
+  }
+  const canKeep = chosenBottom.length === needed;
+  box.appendChild(
+    h(
+      "button",
+      {
+        class: "primary",
+        disabled: !canKeep,
+        title: canKeep ? null : `tick exactly ${needed} card(s) first`,
+        onClick: () => {
+          const body = { player: you, take: false };
+          if (chosenBottom.length) body.bottom = chosenBottom;
+          handlers.onDecisionDraft({ bottom: [] });
+          handlers.onPregame("mulligan", body);
+        },
+      },
+      "Keep"
+    )
+  );
+  if (pregame.can_mulligan && pregame.can_mulligan[you]) {
+    box.appendChild(
+      h("button", { onClick: () => handlers.onPregame("mulligan", { player: you, take: true }) }, "Mulligan")
+    );
+  } else {
+    box.appendChild(h("span", { class: "hint" }, "no mulligan left - a hand of nothing is the floor (CR 103.5)"));
+  }
+  return box;
+}
+
+function renderOpeningHandStep(state, app, handlers) {
+  const pregame = state.pregame;
+  const you = state.you;
+  if (pregame.opening_hand_actor !== you) {
+    const who = pregame.opening_hand_actor;
+    const box = h(
+      "div",
+      { class: "pregame-step" },
+      h("span", {}, `Opening-hand actions (CR 103.6): waiting on ${who || "the other seat"}.`)
+    );
+    const note = opponentSeatNote(app.aiStatus);
+    if (note) box.appendChild(note);
+    return box;
+  }
+  const options = (pregame.opening_hand_options || {})[you] || [];
+  const box = h(
+    "div",
+    { class: "pregame-step" },
+    h("span", {}, "Opening-hand actions (CR 103.6) - yours to take, in any order.")
+  );
+  if (!options.length) box.appendChild(h("span", { class: "hint" }, "nothing in your opening hand offers one."));
+  for (const option of options) {
+    box.appendChild(
+      h(
+        "button",
+        { onClick: () => handlers.onPregame("opening-hand/action", { player: you, card_id: option.card_id }) },
+        `${option.source}: ${option.prompt}`
+      )
+    );
+  }
+  box.appendChild(
+    h("button", { class: "primary", onClick: () => handlers.onPregame("opening-hand/finish", { player: you }) }, "Done")
+  );
+  return box;
+}
+
+function renderPregame(state, app, handlers) {
+  return state.pregame.step === "mulligan"
+    ? renderMulliganStep(state, app, handlers)
+    : renderOpeningHandStep(state, app, handlers);
+}
+
+// ------------------------------------------------------------- combat prompt
+
+function renderDeclareAttackers(app, handlers) {
+  const entries = Object.entries(app.combatDraft || {});
+  const box = h("div", { class: "combat-prompt" }, h("div", { class: "hint" }, "Declare attackers (CR 508.1)"));
+  box.appendChild(
+    entries.length
+      ? h("ul", { class: "combat-list" }, ...entries.map(([atk, def]) => h("li", {}, `${handlers.nameOf(atk)} -> ${handlers.nameOf(def)}`)))
+      : h("div", { class: "hint" }, "click your creatures to attack")
+  );
+  box.appendChild(
+    h(
+      "div",
+      { class: "chip-row" },
+      h("button", { class: "primary", disabled: entries.length === 0, onClick: handlers.onAttackConfirm }, "Attack"),
+      h("button", { onClick: handlers.onAttackNone }, "No attack")
+    )
+  );
+  return box;
+}
+
+function renderDeclareBlockers(app, handlers) {
+  const entries = Object.entries(app.combatDraft || {});
+  const box = h("div", { class: "combat-prompt" }, h("div", { class: "hint" }, "Declare blockers (CR 509.1)"));
+  box.appendChild(
+    entries.length
+      ? h("ul", { class: "combat-list" }, ...entries.map(([blocker, attacker]) => h("li", {}, `${handlers.nameOf(blocker)} blocks ${handlers.nameOf(attacker)}`)))
+      : h("div", { class: "hint" }, "click one of your creatures, then the attacker it blocks")
+  );
+  box.appendChild(
+    h(
+      "div",
+      { class: "chip-row" },
+      h("button", { class: "primary", disabled: entries.length === 0, onClick: handlers.onBlockConfirm }, "Block"),
+      h("button", { onClick: handlers.onBlockNone }, "No blocks")
+    )
+  );
+  return box;
+}
+
+function renderCombatPrompt(state, app, handlers) {
+  const you = state.you;
+  if (state.step === "declare_attackers" && state.active_player === you) return renderDeclareAttackers(app, handlers);
+  if (state.step === "declare_blockers" && state.active_player !== you) return renderDeclareBlockers(app, handlers);
+  return null;
+}
+
+// ------------------------------------------------------------------ #prompt-box
+
+function actionTitle(action) {
+  if (action.kind === "land") return "Play land";
+  if (action.kind === "crew") return "Crew";
+  if (action.kind === "special") return action.keyword;
+  const ability = action.abilityIndex !== null ? (action.card.abilities || [])[action.abilityIndex] : null;
+  return ability ? "Activate" : "Cast";
+}
+
+function renderPromptBox(el, app, handlers) {
+  clear(el);
+  const state = app.state;
+  if (!state) return;
+  if (state.winner || state.drawn) {
+    el.appendChild(
+      h("div", { class: "prompt-gameover" }, state.winner ? `Game over - ${state.winner} won.` : "Game over - drawn.")
+    );
+    return;
+  }
+  if (state.pregame) {
+    el.appendChild(renderPregame(state, app, handlers));
+    return;
+  }
+  const pending = state.pending_decision;
+  if (pending && pending.player === state.you) {
+    el.appendChild(renderDecision(pending, app, handlers));
+    return;
+  }
+  if (app.action) {
+    el.appendChild(
+      h(
+        "div",
+        { class: "prompt-action-summary" },
+        h("span", {}, `${actionTitle(app.action)}: ${app.action.card.name}`),
+        h("button", { onClick: handlers.onCancel }, "Cancel")
+      )
+    );
+    return;
+  }
+  const combat = renderCombatPrompt(state, app, handlers);
+  if (combat) {
+    el.appendChild(combat);
+    return;
+  }
+  el.appendChild(h("div", { class: "hint" }, "click a card to play it"));
+}
+
+// --------------------------------------------------------------- #casting-strip
+
+function slotIsOpen(slot) {
+  const cap = slot.count === null ? Infinity : slot.count;
+  return (slot.count === null || slot.minimum < (slot.count || 0)) && slot.targets.length < cap;
+}
+
+function renderModeChips(card, action, handlers, symbols) {
+  const modes = card.cast && card.cast.modes;
+  if (!modes || action.kind !== "cast") return null;
+  const range = modes.minimum === modes.maximum ? String(modes.minimum) : `${modes.minimum}-${modes.maximum}`;
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, `${modes.instruction} (${range})`),
+    h(
+      "div",
+      { class: "chip-row" },
+      ...modes.options.map((m) =>
+        h(
+          "button",
+          { class: `chip ${action.modes.includes(m.number) ? "selected" : ""}`, onClick: () => handlers.onToggleMode(m.number) },
+          `${m.number}. `,
+          withSymbols(symbols, m.text)
+        )
+      )
+    )
+  );
+}
+
+function renderColorChips(card, action, handlers, symbols) {
+  if (action.abilityIndex === null) return null;
+  const colors = colorOptions(card, action.abilityIndex);
+  if (colors.length <= 1) return null;
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, "Which colour"),
+    h(
+      "div",
+      { class: "chip-row" },
+      ...colors.map((c) =>
+        h("button", { class: `chip ${action.color === c ? "selected" : ""}`, onClick: () => handlers.onChooseColor(c) }, withSymbols(symbols, `{${c}}`, true))
+      )
+    )
+  );
+}
+
+function renderXInput(card, action, handlers) {
+  const ability = action.abilityIndex !== null ? (card.abilities || [])[action.abilityIndex] : null;
+  const needsX = ability ? Boolean(ability.needs_x) : Boolean(card.cast && card.cast.needs_x);
+  if (!needsX) return null;
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, "Announce X"),
+    h("input", {
+      type: "number",
+      min: "0",
+      value: action.xValue === null ? "" : String(action.xValue),
+      placeholder: "X",
+      onChange: (e) => handlers.onSetX(e.target.value === "" ? null : Number(e.target.value)),
+    })
+  );
+}
+
+function renderAltCosts(action, app, handlers) {
+  const alts = (action.affordance && action.affordance.alternative_costs) || [];
+  if (!alts.length || action.kind !== "cast") return null;
+  const chips = alts.map((alt) => {
+    const label = `${alt.keyword || alt.source_name}: ${alt.description}`;
+    if (!alt.available) return h("button", { class: "chip", disabled: true, title: alt.unavailable || "" }, label);
+    return h(
+      "button",
+      {
+        class: `chip ${action.altCost === alt.index ? "selected" : ""}`,
+        title: alt.rule,
+        onClick: () => handlers.onChooseAltCost(action.altCost === alt.index ? null : alt.index),
+      },
+      label
+    );
+  });
+  const step = h("div", { class: "tray-step" }, h("div", { class: "label" }, "Alternative cost (CR 118.9) - optional"), h("div", { class: "chip-row" }, ...chips));
+  const chosen = alts.find((a) => a.index === action.altCost);
+  if (chosen && chosen.requires) {
+    const hand = ((app.state.hands || {})[app.state.you] || []).filter((c) => c.id !== action.cardId);
+    step.appendChild(h("div", { class: "hint" }, `pay it with ${chosen.requires} card(s) from your hand:`));
+    step.appendChild(
+      h(
+        "div",
+        { class: "chip-row" },
+        ...hand.map((c) =>
+          h("button", { class: `chip ${action.choosing.includes(c.id) ? "selected" : ""}`, onClick: () => handlers.onTogglePitch(c.id) }, c.name)
+        )
+      )
+    );
+  }
+  return step;
+}
+
+function renderObjectCostStep(action, offer, field, label, onToggle) {
+  const body = offer.candidates.length
+    ? h(
+        "div",
+        { class: "chip-row" },
+        ...offer.candidates.map((c) =>
+          h("button", { class: `chip ${action[field].includes(c.id) ? "selected" : ""}`, onClick: () => onToggle(c.id) }, c.name)
+        )
+      )
+    : h("div", { class: "hint" }, "nothing eligible right now");
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, `${label} (${action[field].length} chosen) - optional`),
+    body,
+    h("div", { class: "hint" }, offer.rule)
+  );
+}
+
+function renderCrewProgress(action, offer) {
+  const chosen = offer.candidates.filter((c) => action.crewing.includes(c.id));
+  const total = chosen.reduce((sum, c) => sum + (c.power || 0), 0);
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, `Crew ${offer.number} - power ${total}/${offer.number}`),
+    h("div", { class: "hint" }, "click creatures on the board to crew (CR 702.122a)")
+  );
+}
+
+function renderSlotChips(action, handlers) {
+  if (!action.affordance || !action.affordance.targets_anything || !action.slots.length) return null;
+  const active = activeSlotIndex(action.slots);
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, `Targets (${flatten(action.slots).length})`),
+    h(
+      "div",
+      { class: "chip-row" },
+      ...action.slots.map((slot, i) =>
+        h(
+          "div",
+          { class: `chip slot-chip ${i === active ? "active-slot" : ""}`, onClick: () => handlers.onFocusSlot(i) },
+          h("span", {}, slot.targets.length ? `${slot.label}: ${slot.targets.map((id) => handlers.nameOf(id)).join(", ")}` : slot.label),
+          ...slot.targets.map((id) =>
+            h(
+              "button",
+              {
+                class: "unfill",
+                onClick: (e) => {
+                  e.stopPropagation();
+                  handlers.onUnfill(i, id);
+                },
+              },
+              "x"
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+function renderShareSteppers(action, handlers) {
+  if (!action.affordance || !action.affordance.division) return null;
+  const targets = flatten(action.slots);
+  if (!targets.length) return null;
+  const division = action.affordance.division;
+  return h(
+    "div",
+    { class: "tray-step" },
+    h("div", { class: "label" }, `Divide ${division.amount}${division.what ? ` ${division.what}` : ""}`),
+    h(
+      "div",
+      { class: "chip-row" },
+      ...targets.map((id) =>
+        h(
+          "label",
+          { class: "share-stepper" },
+          handlers.nameOf(id),
+          h("input", {
+            type: "number",
+            min: "1",
+            value: String(action.shares[id] || 1),
+            onChange: (e) => handlers.onSetShare(id, Number(e.target.value)),
+          })
+        )
+      )
+    )
+  );
+}
+
+function renderCastingStrip(el, app, handlers) {
+  const action = app.action;
+  clear(el);
+  if (!action) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const card = action.card;
+  const ability = action.abilityIndex !== null ? (card.abilities || [])[action.abilityIndex] : null;
+  const title = actionTitle(action);
+
+  el.appendChild(h("strong", {}, `${title}: ${card.name}`));
+  if (card.mana_cost && !ability) el.appendChild(withSymbols(app.symbols, card.mana_cost));
+  if (ability) el.appendChild(h("span", { class: "hint" }, ability.loyalty ? `${ability.loyalty.label} ` : "", withSymbols(app.symbols, ability.text)));
+
+  const modeStep = renderModeChips(card, action, handlers, app.symbols);
+  if (modeStep) el.appendChild(modeStep);
+
+  const colorStep = renderColorChips(card, action, handlers, app.symbols);
+  if (colorStep) el.appendChild(colorStep);
+
+  const objectCosts = (action.affordance && action.affordance.object_costs) || {};
+  if (action.kind === "crew" && objectCosts.crew) {
+    el.appendChild(renderCrewProgress(action, objectCosts.crew));
+  } else if (action.kind === "cast") {
+    if (objectCosts.convoke) el.appendChild(renderObjectCostStep(action, objectCosts.convoke, "convoke", "Convoke", handlers.onToggleConvoke));
+    if (objectCosts.delve) el.appendChild(renderObjectCostStep(action, objectCosts.delve, "delve", "Delve", handlers.onToggleDelve));
+  }
+
+  const altStep = renderAltCosts(action, app, handlers);
+  if (altStep) el.appendChild(altStep);
+
+  const xStep = renderXInput(card, action, handlers);
+  if (xStep) el.appendChild(xStep);
+
+  const slotsStep = renderSlotChips(action, handlers);
+  if (slotsStep) el.appendChild(slotsStep);
+
+  const sharesStep = renderShareSteppers(action, handlers);
+  if (sharesStep) el.appendChild(sharesStep);
+
+  if (!action.done && action.slots.some(slotIsOpen)) {
+    el.appendChild(h("button", { onClick: handlers.onDone }, "Done"));
+  }
+
+  if (readyToFire(action) && (action.pinned.length > 0 || (action.affordance && action.affordance.division))) {
+    el.appendChild(h("button", { class: "primary", onClick: handlers.onCast }, title));
+  }
+
+  if (action.kind === "cast" || (ability && !ability.is_mana_ability)) {
+    el.appendChild(
+      h(
+        "label",
+        { class: "hint" },
+        h("input", { type: "checkbox", checked: action.holdPriority, onChange: (e) => handlers.onHoldPriority(e.target.checked) }),
+        " keep priority (CR 117.3c)"
+      )
+    );
+  }
+
+  el.appendChild(h("button", { onClick: handlers.onCancel }, "Cancel"));
+  if (action.error) el.appendChild(h("div", { class: "error" }, action.error));
+}
+
+// ------------------------------------------------------------ #priority-box
+
+function renderPriorityBox(el, app, handlers) {
+  clear(el);
+  if (app.run) {
+    el.appendChild(h("div", { class: "hint" }, `Stop (running: ${VERB_LABELS[app.run.verb] || app.run.verb})`));
+    el.appendChild(h("button", { onClick: handlers.onStopRun }, "Stop"));
+  } else {
+    const verbs = passButtonsFor(app.state);
+    el.appendChild(h("div", { class: "chip-row" }, ...verbs.map((v) => h("button", { onClick: () => handlers.onVerb(v) }, VERB_LABELS[v]))));
+  }
+  el.appendChild(h("button", { class: "ghost danger", onClick: handlers.onConcede }, "Concede"));
+}
+
+// --------------------------------------------------------------- #stops-box
+
+function renderStopsBox(el, app, handlers) {
+  clear(el);
+  const steps = STEPS.filter((s) => s !== "untap" && s !== "cleanup");
+  const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));
+  for (const step of steps) {
+    const label = step.replace(/_/g, " ");
+    grid.appendChild(
+      h(
+        "label",
+        {},
+        h("input", { type: "checkbox", checked: app.stops.mine.includes(step), onChange: () => handlers.onToggleStop("mine", step) }),
+        ` ${label}`
+      )
+    );
+    grid.appendChild(
+      h(
+        "label",
+        {},
+        h("input", { type: "checkbox", checked: app.stops.theirs.includes(step), onChange: () => handlers.onToggleStop("theirs", step) }),
+        ` ${label}`
+      )
+    );
+  }
+  el.appendChild(grid);
+}
+
+// -------------------------------------------------------------------- mount
+
+/** Mount the ribbon into `root` (normally `document`) and return the
+ * `store.subscribe` unsubscribe function. See this file's own header for the
+ * full `handlers` shape. */
+export function mountRibbon(root, store, handlers) {
+  const els = {
+    prompt: root.querySelector("#prompt-box"),
+    strip: root.querySelector("#casting-strip"),
+    priority: root.querySelector("#priority-box"),
+    stops: root.querySelector("#stops-box"),
+  };
+  return store.subscribe((app) => {
+    if (!app.state) return;
+    renderPromptBox(els.prompt, app, handlers);
+    renderCastingStrip(els.strip, app, handlers);
+    renderPriorityBox(els.priority, app, handlers);
+    renderStopsBox(els.stops, app, handlers);
+  });
+}
+
+// ----------------------------------------------------------------- popover
+
+let popoverEl = null;
+let outsideHandler = null;
+let escHandler = null;
+
+function removeGlobalHandlers() {
+  if (outsideHandler) document.removeEventListener("click", outsideHandler, true);
+  if (escHandler) document.removeEventListener("keydown", escHandler, true);
+  outsideHandler = null;
+  escHandler = null;
+}
+
+/** Position `#popover` under `anchorEl`'s bounding rect and list `items` as
+ * buttons - `{label, sublabel, disabled, title, onSelect}` each. Hides on a
+ * click outside it or Escape. */
+export function showPopover(anchorEl, items) {
+  const el = document.querySelector("#popover");
+  if (!el) return;
+  clear(el);
+  for (const item of items) {
+    el.appendChild(
+      h(
+        "button",
+        {
+          class: "option",
+          disabled: Boolean(item.disabled),
+          title: item.title || "",
+          onClick: () => {
+            if (!item.disabled) item.onSelect();
+          },
+        },
+        item.label,
+        item.sublabel ? h("span", { class: "hint" }, ` ${item.sublabel}`) : null
+      )
+    );
+  }
+  const rect = anchorEl.getBoundingClientRect();
+  el.style.left = `${rect.left + (window.scrollX || 0)}px`;
+  el.style.top = `${rect.bottom + (window.scrollY || 0)}px`;
+  el.hidden = false;
+  popoverEl = el;
+  removeGlobalHandlers();
+  outsideHandler = (e) => {
+    if (popoverEl && !popoverEl.contains(e.target)) hidePopover();
+  };
+  escHandler = (e) => {
+    if (e.key === "Escape") hidePopover();
+  };
+  document.addEventListener("click", outsideHandler, true);
+  document.addEventListener("keydown", escHandler, true);
+}
+
+export function hidePopover() {
+  removeGlobalHandlers();
+  if (popoverEl) {
+    popoverEl.hidden = true;
+    clear(popoverEl);
+  }
+  popoverEl = null;
+}

@@ -670,6 +670,52 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .state-running { color: var(--good); }
 .state-exited { color: var(--ink-dim); }
 
+/* -------------------------------------------------------- ribbon (ribbon.js) */
+
+/* A toggled-on chip, wherever it appears: a chosen mode, colour, alternative
+   cost, convoke/delve/pitch candidate, or a decision's `options` control. */
+.chip.selected { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+/* The one target slot a click would fill next (`targeting.js`'s
+   `activeSlotIndex`), on the casting strip's own slot chips. */
+.chip.active-slot { outline: 2px solid var(--warn); outline-offset: 1px; }
+.slot-chip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.slot-chip .unfill { border: none; background: transparent; color: var(--ink-dim); cursor: pointer; padding: 0 2px; font-size: 11px; }
+.slot-chip .unfill:hover { color: var(--bad); }
+
+.decision h3 { color: var(--warn); }
+.decision .remaining { font-variant-numeric: tabular-nums; }
+
+.split-columns { display: flex; gap: 14px; }
+.split-col { flex: 1; min-width: 0; }
+.split-col > .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-dim);
+  margin-bottom: 4px;
+}
+.split-row { display: flex; align-items: center; gap: 5px; font-size: 12px; margin: 3px 0; }
+.split-row span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.combat-prompt .combat-list { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+.prompt-action-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prompt-gameover { font-weight: 600; color: var(--warn); }
+
+/* `#stops-box`'s two-column grid over `STEPS` minus `untap`/`cleanup` - one
+   column per side, a header row naming them. */
+.stops-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; font-size: 12px; }
+.stops-grid > div:nth-child(-n+2) { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-faint); }
+.stops-grid label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.pregame-step { display: flex; flex-direction: column; gap: 6px; }
+.pregame-bottom { display: flex; flex-direction: column; gap: 3px; }
+
+.share-stepper { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.share-stepper input { width: 55px; }
+
+/* A popover item's secondary line - a cost, e.g. "Cycle {2}". */
+.popover .option .hint { display: block; font-size: 10px; margin: 0; }
+
 @media (max-width: 1100px) {
   #game { grid-template-columns: 1fr; grid-template-areas: "top" "banner" "board" "side" "debug"; height: auto; }
   .card-preview { right: 14px; }
