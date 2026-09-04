@@ -1,0 +1,342 @@
+// Decision view models: one `viewModel(pending, draft) -> ViewModel` per
+// `DecisionKind` a live seat can answer through `decide` (see
+// `magic_cards_model_api.decisions.ANSWERABLE_KINDS`). `DECISION_KINDS`'
+// object-literal keys are read by `tests/test_ui_decision_coverage.py` the
+// same way `ui/app.js`'s old `DECISION_RENDERERS` was: a new engine
+// `DecisionKind` with no entry here cannot silently hang a live browser game.
+// Do not rename this constant without updating that test.
+//
+// `ViewModel = {kind, title, prompt, controls, submit, secondary, remaining}`
+// - pure data, no DOM and no `innerHTML`; the screen (`ui/app.js`'s
+// `renderDecision`, still unported) is what turns this into markup.
+import { fill, flatten, isSatisfied, slotsFromAffordance } from "./targeting.js";
+
+// -- moved verbatim from ui/app.js (chooseCardsOptions, triggerOrderOptions)
+
+/**
+ * The candidates a `choose_cards` question offers, as `{id, label}` in the
+ * order the engine listed them (zone order, for a search). Pure, and
+ * exported, so `tests/test_fetchland_search_choice.py` can hold the shipped
+ * labelling to the rule rather than re-describing it.
+ */
+export function chooseCardsOptions(pending) {
+  const ids = (pending && pending.cards) || [];
+  const details = {};
+  ((pending && pending.card_details) || []).forEach((obj) => {
+    details[obj.id] = obj;
+  });
+  const labels = (pending && pending.card_labels) || [];
+  return ids.map((id, index) => {
+    const obj = details[id];
+    return { id: id, label: (obj && obj.name) || labels[index] || id };
+  });
+}
+
+/** How much of an ability's own text to show beside its source's name. Enough
+ * to tell two different triggers of one permanent apart without turning a row
+ * of buttons into a wall of oracle text. */
+const TRIGGER_TEXT_CHARS = 80;
+
+/**
+ * The options a CR 603.3b question offers, as `{id, label}` in the order they
+ * triggered. Pure, and exported, so `tests/test_trigger_order_labels.py` can
+ * hold the real shipped labelling to the rule rather than re-describing it.
+ */
+export function triggerOrderOptions(pending) {
+  const ids = (pending && pending.cards) || [];
+  const details = {};
+  ((pending && pending.card_details) || []).forEach((obj) => {
+    details[obj.id] = obj;
+  });
+  return ids.map((id, index) => {
+    const obj = details[id];
+    const position = `#${index + 1}`;
+    if (!obj) return { id: id, label: `trigger ${position}` };
+    const name = obj.name || `trigger ${position}`;
+    const text = (obj.text || "").replace(/\s+/g, " ").trim();
+    const clipped =
+      text.length > TRIGGER_TEXT_CHARS ? `${text.slice(0, TRIGGER_TEXT_CHARS - 1)}…` : text;
+    // The position stays on every label even when the name is known: two
+    // copies of one card is the normal case here (two Delver of Secrets both
+    // read "at the beginning of your upkeep"), so name and text alone can be
+    // identical for two genuinely different objects.
+    return {
+      id: id,
+      label: clipped ? `${position} ${name} - ${clipped}` : `${position} ${name}`,
+    };
+  });
+}
+
+// -- shared helpers ----------------------------------------------------------
+
+/**
+ * `pending.card_details` travels two shapes across this codebase:
+ * `visibility.redact_pending_decision` stamps it as a *list* of
+ * `{id, name, ...}` (what `chooseCardsOptions`/`triggerOrderOptions` above
+ * already expect - that is the real wire shape), but a caller that already
+ * has one indexed by id may hand it over as an object instead. Both are
+ * normalized here so `labelOf` reads either.
+ */
+function detailsById(pending) {
+  const raw = (pending && pending.card_details) || {};
+  if (!Array.isArray(raw)) return raw;
+  const out = {};
+  for (const obj of raw) out[obj.id] = obj;
+  return out;
+}
+
+function labelOf(pending, id) {
+  const details = detailsById(pending);
+  if (details[id] && details[id].name) return details[id].name;
+  const i = (pending.cards || []).indexOf(id);
+  if (i >= 0 && pending.card_labels && pending.card_labels[i]) return pending.card_labels[i];
+  return id;
+}
+
+function yesNo(pending, yes, no) {
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: pending.prompt,
+    controls: [],
+    submit: {
+      label: yes,
+      enabled: pending.affirmative_is_legal !== false,
+      answer: { accept: true },
+    },
+    secondary: { label: no, answer: { accept: false } },
+    remaining: null,
+  };
+}
+
+function amount(pending, draft, field) {
+  const value = draft.amount === undefined ? 0 : draft.amount;
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: pending.prompt,
+    controls: [{ type: "number", min: 0, max: pending.amount, value }],
+    submit: {
+      label: "Pay",
+      enabled: value >= 0 && value <= pending.amount,
+      answer: { [field]: value },
+    },
+    secondary: null,
+    remaining: null,
+  };
+}
+
+function chooseCards(pending, draft) {
+  const chosen = draft.card_ids || [];
+  const options = chooseCardsOptions(pending).map((o) => ({
+    ...o,
+    selected: chosen.includes(o.id),
+    disabled: false,
+  }));
+  const max = pending.amount;
+  // `exact` absent (an older server) reads as `true` - the engine's own
+  // default for the field (`decisions.py`'s `PendingDecision.exact`) and the
+  // shape every `choose_cards` question had before a search became one.
+  const exact = pending.exact !== false;
+  const ok = exact
+    ? chosen.length === max
+    : chosen.length <= (max === null || max === undefined ? Infinity : max);
+  return {
+    kind: pending.kind,
+    title: pending.source || "Choose cards",
+    prompt: pending.prompt,
+    controls: [{ type: "options", items: options, multi: true }],
+    submit: {
+      label: exact ? `Choose ${max}` : "Choose",
+      enabled: ok,
+      answer: { card_ids: chosen },
+    },
+    secondary: exact ? null : { label: "Find nothing", answer: { card_ids: [] } },
+    remaining: null,
+  };
+}
+
+function targetsAffordance(pending) {
+  return {
+    targets_anything: true,
+    understood: true,
+    minimum: pending.target_minimum || 0,
+    maximum: pending.target_maximum,
+    requirements: [
+      {
+        phrase: pending.prompt,
+        count:
+          pending.target_maximum === null || pending.target_maximum === undefined
+            ? 1
+            : pending.target_maximum,
+        minimum: pending.target_minimum || 0,
+        unbounded: pending.target_maximum === null || pending.target_maximum === undefined,
+        variable_count: false,
+        mode: null,
+        mode_text: null,
+      },
+    ],
+    division: null,
+    candidates: (pending.targets || []).map((t) => ({
+      id: t.id,
+      kind: t.kind,
+      name: labelOf(pending, t.id),
+      requirements: [0],
+    })),
+  };
+}
+
+function chooseTargets(pending, draft) {
+  const aff = targetsAffordance(pending);
+  let slots = slotsFromAffordance(aff);
+  for (const id of draft.targets || []) slots = fill(slots, 0, id);
+  return {
+    kind: pending.kind,
+    title: pending.source || "Choose targets",
+    prompt: pending.prompt,
+    controls: [{ type: "targets", slots, affordance: aff }],
+    submit: { label: "Choose", enabled: isSatisfied(slots), answer: { targets: flatten(slots) } },
+    secondary: null,
+    remaining: null,
+  };
+}
+
+function split(pending, draft) {
+  const moved = draft.moved || [];
+  const kept = (pending.cards || []).filter((id) => !moved.includes(id));
+  const order = (draft.order || kept).filter((id) => kept.includes(id));
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: pending.prompt,
+    controls: [
+      {
+        type: "split",
+        cards: (pending.cards || []).map((id) => ({
+          id,
+          label: labelOf(pending, id),
+          moved: moved.includes(id),
+        })),
+        movedLabel: pending.moved_label || (pending.kind === "surveil" ? "graveyard" : "bottom"),
+        keptLabel: pending.kept_label || "top",
+        order,
+      },
+    ],
+    submit: {
+      label: "Done",
+      enabled: true,
+      answer: { moved, top_order: order.length ? order : null },
+    },
+    secondary: null,
+    remaining: null,
+  };
+}
+
+function choice(pending, draft) {
+  const items = (pending.options || []).map((o) => ({
+    id: o,
+    label: o,
+    selected: draft.choice === o,
+    disabled: false,
+  }));
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: pending.prompt,
+    controls: [{ type: "options", items, multi: false }],
+    submit: {
+      label: "Choose",
+      enabled: draft.choice !== undefined,
+      answer: { choice: draft.choice },
+    },
+    secondary: null,
+    remaining: null,
+  };
+}
+
+function topOrBottom(pending) {
+  return {
+    kind: pending.kind,
+    title: pending.source || pending.kind,
+    prompt: pending.prompt,
+    controls: [],
+    submit: { label: "Top", enabled: true, answer: { top: true } },
+    secondary: { label: "Bottom", answer: { top: false } },
+    remaining: null,
+  };
+}
+
+function orderTriggers(pending, draft) {
+  const order = draft.order || [];
+  const items = triggerOrderOptions(pending).map((o) => ({
+    ...o,
+    selected: order.includes(o.id),
+    position: order.indexOf(o.id),
+  }));
+  const all = items.length === order.length;
+  return {
+    kind: pending.kind,
+    title: "Order triggers",
+    prompt: pending.prompt,
+    controls: [{ type: "order", items }],
+    submit: {
+      label: "Put on the stack",
+      enabled: all,
+      // Reversed: the engine wants bottom of the stack first, and the last
+      // thing put on the stack is the first thing to resolve.
+      answer: { order: [...order].reverse() },
+    },
+    secondary: null,
+    remaining: null,
+  };
+}
+
+export const DECISION_KINDS = {
+  may: (p) => yesNo(p, "Yes", "No"),
+  pay_life: (p) => yesNo(p, "Pay", "Don't pay"),
+  pay_energy: (p) => yesNo(p, "Pay", "Don't pay"),
+  pay_mana: (p) => yesNo(p, "Pay", "Don't pay"),
+  pay_energy_amount: (p, d) => amount(p, d, "energy_amount"),
+  pay_life_amount: (p, d) => amount(p, d, "life_amount"),
+  scry: split,
+  surveil: split,
+  mulligan: (p) => yesNo(p, "Keep", "Mulligan"),
+  opening_hand_action: (p) => yesNo(p, "Do it", "Skip"),
+  choose_cards: chooseCards,
+  choose_targets: chooseTargets,
+  choose_a_quality: choice,
+  choose_a_mode: choice,
+  put_on_top_or_bottom: topOrBottom,
+  order_triggers: orderTriggers,
+};
+
+export function viewModel(pending, draft) {
+  const build = DECISION_KINDS[pending.kind];
+  if (!build) {
+    return {
+      kind: pending.kind,
+      title: "Unknown decision",
+      prompt: `no renderer for ${pending.kind}`,
+      controls: [],
+      submit: null,
+      secondary: null,
+      remaining: null,
+    };
+  }
+  return build(pending, draft || {});
+}
+
+export function answerFor(kind, draft) {
+  switch (kind) {
+    case "scry":
+    case "surveil":
+      return {
+        moved: draft.moved || [],
+        top_order: draft.order && draft.order.length ? draft.order : null,
+      };
+    case "order_triggers":
+      return { order: [...(draft.order || [])].reverse() };
+    default:
+      return viewModel({ kind, ...draft.pending }, draft).submit.answer;
+  }
+}
