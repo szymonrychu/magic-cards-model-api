@@ -40,6 +40,8 @@ SCRY = {
     "moved_label": "bottom",
     "kept_label": "top",
 }
+MULLIGAN = {**MAY, "kind": "mulligan", "prompt": "take a mulligan?", "source": None}
+QUALITY = {**MAY, "kind": "choose_a_quality", "prompt": "Choose a card name"}
 
 
 def test_every_answerable_kind_has_a_view_model() -> None:
@@ -82,5 +84,52 @@ def test_choose_targets_uses_slots_with_the_minimum() -> None:
 
 
 def test_scry_answer_carries_moved_and_top_order() -> None:
-    answer = run_module("decisions.js", "m.answerFor('scry', { moved: ['a'], order: ['b'] })")
+    answer = run_module("decisions.js", "m.answerFor(p, { moved: ['a'], order: ['b'] })", p=SCRY)
     assert answer == {"moved": ["a"], "top_order": ["b"]}
+
+
+def test_mulligan_means_mulligan() -> None:
+    """CR 103.5 (`machines/decisions.py`'s `ask_mulligan`): `True` takes a
+    mulligan, `False` keeps the hand - the opposite polarity of every other
+    `yesNo` kind, where the submit button's `accept: true` is the
+    affirmative branch. The submit button here must read "Mulligan" and
+    send `accept: true`; "Keep" is the secondary, sending `accept: false`."""
+    vm = run_module("decisions.js", "m.viewModel(p, {})", p=MULLIGAN)
+    assert vm["submit"]["label"] == "Mulligan"
+    assert vm["submit"]["answer"] == {"accept": True}
+    assert vm["secondary"]["label"] == "Keep"
+    assert vm["secondary"]["answer"] == {"accept": False}
+
+
+def test_an_open_quality_choice_offers_free_text() -> None:
+    """`choose_a_quality` with no `options` (a card-name or creature-type
+    choice - `schemas.py`'s `choice` field docstring: "empty `options` means
+    'any card name' or 'any creature type'") has no printed list to offer,
+    unlike `choose_a_mode`'s always-enumerated modes - so it gets a `text`
+    control instead of an `options` one, enabled only once something is
+    actually typed."""
+    empty = run_module("decisions.js", "m.viewModel(p, {})", p=QUALITY)
+    assert empty["controls"] == [{"type": "text", "value": ""}]
+    assert empty["submit"]["enabled"] is False
+
+    typed = run_module("decisions.js", "m.viewModel(p, { choice: 'Llanowar Elves' })", p=QUALITY)
+    assert typed["controls"] == [{"type": "text", "value": "Llanowar Elves"}]
+    assert typed["submit"]["enabled"] is True
+    assert typed["submit"]["answer"] == {"choice": "Llanowar Elves"}
+
+    blank = run_module("decisions.js", "m.viewModel(p, { choice: '   ' })", p=QUALITY)
+    assert blank["submit"]["enabled"] is False
+
+
+def test_scry_answer_agrees_with_the_view_model_about_which_cards_stay_on_top() -> None:
+    """`answerFor` used to filter `draft.order` to `pending.cards` alone,
+    while `split` (what the view model actually renders) filters it to the
+    *kept* cards - the ones not `moved`. A stale `order` entry for a card
+    that was ticked into `moved` disagreed between the two: this pins that
+    `answerFor` and the view model's own `submit.answer` are now one
+    implementation, so they cannot drift again."""
+    draft = {"moved": ["a"], "order": ["a", "b"]}
+    answer = run_module("decisions.js", "m.answerFor(p, d)", p=SCRY, d=draft)
+    vm_answer = run_module("decisions.js", "m.viewModel(p, d).submit.answer", p=SCRY, d=draft)
+    assert answer == {"moved": ["a"], "top_order": ["b"]}
+    assert answer == vm_answer

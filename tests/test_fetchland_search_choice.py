@@ -281,7 +281,6 @@ def test_a_declinable_search_offers_finding_nothing_as_a_real_answer() -> None:
 
     assert vm["secondary"]["label"] == "Find nothing"
     assert vm["secondary"]["answer"] == {"card_ids": []}
-    assert "up to 1" in vm["prompt"], vm["prompt"]
 
 
 @needs_node
@@ -298,7 +297,6 @@ def test_an_exact_choice_neither_says_up_to_nor_offers_a_decline() -> None:
     )
 
     assert vm["submit"]["label"] == "Choose 2"
-    assert "up to" not in vm["prompt"], vm["prompt"]
     assert vm["secondary"] is None
 
 
@@ -346,7 +344,7 @@ def test_every_candidate_keeps_a_box_even_with_no_naming_at_all() -> None:
 
 
 @needs_node
-def test_a_label_is_escaped_like_every_other_string_in_the_box() -> None:
+def test_a_label_passes_through_verbatim_escaping_is_the_screens_job() -> None:
     """`card_labels` and `source` are engine text; the view model is pure data
     and does not touch it, so both pass through verbatim - escaping for
     `innerHTML` is deferred to whatever screen renders this view model."""

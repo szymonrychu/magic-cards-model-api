@@ -282,7 +282,7 @@ def test_each_label_falls_back_on_its_own() -> None:
 
 
 @needs_node
-def test_a_label_is_escaped_like_every_other_string_in_the_box() -> None:
+def test_a_label_passes_through_verbatim_escaping_is_the_screens_job() -> None:
     """Labels are engine text; the view model is pure data and does not touch
     it, so it carries the label through verbatim - escaping for `innerHTML`
     is deferred to whatever screen renders this view model into the DOM."""

@@ -233,7 +233,30 @@ function split(pending, draft) {
 }
 
 function choice(pending, draft) {
-  const items = (pending.options || []).map((o) => ({
+  const options = pending.options || [];
+  // `schemas.py`'s `choice` field also answers `choose_a_quality` for a
+  // color/card-name/creature-type pick (CR 614.12a) whose universe is too
+  // large to enumerate - `pending.options` is empty for that case, unlike
+  // `choose_a_mode`'s always-printed, always non-empty modes (CR 700.2a) -
+  // so there is nothing to offer as a button list and a free-text control
+  // is the only one that can answer it.
+  if (options.length === 0) {
+    const value = draft.choice || "";
+    return {
+      kind: pending.kind,
+      title: pending.source || pending.kind,
+      prompt: pending.prompt,
+      controls: [{ type: "text", value }],
+      submit: {
+        label: "Choose",
+        enabled: value.trim().length > 0,
+        answer: { choice: value },
+      },
+      secondary: null,
+      remaining: null,
+    };
+  }
+  const items = options.map((o) => ({
     id: o,
     label: o,
     selected: draft.choice === o,
@@ -273,7 +296,15 @@ function orderTriggers(pending, draft) {
     selected: order.includes(o.id),
     position: order.indexOf(o.id),
   }));
-  const all = items.length === order.length;
+  // A real answer (CR 603.3b) is a permutation of every offered ability, not
+  // merely a same-length list - a duplicate click could otherwise pad
+  // `order` out to `items.length` while still dropping one ability and
+  // repeating another.
+  const offeredIds = items.map((o) => o.id);
+  const isPermutation =
+    order.length === offeredIds.length &&
+    new Set(order).size === offeredIds.length &&
+    offeredIds.every((id) => order.includes(id));
   return {
     kind: pending.kind,
     title: "Order triggers",
@@ -281,7 +312,7 @@ function orderTriggers(pending, draft) {
     controls: [{ type: "order", items }],
     submit: {
       label: "Put on the stack",
-      enabled: all,
+      enabled: isPermutation,
       // Reversed: the engine wants bottom of the stack first, and the last
       // thing put on the stack is the first thing to resolve.
       answer: { order: [...order].reverse() },
@@ -300,7 +331,13 @@ export const DECISION_KINDS = {
   pay_life_amount: (p, d) => amount(p, d, "life_amount"),
   scry: split,
   surveil: split,
-  mulligan: (p) => yesNo(p, "Keep", "Mulligan"),
+  // CR 103.5: "True takes a mulligan and False keeps the hand"
+  // (`machines/decisions.py`'s `ask_mulligan`) - the opposite polarity of
+  // every other `yesNo` kind here, where the submit button's `accept: true`
+  // is the affirmative/"yes" branch. `Mulligan`'s submit button must send
+  // `accept: true` (it IS the mulligan), and `Keep` is the secondary
+  // sending `accept: false`.
+  mulligan: (p) => yesNo(p, "Mulligan", "Keep"),
   opening_hand_action: (p) => yesNo(p, "Do it", "Skip"),
   choose_cards: chooseCards,
   choose_targets: chooseTargets,
@@ -326,17 +363,15 @@ export function viewModel(pending, draft) {
   return build(pending, draft || {});
 }
 
-export function answerFor(kind, draft) {
-  switch (kind) {
-    case "scry":
-    case "surveil":
-      return {
-        moved: draft.moved || [],
-        top_order: draft.order && draft.order.length ? draft.order : null,
-      };
-    case "order_triggers":
-      return { order: [...(draft.order || [])].reverse() };
-    default:
-      return viewModel({ kind, ...draft.pending }, draft).submit.answer;
-  }
+// One implementation. `viewModel` already knows, per kind, exactly how a
+// draft becomes an answer (`split`'s `moved`/`top_order` filtered to the
+// kept cards, `orderTriggers`'s reversed `order`, every other kind's own
+// `submit.answer`) - repeating that logic here let the two disagree, which
+// is exactly what happened for `{moved: ["a"], order: ["a", "b"]}`: this
+// used to hand back `top_order: ["a", "b"]` unfiltered while `split` itself
+// would have sent only `["b"]`, the one card actually still on top.
+export function answerFor(pending, draft) {
+  const vm = viewModel(pending, draft);
+  if (!vm.submit) throw new Error(`no answer for decision kind ${pending.kind}`);
+  return vm.submit.answer;
 }
