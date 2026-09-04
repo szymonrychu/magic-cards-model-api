@@ -43,7 +43,8 @@ function permanentOpts(app, card) {
   const opts = targetingOpts(app, card.id);
   const attacks = (app.state.combat && app.state.combat.attacks) || [];
   opts.attacking = Boolean(
-    (app.combatDraft && app.combatDraft[card.id]) || attacks.some((a) => a.attacker === card.id)
+    (app.combatDraft && app.state.step === "declare_attackers" && app.combatDraft[card.id]) ||
+      attacks.some((a) => a.attacker === card.id)
   );
   opts.blocking = Boolean(
     (app.combatDraft &&
@@ -89,14 +90,13 @@ function patchCards(container, cards, app, size, onClick) {
   );
 }
 
-function infoRow(el, app, player, isYou) {
+function infoRow(el, app, player) {
   const opts = targetingOpts(app, player.username);
   el.classList.toggle("targetable", opts.targetable);
   el.classList.toggle("chosen", opts.chosen);
   el.classList.toggle("dimmed", opts.dimmed);
   el.classList.toggle("active", app.state.active_player === player.username);
   el.classList.toggle("priority", app.state.priority_holder === player.username);
-  el.classList.toggle("you", isYou);
   clear(el);
   el.appendChild(h("span", { class: "name" }, player.username));
   el.appendChild(h("span", { class: "life", title: "life" }, String(player.life)));
@@ -107,7 +107,9 @@ function infoRow(el, app, player, isYou) {
       `hand ${player.hand_count} / library ${player.library_count} / graveyard ${player.graveyard_count}`
     )
   );
-  el.appendChild(h("span", { class: "pool" }, manaPoolNodes(app.symbols, player.mana_pool)));
+  // `manaPoolNodes` already returns its own `span.pool` - wrapping it in a
+  // second one nested `.pool` inside `.pool` for no reason.
+  el.appendChild(manaPoolNodes(app.symbols, player.mana_pool));
   if (opts.heldCount > 1) el.appendChild(h("span", { class: "held-count" }, `x${opts.heldCount}`));
 }
 
@@ -140,8 +142,8 @@ export function mountBoard(root, store, handlers) {
     const you = state.you;
     const me = state.players.find((p) => p.username === you);
     const opp = state.players.find((p) => p.username !== you);
-    infoRow(els.oppInfo, app, opp, false);
-    infoRow(els.youInfo, app, me, true);
+    infoRow(els.oppInfo, app, opp);
+    infoRow(els.youInfo, app, me);
     patchChildren(
       els.oppHand,
       Array.from({ length: opp.hand_count }, (_, i) => ({ id: `back-${i}` })),
@@ -167,7 +169,9 @@ export function mountBoard(root, store, handlers) {
       }
     );
     const attacking = state.battlefield.filter(
-      (c) => (app.combatDraft && app.combatDraft[c.id]) || (state.combat.attacks || []).some((a) => a.attacker === c.id)
+      (c) =>
+        (app.combatDraft && app.state.step === "declare_attackers" && app.combatDraft[c.id]) ||
+        (state.combat.attacks || []).some((a) => a.attacker === c.id)
     );
     els.redZone.hidden = attacking.length === 0;
     patchCards(els.redZone, attacking, app, "card-sm", handlers.onPermanent);
