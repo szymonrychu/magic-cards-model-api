@@ -183,6 +183,13 @@ h3 { font-size: 14px; }
 #mtg-board {
   grid-area: board;
   display: grid;
+  /* 7 explicit tracks for the always-present rows. `#red-zone` and
+     `#casting-strip` are `hidden` by default, and a `display: none` grid
+     item consumes no track at all - so keeping the count at 7 (rather than
+     9) is what keeps `my-battlefield` on the flexible 5th track in the
+     common case. When one of the two becomes visible, the grid's default
+     `grid-auto-rows: auto` gives it an implicit row of its own, which is
+     exactly the thin, content-sized row either wants. */
   grid-template-rows: auto auto 1fr auto 1fr auto auto;
   gap: 5px;
   min-height: 0;
