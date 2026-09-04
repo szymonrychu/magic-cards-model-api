@@ -424,7 +424,7 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/games/{game_id}/log")
-def game_log(game_id: str, uid: str | None = None) -> dict[str, Any]:
+def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, Any]:
     """The action log.
 
     Unlike `/api/games/{game_id}` this defaults to full: a bare call (no
@@ -434,13 +434,18 @@ def game_log(game_id: str, uid: str | None = None) -> dict[str, Any]:
     this is also the log mcp.py's `game_log` tool hands a live player - and
     that must not read the opponent's hand any more than the state endpoint
     does.
+
+    `since` is the last `seq` the caller already has; only newer entries
+    come back, and `last_seq` says where to resume next time.
     """
     game_or_404(game_id)  # 404 for an unknown game, like every other endpoint
     viewer = visibility.resolve_viewer(game_id, uid)
     log = audit.entries(game_id)
+    last_seq = log[-1]["seq"] if log else 0
+    log = [entry for entry in log if entry["seq"] > since]
     if isinstance(viewer, str):  # a real seat - not admin, not "nobody"
         log = [visibility.redact_log_entry(entry, viewer) for entry in log]
-    return {"log": log}
+    return {"log": log, "last_seq": last_seq}
 
 
 @app.delete("/api/games/{game_id}")
