@@ -161,6 +161,34 @@ def _target_names(game: Game, targets: list[Any]) -> list[str]:
     return names
 
 
+def _target_refs(game: Game, targets: list[Any]) -> list[dict[str, str]]:
+    """`_target_names` with ids: what a client needs to highlight the target
+    on the board rather than only print its name."""
+    from magic_cards_model.models import Player as PlayerModel
+
+    refs = []
+    for ref in targets:
+        try:
+            thing = game.resolve_target(ref)
+        except Exception:
+            thing = None
+        if isinstance(thing, CardState):
+            refs.append({"kind": "card", "id": str(thing.id), "name": thing.name})
+        elif isinstance(thing, PlayerModel):
+            refs.append({"kind": "player", "id": thing.username, "name": thing.username})
+        elif isinstance(thing, AbilityOnStack):
+            refs.append(
+                {
+                    "kind": "ability",
+                    "id": str(thing.id),
+                    "name": f"ability from {thing.source_name}",
+                }
+            )
+        else:
+            refs.append({"kind": "unknown", "id": str(ref), "name": str(ref)})
+    return refs
+
+
 def _special_actions(game: Game, state: CardState) -> dict[str, Any]:
     """What this hand card's CR 116.2 special actions and keyword-activated
     zone-leaving abilities offer right now: suspend/plot/foretell (each a
@@ -330,6 +358,7 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "toughness": toughness,
         "keywords": _keywords_of(game, state),
         "targets": _target_names(game, state.targets),
+        "target_refs": _target_refs(game, state.targets),
         "image": image.get("normal"),
         "small_image": image.get("small"),
         "art_crop": image.get("art_crop"),
@@ -382,6 +411,7 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
                 "controller": obj.controller,
                 "text": obj.ability.text,
                 "targets": _target_names(game, obj.targets),
+                "target_refs": _target_refs(game, obj.targets),
                 "zone": "stack",
             }
         views.append(view)
@@ -458,12 +488,14 @@ def snapshot(game: Game) -> dict[str, Any]:
                 "kind": "spell",
                 "controller": obj.controller,
                 "targets": _target_names(game, obj.targets),
+                "target_refs": _target_refs(game, obj.targets),
             }
         return {
             "name": obj.source_name,
             "kind": "ability",
             "controller": obj.controller,
             "targets": _target_names(game, obj.targets),
+            "target_refs": _target_refs(game, obj.targets),
         }
 
     combat_lines = []

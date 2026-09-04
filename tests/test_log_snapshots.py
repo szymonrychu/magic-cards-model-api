@@ -52,7 +52,13 @@ def test_the_snapshot_shows_the_stack_and_its_targets(client, game):
     entry = next(e for e in log if e["action"] == "cast" and e["detail"]["allowed"])
     stack = entry["snapshot"]["stack"]
     assert stack == [
-        {"name": "Lightning Bolt", "kind": "spell", "controller": "alice", "targets": ["bob"]}
+        {
+            "name": "Lightning Bolt",
+            "kind": "spell",
+            "controller": "alice",
+            "targets": ["bob"],
+            "target_refs": [{"kind": "player", "id": "bob", "name": "bob"}],
+        }
     ], "the stack and each object's targets are in the snapshot"
 
 
