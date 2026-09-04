@@ -533,6 +533,18 @@ h3 { font-size: 14px; }
   font-size: 12px;
 }
 
+/* One `render/log.js` audit-log line. A refused action's engine-verbatim
+   reason (`.refusal`) reads in the same red as everywhere else refusals show
+   up; a `report_problem` entry (`.log-problem`) is bold, matching the loud
+   banner `audit.py` gives it in the server's own console log. */
+.log-line {
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-line.log-problem { font-weight: 700; }
+.refusal { color: var(--bad); }
+
 /* A short-lived message that appears near an action and fades - a refusal
    or confirmation that does not need a whole `.notice` banner. */
 .toast {
