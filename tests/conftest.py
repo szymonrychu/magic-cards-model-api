@@ -48,6 +48,20 @@ def find(cards: list[dict], name: str) -> dict:
     return matches[0]
 
 
+def card_id(client: TestClient, game_id: str, name: str, player: str, zone: str) -> str:
+    """Add `name` to `player`'s `zone` and return the id it was dealt.
+
+    `hands` and `graveyards` in `state()` are per-player views; `battlefield`
+    and `exile` are shared across both players, so only the former two are
+    looked up by `player`.
+    """
+    add_card(client, game_id, name, player, zone)
+    board = state(client, game_id)
+    per_player = {"hand": board["hands"], "graveyard": board["graveyards"]}
+    pool = per_player[zone][player] if zone in per_player else board[zone]
+    return find(pool, name)["id"]
+
+
 def life_of(state_dict: dict, username: str) -> int:
     return next(player for player in state_dict["players"] if player["username"] == username)[
         "life"

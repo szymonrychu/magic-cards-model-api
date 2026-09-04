@@ -48,7 +48,7 @@ from magic_cards_model.machines.casting import Casting
 from magic_cards_model.machines.modes import modal_profile, substitute_x
 from magic_cards_model.machines.targeting import (
     TargetingProfile,
-    profile_for_modes,
+    profile_for_modes_with_owners,
     profile_for_text,
     targeting_profile,
 )
@@ -62,14 +62,21 @@ from magic_cards_model.models import CardState, Game, Player, Zone
 CANDIDATE_ZONES = (Zone.BATTLEFIELD, Zone.GRAVEYARD, Zone.EXILE)
 
 
-def _profile_view(profile: TargetingProfile) -> dict[str, Any]:
+def _profile_view(
+    profile: TargetingProfile, mode_of: list[tuple[int | None, str | None]] | None = None
+) -> dict[str, Any]:
     """A targeting profile as the UI needs it.
 
     `understood=False` is reported rather than hidden: it means the parser
     could not read this card's targeting, so the UI must fall back to letting
     the player name targets freely instead of pretending the empty candidate
     list is the truth.
+
+    `mode_of` has one `(mode_number, mode_text)` per requirement, from
+    `profile_for_modes_with_owners` (CR 700.2f: each mode may target on its
+    own); a non-modal profile reports `None` for both.
     """
+    mode_of = mode_of or [(None, None)] * len(profile.requirements)
     return {
         "targets_anything": profile.targets_anything,
         "understood": profile.understood,
@@ -82,8 +89,10 @@ def _profile_view(profile: TargetingProfile) -> dict[str, Any]:
                 "minimum": requirement.minimum,
                 "unbounded": requirement.unbounded,
                 "variable_count": requirement.variable_count,
+                "mode": mode,
+                "mode_text": mode_text,
             }
-            for requirement in profile.requirements
+            for requirement, (mode, mode_text) in zip(profile.requirements, mode_of, strict=True)
         ],
         "division": (
             {"amount": profile.division.amount, "what": profile.division.what}
@@ -217,7 +226,7 @@ def _profile_for(
     ability_index: int | None,
     modes: list[int] | None,
     x_value: int | None,
-) -> TargetingProfile:
+) -> tuple[TargetingProfile, list[tuple[int | None, str | None]] | None]:
     """The profile that governs this particular announcement.
 
     Three shapes, in the order the engine itself would reach them:
@@ -257,13 +266,16 @@ def _profile_for(
     if ability_index is not None:
         ability = game.activated_abilities(state)[ability_index]
         effect = getattr(ability, "effect", None) or getattr(ability, "text", "")
-        return profile_for_text(substitute_x(effect, x_value))
+        return profile_for_text(substitute_x(effect, x_value)), None
     modal = modal_profile(state.card)
     if modes and modal is not None:
-        return profile_for_modes(state.card, modal.resolve(modes), x_value)
+        chosen = modal.resolve(modes)
+        profile, owners = profile_for_modes_with_owners(state.card, chosen, x_value)
+        mode_of = [(chosen[owner].number, chosen[owner].text) for owner in owners]
+        return profile, mode_of
     if modal is None and x_value is not None and state.card.oracle_text:
-        return profile_for_text(substitute_x(state.card.oracle_text, x_value))
-    return targeting_profile(state.card)
+        return profile_for_text(substitute_x(state.card.oracle_text, x_value)), None
+    return targeting_profile(state.card), None
 
 
 def candidates(
@@ -293,11 +305,11 @@ def candidates(
     player would read as "nothing is legal".
     """
     try:
-        profile = _profile_for(game, state, caster, ability_index, modes, x_value)
+        profile, mode_of = _profile_for(game, state, caster, ability_index, modes, x_value)
     except (IndexError, ValueError) as exc:
         return {"error": str(exc), **_no_targets(), "candidates": []}
 
-    view = _profile_view(profile)
+    view = _profile_view(profile, mode_of)
     if not profile.understood or not profile.requirements:
         return {**view, "candidates": []}
 
