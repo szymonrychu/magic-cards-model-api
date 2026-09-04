@@ -1182,7 +1182,7 @@ git add tests/test_ui_mana.py ui/mana.js && git commit -m "Auto-pay by default, 
 - Produces:
   - `STEPS` (ordered step names as in the old `STEPS` table at `ui/app.js:47-60`) and `PHASE_OF`.
   - `VERBS = ["pass", "pass_turn", "pass_turn_regardless", "until_my_turn", "until_castable"]`.
-  - `DEFAULT_STOPS = {mine: Set-like object of steps, theirs: ...}` as `{mine: ["precombat_main", "declare_attackers", "postcombat_main"], theirs: ["declare_attackers", "end"]}` (use the exact step names from `STEPS`).
+  - `DEFAULT_STOPS = {mine: Set-like object of steps, theirs: ...}` as `{mine: ["precombat_main", "declare_attackers", "postcombat_main"], theirs: ["declare_attackers", "end_step"]}` (use the exact step names from `STEPS`).
   - `loadStops(storage) -> stops`, `saveStops(storage, stops)` with key `mcm.stops.v1`; both wrap storage access in try/catch.
   - `startRun(verb, state) -> run` where `run = {verb, startedTurn, startedStep, startedActive, knownStackIds: string[]}`.
   - `stopReason(state, run, stops, castable: boolean) -> string | null`: the old `autopilotStopReason` logic (attacked, new stack object, decision pending, your own declare-attackers when you can attack, and the old three toggles folded into the verb) plus: `pass` stops after one pass; `pass_turn` stops when the stack is non-empty or the turn changes; `pass_turn_regardless` stops only at decisions, combat stops and turn change; `until_my_turn` stops when `state.active_player === state.you && state.turn_number > run.startedTurn`; `until_castable` stops when `castable` is true; and every verb stops at a step in `stops` for the right side (`mine` when `state.active_player === state.you`).
@@ -1227,7 +1227,7 @@ def board(**over):
 def test_default_stops_are_mtgo_like() -> None:
     assert run_module("priority.js", "m.DEFAULT_STOPS") == {
         "mine": ["precombat_main", "declare_attackers", "postcombat_main"],
-        "theirs": ["declare_attackers", "end"],
+        "theirs": ["declare_attackers", "end_step"],
     }
 
 
@@ -1294,10 +1294,10 @@ def test_until_my_turn_runs_through_the_opponents_turn() -> None:
 def test_until_castable_stops_when_told_something_is_castable() -> None:
     expr = "m.stopReason(later, m.startRun('until_castable', start), { mine: [], theirs: [] }, castable)"
     assert (
-        run_module("priority.js", expr, start=board(), later=board(step="end"), castable=False)
+        run_module("priority.js", expr, start=board(), later=board(step="end_step"), castable=False)
         is None
     )
-    assert run_module("priority.js", expr, start=board(), later=board(step="end"), castable=True)
+    assert run_module("priority.js", expr, start=board(), later=board(step="end_step"), castable=True)
 
 
 def test_a_stop_halts_every_verb_on_the_right_side() -> None:
@@ -1306,7 +1306,7 @@ def test_a_stop_halts_every_verb_on_the_right_side() -> None:
         "priority.js",
         expr,
         start=board(),
-        later=board(active_player="bob", turn_number=4, step="end"),
+        later=board(active_player="bob", turn_number=4, step="end_step"),
     )
     assert (
         run_module(
@@ -1359,14 +1359,14 @@ Expected: FAIL (module not found).
 export const STEPS = [
   "untap", "upkeep", "draw", "precombat_main", "beginning_of_combat",
   "declare_attackers", "declare_blockers", "combat_damage", "end_of_combat",
-  "postcombat_main", "end", "cleanup",
+  "postcombat_main", "end_step", "cleanup",
 ];
 
 export const PHASE_OF = {
   untap: "beginning", upkeep: "beginning", draw: "beginning",
   precombat_main: "precombat main", beginning_of_combat: "combat",
   declare_attackers: "combat", declare_blockers: "combat", combat_damage: "combat",
-  end_of_combat: "combat", postcombat_main: "postcombat main", end: "ending", cleanup: "ending",
+  end_of_combat: "combat", postcombat_main: "postcombat main", end_step: "ending", cleanup: "ending",
 };
 
 export const VERBS = ["pass", "pass_turn", "pass_turn_regardless", "until_my_turn", "until_castable"];
@@ -1381,7 +1381,7 @@ export const VERB_LABELS = {
 
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
-  theirs: ["declare_attackers", "end"],
+  theirs: ["declare_attackers", "end_step"],
 };
 
 const STOPS_KEY = "mcm.stops.v1";
