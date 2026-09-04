@@ -17,3 +17,22 @@ def test_bolt_on_the_stack_names_bob_by_id(client: TestClient, game: str) -> Non
     (spell,) = client.get(f"/api/games/{game}").json()["stack"]
     assert spell["targets"] == ["bob"]
     assert spell["target_refs"] == [{"kind": "player", "id": "bob", "name": "bob"}]
+
+
+def test_bolt_on_the_stack_names_a_creature_by_id(client: TestClient, game: str) -> None:
+    bears = card_id(client, game, "Grizzly Bears", "bob", "battlefield")
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
+    mountain = card_id(client, game, "Mountain", "alice", "battlefield")
+    res = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": bolt,
+            "targets": [bears],
+            "mana_sources": [mountain],
+        },
+    ).json()
+    assert res["allowed"], res
+    (spell,) = client.get(f"/api/games/{game}").json()["stack"]
+    assert spell["targets"] == ["Grizzly Bears"]
+    assert spell["target_refs"] == [{"kind": "card", "id": bears, "name": "Grizzly Bears"}]

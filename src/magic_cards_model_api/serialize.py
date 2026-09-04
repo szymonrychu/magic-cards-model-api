@@ -141,29 +141,11 @@ def _all_cards(game: Game) -> list[CardState]:
     return cards
 
 
-def _target_names(game: Game, targets: list[Any]) -> list[str]:
-    from magic_cards_model.models import Player as PlayerModel
-
-    names = []
-    for ref in targets:
-        try:
-            thing = game.resolve_target(ref)
-        except Exception:
-            thing = None
-        if isinstance(thing, CardState):
-            names.append(thing.name)
-        elif isinstance(thing, PlayerModel):
-            names.append(thing.username)
-        elif isinstance(thing, AbilityOnStack):
-            names.append(f"ability from {thing.source_name}")
-        else:
-            names.append(str(ref))
-    return names
-
-
 def _target_refs(game: Game, targets: list[Any]) -> list[dict[str, str]]:
-    """`_target_names` with ids: what a client needs to highlight the target
-    on the board rather than only print its name."""
+    """What each target resolves to: kind, id, and a display name - what a
+    client needs to highlight the target on the board, not only print its
+    name. The single place target resolution happens; `_target_names` is a
+    thin wrapper over this that keeps only the `name` field."""
     from magic_cards_model.models import Player as PlayerModel
 
     refs = []
@@ -187,6 +169,10 @@ def _target_refs(game: Game, targets: list[Any]) -> list[dict[str, str]]:
         else:
             refs.append({"kind": "unknown", "id": str(ref), "name": str(ref)})
     return refs
+
+
+def _target_names(game: Game, targets: list[Any]) -> list[str]:
+    return [ref["name"] for ref in _target_refs(game, targets)]
 
 
 def _special_actions(game: Game, state: CardState) -> dict[str, Any]:
