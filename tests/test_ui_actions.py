@@ -263,6 +263,133 @@ def test_activate_body_and_endpoint() -> None:
     ]
 
 
+def test_a_mana_ability_activation_offers_another_untapped_source() -> None:
+    """A filter land's `{1}, {T}: Add ...` needs its generic mana paid from
+    somewhere else - only the land's own id drops out of the offer, not the
+    whole list, so a second untapped source is still there to pay it."""
+    land = {
+        "id": "d1",
+        "name": "Cascade Bluffs",
+        "zone": "battlefield",
+        "controller": "alice",
+        "abilities": [
+            {
+                "index": 0,
+                "text": "{1}, {T}: Add {U} or {R}.",
+                "is_mana_ability": True,
+                "needs_x": False,
+                "mana_options": [["U"], ["R"]],
+                "targeting": {
+                    "targets_anything": False,
+                    "understood": True,
+                    "minimum": 0,
+                    "maximum": 0,
+                    "requirements": [],
+                },
+            }
+        ],
+    }
+    body = run_module(
+        "actions.js",
+        "m.bodyFor(m.begin('activate', land, { abilityIndex: 0 }), 'alice', ['d1', 'm1'])",
+        land=land,
+    )
+    assert body["mana_sources"] == ["m1"]
+
+
+# -- specials (CR 116.2: foretell, plot, suspend) never gate on the card's --
+# -- own cast.targeting, and still need to pay their own cost --------------
+
+
+def test_special_action_is_ready_regardless_of_the_cards_own_targeting() -> None:
+    """CR 116.2h: foretell exiles a card face down, choosing nothing about
+    the spell it will become - Lightning Bolt's "any target" must not block
+    a foretell of it from firing."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.begin('special', bolt, { keyword: 'Foretell' }); "
+        "return [m.readyToFire(a), m.endpointFor(a)]; })()",
+        bolt=BOLT,
+    )
+    assert result == [True, "actions/foretell"]
+
+
+def test_special_action_body_carries_mana_sources() -> None:
+    """`SpecialActionRequest` accepts `mana_sources`, and the engine only
+    auto-taps what it is handed - foretell's `{2}` (and plot's, suspend's)
+    has to be payable from the request body like any other cost."""
+    body = run_module(
+        "actions.js",
+        "m.bodyFor(m.begin('special', bolt, { keyword: 'Foretell' }), 'alice', ['m1', 'm2'])",
+        bolt=BOLT,
+    )
+    assert body == {"player": "alice", "card_id": "b1", "mana_sources": ["m1", "m2"]}
+
+
+DIVIDING_PW = {
+    "id": "pw1",
+    "name": "Test Planeswalker",
+    "zone": "battlefield",
+    "controller": "alice",
+    "type_line": "Legendary Planeswalker",
+    "abilities": [
+        {
+            "index": 0,
+            "text": "-3: Divide two damage among any number of target creatures.",
+            "is_mana_ability": False,
+            "needs_x": False,
+            "mana_options": None,
+            "targeting": {
+                "targets_anything": True,
+                "understood": True,
+                "minimum": 1,
+                "maximum": 2,
+                "requirements": [],
+            },
+        }
+    ],
+}
+DIVIDING_PW_AFF = {
+    "targets_anything": True,
+    "understood": True,
+    "minimum": 1,
+    "maximum": 2,
+    "requirements": [
+        {
+            "phrase": "any number of target creatures",
+            "count": 2,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": None,
+            "mode_text": None,
+        }
+    ],
+    "division": {"amount": 2},
+    "candidates": [
+        {"id": "bob", "kind": "player", "name": "bob", "requirements": [0]},
+        {"id": "c9", "kind": "card", "name": "Memnite", "requirements": [0]},
+    ],
+}
+
+
+def test_an_activated_abilitys_division_sends_shares_too() -> None:
+    """`shares` (CR 601.2d) used to be emitted only for a cast; `readyToFire`
+    already enforces `sharesValid` for every kind, so an activated ability
+    with a division needs `shares` in its body just as much."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.withAffordance(m.begin('activate', pw, "
+        "{ abilityIndex: 0 }), aff); a = m.chooseTarget(a, 'bob'); "
+        "a = m.chooseTarget(a, 'c9'); a = m.setShare(a, 'bob', 1); "
+        "a = m.setShare(a, 'c9', 1); "
+        "return [m.readyToFire(a), m.bodyFor(a, 'alice', []).shares]; })()",
+        pw=DIVIDING_PW,
+        aff=DIVIDING_PW_AFF,
+    )
+    assert result == [True, [1, 1]]
+
+
 # -- completeness: the exports the eight cases above don't exercise --------
 
 

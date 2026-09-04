@@ -16,12 +16,20 @@ a mandatory target also sent no field at all, so the engine would ask rather
 than accept an empty announcement it could never make legal. `bodyFor` does
 not carry that distinction any more - it always answers `[]` for an unfilled
 slot, whatever the requirement's minimum, and leaves "is this legal to fire"
-to `readyToFire` (which checks `isSatisfied`) instead of baking it into the
-request body; there is no `touchedTargets` flag on `Action` at all. This file
-keeps the old test names so the regression story - Karn, the Great Creator's
-`+1` going on the stack targeting nothing every time it was activated - stays
-attached to the code that fixed it, with docstrings updated to say what
-`bodyFor` actually promises now.
+to `readyToFire` (which checks `isSatisfied`, and for an "up to"/unbounded
+slot, `done`) instead of baking it into the request body; there is no
+`touchedTargets` flag on `Action` at all. This file keeps the old test names
+so the regression story - Karn, the Great Creator's `+1` going on the stack
+targeting nothing every time it was activated - stays attached to the code
+that fixed it, renaming only the handful whose names asserted the old
+`undefined` answer where `bodyFor` now answers `[]`.
+
+A click that lands before the affordance does (the candidate fetch is
+asynchronous) is not lost either: `chooseTarget` records it in
+`pendingTargets` when there are no slots yet, and `withAffordance` replays
+those clicks through the normal slot fill once slots exist. That is a
+different mechanism from `addFreeTarget`, which is for a targeting profile
+the parser could never structure into slots at all (`understood: false`).
 
 Like the old file, this loads and runs the actual shipped JS rather than a
 Python re-description of it: `ui/actions.js` has no build step, so this is
@@ -65,31 +73,68 @@ def card(
     }
 
 
+def aff(
+    *,
+    minimum: int,
+    maximum: int | None,
+    anything: bool = True,
+    requirements: list[dict[str, Any]] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """An affordance (the shape `GET /affordances` returns) with the given
+    per-slot requirements, understood and division-free."""
+    return {
+        "targets_anything": anything,
+        "understood": True,
+        "minimum": minimum,
+        "maximum": maximum,
+        "requirements": requirements or [],
+        "division": None,
+        "candidates": candidates or [],
+    }
+
+
+def requirement(phrase: str, *, count: int = 1, minimum: int = 1) -> dict[str, Any]:
+    return {
+        "phrase": phrase,
+        "count": count,
+        "minimum": minimum,
+        "unbounded": False,
+        "variable_count": False,
+        "mode": None,
+        "mode_text": None,
+    }
+
+
 # -- the Karn case: an unfilled "up to one" slot answers [], not nothing ----
 
 
-def test_an_untouched_picker_on_an_up_to_one_ability_sends_no_field_at_all() -> None:
+def test_an_up_to_one_ability_with_nothing_chosen_sends_an_empty_list() -> None:
     """Karn, the Great Creator's `+1`, exactly as it broke: "up to one target
     noncreature artifact" has `minimum: 0`. `bodyFor` answers `[]` here - an
     unfilled slot on a card that targets is always `[]`, whatever the
-    minimum; `readyToFire`'s "up to"/unbounded check (CR 115.6), not
-    `bodyFor`, is what stops this from firing before the player has looked.
-    """
-    targets = run_module(
+    minimum. What kept this from firing before the player had looked is
+    `readyToFire`'s "up to"/unbounded check (CR 115.6) - the sibling case
+    below, with an exact ("any target") requirement instead of an "up to"
+    one, shows the same gate."""
+    result = run_module(
         "actions.js",
-        "m.bodyFor(m.begin('cast', c, {}), 'alice', []).targets",
+        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), affordance); "
+        "return [m.readyToFire(a), m.bodyFor(a, 'alice', []).targets]; })()",
         c=card(minimum=0, maximum=1),
+        affordance=aff(
+            minimum=0, maximum=1, requirements=[requirement("up to one target", minimum=0)]
+        ),
     )
-    assert targets == []
+    assert result == [False, []]
 
 
-def test_an_untouched_picker_on_a_mandatory_target_sends_no_field_at_all() -> None:
-    """Lightning Bolt's "any target": `minimum: 1`, nothing chosen yet.
-    `bodyFor` still answers `[]` - the same unfilled-slot answer as the
-    "up to one" case above, since the minimum no longer changes what
-    `bodyFor` sends. What would once have gated this at `undefined` now gates
-    it at `readyToFire` instead, so a `[]` body from an unfilled mandatory
-    slot is never sent as a live request."""
+def test_a_mandatory_target_with_nothing_chosen_sends_an_empty_list() -> None:
+    """Lightning Bolt's "any target": `minimum: 1`, nothing chosen yet, and no
+    affordance fetched yet either - `bodyFor` falls back to the card's own
+    `cast.targeting` hint. It still answers `[]`, the same unfilled-slot
+    answer as every other case in this file, since the minimum no longer
+    changes what `bodyFor` sends."""
     targets = run_module(
         "actions.js",
         "m.bodyFor(m.begin('cast', c, {}), 'alice', []).targets",
@@ -108,33 +153,17 @@ def test_a_touched_picker_left_empty_on_an_up_to_one_ability_sends_an_empty_list
     same `[]` whether or not the player ever engaged the picker."""
     targets = run_module(
         "actions.js",
-        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), aff); "
+        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), affordance); "
         "return m.bodyFor(a, 'alice', []).targets; })()",
         c=card(minimum=0, maximum=1),
-        aff={
-            "targets_anything": True,
-            "understood": True,
-            "minimum": 0,
-            "maximum": 1,
-            "requirements": [
-                {
-                    "phrase": "up to one target",
-                    "count": 1,
-                    "minimum": 0,
-                    "unbounded": False,
-                    "variable_count": False,
-                    "mode": None,
-                    "mode_text": None,
-                }
-            ],
-            "division": None,
-            "candidates": [],
-        },
+        affordance=aff(
+            minimum=0, maximum=1, requirements=[requirement("up to one target", minimum=0)]
+        ),
     )
     assert targets == []
 
 
-def test_a_touched_picker_left_empty_on_a_mandatory_target_still_sends_no_field() -> None:
+def test_a_mandatory_target_left_empty_still_sends_an_empty_list() -> None:
     """A mandatory slot left unfilled: `bodyFor` still answers `[]`, same as
     every other unfilled-slot case in this file now that the mandatory/
     optional distinction lives in `readyToFire`'s `isSatisfied` check rather
@@ -142,28 +171,10 @@ def test_a_touched_picker_left_empty_on_a_mandatory_target_still_sends_no_field(
     which is what stands between this body and a live request."""
     result = run_module(
         "actions.js",
-        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), aff); "
+        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), affordance); "
         "return [m.readyToFire(a), m.bodyFor(a, 'alice', []).targets]; })()",
         c=card(minimum=1, maximum=1),
-        aff={
-            "targets_anything": True,
-            "understood": True,
-            "minimum": 1,
-            "maximum": 1,
-            "requirements": [
-                {
-                    "phrase": "any target",
-                    "count": 1,
-                    "minimum": 1,
-                    "unbounded": False,
-                    "variable_count": False,
-                    "mode": None,
-                    "mode_text": None,
-                }
-            ],
-            "division": None,
-            "candidates": [],
-        },
+        affordance=aff(minimum=1, maximum=1, requirements=[requirement("any target")]),
     )
     assert result == [False, []]
 
@@ -175,28 +186,15 @@ def test_chosen_targets_are_sent_verbatim() -> None:
     chosen = ["11111111-1111-1111-1111-111111111111", "alice"]
     targets = run_module(
         "actions.js",
-        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), aff); "
+        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), affordance); "
         "a = m.chooseTarget(a, chosen[0]); a = m.chooseTarget(a, chosen[1]); "
         "return m.bodyFor(a, 'alice', []).targets; })()",
         c=card(minimum=1, maximum=2),
-        aff={
-            "targets_anything": True,
-            "understood": True,
-            "minimum": 1,
-            "maximum": 2,
-            "requirements": [
-                {
-                    "phrase": "any target",
-                    "count": 2,
-                    "minimum": 1,
-                    "unbounded": False,
-                    "variable_count": False,
-                    "mode": None,
-                    "mode_text": None,
-                }
-            ],
-            "division": None,
-            "candidates": [
+        affordance=aff(
+            minimum=1,
+            maximum=2,
+            requirements=[requirement("any target", count=2)],
+            candidates=[
                 {
                     "id": "11111111-1111-1111-1111-111111111111",
                     "kind": "card",
@@ -205,7 +203,7 @@ def test_chosen_targets_are_sent_verbatim() -> None:
                 },
                 {"id": "alice", "kind": "player", "name": "alice", "requirements": [0]},
             ],
-        },
+        ),
         chosen=chosen,
     )
     assert targets == chosen
@@ -213,10 +211,34 @@ def test_chosen_targets_are_sent_verbatim() -> None:
 
 def test_chosen_targets_are_sent_even_before_the_affordance_arrives() -> None:
     """The candidate fetch is asynchronous; a player who clicked a target
-    before it landed must not have that click dropped. There are no slots to
-    fill without an affordance, so this is `addFreeTarget`'s job - the same
-    escape hatch an unreadable targeting profile uses - not `chooseTarget`,
-    which is a no-op with no slots yet."""
+    before it landed must not have that click dropped. `chooseTarget` with no
+    slots yet and no affordance records the click in `pendingTargets`, and
+    `withAffordance` replays it through the normal slot fill once real slots
+    exist - so the eventual body carries it exactly as if the click had
+    happened after the fetch landed."""
+    targets = run_module(
+        "actions.js",
+        "(() => { let a = m.chooseTarget(m.begin('cast', c, {}), 'bob'); "
+        "a = m.withAffordance(a, affordance); "
+        "return m.bodyFor(a, 'alice', []).targets; })()",
+        c=card(minimum=1, maximum=1),
+        affordance=aff(
+            minimum=1,
+            maximum=1,
+            requirements=[requirement("any target")],
+            candidates=[{"id": "bob", "kind": "player", "name": "bob", "requirements": [0]}],
+        ),
+    )
+    assert targets == ["bob"]
+
+
+def test_an_unreadable_targeting_profile_uses_free_targets_instead_of_slots() -> None:
+    """A profile the parser could never structure into slots (`understood:
+    false`) has no slots to record a click into at all, so this is
+    `addFreeTarget`'s job, not `chooseTarget`'s `pendingTargets` - a
+    different escape hatch for a genuinely different reason (the affordance
+    exists and says "I can't enumerate this", rather than "hasn't arrived
+    yet")."""
     targets = run_module(
         "actions.js",
         "(() => { let a = m.addFreeTarget(m.begin('cast', c, {}), 'alice'); "
@@ -233,30 +255,22 @@ def test_a_non_targeting_ability_sends_no_field() -> None:
     """Karn's `-2` does not target. Sending `targets: []` for it would be
     harmless but meaningless; sending nothing is the honest answer, and it is
     the only case left where `bodyFor` omits the field entirely."""
-    targets = run_module(
+    body = run_module(
         "actions.js",
-        "m.bodyFor(m.begin('cast', c, {}), 'alice', []).targets",
+        "m.bodyFor(m.begin('cast', c, {}), 'alice', [])",
         c=card(minimum=0, maximum=0, anything=False),
     )
-    assert targets is None
+    assert "targets" not in body
 
 
-def test_a_non_targeting_ability_sends_no_field_even_if_the_picker_was_touched() -> None:
+def test_a_non_targeting_ability_sends_no_field_even_with_an_affordance_loaded() -> None:
     """Even with an affordance loaded (`targets_anything: False` on it too),
     a non-targeting card still gets no `targets` field."""
-    targets = run_module(
+    body = run_module(
         "actions.js",
-        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), aff); "
-        "return m.bodyFor(a, 'alice', []).targets; })()",
+        "(() => { let a = m.withAffordance(m.begin('cast', c, {}), affordance); "
+        "return m.bodyFor(a, 'alice', []); })()",
         c=card(minimum=0, maximum=0, anything=False),
-        aff={
-            "targets_anything": False,
-            "understood": True,
-            "minimum": 0,
-            "maximum": 0,
-            "requirements": [],
-            "division": None,
-            "candidates": [],
-        },
+        affordance=aff(minimum=0, maximum=0, anything=False),
     )
-    assert targets is None
+    assert "targets" not in body

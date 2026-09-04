@@ -55,6 +55,7 @@ export function begin(kind, card, extra) {
     shares: {},
     pinned: [],
     freeTargets: [],
+    pendingTargets: [],
     affordance: null,
     error: null,
     holdPriority: false,
@@ -74,12 +75,20 @@ export function withAffordance(action, affordance) {
     );
     return { ...slot, targets: old.targets.filter((id) => legal.has(id)) };
   });
-  return {
+  const pending = action.pendingTargets || [];
+  let next = {
     ...action,
     affordance,
     slots: kept,
+    pendingTargets: [],
     error: affordance && affordance.error ? affordance.error : null,
   };
+  // A click that landed before the affordance did (the candidate fetch is
+  // asynchronous) is replayed through the normal slot fill now that there
+  // are slots to fill it into, in the order it happened; one that can no
+  // longer be filled is silently dropped rather than surfaced as an error.
+  for (const id of pending) next = chooseTarget(next, id);
+  return next;
 }
 
 export function toggleMode(action, n) {
@@ -139,6 +148,12 @@ function canTake(action, slotIndex, id) {
 }
 
 export function chooseTarget(action, id) {
+  if (action.slots.length === 0 && !action.affordance) {
+    // The affordance hasn't arrived yet (it's fetched asynchronously right
+    // after `begin`), so there is nothing to fill. Remember the click and
+    // `withAffordance` will replay it once real slots exist.
+    return { ...action, pendingTargets: toggleIn(action.pendingTargets, id) };
+  }
   const already = action.slots.findIndex((s) => s.targets.includes(id));
   if (already >= 0) {
     // A second click on a chosen object unfills it from the LAST slot it sits
@@ -200,6 +215,11 @@ function targeting(action) {
 
 export function readyToFire(action) {
   if (action.kind === "crew") return action.crewing.length > 0;
+  // A special action (foretell, plot, suspend, CR 116.2) exiles the card
+  // face down without choosing anything about the spell it will become -
+  // that happens later, when it's cast from exile - so the underlying
+  // card's own cast.targeting (which may well target) never applies here.
+  if (action.kind === "special") return true;
   if (!modesReady(action)) return false;
   if (needsX(action) && action.xValue === null) return false;
   const profile = targeting(action);
@@ -236,22 +256,30 @@ function isManaAbility(action) {
 
 export function bodyFor(action, you, untapped) {
   const body = { player: you, card_id: action.cardId };
-  if (action.kind === "special") return body;
   if (action.kind === "crew") return { ...body, crewing: action.crewing };
   if (action.kind === "activate") {
     body.ability_index = action.abilityIndex;
     if (action.color) body.color = action.color;
   }
-  const profile = targeting(action);
-  if (profile.targets_anything) {
-    body.targets = flatten(action.slots);
-  } else if (
-    profile.understood === false &&
-    action.slots.length === 0 &&
-    action.freeTargets &&
-    action.freeTargets.length
-  ) {
-    body.targets = [...action.freeTargets];
+  if (action.kind !== "special") {
+    // A special action's request has no `targets`/`shares` fields at all
+    // (CR 116.2's exile-face-down actions don't choose anything about the
+    // spell they'll become) - the underlying card's targeting hint would
+    // otherwise leak in through `targeting(action)`'s cast-level fallback.
+    const profile = targeting(action);
+    if (profile.targets_anything) {
+      body.targets = flatten(action.slots);
+    } else if (
+      profile.understood === false &&
+      action.slots.length === 0 &&
+      action.freeTargets &&
+      action.freeTargets.length
+    ) {
+      body.targets = [...action.freeTargets];
+    }
+    if (action.affordance && action.affordance.division) {
+      body.shares = flatten(action.slots).map((id) => action.shares[id]);
+    }
   }
   if (action.kind === "cast") {
     if (action.modes.length) body.modes = action.modes;
@@ -261,12 +289,16 @@ export function bodyFor(action, you, untapped) {
     if (action.delve.length) body.delve = action.delve;
     if (action.altCost !== null) body.alternative_cost = action.altCost;
     if (action.choosing.length) body.choosing = action.choosing;
-    if (action.affordance && action.affordance.division)
-      body.shares = flatten(action.slots).map((id) => action.shares[id]);
-  } else if (action.xValue !== null) {
+  } else if (action.kind === "activate" && action.xValue !== null) {
     body.x_value = action.xValue;
   }
   const sources = manaSources(action.pinned, untapped || []);
-  if (sources.length && !isManaAbility(action)) body.mana_sources = sources;
+  // A mana ability's own source cannot pay for its own activation - drop
+  // just that one id/ManaSource rather than the whole list, so a filter
+  // land's `{1}, {T}: Add ...` can still be paid by another untapped source.
+  const offered = isManaAbility(action)
+    ? sources.filter((s) => (typeof s === "string" ? s : s.card_id) !== action.cardId)
+    : sources;
+  if (offered.length) body.mana_sources = offered;
   return body;
 }
