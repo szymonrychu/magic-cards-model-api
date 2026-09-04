@@ -153,13 +153,19 @@ def create(client: TestClient, agent: dict | None = None, ai: bool = True) -> di
     bot = {"username": "bot", "decklist_text": DECK_B, "ai": ai}
     if agent is not None:
         bot["agent"] = agent
-    return client.post("/api/ui/games", json={"players": [{"username": "you", "decklist_text": DECK_A}, bot]}).json()
+    return client.post(
+        "/api/ui/games", json={"players": [{"username": "you", "decklist_text": DECK_A}, bot]}
+    ).json()
 
 
 def test_agent_settings_default_and_show_on_the_player(client: TestClient) -> None:
     created = create(client)
-    assert created["agents"] == {"bot": {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}}
-    state = client.get(f"/api/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}).json()
+    assert created["agents"] == {
+        "bot": {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
+    }
+    state = client.get(
+        f"/api/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
+    ).json()
     bot = next(p for p in state["players"] if p["username"] == "bot")
     assert bot["agent"] == {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
     you = next(p for p in state["players"] if p["username"] == "you")
@@ -168,13 +174,27 @@ def test_agent_settings_default_and_show_on_the_player(client: TestClient) -> No
 
 def test_agent_settings_are_stored_as_given(client: TestClient) -> None:
     created = create(client, {"model": "opus", "effort": "xhigh", "max_thinking_tokens": 8000})
-    assert created["agents"]["bot"] == {"model": "opus", "effort": "xhigh", "max_thinking_tokens": 8000}
+    assert created["agents"]["bot"] == {
+        "model": "opus",
+        "effort": "xhigh",
+        "max_thinking_tokens": 8000,
+    }
 
 
 def test_agent_on_a_human_seat_is_refused(client: TestClient) -> None:
-    response = client.post("/api/ui/games", json={"players": [
-        {"username": "you", "decklist_text": DECK_A, "agent": {"model": "opus", "effort": "high"}},
-        {"username": "bot", "decklist_text": DECK_B, "ai": True}]})
+    response = client.post(
+        "/api/ui/games",
+        json={
+            "players": [
+                {
+                    "username": "you",
+                    "decklist_text": DECK_A,
+                    "agent": {"model": "opus", "effort": "high"},
+                },
+                {"username": "bot", "decklist_text": DECK_B, "ai": True},
+            ]
+        },
+    )
     assert response.status_code == 400
     assert "agent" in response.json()["detail"]
 ```
@@ -276,7 +296,9 @@ def test_lobby_lists_live_games_with_only_your_uids(client: TestClient) -> None:
 
 def test_end_game_deletes_it(client: TestClient) -> None:
     created = create(client)
-    response = client.delete(f"/api/ui/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]})
+    response = client.delete(
+        f"/api/ui/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
+    )
     assert response.status_code == 200
     assert response.json()["deleted"] is True
     assert client.get(f"/api/games/{created['game_id']}").status_code == 404
@@ -286,7 +308,9 @@ def test_end_game_deletes_it(client: TestClient) -> None:
 def test_end_game_needs_a_seat_of_that_game(client: TestClient) -> None:
     first = create(client)
     second = create(client)
-    response = client.delete(f"/api/ui/games/{first['game_id']}", params={"uid": second["seat_uids"]["you"]})
+    response = client.delete(
+        f"/api/ui/games/{first['game_id']}", params={"uid": second["seat_uids"]["you"]}
+    )
     assert response.status_code == 404
 
 
@@ -295,7 +319,10 @@ def test_live_game_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
     create(client)
     create(client)
     bot = {"username": "bot", "decklist_text": create.__globals__["DECK_B"], "ai": True}
-    response = client.post("/api/ui/games", json={"players": [{"username": "you", "decklist_text": create.__globals__["DECK_A"]}, bot]})
+    response = client.post(
+        "/api/ui/games",
+        json={"players": [{"username": "you", "decklist_text": create.__globals__["DECK_A"]}, bot]},
+    )
     assert response.status_code == 409
     assert "2" in response.json()["detail"]
 ```
@@ -410,13 +437,20 @@ def test_dispatch_payload_carries_agent(monkeypatch) -> None:
 
     class Response:
         status_code = 202
+
         def json(self):
             return {"deck": None, "turnId": "t1", "pending": False}
 
     class Client:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def post(self, path, json):
             captured["path"], captured["json"] = path, json
             return Response()
@@ -424,8 +458,18 @@ def test_dispatch_payload_carries_agent(monkeypatch) -> None:
     monkeypatch.setattr(ai_seat, "_driver_client", lambda base: Client())
     monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
     registry = ai_seat.AiSeatRegistry()
-    registry.start(uid="u1", game_id="g1", player="bot", api_base="http://x", agent=AgentSettings(model="fable", effort="low", max_thinking_tokens=0))
-    assert captured["json"]["agent"] == {"model": "fable", "effort": "low", "max_thinking_tokens": 0}
+    registry.start(
+        uid="u1",
+        game_id="g1",
+        player="bot",
+        api_base="http://x",
+        agent=AgentSettings(model="fable", effort="low", max_thinking_tokens=0),
+    )
+    assert captured["json"]["agent"] == {
+        "model": "fable",
+        "effort": "low",
+        "max_thinking_tokens": 0,
+    }
 ```
 
 The `Client` above stands in for an HTTP client to the driver, which is the process boundary the existing `tests/driver/test_ai_seat_wrapper_mode.py` already fakes the same way; follow that file's pattern exactly if it differs.
@@ -441,7 +485,16 @@ Expected: FAIL (`TypeError: unexpected keyword 'agent'`).
 
 ```python
 def command_for(prompt: str, agent: AgentSettings) -> list[str]:
-    return ["claude", "--print", *agent.claude_args(), "--dangerously-skip-permissions", "--allowedTools", "Bash", "--", prompt]
+    return [
+        "claude",
+        "--print",
+        *agent.claude_args(),
+        "--dangerously-skip-permissions",
+        "--allowedTools",
+        "Bash",
+        "--",
+        prompt,
+    ]
 ```
 
 `AiSeatRunner.start(self)` gets `env={**os.environ, **self.agent.env()}` on its `Popen`; store `agent` on the runner dataclass. `_dispatch_to_driver(..., agent)` adds `"agent": agent.model_dump()` to `payload`. `AiSeatRegistry.start` takes `agent: AgentSettings` and threads it to both. `ai_seat_api.start_ai_seat` reads `store.agent_settings(game_id).get(player) or AgentSettings.default(os.environ)`. `decks_api.start_game_from_decklists` calls `ai_seat.registry.start(...)` for each AI seat right after `ai_pregame.start`, using `request: Request` for `api_base` as `ai_seat_api._api_base` does; keep the separate start route. Driver: `DispatchIn.agent: dict | None = None`, stored on `Assignment` as `agent` and shown in `/status`.
@@ -470,7 +523,9 @@ uv run ruff format . && git add -A && git commit -m "Run the subprocess and wrap
 
 ```python
 def test_effort_becomes_a_flag() -> None:
-    settings = Settings.from_env({"MODEL": "opus", "EFFORT": "xhigh", "MAX_THINKING_TOKENS": "4000"})
+    settings = Settings.from_env(
+        {"MODEL": "opus", "EFFORT": "xhigh", "MAX_THINKING_TOKENS": "4000"}
+    )
     assert settings.claude_args(resume=False) == ["--model", "opus", "--effort", "xhigh"]
     assert settings.max_thinking_tokens == 4000
 
@@ -546,18 +601,19 @@ Expected: FAIL.
 `config.py`: `assignment_json: str = ""` from `DRIVER_ASSIGNMENT_JSON`, `exit_after_match: bool = False` from `DRIVER_EXIT_AFTER_MATCH in ("1", "true", "yes")`. `app.py`: move the body of `dispatch` into `def assign(body: DispatchIn) -> dict` (same 409 logic, same pending retry); the route calls it; add:
 
 ```python
-    app.state.should_exit = False
+app.state.should_exit = False
 
-    @app.on_event("startup")
-    def dispatch_from_env() -> None:
-        if not settings.assignment_json:
-            return
-        body = DispatchIn.model_validate_json(settings.assignment_json)
-        try:
-            assign(body)
-        except HTTPException as exc:
-            log.error("self-dispatch failed: %s", exc.detail)
-            current["lastError"] = str(exc.detail)
+
+@app.on_event("startup")
+def dispatch_from_env() -> None:
+    if not settings.assignment_json:
+        return
+    body = DispatchIn.model_validate_json(settings.assignment_json)
+    try:
+        assign(body)
+    except HTTPException as exc:
+        log.error("self-dispatch failed: %s", exc.detail)
+        current["lastError"] = str(exc.detail)
 ```
 
 and in `retire`, after `clear_locked()`: `if settings.exit_after_match: app.state.should_exit = True; log.info("match over, exiting")`. In `__main__.py`, build a `uvicorn.Server(uvicorn.Config(app, ...))` and run it in the main thread while a daemon thread polls `app.state.should_exit` every second and sets `server.should_exit = True` (the pattern in `wrapper/__main__.py:58-65`). Use the lifespan-style startup if `on_event` is deprecated in the installed FastAPI (`uv run python -c "import fastapi; print(fastapi.__version__)"`).
@@ -595,8 +651,14 @@ from __future__ import annotations
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.k8s_seats import K8sSettings, build_job, job_name, mcp_config
 
-ENV = {"AGENT_NAMESPACE": "mtg-engine", "AGENT_IMAGE": "harbor/agent:abc", "API_IMAGE": "harbor/api:abc",
-       "POD_NAME": "mtg-stack-1", "POD_UID": "uid-1", "SPELLSLINGER_MCP_URL": "http://ss:8080/mcp"}
+ENV = {
+    "AGENT_NAMESPACE": "mtg-engine",
+    "AGENT_IMAGE": "harbor/agent:abc",
+    "API_IMAGE": "harbor/api:abc",
+    "POD_NAME": "mtg-stack-1",
+    "POD_UID": "uid-1",
+    "SPELLSLINGER_MCP_URL": "http://ss:8080/mcp",
+}
 
 
 def test_job_name_is_short_and_stable() -> None:
@@ -605,18 +667,41 @@ def test_job_name_is_short_and_stable() -> None:
 
 def test_mcp_config_binds_the_game() -> None:
     cfg = mcp_config(K8sSettings.from_env(ENV), "g1")
-    assert cfg["mcpServers"]["mtg"]["args"] == ["-m", "magic_cards_model_api.mcp", "--game", "g1", "--api", "http://mtg-stack.mtg-engine.svc.cluster.local:8000"]
+    assert cfg["mcpServers"]["mtg"]["args"] == [
+        "-m",
+        "magic_cards_model_api.mcp",
+        "--game",
+        "g1",
+        "--api",
+        "http://mtg-stack.mtg-engine.svc.cluster.local:8000",
+    ]
     assert cfg["mcpServers"]["spellslinger"]["url"] == "http://ss:8080/mcp"
 
 
 def test_job_shape() -> None:
-    job = build_job(K8sSettings.from_env(ENV), game_id="g1", uid="u1", player="bot", agent=AgentSettings(model="opus", effort="max", max_thinking_tokens=0))
+    job = build_job(
+        K8sSettings.from_env(ENV),
+        game_id="g1",
+        uid="u1",
+        player="bot",
+        agent=AgentSettings(model="opus", effort="max", max_thinking_tokens=0),
+    )
     meta = job["metadata"]
     assert meta["name"] == job_name("g1", "u1")
-    assert meta["labels"] == {"app.kubernetes.io/name": "mtg-agent", "mtg/game-id": "g1", "mtg/seat-uid": "u1"}
-    assert meta["ownerReferences"] == [{"apiVersion": "v1", "kind": "Pod", "name": "mtg-stack-1", "uid": "uid-1"}]
+    assert meta["labels"] == {
+        "app.kubernetes.io/name": "mtg-agent",
+        "mtg/game-id": "g1",
+        "mtg/seat-uid": "u1",
+    }
+    assert meta["ownerReferences"] == [
+        {"apiVersion": "v1", "kind": "Pod", "name": "mtg-stack-1", "uid": "uid-1"}
+    ]
     spec = job["spec"]
-    assert spec["backoffLimit"] == 0 and spec["ttlSecondsAfterFinished"] == 600 and spec["activeDeadlineSeconds"] == 14400
+    assert (
+        spec["backoffLimit"] == 0
+        and spec["ttlSecondsAfterFinished"] == 600
+        and spec["activeDeadlineSeconds"] == 14400
+    )
     pod = spec["template"]["spec"]
     assert pod["restartPolicy"] == "Never" and pod["automountServiceAccountToken"] is False
     names = [c["name"] for c in pod["containers"]]
@@ -719,7 +804,14 @@ def mcp_config(settings: K8sSettings, game_id: str) -> dict[str, Any]:
     servers: dict[str, Any] = {
         "mtg": {
             "command": "python",
-            "args": ["-m", "magic_cards_model_api.mcp", "--game", game_id, "--api", settings.api_url],
+            "args": [
+                "-m",
+                "magic_cards_model_api.mcp",
+                "--game",
+                game_id,
+                "--api",
+                settings.api_url,
+            ],
         }
     }
     if settings.spellslinger_url:
@@ -738,10 +830,18 @@ CONTAINER_SECURITY = {
 }
 
 
-def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings) -> dict[str, Any]:
+def build_job(
+    settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings
+) -> dict[str, Any]:
     name = job_name(game_id, uid)
     labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_SEAT: uid}
-    assignment = {"uid": uid, "game_id": game_id, "player": player, "api_base": settings.api_url, "agent": agent.model_dump()}
+    assignment = {
+        "uid": uid,
+        "game_id": game_id,
+        "player": player,
+        "api_base": settings.api_url,
+        "agent": agent.model_dump(),
+    }
     agent_env = {
         "HTTP_ADDR": ":8080",
         "INTERNAL_ADDR": "127.0.0.1:8099",
@@ -770,10 +870,21 @@ def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, age
         "DRIVER_EXIT_AFTER_MATCH": "1",
         "DRIVER_ASSIGNMENT_JSON": json.dumps(assignment),
     }
-    metadata: dict[str, Any] = {"name": name, "namespace": settings.namespace, "labels": labels,
-                                "annotations": {"mtg/player": player, "mtg/model": agent.model, "mtg/effort": agent.effort}}
+    metadata: dict[str, Any] = {
+        "name": name,
+        "namespace": settings.namespace,
+        "labels": labels,
+        "annotations": {"mtg/player": player, "mtg/model": agent.model, "mtg/effort": agent.effort},
+    }
     if settings.owner_pod_name and settings.owner_pod_uid:
-        metadata["ownerReferences"] = [{"apiVersion": "v1", "kind": "Pod", "name": settings.owner_pod_name, "uid": settings.owner_pod_uid}]
+        metadata["ownerReferences"] = [
+            {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": settings.owner_pod_name,
+                "uid": settings.owner_pod_uid,
+            }
+        ]
     guides_script = (
         'test -n "${GH_PAT}" || { echo "GH_PAT is empty" >&2; exit 1; }\n'
         "git config --global --add safe.directory /guides\n"
@@ -787,7 +898,13 @@ def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, age
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
         "imagePullSecrets": [{"name": settings.image_pull_secret}],
-        "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
+        "securityContext": {
+            "runAsNonRoot": True,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+            "fsGroup": 1000,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        },
         "volumes": [
             {"name": "guides", "emptyDir": {}},
             {"name": "memory", "persistentVolumeClaim": {"claimName": settings.memory_claim}},
@@ -801,13 +918,21 @@ def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, age
                 "imagePullPolicy": "IfNotPresent",
                 "command": ["/bin/sh", "-euc", guides_script],
                 "env": [
-                    {"name": "GH_PAT", "valueFrom": {"secretKeyRef": {"name": settings.git_secret, "key": "GH_PAT"}}},
+                    {
+                        "name": "GH_PAT",
+                        "valueFrom": {
+                            "secretKeyRef": {"name": settings.git_secret, "key": "GH_PAT"}
+                        },
+                    },
                     {"name": "GIT_TERMINAL_PROMPT", "value": "0"},
                     {"name": "HOME", "value": "/agent-home"},
                 ],
                 "volumeMounts": [{"name": "guides", "mountPath": "/guides"}],
                 "securityContext": CONTAINER_SECURITY,
-                "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
+                "resources": {
+                    "requests": {"cpu": "50m", "memory": "64Mi"},
+                    "limits": {"cpu": "500m", "memory": "256Mi"},
+                },
             },
             {
                 "name": "mcp-config",
@@ -817,7 +942,10 @@ def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, age
                 "env": [{"name": "MCP_JSON", "value": mcp_json}],
                 "volumeMounts": [{"name": "mcp", "mountPath": "/etc/mtg"}],
                 "securityContext": CONTAINER_SECURITY,
-                "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi"}},
+                "resources": {
+                    "requests": {"cpu": "10m", "memory": "16Mi"},
+                    "limits": {"cpu": "100m", "memory": "64Mi"},
+                },
             },
         ],
         "containers": [
@@ -833,10 +961,22 @@ def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, age
                     {"name": "memory", "mountPath": "/workspace/memory"},
                     {"name": "mcp", "mountPath": "/etc/mtg", "readOnly": True},
                 ],
-                "startupProbe": {"httpGet": {"path": "/healthz", "port": 8080}, "periodSeconds": 10, "failureThreshold": 36},
-                "readinessProbe": {"httpGet": {"path": "/readyz", "port": 8080}, "periodSeconds": 10, "timeoutSeconds": 3, "failureThreshold": 3},
+                "startupProbe": {
+                    "httpGet": {"path": "/healthz", "port": 8080},
+                    "periodSeconds": 10,
+                    "failureThreshold": 36,
+                },
+                "readinessProbe": {
+                    "httpGet": {"path": "/readyz", "port": 8080},
+                    "periodSeconds": 10,
+                    "timeoutSeconds": 3,
+                    "failureThreshold": 3,
+                },
                 "securityContext": CONTAINER_SECURITY,
-                "resources": {"requests": {"cpu": "250m", "memory": "1Gi"}, "limits": {"cpu": "2", "memory": "3Gi"}},
+                "resources": {
+                    "requests": {"cpu": "250m", "memory": "1Gi"},
+                    "limits": {"cpu": "2", "memory": "3Gi"},
+                },
             },
             {
                 "name": "driver",
@@ -850,9 +990,17 @@ def build_job(settings: K8sSettings, *, game_id: str, uid: str, player: str, age
                     {"name": "memory", "mountPath": "/workspace/memory"},
                     {"name": "driver-workspace", "mountPath": "/driver-workspace"},
                 ],
-                "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8090}, "periodSeconds": 10, "timeoutSeconds": 3, "failureThreshold": 3},
+                "readinessProbe": {
+                    "httpGet": {"path": "/healthz", "port": 8090},
+                    "periodSeconds": 10,
+                    "timeoutSeconds": 3,
+                    "failureThreshold": 3,
+                },
                 "securityContext": CONTAINER_SECURITY,
-                "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "512Mi"}},
+                "resources": {
+                    "requests": {"cpu": "50m", "memory": "128Mi"},
+                    "limits": {"cpu": "500m", "memory": "512Mi"},
+                },
             },
         ],
     }
@@ -906,14 +1054,22 @@ class FakeBatch:
     def __init__(self):
         self.jobs = {}
         self.deleted = []
+
     def create_namespaced_job(self, namespace, body):
         name = body["metadata"]["name"]
         if name in self.jobs:
             raise ApiException(status=409, reason="AlreadyExists")
-        self.jobs[name] = types.SimpleNamespace(metadata=types.SimpleNamespace(name=name, labels=body["metadata"]["labels"]), status=types.SimpleNamespace(active=1, succeeded=0, failed=0))
+        self.jobs[name] = types.SimpleNamespace(
+            metadata=types.SimpleNamespace(name=name, labels=body["metadata"]["labels"]),
+            status=types.SimpleNamespace(active=1, succeeded=0, failed=0),
+        )
         return self.jobs[name]
+
     def list_namespaced_job(self, namespace, label_selector=None, **kw):
-        return types.SimpleNamespace(items=list(self.jobs.values()), metadata=types.SimpleNamespace(resource_version="1"))
+        return types.SimpleNamespace(
+            items=list(self.jobs.values()), metadata=types.SimpleNamespace(resource_version="1")
+        )
+
     def delete_namespaced_job(self, name, namespace, body=None):
         self.deleted.append(name)
         self.jobs.pop(name, None)
@@ -922,21 +1078,38 @@ class FakeBatch:
 class FakeCore:
     def __init__(self, pod_ip="10.0.0.5", phase="Running"):
         self.pod_ip, self.phase = pod_ip, phase
+
     def list_namespaced_pod(self, namespace, label_selector=None, **kw):
-        pod = types.SimpleNamespace(status=types.SimpleNamespace(pod_ip=self.pod_ip, phase=self.phase, container_statuses=[]), metadata=types.SimpleNamespace(name="p1"))
+        pod = types.SimpleNamespace(
+            status=types.SimpleNamespace(
+                pod_ip=self.pod_ip, phase=self.phase, container_statuses=[]
+            ),
+            metadata=types.SimpleNamespace(name="p1"),
+        )
         return types.SimpleNamespace(items=[pod])
 
 
 class FakeDriverHttp:
     def __init__(self, status):
         self.status, self.posts = status, []
+
     def __call__(self, base):
         outer = self
+
         class Client:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def get(self, path, **kw): return types.SimpleNamespace(status_code=200, json=lambda: outer.status)
-            def post(self, path, **kw): outer.posts.append((base, path)); return types.SimpleNamespace(status_code=202, json=lambda: {})
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, path, **kw):
+                return types.SimpleNamespace(status_code=200, json=lambda: outer.status)
+
+            def post(self, path, **kw):
+                outer.posts.append((base, path))
+                return types.SimpleNamespace(status_code=202, json=lambda: {})
+
         return Client()
 
 
@@ -948,28 +1121,42 @@ def make(status=None, **core):
 
 def test_start_creates_the_job_once() -> None:
     seats, batch, _ = make()
-    first = seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
-    again = seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
+    first = seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    again = seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
     assert first["mechanism"] == "kubernetes" and first["job"] == job_name("g1", "u1")
     assert again["job"] == first["job"] and list(batch.jobs) == [first["job"]]
 
 
 def test_status_merges_pod_and_driver() -> None:
     seats, _, _ = make()
-    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
     status = seats.status("u1")
-    assert status["state"] == "thinking" and status["pod"] == "Running" and status["driver"]["turnActive"] is True
+    assert (
+        status["state"] == "thinking"
+        and status["pod"] == "Running"
+        and status["driver"]["turnActive"] is True
+    )
 
 
 def test_status_is_pending_before_the_pod_runs() -> None:
     seats, _, _ = make(phase="Pending", pod_ip=None)
-    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
     assert seats.status("u1")["state"] == "pending"
 
 
 def test_release_tells_the_driver_then_deletes_the_job() -> None:
     seats, batch, http = make()
-    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
     released = seats.release("u1")
     assert http.posts == [("http://10.0.0.5:8090", "/release")]
     assert batch.deleted == [job_name("g1", "u1")] and released["deleted"] is True
@@ -978,8 +1165,12 @@ def test_release_tells_the_driver_then_deletes_the_job() -> None:
 
 def test_reconcile_deletes_jobs_of_dead_games_and_flags_missing_jobs() -> None:
     seats, batch, _ = make()
-    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
-    seats.start(uid="u2", game_id="g2", player="bot", agent=AgentSettings(model="sonnet", effort="high"))
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    seats.start(
+        uid="u2", game_id="g2", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
     batch.jobs.pop(job_name("g2", "u2"))  # vanished behind our back
     report = seats.reconcile(live_game_ids={"g2"})
     assert batch.deleted == [job_name("g1", "u1")]
@@ -1012,7 +1203,13 @@ def _default_http(base: str) -> httpx.Client:
 
 
 class K8sSeats:
-    def __init__(self, settings: K8sSettings, batch_api: Any, core_api: Any, http_client_factory: Callable[[str], Any] = _default_http) -> None:
+    def __init__(
+        self,
+        settings: K8sSettings,
+        batch_api: Any,
+        core_api: Any,
+        http_client_factory: Callable[[str], Any] = _default_http,
+    ) -> None:
         self.settings = settings
         self.batch = batch_api
         self.core = core_api
@@ -1038,7 +1235,9 @@ class K8sSeats:
         return self.status(uid) or {}
 
     def _pod(self, uid: str) -> Any | None:
-        pods = self.core.list_namespaced_pod(self.settings.namespace, label_selector=f"{LABEL_SEAT}={uid}").items
+        pods = self.core.list_namespaced_pod(
+            self.settings.namespace, label_selector=f"{LABEL_SEAT}={uid}"
+        ).items
         return pods[0] if pods else None
 
     def _driver_status(self, pod: Any) -> dict[str, Any] | None:
@@ -1057,7 +1256,13 @@ class K8sSeats:
             seat = self._seats.get(uid)
         if seat is None:
             return None
-        base = {"uid": uid, "mechanism": "kubernetes", "job": seat["job"], "game_id": seat["game_id"], "player": seat["player"]}
+        base = {
+            "uid": uid,
+            "mechanism": "kubernetes",
+            "job": seat["job"],
+            "game_id": seat["game_id"],
+            "player": seat["player"],
+        }
         if seat["error"]:
             return {**base, "state": "error", "reason": seat["error"], "pod": None, "driver": None}
         pod = self._pod(uid)
@@ -1065,7 +1270,11 @@ class K8sSeats:
         waiting = ""
         for cs in (pod.status.container_statuses or []) if pod is not None else []:
             state = getattr(cs, "state", None)
-            if state is not None and getattr(state, "waiting", None) is not None and state.waiting.reason:
+            if (
+                state is not None
+                and getattr(state, "waiting", None) is not None
+                and state.waiting.reason
+            ):
                 waiting = state.waiting.reason
         if waiting in ("ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff"):
             return {**base, "state": "error", "reason": waiting, "pod": phase, "driver": None}
@@ -1074,8 +1283,18 @@ class K8sSeats:
             state = "gone" if phase in ("Succeeded", "Failed") else "pending"
             return {**base, "state": state, "reason": phase, "pod": phase, "driver": driver}
         if driver.get("lastError"):
-            return {**base, "state": "error", "reason": driver["lastError"], "pod": phase, "driver": driver}
-        state = "thinking" if driver.get("turnActive") else ("pending" if driver.get("pending") else "idle")
+            return {
+                **base,
+                "state": "error",
+                "reason": driver["lastError"],
+                "pod": phase,
+                "driver": driver,
+            }
+        state = (
+            "thinking"
+            if driver.get("turnActive")
+            else ("pending" if driver.get("pending") else "idle")
+        )
         return {**base, "state": state, "reason": None, "pod": phase, "driver": driver}
 
     def release(self, uid: str) -> dict[str, Any]:
@@ -1092,7 +1311,11 @@ class K8sSeats:
                 log.info("driver for %s not told about the release: %s", uid, exc)
         deleted = True
         try:
-            self.batch.delete_namespaced_job(seat["job"], self.settings.namespace, body=k8s_client.V1DeleteOptions(propagation_policy="Background"))
+            self.batch.delete_namespaced_job(
+                seat["job"],
+                self.settings.namespace,
+                body=k8s_client.V1DeleteOptions(propagation_policy="Background"),
+            )
         except ApiException as exc:
             deleted = exc.status == 404
         return {"uid": uid, "mechanism": "kubernetes", "job": seat["job"], "deleted": deleted}
@@ -1101,14 +1324,20 @@ class K8sSeats:
 
     # -- tracking ----------------------------------------------------------
     def reconcile(self, live_game_ids: set[str]) -> dict[str, list[str]]:
-        jobs = self.batch.list_namespaced_job(self.settings.namespace, label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}").items
+        jobs = self.batch.list_namespaced_job(
+            self.settings.namespace, label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}"
+        ).items
         present = {job.metadata.name for job in jobs}
         deleted: list[str] = []
         for job in jobs:
             game_id = (job.metadata.labels or {}).get(LABEL_GAME)
             if game_id not in live_game_ids:
                 try:
-                    self.batch.delete_namespaced_job(job.metadata.name, self.settings.namespace, body=k8s_client.V1DeleteOptions(propagation_policy="Background"))
+                    self.batch.delete_namespaced_job(
+                        job.metadata.name,
+                        self.settings.namespace,
+                        body=k8s_client.V1DeleteOptions(propagation_policy="Background"),
+                    )
                     deleted.append(job.metadata.name)
                 except ApiException as exc:
                     log.warning("could not delete stray job %s: %s", job.metadata.name, exc)
@@ -1124,9 +1353,21 @@ class K8sSeats:
         while not stop.is_set():
             try:
                 w = k8s_watch.Watch()
-                for event in w.stream(self.batch.list_namespaced_job, self.settings.namespace, label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}", timeout_seconds=300):
+                for event in w.stream(
+                    self.batch.list_namespaced_job,
+                    self.settings.namespace,
+                    label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}",
+                    timeout_seconds=300,
+                ):
                     job = event["object"]
-                    log.info("job %s %s active=%s succeeded=%s failed=%s", job.metadata.name, event["type"], job.status.active, job.status.succeeded, job.status.failed)
+                    log.info(
+                        "job %s %s active=%s succeeded=%s failed=%s",
+                        job.metadata.name,
+                        event["type"],
+                        job.status.active,
+                        job.status.succeeded,
+                        job.status.failed,
+                    )
                     if stop.is_set():
                         break
             except ApiException as exc:
@@ -1136,9 +1377,13 @@ class K8sSeats:
                 log.warning("job watch error: %s", exc)
                 time.sleep(5)
 
-    def start_background(self, live_games: Callable[[], set[str]], interval: float = 60.0) -> threading.Event:
+    def start_background(
+        self, live_games: Callable[[], set[str]], interval: float = 60.0
+    ) -> threading.Event:
         stop = threading.Event()
-        threading.Thread(target=self.run_watch, args=(stop,), name="k8s-seat-watch", daemon=True).start()
+        threading.Thread(
+            target=self.run_watch, args=(stop,), name="k8s-seat-watch", daemon=True
+        ).start()
 
         def loop() -> None:
             while not stop.wait(interval):
@@ -1201,19 +1446,45 @@ from ui_node import requires_node, run_module
 
 pytestmark = requires_node
 
-GAMES = [{"game_id": "g1", "players": ["you", "bot"], "turn_number": 3, "step": "precombat_main", "winner": None, "drawn": None,
-          "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}}, "seats": {"you": "u1"}}]
+GAMES = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": 3,
+        "step": "precombat_main",
+        "winner": None,
+        "drawn": None,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        "seats": {"you": "u1"},
+    }
+]
 SAVED = [{"gameId": "g1", "uid": "u1", "aiUid": "u2"}]
 
 
 def test_lobby_rows_join_server_games_with_saved_seats() -> None:
     rows = run_module("lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES, saved=SAVED)
-    assert rows == [{"gameId": "g1", "opponent": "bot", "turn": 3, "step": "precombat_main", "over": False, "model": "opus", "effort": "max", "myUid": "u1", "aiUid": "u2"}]
+    assert rows == [
+        {
+            "gameId": "g1",
+            "opponent": "bot",
+            "turn": 3,
+            "step": "precombat_main",
+            "over": False,
+            "model": "opus",
+            "effort": "max",
+            "myUid": "u1",
+            "aiUid": "u2",
+        }
+    ]
 
 
 def test_agent_body_from_fields() -> None:
-    assert run_module("lobby_model.js", "m.agentFrom({ model: ' fable ', effort: 'low', thinking: '' })") == {"model": "fable", "effort": "low", "max_thinking_tokens": None}
-    assert run_module("lobby_model.js", "m.agentFrom({ model: '', effort: 'high', thinking: '0' })") == {"model": "sonnet", "effort": "high", "max_thinking_tokens": 0}
+    assert run_module(
+        "lobby_model.js", "m.agentFrom({ model: ' fable ', effort: 'low', thinking: '' })"
+    ) == {"model": "fable", "effort": "low", "max_thinking_tokens": None}
+    assert run_module(
+        "lobby_model.js", "m.agentFrom({ model: '', effort: 'high', thinking: '0' })"
+    ) == {"model": "sonnet", "effort": "high", "max_thinking_tokens": 0}
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1285,7 +1556,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def rendered() -> list[dict]:
     text = "".join(
         (p.read_text().replace("__TAG__", "t1") + "\n---\n")
-        for p in sorted((ROOT / "deploy/k8s").glob("*.yaml")) if not p.name.endswith(".template.yaml")
+        for p in sorted((ROOT / "deploy/k8s").glob("*.yaml"))
+        if not p.name.endswith(".template.yaml")
     )
     return [doc for doc in yaml.safe_load_all(text) if doc]
 
@@ -1315,12 +1587,18 @@ def test_rbac_is_namespaced_and_minimal() -> None:
     assert rules[(("",), ("pods",))] == {"get", "list", "watch"}
     assert not by_kind(docs, "ClusterRole")
     (binding,) = by_kind(docs, "RoleBinding")
-    assert binding["subjects"] == [{"kind": "ServiceAccount", "name": "mtg-api", "namespace": "mtg-engine"}]
+    assert binding["subjects"] == [
+        {"kind": "ServiceAccount", "name": "mtg-api", "namespace": "mtg-engine"}
+    ]
 
 
 def test_memory_is_shared_and_the_service_exposes_only_the_api() -> None:
     docs = rendered()
-    memory = next(d for d in by_kind(docs, "PersistentVolumeClaim") if d["metadata"]["name"] == "mtg-agent-memory")
+    memory = next(
+        d
+        for d in by_kind(docs, "PersistentVolumeClaim")
+        if d["metadata"]["name"] == "mtg-agent-memory"
+    )
     assert memory["spec"]["accessModes"] == ["ReadWriteMany"]
     (service,) = by_kind(docs, "Service")
     assert [p["port"] for p in service["spec"]["ports"]] == [8000]

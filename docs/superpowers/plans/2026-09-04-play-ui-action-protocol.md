@@ -92,9 +92,7 @@ def test_requirements_carry_their_mode(client: TestClient, game: str) -> None:
 
 def test_non_modal_requirements_have_no_mode(client: TestClient, game: str) -> None:
     bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
-    result = client.get(
-        f"/api/games/{game}/affordances/{bolt}", params={"player": "alice"}
-    ).json()
+    result = client.get(f"/api/games/{game}/affordances/{bolt}", params={"player": "alice"}).json()
     assert [r["mode"] for r in result["requirements"]] == [None]
     assert result["requirements"][0]["mode_text"] is None
 ```
@@ -144,9 +142,7 @@ def _profile_view(
                 "mode": mode,
                 "mode_text": mode_text,
             }
-            for requirement, (mode, mode_text) in zip(
-                profile.requirements, mode_of, strict=True
-            )
+            for requirement, (mode, mode_text) in zip(profile.requirements, mode_of, strict=True)
         ],
         "division": (
             {"amount": profile.division.amount, "what": profile.division.what}
@@ -323,7 +319,9 @@ def test_dry_run_allows_without_playing(client: TestClient, game: str) -> None:
     assert len(board["hands"]["alice"]) == 1
 
 
-def test_dry_run_refuses_a_second_land_with_the_engines_reason(client: TestClient, game: str) -> None:
+def test_dry_run_refuses_a_second_land_with_the_engines_reason(
+    client: TestClient, game: str
+) -> None:
     land = boot(client, game)
     second = card_id(client, game, "Mountain", "alice", "hand")
     assert client.post(
@@ -365,7 +363,9 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     except (KeyError, ValueError) as exc:
         return refused(exc)
     if req.dry_run:
-        refusal = game.why_cannot_play_land(req.player) or _land_card_refusal(game, land, req.player)
+        refusal = game.why_cannot_play_land(req.player) or _land_card_refusal(
+            game, land, req.player
+        )
         return Outcome(refusal is None, refusal)
     try:
         played = game.play_land(land, req.player)
@@ -422,7 +422,9 @@ def test_shares_are_announced_and_dealt(client: TestClient, game: str) -> None:
             "card_id": electrolyze,
             "targets": [memnite, "bob"],
             "shares": [1, 1],
-            "mana_sources": [c["id"] for c in state(client, game)["battlefield"] if c["controller"] == "alice"],
+            "mana_sources": [
+                c["id"] for c in state(client, game)["battlefield"] if c["controller"] == "alice"
+            ],
         },
     ).json()
     assert res["allowed"] is True, res
@@ -439,7 +441,13 @@ def test_shares_that_do_not_add_up_are_refused(client: TestClient, game: str) ->
     memnite = card_id(client, game, "Memnite", "bob", "battlefield")
     res = client.post(
         f"/api/games/{game}/actions/cast",
-        json={"player": "alice", "card_id": electrolyze, "targets": [memnite, "bob"], "shares": [2, 1], "dry_run": True},
+        json={
+            "player": "alice",
+            "card_id": electrolyze,
+            "targets": [memnite, "bob"],
+            "shares": [2, 1],
+            "dry_run": True,
+        },
     ).json()
     assert res["allowed"] is False
     assert "divide" in res["reason"].lower() or "601.2d" in res["reason"]
@@ -543,7 +551,11 @@ def _target_refs(game: Game, targets: list[Any]) -> list[dict[str, str]]:
             refs.append({"kind": "player", "id": thing.username, "name": thing.username})
         elif isinstance(thing, AbilityOnStack):
             refs.append(
-                {"kind": "ability", "id": str(thing.id), "name": f"ability from {thing.source_name}"}
+                {
+                    "kind": "ability",
+                    "id": str(thing.id),
+                    "name": f"ability from {thing.source_name}",
+                }
             )
         else:
             refs.append({"kind": "unknown", "id": str(ref), "name": str(ref)})
@@ -578,7 +590,9 @@ Find an existing `choose_targets` decision test to copy the board from: `grep -l
 
 ```python
 def test_choose_targets_decision_says_its_minimum(client: TestClient, game: str) -> None:
-    uid = boot_a_choose_targets_decision(client, game)  # from the copied helper, returns alice's uid
+    uid = boot_a_choose_targets_decision(
+        client, game
+    )  # from the copied helper, returns alice's uid
     pending = client.get(f"/api/games/{game}", params={"uid": uid}).json()["pending_decision"]
     assert pending["kind"] == "choose_targets"
     assert pending["target_minimum"] == 1
@@ -761,25 +775,81 @@ KOZILEK_12 = {
     "minimum": 2,
     "maximum": 2,
     "requirements": [
-        {"phrase": "target player", "count": 1, "minimum": 1, "unbounded": False,
-         "variable_count": False, "mode": 1, "mode_text": "Target player creates X 0/1 colorless Eldrazi Spawn creature tokens with \"Sacrifice this token: Add {C}.\""},
-        {"phrase": "target player", "count": 1, "minimum": 1, "unbounded": False,
-         "variable_count": False, "mode": 2, "mode_text": "Target player scries X, then draws a card."},
+        {
+            "phrase": "target player",
+            "count": 1,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": 1,
+            "mode_text": 'Target player creates X 0/1 colorless Eldrazi Spawn creature tokens with "Sacrifice this token: Add {C}."',
+        },
+        {
+            "phrase": "target player",
+            "count": 1,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": 2,
+            "mode_text": "Target player scries X, then draws a card.",
+        },
     ],
     "division": None,
     "candidates": [
-        {"id": "alice", "kind": "player", "name": "alice", "zone": None, "controller": None, "requirements": [0, 1]},
-        {"id": "bob", "kind": "player", "name": "bob", "zone": None, "controller": None, "requirements": [0, 1]},
+        {
+            "id": "alice",
+            "kind": "player",
+            "name": "alice",
+            "zone": None,
+            "controller": None,
+            "requirements": [0, 1],
+        },
+        {
+            "id": "bob",
+            "kind": "player",
+            "name": "bob",
+            "zone": None,
+            "controller": None,
+            "requirements": [0, 1],
+        },
     ],
 }
 
 UP_TO_X = {
-    "targets_anything": True, "understood": True, "minimum": 0, "maximum": 2,
-    "requirements": [{"phrase": "up to 2 target cards from graveyards", "count": 2, "minimum": 0,
-                      "unbounded": False, "variable_count": False, "mode": 4, "mode_text": "Exile up to X target cards from graveyards."}],
+    "targets_anything": True,
+    "understood": True,
+    "minimum": 0,
+    "maximum": 2,
+    "requirements": [
+        {
+            "phrase": "up to 2 target cards from graveyards",
+            "count": 2,
+            "minimum": 0,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": 4,
+            "mode_text": "Exile up to X target cards from graveyards.",
+        }
+    ],
     "division": None,
-    "candidates": [{"id": "g1", "kind": "card", "name": "Memnite", "zone": "graveyard", "controller": "bob", "requirements": [0]},
-                   {"id": "g2", "kind": "card", "name": "Wastes", "zone": "graveyard", "controller": "bob", "requirements": [0]}],
+    "candidates": [
+        {
+            "id": "g1",
+            "kind": "card",
+            "name": "Memnite",
+            "zone": "graveyard",
+            "controller": "bob",
+            "requirements": [0],
+        },
+        {
+            "id": "g2",
+            "kind": "card",
+            "name": "Wastes",
+            "zone": "graveyard",
+            "controller": "bob",
+            "requirements": [0],
+        },
+    ],
 }
 
 
@@ -793,7 +863,9 @@ def test_same_player_fills_both_mode_slots() -> None:
 
 
 def test_slot_labels_name_their_mode() -> None:
-    labels = run_module("targeting.js", "m.slotsFromAffordance(aff).map(s => s.label)", aff=KOZILEK_12)
+    labels = run_module(
+        "targeting.js", "m.slotsFromAffordance(aff).map(s => s.label)", aff=KOZILEK_12
+    )
     assert labels == ["Mode 1: target player", "Mode 2: target player"]
 
 
@@ -825,20 +897,36 @@ def test_unfill_removes_one_target() -> None:
 
 
 def test_up_to_slots_are_satisfied_empty() -> None:
-    assert run_module("targeting.js", "m.isSatisfied(m.slotsFromAffordance(aff))", aff=UP_TO_X) is True
+    assert (
+        run_module("targeting.js", "m.isSatisfied(m.slotsFromAffordance(aff))", aff=UP_TO_X) is True
+    )
 
 
 def test_a_non_candidate_cannot_fill() -> None:
-    assert run_module("targeting.js", "m.canFill(aff, m.slotsFromAffordance(aff)[0], 'nobody')", aff=KOZILEK_12) is False
+    assert (
+        run_module(
+            "targeting.js",
+            "m.canFill(aff, m.slotsFromAffordance(aff)[0], 'nobody')",
+            aff=KOZILEK_12,
+        )
+        is False
+    )
 
 
 def test_candidate_ids_follow_the_slot() -> None:
-    ids = run_module("targeting.js", "[...m.candidateIds(aff, m.slotsFromAffordance(aff)[1])].sort()", aff=KOZILEK_12)
+    ids = run_module(
+        "targeting.js",
+        "[...m.candidateIds(aff, m.slotsFromAffordance(aff)[1])].sort()",
+        aff=KOZILEK_12,
+    )
     assert ids == ["alice", "bob"]
 
 
 def test_shares_must_sum_to_the_amount_and_be_positive() -> None:
-    assert run_module("targeting.js", "[m.sharesValid([1, 1], 2), m.sharesValid([2, 0], 2), m.sharesValid([1, 2], 2)]") == [True, False, False]
+    assert run_module(
+        "targeting.js",
+        "[m.sharesValid([1, 1], 2), m.sharesValid([2, 0], 2), m.sharesValid([1, 2], 2)]",
+    ) == [True, False, False]
 ```
 
 - [ ] **Step 3: Run tests to verify they fail**
@@ -957,14 +1045,38 @@ from ui_node import requires_node, run_module
 
 pytestmark = requires_node
 
-MOUNTAIN = {"id": "m1", "controller": "alice", "tapped": False, "zone": "battlefield",
-            "abilities": [{"index": 0, "text": "{T}: Add {R}.", "is_mana_ability": True, "mana_options": None}]}
+MOUNTAIN = {
+    "id": "m1",
+    "controller": "alice",
+    "tapped": False,
+    "zone": "battlefield",
+    "abilities": [
+        {"index": 0, "text": "{T}: Add {R}.", "is_mana_ability": True, "mana_options": None}
+    ],
+}
 TAPPED = {**MOUNTAIN, "id": "m2", "tapped": True}
-DUAL = {"id": "d1", "controller": "alice", "tapped": False, "zone": "battlefield",
-        "abilities": [{"index": 0, "text": "{T}: Add {R} or {W}.", "is_mana_ability": True, "mana_options": [["R"], ["W"]]}]}
+DUAL = {
+    "id": "d1",
+    "controller": "alice",
+    "tapped": False,
+    "zone": "battlefield",
+    "abilities": [
+        {
+            "index": 0,
+            "text": "{T}: Add {R} or {W}.",
+            "is_mana_ability": True,
+            "mana_options": [["R"], ["W"]],
+        }
+    ],
+}
 THEIRS = {**MOUNTAIN, "id": "m3", "controller": "bob"}
-GRIZZLY = {"id": "c1", "controller": "alice", "tapped": False, "zone": "battlefield",
-           "abilities": []}
+GRIZZLY = {
+    "id": "c1",
+    "controller": "alice",
+    "tapped": False,
+    "zone": "battlefield",
+    "abilities": [],
+}
 STATE = {"you": "alice", "battlefield": [MOUNTAIN, TAPPED, DUAL, THEIRS, GRIZZLY]}
 
 
@@ -982,12 +1094,19 @@ def test_pinned_sources_go_first_with_their_colour() -> None:
 
 
 def test_unpin_restores_the_bare_id() -> None:
-    result = run_module("mana.js", "m.manaSources(m.unpin(m.pin([], 'd1', 'W'), 'd1'), ['m1', 'd1'])")
+    result = run_module(
+        "mana.js", "m.manaSources(m.unpin(m.pin([], 'd1', 'W'), 'd1'), ['m1', 'd1'])"
+    )
     assert result == ["m1", "d1"]
 
 
 def test_colour_options_come_from_the_ability() -> None:
-    assert run_module("mana.js", "[m.colorOptions(dual, 0), m.colorOptions(mountain, 0)]", dual=DUAL, mountain=MOUNTAIN) == [["R", "W"], []]
+    assert run_module(
+        "mana.js",
+        "[m.colorOptions(dual, 0), m.colorOptions(mountain, 0)]",
+        dual=DUAL,
+        mountain=MOUNTAIN,
+    ) == [["R", "W"], []]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1087,9 +1206,20 @@ pytestmark = requires_node
 
 
 def board(**over):
-    state = {"you": "alice", "priority_holder": "alice", "active_player": "alice", "turn_number": 3,
-             "step": "precombat_main", "stack": [], "pending_decision": None, "combat": {"attacks": []},
-             "battlefield": [], "hands": {"alice": []}, "winner": None, "drawn": None}
+    state = {
+        "you": "alice",
+        "priority_holder": "alice",
+        "active_player": "alice",
+        "turn_number": 3,
+        "step": "precombat_main",
+        "stack": [],
+        "pending_decision": None,
+        "combat": {"attacks": []},
+        "battlefield": [],
+        "hands": {"alice": []},
+        "winner": None,
+        "drawn": None,
+    }
     state.update(over)
     return state
 
@@ -1118,7 +1248,10 @@ def test_pass_turn_stops_when_something_hits_the_stack() -> None:
     reason = run_module(
         "priority.js",
         "m.stopReason(later, m.startRun('pass_turn', start), m.DEFAULT_STOPS, false)",
-        start=board(), later=board(step="beginning_of_combat", stack=[{"id": "s1", "name": "Bolt", "kind": "spell"}]),
+        start=board(),
+        later=board(
+            step="beginning_of_combat", stack=[{"id": "s1", "name": "Bolt", "kind": "spell"}]
+        ),
     )
     assert reason
 
@@ -1127,44 +1260,84 @@ def test_pass_turn_regardless_ignores_the_stack_but_not_a_decision() -> None:
     quiet = run_module(
         "priority.js",
         "m.stopReason(later, m.startRun('pass_turn_regardless', start), { mine: [], theirs: [] }, false)",
-        start=board(), later=board(step="beginning_of_combat", stack=[{"id": "s1", "name": "Bolt", "kind": "spell"}]),
+        start=board(),
+        later=board(
+            step="beginning_of_combat", stack=[{"id": "s1", "name": "Bolt", "kind": "spell"}]
+        ),
     )
     assert quiet is None
     asked = run_module(
         "priority.js",
         "m.stopReason(later, m.startRun('pass_turn_regardless', start), { mine: [], theirs: [] }, false)",
-        start=board(), later=board(pending_decision={"player": "alice", "kind": "may", "prompt": "x"}),
+        start=board(),
+        later=board(pending_decision={"player": "alice", "kind": "may", "prompt": "x"}),
     )
     assert asked
 
 
 def test_until_my_turn_runs_through_the_opponents_turn() -> None:
-    expr = "m.stopReason(later, m.startRun('until_my_turn', start), { mine: [], theirs: [] }, false)"
-    assert run_module("priority.js", expr, start=board(), later=board(active_player="bob", priority_holder="alice", step="upkeep", turn_number=4)) is None
+    expr = (
+        "m.stopReason(later, m.startRun('until_my_turn', start), { mine: [], theirs: [] }, false)"
+    )
+    assert (
+        run_module(
+            "priority.js",
+            expr,
+            start=board(),
+            later=board(active_player="bob", priority_holder="alice", step="upkeep", turn_number=4),
+        )
+        is None
+    )
     assert run_module("priority.js", expr, start=board(), later=board(turn_number=5, step="upkeep"))
 
 
 def test_until_castable_stops_when_told_something_is_castable() -> None:
     expr = "m.stopReason(later, m.startRun('until_castable', start), { mine: [], theirs: [] }, castable)"
-    assert run_module("priority.js", expr, start=board(), later=board(step="end"), castable=False) is None
+    assert (
+        run_module("priority.js", expr, start=board(), later=board(step="end"), castable=False)
+        is None
+    )
     assert run_module("priority.js", expr, start=board(), later=board(step="end"), castable=True)
 
 
 def test_a_stop_halts_every_verb_on_the_right_side() -> None:
     expr = "m.stopReason(later, m.startRun('until_my_turn', start), { mine: [], theirs: ['end'] }, false)"
-    assert run_module("priority.js", expr, start=board(), later=board(active_player="bob", turn_number=4, step="end"))
-    assert run_module("priority.js", expr, start=board(), later=board(active_player="bob", turn_number=4, step="upkeep")) is None
+    assert run_module(
+        "priority.js",
+        expr,
+        start=board(),
+        later=board(active_player="bob", turn_number=4, step="end"),
+    )
+    assert (
+        run_module(
+            "priority.js",
+            expr,
+            start=board(),
+            later=board(active_player="bob", turn_number=4, step="upkeep"),
+        )
+        is None
+    )
 
 
 def test_being_attacked_always_stops() -> None:
     expr = "m.stopReason(later, m.startRun('pass_turn_regardless', start), { mine: [], theirs: [] }, false)"
-    later = board(active_player="bob", turn_number=4, step="declare_blockers",
-                  combat={"attacks": [{"attacker": "c1", "defender": "alice", "blockers": []}]})
+    later = board(
+        active_player="bob",
+        turn_number=4,
+        step="declare_blockers",
+        combat={"attacks": [{"attacker": "c1", "defender": "alice", "blockers": []}]},
+    )
     assert run_module("priority.js", expr, start=board(), later=later)
 
 
 def test_pass_buttons() -> None:
-    assert run_module("priority.js", "m.passButtonsFor(s)", s=board()) == ["pass", "pass_turn", "pass_turn_regardless", "until_my_turn", "until_castable"]
+    assert run_module("priority.js", "m.passButtonsFor(s)", s=board()) == [
+        "pass",
+        "pass_turn",
+        "pass_turn_regardless",
+        "until_my_turn",
+        "until_castable",
+    ]
     assert run_module("priority.js", "m.passButtonsFor(s)", s=board(priority_holder="bob")) == []
 ```
 
@@ -1336,44 +1509,164 @@ from ui_node import requires_node, run_module
 
 pytestmark = requires_node
 
-BOLT = {"id": "b1", "name": "Lightning Bolt", "zone": "hand", "controller": "alice", "type_line": "Instant",
-        "cast": {"mana_cost": "{R}", "needs_x": False, "modes": None,
-                 "targeting": {"targets_anything": True, "understood": True, "minimum": 1, "maximum": 1,
-                               "requirements": [{"phrase": "any target", "count": 1, "minimum": 1, "unbounded": False, "variable_count": False, "mana": None, "mode": None, "mode_text": None}]}},
-        "abilities": []}
-MEMNITE = {"id": "mm", "name": "Memnite", "zone": "hand", "controller": "alice", "type_line": "Artifact Creature",
-           "cast": {"mana_cost": "{0}", "needs_x": False, "modes": None,
-                    "targeting": {"targets_anything": False, "understood": True, "minimum": 0, "maximum": 0, "requirements": []}},
-           "abilities": []}
-KOZILEK = {"id": "kc", "name": "Kozilek's Command", "zone": "hand", "controller": "alice", "type_line": "Kindred Instant",
-           "cast": {"mana_cost": "{X}{C}{C}", "needs_x": True,
-                    "modes": {"instruction": "Choose two -", "minimum": 2, "maximum": 2, "repeatable": False, "understood": True,
-                              "options": [{"number": 1, "text": "Target player creates X ..."}, {"number": 2, "text": "Target player scries X, then draws a card."},
-                                          {"number": 3, "text": "Exile target creature with mana value X or less."}, {"number": 4, "text": "Exile up to X target cards from graveyards."}]},
-                    "targeting": {"targets_anything": True, "understood": False, "minimum": 0, "maximum": None, "requirements": []}},
-           "abilities": []}
-BOLT_AFF = {"targets_anything": True, "understood": True, "minimum": 1, "maximum": 1,
-            "requirements": [{"phrase": "any target", "count": 1, "minimum": 1, "unbounded": False, "variable_count": False, "mode": None, "mode_text": None}],
-            "division": None,
-            "candidates": [{"id": "bob", "kind": "player", "name": "bob", "requirements": [0]}, {"id": "c9", "kind": "card", "name": "Memnite", "requirements": [0]}]}
-KOZ_AFF = {"targets_anything": True, "understood": True, "minimum": 2, "maximum": 2,
-           "requirements": [{"phrase": "target player", "count": 1, "minimum": 1, "unbounded": False, "variable_count": False, "mode": 1, "mode_text": "Target player creates X ..."},
-                            {"phrase": "target player", "count": 1, "minimum": 1, "unbounded": False, "variable_count": False, "mode": 2, "mode_text": "Target player scries X, then draws a card."}],
-           "division": None,
-           "candidates": [{"id": "alice", "kind": "player", "name": "alice", "requirements": [0, 1]}, {"id": "bob", "kind": "player", "name": "bob", "requirements": [0, 1]}]}
+BOLT = {
+    "id": "b1",
+    "name": "Lightning Bolt",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Instant",
+    "cast": {
+        "mana_cost": "{R}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": True,
+            "understood": True,
+            "minimum": 1,
+            "maximum": 1,
+            "requirements": [
+                {
+                    "phrase": "any target",
+                    "count": 1,
+                    "minimum": 1,
+                    "unbounded": False,
+                    "variable_count": False,
+                    "mana": None,
+                    "mode": None,
+                    "mode_text": None,
+                }
+            ],
+        },
+    },
+    "abilities": [],
+}
+MEMNITE = {
+    "id": "mm",
+    "name": "Memnite",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Artifact Creature",
+    "cast": {
+        "mana_cost": "{0}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+KOZILEK = {
+    "id": "kc",
+    "name": "Kozilek's Command",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Kindred Instant",
+    "cast": {
+        "mana_cost": "{X}{C}{C}",
+        "needs_x": True,
+        "modes": {
+            "instruction": "Choose two -",
+            "minimum": 2,
+            "maximum": 2,
+            "repeatable": False,
+            "understood": True,
+            "options": [
+                {"number": 1, "text": "Target player creates X ..."},
+                {"number": 2, "text": "Target player scries X, then draws a card."},
+                {"number": 3, "text": "Exile target creature with mana value X or less."},
+                {"number": 4, "text": "Exile up to X target cards from graveyards."},
+            ],
+        },
+        "targeting": {
+            "targets_anything": True,
+            "understood": False,
+            "minimum": 0,
+            "maximum": None,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+BOLT_AFF = {
+    "targets_anything": True,
+    "understood": True,
+    "minimum": 1,
+    "maximum": 1,
+    "requirements": [
+        {
+            "phrase": "any target",
+            "count": 1,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": None,
+            "mode_text": None,
+        }
+    ],
+    "division": None,
+    "candidates": [
+        {"id": "bob", "kind": "player", "name": "bob", "requirements": [0]},
+        {"id": "c9", "kind": "card", "name": "Memnite", "requirements": [0]},
+    ],
+}
+KOZ_AFF = {
+    "targets_anything": True,
+    "understood": True,
+    "minimum": 2,
+    "maximum": 2,
+    "requirements": [
+        {
+            "phrase": "target player",
+            "count": 1,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": 1,
+            "mode_text": "Target player creates X ...",
+        },
+        {
+            "phrase": "target player",
+            "count": 1,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": 2,
+            "mode_text": "Target player scries X, then draws a card.",
+        },
+    ],
+    "division": None,
+    "candidates": [
+        {"id": "alice", "kind": "player", "name": "alice", "requirements": [0, 1]},
+        {"id": "bob", "kind": "player", "name": "bob", "requirements": [0, 1]},
+    ],
+}
 
 
 def test_memnite_needs_no_choices_and_bolt_does() -> None:
-    assert run_module("actions.js", "[m.needsChoices(memnite, null), m.needsChoices(bolt, null)]", memnite=MEMNITE, bolt=BOLT) == [False, True]
+    assert run_module(
+        "actions.js",
+        "[m.needsChoices(memnite, null), m.needsChoices(bolt, null)]",
+        memnite=MEMNITE,
+        bolt=BOLT,
+    ) == [False, True]
 
 
 def test_bolt_body_carries_target_and_all_sources() -> None:
     body = run_module(
         "actions.js",
         "(() => { let a = m.begin('cast', bolt, {}); a = m.withAffordance(a, aff); a = m.chooseTarget(a, 'bob'); return [m.readyToFire(a), m.bodyFor(a, 'alice', ['m1', 'm2'])]; })()",
-        bolt=BOLT, aff=BOLT_AFF,
+        bolt=BOLT,
+        aff=BOLT_AFF,
     )
-    assert body == [True, {"player": "alice", "card_id": "b1", "targets": ["bob"], "mana_sources": ["m1", "m2"]}]
+    assert body == [
+        True,
+        {"player": "alice", "card_id": "b1", "targets": ["bob"], "mana_sources": ["m1", "m2"]},
+    ]
 
 
 def test_kozilek_flow_same_player_twice() -> None:
@@ -1388,46 +1681,83 @@ def test_kozilek_flow_same_player_twice() -> None:
           a = m.chooseTarget(a, 'alice'); a = m.chooseTarget(a, 'alice');
           return [before, q, m.readyToFire(a), m.bodyFor(a, 'alice', ['w1', 'w2', 'w3'])];
         })()""",
-        koz=KOZILEK, aff=KOZ_AFF,
+        koz=KOZILEK,
+        aff=KOZ_AFF,
     )
     assert result[0] == {}
     assert result[1] == {"modes": [1, 2], "x_value": 1}
     assert result[2] is True
-    assert result[3] == {"player": "alice", "card_id": "kc", "targets": ["alice", "alice"], "modes": [1, 2], "x_value": 1, "mana_sources": ["w1", "w2", "w3"]}
+    assert result[3] == {
+        "player": "alice",
+        "card_id": "kc",
+        "targets": ["alice", "alice"],
+        "modes": [1, 2],
+        "x_value": 1,
+        "mana_sources": ["w1", "w2", "w3"],
+    }
 
 
 def test_choosing_a_target_again_unfills_it() -> None:
     targets = run_module(
         "actions.js",
         "(() => { let a = m.withAffordance(m.begin('cast', bolt, {}), aff); a = m.chooseTarget(a, 'bob'); a = m.chooseTarget(a, 'bob'); return m.bodyFor(a, 'alice', []).targets; })()",
-        bolt=BOLT, aff=BOLT_AFF,
+        bolt=BOLT,
+        aff=BOLT_AFF,
     )
     assert targets == []
 
 
 def test_modes_are_not_ready_until_enough_are_chosen() -> None:
-    assert run_module("actions.js", "[m.modesReady(m.begin('cast', koz, {})), m.modesReady(m.toggleMode(m.toggleMode(m.begin('cast', koz, {}), 1), 3))]", koz=KOZILEK) == [False, True]
+    assert run_module(
+        "actions.js",
+        "[m.modesReady(m.begin('cast', koz, {})), m.modesReady(m.toggleMode(m.toggleMode(m.begin('cast', koz, {}), 1), 3))]",
+        koz=KOZILEK,
+    ) == [False, True]
 
 
 def test_pinned_source_leads_the_mana_sources() -> None:
     body = run_module(
         "actions.js",
         "m.bodyFor(m.pinSource(m.withAffordance(m.chooseTarget(m.begin('cast', bolt, {}), 'bob'), aff), 'd1', 'R'), 'alice', ['d1', 'm1'])",
-        bolt=BOLT, aff=BOLT_AFF,
+        bolt=BOLT,
+        aff=BOLT_AFF,
     )
     assert body["mana_sources"] == [{"card_id": "d1", "colors": ["R"]}, "m1"]
 
 
 def test_activate_body_and_endpoint() -> None:
-    land = {"id": "d1", "name": "Sunbaked Canyon", "zone": "battlefield", "controller": "alice",
-            "abilities": [{"index": 0, "text": "{T}, Pay 1 life: Add {R} or {W}.", "is_mana_ability": True, "needs_x": False, "mana_options": [["R"], ["W"]],
-                           "targeting": {"targets_anything": False, "understood": True, "minimum": 0, "maximum": 0, "requirements": []}}]}
+    land = {
+        "id": "d1",
+        "name": "Sunbaked Canyon",
+        "zone": "battlefield",
+        "controller": "alice",
+        "abilities": [
+            {
+                "index": 0,
+                "text": "{T}, Pay 1 life: Add {R} or {W}.",
+                "is_mana_ability": True,
+                "needs_x": False,
+                "mana_options": [["R"], ["W"]],
+                "targeting": {
+                    "targets_anything": False,
+                    "understood": True,
+                    "minimum": 0,
+                    "maximum": 0,
+                    "requirements": [],
+                },
+            }
+        ],
+    }
     result = run_module(
         "actions.js",
         "(() => { let a = m.begin('activate', land, { abilityIndex: 0 }); a = m.chooseColor(a, 'W'); return [m.endpointFor(a), m.bodyFor(a, 'alice', ['d1']), m.readyToFire(a)]; })()",
         land=land,
     )
-    assert result == ["actions/activate", {"player": "alice", "card_id": "d1", "ability_index": 0, "color": "W"}, True]
+    assert result == [
+        "actions/activate",
+        {"player": "alice", "card_id": "d1", "ability_index": 0, "color": "W"},
+        True,
+    ]
 ```
 
 Note: `chooseTarget` in the second-to-last test is called before `withAffordance`; with no slots yet it must be a no-op, and `withAffordance` then builds the slots. Adjust that test to call `withAffordance` first if you prefer the stricter reading, but keep the no-op behaviour.
@@ -1702,19 +2032,66 @@ from ui_node import requires_node, run_module
 
 pytestmark = requires_node
 
-MAY = {"player": "alice", "kind": "may", "prompt": "Pay 2 life?", "source": "Shockland", "amount": None, "cards": [],
-       "targets": [], "target_minimum": None, "target_maximum": None, "affirmative_is_legal": True, "options": [],
-       "moved_label": None, "kept_label": None, "card_labels": [], "exact": False, "default_cards": None}
-TARGETS = {**MAY, "kind": "choose_targets", "prompt": "Choose a target", "targets": [{"kind": "player", "id": "bob"}, {"kind": "card", "id": "c1"}],
-           "target_minimum": 1, "target_maximum": 1, "card_details": {"c1": {"name": "Memnite"}}}
-SCRY = {**MAY, "kind": "scry", "prompt": "Scry 2", "cards": ["a", "b"], "card_labels": ["Island", "Bolt"], "moved_label": "bottom", "kept_label": "top"}
+MAY = {
+    "player": "alice",
+    "kind": "may",
+    "prompt": "Pay 2 life?",
+    "source": "Shockland",
+    "amount": None,
+    "cards": [],
+    "targets": [],
+    "target_minimum": None,
+    "target_maximum": None,
+    "affirmative_is_legal": True,
+    "options": [],
+    "moved_label": None,
+    "kept_label": None,
+    "card_labels": [],
+    "exact": False,
+    "default_cards": None,
+}
+TARGETS = {
+    **MAY,
+    "kind": "choose_targets",
+    "prompt": "Choose a target",
+    "targets": [{"kind": "player", "id": "bob"}, {"kind": "card", "id": "c1"}],
+    "target_minimum": 1,
+    "target_maximum": 1,
+    "card_details": {"c1": {"name": "Memnite"}},
+}
+SCRY = {
+    **MAY,
+    "kind": "scry",
+    "prompt": "Scry 2",
+    "cards": ["a", "b"],
+    "card_labels": ["Island", "Bolt"],
+    "moved_label": "bottom",
+    "kept_label": "top",
+}
 
 
 def test_every_answerable_kind_has_a_view_model() -> None:
     kinds = run_module("decisions.js", "Object.keys(m.DECISION_KINDS).sort()")
-    assert kinds == sorted(["may", "pay_life", "pay_energy", "pay_mana", "pay_energy_amount", "pay_life_amount", "scry", "surveil",
-                            "mulligan", "opening_hand_action", "choose_cards", "choose_targets", "choose_a_quality", "choose_a_mode",
-                            "put_on_top_or_bottom", "order_triggers"])
+    assert kinds == sorted(
+        [
+            "may",
+            "pay_life",
+            "pay_energy",
+            "pay_mana",
+            "pay_energy_amount",
+            "pay_life_amount",
+            "scry",
+            "surveil",
+            "mulligan",
+            "opening_hand_action",
+            "choose_cards",
+            "choose_targets",
+            "choose_a_quality",
+            "choose_a_mode",
+            "put_on_top_or_bottom",
+            "order_triggers",
+        ]
+    )
 
 
 def test_may_offers_yes_and_no() -> None:
@@ -1746,33 +2123,67 @@ from ui_node import requires_node, run_module
 
 pytestmark = requires_node
 
+
 def creature(id, controller, **over):
-    c = {"id": id, "name": id, "controller": controller, "tapped": False, "summoning_sick": False,
-         "type_line": "Creature", "zone": "battlefield", "abilities": []}
+    c = {
+        "id": id,
+        "name": id,
+        "controller": controller,
+        "tapped": False,
+        "summoning_sick": False,
+        "type_line": "Creature",
+        "zone": "battlefield",
+        "abilities": [],
+    }
     c.update(over)
     return c
 
-STATE = {"you": "alice", "active_player": "alice", "step": "declare_attackers",
-         "players": [{"username": "alice"}, {"username": "bob"}],
-         "battlefield": [creature("a1", "alice"), creature("a2", "alice", tapped=True), creature("a3", "alice", summoning_sick=True),
-                         creature("pw", "bob", type_line="Legendary Planeswalker"), creature("b1", "bob")],
-         "combat": {"attacks": []}}
+
+STATE = {
+    "you": "alice",
+    "active_player": "alice",
+    "step": "declare_attackers",
+    "players": [{"username": "alice"}, {"username": "bob"}],
+    "battlefield": [
+        creature("a1", "alice"),
+        creature("a2", "alice", tapped=True),
+        creature("a3", "alice", summoning_sick=True),
+        creature("pw", "bob", type_line="Legendary Planeswalker"),
+        creature("b1", "bob"),
+    ],
+    "combat": {"attacks": []},
+}
 
 
 def test_attack_candidates_and_defenders() -> None:
-    result = run_module("combat.js", "[m.attackCandidates(s).map(c => c.id), m.defenders(s).map(d => d.id)]", s=STATE)
+    result = run_module(
+        "combat.js",
+        "[m.attackCandidates(s).map(c => c.id), m.defenders(s).map(d => d.id)]",
+        s=STATE,
+    )
     assert result == [["a1"], ["bob", "pw"]]
 
 
 def test_attack_body_from_toggles() -> None:
-    body = run_module("combat.js", "m.attackBody(m.toggleAttacker(m.toggleAttacker({}, 'a1', 'bob'), 'a3', 'pw'))")
-    assert body == {"attackers": [{"card_id": "a1", "defender": "bob"}, {"card_id": "a3", "defender": "pw"}]}
-    assert run_module("combat.js", "m.attackBody(m.toggleAttacker(m.toggleAttacker({}, 'a1', 'bob'), 'a1', 'bob'))") == {"attackers": []}
+    body = run_module(
+        "combat.js", "m.attackBody(m.toggleAttacker(m.toggleAttacker({}, 'a1', 'bob'), 'a3', 'pw'))"
+    )
+    assert body == {
+        "attackers": [{"card_id": "a1", "defender": "bob"}, {"card_id": "a3", "defender": "pw"}]
+    }
+    assert run_module(
+        "combat.js",
+        "m.attackBody(m.toggleAttacker(m.toggleAttacker({}, 'a1', 'bob'), 'a1', 'bob'))",
+    ) == {"attackers": []}
 
 
 def test_block_body_from_toggles() -> None:
-    state = {**STATE, "active_player": "bob", "step": "declare_blockers",
-             "combat": {"attacks": [{"attacker": "b1", "defender": "alice", "blockers": []}]}}
+    state = {
+        **STATE,
+        "active_player": "bob",
+        "step": "declare_blockers",
+        "combat": {"attacks": [{"attacker": "b1", "defender": "alice", "blockers": []}]},
+    }
     body = run_module("combat.js", "m.blockBody(m.toggleBlock({}, 'a1', 'b1'), 'alice')", s=state)
     assert body == {"player": "alice", "blocks": [{"blocker": "a1", "blocked": "b1"}]}
     assert run_module("combat.js", "m.attacksAgainstYou(s).map(a => a.attacker)", s=state) == ["b1"]
@@ -2040,7 +2451,8 @@ globalThis.document = { createElement: (t) => new El(t), createTextNode: (s) => 
 def test_patch_children_keeps_nodes_with_the_same_key() -> None:
     result = run_module(
         "dom.js",
-        FAKE_DOM + """
+        FAKE_DOM
+        + """
         (() => {
           const parent = document.createElement("div");
           const create = (item) => { const el = m.h("div", { dataset: { key: item.id } }, item.id); el.made = item.id; return el; };
@@ -2757,7 +3169,14 @@ def test_same_player_for_both_modes_casts_and_resolves(client: TestClient, game:
         params={"player": "alice", "modes": "1,2", "x_value": 1},
     ).json()
     assert [r["mode"] for r in aff["requirements"]] == [1, 2]
-    body = {"player": "alice", "card_id": command, "targets": ["alice", "alice"], "modes": [1, 2], "x_value": 1, "mana_sources": lands}
+    body = {
+        "player": "alice",
+        "card_id": command,
+        "targets": ["alice", "alice"],
+        "modes": [1, 2],
+        "x_value": 1,
+        "mana_sources": lands,
+    }
     probe = client.post(f"/api/games/{game}/actions/cast", json={**body, "dry_run": True}).json()
     assert probe["allowed"] is True, probe
     assert len(probe["tapped"]) == 3
@@ -2771,7 +3190,9 @@ def test_same_player_for_both_modes_casts_and_resolves(client: TestClient, game:
     spawn = [c for c in board["battlefield"] if "Eldrazi Spawn" in (c["name"] or "")]
     assert len(spawn) == 1
     alice = next(p for p in board["players"] if p["username"] == "alice")
-    assert alice["hand_count"] == 1  # drew from mode 2 (library was empty apart from nothing; adjust if the harness seeds a library)
+    assert (
+        alice["hand_count"] == 1
+    )  # drew from mode 2 (library was empty apart from nothing; adjust if the harness seeds a library)
 ```
 
 If the harness boots players with empty libraries, mode 2's draw makes alice lose at the next state-based check; add one `add_card(..., zone="library")` for alice before casting and assert `hand_count == 1`. If the scry decision blocks resolution (a `scry` `pending_decision` for alice), answer it with `POST /decide` `{"player": "alice", "moved": [], "top_order": null}` using alice's uid from `POST /api/games`' `seat_uids` before the second pass, the way `tests/test_ui_e2e.py` answers decisions.
