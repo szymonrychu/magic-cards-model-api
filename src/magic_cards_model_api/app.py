@@ -880,7 +880,12 @@ def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
         game.player(req.player)
         outcome = engine_api.play_land(game, req)
         return audit_outcome(
-            game_id, "play_land", outcome, player=req.player, card=req.card or str(req.card_id)
+            game_id,
+            "play_land",
+            outcome,
+            dry_run=req.dry_run,
+            player=req.player,
+            card=req.card or str(req.card_id),
         )
 
 

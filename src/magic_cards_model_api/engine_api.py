@@ -17,7 +17,9 @@ from uuid import UUID
 from magic_cards_model.machines import Casting, Step
 from magic_cards_model.machines.casting import (
     MarkedExile,
+    PlayAction,
     finish_suspend,
+    play_permissions_on,
     remove_suspend_time_counter,
 )
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
@@ -753,6 +755,34 @@ def locate_land(game: Game, req: PlayLandRequest) -> CardState:
     raise ValueError(f"{req.player} has no land named {req.card} in hand")
 
 
+def _land_card_refusal(game: Game, land: CardState, player: str) -> str | None:
+    """The card-level checks `Game.play_land` runs before it mutates anything,
+    for a dry run to answer without playing the land - is `land` actually a
+    land, and is it somewhere `player` may play it from (their hand, or a live
+    `PlayAction.PLAY` permission).
+
+    Mirrors `Game.play_land` at `.../magic_cards_model/models/game.py:7862`,
+    same wording, same order, up to (not including) the mutation; the
+    player-level checks (priority, main phase, empty stack, land drops left)
+    are `Game.why_cannot_play_land`'s job, not this one's. Keep this in step
+    with `Game.play_land` if that ever changes.
+    """
+    land_face = land.card.land_face
+    if not land.card.is_land and land_face is None:
+        return f"{land.name} is not a land"
+    if land.zone is not Zone.HAND:
+        permission = game.play_permission_for(land, player, PlayAction.PLAY)
+        if permission is None:
+            granted = play_permissions_on(game, land)
+            if granted:
+                return granted[0].why_not(land, player, game, action=PlayAction.PLAY)
+            return (
+                f"nothing allows {player} to play {land.name} from the "
+                f"{land.zone.value} (CR 305.1, CR 701.18a)"
+            )
+    return None
+
+
 def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     """Play a land: locating the card and playing it are one refusal path.
 
@@ -761,11 +791,20 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     `Outcome(False, ...)`, so `action_play_land` can audit either one and
     `run_action` recognises it as `allowed: False` rather than falling
     through to releasing priority as if the play had gone through.
+
+    `req.dry_run` answers without playing: the player-level checks come from
+    `Game.why_cannot_play_land`, the card-level ones from `_land_card_refusal`
+    above, which mirrors `Game.play_land`'s own pre-mutation checks.
     """
     try:
         land = locate_land(game, req)
     except (KeyError, ValueError) as exc:
         return refused(exc)
+    if req.dry_run:
+        refusal = game.why_cannot_play_land(req.player) or _land_card_refusal(
+            game, land, req.player
+        )
+        return Outcome(refusal is None, refusal)
     try:
         played = game.play_land(land, req.player)
     except ValueError as exc:

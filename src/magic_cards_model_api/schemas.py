@@ -237,6 +237,7 @@ class PlayLandRequest(BaseModel):
     player: str
     card_id: UUID | None = None
     card: str | None = None
+    dry_run: bool = False
 
 
 class PassPriorityRequest(BaseModel):
