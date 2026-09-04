@@ -2014,7 +2014,7 @@ git add ui/actions.js tests/test_ui_actions.py tests/test_ui_targets.py && git c
   - `DECISION_KINDS`: the object-literal keys the coverage test extracts, one per kind in `decisions.ANSWERABLE_KINDS` (`may, pay_life, pay_energy, pay_mana, pay_energy_amount, pay_life_amount, scry, surveil, mulligan, opening_hand_action, choose_cards, choose_targets, choose_a_quality, choose_a_mode, put_on_top_or_bottom, order_triggers`), each mapping to a view-model function `(pending, draft) -> ViewModel`.
   - `ViewModel = {kind, title, prompt, controls: Control[], submit: {label, enabled, answer} | null, secondary: {label, answer} | null, remaining: number | null}` where `Control` is one of `{type: "options", items: [{id, label, selected, disabled}]}`, `{type: "number", min, max, value}`, `{type: "targets", slots}` (reusing `targeting.js` slots built from `pending.targets` and `target_minimum`/`target_maximum`), `{type: "split", cards: [{id, label, moved}], movedLabel, keptLabel, order: string[]}`, `{type: "order", items}`.
   - `chooseCardsOptions(pending)`, `triggerOrderOptions(pending)` moved verbatim (same names, same output shape).
-  - `answerFor(kind, draft) -> body` producing exactly the `DecideRequest` fields the old `submit*` functions sent (`card_ids`, `targets`, `order` reversed as before, `accept`, `energy_amount`, `life_amount`, `choice`, `top`, `moved` + `top_order`).
+  - `answerFor(pending, draft) -> body` (delegating to the kind's view model, so there is one answer builder per kind) producing exactly the `DecideRequest` fields the old `submit*` functions sent (`card_ids`, `targets`, `order` reversed as before, `accept`, `energy_amount`, `life_amount`, `choice`, `top`, `moved` + `top_order`).
 - Produces (`combat.js`):
   - `attackCandidates(state) -> Card[]` (your untapped creatures without summoning sickness, as the old `openAttackModal` filtered; the engine still decides).
   - `defenders(state) -> [{id, label}]` (opponent player plus their planeswalkers, and battles if `type_line` includes "Battle").
@@ -2798,7 +2798,7 @@ import * as A from "./actions.js";
 import * as P from "./priority.js";
 import * as C from "./combat.js";
 import { untappedSources, colorOptions } from "./mana.js";
-import { viewModel, answerFor } from "./decisions.js";
+import { viewModel } from "./decisions.js";
 import { mountBoard } from "./render/board.js";
 import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
