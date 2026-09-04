@@ -755,21 +755,34 @@ def locate_land(game: Game, req: PlayLandRequest) -> CardState:
     raise ValueError(f"{req.player} has no land named {req.card} in hand")
 
 
-def _land_card_refusal(game: Game, land: CardState, player: str) -> str | None:
-    """The card-level checks `Game.play_land` runs before it mutates anything,
-    for a dry run to answer without playing the land - is `land` actually a
-    land, and is it somewhere `player` may play it from (their hand, or a live
-    `PlayAction.PLAY` permission).
+def _not_a_land_refusal(land: CardState) -> str | None:
+    """The very first thing `Game.play_land` checks, before it even asks
+    `why_cannot_play_land`: is `land` actually playable as a land at all.
 
     Mirrors `Game.play_land` at `.../magic_cards_model/models/game.py:7862`,
-    same wording, same order, up to (not including) the mutation; the
-    player-level checks (priority, main phase, empty stack, land drops left)
-    are `Game.why_cannot_play_land`'s job, not this one's. Keep this in step
-    with `Game.play_land` if that ever changes.
+    same wording - a modal double-faced card counts through `Card.land_face`
+    (CR 712.12), same as there. Kept as its own function, and called first in
+    `play_land` below, so a dry run's check order matches the real one's
+    exactly: this, then `Game.why_cannot_play_land`, then `_land_zone_refusal`.
     """
     land_face = land.card.land_face
     if not land.card.is_land and land_face is None:
         return f"{land.name} is not a land"
+    return None
+
+
+def _land_zone_refusal(game: Game, land: CardState, player: str) -> str | None:
+    """The last of `Game.play_land`'s pre-mutation checks: is `land` somewhere
+    `player` may play it from (their hand, or a live `PlayAction.PLAY`
+    permission).
+
+    Mirrors `Game.play_land` at `.../magic_cards_model/models/game.py:7862`,
+    same wording - it runs after the is-a-land check and after
+    `why_cannot_play_land`, exactly as `Game.play_land` runs it, which is why
+    `play_land` below calls this last rather than folding it into one
+    function with `_not_a_land_refusal`. Keep this in step with
+    `Game.play_land` if that ever changes.
+    """
     if land.zone is not Zone.HAND:
         permission = game.play_permission_for(land, player, PlayAction.PLAY)
         if permission is None:
@@ -792,17 +805,20 @@ def play_land(game: Game, req: PlayLandRequest) -> Outcome:
     `run_action` recognises it as `allowed: False` rather than falling
     through to releasing priority as if the play had gone through.
 
-    `req.dry_run` answers without playing: the player-level checks come from
-    `Game.why_cannot_play_land`, the card-level ones from `_land_card_refusal`
-    above, which mirrors `Game.play_land`'s own pre-mutation checks.
+    `req.dry_run` answers without playing, checking in the same order
+    `Game.play_land` does: `_not_a_land_refusal` first, then
+    `Game.why_cannot_play_land` (the player-level checks - priority, main
+    phase, empty stack, land drops left), then `_land_zone_refusal` last.
     """
     try:
         land = locate_land(game, req)
     except (KeyError, ValueError) as exc:
         return refused(exc)
     if req.dry_run:
-        refusal = game.why_cannot_play_land(req.player) or _land_card_refusal(
-            game, land, req.player
+        refusal = (
+            _not_a_land_refusal(land)
+            or game.why_cannot_play_land(req.player)
+            or _land_zone_refusal(game, land, req.player)
         )
         return Outcome(refusal is None, refusal)
     try:

@@ -38,3 +38,27 @@ def test_dry_run_refuses_a_second_land_with_the_engines_reason(
     assert res["reason"]
     board = client.get(f"/api/games/{game}").json()
     assert len(board["battlefield"]) == 1
+
+
+def test_dry_run_checks_is_a_land_before_the_player_level_reason(
+    client: TestClient, game: str
+) -> None:
+    """`Game.play_land` checks is-a-land before it asks `why_cannot_play_land`
+    (which would refuse for the wrong reason - wrong step - once combat has
+    started); a dry run must ask in that same order, not player-level first."""
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
+    assert (
+        client.put(f"/api/games/{game}/step", json={"step": "declare_attackers"}).status_code == 200
+    )
+    dry = client.post(
+        f"/api/games/{game}/actions/play-land",
+        json={"player": "alice", "card_id": bolt, "dry_run": True},
+    ).json()
+    real = client.post(
+        f"/api/games/{game}/actions/play-land",
+        json={"player": "alice", "card_id": bolt},
+    ).json()
+    assert dry["allowed"] is False
+    assert real["allowed"] is False
+    assert dry["reason"] == real["reason"]
+    assert "is not a land" in dry["reason"], dry
