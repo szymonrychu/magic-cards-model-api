@@ -284,6 +284,6 @@ def test_the_seat_cli_flow_answers_a_target_decision(monkeypatch, capsys) -> Non
             final = http.get(f"/api/games/{game_id}", params={"uid": uids["alice"]}).json()
             assert "Grizzly Bears" in [c["name"] for c in final["exile"]]
         finally:
-            http.delete(f"/api/games/{game_id}")
+            http.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
     finally:
         http.close()

@@ -103,7 +103,8 @@ def game(client: TestClient) -> str:
     assert response.status_code == 200, response.text
     info = response.json()
     game_id = info["game_id"]
-    _ADMIN_KEYS[game_id] = info["admin_key"]
+    admin_key = info["admin_key"]
+    _ADMIN_KEYS[game_id] = admin_key
     yield game_id
     _ADMIN_KEYS.pop(game_id, None)
-    client.delete(f"/api/games/{game_id}")
+    client.delete(f"/api/games/{game_id}", params={"key": admin_key})

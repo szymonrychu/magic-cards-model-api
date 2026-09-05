@@ -1887,7 +1887,7 @@ def test_the_seat_cli_answers_pay_life(monkeypatch, capsys) -> None:
             assert life_of(final, "alice") == 18
             assert find(final["battlefield"], "Steam Vents")["tapped"] is False
         finally:
-            http.delete(f"/api/games/{game_id}")
+            http.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
     finally:
         http.close()
 
@@ -1947,6 +1947,6 @@ def test_the_mcp_tool_answers_pay_life(monkeypatch) -> None:
             assert life_of(final, "alice") == 20
             assert find(final["battlefield"], "Steam Vents")["tapped"] is True
         finally:
-            http.delete(f"/api/games/{game_id}")
+            http.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
     finally:
         http.close()

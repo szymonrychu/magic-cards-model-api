@@ -154,7 +154,7 @@ def test_the_next_games_seat_reaches_the_agent_after_end_game(world) -> None:
         assert status["mechanism"] == "wrapper", status
         assert driver_client.get("/status").json()["gameId"] == second["game_id"]
     finally:
-        game_client.delete(f"/api/games/{second['game_id']}")
+        game_client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
 
 
 def test_the_agents_memory_survives_end_game(world) -> None:
@@ -204,7 +204,7 @@ def test_the_old_seats_status_is_forgotten_after_end_game(world) -> None:
         assert answer["state"] == "not_started"
         assert answer["mechanism"] is None
     finally:
-        game_client.delete(f"/api/games/{second['game_id']}")
+        game_client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
 
 
 def test_the_driver_refuses_a_release_for_a_game_it_is_not_playing(world) -> None:
@@ -218,7 +218,7 @@ def test_the_driver_refuses_a_release_for_a_game_it_is_not_playing(world) -> Non
         assert refused.status_code == 409
         assert driver_client.get("/status").json()["gameId"] == first["game_id"]
     finally:
-        game_client.delete(f"/api/games/{first['game_id']}")
+        game_client.delete(f"/api/games/{first['game_id']}", params={"key": first["admin_key"]})
 
 
 def test_releasing_an_idle_driver_is_not_an_error(world) -> None:

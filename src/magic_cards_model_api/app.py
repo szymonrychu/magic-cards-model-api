@@ -449,10 +449,22 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
 
 
 @app.delete("/api/games/{game_id}")
-def delete_game(game_id: str) -> dict[str, Any]:
+def delete_game(game_id: str, uid: str | None = None, key: str | None = None) -> dict[str, Any]:
+    """Delete a game outright. `uid` must be a seat uid of this game, or `key`
+    this game's admin key - the same guard `decks_api.end_lobby_game` uses,
+    mirrored here because this route deletes *any* game (not only a
+    lobby-booted one) and `GET /api/ui/games` publishes every lobby-booted
+    game's id with no credential required to read the list itself; without
+    this check, reading the list would be enough to delete a game nobody
+    handed the caller a seat or an admin key for."""
     game = store.get(game_id)
     if game is None:
         raise KeyError(f"no game {game_id}")
+    allowed = (uid is not None and store.player_for_uid(game_id, uid) is not None) or (
+        key is not None and store.is_admin(game_id, key)
+    )
+    if not allowed:
+        raise KeyError("that uid is no seat in this game")
     audit.record(game_id, "delete_game")  # before the game leaves the store
     store.delete(game_id)
     return {"deleted": game_id}

@@ -69,6 +69,63 @@ def test_end_game_needs_a_seat_of_that_game(client: TestClient) -> None:
         )
 
 
+def test_created_at_is_stamped_and_the_listing_is_oldest_first(client: TestClient) -> None:
+    first = create(client)
+    second = create(client)
+    try:
+        listing = client.get("/api/ui/games").json()["games"]
+        by_id = {g["game_id"]: g for g in listing}
+        assert by_id[first["game_id"]]["created_at"] is not None
+        assert by_id[second["game_id"]]["created_at"] is not None
+        assert by_id[first["game_id"]]["created_at"] <= by_id[second["game_id"]]["created_at"]
+        # The listing itself is ordered by it, oldest first.
+        ids_in_order = [g["game_id"] for g in listing]
+        assert ids_in_order.index(first["game_id"]) < ids_in_order.index(second["game_id"])
+    finally:
+        client.delete(
+            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+        )
+        client.delete(
+            f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+        )
+
+
+def test_a_conceded_game_does_not_count_against_the_cap(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR 104.3a: a player may concede at any time. A conceded game has a
+    winner (`Game.is_over`, CR 104.1) and so no longer counts as live - it
+    is finished, only not yet cleared from the lobby - so it must not itself
+    block a new game under a cap that would otherwise refuse one."""
+    monkeypatch.setenv("MAX_LIVE_GAMES", "1")
+    first = create(client)
+    try:
+        conceded = client.post(
+            f"/api/games/{first['game_id']}/actions/concede", json={"player": "you"}
+        )
+        assert conceded.status_code == 200, conceded.text
+        assert conceded.json()["winner"] == "bot"
+
+        # The cap is 1, but the conceded game is not live any more, so a
+        # second boot succeeds instead of refusing with 409.
+        second = create(client)
+        try:
+            listing = client.get("/api/ui/games").json()["games"]
+            by_id = {g["game_id"]: g for g in listing}
+            assert set(by_id) == {first["game_id"], second["game_id"]}
+            # Still listed - finished, not ended - and with its winner
+            # reported, so End game can clear it from the lobby.
+            assert by_id[first["game_id"]]["winner"] == "bot"
+        finally:
+            client.delete(
+                f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            )
+    finally:
+        client.delete(
+            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+        )
+
+
 def test_live_game_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_LIVE_GAMES", "2")
     first = create(client)

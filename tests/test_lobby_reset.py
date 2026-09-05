@@ -78,22 +78,40 @@ def test_a_second_lobby_game_leaves_the_first_alone(client: TestClient) -> None:
         assert client.get(f"/api/games/{first['game_id']}").status_code == 200
         assert client.get(f"/api/games/{second['game_id']}").status_code == 200
     finally:
-        client.delete(f"/api/games/{first['game_id']}")
-        client.delete(f"/api/games/{second['game_id']}")
+        client.delete(f"/api/games/{first['game_id']}", params={"key": first["admin_key"]})
+        client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
 
 
 def test_end_game_deletes_it_and_its_seat_uids_stop_opening_anything(client: TestClient) -> None:
     """The uid the browser was holding is the credential the game was played
-    with. Once it is ended, the uid opens nothing - not the game, which is
-    gone."""
+    with. Once it is ended, the uid opens nothing - not its own game, which
+    is gone, and not some other, still-live game either, since it was never
+    that game's uid to begin with."""
     first = boot(client, seed=1)
+    second = boot(client, seed=2)  # stays live throughout - not ended here
     old_uid = first["seat_uids"]["alice"]
     end(client, first)
-    assert client.get(f"/api/games/{first['game_id']}").status_code == 404
-    assert (
-        client.get(f"/api/games/{first['game_id']}/seat", params={"uid": old_uid}).status_code
-        == 404
-    )
+    try:
+        assert client.get(f"/api/games/{first['game_id']}").status_code == 404
+        assert (
+            client.get(f"/api/games/{first['game_id']}/seat", params={"uid": old_uid}).status_code
+            == 404
+        )
+        assert (
+            client.get(f"/api/games/{second['game_id']}/seat", params={"uid": old_uid}).status_code
+            == 404
+        )
+        # And it cannot act on the still-live game either: a pregame
+        # declaration is the first move a stale browser tab would make.
+        refused = client.post(
+            f"/api/games/{second['game_id']}/pregame/mulligan",
+            params={"uid": old_uid},
+            json={"player": "alice", "take": True},
+        )
+        assert refused.status_code == 400, refused.text
+        assert "seat" in refused.text
+    finally:
+        client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
 
 
 def test_ending_a_game_stops_its_pregame_watcher(client: TestClient) -> None:
@@ -130,7 +148,7 @@ def test_stopping_a_watcher_ends_its_thread_on_the_signal_itself(client: TestCli
         # The game itself is untouched by stopping its watcher.
         assert client.get(f"/api/games/{booted['game_id']}").status_code == 200
     finally:
-        client.delete(f"/api/games/{booted['game_id']}")
+        client.delete(f"/api/games/{booted['game_id']}", params={"key": booted["admin_key"]})
 
 
 def test_a_stale_watcher_cannot_settle_the_new_games_pregame(client: TestClient) -> None:
@@ -154,7 +172,7 @@ def test_a_stale_watcher_cannot_settle_the_new_games_pregame(client: TestClient)
         ]
         assert automatic == []
     finally:
-        client.delete(f"/api/games/{second['game_id']}")
+        client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
         ai_pregame.stop(second["game_id"])
 
 
@@ -236,7 +254,7 @@ def test_a_game_the_lobby_did_not_boot_is_left_alone(client: TestClient) -> None
         end(client, booted)
         assert client.get(f"/api/games/{other['game_id']}").status_code == 200
     finally:
-        client.delete(f"/api/games/{other['game_id']}")
+        client.delete(f"/api/games/{other['game_id']}", params={"key": other["admin_key"]})
 
 
 def test_a_rejected_decklist_does_not_touch_the_running_game(client: TestClient) -> None:
@@ -258,5 +276,5 @@ def test_a_rejected_decklist_does_not_touch_the_running_game(client: TestClient)
         assert client.get(f"/api/games/{first['game_id']}").status_code == 200
         assert ai_pregame.is_watching(first["game_id"])
     finally:
-        client.delete(f"/api/games/{first['game_id']}")
+        client.delete(f"/api/games/{first['game_id']}", params={"key": first["admin_key"]})
         ai_pregame.stop(first["game_id"])

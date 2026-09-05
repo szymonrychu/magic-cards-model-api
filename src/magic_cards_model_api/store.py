@@ -27,6 +27,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from magic_cards_model.models import Game
@@ -42,6 +43,7 @@ class GameStore:
         self._games: dict[str, Game] = {}
         self._seats: dict[str, dict[str, str]] = {}  # game_id -> uid -> username
         self._admin_keys: dict[str, str] = {}  # game_id -> admin key
+        self._created_at: dict[str, str] = {}  # game_id -> UTC ISO 8601 creation time
         self._locks: dict[str, threading.Lock] = {}  # game_id -> its mutation lock
         self._mailboxes: dict[str, DecisionMailbox] = {}  # game_id -> its pending decision
         self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
@@ -69,15 +71,23 @@ class GameStore:
         with self._lock:
             self._games[game_id] = game
             self._admin_keys[game_id] = uuid4().hex
+            self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
             self._mailboxes[game_id] = mailbox
         return game_id
 
+    def created_at(self, game_id: str) -> str | None:
+        """When this game was created, UTC ISO 8601 - `None` for an unknown
+        game. Stamped once, in `create()`, and never touched again."""
+        with self._lock:
+            return self._created_at.get(game_id)
+
     def register_ui_game(self, game_id: str) -> None:
         """Record that the play UI's lobby booted this game.
 
-        `lobby.reset_previous_games` resets exactly these and nothing else, so
-        the marker is set only by `POST /api/ui/games` - never inferred.
+        `DELETE /api/ui/games/{id}` (End game, `lobby.reset_game`) resets
+        exactly these and nothing else, so the marker is set only by
+        `POST /api/ui/games` - never inferred.
         """
         with self._lock:
             if game_id not in self._ui_games:
@@ -266,6 +276,7 @@ class GameStore:
         with self._lock:
             self._seats.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
+            self._created_at.pop(game_id, None)
             self._locks.pop(game_id, None)
             self._mailboxes.pop(game_id, None)
             self._decision_timeouts.pop(game_id, None)

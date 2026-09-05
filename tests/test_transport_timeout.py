@@ -379,7 +379,7 @@ def test_old_style_short_client_timeout_genuinely_times_out_on_a_real_block(
         # is torn down out from under it.
         time.sleep(block_seconds + 1.0)
         with httpx.Client(base_url=live_server, timeout=10.0) as cleanup_client:
-            cleanup_client.delete(f"/api/games/{game_id}")
+            cleanup_client.delete(f"/api/games/{game_id}", params={"key": store.admin_key(game_id)})
 
 
 def test_seat_with_derived_timeout_survives_the_same_kind_of_block(live_server: str) -> None:
@@ -414,4 +414,4 @@ def test_seat_with_derived_timeout_survives_the_same_kind_of_block(live_server: 
         assert isinstance(result["log_seq"], int)
     finally:
         with httpx.Client(base_url=live_server, timeout=10.0) as cleanup_client:
-            cleanup_client.delete(f"/api/games/{game_id}")
+            cleanup_client.delete(f"/api/games/{game_id}", params={"key": store.admin_key(game_id)})

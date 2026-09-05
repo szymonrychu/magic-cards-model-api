@@ -219,6 +219,6 @@ def test_the_seat_cli_activate_omits_targets_key_and_gets_asked(monkeypatch, cap
             sol_ring = find(final["battlefield"], "Sol Ring")
             assert "Creature" in sol_ring["type_line"]
         finally:
-            http.delete(f"/api/games/{game_id}")
+            http.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
     finally:
         http.close()

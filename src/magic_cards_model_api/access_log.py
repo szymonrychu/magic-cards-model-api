@@ -74,6 +74,8 @@ QUIET_PATHS: tuple[re.Pattern[str], ...] = (
     re.compile(r"/api/games/[^/]+"),
     # the play UI's AI-seat poll
     re.compile(r"/api/ui/games/[^/]+/ai-seat/status"),
+    # the play UI's lobby poll - the game list itself, not a specific game
+    re.compile(r"/api/ui/games"),
 )
 
 #: Methods that can be silenced. Everything else - POST, DELETE, PATCH - is a

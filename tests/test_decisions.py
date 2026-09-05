@@ -357,7 +357,7 @@ def test_answering_the_decision_does_not_mutate_the_game() -> None:
             thread.join(timeout=10)
         assert not thread.is_alive()
     finally:
-        client.delete(f"/api/games/{game_id}")
+        client.delete(f"/api/games/{game_id}", params={"key": store.admin_key(game_id)})
 
 
 def test_the_seat_cli_flow(monkeypatch, capsys) -> None:
@@ -430,7 +430,7 @@ def test_the_seat_cli_flow(monkeypatch, capsys) -> None:
             discarded = [c["id"] for c in final["graveyards"]["alice"]]
             assert discarded == [card_id]
         finally:
-            http.delete(f"/api/games/{game_id}")
+            http.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
     finally:
         http.close()
 

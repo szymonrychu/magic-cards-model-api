@@ -370,7 +370,9 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
                 f"/api/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["bob"]}
             ).json()
         finally:
-            game_client.delete(f"/api/games/{booted['game_id']}")
+            game_client.delete(
+                f"/api/games/{booted['game_id']}", params={"key": booted["admin_key"]}
+            )
 
     from mtg_agent.driver.guides import parse_decklist
 

@@ -160,6 +160,8 @@ POLLED = [
     "/api/games/f8e61463c97842a2b5ff6790834b36e6?uid=beefcafe",
     "/api/ui/games/f8e61463c97842a2b5ff6790834b36e6/ai-seat/status",
     "/api/ui/games/f8e61463c97842a2b5ff6790834b36e6/ai-seat/status?uid=beefcafe",
+    "/api/ui/games",
+    "/api/ui/games?uids=beefcafe",
 ]
 
 
@@ -207,11 +209,12 @@ def test_real_traffic_is_still_printed():
 
 def test_the_silenced_game_routes_are_the_ones_the_app_serves(client, game):
     """The filter is only sound if its patterns match routes that exist. These
-    are the two the browser polls; both are answered here for real, and the
+    are the ones the browser polls; all are answered here for real, and the
     path each request actually took is the one that gets silenced."""
     for response in (
         client.get(f"/api/games/{game}"),
         client.get(f"/api/ui/games/{game}/ai-seat/status", params={"uid": "nobody"}),
+        client.get("/api/ui/games"),
     ):
         assert response.status_code == 200, response.text
         assert access_log.is_quiet_path(response.request.url.path), response.request.url
@@ -219,12 +222,17 @@ def test_the_silenced_game_routes_are_the_ones_the_app_serves(client, game):
 
 def test_the_quiet_paths_are_anchored_whole():
     """A prefix match would have swallowed half the API - `/api/games/{id}` is
-    silent, everything under it is not."""
+    silent, everything under it is not. Same for `/api/ui/games`: the bare
+    list is the lobby's poll and is silent, but a specific game under it
+    (`.../ai-seat/status` aside, which has its own pattern) is a new question,
+    not the loop."""
     assert access_log.is_quiet_path("/api/games/abc")
     assert not access_log.is_quiet_path("/api/games")
     assert not access_log.is_quiet_path("/api/games/abc/seat")
     assert not access_log.is_quiet_path("/status/detail")
     assert not access_log.is_quiet_path("/api/healthy")
+    assert access_log.is_quiet_path("/api/ui/games")
+    assert not access_log.is_quiet_path("/api/ui/games/abc")
 
 
 def test_the_env_var_gives_the_whole_access_log_back():

@@ -181,7 +181,7 @@ def test_seats_picks_up_new_game_after_restart_and_drops_stale_uid(client, monke
     # The API restarting: the old game is gone, a brand new one takes its
     # place with a brand new id and brand new uids - never reused, exactly
     # what a fresh `serve.py` boot does.
-    client.delete(f"/api/games/{game1}")
+    client.delete(f"/api/games/{game1}", params={"key": store.admin_key(game1)})
     game2, uids2 = make_game(client)
     assert game2 != game1
     assert uids2["alice"] != uids1["alice"]

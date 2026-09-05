@@ -266,9 +266,9 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
 
 @router.get("/games")
 def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
-    """Every live lobby-booted game (`store.ui_games()` - not filtered to
+    """Every lobby-booted game (`store.ui_games()` - not filtered to
     `live_ui_games()`, so a finished-but-not-yet-ended game still shows up for
-    End game to clear), for the lobby's game list.
+    End game to clear), oldest first, for the lobby's game list.
 
     `uids` is a comma-separated list of seat uids the caller holds, across
     every game it has ever seen - each game's `seats` in the response is
@@ -289,15 +289,17 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
                 "players": [p.username for p in game.players],
                 "turn_number": view["turn_number"],
                 "step": view["step"],
-                "winner": game.winner,
-                "drawn": game.drawn,
+                "winner": view["winner"],
+                "drawn": view["drawn"],
                 "agents": {
                     name: settings.model_dump()
                     for name, settings in store.agent_settings(game_id).items()
                 },
                 "seats": seats,
+                "created_at": store.created_at(game_id),
             }
         )
+    games.sort(key=lambda entry: entry["created_at"] or "")
     return {"games": games}
 
 
