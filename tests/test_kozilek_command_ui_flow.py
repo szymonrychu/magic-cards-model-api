@@ -108,7 +108,13 @@ def test_same_player_for_both_modes_casts_and_resolves(client: TestClient, game:
     assert result["response"].json()["outcome"] == "resolve_top", result["response"].json()
 
     board = client.get(f"/api/games/{game}").json()
-    spawn = [c for c in board["battlefield"] if "Eldrazi Spawn" in (c["name"] or "")]
+    assert board["stack"] == [], "the spell resolved - nothing should be left on the stack"
+
+    spawn = [
+        c
+        for c in board["battlefield"]
+        if "Eldrazi Spawn" in (c["name"] or "") and c["controller"] == "alice"
+    ]
     assert len(spawn) == 1
 
     alice = next(p for p in board["players"] if p["username"] == "alice")
