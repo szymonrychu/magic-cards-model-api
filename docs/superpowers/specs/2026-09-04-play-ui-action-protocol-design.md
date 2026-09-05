@@ -88,7 +88,12 @@ plus a persisted stops panel; additive API changes only; polling stays.
 - `choose_targets` uses the same board picker as casting, per slot.
 - Scry and surveil keep the split renderer, and gain kept-card ordering by
   drag or arrow buttons, sending `top_order`.
-- A decision shows the remaining time from `decision_timeouts`.
+- ~~A decision shows the remaining time from `decision_timeouts`.~~ Not
+  implemented: `decision_timeouts` (`serialize.state_view`, `store.py`) is an
+  audit trail of decisions that already timed out and defaulted, not a live
+  countdown for the one currently pending - `pending_decision` carries no
+  remaining-time field at all, so there is no deadline on the wire for a
+  client to show.
 
 ### Ribbon
 
@@ -115,6 +120,12 @@ frontend does.
 - Sending: the flat `targets` list is built by walking the slots in
   requirement order, which is exactly the order the engine's slot assignment
   expects.
+- A `choose_targets` decision (as opposed to a cast or activation's own
+  targeting) carries exactly one requirement - `target_minimum`/
+  `target_maximum` on the `PendingDecision` itself, no per-mode breakdown -
+  so `decisions.js`'s `targetsAffordance` synthesizes a single-requirement
+  affordance from those two fields and the decision renders exactly one
+  slot, never several.
 - Division: when the affordance carries `division`, each filled target gets
   a number stepper; the sum must equal the amount; the cast sends `shares`.
   `CastRequest` gains `shares: list[int] | None`, applied through

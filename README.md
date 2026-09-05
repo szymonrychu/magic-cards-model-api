@@ -45,8 +45,10 @@ player"), so a modal spell can put the *same* player in two different slots.
 Kozilek's Command choosing modes 1 and 2 with you as both targets is the case
 this was built for. The active slot is the first unfilled one, the board
 highlights what may legally fill it, clicking a slot chip refocuses it, and
-clicking a chosen target again un-chooses it. The cast fires the moment the
-last required slot is filled and the dry run comes back allowed. A Cast button
+clicking a chosen target again fills the active slot with it too when that
+slot can legally take it (how the same player ends up in two different
+Kozilek's Command slots) and un-chooses it otherwise. The cast fires the
+moment the last required slot is filled and the dry run comes back allowed. A Cast button
 appears only when the player has to say they are done: "up to N" targets, a
 division, pinned mana, or a dry run that came back refused. Escape, or
 clicking the lifted card, cancels.
