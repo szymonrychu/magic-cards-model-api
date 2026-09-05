@@ -1,0 +1,41 @@
+# The API creates one Job per AI seat, so it needs to create, watch and delete
+# Jobs, and read Pods to find each Job's pod IP and phase. Namespaced, never
+# cluster-wide: creating pods is a privilege boundary, and the restricted Pod
+# Security Standard on this namespace (label it: pod-security.kubernetes.io/
+# enforce=restricted) keeps what those Jobs may ask for in check.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mtg-api
+  namespace: mtg-engine
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mtg-api
+  namespace: mtg-engine
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+# No configmaps rule: the Job's initContainer writes the MCP config from an env var.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mtg-api
+  namespace: mtg-engine
+subjects:
+  - kind: ServiceAccount
+    name: mtg-api
+    namespace: mtg-engine
+roleRef:
+  kind: Role
+  name: mtg-api
+  apiGroup: rbac.authorization.k8s.io

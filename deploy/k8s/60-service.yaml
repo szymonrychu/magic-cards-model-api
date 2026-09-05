@@ -1,21 +1,15 @@
-# One Service, three ports - the same three things compose published.
+# One Service, one port: 8000, the API and the play UI.
 #
-# 8000 is the point of the whole stack: it serves the play UI at /, so without it you
-# cannot play. 8090 and 8080 are kept because they are how you see what the
-# agent is doing: `GET /status` on the driver says which deck it identified and
-# how confidently, and the agent's `/v1/messages/{turnId}` carries the full
-# text of a turn the driver only logs a trimmed version of (plus /v1/probe and
-# /v1/interrupt when a turn looks stuck). NEITHER HAS ANY AUTHENTICATION.
+# The old 8080 (agent debug) and 8090 (driver debug) ports are gone from this
+# Service along with their containers: each AI seat is now its own Job
+# (`k8s_seats.py`), with its own agent/driver containers and its own Pod IP,
+# not a sidecar sharing this Deployment's Pod. There is no longer one fixed
+# agent/driver pair to expose here - port-forward a seat's own Job Pod
+# instead (`kubectl -n mtg-engine get pods -l app.kubernetes.io/name=mtg-agent`)
+# if you need to reach one directly.
 #
-# type is ClusterIP: the ingress (70-ingress.yaml) is the front door now, and
-# it routes to port 8000 ONLY. 8080 and 8090 are reachable from inside the
-# cluster and by port-forward, and that is the whole point of leaving them on
-# the Service - they are debug ports, not published ones:
-#
-#     kubectl -n mtg-engine port-forward pod/mtg-stack 8000 8080 8090
-#
-# Do not add 8080 or 8090 to the ingress. Do not switch this back to NodePort
-# unless you want those two unauthenticated ports open on every node.
+# type is ClusterIP: the ingress (70-ingress.yaml) is the front door, and it
+# routes to port 8000 only.
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,9 +23,3 @@ spec:
     - name: game
       port: 8000
       targetPort: 8000
-    - name: agent
-      port: 8080
-      targetPort: 8080
-    - name: driver
-      port: 8090
-      targetPort: 8090

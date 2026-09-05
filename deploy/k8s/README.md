@@ -1,30 +1,35 @@
-# The agent stack on Kubernetes - one Pod, three containers
+# The stack on Kubernetes - the API, plus one Job per AI seat
 
-**Status: a draft. These manifests have never been applied to a running
-cluster.** They validate (see [What was actually validated](#what-was-actually-validated))
-and the wiring below was derived from `docker-compose.yml` and the code, not
-guessed - but nothing here has served a game. Treat the first `kubectl apply`
-as the real test. `docker compose up` remains the supported way to run this.
-
-This is the compose topology with the network collapsed onto loopback: the
-game, the agent and the driver as three containers in a single Pod, plus one
-initContainer that clones the deck guides. Plain YAML, no Helm, no Kustomize,
-no operator.
+This used to be one Pod with three containers (game, agent, driver) mirroring
+`docker-compose.yml`'s topology. It is not that any more. The API is now a
+single-container Deployment, and it creates one Kubernetes Job per AI seat
+itself (`AI_SEAT_MODE=kubernetes`, `src/magic_cards_model_api/k8s_seats.py`) -
+each Job carries its own `agent` + `driver` containers, runs for the length of
+one match, and is cleaned up by `ttlSecondsAfterFinished` when it is done.
+Plain YAML, no Helm, no Kustomize, no operator.
 
 | file | what it is |
 |---|---|
 | `00-namespace.yaml` | the `mtg-engine` namespace (NOT `mtg` - see below) |
 | `10-secret.template.yaml` | templates for the Claude credential and the GitHub PAT - placeholders only, never real values |
-| `20-configmap-mcp.yaml` | `mcp.base.json` with `mtg` re-pointed at `127.0.0.1:8000` and spellslinger at its in-cluster Service |
-| `30-storage.yaml` | PVCs for the agent's memory and the Scryfall cache |
-| `50-deployment.yaml` | the Deployment - one replica, `Recreate` strategy, owning a Pod with the guides initContainer, then game + agent + driver: ports, env, probes, resources |
-| `60-service.yaml` | ClusterIP Service for 8000 (play), 8080 (agent API), 8090 (driver status) |
+| `30-storage.yaml` | PVCs for the agent's memory (now `ReadWriteMany` - see below) and the Scryfall cache |
+| `40-rbac.yaml` | a `mtg-api` ServiceAccount, namespaced Role and RoleBinding letting the API create/watch/delete Jobs and read Pods |
+| `45-networkpolicy.yaml` | pins every agent-seat Pod: reachable only from the API, allowed out only to the API, DNS, spellslinger, and HTTPS |
+| `50-deployment.yaml` | the API Deployment - one replica, `Recreate` strategy, one `game` container: ports, env, probes, resources |
+| `60-service.yaml` | ClusterIP Service for port 8000 only |
 | `70-ingress.yaml` | the basic-auth Secret and the TLS ingress on `play-magic.szymonrichert.pl`, routing port 8000 only |
+
+There is no `20-configmap-mcp.yaml` any more. The old ConfigMap supplied a
+loopback-pointed `mcp.base.json` to the one Pod's agent container; per-seat
+Jobs have no shared Pod to loop back to, so each Job's `mcp-config`
+initContainer writes its own `/etc/mtg/mcp.json` from a `--game`-scoped JSON
+literal baked in by `k8s_seats.mcp_config` (see `env: MCP_JSON` on that
+initContainer) - there is nothing left for a ConfigMap to hold.
 
 ## The three things you have to supply
 
 Everything else applies as-is. These three do not exist until you create them,
-and the Pod will not run without the first two.
+and neither the API Pod nor any seat Job will run without the first two.
 
 | what | where it goes | how |
 |---|---|---|
@@ -36,17 +41,70 @@ The full ordered sequence is under [Apply](#apply).
 
 ## Namespace: `mtg-engine`, not `mtg`
 
-A namespace called `mtg` already exists in this cluster (57 days old, empty at
-the time of writing) and belongs to something else. These manifests deliberately
-use a new `mtg-engine` namespace and never touch `mtg`.
+A namespace called `mtg` already exists in this cluster and belongs to
+something else. These manifests deliberately use a new `mtg-engine` namespace
+and never touch `mtg`.
+
+## RBAC, and the Pod Security Standard
+
+The API creates a Job (and reads its Pods) for every AI seat it dispatches, so
+it needs its own ServiceAccount and a namespaced Role - never a ClusterRole,
+because creating Pods (which a Job does on your behalf) is a privilege
+boundary worth keeping inside one namespace. `40-rbac.yaml` grants exactly:
+
+- `batch/jobs`: `create`, `get`, `list`, `watch`, `delete`
+- `pods`: `get`, `list`, `watch` (to find a seat Job's Pod IP and phase)
+- `pods/log`: `get`
+
+No `configmaps` rule: the Job's own `mcp-config` initContainer writes the MCP
+config from an env var, so the API never touches a ConfigMap.
+
+Label the namespace with the restricted Pod Security Standard once, so a bug
+in a future Job template cannot ask for more than a seat Pod should ever need
+(root, host access, extra capabilities - `k8s_seats.build_job` already sets
+`runAsNonRoot`, drops all capabilities, and disallows privilege escalation on
+every container, precisely so this label does not block it):
+
+```sh
+kubectl label namespace mtg-engine pod-security.kubernetes.io/enforce=restricted
+```
+
+## NetworkPolicy: agent Pods are pinned
+
+`45-networkpolicy.yaml` selects every Pod labelled
+`app.kubernetes.io/name: mtg-agent` (every seat Job's Pod carries this label -
+see `k8s_seats.LABEL_APP`) and, both directions:
+
+- **Ingress**: only from Pods labelled `app: mtg-stack` (the API Deployment) -
+  the driver's `/status` and any control call the API makes land, nothing else
+  does.
+- **Egress**: DNS (`kube-system`, UDP/TCP 53), the API on 8000, the
+  `spellslinger-development` namespace on 8080 (the spellslinger MCP Service),
+  and HTTPS (443) to everywhere *except* the RFC1918 private ranges - which is
+  how the agent reaches the Anthropic API without also being able to reach
+  arbitrary other things inside the cluster's own address space.
+
+The egress `ipBlock`'s `except` list is the RFC1918 ranges
+(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), not this cluster's specific
+pod/service CIDRs. Checked directly against this cluster with
+`kubectl cluster-info dump | grep -m1 cluster-cidr` (pod CIDR `10.244.0.0/16`)
+and `grep -m1 service-cluster-ip-range` (service CIDR `10.96.0.0/12`): both
+are already subsets of `10.0.0.0/8`, so the RFC1918 list as committed already
+excludes them - no cluster-specific edit was needed. If you point this at a
+cluster whose pod or service CIDR falls *outside* 10.0.0.0/8 (an
+`icx-cidr`-in-172.32/8 style setup, say), add that range to the `except` list
+too, or agent egress to the cluster's own Pod/Service network stays blocked
+by the ipBlock's own default deny rather than reaching the intended peers -
+which would surface as the agent timing out talking to the API or
+spellslinger, not as an obvious policy error.
 
 ## Images: Harbor, and the `__TAG__` placeholder
 
-The three app containers and the initContainer pull from Harbor:
+The API image, and the two images every seat Job pulls, come from Harbor:
 
 ```
-harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__     # game, driver
-harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__   # agent, guides init
+harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__     # game (this Deployment), driver (per-seat Job)
+harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__   # agent, guides init (per-seat Job)
 ```
 
 **`__TAG__` is a literal placeholder, not a tag that exists.** The intended way
@@ -56,8 +114,13 @@ to deploy is:
 mise run k8s:deploy
 ```
 
-which substitutes `__TAG__` with `git rev-parse --short HEAD` and pipes the
-result to `kubectl apply -f -`. Nothing rendered is written back into the repo.
+which substitutes `__TAG__` with the commit sha and pipes the result to
+`kubectl apply -f -`. Nothing rendered is written back into the repo. The
+Deployment sets `AGENT_IMAGE` and `API_IMAGE` env vars to the same
+`harbor.szymonrichert.pl/.../*:__TAG__` strings, substituted by the exact same
+`sed`, so one substitution pins both the API's own image and the image every
+Job it creates will pull - no separate `__AGENT_IMAGE__`/`__API_IMAGE__`
+placeholder was needed.
 
 If you are not using mise, do the same thing by hand:
 
@@ -73,11 +136,11 @@ policy with it.
 
 ### The registry pull secret
 
-Harbor is private, so the Pod carries `imagePullSecrets: [{name: regcred}]`.
-`imagePullSecrets` are namespaced, and the new namespace starts without one.
-Every other namespace in this cluster already has a `regcred`
-docker-registry Secret for `harbor.szymonrichert.pl` (robot account
-`robot$kubernetes`). The easy path is to copy one:
+Harbor is private, so the API Pod (and every seat Job's Pod) carries
+`imagePullSecrets: [{name: regcred}]`. `imagePullSecrets` are namespaced, and
+the new namespace starts without one. Every other namespace in this cluster
+already has a `regcred` docker-registry Secret for `harbor.szymonrichert.pl`
+(robot account `robot$kubernetes`). The easy path is to copy one:
 
 ```sh
 kubectl -n default get secret regcred -o yaml \
@@ -112,7 +175,9 @@ kubectl -n mtg-engine create secret generic mtg-agent \
 Get the value from `claude setup-token`. **It is not an API key.** The CLI
 reads OAuth tokens and API keys from different variables, and a setup-token
 placed in `ANTHROPIC_API_KEY` is sent as an API key and gets a 401 -
-`docker-compose.yml` says the same thing.
+`docker-compose.yml` says the same thing. Every seat Job's `agent` container
+pulls both keys from this same Secret via `envFrom` (`k8s_seats.build_job`),
+so one Secret update is picked up by the next Job created, no restart needed.
 
 If you would rather use a real `sk-ant-...` key:
 
@@ -121,10 +186,9 @@ kubectl -n mtg-engine create secret generic mtg-agent \
   --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 ```
 
-Set exactly one. The agent container declares **both** env vars from **the same
-Secret**, each with `optional: true` on the `secretKeyRef`, so whichever key you
-did not create is simply absent instead of blocking Pod start. The wrapper
-prefers the token and clears the other so they cannot shadow each other.
+Set exactly one. Whichever key you did not create is simply absent from the
+Secret; the wrapper prefers the token and clears the other so they cannot
+shadow each other.
 
 ### The GitHub PAT for the deck guides
 
@@ -136,6 +200,8 @@ kubectl -n mtg-engine create secret generic mtg-decks-git \
 Scope: read access to **one private repo**, `szymonrychu/mtg-decks`, and nothing
 else. A classic PAT with the `repo` scope works; a fine-grained PAT scoped to
 that single repository with `Contents: Read-only` is tighter and preferred.
+Every seat Job's `guides` initContainer uses it to clone the repo fresh into
+that Job's own emptyDir.
 
 `10-secret.template.yaml` exists for people who want either declarative; copy it
 to `10-secret.yaml` (gitignored) and fill in the placeholders.
@@ -150,11 +216,12 @@ crawlers, not security. See the blunt comment on the Secret itself.
 
 ## Apply
 
-In order. Steps 1-3 are the ones you only do once per cluster.
+In order. Steps 1-4 are the ones you only do once per cluster.
 
 ```sh
-# 1. namespace
+# 1. namespace, then the restricted Pod Security Standard on it
 kubectl apply -f deploy/k8s/00-namespace.yaml
+kubectl label namespace mtg-engine pod-security.kubernetes.io/enforce=restricted
 
 # 2. registry pull secret (copied from an existing namespace)
 kubectl -n default get secret regcred -o yaml \
@@ -167,29 +234,73 @@ kubectl -n mtg-engine create secret generic mtg-agent \
 kubectl -n mtg-engine create secret generic mtg-decks-git \
   --from-literal=GH_PAT="$GH_PAT"
 
-# 4. everything else, with the image tag substituted
+# 4. RBAC (ServiceAccount, Role, RoleBinding) - the API Deployment names this
+#    ServiceAccount, so apply it before or together with everything else
+kubectl apply -f deploy/k8s/40-rbac.yaml
+
+# 5. everything else, with the image tag substituted
 mise run k8s:deploy
 #   or, without mise:
 #   sed "s/__TAG__/$(git rev-parse --short HEAD)/g" deploy/k8s/*.yaml | kubectl apply -f -
 
-# 5. watch it come up
-kubectl -n mtg-engine get pod mtg-stack -w
+# 6. watch it come up
+kubectl -n mtg-engine get pod -l app=mtg-stack -w
 ```
 
-The Pod goes `Init:0/1` (cloning the guides) then `Running` but **not ready**
-until claude has booted, which takes up to about two minutes.
+The API Pod is a single container; it is ready as soon as `/api/health`
+answers, no `Init:` phase and no multi-minute claude boot to wait on any more -
+that all happens per-seat, inside a Job, once a game actually dispatches an AI
+seat:
+
+```sh
+kubectl -n mtg-engine get jobs -l app.kubernetes.io/name=mtg-agent
+kubectl -n mtg-engine get pods -l app.kubernetes.io/name=mtg-agent
+kubectl -n mtg-engine logs job/<name> -c agent -f
+kubectl -n mtg-engine logs job/<name> -c driver -f
+```
+
+### The `mtg-agent-memory` PVC cannot change access mode in place
+
+If this cluster already has a `mtg-agent-memory` PVC bound from an earlier
+apply (the one-Pod-three-container design used `ReadWriteOnce`), `kubectl
+apply` on the new `ReadWriteMany` spec will be **rejected**, not silently
+applied:
+
+```
+The PersistentVolumeClaim "mtg-agent-memory" is invalid: spec: Forbidden:
+spec is immutable after creation except resources.requests and
+volumeAttributesClassName for bound claims
+```
+
+A PVC's `accessModes` cannot be changed after it is bound - confirmed with
+`kubectl apply --dry-run=server` against this cluster's existing PVC before
+committing this change. The only fix is delete-and-recreate, and the default
+`Delete` reclaim policy on `rook-ceph-rwx` means deleting the PVC deletes the
+underlying volume too - **which is where the agent's cross-game notes live**.
+Before deleting it, copy `/workspace/memory` out of a running Pod that mounts
+it (`kubectl cp` or a throwaway Pod mounting the same claim), delete the PVC,
+`kubectl apply` the new `ReadWriteMany` one, then copy the notes back in. This
+step was **not** performed as part of writing these manifests - it touches a
+live volume and was left for whoever actually cuts the cluster over.
 
 ## Reach it
 
 | what | where |
 |---|---|
 | play | `https://play-magic.szymonrichert.pl/` - user `play`, password `magic`. `/play/` redirects here |
-| which deck the driver identified | port-forward, then `http://127.0.0.1:8090/status` |
-| agent turns, probe, interrupt | port-forward, then `http://127.0.0.1:8080/v1/...` |
+| a seat's driver status | port-forward that seat Job's Pod, then `http://127.0.0.1:8090/status` |
+| a seat's agent turns, probe, interrupt | port-forward that seat Job's Pod, then `http://127.0.0.1:8080/v1/...` |
 
 ```sh
-kubectl -n mtg-engine port-forward deploy/mtg-stack 8000 8080 8090
+kubectl -n mtg-engine port-forward deploy/mtg-stack 8000
+kubectl -n mtg-engine port-forward job/<seat-job-name> 8080 8090
 ```
+
+Neither 8080 nor 8090 is on the `mtg-stack` Service or the ingress any more -
+there is no longer one fixed agent/driver pair behind that Service to route
+to, and both remain unauthenticated, so a seat Job's debug ports are
+reachable only by port-forward (or from inside the cluster, and only from the
+API Pod - see the NetworkPolicy above).
 
 `*.szymonrichert.pl` resolves to the LAN IP at home and to the public IP from
 outside, so the host works from both with no extra DNS record - and is really
@@ -201,285 +312,160 @@ can 502 or serve a self-signed cert for the minute that takes.
 ## Logs
 
 ```sh
-kubectl -n mtg-engine logs deploy/mtg-stack -c guides           # the deck-guide clone
-kubectl -n mtg-engine logs deploy/mtg-stack -c agent -f         # session boot, turns, a dead claude
-kubectl -n mtg-engine logs deploy/mtg-stack -c agent --previous # the match that just ended
-kubectl -n mtg-engine logs deploy/mtg-stack -c driver -f        # the match lifecycle
 kubectl -n mtg-engine logs deploy/mtg-stack -c game -f | grep "PROBLEM REPORTED"
+kubectl -n mtg-engine get jobs -l app.kubernetes.io/name=mtg-agent
+kubectl -n mtg-engine logs job/<name> -c guides             # the deck-guide clone
+kubectl -n mtg-engine logs job/<name> -c agent -f            # session boot, turns, a dead claude
+kubectl -n mtg-engine logs job/<name> -c driver -f           # the match lifecycle
 ```
 
-`--previous` matters here more than usual: the agent container is *replaced*
-after every match, so the log of the game you just played is the previous
-container's.
+There is no `--previous` container to fall back to any more: a finished seat
+is a finished Job (`ttlSecondsAfterFinished`), not a replaced container in an
+otherwise-still-running Pod. Grab the logs before the TTL cleans the Job up,
+or raise `AGENT_JOB_TTL_SECONDS` if you need a longer window.
 
-## What changed versus compose, and why
+## What changed versus the one-Pod-three-container design
 
-### Every service name became `127.0.0.1`
+### The API Deployment lost two containers and four volumes
 
-One Pod is one network namespace.
+`agent`, `driver`, the `guides` initContainer, and the `guides`, `memory`,
+`mcp-base`, `driver-workspace` volumes are all gone from `50-deployment.yaml`.
+They still exist - just per-seat, inside the Job `k8s_seats.build_job`
+constructs, not baked into this Deployment's Pod template. The API Deployment
+keeps exactly the `game` container and the `scryfall-cache` PVC, plus a new
+`serviceAccountName: mtg-api` and the downward-API env described below.
 
-| compose | here |
-|---|---|
-| `DRIVER_URL=http://driver:8090` (game) | `http://127.0.0.1:8090` |
-| `GAME_API=http://game:8000` (driver) | `http://127.0.0.1:8000` |
-| `WRAPPER_API=http://agent:8080` (driver) | `http://127.0.0.1:8080` |
-| `DRIVER_SELF_URL=http://driver:8090` (driver) | `http://127.0.0.1:8090` |
-| `mcp.base.json` `--api http://game:8000` | `--api http://127.0.0.1:8000` |
+### `AI_SEAT_MODE=kubernetes`, and the env that goes with it
 
-The MCP one is the easy one to miss. The `mtg` MCP server is not a container:
-the agent spawns it itself over stdio, inside the agent container, and it
-reaches the game over HTTP using the `--api` URL baked into `mcp.base.json`.
-Left alone it would try to resolve the DNS name `game` and fail.
+The `game` container's env grew: `AI_SEAT_MODE=kubernetes` (in place of the
+old `wrapper` plus loopback `DRIVER_URL`, which no longer applies - there is
+no longer one sidecar driver to loop back to), `AGENT_NAMESPACE`,
+`AGENT_IMAGE`, `API_IMAGE`, `API_SERVICE_URL`, `SPELLSLINGER_MCP_URL`,
+`MAX_LIVE_GAMES`, and `POD_NAME`/`POD_UID`/`POD_NAMESPACE` from the downward
+API. The last three let `k8s_seats.build_job` set each Job's
+`ownerReferences` to this Pod - but only when `POD_NAMESPACE` equals
+`AGENT_NAMESPACE` (both `mtg-engine` here), because a cross-namespace
+`ownerReferences` entry makes the garbage collector delete the Job within
+seconds of creation instead of waiting for it to finish.
 
-**How the corrected file is supplied:** the wrapper reads whatever
-`BASE_MCP_PATH` points at (`bootstrap.merge_mcp`), then merges it into the
-workspace `.mcp.json`. So `20-configmap-mcp.yaml` carries a k8s copy, mounted
-at `/etc/mtg/mcp.base.json`, and the agent container sets
-`BASE_MCP_PATH=/etc/mtg/mcp.base.json`. `deploy/mcp.base.json` in the repo is
-untouched and compose keeps using it. That was preferred over a ConfigMap
-overmount of `/app/deploy/mcp.base.json`: same effect, but pointing an env var
-at a new file is visible in the Pod spec, while an overmount silently replaces
-a file that looks unchanged in the image.
+### Per-seat MCP config, not a ConfigMap
 
-### Spellslinger MCP goes in-cluster, not through the public ingress
+The old `20-configmap-mcp.yaml` supplied one `mcp.base.json`, mounted once,
+shared by whichever agent happened to be running in the one Pod. There is no
+longer one agent to share it with: each seat Job needs a `--game`-scoped `mtg`
+MCP server, one per concurrent game. `k8s_seats.build_job` bakes that JSON
+straight into the Job spec (`mcp_config`, written by the `mcp-config`
+initContainer to an emptyDir) instead - no ConfigMap, no shared object at all.
 
-Still enabled, different address:
+### RBAC and a NetworkPolicy are new, because the API now creates Pods
 
-```
-https://mcp.szymonrichert.pl/mcp
-  ->  http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
-```
+Nothing in the old design needed the API to talk to the Kubernetes API
+server. Now it creates a Job (hence a Pod) per seat, so it needs its own
+ServiceAccount and Role (`40-rbac.yaml`), and those seat Pods need their
+network access constrained the way loopback constrained it before
+(`45-networkpolicy.yaml`) - see both sections above.
 
-The public ingress for that server (`magic-cards-model/deploy/mcp-ingress.yaml`)
-carries `whitelist-source-range` limited to the LAN ranges. A Pod's source
-address as seen by that ingress is a cluster pod IP, so the old URL was both a
-pointless round trip out and back and a good way to eat a 403. The Service
-address skips the ingress entirely. Plain HTTP is fine: it never leaves the
-cluster network. Verified present: Service `spellslinger-mcp-http`, port 8080,
-namespace `spellslinger-development`.
+### The Service and Ingress lost two ports
 
-### A port collision that compose was hiding
+`60-service.yaml` is down to port 8000; `70-ingress.yaml` was already
+8000-only. The old 8080/8090 debug ports pointed at one fixed agent/driver
+pair sharing this Deployment's Pod; that pair does not exist any more, so
+there is nothing stable for the Service to route those ports to. Use
+port-forward against a seat Job's own Pod instead (see
+[Reach it](#reach-it)).
 
-The wrapper's internal listener is `INTERNAL_ADDR`, and compose sets it to
-`127.0.0.1:8090` - **the same port the driver serves on**. Separate network
-namespaces made that fine. In one Pod it is a bind clash. Here the internal
-listener moves to `127.0.0.1:8099`, and `CCW_INTERNAL_URL` (the URL the stop
-hook posts a finished turn to) moves with it. Port map:
+### `mtg-agent-memory` becomes `ReadWriteMany`
 
-```
-8000 game      8080 agent      8090 driver      8099 agent-internal (loopback)
-```
+Several seats' Pods now mount the same claim at once, for as many games as
+`MAX_LIVE_GAMES` allows running concurrently, potentially scheduled on
+different nodes. `ReadWriteOnce` would let only the first seat's Pod bind it;
+every other seat's Pod would sit in `ContainerCreating` waiting for the
+volume. See [The `mtg-agent-memory` PVC cannot change access mode in
+place](#the-mtg-agent-memory-pvc-cannot-change-access-mode-in-place) for what
+that means for a cluster that already has this PVC bound.
 
-Compose is not changed; 8090 is still correct there.
+### Everything inside one seat Job is still the old three-container shape
 
-### Non-root, and it must stay that way
-
-claude refuses bypass-permissions mode as root ("cannot be used with root/sudo
-privileges for security reasons") and exits 1, which surfaces as `claude exited
-code=1`. `Dockerfile.agent` creates a uid/gid 1000 `agent` user for exactly
-this reason. The Pod's `securityContext` is `runAsNonRoot: true`,
-`runAsUser/runAsGroup: 1000`, `fsGroup: 1000` to match. If you hit a permission
-error on a volume, fix the volume - do not set `runAsUser: 0`.
-
-Note this also runs the *game* and *driver* containers as uid 1000; their image
-has no `USER` line and runs as root under compose. Their writable paths are
-mounted volumes (`fsGroup` covers those), so this should be fine - but it is
-one of the unverified items below.
-
-### `restartPolicy: Always`
-
-The agent exits deliberately at the end of every match - one match per
-container, then a fresh claude session - and it exits **zero** (a clean return
-out of `wrapper/__main__`). `OnFailure` only restarts non-zero exits, so it
-would leave the stack dead after game one. `Never` is worse. `Always` restarts
-the agent container **in place**: a container restart is not a Pod restart, so
-the game and driver containers keep running, keep their listeners, and keep
-their state across the agent's recycle. That is what compose's
-`restart: unless-stopped` did.
-
-One difference to expect: Kubernetes applies an exponential restart backoff
-(up to 5 minutes) to a container that keeps exiting, regardless of exit code,
-and a container recycled once per match will accumulate it. If the gap between
-matches grows, `CrashLoopBackOff` on the agent is the reason - it is the
-restart backoff doing its job, not a failure.
-
-### Probes
-
-- **game**, **driver**: `/api/health` and `/healthz`, readiness and liveness.
-- **agent**: a `startupProbe` on `/healthz` owns the whole boot window - 10s x
-  36 = 6 minutes of grace. This is load-bearing: the wrapper boots claude
-  *before* it starts serving HTTP at all, so nothing answers on 8080 for up to
-  two minutes, and a bare liveness probe would kill the container mid-boot
-  forever. Liveness only starts once startup has passed. Readiness uses
-  `/readyz`, which 503s until claude has actually booted; liveness deliberately
-  does **not** use `/readyz`, because a dead claude already takes the container
-  down by exiting, and that is the designed recycle path.
-
-### Env carried over from compose
-
-Everything compose sets is set here, including the four that an earlier draft of
-these manifests had dropped: `ACCESS_LOG_QUIET=1` on all three containers (it
-keeps the ~1.2s UI polls and the driver's `/status` polls out of the access
-log), and `AGENT_LOG_LEVEL=tools` on the agent (what the agent prints off its
-own live transcript). `MODEL=sonnet` and `GUIDES_ROOT=/guides` were already
-there. Compose reads these from `.env` with defaults; here they are the
-defaults, written out literally.
-
-### Resources
-
-Conservative, and requests deliberately well under limits:
-
-| container | requests | limits | why |
-|---|---|---|---|
-| guides (init) | 50m / 64Mi | 500m / 256Mi | one shallow git clone |
-| game | 100m / 256Mi | 1 CPU / 1Gi | one uvicorn app serving one game |
-| agent | 250m / 1Gi | 2 CPU / 3Gi | node plus an interactive claude holding a long transcript; a turn is bursty |
-| driver | 50m / 128Mi | 500m / 512Mi | bookkeeping and HTTP calls |
-
-Nothing here was measured under load. If the agent gets OOMKilled mid-match,
-raise its memory limit first.
+The env, volumes, probes and non-root `securityContext` that used to live on
+this Deployment's `agent` and `driver` containers are still exactly that
+shape - they just live in `k8s_seats.build_job` now, one Job per seat, instead
+of being baked into this file. Read that module next to this README for the
+per-seat wiring (ports, `INTERNAL_ADDR` moved off 8090, `BASE_MCP_PATH`, the
+guides clone script, the probes, resource requests/limits).
 
 ## Storage choices, honestly
 
-### Deck guides: an initContainer that clones them, every Pod start
+### Deck guides: still an initContainer clone, now per-seat
 
-There is no bind mount in Kubernetes. An earlier draft used
-`hostPath: /srv/mtg-decks`, which worked but **pinned the Pod to one node**:
-you had to copy the guides onto that node by hand and pin the Pod with a
-`nodeSelector`, or the scheduler would place it somewhere `/srv/mtg-decks` did
-not exist. `hostPath` is also restricted by policy on a lot of clusters.
-
-That is gone. The guides now live in an `emptyDir` that an initContainer fills
-by cloning `github.com/szymonrychu/mtg-decks` before any app container starts.
-Strictly better on two axes: **no node pinning at all**, and the guides are
-**current at every restart** rather than being whatever was last copied onto
-one node. The `nodeSelector` and the hostPath are both deleted.
-
-Details worth knowing:
-
-- **The image is the agent image**, `magic-cards-model-agent:__TAG__`.
-  `Dockerfile.agent` apt-installs `git`; the game/driver `Dockerfile` installs
-  nothing beyond `uv` and has no git, so it could not do this job. Reusing an
-  image the kubelet is already pulling for the agent container avoids a second
-  registry and a second pull.
-- **It runs as uid 1000**, under the Pod `securityContext` like everything
-  else. The `emptyDir` is chowned to `fsGroup` 1000 with the setgid bit, so
-  uid 1000 can write into it. Nothing in the clone needs root.
-- **The PAT does not stay in the repo it cloned.** The token has to be in the
-  clone URL (`https://x-access-token:${GH_PAT}@github.com/...`), and `git clone`
-  persists whatever URL it was given into `.git/config` as
-  `remote.origin.url` - which would then sit inside `/guides` for the life of
-  the Pod, in cleartext, readable by a claude session that can read files. So
-  the remote is immediately reset to the tokenless URL, and the script greps
-  `.git/config` afterwards to prove the token is gone. The clone is `--depth 1`,
-  so there is no fetch history carrying it either.
-- **A failed clone fails the Pod, loudly.** `set -e` and a non-zero exit leave
-  the Pod in `Init:Error` / `Init:CrashLoopBackOff`, plainly visible in
-  `kubectl get pod`. It never starts with a silently empty `/guides`, which
-  would look healthy and play badly. `GIT_TERMINAL_PROMPT=0` makes a bad or
-  expired PAT fail immediately instead of hanging on a credential prompt.
-
-The cost, versus the hostPath it replaced: you can no longer edit a guide on
-the node and have the agent see it next match. Push to the repo and restart the
-Pod instead. For a repo you already keep in git, that is the right loop.
+There is no bind mount and no ConfigMap-backed shared copy. Each seat Job's
+`guides` initContainer clones `github.com/szymonrychu/mtg-decks` fresh into
+that Job's own `emptyDir` before its `agent`/`driver` containers start - the
+same script the old Pod-level initContainer ran, just templated per Job by
+`k8s_seats.build_job` instead of hand-written once here. The PAT-hygiene and
+loud-failure behaviour described in the module docstring is unchanged.
 
 ### Agent memory: a PVC, and it is the important one
 
-`/workspace/memory` is the only thing that crosses a match boundary. The agent
-container is replaced after every game; the notes it wrote are the entire
-mechanism for cross-game learning. It gets `mtg-agent-memory`, a 1Gi
-ReadWriteOnce PVC.
+`/workspace/memory` is the only thing that crosses a match boundary. A seat
+Job's containers are gone once the Job finishes; the notes they wrote are the
+entire mechanism for cross-game learning. It gets `mtg-agent-memory`, a 1Gi
+`ReadWriteMany` PVC, mounted by every concurrent seat Job's Pod at once.
 
 ### Scryfall cache: a PVC too
 
-`/app/.scryfall-cache`, 2Gi. Not correctness-critical, purely cold-start cost -
-a cold cache measured 34.5s for a single decklist, and without a volume every
-Pod recreate pays it again.
+`/app/.scryfall-cache`, 2Gi, mounted on the API Deployment only (seat Jobs
+never fetch card data directly). Not correctness-critical, purely speed: a
+cold cache re-fetches every card on first use (measured at 34.5s for a single
+decklist), and every Pod restart would pay it again without a volume.
 
 ### StorageClass
 
 Neither PVC names a `storageClassName`, so both take the cluster default. In
 this cluster that is **`rook-ceph-rwx`** (CephFS), confirmed with
-`kubectl get sc` - both claims bind to it as written, no edit needed. On a
-cluster with no default they would stay `Pending` forever and the Pod would
+`kubectl get sc` - both claims bind to it as written, no edit needed, and
+CephFS is what makes `ReadWriteMany` on `mtg-agent-memory` possible at all. On
+a cluster with no default they would stay `Pending` forever and the Pod would
 never start; `30-storage.yaml` explains the fix.
 
 ## What was actually validated
 
-Run on these manifests, with `__TAG__` substituted with a dummy value into a
-temp directory (nothing rendered was left in the repo, and nothing was applied
-for real):
-
-- `kubectl apply --dry-run=client -f <rendered>/` - all 10 objects accepted.
-- `kubectl apply --dry-run=server -f <rendered>/` against the live cluster on
-  the `kubernetes-admin@kubernetes` context - all 10 accepted. Server dry-run
-  runs real schema validation, defaulting and admission. Nothing was created:
-  server dry-run does not persist.
-  One wrinkle worth recording: a server dry-run of the namespaced objects
-  fails with `namespaces "mtg-engine" not found`, because the namespace's own
-  dry-run creation does not persist for the objects that follow it. So the
-  namespaced objects were re-rendered into the existing `mtg` namespace purely
-  to get them admitted by the API server, and all 10 passed that way. That is
-  a validation artifact only - nothing was written to `mtg`, and the committed
-  manifests all say `mtg-engine`.
-- Server-side defaulting confirmed both PVCs resolve to
-  `storageClassName: rook-ceph-rwx`.
-- The initContainer script parses clean under `sh -n`.
-- The committed basic-auth hash was generated with `htpasswd -nbB play magic`
-  and then **verified**: `htpasswd -vb` accepts `magic` and rejects a wrong
-  password.
-
-Cluster facts checked directly, not assumed:
-
-- ClusterIssuer `letsencrypt-prod` exists and is Ready.
-- Service `spellslinger-mcp-http` exists in `spellslinger-development` on port
-  8080.
-- Default StorageClass is `rook-ceph-rwx`.
-- Secret `regcred` exists in `default` and is `kubernetes.io/dockerconfigjson`.
-- Namespace `mtg` exists (57 days old) and `mtg-engine` does not.
-
-`kubeval` and `kubectl-validate` are not installed here; no other linter ran.
+- `uv run pytest tests/test_k8s_manifests.py` - parses every non-template
+  manifest with `__TAG__` substituted via `yaml.safe_load_all` and asserts
+  the Deployment is API-only with the right env, the Role/RoleBinding/absence
+  of a ClusterRole, the memory PVC's `ReadWriteMany` mode, the Service's
+  single port, and the NetworkPolicy's selector and policy types.
+- `kubectl apply --dry-run=client -f <rendered>` - all 11 objects accepted.
+- `kubectl apply --dry-run=server -f <rendered>` against the live cluster
+  (context `kubernetes-admin@kubernetes`, namespace `mtg-engine`, which
+  already exists on this cluster from an earlier apply of the previous
+  three-container design) - every object except the memory PVC accepted; see
+  [The `mtg-agent-memory` PVC cannot change access mode in
+  place](#the-mtg-agent-memory-pvc-cannot-change-access-mode-in-place) for
+  the one that was not, and why.
+- `kubectl cluster-info dump | grep -m1 cluster-cidr` /
+  `grep -m1 service-cluster-ip-range` against the live cluster, to confirm
+  the NetworkPolicy's RFC1918 `except` list already covers this cluster's own
+  pod (`10.244.0.0/16`) and service (`10.96.0.0/12`) ranges.
 
 ## What remains unverified
 
-Everything that needs the workload to actually run:
+- **No seat Job has ever actually been created against this RBAC and
+  NetworkPolicy.** `k8s_seats.build_job`'s output is unit-tested and this
+  Role's shape is asserted by `test_k8s_manifests.py`, but nothing here has
+  watched the API create a real Job, seen it pass admission under the
+  restricted Pod Security Standard, or seen its Pod actually reach the API
+  and spellslinger through the NetworkPolicy.
+- **The `mtg-agent-memory` PVC migration (delete, recreate `ReadWriteMany`,
+  restore the notes) has not been performed.** It needs a live volume touched
+  by hand; see the callout above.
+- **`AI_SEAT_MODE=kubernetes` is set on the Deployment, but `ai_seat.py`'s
+  own dispatch does not yet branch on it** (as of this manifest change,
+  `ai_seat_mode()` only recognises `subprocess`/`wrapper`) - wiring that
+  branch is a separate task in this plan, not part of the manifests here.
+- Everything the old README already flagged as unverified about the
+  per-seat container shape (non-root uid 1000 for game/driver, the 8099
+  internal-port move, the MCP re-point, probe timings, resource
+  requests/limits, `regcred`/Harbor image availability) still applies -
+  see `k8s_seats.py` and its tests for what has and has not been exercised.
 
-- **The Pod has never been applied for real.** No container has started from
-  these manifests. Schema-valid is not working.
-- **The Harbor images may not exist at the tag you deploy.** Nothing here built
-  or pushed `magic-cards-model-api` or `magic-cards-model-agent`, and no tag was
-  checked against the registry. If the CI that pushes them has not run for your
-  commit, you get `ImagePullBackOff`.
-- **The `regcred` copy has not been done.** The copy command is transcribed, not
-  executed; the `mtg-engine` namespace does not exist yet, so nothing could be
-  copied into it.
-- **The guides clone has never run.** The PAT, the repo's private-ness, the
-  emptyDir ownership under `fsGroup`, and the `.git/config` grep are all
-  reasoned from how git and the kubelet behave, not observed. If the guide repo
-  has submodules, `--depth 1` without `--recurse-submodules` will not bring
-  them.
-- **The ingress has never served a request.** No certificate has been issued for
-  `play-magic.szymonrichert.pl`, no basic-auth challenge has been seen in a
-  browser, and the claim that nothing in the annotations breaks a 1.2s poll is
-  reasoned (no rate limit, no connection limit, generous timeouts) rather than
-  measured.
-- Running **game and driver as uid 1000** (they run as root under compose) is
-  untested. If either needs to write a path that is not a mounted volume, it
-  will fail with EACCES and want either an extra volume or a per-container
-  `runAsUser: 0` - and note that turning off `runAsNonRoot` at the Pod level
-  would break the agent, so any such fix belongs on the individual container.
-- The **8099 move** is untested end to end. It is consistent across
-  `INTERNAL_ADDR` and `CCW_INTERNAL_URL`, and nothing else in the repo
-  hardcodes 8090 for the wrapper, but no turn has been completed through it.
-- The **MCP re-points** are untested: no MCP tool call has been made against
-  `http://127.0.0.1:8000` or against the spellslinger Service DNS name from
-  inside the agent container.
-- **Probe timings** are reasoned from the code and the documented ~2 minute
-  boot, not measured. If claude boots slower on your node, raise the
-  startupProbe `failureThreshold`.
-- **Resource requests and limits** are estimates. None were profiled.
-- The **restart-per-match cycle** has not been observed under Kubernetes; the
-  backoff behaviour described above is expected, not seen.
-- **PVC binding and fsGroup ownership** - not exercised.
-- `mise run k8s:deploy` is written by a sibling change in this repo and was not
-  run from here.
+`kubeval` and `kubectl-validate` are not installed here; no other linter ran.

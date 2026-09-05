@@ -1,7 +1,11 @@
-# The whole stack as ONE Pod with three containers: game, agent, driver, run by
-# a single-replica Deployment. It is the docker-compose.yml topology with the
-# network collapsed onto loopback. Read that file next to this one; the env
-# below is copied from it.
+# The API, alone, as a single-container Pod run by a single-replica
+# Deployment. It used to be one Pod with three containers (game, agent,
+# driver) mirroring `docker-compose.yml`'s topology; that is gone. Per-game
+# agent pods are now Kubernetes Jobs the API creates itself, one per AI seat
+# (`AI_SEAT_MODE=kubernetes`, `src/magic_cards_model_api/k8s_seats.py`), each
+# carrying its own agent + driver containers. This Deployment's only job is
+# to serve the play UI and API, and to create/watch/delete those Jobs -
+# `40-rbac.yaml` is what grants it permission to do that.
 #
 # WHY A DEPLOYMENT AND NOT A BARE POD: a bare Pod is not rescheduled. Drain the
 # node, evict it, lose the kubelet, and it is simply gone - `kubectl get pod`
@@ -10,46 +14,27 @@
 # automatically, and a changed image tag becomes a rollout instead of a manual
 # delete-and-recreate. It is still exactly one Pod: `replicas: 1`.
 #
-# THREE THINGS CHANGE when the three containers share a Pod:
+# RECREATE, NOT ROLLING: the Deployment restart wipes every in-memory game
+# (games live in memory, see the top-level README), so there is nothing a
+# rolling update would preserve, and `ownerReferences` on every Job this Pod
+# created point at this Pod's uid - see below for what that buys.
 #
-# 1. One network namespace, so every service-name URL becomes 127.0.0.1:
-#      http://game:8000   -> http://127.0.0.1:8000    (driver GAME_API, game
-#                                                      DRIVER_URL's peer, and
-#                                                      the mtg MCP server, see
-#                                                      20-configmap-mcp.yaml)
-#      http://agent:8080  -> http://127.0.0.1:8080    (driver WRAPPER_API)
-#      http://driver:8090 -> http://127.0.0.1:8090    (game DRIVER_URL,
-#                                                      driver DRIVER_SELF_URL)
-#
-# 2. One port space, so the ports must not collide - and in compose THEY DO.
-#    The wrapper's loopback-only internal listener is INTERNAL_ADDR, which
-#    compose sets to 127.0.0.1:8090 - the same port the driver serves on.
-#    Separate namespaces made that harmless; here it would be a bind clash
-#    between the agent and the driver. The internal listener is moved to
-#    127.0.0.1:8099 below, and CCW_INTERNAL_URL (the URL the stop hook posts
-#    the finished turn to) is moved with it. Final port map:
-#      8000 game (public)   8080 agent (debug)   8090 driver (debug)
-#      8099 agent internal (loopback only, not a containerPort)
-#
-# 3. `restartPolicy: Always` - which is now also the only value a Deployment's
-#    Pod template accepts, so this stopped being a choice and became a
-#    constraint. It happens to be the one that was already wanted. The agent
-#    EXITS ON PURPOSE at the end of every
-#    match - one match per container, then a brand-new claude session - and it
-#    exits ZERO (a clean return out of wrapper/__main__). `OnFailure` would
-#    therefore never restart it and the stack would sit there dead after game
-#    one; `Never` is worse. `Always` restarts the agent container in place
-#    while the game and driver containers keep running untouched - a container
-#    restart is not a Pod restart, so no state and no listener is lost on the
-#    other two, and the driver's next dispatch is answered `pending: true`
-#    until the fresh claude has booted. This is the same behaviour compose gets
-#    from `restart: unless-stopped`.
+# `POD_NAME`/`POD_UID`/`POD_NAMESPACE` come from the downward API.
+# `k8s_seats.build_job` uses them to set each Job's `ownerReferences` to this
+# Pod, but only when `POD_NAMESPACE` equals `AGENT_NAMESPACE` - a
+# cross-namespace ownerReferences entry makes the garbage collector delete the
+# Job within seconds of creation, so a mismatch instead logs a warning and
+# omits it. Both are set to `mtg-engine` here, so ownership is set: an API
+# restart, which loses every in-memory game anyway, garbage-collects its Jobs
+# instead of leaving them running for nobody.
 #
 # IMAGES come from Harbor, and `__TAG__` is a LITERAL PLACEHOLDER, not a tag
-# that exists. `mise run k8s:deploy` in this repo substitutes it with
-# `git rev-parse --short HEAD` and pipes the result to `kubectl apply -f -`.
-# Applying this file straight from the repo with plain kubectl will fail to
-# pull; sed it yourself first (the README has the one-liner).
+# that exists. `mise run k8s:deploy` in this repo substitutes it with the
+# commit sha and pipes the result to `kubectl apply -f -`. Applying this file
+# straight from the repo with plain kubectl will fail to pull; sed it
+# yourself first (the README has the one-liner). The same `__TAG__` is used
+# for both `AGENT_IMAGE` and `API_IMAGE` below, so one substitution pins both
+# the API's own image and the image each Job it creates will pull.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -62,12 +47,6 @@ spec:
   selector:
     matchLabels:
       app: mtg-stack
-  # RECREATE, NOT ROLLING. A rolling update starts the replacement Pod before
-  # the old one is gone, and the two PersistentVolumeClaims below are
-  # ReadWriteOnce - the new Pod would sit Pending on a volume the old one still
-  # holds, and the rollout would deadlock until the old Pod was deleted by
-  # hand. There is exactly one replica and one game in flight, so there is
-  # nothing a rolling update would buy: take the stack down, bring it back up.
   strategy:
     type: Recreate
   template:
@@ -76,6 +55,7 @@ spec:
         app: mtg-stack
     spec:
       restartPolicy: Always
+      serviceAccountName: mtg-api
 
       # harbor.szymonrichert.pl is a private registry. Every other namespace in
       # this cluster carries a `regcred` docker-registry Secret for it (robot
@@ -84,12 +64,6 @@ spec:
       imagePullSecrets:
         - name: regcred
 
-      # The agent image creates a uid/gid 1000 `agent` user and does `USER agent`
-      # because claude REFUSES bypass-permissions mode as root and exits 1 - which
-      # surfaces as `claude exited code=1`. Do not "fix" a permission error by
-      # putting runAsUser: 0 here; fix the volume ownership instead. fsGroup makes
-      # the two PVCs - and the guides emptyDir the initContainer has to write -
-      # group-writable by gid 1000.
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -97,112 +71,9 @@ spec:
         fsGroup: 1000
 
       volumes:
-        # The deck guides. Compose bind-mounts a host directory (`${MTG_DECKS}`);
-        # an earlier draft of this file used `hostPath: /srv/mtg-decks`, which
-        # PINNED THE POD TO ONE NODE and needed a nodeSelector to be safe. This is
-        # an emptyDir filled by the `guides` initContainer below, which is a strict
-        # improvement on both counts: the Pod schedules anywhere, and the guides
-        # are re-cloned fresh on every Pod start instead of being whatever was last
-        # copied onto one node by hand.
-        - name: guides
-          emptyDir: {}
-        - name: memory
-          persistentVolumeClaim:
-            claimName: mtg-agent-memory
         - name: scryfall-cache
           persistentVolumeClaim:
             claimName: mtg-scryfall-cache
-        - name: mcp-base
-          configMap:
-            name: mtg-agent-mcp
-        # The driver's scratch dir (DRIVER_WORKSPACE). In compose this is just
-        # container-local disk; an emptyDir is the same thing with a name.
-        - name: driver-workspace
-          emptyDir: {}
-
-      initContainers:
-        # ------------------------------------------------------------- guides --
-        # Clone the private deck-guide repo into the `guides` emptyDir before any
-        # app container starts. All three containers then mount it read-only at
-        # /guides, exactly where compose's bind mount put it.
-        #
-        # WHY THE AGENT IMAGE: it is the only one of the two that has git.
-        # Dockerfile.agent apt-installs `git` (it needs it for the nodesource
-        # setup layer and keeps it); the game/driver Dockerfile installs nothing
-        # beyond uv. Reusing an image the kubelet is already pulling for the agent
-        # container means no second registry, no second pull, and no third thing
-        # to keep tagged in step.
-        #
-        # UID: runs as 1000 under the Pod securityContext, same as everything else.
-        # The emptyDir is created for the Pod and chowned to fsGroup 1000 with the
-        # setgid bit, so uid 1000 can write into it. Nothing here needs root.
-        #
-        # TOKEN HYGIENE: the token has to be in the clone URL, and `git clone`
-        # PERSISTS whatever URL it was given into .git/config as remote.origin.url.
-        # That file would then sit inside /guides for the life of the Pod with the
-        # PAT in cleartext, readable by the agent - which is a claude session that
-        # can read files. So the remote is immediately reset to the tokenless URL.
-        # That is the whole mitigation and it is deliberate: git writes the
-        # credential in exactly one place, and this removes it from that place. The
-        # clone is --depth 1, so there is no fetch history carrying it either.
-        #
-        # FAILURE IS LOUD ON PURPOSE: `set -e` plus a non-zero exit leaves the Pod
-        # in Init:Error / Init:CrashLoopBackOff, visible in `kubectl get pod`. The
-        # alternative - swallowing the error and starting with an empty /guides -
-        # would look healthy and play badly, with the driver unable to identify a
-        # deck and nobody knowing why. GIT_TERMINAL_PROMPT=0 makes a bad or expired
-        # PAT fail immediately instead of blocking on a credential prompt.
-        - name: guides
-          image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__
-          imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -euc
-            - |
-              test -n "${GH_PAT}" || { echo "GH_PAT is empty - is the mtg-decks-git Secret created?" >&2; exit 1; }
-              # The emptyDir's own directory stays owned by root: fsGroup sets the
-              # group and the setgid bit so uid 1000 can write INTO it, but it does
-              # not change the owner. git then refuses the repo with "detected
-              # dubious ownership", because the repo's top directory is owned by
-              # somebody other than the euid running git. Declaring it trusted is
-              # the fix that does not need root; a chown would.
-              git config --global --add safe.directory /guides
-              # A restarted initContainer finds the previous attempt's partial
-              # clone, and `git clone` refuses a destination that is not empty. Wipe
-              # it first so a retry is a clean retry. `find -delete` rather than
-              # `rm -rf /guides/*`, because an unmatched glob under `set -e` would
-              # hand rm a literal `*` and fail the whole script on the happy path.
-              find /guides -mindepth 1 -delete
-              git clone --depth 1 \
-                "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git" \
-                /guides
-              # Drop the credential out of .git/config, the only place git kept it.
-              git -C /guides remote set-url origin \
-                https://github.com/szymonrychu/mtg-decks.git
-              ! grep -rq "x-access-token" /guides/.git/config
-              echo "guides cloned at $(git -C /guides rev-parse --short HEAD)"
-          env:
-            - name: GH_PAT
-              valueFrom:
-                secretKeyRef:
-                  name: mtg-decks-git
-                  key: GH_PAT
-            - name: GIT_TERMINAL_PROMPT
-              value: "0"
-            # git wants a HOME it can read; the agent image sets /agent-home and
-            # owns it as uid 1000.
-            - name: HOME
-              value: /agent-home
-          volumeMounts:
-            - name: guides
-              mountPath: /guides
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 500m
-              memory: 256Mi
 
       containers:
         # ---------------------------------------------------------------- game --
@@ -217,10 +88,40 @@ spec:
             - name: game
               containerPort: 8000
           env:
+            # kubernetes, not wrapper: each AI seat now runs as its own Job
+            # (`k8s_seats.py`) instead of a sidecar agent container sharing
+            # this Pod's network namespace, so there is no DRIVER_URL to
+            # loopback to any more - see `AgentSettings`/`K8sSettings` for
+            # what this mode reads instead.
             - name: AI_SEAT_MODE
-              value: wrapper
-            - name: DRIVER_URL
-              value: http://127.0.0.1:8090
+              value: kubernetes
+            - name: AGENT_NAMESPACE
+              value: mtg-engine
+            - name: AGENT_IMAGE
+              value: harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__
+            - name: API_IMAGE
+              value: harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__
+            - name: API_SERVICE_URL
+              value: http://mtg-stack.mtg-engine.svc.cluster.local:8000
+            - name: SPELLSLINGER_MCP_URL
+              value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
+            - name: MAX_LIVE_GAMES
+              value: "4"
+            # Downward API: `k8s_seats.build_job` reads these to set
+            # ownerReferences on every Job it creates, pointing back at this
+            # Pod (see the header comment).
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             # The browser re-reads the game and the AI seat's status every ~1.2s.
             # Successful reads of those two routes, and of the healthcheck, are
             # kept out of uvicorn's access log; POSTs and any non-2xx always print.
@@ -228,9 +129,6 @@ spec:
             - name: ACCESS_LOG_QUIET
               value: "1"
           volumeMounts:
-            - name: guides
-              mountPath: /guides
-              readOnly: true
             - name: scryfall-cache
               mountPath: /app/.scryfall-cache
           # The compose healthcheck, as a k8s probe. /api/health is cheap and is
@@ -259,178 +157,3 @@ spec:
             limits:
               cpu: "1"
               memory: 1Gi
-
-        # --------------------------------------------------------------- agent --
-        - name: agent
-          image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__
-          imagePullPolicy: IfNotPresent
-          # CMD from Dockerfile.agent: python -m mtg_agent.wrapper, as PID 1 of
-          # this container, supervising one interactive claude over a PTY.
-          ports:
-            - name: agent
-              containerPort: 8080
-          env:
-            # Either credential, from the same Secret, BOTH optional. `claude
-            # setup-token` produces an OAuth token, which is NOT an API key: the
-            # CLI reads them from different variables, and a setup-token placed in
-            # ANTHROPIC_API_KEY is sent as an API key and gets a 401. The token is
-            # the recommended one. `optional: true` on both is what makes setting
-            # only one work - without it, the missing key would block Pod start.
-            - name: CLAUDE_CODE_OAUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: mtg-agent
-                  key: CLAUDE_CODE_OAUTH_TOKEN
-                  optional: true
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: mtg-agent
-                  key: ANTHROPIC_API_KEY
-                  optional: true
-            - name: MODEL
-              value: sonnet
-            - name: HTTP_ADDR
-              value: ":8080"
-            # Moved off 8090: that is the driver's port in this Pod. See the
-            # header comment.
-            - name: INTERNAL_ADDR
-              value: 127.0.0.1:8099
-            - name: WORKSPACE
-              value: /workspace
-            - name: HOME_DIR
-              value: /agent-home
-            - name: HOOK_COMMAND
-              value: /app/.venv/bin/cc-stop-hook
-            - name: CCW_INTERNAL_URL
-              value: http://127.0.0.1:8099/internal/turn-complete
-            - name: CCW_RESULT_JSON
-              value: /workspace/result.json
-            # The k8s copy, with the mtg MCP server pointed at loopback and
-            # spellslinger pointed at its in-cluster Service.
-            - name: BASE_MCP_PATH
-              value: /etc/mtg/mcp.base.json
-            - name: TURN_TIMEOUT_SECONDS
-              value: "1800"
-            - name: BOOT_TIMEOUT_SECONDS
-              value: "120"
-            - name: LOG_LEVEL
-              value: info
-            # What the agent itself prints while it plays, tailed off the live
-            # transcript: off | turns | messages | tools (default). See
-            # `wrapper/activity.py`.
-            - name: AGENT_LOG_LEVEL
-              value: tools
-            - name: ACCESS_LOG_QUIET
-              value: "1"
-          volumeMounts:
-            - name: guides
-              mountPath: /guides
-              readOnly: true
-            - name: memory
-              mountPath: /workspace/memory
-            - name: mcp-base
-              mountPath: /etc/mtg
-              readOnly: true
-          # BOOT IS SLOW AND MUST NOT BE KILLED. The wrapper boots claude (pty
-          # spawn, bypass dialog, output quiescence - up to about two minutes)
-          # BEFORE it starts serving HTTP at all, so nothing on :8080 answers
-          # during boot. A liveness probe alone would kill the container mid-boot,
-          # forever. The startupProbe therefore owns the whole boot window
-          # (10s * 36 = 6 minutes of grace) and liveness only starts after it
-          # passes, per the kubelet's probe ordering.
-          startupProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 36
-          # /healthz is "the process is serving"; /readyz is "claude has actually
-          # booted and can take a turn" (503 while booting or dead). Readiness
-          # gates the Service, liveness must not - a dead claude takes the
-          # container down by exiting on its own, which is the designed path.
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 8080
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 3
-          resources:
-            # This is the expensive container: a node runtime plus an interactive
-            # claude session holding a long transcript. Give it real memory; the
-            # CPU limit is generous because a turn is bursty.
-            requests:
-              cpu: 250m
-              memory: 1Gi
-            limits:
-              cpu: "2"
-              memory: 3Gi
-
-        # -------------------------------------------------------------- driver --
-        - name: driver
-          image: harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-m", "mtg_agent.driver"]
-          ports:
-            - name: driver
-              containerPort: 8090
-          env:
-            - name: GAME_API
-              value: http://127.0.0.1:8000
-            - name: WRAPPER_API
-              value: http://127.0.0.1:8080
-            - name: DRIVER_SELF_URL
-              value: http://127.0.0.1:8090
-            - name: GUIDES_ROOT
-              value: /guides
-            - name: MEMORY_ROOT
-              value: /workspace/memory
-            - name: DRIVER_WORKSPACE
-              value: /driver-workspace
-            - name: HTTP_ADDR
-              value: ":8090"
-            # The game server polls `GET /status` for as long as a seat is
-            # dispatched. Same filter, same escape hatch.
-            - name: ACCESS_LOG_QUIET
-              value: "1"
-          volumeMounts:
-            - name: guides
-              mountPath: /guides
-              readOnly: true
-            - name: memory
-              mountPath: /workspace/memory
-            - name: driver-workspace
-              mountPath: /driver-workspace
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8090
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8090
-            initialDelaySeconds: 30
-            periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 3
-          resources:
-            # Bookkeeping and HTTP calls; it does no heavy work of its own.
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
-

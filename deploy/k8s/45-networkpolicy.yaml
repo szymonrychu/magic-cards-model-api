@@ -1,0 +1,57 @@
+# Agent pods talk to the API, the spellslinger MCP service, DNS, and the
+# Anthropic API over HTTPS - and accept connections only from the API pod
+# (driver /status and /release). Nothing else in the cluster can reach them
+# and they can reach nothing else in the cluster.
+#
+# The egress `except` list below is the RFC1918 private ranges, not this
+# cluster's own pod/service CIDRs - checked with `kubectl cluster-info dump |
+# grep -m1 cluster-cidr` (pod CIDR `10.244.0.0/16`) and `grep -m1
+# service-cluster-ip-range` (service CIDR `10.96.0.0/12`): both are already
+# subsets of `10.0.0.0/8`, so the RFC1918 list as written already excludes
+# them and needs no cluster-specific edit.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mtg-agent
+  namespace: mtg-engine
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mtg-agent
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: mtg-stack
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mtg-stack
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: spellslinger-development
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+      ports:
+        - protocol: TCP
+          port: 443

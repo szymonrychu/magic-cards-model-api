@@ -1,6 +1,6 @@
-# Two PersistentVolumeClaims. The deck guides are NOT here: they are an
-# emptyDir filled by an initContainer that clones the guide repo on every Pod
-# start (see 50-pod.yaml), so there is nothing to provision for them.
+# Two PersistentVolumeClaims. The deck guides are NOT here: each AI-seat Job
+# clones them into its own emptyDir with an initContainer (`k8s_seats.py`
+# builds it fresh per Job), so there is nothing to provision for them.
 #
 # Neither claim names a storageClassName, so both take the cluster's DEFAULT
 # StorageClass. In this cluster that is `rook-ceph-rwx` (CephFS), verified with
@@ -21,6 +21,13 @@
 # the agent container exits after every match and comes back empty, so
 # /workspace/memory is where cross-game learning actually lives. Losing this
 # volume means losing everything the agent has learned.
+#
+# ReadWriteMany, not ReadWriteOnce: the API now runs one Job per AI seat
+# (`k8s_seats.py`), and several seats' Pods mount this same claim at once for
+# concurrent games - MAX_LIVE_GAMES seats, potentially on different nodes.
+# ReadWriteOnce would let only the first seat's Pod bind it; every other
+# seat's Pod would stick in ContainerCreating waiting for the volume. The
+# cluster's default StorageClass (`rook-ceph-rwx`, CephFS) supports RWX.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -28,7 +35,7 @@ metadata:
   namespace: mtg-engine
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   # storageClassName: rook-ceph-rwx
   resources:
     requests:
