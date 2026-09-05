@@ -4,6 +4,7 @@ import json
 import threading
 import types
 
+import pytest
 from kubernetes import client as k8s_client
 from kubernetes.client.exceptions import ApiException
 
@@ -160,11 +161,20 @@ class FakeBatch:
         self.jobs = {}
         self.deleted = []
         self.delete_calls = []  # (name, body) - so a test can check propagation_policy
+        self.creates = 0  # only incremented on an actual successful create
+        #: Set by a test to make the *next* `create_namespaced_job` raise
+        #: this instead of creating anything - cleared automatically after
+        #: it fires once, so a retry after the failure behaves normally.
+        self.raise_once: Exception | None = None
 
     def create_namespaced_job(self, namespace, body):
+        if self.raise_once is not None:
+            exc, self.raise_once = self.raise_once, None
+            raise exc
         name = body["metadata"]["name"]
         if name in self.jobs:
             raise ApiException(status=409, reason="AlreadyExists")
+        self.creates += 1
         self.jobs[name] = types.SimpleNamespace(
             metadata=types.SimpleNamespace(name=name, labels=body["metadata"]["labels"]),
             status=types.SimpleNamespace(active=1, succeeded=0, failed=0),
@@ -376,25 +386,70 @@ def test_status_survives_a_pod_lookup_that_raises() -> None:
     assert "api server unavailable" in status["reason"]
 
 
-# ---- start: a release racing the create call must not raise ---------------
+# ---- start: a create failure must not leave a seat behind for the next
+# `start()` to trip on, and popping it must not raise on its own ------------
+#
+# `start()` re-raises whatever `create_namespaced_job` threw (other than 409
+# AlreadyExists) - it is `ai_seat._dispatch_to_kubernetes` that turns this
+# into a `fallback`, not `K8sSeats` itself. What `K8sSeats.start` alone must
+# guarantee: its own optimistic `_seats[uid]` insert is always undone on a
+# real failure (even if a concurrent `release()` already popped it - popping
+# twice must not raise), so the uid is never stuck `already_started` for a
+# Job that was never actually created.
+
+
+def test_start_pops_the_seat_and_reraises_on_a_non_409_create_failure() -> None:
+    seats, batch, _ = make()
+    batch.raise_once = ApiException(status=500, reason="boom")
+
+    with pytest.raises(ApiException):
+        seats.start(
+            uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+        )
+    assert seats.status("u1") is None
 
 
 def test_start_survives_a_release_racing_the_create_call() -> None:
     seats, batch, _ = make()
 
     def create_then_race_a_release(namespace, body):
-        # A concurrent `release()` pops the seat before the `ApiException`
-        # handler below runs - simulated directly since the real race is a
-        # matter of thread-scheduling luck, not something worth flaking a
-        # test over.
+        # A concurrent `release()` pops the seat before `start()`'s own
+        # exception handler runs - simulated directly since the real race is
+        # a matter of thread-scheduling luck, not something worth flaking a
+        # test over. Popping an already-gone seat must not raise, and the
+        # original create failure must still propagate.
         seats._seats.pop("u1", None)
         raise ApiException(status=500, reason="boom")
 
     batch.create_namespaced_job = create_then_race_a_release
+    with pytest.raises(ApiException):
+        seats.start(
+            uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+        )
+    assert seats.status("u1") is None
+
+
+def test_a_failed_create_leaves_nothing_behind_for_a_retry_to_trip_on() -> None:
+    seats, batch, _ = make()
+    batch.raise_once = RuntimeError("transient apiserver hiccup")
+
+    with pytest.raises(RuntimeError):
+        seats.start(
+            uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+        )
+    # The failed attempt created nothing and left no seat behind...
+    assert seats.status("u1") is None
+    assert batch.creates == 0
+
+    # ...so the retry is a genuine first attempt, not `already_started`
+    # handing back stale status for a Job that was never created.
     status = seats.start(
         uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
     )
-    assert status == {}
+    assert batch.creates == 1
+    assert status["mechanism"] == "kubernetes"
+    assert status["job"] == job_name("g1", "u1")
+    assert job_name("g1", "u1") in batch.jobs
 
 
 # ---- release: the delete really asks for Background propagation -----------

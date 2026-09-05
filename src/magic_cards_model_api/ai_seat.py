@@ -292,11 +292,13 @@ class AiSeatRegistry:
         self, *, uid: str, game_id: str, player: str, agent: AgentSettings
     ) -> dict[str, Any]:
         """Hand this seat to `K8sSeats`. Never raises: `k8s_seats.get()`
-        failing to load any cluster config, or a transport-level failure
-        underneath `create_namespaced_job` that is not a plain `ApiException`
-        (neither of which `K8sSeats` itself guards against), come back as a
-        fallback exactly like an unreachable driver - the registry's "never
-        raises" contract does not get to make an exception for this
+        failing to load any cluster config, or `create_namespaced_job` itself
+        failing for any reason other than 409 AlreadyExists (`K8sSeats.start`
+        pops its own seat record and re-raises rather than swallowing this,
+        so a retry actually retries instead of finding a stale, already-
+        `already_started` seat for a Job that was never created), come back
+        as a fallback exactly like an unreachable driver - the registry's
+        "never raises" contract does not get to make an exception for this
         mechanism just because it usually behaves."""
         try:
             return k8s_seats.get().start(uid=uid, game_id=game_id, player=player, agent=agent)

@@ -400,16 +400,36 @@ class K8sSeats:
             self.batch.create_namespaced_job(self.settings.namespace, body=body)
         except ApiException as exc:
             if exc.status != 409:
-                with self._lock:
-                    # `.get`, not `[uid]`: a `release()` racing this create
-                    # call may already have popped the seat by the time the
-                    # exception handler runs, and this must not raise either
-                    # way.
-                    seat = self._seats.get(uid)
-                    if seat is not None:
-                        seat["error"] = f"could not create job {name}: {exc.reason}"
-                logger.error("job %s not created: %s", name, exc)
+                self._forget_failed_create(uid, name, exc)
+                raise
+            # 409 AlreadyExists: idempotent - a Job by this name is already
+            # out there (an earlier call's create that this process never
+            # heard the answer to, say), so the seat stands and `status()`
+            # below reports on the Job that already exists.
+        except Exception as exc:
+            self._forget_failed_create(uid, name, exc)
+            raise
         return self.status(uid) or {}
+
+    def _forget_failed_create(self, uid: str, name: str, exc: Exception) -> None:
+        """Undo `start()`'s optimistic `_seats[uid]` insert when the create
+        call it guarded actually failed.
+
+        Left in place, that entry made the *next* `start()` for this uid see
+        `already_started` and hand back `self.status(uid)` for a Job that was
+        never created - reported as `pending` (no pod yet, nothing wrong)
+        rather than the error it actually was, and audited as "scheduled"
+        in `ai_seat.py`. Popping it here means the caller's retry inserts a
+        fresh seat and genuinely tries to create the Job again; the exception
+        is still re-raised so `ai_seat._dispatch_to_kubernetes` sees it and
+        records the real reason instead of a seat that quietly never existed.
+        """
+        with self._lock:
+            # `.pop(uid, None)`, not `del`: a `release()` racing this create
+            # call may already have removed the seat by the time this runs,
+            # and that must not raise either.
+            self._seats.pop(uid, None)
+        logger.error("job %s not created: %s", name, exc)
 
     def _pod(self, uid: str) -> Any | None:
         pods = self.core.list_namespaced_pod(
