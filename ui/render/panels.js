@@ -1,28 +1,35 @@
 // Everything above the board that is not the ribbon: the topbar (turn info,
-// phase track, AI seat panel, connection pill), the AI-stall banner, and the
-// two modal-shaped overlays - the zones popover (graveyards, shared exile,
-// CR 406.4's marked exile piles, and the command zone) and the "report a
-// problem" form. Split out of `ui/app.js` per Task 17's own size guidance,
-// once porting the old classic script's AI panel and modal pieces onto the
-// new buildless modules would have pushed `app.js` well past ~700 lines.
+// phase track, AI seat panel, connection pill), the AI-stall banner, the
+// hover card preview, and the two modal-shaped overlays - the zones popover
+// (graveyards, shared exile, CR 406.4's marked exile piles, and the command
+// zone) and the "report a problem" form. Split out of `ui/app.js` per Task
+// 17's own size guidance, once porting the old classic script's AI panel and
+// modal pieces onto the new buildless modules would have pushed `app.js`
+// well past ~700 lines.
 //
 // Ported from the old `ui/app.js` (deleted by this task): `renderAiPanel`,
 // `showAiError`, `showFallbackBox` (app.js:2835-2883), `renderPhaseTrack`/the
 // `$("#turn-info")` line (app.js:456-512), `renderAiStallBanner`/
 // `aiUnchangedSeconds` (app.js:1712-1748), `setConnection` (app.js:411-418),
-// and `openZonesModal`/`openReportModal`/`showModal`/`closeModal`
-// (app.js:2645-2698) - rebuilt as `h()`/`patchChildren` nodes instead of
-// `innerHTML` strings, and the zones popover's cards wired to the same
+// `openZonesModal`/`openReportModal`/`showModal`/`closeModal`
+// (app.js:2645-2698), and `wireCardPreview`/`showPreview`/`hidePreview`
+// (app.js:656-700) - rebuilt as `h()`/`patchChildren` nodes instead of
+// `innerHTML` strings. The zones popover's cards are wired to the same
 // `onPermanent` targeting click the board itself uses (the old modal only
-// ever displayed them) via `render/board.js`'s exported `targetingOpts`.
+// ever displayed them) via `render/board.js`'s exported `targetingOpts`, or
+// to `onPermission` when a CR 601.3 play permission names that exact card
+// (a cast begun from exile/a graveyard rather than the hand).
 //
 // CR numbers here (verified with `knowledge_search(type="rules")` in the
 // session that wrote this file): 406.4 (exiled cards kept in separate,
 // marked piles - suspend/plot/foretell), 117.3d (passing priority for a
-// silent AI seat is an ordinary pass, nothing special-cased).
+// silent AI seat is an ordinary pass, nothing special-cased), 601.3 (a
+// player can cast a spell only if some rule or effect allows it - the
+// dynamic half of that is `PlayPermission`, `machines/casting.py`).
 
 import { h, clear } from "../dom.js";
 import { cardNode } from "../cards.js";
+import { withSymbols } from "../symbols.js";
 import { targetingOpts } from "./board.js";
 import { STEPS, PHASE_OF } from "../priority.js";
 import { aiStallNotice } from "../store.js";
@@ -44,6 +51,17 @@ const STEP_LABELS = {
 
 // ------------------------------------------------------------------ modal --
 
+/** Close `#modal` and empty it - exported so `app.js`'s own Escape handler
+ * can close whatever is open without knowing anything about how it was
+ * built (a report form, a zones popover, an AI-seat error box all share this
+ * one overlay). */
+export function closeModal(root) {
+  const modal = root.querySelector("#modal");
+  if (!modal) return;
+  modal.hidden = true;
+  clear(modal);
+}
+
 /** Build `#modal`'s content via `builder(inner, close)` and show it. One
  * shared overlay for every dialog-shaped thing this module needs (the zones
  * popover, the report form, the AI seat's error/fallback boxes) rather than
@@ -53,10 +71,7 @@ function showModal(root, builder) {
   if (!modal) return;
   clear(modal);
   const inner = h("div", { class: "modal-inner" });
-  const close = () => {
-    modal.hidden = true;
-    clear(modal);
-  };
+  const close = () => closeModal(root);
   builder(inner, close);
   modal.appendChild(inner);
   modal.hidden = false;
@@ -269,55 +284,148 @@ export function openReportModal(root, handlers) {
 
 // --------------------------------------------------------------- zones ----
 
-function zoneSection(app, handlers, label, cards) {
-  const section = h("div", {}, h("div", { class: "label" }, label));
+/** Append one zone's label and card grid straight into `inner` (siblings,
+ * not wrapped in an extra container) - `.modal-inner > .label` (`style.css`)
+ * is a direct-child selector, so a wrapper here would silently opt every
+ * zone heading in this popover out of it. */
+function zoneSection(inner, app, handlers, label, cards) {
+  inner.appendChild(h("div", { class: "label" }, label));
   if (!cards || !cards.length) {
-    section.appendChild(h("div", { class: "zone-empty" }, "empty"));
-    return section;
+    inner.appendChild(h("div", { class: "zone-empty" }, "empty"));
+    return;
   }
   const grid = h("div", { class: "zone-grid" });
+  // CR 601.3's dynamic play permissions can name a card sitting in exile or
+  // a graveyard (cascade, suspend's own third ability) - clicking one of
+  // those begins casting it from there instead of an ordinary targeting
+  // click, the same choice `render/board.js`'s `#permitted-row` offers.
+  const permissions = (app.state.play_permissions && app.state.play_permissions[app.state.you]) || [];
   for (const card of cards) {
     const opts = targetingOpts(app, card.id);
     const node = cardNode(card, "card-sm", {});
     node.classList.toggle("targetable", opts.targetable);
     node.classList.toggle("chosen", opts.chosen);
     node.classList.toggle("dimmed", opts.dimmed);
-    // The same targeting click the board itself wires (`onPermanent`) - a
-    // graveyard/exile card is exactly as legal a target as a battlefield one
-    // for whatever cast or decision is asking, and this is the only way to
-    // reach it.
-    node.onclick = (event) => handlers.onPermanent(card, event);
+    const permission = permissions.find((p) => p.card.id === card.id);
+    node.onclick = (event) =>
+      permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
     grid.appendChild(node);
   }
-  section.appendChild(grid);
-  return section;
+  inner.appendChild(grid);
 }
 
 /** Graveyards, the shared exile zone, CR 406.4's separately-tracked marked
  * exile piles (suspended/plotted/foretold cards), and the command zone -
  * `handlers.onPermanent` wired onto every card the same way the board wires
  * it, so a spell that targets a graveyard or exiled card can actually be
- * pointed at one. */
+ * pointed at one; a card a CR 601.3 permission names goes through
+ * `handlers.onPermission` instead. */
 export function openZonesModal(root, app, handlers) {
   const state = app.state;
   const you = state.you;
   const opponent = (state.players || []).find((p) => p.username !== you);
   showModal(root, (inner, close) => {
     inner.appendChild(h("h3", {}, "Zones"));
-    inner.appendChild(zoneSection(app, handlers, "Your graveyard", (state.graveyards || {})[you]));
-    inner.appendChild(
-      zoneSection(
-        app,
-        handlers,
-        `${opponent ? opponent.username : "opponent"}'s graveyard`,
-        (state.graveyards || {})[opponent && opponent.username]
-      )
+    zoneSection(inner, app, handlers, "Your graveyard", (state.graveyards || {})[you]);
+    zoneSection(
+      inner,
+      app,
+      handlers,
+      `${opponent ? opponent.username : "opponent"}'s graveyard`,
+      (state.graveyards || {})[opponent && opponent.username]
     );
-    inner.appendChild(zoneSection(app, handlers, "Exile (shared)", state.exile));
-    inner.appendChild(
-      zoneSection(app, handlers, "Marked exile piles (CR 406.4) - suspended, plotted, foretold", state.exile_pile)
-    );
-    inner.appendChild(zoneSection(app, handlers, "Command zone", state.command));
+    zoneSection(inner, app, handlers, "Exile (shared)", state.exile);
+    zoneSection(inner, app, handlers, "Marked exile piles (CR 406.4) - suspended, plotted, foretold", state.exile_pile);
+    zoneSection(inner, app, handlers, "Command zone", state.command);
     inner.appendChild(h("button", { onClick: close }, "Close"));
   });
+}
+
+// ---------------------------------------------------------- hover preview --
+
+/** Every card a live seat's view can ever put a `.card[data-card-id]` node
+ * on screen for - battlefield, stack, exile, your own hand, every
+ * graveyard, and (CR 601.3) any card a play permission names - keyed by id,
+ * fresh on each hover rather than kept live, so a card that only exists
+ * because of a permission still previews correctly. */
+function hoverableCards(state) {
+  const lookup = {};
+  const add = (card) => {
+    if (card && card.id) lookup[card.id] = card;
+  };
+  (state.battlefield || []).forEach(add);
+  (state.stack || []).forEach(add);
+  (state.exile || []).forEach(add);
+  (state.exile_pile || []).forEach(add);
+  (state.command || []).forEach(add);
+  ((state.hands && state.hands[state.you]) || []).forEach(add);
+  Object.values(state.graveyards || {}).forEach((cards) => (cards || []).forEach(add));
+  ((state.play_permissions && state.play_permissions[state.you]) || []).forEach((p) => add(p.card));
+  return lookup;
+}
+
+function showPreview(root, symbols, card) {
+  const box = root.querySelector("#card-preview");
+  if (!box) return;
+  clear(box);
+  const img = card.image || card.small_image;
+  if (img) {
+    const image = h("img", {
+      src: img,
+      alt: card.name || "",
+      onerror: (e) => e.target.remove(),
+    });
+    box.appendChild(image);
+  } else {
+    box.appendChild(
+      h(
+        "div",
+        { class: "fallback-text" },
+        h("span", { class: "name" }, card.name || card.card_name || "?"),
+        h("br"),
+        h("span", { class: "type" }, card.type_line || ""),
+        h("div", { class: "oracle" }, withSymbols(symbols, card.oracle_text || card.text || ""))
+      )
+    );
+  }
+  box.hidden = false;
+}
+
+function hidePreview(root) {
+  const box = root.querySelector("#card-preview");
+  if (box) box.hidden = true;
+}
+
+/** Wire a `mouseover`/`mouseout` delegate on `boardEl` that shows whichever
+ * `.card[data-card-id]` node is hovered in `#card-preview`, ported from the
+ * classic script's `wireCardPreview`/`showPreview`/`hidePreview`. A no-op
+ * (rather than double-wiring listeners) on an element already wired -
+ * `boardEl.dataset.previewWired` marks it, the same guard the old code used
+ * - so this can safely be called again after the zones popover rebuilds its
+ * own content on every open. */
+function wireOn(root, boardEl, store) {
+  if (!boardEl || boardEl.dataset.previewWired) return;
+  boardEl.dataset.previewWired = "1";
+  boardEl.addEventListener("mouseover", (e) => {
+    const el = e.target.closest(".card[data-card-id]");
+    if (!el) return;
+    const app = store.get();
+    if (!app.state) return;
+    const card = hoverableCards(app.state)[el.dataset.cardId];
+    if (card) showPreview(root, app.symbols, card);
+  });
+  boardEl.addEventListener("mouseout", (e) => {
+    const el = e.target.closest(".card[data-card-id]");
+    const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest(".card") : null;
+    if (el && !to) hidePreview(root);
+  });
+}
+
+/** Mount the hover preview onto `#mtg-board` and the zones popover's
+ * `#modal` (its content is rebuilt fresh every time it opens, but the modal
+ * element itself persists, so wiring it once here is enough). `store`
+ * supplies both the card lookup and the mana-symbol map for oracle text. */
+export function mountHoverPreview(root, store) {
+  wireOn(root, root.querySelector("#mtg-board"), store);
+  wireOn(root, root.querySelector("#modal"), store);
 }

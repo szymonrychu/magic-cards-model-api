@@ -645,3 +645,73 @@ def test_toggling_crewing_twice_removes_it() -> None:
         copter=SMUGGLERS_COPTER,
     )
     assert crewing == []
+
+
+# -- CR 601.3 play permissions: casting from a zone other than the hand -----
+
+
+def test_from_zone_is_sent_only_when_begun_from_a_permission() -> None:
+    """`fromZone` (CR 601.3's dynamic play permissions - cascade, suspend's
+    own third ability) defaults to unset, matching `CastRequest.from_zone`'s
+    own "hand" default (`schemas.py`) - only a cast begun through
+    `beginCastFromPermission` sends it at all."""
+    result = run_module(
+        "actions.js",
+        "(() => { const ordinary = m.begin('cast', memnite, {}); "
+        "const fromExile = m.begin('cast', memnite, { fromZone: 'exile' }); "
+        "return [m.bodyFor(ordinary, 'alice', []), m.bodyFor(fromExile, 'alice', [])]; })()",
+        memnite=MEMNITE,
+    )
+    assert "from_zone" not in result[0]
+    assert result[1]["from_zone"] == "exile"
+
+
+# -- targetSlotIndex: the one place a board click's slot is decided --------
+
+
+def test_target_slot_index_defers_to_active_slot_index_by_default() -> None:
+    """No manual focus (`focusSlot: null`, `begin`'s own default) means the
+    board click and `render/board.js`'s highlight both fall back to
+    `targeting.js`'s own `activeSlotIndex` guess."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.withAffordance(m.begin('cast', koz, {}), koz_aff); "
+        "a = m.toggleMode(a, 1); a = m.toggleMode(a, 2); "
+        "a = m.withAffordance(a, koz_aff); "
+        "return m.targetSlotIndex(a); })()",
+        koz=KOZILEK,
+        koz_aff=KOZ_AFF,
+    )
+    assert result == 0
+
+
+def test_target_slot_index_honours_an_explicit_focus() -> None:
+    """A slot chip's own click (`onFocusSlot`) pins `action.focusSlot` -
+    `targetSlotIndex` must return exactly that slot rather than whichever
+    `activeSlotIndex` would otherwise pick."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.withAffordance(m.begin('cast', koz, {}), koz_aff); "
+        "a = m.toggleMode(a, 1); a = m.toggleMode(a, 2); "
+        "a = m.withAffordance(a, koz_aff); "
+        "a = { ...a, focusSlot: 1 }; "
+        "return m.targetSlotIndex(a); })()",
+        koz=KOZILEK,
+        koz_aff=KOZ_AFF,
+    )
+    assert result == 1
+
+
+def test_target_slot_index_ignores_a_stale_out_of_range_focus() -> None:
+    """A focus left over from a slot list that has since shrunk (a mode
+    toggled off, clearing `slots`) must not point past the end of the new
+    one - falling back to `activeSlotIndex` is the safe default."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.withAffordance(m.begin('cast', bolt, {}), aff); "
+        "a = { ...a, focusSlot: 5 }; "
+        "return m.targetSlotIndex(a); })()",
+        bolt=BOLT,
+        aff=BOLT_AFF,
+    )
+    assert result == 0

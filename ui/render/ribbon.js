@@ -33,11 +33,11 @@
 // 117.3c (holding priority), 700.2 (modal spells).
 
 import { clear, h } from "../dom.js";
-import { activeSlotIndex, flatten } from "../targeting.js";
+import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
 import { withSymbols } from "../symbols.js";
-import { needsExplicitFire, readyToFire } from "../actions.js";
-import { VERB_LABELS, STEPS, passButtonsFor } from "../priority.js";
+import { needsExplicitFire, readyToFire, targetSlotIndex } from "../actions.js";
+import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
 
 // --------------------------------------------------------------- pregame ---
@@ -448,15 +448,12 @@ function renderCrewProgress(action, offer) {
 
 function renderSlotChips(action, handlers) {
   if (!action.affordance || !action.affordance.targets_anything || !action.slots.length) return null;
-  // Task 17's addition: a slot chip click (`handlers.onFocusSlot`) sets
-  // `action.focusSlot` in app.js so the next board click fills that slot
-  // specifically rather than whichever one `activeSlotIndex` would pick on
-  // its own - this only has to agree with that override for the highlight,
-  // not compute it.
-  const active =
-    action.focusSlot !== null && action.focusSlot !== undefined && action.slots[action.focusSlot]
-      ? action.focusSlot
-      : activeSlotIndex(action.slots);
+  // A slot chip click (`handlers.onFocusSlot`) sets `action.focusSlot`;
+  // `actions.js`'s `targetSlotIndex` is the single place that resolves it
+  // against `activeSlotIndex`'s own guess - `app.js`'s click handler reads
+  // the exact same helper, so the highlighted slot here is always the slot
+  // a board click actually fills.
+  const active = targetSlotIndex(action);
   return h(
     "div",
     { class: "tray-step" },
@@ -597,6 +594,16 @@ function renderPriorityBox(el, app, handlers) {
   } else {
     const verbs = passButtonsFor(app.state);
     el.appendChild(h("div", { class: "chip-row" }, ...verbs.map((v) => h("button", { onClick: () => handlers.onVerb(v) }, VERB_LABELS[v]))));
+    // CR 502.4/514.3: nobody receives priority during untap or (most)
+    // cleanup steps, so `passButtonsFor` offers nothing there at all - the
+    // active player's own way past either is `POST .../advance`
+    // (`engine_api.advance`), not a pass. `advanceOffered` is the one place
+    // that decides when to show it.
+    if (advanceOffered(app.state)) {
+      el.appendChild(
+        h("button", { class: "primary", onClick: handlers.onAdvance }, `Advance (${app.state.step.replace(/_/g, " ")})`)
+      );
+    }
   }
   el.appendChild(h("button", { class: "ghost danger", onClick: handlers.onConcede }, "Concede"));
 }

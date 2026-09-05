@@ -43,6 +43,10 @@ export function begin(kind, card, extra) {
     card,
     abilityIndex: extra.abilityIndex === undefined ? null : extra.abilityIndex,
     keyword: extra.keyword || null,
+    // CR 601.3's dynamic play permissions (cascade, suspend's third ability)
+    // let a card be cast from a zone other than the hand - `null` here means
+    // "hand", `CastRequest.from_zone`'s own default (`schemas.py`).
+    fromZone: extra.fromZone || null,
     modes: [],
     xValue: null,
     color: null,
@@ -56,6 +60,10 @@ export function begin(kind, card, extra) {
     pinned: [],
     freeTargets: [],
     pendingTargets: [],
+    // A slot chip's own click (`app.js`'s `onFocusSlot`) can pin which slot
+    // the next board click fills, overriding `targetSlotIndex`'s own guess
+    // below - `null` defers to it entirely.
+    focusSlot: null,
     affordance: null,
     error: null,
     holdPriority: false,
@@ -187,6 +195,21 @@ export function markDone(action) {
   return { ...action, done: true };
 }
 
+/**
+ * Which slot a board click should fill right now: `action.focusSlot` when
+ * a slot chip's own click (`app.js`'s `onFocusSlot`) has pinned one,
+ * otherwise `targeting.js`'s own `activeSlotIndex` guess. The single place
+ * that decides it, used by both `render/board.js`'s `targetingOpts` (which
+ * slot gets the "active" highlight and which candidates light up) and
+ * `app.js`'s own click handler (which slot a click actually fills) - so the
+ * outlined slot and the slot a click lands in can never disagree.
+ */
+export function targetSlotIndex(action) {
+  const focus = action.focusSlot;
+  if (focus !== null && focus !== undefined && action.slots[focus]) return focus;
+  return activeSlotIndex(action.slots);
+}
+
 export function affordanceQuery(action) {
   const query = {};
   if (action.abilityIndex !== null) query.ability_index = action.abilityIndex;
@@ -314,6 +337,10 @@ export function bodyFor(action, you, untapped) {
     if (action.delve.length) body.delve = action.delve;
     if (action.altCost !== null) body.alternative_cost = action.altCost;
     if (action.choosing.length) body.choosing = action.choosing;
+    // CR 601.3's dynamic play permissions (cascade, suspend's own third
+    // ability): `CastRequest.from_zone` (`schemas.py`) defaults to "hand",
+    // so this is only sent when the cast began from `beginCastFromPermission`.
+    if (action.fromZone) body.from_zone = action.fromZone;
   } else if (action.kind === "activate" && action.xValue !== null) {
     body.x_value = action.xValue;
   }

@@ -213,3 +213,15 @@ export function passButtonsFor(state) {
   if (state.pending_decision && state.pending_decision.player === state.you) return ["pass"];
   return [...VERBS];
 }
+
+// CR 502.4: "No player receives priority during the untap step"; CR 514.3:
+// "Normally, no player receives priority during the cleanup step" - both
+// verified with `knowledge_search(type="rules")` in the session that wrote
+// this. `passButtonsFor` correctly offers nothing in either (there is no
+// pass to make), which used to leave the active player with no way past
+// either at all: `POST .../advance` (`engine_api.advance`) is that way,
+// offered only to the player whose turn it is, in the one step it does
+// something in.
+export function advanceOffered(state) {
+  return state.active_player === state.you && (state.step === "untap" || state.step === "cleanup");
+}

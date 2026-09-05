@@ -7,7 +7,7 @@
 // would have pushed this file well past ~700 lines).
 //
 // The click-planning logic (`planHandCardClick`/`planPermanentClick`) is
-// factored out as pure functions - no DOM, no fetch - so `tests/test_ui_app.js`
+// factored out as pure functions - no DOM, no fetch - so `tests/test_ui_app.py`
 // can exercise "what does clicking this card do" without a network, and so
 // this file has exactly one place that decides it rather than the decision
 // living twice (once for real, once reimplemented for a test).
@@ -25,7 +25,7 @@ import { mountBoard } from "./render/board.js";
 import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
-import { mountTopbar, openZonesModal, openReportModal } from "./render/panels.js";
+import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./render/panels.js";
 
 const POLL_MS = 1200;
 const LS_KEY = "mcm.game";
@@ -54,6 +54,31 @@ function you() {
 }
 function gamePath(rest) {
   return `/api/games/${store.get().gameId}/${rest}`;
+}
+
+/**
+ * The one place a transport failure - a rejected `fetch` (the network is
+ * down, the server is unreachable), or a non-2xx `api()` cannot even parse a
+ * body from - is turned into something the player can see, rather than an
+ * unhandled promise rejection. Every action path in this file goes through
+ * this instead of calling `api()` directly, and tells a transport failure
+ * apart from an ordinary refusal (`res.allowed === false`, a normal outcome
+ * the caller already toasts on its own terms) by checking for `null` first.
+ *
+ * `poll()`'s own two reads (state, log) are the one exception: they keep
+ * their existing `try/catch`, on purpose - letting *that* throw is what
+ * stops a single flaky request from overwriting good board state with
+ * `null` (this function would resolve to `null` there instead of leaving
+ * the previous `store.set` call unmade).
+ */
+export async function send(method, path, body) {
+  try {
+    return await api(method, path, body);
+  } catch (err) {
+    store.set({ connection: `error: ${err.message}` });
+    toast(err.message);
+    return null;
+  }
 }
 
 // -------------------------------------------------------- click planning --
@@ -198,7 +223,8 @@ async function refreshAffordance() {
   if (q.modes) query.set("modes", q.modes.join(","));
   if (q.x_value !== undefined) query.set("x_value", q.x_value);
   if (action.kind === "cast" && !A.modesReady(action)) return;
-  const affordance = await api("GET", gamePath(`affordances/${action.cardId}?${query}`));
+  const affordance = await send("GET", gamePath(`affordances/${action.cardId}?${query}`));
+  if (affordance === null) return;
   store.set((s) => (s.action && s.action.cardId === action.cardId ? { action: A.withAffordance(s.action, affordance) } : {}));
   await previewAndMaybeFire();
 }
@@ -212,7 +238,8 @@ async function previewAndMaybeFire() {
     return;
   }
   const body = { ...A.bodyFor(action, you(), untappedSources(app.state)), dry_run: true };
-  const probe = await api("POST", gamePath(A.endpointFor(action)), body);
+  const probe = await send("POST", gamePath(A.endpointFor(action)), body);
+  if (probe === null) return;
   if (probe.allowed === false) {
     store.set({ action: { ...action, error: probe.reason }, preview: { tapped: probe.tapped || [] } });
     return;
@@ -230,7 +257,8 @@ async function fire() {
   const app = store.get();
   const action = app.action;
   const body = A.bodyFor(action, you(), untappedSources(app.state));
-  const res = await api("POST", gamePath(A.endpointFor(action)), body);
+  const res = await send("POST", gamePath(A.endpointFor(action)), body);
+  if (res === null) return;
   if (res.allowed === false) {
     store.set({ action: { ...action, error: res.reason } });
     toast(res.reason);
@@ -276,22 +304,40 @@ function beginCrew(card) {
   return refreshAffordance();
 }
 
+/** CR 601.3's dynamic play permissions (cascade, suspend's own third
+ * ability): begin casting `card` from `fromZone` (exile, a graveyard) rather
+ * than the hand - `actions.js`'s `bodyFor` sends `from_zone` only when this
+ * is set, so an ordinary hand cast is unaffected. */
+function beginCastFromPermission(card, fromZone) {
+  hidePopover();
+  store.set({ action: A.begin("cast", card, { fromZone }), preview: null });
+  if (!A.needsChoices(card, null)) return previewAndMaybeFire();
+  return refreshAffordance();
+}
+
+function onPermission(permission) {
+  beginCastFromPermission(permission.card, permission.from_zone);
+}
+
 async function playLand(card) {
-  const res = await api("POST", gamePath("actions/play-land"), { player: you(), card_id: card.id });
+  const res = await send("POST", gamePath("actions/play-land"), { player: you(), card_id: card.id });
+  if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   await poll();
 }
 
 async function fireSpecial(card, keyword) {
   hidePopover();
-  const res = await api("POST", gamePath(`actions/${keyword}`), { player: you(), card_id: card.id });
+  const res = await send("POST", gamePath(`actions/${keyword}`), { player: you(), card_id: card.id });
+  if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   await poll();
 }
 
 async function cycle(card) {
   hidePopover();
-  const res = await api("POST", gamePath("actions/cycle"), { player: you(), card_id: card.id });
+  const res = await send("POST", gamePath("actions/cycle"), { player: you(), card_id: card.id });
+  if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   await poll();
 }
@@ -373,25 +419,35 @@ async function tryTarget(id) {
   if (action.affordance && action.affordance.understood === false) {
     return store.set({ action: A.addFreeTarget(action, id) });
   }
-  // A slot chip's own click (`onFocusSlot`, wired in `main()` below) can pin
-  // which slot the next click fills, overriding `targeting.js`'s own
-  // `activeSlotIndex` guess - a modal spell's second mode is otherwise
-  // unreachable once the first is already satisfied and the player wants to
-  // go back and change it.
-  const focusSlot = action.focusSlot;
-  if (focusSlot !== null && focusSlot !== undefined && action.slots[focusSlot]) {
-    const slot = action.slots[focusSlot];
-    let slots;
-    if (slot.targets.includes(id)) slots = unfill(action.slots, focusSlot, id);
-    else if (canFill(action.affordance, slot, id)) slots = fill(action.slots, focusSlot, id);
-    else return;
-    store.set({ action: { ...action, slots } });
+  // The affordance is still an async GET in flight (right after
+  // `beginCast`/`beginActivate`) - there are no real slots yet to fill, so
+  // the click is queued the way `actions.js`'s `chooseTarget` always has for
+  // exactly this case, and `withAffordance` replays it once real slots
+  // exist.
+  if (action.slots.length === 0 && !action.affordance) {
+    store.set({ action: A.chooseTarget(action, id) });
+    return;
+  }
+  // `actions.js`'s `targetSlotIndex` is the single place that decides which
+  // slot a click fills - a manual focus from a slot chip's own click
+  // (`onFocusSlot`), or `targeting.js`'s own `activeSlotIndex` guess. It is
+  // the exact same helper `board.js`'s highlight uses, so the outlined slot
+  // and the slot a click actually fills can never disagree - and a click
+  // that lands on something illegal for it says so, rather than a silent
+  // no-op.
+  const slotIndex = A.targetSlotIndex(action);
+  if (slotIndex < 0 || !action.slots[slotIndex]) return;
+  const slot = action.slots[slotIndex];
+  if (slot.targets.includes(id)) {
+    store.set({ action: { ...action, slots: unfill(action.slots, slotIndex, id) } });
     return previewAndMaybeFire();
   }
-  const next = A.chooseTarget(action, id);
-  if (next === action) return;
-  store.set({ action: next });
-  await previewAndMaybeFire();
+  if (!canFill(action.affordance, slot, id)) {
+    toast(`that is not a legal target for ${slot.label}`);
+    return;
+  }
+  store.set({ action: { ...action, slots: fill(action.slots, slotIndex, id) } });
+  return previewAndMaybeFire();
 }
 
 function onFocusSlot(i) {
@@ -432,7 +488,8 @@ function toggleAttacker(card, event) {
 
 async function confirmAttack() {
   const body = C.attackBody(store.get().combatDraft);
-  const res = await api("POST", gamePath("actions/attack"), body);
+  const res = await send("POST", gamePath("actions/attack"), body);
+  if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
   await poll();
@@ -451,7 +508,8 @@ function toggleBlock(card) {
 }
 
 async function confirmBlocks() {
-  const res = await api("POST", gamePath("actions/declare-blockers"), C.blockBody(store.get().combatDraft, you()));
+  const res = await send("POST", gamePath("actions/declare-blockers"), C.blockBody(store.get().combatDraft, you()));
+  if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
   await poll();
@@ -460,10 +518,22 @@ async function confirmBlocks() {
 // ---- priority ------------------------------------------------------------
 
 async function passOnce() {
-  const res = await api("POST", gamePath("actions/pass-priority"), { player: you() });
+  const res = await send("POST", gamePath("actions/pass-priority"), { player: you() });
+  if (res === null) return { ok: false, reason: null, outcome: null, settledThrough: null };
   const out = P.interpretPassOutcome(res);
   if (!out.ok) toast(out.reason);
   return out;
+}
+
+/** CR 502.4/514.3: nobody receives priority during untap or (most) cleanup
+ * steps, so `passOnce` has nothing to pass - `POST .../advance`
+ * (`engine_api.advance`) is the active player's own way past either.
+ * `priority.js`'s `advanceOffered` decides when `#priority-box` offers this. */
+async function advanceStep() {
+  const res = await send("POST", withUid(gamePath("advance"), store.get().uid), { player: you() });
+  if (res === null) return;
+  if (res.allowed === false) toast(res.reason);
+  await poll();
 }
 
 async function onVerb(verb) {
@@ -481,13 +551,13 @@ async function castable() {
   const hand = app.state.hands[you()] || [];
   for (const card of hand) {
     if (/land/i.test(card.type_line || "")) continue;
-    const res = await api("POST", gamePath("actions/cast"), {
+    const res = await send("POST", gamePath("actions/cast"), {
       player: you(),
       card_id: card.id,
       mana_sources: untappedSources(app.state),
       dry_run: true,
     });
-    if (res.allowed) return true;
+    if (res && res.allowed) return true;
   }
   return false;
 }
@@ -512,7 +582,8 @@ async function tickRun() {
 // ---- decisions -----------------------------------------------------------
 
 async function decide(answer) {
-  const res = await api("POST", withUid(gamePath("decide"), store.get().uid), { player: you(), ...answer });
+  const res = await send("POST", withUid(gamePath("decide"), store.get().uid), { player: you(), ...answer });
+  if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   store.set({ decisionDraft: {} });
   await poll();
@@ -520,8 +591,9 @@ async function decide(answer) {
 
 async function onPregame(path, body) {
   const app = store.get();
-  const res = await api("POST", withUid(gamePath(`pregame/${path}`), app.uid), body);
-  if (res && res.allowed === false) toast(res.reason);
+  const res = await send("POST", withUid(gamePath(`pregame/${path}`), app.uid), body);
+  if (res === null) return;
+  if (res.allowed === false) toast(res.reason);
   await poll();
 }
 
@@ -547,6 +619,10 @@ function buildCardLookup(state) {
   (state.exile || []).forEach(add);
   ((state.hands && state.hands[state.you]) || []).forEach(add);
   Object.values(state.graveyards || {}).forEach((cards) => (cards || []).forEach(add));
+  // CR 601.3's dynamic play permissions can name a card nowhere else on this
+  // list (exiled or in a graveyard, same as above, but worth naming
+  // explicitly since a permission's own card is how a player reaches it).
+  ((state.play_permissions && state.play_permissions[state.you]) || []).forEach((p) => add(p.card));
   return lookup;
 }
 
@@ -563,26 +639,22 @@ function nameOf(id) {
 function onOpenZones() {
   const app = store.get();
   if (!app.state) return;
-  openZonesModal(document, app, { onPermanent });
+  openZonesModal(document, app, { onPermanent, onPermission });
 }
 
 async function reportProblem(text) {
-  const res = await api("POST", gamePath("report"), { player: you(), text });
-  if (res && res.allowed === false) toast(res.reason);
+  const res = await send("POST", gamePath("report"), { player: you(), text });
+  if (res === null) return;
+  if (res.allowed === false) toast(res.reason);
   await poll();
 }
 
 async function passForAiSeat(aiPlayer) {
   const app = store.get();
   if (!aiPlayer || !app.aiUid) return;
-  try {
-    const res = await api("POST", gamePath("actions/pass-priority"), { player: aiPlayer });
-    if (res && res.allowed === false) toast(`pass for ${aiPlayer} refused: ${res.reason}`);
-  } catch (e) {
-    toast(`pass for ${aiPlayer} failed: ${e.message}`);
-  } finally {
-    await poll();
-  }
+  const res = await send("POST", gamePath("actions/pass-priority"), { player: aiPlayer });
+  if (res !== null && res.allowed === false) toast(`pass for ${aiPlayer} refused: ${res.reason}`);
+  await poll();
 }
 
 function leaveGame() {
@@ -623,6 +695,7 @@ async function main() {
     onPermanent,
     onPlayer: (u) => tryTarget(u),
     onStackObject: (o) => tryTarget(o.id),
+    onPermission,
   });
   mountRibbon(document, store, {
     nameOf,
@@ -691,10 +764,12 @@ async function main() {
     onBlockConfirm: confirmBlocks,
     onBlockNone: () => passOnce().then(poll),
     onConcede: async () => {
-      await api("POST", gamePath("actions/concede"), { player: you() });
+      const res = await send("POST", gamePath("actions/concede"), { player: you() });
+      if (res === null) return;
       await poll();
     },
     onPregame,
+    onAdvance: advanceStep,
   });
   mountLog(document, store);
   mountTopbar(document, store, {
@@ -703,13 +778,24 @@ async function main() {
     onPassForAiSeat: passForAiSeat,
     onReportProblem: reportProblem,
   });
+  mountHoverPreview(document, store);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      cancel();
-      hidePopover();
+    if (e.key !== "Escape") return;
+    const modal = document.querySelector("#modal");
+    if (modal && !modal.hidden) {
+      closeModal(document);
+      return;
     }
+    cancel();
+    hidePopover();
   });
-  const saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+  } catch {
+    // a corrupted or unreadable localStorage entry is no worse than none
+    saved = null;
+  }
   if (saved && saved.gameId) await startGame({ game_id: saved.gameId, uid: saved.uid, aiUid: saved.aiUid });
   setInterval(poll, POLL_MS);
 }

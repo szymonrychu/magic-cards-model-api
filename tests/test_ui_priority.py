@@ -197,3 +197,33 @@ def test_pass_buttons() -> None:
         "until_castable",
     ]
     assert run_module("priority.js", "m.passButtonsFor(s)", s=board(priority_holder="bob")) == []
+
+
+# -- advanceOffered: the untap/cleanup way past a priorityless step --------
+
+
+def test_advance_is_offered_in_your_own_untap_step() -> None:
+    """CR 502.4: nobody receives priority during untap, so `passButtonsFor`
+    offers nothing there - `POST .../advance` is the active player's own way
+    past it."""
+    assert run_module("priority.js", "m.advanceOffered(s)", s=board(step="untap")) is True
+
+
+def test_advance_is_offered_in_your_own_cleanup_step() -> None:
+    """CR 514.3: normally, no player receives priority during cleanup either."""
+    assert run_module("priority.js", "m.advanceOffered(s)", s=board(step="cleanup")) is True
+
+
+def test_advance_is_not_offered_in_an_ordinary_step() -> None:
+    assert run_module("priority.js", "m.advanceOffered(s)", s=board(step="precombat_main")) is False
+
+
+def test_advance_is_not_offered_on_the_opponents_untap_step() -> None:
+    """It is the active player's own turn-based action (CR 502.1's untap) -
+    the defending player has nothing to advance here."""
+    result = run_module(
+        "priority.js",
+        "m.advanceOffered(s)",
+        s=board(step="untap", active_player="bob", priority_holder=None),
+    )
+    assert result is False

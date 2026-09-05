@@ -16,6 +16,7 @@
 import { cardNode, updateCardNode, cardBackNode } from "../cards.js";
 import { h, patchChildren, clear, setText } from "../dom.js";
 import { activeSlotIndex, candidateIds } from "../targeting.js";
+import { targetSlotIndex } from "../actions.js";
 import { manaPoolNodes } from "../symbols.js";
 
 // Exported (Task 17's addition to this render module) so `render/panels.js`'s
@@ -31,7 +32,11 @@ export function targetingOpts(app, id) {
   const slots = decision ? decision.slots : action ? action.slots : [];
   const aff = decision ? decision.affordance : action ? action.affordance : null;
   const picking = Boolean(aff && aff.targets_anything && slots.length);
-  const active = picking ? activeSlotIndex(slots) : -1;
+  // A `choose_targets` decision has no `focusSlot` of its own (it is not an
+  // `actions.js` action) - only an in-flight cast/activate reads through
+  // `targetSlotIndex`, so the outlined slot there matches exactly what
+  // `app.js`'s click handler will actually fill.
+  const active = picking ? (decision ? activeSlotIndex(slots) : targetSlotIndex(action)) : -1;
   const legal = picking && active >= 0 ? candidateIds(aff, slots[active]) : new Set();
   const held = slots.filter((s) => s.targets.includes(id)).length;
   return {
@@ -94,6 +99,31 @@ function patchCards(container, cards, app, size, onClick) {
   );
 }
 
+/**
+ * CR 601.3's dynamic play permissions (cascade, suspend's own third
+ * ability) - `state.play_permissions[you]`, `serialize.py`'s
+ * `_play_permission_view`: `{card, from_zone, granted_by, usable_now,
+ * why_not, ...}`. Keyed by the permitted card's own id (a permission
+ * disappears from the list, rather than changing identity, once its card
+ * moves zones - CR 400.7 already makes it dead the instant that happens).
+ * Greyed with the engine's own `why_not` as a title when not `usable_now`
+ * yet - a hint, not a hard block; the click still begins the cast and the
+ * server has the final word, exactly like every other click on this board.
+ */
+function patchPermissions(container, permissions, onClick) {
+  patchChildren(
+    container,
+    permissions,
+    (p) => p.card.id,
+    (p) => cardNode(p.card, "card-md", {}),
+    (el, p) => {
+      updateCardNode(el, p.card, { dimmed: !p.usable_now });
+      el.title = p.usable_now ? `${p.granted_by} (CR 601.3): ${p.rule || ""}` : p.why_not || "";
+      el.onclick = (event) => onClick(p, event);
+    }
+  );
+}
+
 function infoRow(el, app, player) {
   const opts = targetingOpts(app, player.username);
   el.classList.toggle("targetable", opts.targetable);
@@ -121,10 +151,14 @@ function infoRow(el, app, player) {
  * Mount the board region into `root` (the element containing the ids listed
  * below - normally `#game`) and return the `store.subscribe` unsubscribe
  * function. `handlers = {onHandCard(card), onPermanent(card, event),
- * onPlayer(username), onStackObject(obj), onLand(card)}`; `onLand` is not
- * called from here (a land click is a `onHandCard`/`onPermanent` click the
- * caller distinguishes by `card.type_line`) but is accepted so callers can
- * pass one handlers object across every render module.
+ * onPlayer(username), onStackObject(obj), onPermission(permission, event),
+ * onLand(card)}`; `onLand` is not called from here (a land click is a
+ * `onHandCard`/`onPermanent` click the caller distinguishes by
+ * `card.type_line`) but is accepted so callers can pass one handlers object
+ * across every render module. `#permitted-row` (CR 601.3's dynamic play
+ * permissions, under the hand) is optional - a page without it is simply not
+ * offered one, the same tolerance every other `$(...)` lookup here has none
+ * of only because their ids are load-bearing elsewhere.
  */
 export function mountBoard(root, store, handlers) {
   const $ = (sel) => root.querySelector(sel);
@@ -136,6 +170,7 @@ export function mountBoard(root, store, handlers) {
     redZone: $("#red-zone"),
     myBf: $("#my-battlefield"),
     myHand: $("#my-hand"),
+    permittedRow: $("#permitted-row"),
     youInfo: $("#you-info"),
   };
   els.oppInfo.onclick = () => handlers.onPlayer(store.get().opponent);
@@ -158,6 +193,11 @@ export function mountBoard(root, store, handlers) {
     patchCards(els.oppBf, state.battlefield.filter((c) => c.controller !== you), app, "card-md", handlers.onPermanent);
     patchCards(els.myBf, state.battlefield.filter((c) => c.controller === you), app, "card-md", handlers.onPermanent);
     patchCards(els.myHand, state.hands[you] || [], app, "card-lg", handlers.onHandCard);
+    if (els.permittedRow) {
+      const permitted = (state.play_permissions && state.play_permissions[you]) || [];
+      els.permittedRow.hidden = permitted.length === 0;
+      patchPermissions(els.permittedRow, permitted, handlers.onPermission);
+    }
     patchChildren(
       els.stack,
       state.stack,

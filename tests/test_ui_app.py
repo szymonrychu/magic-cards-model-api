@@ -75,6 +75,29 @@ def test_app_js_still_exports_start_game_for_the_routes_test() -> None:
     assert run_app("typeof m.startGame") == "function"
 
 
+def test_send_catches_a_rejected_fetch_and_toasts_instead_of_throwing() -> None:
+    """`send` is the one place every action path in `app.js` goes through
+    instead of calling `api()` directly - a transport failure (a rejected
+    `fetch`: the network is down, the server unreachable) must resolve to
+    `null` and toast the error, never escape as an unhandled rejection.
+
+    `document` is stubbed here, locally to this one test, with just enough
+    (`querySelector("#toast")`) for `toast()` to run - `window` stays
+    undefined, so `app.js`'s own `main()` guard still never fires."""
+    result = run_app(
+        """(async () => {
+          const toastEl = { textContent: "", hidden: true };
+          globalThis.document = { querySelector: (sel) => (sel === "#toast" ? toastEl : null) };
+          globalThis.fetch = () => Promise.reject(new Error("network is down"));
+          const res = await m.send("GET", "/api/games/x");
+          return { res, toastText: toastEl.textContent, toastHidden: toastEl.hidden };
+        })()"""
+    )
+    assert result["res"] is None, "a transport failure must resolve to null, not throw"
+    assert result["toastHidden"] is False
+    assert "network is down" in result["toastText"]
+
+
 # -- fixtures ----------------------------------------------------------------
 
 MOUNTAIN = {
@@ -160,6 +183,26 @@ TWO_ABILITY_PW = {
     "abilities": [
         {"index": 0, "text": "+1: draw a card", "is_mana_ability": False},
         {"index": 1, "text": "-2: destroy target creature", "is_mana_ability": False},
+    ],
+}
+
+VEHICLE = {
+    "id": "sc",
+    "name": "Smuggler's Copter",
+    "type_line": "Artifact Vehicle",
+    "zone": "battlefield",
+    "controller": "alice",
+    "abilities": [],
+}
+
+CREWED_VEHICLE_WITH_ABILITY = {
+    "id": "vv",
+    "name": "Skysovereign, Consul Flagship",
+    "type_line": "Legendary Artifact Vehicle",
+    "zone": "battlefield",
+    "controller": "alice",
+    "abilities": [
+        {"index": 0, "text": "Whenever this Vehicle attacks...", "is_mana_ability": False}
     ],
 }
 
@@ -348,3 +391,31 @@ def test_two_activated_abilities_open_a_menu() -> None:
     assert plan["kind"] == "menu"
     assert plan["vehicle"] is False
     assert len(plan["abilities"]) == 2
+
+
+def test_a_vehicle_with_no_abilities_still_offers_a_crew_menu() -> None:
+    """CR 702.122a: crewing is a Vehicle's own thing to do even with no
+    printed activated ability at all - `vehicle: true` is what tells
+    `onPermanent` to add the "Crew" item to an otherwise-empty menu."""
+    plan = run_app(
+        "m.planPermanentClick(vehicle, app, state)",
+        vehicle=VEHICLE,
+        app=base_app(),
+        state=base_state(),
+    )
+    assert plan == {"kind": "menu", "abilities": [], "vehicle": True}
+
+
+def test_a_vehicle_with_an_ability_also_menus_rather_than_auto_activating() -> None:
+    """A Vehicle with exactly one activated ability still isn't the
+    single-ability auto-activate case (`abilities.length === 1 && !vehicle`)
+    - crewing is always a second choice standing next to it."""
+    plan = run_app(
+        "m.planPermanentClick(vehicle, app, state)",
+        vehicle=CREWED_VEHICLE_WITH_ABILITY,
+        app=base_app(),
+        state=base_state(),
+    )
+    assert plan["kind"] == "menu"
+    assert plan["vehicle"] is True
+    assert len(plan["abilities"]) == 1
