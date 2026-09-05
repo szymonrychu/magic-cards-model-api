@@ -57,8 +57,17 @@ export const store = createStore({
 function you() {
   return store.get().state.you;
 }
-function gamePath(rest) {
-  return `/api/games/${store.get().gameId}/${rest}`;
+/**
+ * The game's own URL, plus `rest`. An empty `rest` means the game itself, and
+ * it must not leave a trailing slash behind: `GET /api/games/{id}/` answers
+ * 404, not a redirect to `GET /api/games/{id}`, because the router carries
+ * sibling routes under that same prefix (`log`, `decide`, `actions/...`) and
+ * Starlette's redirect-slashes never fires. The whole game screen stayed
+ * blank on that one character, so the poll's path is exported and pinned.
+ */
+export function gamePath(rest) {
+  const base = `/api/games/${store.get().gameId}`;
+  return rest ? `${base}/${rest}` : base;
 }
 
 /**
