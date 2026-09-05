@@ -288,6 +288,27 @@ class AiSeatRegistry:
             "dispatched_at": time.time(),
         }
 
+    def _dispatch_to_kubernetes(
+        self, *, uid: str, game_id: str, player: str, agent: AgentSettings
+    ) -> dict[str, Any]:
+        """Hand this seat to `K8sSeats`. Never raises: `k8s_seats.get()`
+        failing to load any cluster config, or a transport-level failure
+        underneath `create_namespaced_job` that is not a plain `ApiException`
+        (neither of which `K8sSeats` itself guards against), come back as a
+        fallback exactly like an unreachable driver - the registry's "never
+        raises" contract does not get to make an exception for this
+        mechanism just because it usually behaves."""
+        try:
+            return k8s_seats.get().start(uid=uid, game_id=game_id, player=player, agent=agent)
+        except Exception as exc:  # noqa: BLE001 - report, never raise - see the docstring
+            return {
+                "uid": uid,
+                "player": player,
+                "mechanism": "fallback",
+                "state": "not_started",
+                "reason": f"kubernetes seat scheduling failed: {exc}",
+            }
+
     def _live_driver_status(self, dispatched: dict[str, Any]) -> dict[str, Any]:
         """`dispatched` refreshed from the driver's own `/status`.
 
@@ -321,17 +342,19 @@ class AiSeatRegistry:
     ) -> dict[str, Any]:
         """Start (or report the existing) AI seat for `uid`.
 
-        Two mechanisms, chosen by `AI_SEAT_MODE`. `subprocess` (the default)
-        spawns a one-shot `claude --print` that forgets the game the moment it
-        ends. `wrapper` hands the seat to the driver, which pushes turns into a
-        long-lived interactive claude that carries guides and notes across
-        games.
+        Three mechanisms, chosen by `AI_SEAT_MODE`. `subprocess` (the
+        default) spawns a one-shot `claude --print` that forgets the game the
+        moment it ends. `wrapper` hands the seat to the driver, which pushes
+        turns into a long-lived interactive claude that carries guides and
+        notes across games. `kubernetes` schedules one Job (agent plus driver
+        sidecar) per seat via `k8s_seats.K8sSeats`.
 
-        Never raises in either mode: an unavailable `claude` binary, one that
-        fails to spawn, or an unreachable driver all come back as
-        `mechanism: "fallback"` - see the module docstring. Calling this again
-        for a uid already started returns its current status rather than
-        starting a second seat.
+        Never raises in any mode: an unavailable `claude` binary, one that
+        fails to spawn, an unreachable driver, or a kubernetes seat that could
+        not be scheduled (no cluster config, a transport error under the
+        Job's create call) all come back as `mechanism: "fallback"` - see the
+        module docstring. Calling this again for a uid already started
+        returns its current status rather than starting a second seat.
         """
         mode = ai_seat_mode()
         if mode in ("wrapper", "kubernetes"):
@@ -339,7 +362,9 @@ class AiSeatRegistry:
                 if uid in self._dispatched:
                     return self._dispatched[uid]
             if mode == "kubernetes":
-                status = k8s_seats.get().start(uid=uid, game_id=game_id, player=player, agent=agent)
+                status = self._dispatch_to_kubernetes(
+                    uid=uid, game_id=game_id, player=player, agent=agent
+                )
             else:
                 status = self._dispatch_to_driver(
                     uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
@@ -347,8 +372,11 @@ class AiSeatRegistry:
             # Recorded either way: a dispatch that failed used to be entirely
             # silent here - the UI got a "fallback" status and the container
             # log said nothing, so an unreachable driver looked exactly like
-            # an agent that was simply thinking.
-            if status["mechanism"] in ("wrapper", "kubernetes"):
+            # an agent that was simply thinking. `.get`, not `[...]`: a
+            # kubernetes dispatch can come back `{}` if the seat was released
+            # out from under it between `K8sSeats.start` creating the Job and
+            # reading its own status back - this must not crash the register.
+            if status.get("mechanism") in ("wrapper", "kubernetes"):
                 with self._lock:
                     self._dispatched[uid] = status
                     # A uid that failed to dispatch once (driver unreachable,
@@ -366,9 +394,10 @@ class AiSeatRegistry:
                         f"match={status.get('match_score')} turn={status.get('turn_id')}"
                     )
             else:
-                note = f"NOT STARTED - {status.get('reason')}"
+                reason = status.get("reason") or "the seat did not start"
+                note = f"NOT STARTED - {reason}"
                 with self._lock:
-                    self._unavailable[uid] = str(status.get("reason") or "the seat did not start")
+                    self._unavailable[uid] = str(reason)
             from . import audit  # lazy: ai_seat is imported by modules audit imports
 
             audit.record(game_id, "ai_seat", player=player, note=note)
@@ -430,11 +459,17 @@ class AiSeatRegistry:
         The kubernetes mechanism is treated the same way: `K8sSeats.status`'s
         `pending`/`thinking` states map to `STARTING`/`WORKING`, and every
         other state (`idle`, `gone`, `error`, or a seat `K8sSeats` no longer
-        knows about at all) maps to `GONE`.
+        knows about at all) maps to `GONE` - including a transient failure
+        reading it at all (a Kubernetes API hiccup must not take down the
+        pregame backstop's polling thread any more than an unreachable
+        driver is allowed to below).
         """
         if dispatched.get("mechanism") == "kubernetes":
-            status = k8s_seats.get().status(dispatched["uid"])
-            if status is None:
+            try:
+                status = k8s_seats.get().status(dispatched.get("uid"))
+            except Exception:  # noqa: BLE001 - an erroring cluster is a gone seat
+                return GONE
+            if not status:
                 return GONE
             state = status.get("state")
             if state == "pending":
@@ -520,11 +555,24 @@ class AiSeatRegistry:
         return runner.status() if runner is not None else None
 
     def stop(self, uid: str) -> bool:
+        """Stop whatever is playing `uid`.
+
+        For a kubernetes seat this deletes the Job outright (there is no
+        "pause" for a Job the way `terminate()` pauses a subprocess), so the
+        registry's own record of it must go too - `K8sSeats` has already
+        forgotten the uid by the time `.stop()` returns, and leaving
+        `_dispatched[uid]` behind would make a later `start()` for the same
+        uid hand back that stale, now-nonexistent status forever instead of
+        scheduling a fresh Job.
+        """
         with self._lock:
             dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
         if dispatched is not None and dispatched.get("mechanism") == "kubernetes":
             k8s_seats.get().stop(uid)
+            with self._lock:
+                self._dispatched.pop(uid, None)
+                self._unavailable.pop(uid, None)
             return True
         if runner is None:
             return False

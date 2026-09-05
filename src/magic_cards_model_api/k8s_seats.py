@@ -352,12 +352,25 @@ class K8sSeats:
         batch_api: Any,
         core_api: Any,
         http_client_factory: Callable[[str], Any] = _default_http,
+        reconcile_interval: float = 60.0,
     ) -> None:
         self.settings = settings
         self.batch = batch_api
         self.core = core_api
         self.http = http_client_factory
-        self._seats: dict[str, dict[str, Any]] = {}  # uid -> {game_id, player, job, error}
+        #: How often `start_background`'s reconcile loop runs - also the
+        #: grace period `reconcile()` gives a just-created seat before it is
+        #: willing to call its Job "missing". `start()` inserts a seat into
+        #: `_seats` before the (synchronous, but not lock-held) call to
+        #: `create_namespaced_job` returns; a reconcile pass landing in that
+        #: window would otherwise see the seat but not yet the Job and flag a
+        #: perfectly healthy seat as an error forever (nothing else ever
+        #: clears it). Tests that want the old "flag immediately" behaviour
+        #: pass `reconcile_interval=0`.
+        self.reconcile_interval = reconcile_interval
+        # uid -> {game_id, player, job, error, created_at, missing,
+        # last_pod_phase, gone}
+        self._seats: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     # -- lifecycle ---------------------------------------------------------
@@ -371,6 +384,10 @@ class K8sSeats:
                     "player": player,
                     "job": name,
                     "error": None,
+                    "created_at": time.monotonic(),
+                    "missing": False,
+                    "last_pod_phase": None,
+                    "gone": False,
                 }
         # `status()` below takes `self._lock` itself - it must never be
         # called while this method still holds it (a plain `threading.Lock`
@@ -384,7 +401,13 @@ class K8sSeats:
         except ApiException as exc:
             if exc.status != 409:
                 with self._lock:
-                    self._seats[uid]["error"] = f"could not create job {name}: {exc.reason}"
+                    # `.get`, not `[uid]`: a `release()` racing this create
+                    # call may already have popped the seat by the time the
+                    # exception handler runs, and this must not raise either
+                    # way.
+                    seat = self._seats.get(uid)
+                    if seat is not None:
+                        seat["error"] = f"could not create job {name}: {exc.reason}"
                 logger.error("job %s not created: %s", name, exc)
         return self.status(uid) or {}
 
@@ -417,10 +440,36 @@ class K8sSeats:
             "game_id": seat["game_id"],
             "player": seat["player"],
         }
+        if seat.get("gone"):
+            # The Job finished cleanly (its pod's last known phase was
+            # `Succeeded`/`Failed`) and has since been TTL-reaped or reconciled
+            # away - the expected end of this seat's life, not a failure.
+            return {
+                **base,
+                "state": "gone",
+                "reason": seat.get("last_pod_phase") or "the Job was cleaned up",
+                "pod": None,
+                "driver": None,
+            }
         if seat["error"]:
             return {**base, "state": "error", "reason": seat["error"], "pod": None, "driver": None}
-        pod = self._pod(uid)
+        try:
+            pod = self._pod(uid)
+        except Exception as exc:  # noqa: BLE001 - a transient API hiccup is not "gone"
+            return {
+                **base,
+                "state": "pending",
+                "reason": f"could not read pod status: {exc}",
+                "pod": None,
+                "driver": None,
+            }
         phase = pod.status.phase if pod is not None else None
+        if pod is not None:
+            # Remembered across calls so `reconcile()` can tell "the Job
+            # vanished after finishing cleanly" (TTL cleanup - `gone`) from
+            # "the Job vanished out from under a still-running seat" (`error`).
+            with self._lock:
+                seat["last_pod_phase"] = phase
         waiting = ""
         for cs in (pod.status.container_statuses or []) if pod is not None else []:
             state = getattr(cs, "state", None)
@@ -432,10 +481,17 @@ class K8sSeats:
                 waiting = state.waiting.reason
         if waiting in ("ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff"):
             return {**base, "state": "error", "reason": waiting, "pod": phase, "driver": None}
+        # Terminal phases are decided before any driver call: the pod's own
+        # IP can be recycled onto an unrelated pod the moment it is gone, so
+        # asking "is the driver at this IP happy" is meaningless once the pod
+        # itself has already succeeded or failed.
+        if phase in ("Succeeded", "Failed"):
+            return {**base, "state": "gone", "reason": phase, "pod": phase, "driver": None}
+        if phase in (None, "Pending"):
+            return {**base, "state": "pending", "reason": phase, "pod": phase, "driver": None}
         driver = self._driver_status(pod)
-        if phase in (None, "Pending") or driver is None:
-            state = "gone" if phase in ("Succeeded", "Failed") else "pending"
-            return {**base, "state": state, "reason": phase, "pod": phase, "driver": driver}
+        if driver is None:
+            return {**base, "state": "pending", "reason": phase, "pod": phase, "driver": None}
         if driver.get("lastError"):
             return {
                 **base,
@@ -456,7 +512,11 @@ class K8sSeats:
             seat = self._seats.pop(uid, None)
         if seat is None:
             return {"uid": uid, "mechanism": None, "deleted": False}
-        pod = self._pod(uid)
+        try:
+            pod = self._pod(uid)
+        except Exception as exc:  # noqa: BLE001 - the Job is deleted regardless
+            logger.info("could not read pod for %s before release: %s", uid, exc)
+            pod = None
         if pod is not None and pod.status.pod_ip:
             try:
                 with self.http(f"http://{pod.status.pod_ip}:8090") as client:
@@ -496,14 +556,47 @@ class K8sSeats:
                 except ApiException as exc:
                     logger.warning("could not delete stray job %s: %s", job.metadata.name, exc)
         missing: list[str] = []
+        now = time.monotonic()
         with self._lock:
             for uid, seat in self._seats.items():
-                if seat["job"] not in present and not seat["error"]:
-                    seat["error"] = f"job {seat['job']} is missing from the cluster"
-                    missing.append(uid)
+                job_present = seat["job"] in present
+                if job_present:
+                    # The Job reappeared (or never really left - a prior pass
+                    # flagged it while `start()` was still mid-create): this
+                    # was never actually missing, so undo that verdict rather
+                    # than leaving a healthy seat pinned at `error` forever.
+                    if seat.get("missing"):
+                        seat["error"] = None
+                        seat["missing"] = False
+                    continue
+                if seat.get("gone") or seat["error"]:
+                    continue  # already accounted for, one way or another
+                age = now - seat.get("created_at", now)
+                if age < self.reconcile_interval:
+                    # Too young to judge: `create_namespaced_job` may simply
+                    # not have returned yet when this pass listed Jobs.
+                    continue
+                if seat.get("last_pod_phase") in ("Succeeded", "Failed"):
+                    # The Job finished cleanly and has since been TTL-reaped
+                    # (or reconciled away as a dead game's stray Job above) -
+                    # the expected end of this seat's life, not a failure.
+                    seat["gone"] = True
+                    continue
+                seat["error"] = f"job {seat['job']} is missing from the cluster"
+                seat["missing"] = True
+                missing.append(uid)
         return {"deleted": deleted, "missing": missing}
 
-    def run_watch(self, stop: threading.Event) -> None:
+    def run_watch(self, stop: threading.Event, sleep: Callable[[float], None] = time.sleep) -> None:
+        """Watch Jobs until `stop` is set, relisting whenever the stream ends.
+
+        A short, unconditional `sleep` follows every outer iteration - not
+        only the exception paths. A stream that ends *without* raising (the
+        server closing it cleanly, or a fake in a test whose `.stream(...)`
+        simply returns) would otherwise spin this loop with no delay at all;
+        `sleep` is a parameter rather than a bare `time.sleep(1)` so a test can
+        inject a recording stand-in instead of a real one-second wait.
+        """
         while not stop.is_set():
             try:
                 w = k8s_watch.Watch()
@@ -526,14 +619,15 @@ class K8sSeats:
                         break
             except ApiException as exc:
                 logger.warning("job watch ended: %s; relisting", exc.reason)
-                time.sleep(2)
             except Exception as exc:  # noqa: BLE001 - keep watching
                 logger.warning("job watch error: %s", exc)
-                time.sleep(5)
+            if not stop.is_set():
+                sleep(1.0)
 
     def start_background(
-        self, live_games: Callable[[], set[str]], interval: float = 60.0
+        self, live_games: Callable[[], set[str]], interval: float | None = None
     ) -> threading.Event:
+        interval = self.reconcile_interval if interval is None else interval
         stop = threading.Event()
         threading.Thread(
             target=self.run_watch, args=(stop,), name="k8s-seat-watch", daemon=True

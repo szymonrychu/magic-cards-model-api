@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import threading
 import types
 
 from kubernetes import client as k8s_client
 from kubernetes.client.exceptions import ApiException
 
+from magic_cards_model_api import k8s_seats
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.k8s_seats import (
     K8sSeats,
@@ -157,6 +159,7 @@ class FakeBatch:
     def __init__(self):
         self.jobs = {}
         self.deleted = []
+        self.delete_calls = []  # (name, body) - so a test can check propagation_policy
 
     def create_namespaced_job(self, namespace, body):
         name = body["metadata"]["name"]
@@ -175,6 +178,7 @@ class FakeBatch:
 
     def delete_namespaced_job(self, name, namespace, body=None):
         self.deleted.append(name)
+        self.delete_calls.append((name, body))
         self.jobs.pop(name, None)
 
 
@@ -194,7 +198,7 @@ class FakeCore:
 
 class FakeDriverHttp:
     def __init__(self, status):
-        self.status, self.posts = status, []
+        self.status, self.posts, self.gets = status, [], []
 
     def __call__(self, base):
         outer = self
@@ -207,6 +211,7 @@ class FakeDriverHttp:
                 return False
 
             def get(self, path, **kw):
+                outer.gets.append((base, path))
                 return types.SimpleNamespace(status_code=200, json=lambda: outer.status)
 
             def post(self, path, **kw):
@@ -216,10 +221,17 @@ class FakeDriverHttp:
         return Client()
 
 
-def make(status=None, **core):
+def make(status=None, reconcile_interval=0, **core):
+    # `reconcile_interval=0` by default - not the runner's real 60s default -
+    # so every test here that reconciles gets `reconcile()`'s old "judge a
+    # missing Job immediately" behaviour unless it opts into a longer window
+    # on purpose (the age-gate tests below do exactly that).
     batch, corev1 = FakeBatch(), FakeCore(**core)
     http = FakeDriverHttp(status or {"turnActive": True, "pending": False, "lastError": None})
-    return K8sSeats(K8sSettings.from_env(ENV), batch, corev1, http), batch, http
+    seats = K8sSeats(
+        K8sSettings.from_env(ENV), batch, corev1, http, reconcile_interval=reconcile_interval
+    )
+    return seats, batch, http
 
 
 def test_start_creates_the_job_once() -> None:
@@ -279,3 +291,150 @@ def test_reconcile_deletes_jobs_of_dead_games_and_flags_missing_jobs() -> None:
     assert batch.deleted == [job_name("g1", "u1")]
     assert report == {"deleted": [job_name("g1", "u1")], "missing": ["u2"]}
     assert seats.status("u2")["state"] == "error" and "missing" in seats.status("u2")["reason"]
+
+
+# ---- reconcile: a just-created seat must never be pinned at `error` --------
+#
+# `start()` inserts a seat into `_seats` before `create_namespaced_job`
+# returns - a reconcile pass landing in that narrow window used to see the
+# seat but not yet its Job and flag a perfectly healthy seat as `error`
+# forever (nothing else ever cleared it). `reconcile_interval` gives a
+# just-created seat a grace period, and a later pass clears a stale `missing`
+# verdict once the Job is seen again.
+
+
+def test_reconcile_does_not_flag_a_seat_still_mid_create() -> None:
+    seats, batch, _ = make(reconcile_interval=999)
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    batch.jobs.pop(job_name("g1", "u1"))  # a reconcile pass landing before create returned
+    report = seats.reconcile(live_game_ids={"g1"})
+    assert report == {"deleted": [], "missing": []}
+    assert seats.status("u1")["state"] != "error"
+
+
+def test_reconcile_clears_a_stale_missing_verdict_once_the_job_reappears() -> None:
+    seats, batch, _ = make()  # reconcile_interval=0 - judges immediately
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    job = batch.jobs.pop(job_name("g1", "u1"))
+    first = seats.reconcile(live_game_ids={"g1"})
+    assert first["missing"] == ["u1"]
+    assert seats.status("u1")["state"] == "error"
+    batch.jobs[job_name("g1", "u1")] = job  # the Job is seen again
+    second = seats.reconcile(live_game_ids={"g1"})
+    assert second["missing"] == []
+    assert seats.status("u1")["state"] != "error"
+
+
+def test_reconcile_marks_a_ttl_reaped_completed_job_gone_not_error() -> None:
+    seats, batch, _ = make(phase="Succeeded")
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    assert seats.status("u1")["state"] == "gone"  # observed once, so `last_pod_phase` is recorded
+    batch.jobs.pop(job_name("g1", "u1"))  # ttlSecondsAfterFinished reaped it
+    report = seats.reconcile(live_game_ids={"g1"})
+    assert report["missing"] == []
+    assert seats.status("u1")["state"] == "gone"
+
+
+# ---- status: a terminal pod phase is decided before any driver call --------
+#
+# The pod's IP can be recycled onto an unrelated pod the instant the pod
+# itself is gone, so asking "is the driver at this IP happy" is meaningless
+# once the pod has already succeeded or failed - and must not even be tried.
+
+
+def test_a_succeeded_pod_is_gone_even_when_the_driver_still_answers() -> None:
+    seats, _, http = make(phase="Succeeded")
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    status = seats.status("u1")
+    assert status["state"] == "gone" and status["driver"] is None
+    assert http.gets == []  # the (possibly recycled) pod IP was never asked
+
+
+# ---- status: a transient failure reading the pod is "pending", not a raise -
+
+
+def test_status_survives_a_pod_lookup_that_raises() -> None:
+    seats, _, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+
+    def boom(*a, **kw):
+        raise RuntimeError("api server unavailable")
+
+    seats.core.list_namespaced_pod = boom
+    status = seats.status("u1")
+    assert status["state"] == "pending"
+    assert "api server unavailable" in status["reason"]
+
+
+# ---- start: a release racing the create call must not raise ---------------
+
+
+def test_start_survives_a_release_racing_the_create_call() -> None:
+    seats, batch, _ = make()
+
+    def create_then_race_a_release(namespace, body):
+        # A concurrent `release()` pops the seat before the `ApiException`
+        # handler below runs - simulated directly since the real race is a
+        # matter of thread-scheduling luck, not something worth flaking a
+        # test over.
+        seats._seats.pop("u1", None)
+        raise ApiException(status=500, reason="boom")
+
+    batch.create_namespaced_job = create_then_race_a_release
+    status = seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    assert status == {}
+
+
+# ---- release: the delete really asks for Background propagation -----------
+
+
+def test_release_deletes_with_background_propagation() -> None:
+    seats, batch, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    seats.release("u1")
+    name, body = batch.delete_calls[-1]
+    assert name == job_name("g1", "u1")
+    assert body.propagation_policy == "Background"
+
+
+# ---- run_watch: no busy-loop when the stream ends without raising ---------
+
+
+def test_run_watch_sleeps_between_reconnects_when_the_stream_ends_cleanly(
+    monkeypatch,
+) -> None:
+    seats, _, _ = make()
+
+    class _FakeWatch:
+        def stream(self, *a, **kw):
+            return iter([])  # ends immediately, no exception
+
+    monkeypatch.setattr(k8s_seats.k8s_watch, "Watch", _FakeWatch)
+
+    stop = threading.Event()
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            stop.set()
+
+    thread = threading.Thread(target=seats.run_watch, args=(stop,), kwargs={"sleep": fake_sleep})
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert sleeps[:2] == [1.0, 1.0]

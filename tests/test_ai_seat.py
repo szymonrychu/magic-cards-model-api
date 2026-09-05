@@ -177,11 +177,21 @@ def test_spawn_failure_falls_back_cleanly(
 class _FakeBatch:
     def __init__(self) -> None:
         self.jobs: dict[str, object] = {}
+        self.creates = 0
+        #: Set by a test to make the next `create_namespaced_job` raise it -
+        #: a plain `RuntimeError`, not `kubernetes.client.exceptions
+        #: .ApiException`, is exactly the shape of failure `K8sSeats.start`
+        #: does not itself guard against (a transport error, say), so this is
+        #: what proves `ai_seat.py`'s kubernetes branch never raises either.
+        self.create_error: Exception | None = None
 
     def create_namespaced_job(self, namespace, body):
         import types
 
+        if self.create_error is not None:
+            raise self.create_error
         name = body["metadata"]["name"]
+        self.creates += 1
         self.jobs[name] = types.SimpleNamespace(
             metadata=types.SimpleNamespace(name=name, labels=body["metadata"]["labels"])
         )
@@ -231,6 +241,91 @@ def test_kubernetes_mode_creates_a_job_and_reports_the_mechanism(
     live = fresh_registry.status("u-k8s")
     assert live is not None
     assert live["mechanism"] == "kubernetes"
+
+
+def test_kubernetes_create_failure_falls_back_without_raising(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """`K8sSeats.start` only guards against `ApiException` - a transport-level
+    failure underneath `create_namespaced_job` (here, a plain `RuntimeError`)
+    would otherwise propagate straight out of `registry.start`, breaking the
+    "never raises" contract every other mechanism keeps."""
+    kubernetes_mode.create_error = RuntimeError("kubelet is down")
+    status = fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "fallback"
+    assert status["state"] == "not_started"
+    assert "kubelet is down" in status["reason"]
+    assert kubernetes_mode.jobs == {}
+    assert fresh_registry.activity("u-k8s") == ai_seat.GONE
+
+
+def test_kubernetes_stop_deletes_the_job_and_allows_a_restart(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    from magic_cards_model_api.k8s_seats import job_name
+
+    fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert kubernetes_mode.creates == 1
+
+    assert fresh_registry.stop("u-k8s") is True
+    assert job_name("g-k8s", "u-k8s") not in kubernetes_mode.jobs
+    # No stale dispatch record left behind - otherwise `start()` below would
+    # just hand back this now-deleted Job's old status instead of scheduling
+    # a fresh one.
+    assert fresh_registry.status("u-k8s") is None
+
+    fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert kubernetes_mode.creates == 2
+    assert job_name("g-k8s", "u-k8s") in kubernetes_mode.jobs
+
+
+def test_kubernetes_release_reports_the_mechanism_and_deletes_the_job(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    from magic_cards_model_api.k8s_seats import job_name
+
+    fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    released = fresh_registry.release("u-k8s")
+    assert released["mechanism"] == "kubernetes"
+    assert job_name("g-k8s", "u-k8s") not in kubernetes_mode.jobs
+    assert fresh_registry.status("u-k8s") is None
+
+
+def test_kubernetes_activity_is_starting_before_the_pod_runs(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """`_FakeCore.list_namespaced_pod` above reports no pods at all -
+    `K8sSeats.status` therefore says `pending`, which `_driver_activity` maps
+    to `STARTING` for kubernetes exactly as it maps the driver's own
+    `pending` for wrapper mode."""
+    fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert fresh_registry.activity("u-k8s") == ai_seat.STARTING
+
+
+def test_kubernetes_activity_is_gone_when_the_cluster_errors(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from magic_cards_model_api import k8s_seats
+
+    fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+
+    def boom(uid: str):
+        raise RuntimeError("apiserver unreachable")
+
+    monkeypatch.setattr(k8s_seats.get(), "status", boom)
+    assert fresh_registry.activity("u-k8s") == ai_seat.GONE
 
 
 # -- HTTP layer (ai_seat_api.py) ---------------------------------------------
