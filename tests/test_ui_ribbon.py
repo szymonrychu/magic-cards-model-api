@@ -114,8 +114,21 @@ function click(el) {
   if (el && el.listeners && el.listeners.click) el.listeners.click({ target: el });
 }
 
+// The first `tag` element (depth-first) whose `dataset.field` equals `field`
+// - how the casting-strip focus-guard test below finds the X input among
+// several inputs without a class or id to key off.
+function findByField(node, tag, field) {
+  if (node.tagName === tag && node.dataset && node.dataset.field === field) return node;
+  for (const c of node.children || []) {
+    const found = findByField(c, tag, field);
+    if (found) return found;
+  }
+  return null;
+}
+
 globalThis.window = { scrollX: 0, scrollY: 0 };
 globalThis.document = new El("#document");
+document.activeElement = null;
 document.createElement = (t) => new El(t);
 document.createTextNode = (s) => ({ nodeType: 3, textContent: s });
 document.createDocumentFragment = () => new El("#fragment");
@@ -567,3 +580,98 @@ def test_a_refused_dry_run_puts_the_cast_button_back() -> None:
     strip = _one_target_strip("no combination of the available mana sources can pay {1}{B}{R}")
     assert "no combination of the available mana sources" in strip
     assert "Cast" in strip.replace("Cast: ", ""), "a refusal needs a way to try again"
+
+
+# --------------------------------------- the casting strip's own focus guard
+#
+# From the whole-branch review: `renderCastingStrip` used to `clear(el)` on
+# every store update with no guard at all, so a poll landing mid-keystroke on
+# the X input (or a share stepper) destroyed it and started it over blank -
+# `renderPromptBox`'s own `focusedTextInput` protects exactly this failure
+# mode for a decision's free-text control, but the casting strip had nothing
+# of its own.
+
+
+def test_rerendering_while_the_x_input_is_focused_keeps_the_same_node() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const action = {
+            kind: "cast", cardId: koz.id, card: koz, abilityIndex: null, keyword: null,
+            modes: [1, 2], xValue: 1, color: null, altCost: null,
+            choosing: [], convoke: [], delve: [], crewing: [],
+            slots: [
+              { index: 0, requirementIndex: 0, label: "Mode 1: target player",
+                count: 1, minimum: 1, mode: 1, targets: ["alice"] },
+              { index: 1, requirementIndex: 1, label: "Mode 2: target player",
+                count: 1, minimum: 1, mode: 2, targets: [] },
+            ],
+            shares: {}, pinned: [], freeTargets: [], pendingTargets: [],
+            affordance: aff, error: null, holdPriority: false, done: false,
+          };
+          const state = baseState({ hands: { alice: [koz] } });
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({}); // the initial render
+          const xInput = findByField(document.querySelector("#casting-strip"), "input", "x");
+          // The player has typed "7" but never committed it (no onChange
+          // fired, so the store still holds xValue: 1) - the exact moment a
+          // poll tick used to wipe the input out from under them.
+          document.activeElement = xInput;
+          xInput.value = "7";
+          store.set({}); // the poll tick landing mid-edit
+          const stillThere = findByField(document.querySelector("#casting-strip"), "input", "x");
+          return [stillThere === xInput, stillThere.value];
+        })()
+        """,
+        koz=KOZILEK,
+        aff=KOZ_AFF,
+    )
+    assert result == [True, "7"], "an in-progress X edit must survive a repaint, same node and all"
+
+
+def test_once_the_x_input_agrees_with_the_store_the_strip_repaints_normally() -> None:
+    """The other half of the guard: once the input's live value already
+    matches `action.xValue` (nothing uncommitted to protect), staying focused
+    must not freeze the whole strip forever - a change elsewhere in the
+    action (here, a refused dry run's error message) still has to show up."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const action = {
+            kind: "cast", cardId: koz.id, card: koz, abilityIndex: null, keyword: null,
+            modes: [1, 2], xValue: 1, color: null, altCost: null,
+            choosing: [], convoke: [], delve: [], crewing: [],
+            slots: [
+              { index: 0, requirementIndex: 0, label: "Mode 1: target player",
+                count: 1, minimum: 1, mode: 1, targets: ["alice"] },
+              { index: 1, requirementIndex: 1, label: "Mode 2: target player",
+                count: 1, minimum: 1, mode: 2, targets: [] },
+            ],
+            shares: {}, pinned: [], freeTargets: [], pendingTargets: [],
+            affordance: aff, error: null, holdPriority: false, done: false,
+          };
+          const state = baseState({ hands: { alice: [koz] } });
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({}); // the initial render
+          const xInput = findByField(document.querySelector("#casting-strip"), "input", "x");
+          document.activeElement = xInput;
+          xInput.value = "1"; // already matches action.xValue - nothing in flight
+          store.set({ action: { ...action, error: "no combination of sources can pay this" } });
+          const repainted = findByField(document.querySelector("#casting-strip"), "input", "x");
+          return [
+            repainted !== xInput,
+            document.querySelector("#casting-strip").textContent,
+          ];
+        })()
+        """,
+        koz=KOZILEK,
+        aff=KOZ_AFF,
+    )
+    assert result[0] is True, "a repaint with nothing uncommitted must go through, as a fresh node"
+    assert "no combination of sources can pay this" in result[1]

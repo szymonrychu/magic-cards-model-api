@@ -377,6 +377,9 @@ function renderXInput(card, action, handlers) {
       min: "0",
       value: action.xValue === null ? "" : String(action.xValue),
       placeholder: "X",
+      // `castingStripEditInProgress` (below) keys off this to tell a live,
+      // uncommitted X value apart from a share stepper's own input.
+      dataset: { field: "x" },
       onChange: (e) => handlers.onSetX(e.target.value === "" ? null : Number(e.target.value)),
     })
   );
@@ -506,6 +509,10 @@ function renderShareSteppers(action, handlers) {
             type: "number",
             min: "1",
             value: String(action.shares[id] || 1),
+            // Keyed by the target's own id, not just "a share input", so
+            // `castingStripEditInProgress` can tell which target's live edit
+            // it is looking at when more than one share stepper is on screen.
+            dataset: { field: `share:${id}` },
             onChange: (e) => handlers.onSetShare(id, Number(e.target.value)),
           })
         )
@@ -514,8 +521,53 @@ function renderShareSteppers(action, handlers) {
   );
 }
 
+/**
+ * Whether `#casting-strip` has a live, uncommitted edit sitting in a focused
+ * X or share-stepper `<input type=number>` right now - `renderCastingStrip`
+ * skips its repaint while this is true, the same shape `renderPromptBox`'s
+ * own `focusedTextInput` protects a half-typed free-text decision answer
+ * with. `renderCastingStrip` runs on every store update (a ~1.2s poll tick
+ * included), and it tears the strip down and rebuilds it wholesale
+ * (`clear` + fresh `h()` nodes) same as `renderPromptBox` does - so a poll
+ * landing while the player is mid-keystroke on the X input used to destroy
+ * that input and start it over blank.
+ *
+ * Unlike `focusedTextInput` (which blocks on focus alone, because
+ * `#prompt-box`'s controls have no notion of "already in sync"), this also
+ * checks whether the input's live value has actually diverged from what
+ * `action` says it should be: `renderXInput`/`renderShareSteppers` tag their
+ * input with `dataset.field` (`"x"`, or `"share:<id>"`) precisely so this can
+ * ask "does this field's live text still match the store" rather than
+ * "is any input here focused at all". Once an `onChange` has landed and the
+ * two agree again, the guard steps aside - continuing to block on focus
+ * alone would freeze the rest of the strip (a fresh dry-run preview, a newly
+ * legal Cast button) behind an input that simply still happens to hold
+ * focus.
+ */
+function castingStripEditInProgress(el, action) {
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  if (!active || typeof el.contains !== "function" || !el.contains(active)) return false;
+  const tag = (active.tagName || "").toUpperCase();
+  if (tag !== "INPUT") return false;
+  const type = (active.type || (active.attrs && active.attrs.type) || "text").toLowerCase();
+  if (type !== "number" && type !== "text") return false;
+  const field = (active.dataset && active.dataset.field) || "";
+  const live = active.value === undefined || active.value === null ? "" : String(active.value);
+  if (field === "x") {
+    const expected = action && action.xValue !== null && action.xValue !== undefined ? String(action.xValue) : "";
+    return live !== expected;
+  }
+  if (field.startsWith("share:")) {
+    const id = field.slice("share:".length);
+    const expected = action ? String((action.shares && action.shares[id]) || 1) : "";
+    return live !== expected;
+  }
+  return false;
+}
+
 function renderCastingStrip(el, app, handlers) {
   const action = app.action;
+  if (castingStripEditInProgress(el, action)) return;
   clear(el);
   if (!action) {
     el.hidden = true;
