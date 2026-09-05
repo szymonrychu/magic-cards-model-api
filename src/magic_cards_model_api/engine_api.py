@@ -406,12 +406,13 @@ def crew_vehicle(game: Game, req: CrewRequest) -> Outcome:
     try:
         payment = activation.begin_paying()
         if req.dry_run:
+            tapped = tapped_view(payment)
             if payment.unpayable or payment.shortfall:
                 reason = shortfall_reason(payment)
                 payment.rewind()
-                return Outcome(False, reason, {"cost": str(payment.cost)})
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
             payment.rewind()
-            return Outcome(True, detail={"cost": str(payment.cost)})
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
         payment.pay()
     except ValueError as exc:
         if payment is not None:
@@ -452,12 +453,13 @@ def _take_marked_exile(game: Game, action: MarkedExile, req: SpecialActionReques
     try:
         pay_with(payment, list(req.mana_sources or []), game)
         if req.dry_run:
+            tapped = tapped_view(payment)
             if payment.unpayable or payment.shortfall:
                 reason = shortfall_reason(payment)
                 payment.rewind()
-                return Outcome(False, reason, {"cost": str(payment.cost)})
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
             payment.rewind()
-            return Outcome(True, detail={"cost": str(payment.cost)})
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
         payment.pay()
     except ValueError as exc:
         payment.rewind()
@@ -572,12 +574,13 @@ def cycle_card(game: Game, req: CycleRequest) -> Outcome:
         payment = activation.begin_paying()
         pay_with(payment, list(req.mana_sources or []), game)
         if req.dry_run:
+            tapped = tapped_view(payment)
             if payment.unpayable or payment.shortfall:
                 reason = shortfall_reason(payment)
                 payment.rewind()
-                return Outcome(False, reason, {"cost": str(payment.cost)})
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
             payment.rewind()
-            return Outcome(True, detail={"cost": str(payment.cost)})
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
         payment.pay()
     except ValueError as exc:
         if payment is not None:
