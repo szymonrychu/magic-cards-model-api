@@ -362,6 +362,15 @@ is a finished Job (`ttlSecondsAfterFinished`), not a replaced container in an
 otherwise-still-running Pod. Grab the logs before the TTL cleans the Job up,
 or raise `AGENT_JOB_TTL_SECONDS` if you need a longer window.
 
+**Metrics, breaking change**: each seat's `agent` container's
+`ccw_turn_tokens_total` (scraped from its own Pod, per seat Job, not
+aggregated here) now carries `model` and `effort` labels alongside `type` -
+one series per (type, model, effort) rather than per `type` alone. Anything
+scraping or dashboarding this metric across seats needs `sum by (type)` (or
+similar) to collapse back to the old one-series-per-type shape; per-game
+`agent` settings otherwise fan it out into one series per model/effort
+combination in play.
+
 ## What changed versus the one-Pod-three-container design
 
 ### The API Deployment lost two containers and four volumes
@@ -494,25 +503,47 @@ never start; `30-storage.yaml` explains the fix.
   (`10.96.0.10`, `53/UDP,TCP`) before pointing the DNS egress rule's
   `namespaceSelector` there.
 
+## What was verified against the live cluster (2026-09-05)
+
+The four bullets that used to sit under "What remains unverified" below were
+all cleared by a cluster run recorded in
+`.superpowers/sdd/2026-09-04-per-game-agent-pods/task-12-report.md`, on
+`kubernetes-admin@kubernetes`, namespace `mtg-engine`, image tag
+`ae38dea-9608ea9`:
+
+- **Two concurrent seat Jobs, on the `ReadWriteMany` `mtg-agent-memory`
+  claim.** Two games were dispatched at once; both Jobs' Pods mounted the
+  same PVC and both agents read the restored notes under
+  `/workspace/memory/unknown-deck/` as their first act. The migration itself
+  (delete the old `ReadWriteOnce` claim, recreate `ReadWriteMany`, restore
+  the notes from a backup) was performed by hand and confirmed byte-for-byte
+  identical afterwards.
+- **Admission under the restricted Pod Security Standard.** The namespace
+  was labelled `pod-security.kubernetes.io/enforce=restricted` for the first
+  time in this run; both seat Jobs' Pods (agent and driver containers, and
+  the `guides` initContainer) were admitted and reached `Running` without a
+  PSS warning or a manifest rewrite.
+- **The per-game MCP config.** Each agent called `mcp__mtg__*` tools scoped
+  to its own seat uid and got real answers back - no cross-talk between the
+  two concurrently-running games.
+- **NetworkPolicy egress** to the API (the `mtg` MCP server), DNS, the
+  spellslinger MCP server, and the Anthropic API (443) - all reached
+  successfully by both seat Pods.
+- **`ownerReferences` garbage collection on an API restart.** `kubectl
+  rollout restart deploy/mtg-stack` deleted the old API Pod, and the
+  leftover seat Job (from a game ended mid-run) was already gone by the time
+  the rollout reported complete - no manual cleanup needed.
+
 ## What remains unverified
 
-- **No seat Job has ever actually been created against this RBAC and
-  NetworkPolicy.** `k8s_seats.build_job`'s output is unit-tested and this
-  Role's shape is asserted by `test_k8s_manifests.py`, but nothing here has
-  watched the API create a real Job, seen it pass admission under the
-  restricted Pod Security Standard, or seen its Pod actually reach the API
-  and spellslinger through the NetworkPolicy.
-- **The `mtg-agent-memory` PVC migration (delete, recreate `ReadWriteMany`,
-  restore the notes) has not been performed.** It needs a live volume touched
-  by hand; see the callout above.
-- **`AI_SEAT_MODE=kubernetes` is set on the Deployment, but `ai_seat.py`'s
-  own dispatch does not yet branch on it** (as of this manifest change,
-  `ai_seat_mode()` only recognises `subprocess`/`wrapper`) - wiring that
-  branch is a separate task in this plan, not part of the manifests here.
 - Everything the old README already flagged as unverified about the
   per-seat container shape (non-root uid 1000 for game/driver, the 8099
   internal-port move, the MCP re-point, probe timings, resource
-  requests/limits, `regcred`/Harbor image availability) still applies -
-  see `k8s_seats.py` and its tests for what has and has not been exercised.
-
-`kubeval` and `kubectl-validate` are not installed here; no other linter ran.
+  requests/limits, `regcred`/Harbor image availability) was exercised live
+  in the run above and came up clean on the first try, but no dedicated
+  chaos/failure-injection pass (a killed driver container, a stalled boot,
+  an apiserver hiccup mid-reconcile) has been run against the live cluster -
+  only the unit tests in `tests/test_k8s_seats.py` cover those paths.
+- `kubeval` and `kubectl-validate` are still not installed here; no other
+  manifest linter has run against the live cluster's admission controller
+  beyond the restricted PSS label itself.

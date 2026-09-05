@@ -65,16 +65,44 @@ class GameStore:
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
+        game_id, _created = self._create_locked(game)
+        return game_id
+
+    def create_if_under(self, game: Game, cap: int) -> str | None:
+        """`create()`, but refuses (creates nothing, returns `None`) once
+        `cap` lobby games are already live.
+
+        `start_game_from_decklists` used to call `live_ui_games()` and
+        `create()` as two separately-locked steps, with nothing serialising
+        one against the other: two concurrent requests could both read the
+        live count just under `cap`, and both go on to create, letting the
+        live table grow past the limit `MAX_LIVE_GAMES` exists to enforce.
+        This method takes `self._lock` once around both the count and the
+        create, closing that window - the two are now one atomic decision.
+        """
+        game_id, created = self._create_locked(game, cap=cap)
+        return game_id if created else None
+
+    def _create_locked(self, game: Game, *, cap: int | None = None) -> tuple[str, bool]:
         game_id = uuid4().hex
         mailbox = DecisionMailbox()
         game.decisions.provider = GameDecisionProvider(mailbox=mailbox, game_id=game_id)
         with self._lock:
+            if cap is not None and self._live_ui_count_locked() >= cap:
+                return "", False
             self._games[game_id] = game
             self._admin_keys[game_id] = uuid4().hex
             self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
             self._mailboxes[game_id] = mailbox
-        return game_id
+        return game_id, True
+
+    def _live_ui_count_locked(self) -> int:
+        """`len(live_ui_games())`, computed without re-taking `self._lock` -
+        for `_create_locked`'s cap check, which already holds it."""
+        return sum(
+            1 for gid in self._ui_games if gid in self._games and not self._games[gid].is_over
+        )
 
     def created_at(self, game_id: str) -> str | None:
         """When this game was created, UTC ISO 8601 - `None` for an unknown

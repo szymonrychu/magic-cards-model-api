@@ -135,7 +135,7 @@ into game two, while a note has to be written down to survive.
 A dispatch that lands while the replacement container is still booting (pty
 spawn, bypass dialog and quiescence take up to about two minutes) is accepted
 with `pending: true`, and the driver keeps offering turn 0 until the agent
-answers or the boot budget (`AGENT_BOOT_WAIT_SECONDS`, default 180) runs out.
+answers or the boot budget (`AGENT_BOOT_WAIT_SECONDS`, default 360) runs out.
 A second *different* game arriving while a match is live is refused with a 409
 naming the game in progress - compose's one agent container plays one game at
 a time. That limit is specific to `wrapper` mode's single agent container;
@@ -217,7 +217,7 @@ depends on `AI_SEAT_MODE`:
 
 | `AI_SEAT_MODE` | what plays each AI seat | how many games at once |
 |---|---|---|
-| `subprocess` (default outside compose) | a one-shot `claude --print` per turn, forgetting the game when it ends | as many as the process can spawn; each seat is independent, nothing shared to contend over |
+| `subprocess` (default outside compose) | a one-shot `claude --print` per seat per game (one subprocess plays the whole match agentically, then forgets it) | as many as the process can spawn; each seat is independent, nothing shared to contend over |
 | `wrapper` (what `docker compose up` runs) | one continuous interactive `claude` under a PTY, in the compose stack's single **agent** container, recycled between matches (see "Play against a continuous agent" above) | one - a second game's dispatch is refused with a 409 while the one agent container is mid-match |
 | `kubernetes` | one Kubernetes Job per AI seat, each carrying its own `agent` + `driver` sidecar, scheduled through the Kubernetes API (`src/magic_cards_model_api/k8s_seats.py`) | as many as the cluster and `MAX_LIVE_GAMES` allow - every seat gets its own Job, so nothing serializes them |
 
@@ -232,7 +232,10 @@ against continuous agents at once means running against a cluster in
   turn, step, winner, each AI player's `agent` settings, and (scoped to the
   seat uids the caller already holds, via a `?uids=` query) the uids it may
   act through. A game nobody's browser holds a uid for still shows up as an
-  open seat for a new browser to claim.
+  open seat for a new browser to claim. `uids` is **one comma-separated
+  value** (`?uids=a,b`), not a repeated query parameter - `?uids=a&uids=b`
+  keeps only the last one and silently hides your seat uid on every other
+  game.
 - **Open**: click a game in the list to resume it with the uid(s) this
   browser saved for it (`mcm.games.v1` in `localStorage`, a list of
   `{gameId, uid, aiUid}` entries - one per game, not one for the whole
@@ -270,6 +273,15 @@ claude with them - there is no way to change `--model`/`--effort` on an
 already-running claude. An older wrapper that predates the route answers 404
 to both calls, which the driver treats as "not supported, continue": the seat
 still plays, just with whatever model/effort it booted with.
+
+**Breaking change for scrapes**: the wrapper's `ccw_turn_tokens_total`
+Prometheus counter (`/metrics`) carries `model` and `effort` labels now, in
+addition to `type` - one time series per (type, model, effort) combination
+rather than one per `type` alone. A query or dashboard panel that assumed
+exactly one series per `type` (grouping only `by (type)`, or reading
+`ccw_turn_tokens_total{type="output"}` expecting a single value) will now see
+one series per model/effort choice instead, and needs an explicit `sum by
+(type)` (or similar) to collapse back to the old shape.
 
 ### Seeing the Jobs (`kubernetes` mode)
 

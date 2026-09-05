@@ -43,6 +43,14 @@ metadata:
   labels:
     app: mtg-stack
 spec:
+  # MUST stay 1. K8sSeats.reconcile lists every Job labelled
+  # app.kubernetes.io/name=mtg-agent in this namespace and deletes any whose
+  # game_id is not among this process's own in-memory live games - it is not
+  # scoped to "Jobs this Pod owns". A second replica's in-memory game list
+  # would not match the first's, so each replica's reconcile loop would treat
+  # the other's live games as stray and delete their seat Jobs out from under
+  # them within one reconcile interval. Scaling past 1 needs reconcile made
+  # owner-scoped (or the live-game set made shared) first.
   replicas: 1
   selector:
     matchLabels:

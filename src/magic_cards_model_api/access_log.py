@@ -74,7 +74,12 @@ QUIET_PATHS: tuple[re.Pattern[str], ...] = (
     re.compile(r"/api/games/[^/]+"),
     # the play UI's AI-seat poll
     re.compile(r"/api/ui/games/[^/]+/ai-seat/status"),
-    # the play UI's lobby poll - the game list itself, not a specific game
+    # the play UI's lobby poll: `GET /api/ui/games` (optionally `?uids=` -
+    # one comma-separated value, scoping the uids a browser may act
+    # through), matched only in full so a specific game's own routes below
+    # (`/api/ui/games/{id}/ai-seat/status`, and `DELETE
+    # /api/ui/games/{id}` - a mutation, so method-gated regardless) are
+    # never silenced by this one
     re.compile(r"/api/ui/games"),
 )
 

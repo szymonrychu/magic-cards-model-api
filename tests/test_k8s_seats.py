@@ -135,6 +135,25 @@ def test_init_containers_present_in_order_with_security_context() -> None:
         assert container["securityContext"]["allowPrivilegeEscalation"] is False
 
 
+def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
+    """`build_job` writes the driver's own `DispatchIn` shape into
+    `DRIVER_ASSIGNMENT_JSON` (the self-dispatch payload the driver's
+    lifespan hook reads on startup, see `mtg_agent/driver/app.py`) - typed
+    here directly against that model, rather than only asserting on
+    substrings of the JSON, so a field renamed on either side of the
+    `DispatchIn` API is caught."""
+    from mtg_agent.driver.app import DispatchIn
+
+    job = _build(ENV)
+    driver = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "driver")
+    denv = {e["name"]: e["value"] for e in driver["env"]}
+    parsed = DispatchIn.model_validate_json(denv["DRIVER_ASSIGNMENT_JSON"])
+    assert parsed.uid == "u1"
+    assert parsed.game_id == "g1"
+    assert parsed.player == "bot"
+    assert parsed.agent == {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
+
+
 def test_job_is_plain_dicts_the_kubernetes_client_can_serialize() -> None:
     # `create_namespaced_job(namespace, body=dict)` hands this straight to
     # `ApiClient.sanitize_for_serialization`, which branches on

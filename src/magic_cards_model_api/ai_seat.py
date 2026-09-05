@@ -535,6 +535,19 @@ class AiSeatRegistry:
             runner = self._runners.get(uid)
             unavailable = self._unavailable.get(uid)
         if dispatched is not None:
+            if dispatched.get("mechanism") == "kubernetes":
+                try:
+                    k8s_status = k8s_seats.get().status(uid)
+                except Exception:  # noqa: BLE001 - a generic fallback beats a raise here
+                    k8s_status = None
+                # `K8sSeats.status`'s own `reason` names the actual cause -
+                # "driver unreachable", "job <name> is missing from the
+                # cluster", `ImagePullBackOff`, a terminated container's
+                # reason - which is worth far more on the audit log than the
+                # one generic line every kubernetes seat used to get here
+                # regardless of why it was gone.
+                if k8s_status and k8s_status.get("reason"):
+                    return str(k8s_status["reason"])
             return "the driver reports no live turn for this seat"
         if runner is not None:
             if runner.error is not None:

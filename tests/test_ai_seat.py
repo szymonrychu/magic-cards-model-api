@@ -328,6 +328,29 @@ def test_kubernetes_activity_is_gone_when_the_cluster_errors(
     assert fresh_registry.activity("u-k8s") == ai_seat.GONE
 
 
+def test_kubernetes_why_gone_carries_the_kubernetes_status_reason(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """`why_gone` used to answer one generic "the driver reports no live
+    turn for this seat" for every kubernetes seat regardless of why -
+    `K8sSeats.status`'s own `reason` (here, the Job vanishing from the
+    cluster, discovered by `reconcile`) is far more useful on the audit
+    log."""
+    from magic_cards_model_api import k8s_seats
+    from magic_cards_model_api.k8s_seats import job_name
+
+    fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    seats = k8s_seats.get()
+    kubernetes_mode.jobs.pop(job_name("g-k8s", "u-k8s"))  # the Job vanished behind our back
+    with seats._lock:
+        seats._seats["u-k8s"]["created_at"] -= 1000  # past the reconcile grace period
+    seats.reconcile(live_game_ids={"g-k8s"})
+    reason = fresh_registry.why_gone("u-k8s")
+    assert "missing" in reason and job_name("g-k8s", "u-k8s") in reason
+
+
 # -- HTTP layer (ai_seat_api.py) ---------------------------------------------
 
 
