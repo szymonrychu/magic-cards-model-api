@@ -1,0 +1,233 @@
+"""`ui/render/panels.js`'s `mountTopbar` against a fake DOM (the pattern from
+`tests/test_ui_ribbon.py`), which had no tests of its own before this whole-
+branch review.
+
+Two smoke tests: the AI panel's fallback rendering (`ai_seat.py`'s
+`mechanism: "fallback"` - the shape it actually reports once a spawned
+runner's own process fails to start, `status["state"] == "error"` alongside
+it, per that module's own `_start` - never `state: "not_started"`, which
+`renderAiPanel`'s own early-return guard reads as the plainer "not started"
+pill instead) shows the "Run it by hand" button and, on a click, opens the
+modal with the fallback command's full prompt text; and the AI-stall banner
+offering a "Pass priority for <player>" button once the AI seat has reported
+an error.
+"""
+
+from __future__ import annotations
+
+from ui_node import requires_node, run_module
+
+pytestmark = requires_node
+
+# A fake DOM minimal enough for `dom.js`'s `h`/`clear` plus what `panels.js`
+# itself needs: `querySelector` by id (`mountTopbar` looks up its boxes that
+# way), a `textContent` getter that walks the whole subtree, and an
+# `addEventListener` that actually records the listener so a test can invoke
+# the handler `h()` wired to a rendered button - `click(el)` below does
+# exactly that, same as `tests/test_ui_ribbon.py`'s own copy.
+FAKE_DOM = """
+class El {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.dataset = {};
+    this.attrs = {};
+    this.style = {};
+    this.hidden = false;
+    this.listeners = {};
+    this.classList = {
+      set: new Set(),
+      add: (c) => this.classList.set.add(c),
+      remove: (c) => this.classList.set.delete(c),
+      toggle: (c, on) => (on ? this.classList.set.add(c) : this.classList.set.delete(c)),
+      contains: (c) => this.classList.set.has(c),
+    };
+  }
+  appendChild(c) { this.children.push(c); c.parentNode = this; return c; }
+  insertBefore(c, ref) {
+    const i = this.children.indexOf(ref);
+    this.children.splice(i < 0 ? this.children.length : i, 0, c);
+    c.parentNode = this;
+    return c;
+  }
+  removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
+  setAttribute(k, v) { this.attrs[k] = v; if (k === "id") this.id = v; }
+  addEventListener(type, fn) { this.listeners[type] = fn; }
+  removeEventListener(type, fn) { if (this.listeners[type] === fn) delete this.listeners[type]; }
+  contains(other) {
+    if (other === this) return true;
+    return this.children.some((c) => (c.contains ? c.contains(other) : false));
+  }
+  getBoundingClientRect() { return { left: 0, top: 0, right: 0, bottom: 0 }; }
+  get firstChild() { return this.children[0] || null; }
+  get childNodes() { return this.children; }
+  get textContent() {
+    return this.children.map((c) => (c.textContent === undefined ? "" : c.textContent)).join("");
+  }
+  querySelector(sel) {
+    if (!sel.startsWith("#")) return null;
+    const id = sel.slice(1);
+    const walk = (node) => {
+      if (!node) return null;
+      if (node.attrs && node.attrs.id === id) return node;
+      for (const c of node.children || []) {
+        const found = walk(c);
+        if (found) return found;
+      }
+      return null;
+    };
+    return walk(this);
+  }
+}
+
+function findByText(node, tag, text) {
+  const content = typeof node.textContent === "string" ? node.textContent : "";
+  if (node.tagName === tag && content.includes(text)) return node;
+  for (const c of node.children || []) {
+    const found = findByText(c, tag, text);
+    if (found) return found;
+  }
+  return null;
+}
+
+function click(el) {
+  if (el && el.listeners && el.listeners.click) el.listeners.click({ target: el });
+}
+
+globalThis.window = { scrollX: 0, scrollY: 0 };
+globalThis.document = new El("#document");
+document.createElement = (t) => new El(t);
+document.createTextNode = (s) => ({ nodeType: 3, textContent: s });
+document.createDocumentFragment = () => new El("#fragment");
+
+function boxed(id, hidden) {
+  const el = document.createElement("div");
+  el.setAttribute("id", id);
+  el.hidden = Boolean(hidden);
+  document.appendChild(el);
+  return el;
+}
+boxed("ai-panel");
+boxed("ai-stall-banner", true);
+boxed("modal", true);
+
+function makeStore(initial) {
+  let state = initial;
+  const listeners = [];
+  return {
+    get: () => state,
+    set(patch) {
+      state = { ...state, ...(typeof patch === "function" ? patch(state) : patch) };
+      for (const fn of listeners) fn(state);
+    },
+    subscribe(fn) {
+      listeners.push(fn);
+      return () => {};
+    },
+  };
+}
+
+const NOOP = () => {};
+
+function baseState(overrides) {
+  return {
+    you: "alice",
+    winner: null,
+    drawn: false,
+    turn_number: 3,
+    active_player: "alice",
+    priority_holder: "claude",
+    step: "precombat_main",
+    ...overrides,
+  };
+}
+"""
+
+
+def test_ai_panel_shows_a_fallback_status_with_the_command_and_opens_it_on_click() -> None:
+    """`ai_seat.py`'s real fallback shape once a spawned runner's process
+    itself failed: `mechanism: "fallback"` alongside `state: "error"` (never
+    `"not_started"` - that earlier, distinct case reads as plain "AI seat:
+    not started" through `renderAiPanel`'s own first guard) and a `prompt`
+    carrying the full command a human would run by hand."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "fallback", state: "error",
+              command: 'claude --print --dangerously-skip-permissions --allowedTools Bash -- "..."',
+              prompt: "the full agent prompt, including the game id and the opponent's uid",
+            },
+          });
+          const panel = document.querySelector("#ai-panel");
+          const before = {
+            panelText: panel.textContent,
+            modalHiddenBefore: document.querySelector("#modal").hidden,
+          };
+          const button = findByText(panel, "button", "Run it by hand");
+          click(button);
+          const modal = document.querySelector("#modal");
+          return {
+            ...before,
+            found: button !== null,
+            modalHiddenAfter: modal.hidden,
+            modalText: modal.textContent,
+          };
+        })()
+        """,
+    )
+    assert "AI seat: no agent running" in result["panelText"]
+    assert result["modalHiddenBefore"] is True
+    assert result["found"] is True
+    assert result["modalHiddenAfter"] is False
+    assert (
+        "the full agent prompt, including the game id and the opponent's uid" in result["modalText"]
+    )
+
+
+def test_the_stall_banner_offers_a_pass_priority_button_for_the_ai_seat() -> None:
+    """`aiStallNotice` (`ui/store.js`) reports a message the instant the AI
+    seat's own status carries an error - `renderAiStallBanner` turns that
+    into the banner and its "Pass priority for <player>" button, wired to
+    `handlers.onPassForAiSeat(aiPlayer)`."""
+    calls = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const calls = [];
+          const store = makeStore({
+            state: baseState({ priority_holder: "claude" }),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onReportProblem: NOOP,
+            onPassForAiSeat: (player) => calls.push(player),
+          });
+          store.set({
+            aiStatus: { player: "claude", state: "error", last_error: "agent crashed" },
+          });
+          const banner = document.querySelector("#ai-stall-banner");
+          const button = findByText(banner, "button", "Pass priority for claude");
+          click(button);
+          return { visible: banner.hidden === false, found: button !== null, calls };
+        })()
+        """,
+    )
+    assert calls["found"] is True
+    assert calls["visible"] is True
+    assert calls["calls"] == ["claude"]
