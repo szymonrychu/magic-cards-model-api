@@ -12,12 +12,18 @@ MAY = {
     "amount": None,
     "cards": [],
     "targets": [],
-    "target_minimum": None,
+    # `PendingDecision.from_engine` reads these straight off the engine's own
+    # `Decision`, which never carries `None` for either: `target_minimum` is
+    # `int = 0` (0 for a genuinely optional "up to N"/"any number" - never
+    # unset), and `moved_label`/`kept_label` default to `""`, not `None` -
+    # `tests/test_ui_fixture_shape.py` pins the real shape these fixtures
+    # must match.
+    "target_minimum": 0,
     "target_maximum": None,
     "affirmative_is_legal": True,
     "options": [],
-    "moved_label": None,
-    "kept_label": None,
+    "moved_label": "",
+    "kept_label": "",
     "card_labels": [],
     "exact": False,
     "default_cards": None,
