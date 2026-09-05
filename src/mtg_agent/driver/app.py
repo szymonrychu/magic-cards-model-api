@@ -19,7 +19,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -96,6 +97,12 @@ def build_app(
     client_factory: Callable[[str], httpx.Client] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="mtg-agent-driver")
+    # False for the whole life of a compose-style driver that just sits and
+    # takes dispatches; a per-game Job container flips this in `retire` once
+    # `exit_after_match` says the container's one match is over, and
+    # `__main__` polls it to know when to stop uvicorn and let the container
+    # exit 0.
+    app.state.should_exit = False
     library = GuideLibrary(settings.guides_root)
     make_client = client_factory or _default_client_factory
     lock = threading.Lock()
@@ -189,6 +196,13 @@ def build_app(
             log.warning("could not stop the agent after game %s: %s", assignment.game_id, exc)
         with lock:
             clear_locked()
+        if settings.exit_after_match:
+            # A per-game Job plays exactly one match; once it is retired
+            # there is no next dispatch to wait for, so the container should
+            # exit rather than sit idle. `__main__` polls this flag and stops
+            # uvicorn once it is set.
+            app.state.should_exit = True
+            log.info("match over, exiting")
         log.info("match %s retired, agent stopped=%s", assignment.game_id, stopped)
         return stopped
 
@@ -255,8 +269,11 @@ def build_app(
         others = [n for n in names if n and n != player]
         return others[0] if others else ""
 
-    @app.post("/dispatch", status_code=202)
-    def dispatch(body: DispatchIn) -> dict:
+    def assign(body: DispatchIn) -> dict:
+        """The whole of a dispatch: claim the seat, learn its deck, write
+        the briefing, and push turn 0. Used both by `POST /dispatch` and by
+        the startup hook that self-dispatches a per-game Job's own match
+        from `DRIVER_ASSIGNMENT_JSON` - one code path either way."""
         with lock:
             existing = current["assignment"]
             if existing is not None and existing.uid == body.uid:
@@ -372,6 +389,10 @@ def build_app(
             "matchScore": score,
             "pending": False,
         }
+
+    @app.post("/dispatch", status_code=202)
+    def dispatch(body: DispatchIn) -> dict:
+        return assign(body)
 
     def log_turn_result(record: dict) -> None:
         """The agent's own account of the turn it just finished.
@@ -517,5 +538,26 @@ def build_app(
     @app.get("/healthz")
     def healthz() -> dict:
         return {"ok": True}
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        """A per-game Job carries its own match in `DRIVER_ASSIGNMENT_JSON`
+        rather than waiting for a caller to `POST /dispatch` it, so it
+        self-dispatches here, on startup, through the same `assign` the
+        route uses. A failure is logged and recorded on `/status` rather
+        than raised - raising here would keep the container from ever
+        starting, which is worse than a container that starts idle and
+        reports why."""
+        if settings.assignment_json:
+            body = DispatchIn.model_validate_json(settings.assignment_json)
+            try:
+                assign(body)
+            except HTTPException as exc:
+                log.error("self-dispatch failed: %s", exc.detail)
+                with lock:
+                    current["lastError"] = str(exc.detail)
+        yield
+
+    app.router.lifespan_context = lifespan
 
     return app

@@ -22,6 +22,16 @@ class DriverSettings:
     #: quiescence - about two minutes in the worst case.
     agent_boot_wait: float = 180.0
     agent_retry_interval: float = 3.0
+    #: A dispatch body (the same shape `POST /dispatch` takes), set when the
+    #: container is a per-game Kubernetes Job rather than a long-lived
+    #: compose service: the driver dispatches itself at startup instead of
+    #: waiting for a caller to POST it.
+    assignment_json: str = ""
+    #: Whether `retire` should stop the driver's own process once the match
+    #: it was dispatched for is over - the per-game Job case, where the
+    #: container is meant to exit 0 rather than sit idle waiting for the next
+    #: match.
+    exit_after_match: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> DriverSettings:
@@ -39,4 +49,6 @@ class DriverSettings:
             http_addr=value("HTTP_ADDR", ":8090"),
             agent_boot_wait=float(value("AGENT_BOOT_WAIT_SECONDS", "180")),
             agent_retry_interval=float(value("AGENT_RETRY_INTERVAL_SECONDS", "3")),
+            assignment_json=value("DRIVER_ASSIGNMENT_JSON", ""),
+            exit_after_match=value("DRIVER_EXIT_AFTER_MATCH", "").lower() in ("1", "true", "yes"),
         )

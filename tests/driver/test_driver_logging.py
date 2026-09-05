@@ -23,7 +23,7 @@ def driver_log(caplog):
 
 
 def test_a_finished_turn_logs_what_the_agent_said(world, driver_log):  # noqa: F811
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     driver_log.clear()
 
@@ -57,7 +57,7 @@ def test_trimming_keeps_the_agents_line_breaks_and_drops_the_blank_ones():
 
 
 def test_a_failed_turn_is_logged_as_an_error(world, driver_log):  # noqa: F811
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     driver_log.clear()
 
@@ -74,7 +74,7 @@ def test_a_failed_turn_is_logged_as_an_error(world, driver_log):  # noqa: F811
 def test_pushing_a_turn_names_the_game_and_the_seat(world, driver_log):  # noqa: F811
     """Three services share one compose log, so "turn started" on its own says
     nothing about which game or which seat it belongs to."""
-    client, _, _, _ = world
+    client = world.client
     driver_log.clear()
     dispatch(client)
     assert "turn turn-1 started" in driver_log.text
@@ -83,7 +83,7 @@ def test_pushing_a_turn_names_the_game_and_the_seat(world, driver_log):  # noqa:
 
 
 def test_dispatch_logs_the_deck_it_identified_and_how_well_it_matched(world, driver_log):  # noqa: F811
-    client, _, _, _ = world
+    client = world.client
     driver_log.clear()
     dispatch(client)
     assert "deck=dimir-frog" in driver_log.text
@@ -91,7 +91,8 @@ def test_dispatch_logs_the_deck_it_identified_and_how_well_it_matched(world, dri
 
 
 def test_the_end_of_the_match_is_logged(world, driver_log):  # noqa: F811
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     dispatch(client)
     state["winner"] = "bob"
     driver_log.clear()

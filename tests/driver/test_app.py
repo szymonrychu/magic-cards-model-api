@@ -4,80 +4,15 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from mtg_agent.driver.app import build_app
 from mtg_agent.driver.config import DriverSettings
-
-DECKLIST = "4 Psychic Frog\n4 Fatal Push\n2 Consign to Memory\n"
+from tests.driver.world import build_world
 
 
 @pytest.fixture
 def world(tmp_path):
-    """A fake game server and a fake wrapper, both real FastAPI apps driven
-    over ASGI by `TestClient` (itself an `httpx.Client`) - no mocking library
-    involved."""
-    guides = tmp_path / "guides" / "decks" / "dimir-frog"
-    guides.mkdir(parents=True)
-    (guides / "decklist.txt").write_text(DECKLIST)
-    (guides / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
-
-    state = {"winner": None, "decklist": DECKLIST, "agent": "up", "deleted": 0}
-    submitted: list[dict] = []
-
-    game = FastAPI()
-
-    @game.get("/api/games/{game_id}")
-    def get_game(game_id: str, uid: str):
-        return {
-            "id": game_id,
-            "players": [
-                {"username": "bob", "decklist": state["decklist"]},
-                {"username": "alice"},
-            ],
-            "winner": state["winner"],
-        }
-
-    wrapper = FastAPI()
-
-    @wrapper.post("/v1/messages", status_code=202)
-    def post_message(body: dict):
-        if state["agent"] == "booting":
-            raise HTTPException(status_code=503, detail="session not ready")
-        if state["agent"] == "down":
-            raise httpx.ConnectError("connection refused")
-        submitted.append(body)
-        return {"turnId": f"turn-{len(submitted)}"}
-
-    @wrapper.delete("/v1/session", status_code=202)
-    def delete_session():
-        if state["agent"] == "down":
-            raise httpx.ConnectError("connection refused")
-        state["deleted"] += 1
-        # A real wrapper exits here; the replacement container boots for a
-        # while before it can take a turn.
-        state["agent"] = "booting"
-        return {"stopping": True, "exiting": True}
-
-    def client_factory(base_url: str) -> httpx.Client:
-        app = game if "game" in base_url else wrapper
-        return TestClient(app, base_url=base_url)
-
-    settings = DriverSettings(
-        game_api="http://game:8000",
-        wrapper_api="http://agent:8080",
-        wrapper_secret="",
-        guides_root=tmp_path / "guides",
-        memory_root=tmp_path / "memory",
-        workspace=tmp_path / "workspace",
-        self_url="http://driver:8090",
-        http_addr=":8090",
-        agent_boot_wait=1.0,
-        agent_retry_interval=0.01,
-    )
-    client = TestClient(build_app(settings, client_factory=client_factory))
-    return client, settings, submitted, state
+    return build_world(tmp_path)
 
 
 def dispatch(
@@ -116,14 +51,15 @@ def play_out_the_match(client, state) -> None:
 
 
 def test_dispatch_identifies_the_deck_and_reports_it(world):
-    client, _, _, _ = world
+    client = world.client
     body = json.loads(dispatch(client).text)
     assert body["deck"] == "dimir-frog"
     assert body["turnId"] == "turn-1"
 
 
 def test_dispatch_writes_current_game_md_into_the_workspace(world):
-    client, settings, _, _ = world
+    client = world.client
+    settings = world.settings
     dispatch(client)
     text = (settings.workspace / "current-game.md").read_text()
     assert "secret-uid" in text
@@ -132,7 +68,8 @@ def test_dispatch_writes_current_game_md_into_the_workspace(world):
 
 
 def test_dispatch_pushes_turn_zero_with_its_own_callback_url(world):
-    client, settings, submitted, _ = world
+    client = world.client
+    submitted = world.submitted
     dispatch(client)
     turn = submitted[0]
     assert turn["callbackUrl"] == "http://driver:8090/turn-done"
@@ -141,7 +78,8 @@ def test_dispatch_pushes_turn_zero_with_its_own_callback_url(world):
 
 
 def test_turn_zero_never_carries_the_opponents_list(world):
-    client, _, submitted, _ = world
+    client = world.client
+    submitted = world.submitted
     dispatch(client)
     text = submitted[0]["text"]
     assert "alice" in text, "the opponent's seat NAME is public at a real table"
@@ -151,7 +89,9 @@ def test_turn_zero_never_carries_the_opponents_list(world):
 
 
 def test_dispatch_of_an_unguided_deck_still_starts_the_game(world):
-    client, _, submitted, state = world
+    client = world.client
+    submitted = world.submitted
+    state = world.state
     state["decklist"] = "4 Lightning Bolt\n20 Mountain\n"
     body = dispatch(client).json()
     assert body["deck"] is None
@@ -159,21 +99,25 @@ def test_dispatch_of_an_unguided_deck_still_starts_the_game(world):
 
 
 def test_a_second_dispatch_for_the_same_uid_does_not_push_a_second_turn_zero(world):
-    client, _, submitted, _ = world
+    client = world.client
+    submitted = world.submitted
     dispatch(client)
     dispatch(client)
     assert len(submitted) == 1
 
 
 def test_turn_done_mid_game_pushes_nothing(world):
-    client, _, submitted, _ = world
+    client = world.client
+    submitted = world.submitted
     dispatch(client)
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
     assert len(submitted) == 1
 
 
 def test_turn_done_after_a_win_pushes_exactly_one_reflection_turn(world):
-    client, _, submitted, state = world
+    client = world.client
+    submitted = world.submitted
+    state = world.state
     dispatch(client)
     state["winner"] = "bob"
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
@@ -186,7 +130,7 @@ def test_turn_done_after_a_win_pushes_exactly_one_reflection_turn(world):
 
 
 def test_status_reports_the_current_assignment(world):
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     body = client.get("/status").json()
     assert body["gameId"] == "g-1"
@@ -196,7 +140,7 @@ def test_status_reports_the_current_assignment(world):
 
 
 def test_status_before_any_dispatch_is_idle(world):
-    client, _, _, _ = world
+    client = world.client
     assert client.get("/status").json()["gameId"] is None
 
 
@@ -204,20 +148,20 @@ def test_status_reports_the_dispatched_agent_settings(world):
     """`DispatchIn.agent` is carried onto `Assignment` and shown back in
     `/status`, so the game server (and a human reading the driver's own
     status) can see what model/effort this container is running under."""
-    client, _, _, _ = world
+    client = world.client
     agent = {"model": "opus", "effort": "max", "max_thinking_tokens": None}
     dispatch(client, agent=agent)
     assert client.get("/status").json()["agent"] == agent
 
 
 def test_status_agent_is_none_when_dispatch_carried_none(world):
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     assert client.get("/status").json()["agent"] is None
 
 
 def test_healthz(world):
-    client, _, _, _ = world
+    client = world.client
     assert client.get("/healthz").status_code == 200
 
 
@@ -237,7 +181,8 @@ def test_settings_from_env_reads_the_container_wiring():
 
 
 def test_turn_zero_inlines_the_decklist_because_containers_share_no_disk(world):
-    client, _, submitted, _ = world
+    client = world.client
+    submitted = world.submitted
     dispatch(client)
     assert "4 Psychic Frog" in submitted[0]["text"]
 
@@ -246,7 +191,8 @@ def test_turn_zero_inlines_the_decklist_because_containers_share_no_disk(world):
 
 
 def test_a_second_game_arriving_mid_match_is_refused_by_name(world):
-    client, _, submitted, _ = world
+    client = world.client
+    submitted = world.submitted
     dispatch(client)
     response = dispatch(client, uid="other-uid", game_id="g-2")
     assert response.status_code == 409
@@ -255,19 +201,22 @@ def test_a_second_game_arriving_mid_match_is_refused_by_name(world):
 
 
 def test_the_completed_reflection_turn_stops_the_agent(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     play_out_the_match(client, state)
     assert state["deleted"] == 1
 
 
 def test_retiring_clears_the_assignment_so_the_next_dispatch_starts_clean(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     play_out_the_match(client, state)
     assert client.get("/status").json()["gameId"] is None
 
 
 def test_the_next_match_is_accepted_once_the_replacement_agent_is_up(world):
-    client, _, submitted, state = world
+    client = world.client
+    state = world.state
     play_out_the_match(client, state)
     state["agent"] = "up"  # the replacement container finished booting
     state["winner"] = None
@@ -278,14 +227,16 @@ def test_the_next_match_is_accepted_once_the_replacement_agent_is_up(world):
 
 
 def test_the_agent_is_stopped_only_once_per_match(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     play_out_the_match(client, state)
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete"})
     assert state["deleted"] == 1
 
 
 def test_a_match_is_retired_even_when_the_agent_is_already_gone(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     dispatch(client)
     state["winner"] = "bob"
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete"})
@@ -297,7 +248,8 @@ def test_a_match_is_retired_even_when_the_agent_is_already_gone(world):
 
 
 def test_a_game_that_ends_with_the_agent_already_dead_is_still_retired(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     dispatch(client)
     state["winner"] = "bob"
     state["agent"] = "down"
@@ -308,7 +260,9 @@ def test_a_game_that_ends_with_the_agent_already_dead_is_still_retired(world):
 
 
 def test_a_dispatch_while_the_agent_is_booting_is_accepted_and_retried(world):
-    client, _, submitted, state = world
+    client = world.client
+    submitted = world.submitted
+    state = world.state
     state["agent"] = "booting"
     body = dispatch(client).json()
     assert body["pending"] is True
@@ -322,7 +276,8 @@ def test_a_dispatch_while_the_agent_is_booting_is_accepted_and_retried(world):
 
 
 def test_a_dispatch_to_an_agent_that_never_comes_back_gives_up_and_frees_the_driver(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     state["agent"] = "down"
     assert dispatch(client).json()["pending"] is True
 
@@ -336,7 +291,9 @@ def test_a_dispatch_to_an_agent_that_never_comes_back_gives_up_and_frees_the_dri
 
 
 def test_the_retry_stops_if_the_match_is_retired_under_it(world):
-    client, _, submitted, state = world
+    client = world.client
+    submitted = world.submitted
+    state = world.state
     state["agent"] = "down"
     dispatch(client)
     wait_for(lambda: client.get("/status").json()["lastError"])
@@ -414,7 +371,7 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
 
 
 def test_a_failed_turn_is_reported_by_status(world):
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     client.post(
         "/turn-done",
@@ -431,7 +388,7 @@ def test_a_failed_turn_is_reported_by_status(world):
 
 
 def test_a_turn_that_succeeds_clears_a_previous_failure(world):
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     client.post("/turn-done", json={"turnId": "turn-1", "state": "failed", "error": "boom"})
     assert client.get("/status").json()["lastError"] is not None
@@ -451,7 +408,7 @@ def test_a_turn_that_succeeds_clears_a_previous_failure(world):
 
 
 def test_a_dispatched_turn_is_reported_as_in_flight(world):
-    client, _, _, _ = world
+    client = world.client
     assert client.get("/status").json()["turnActive"] is False
     dispatch(client)
     assert client.get("/status").json()["turnActive"] is True
@@ -460,14 +417,15 @@ def test_a_dispatched_turn_is_reported_as_in_flight(world):
 def test_a_finished_turn_is_no_longer_in_flight(world):
     """The exact shape of the reported hang: the agent's turn ended, the game
     is still running, and nothing is playing the seat."""
-    client, _, _, _ = world
+    client = world.client
     dispatch(client)
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "ok"})
     assert client.get("/status").json()["turnActive"] is False
 
 
 def test_a_pushed_reflection_turn_is_in_flight_again(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     dispatch(client)
     state["winner"] = "bob"
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
@@ -477,7 +435,8 @@ def test_a_pushed_reflection_turn_is_in_flight_again(world):
 
 
 def test_a_dispatch_that_is_still_reaching_the_agent_has_no_live_turn(world):
-    client, _, _, state = world
+    client = world.client
+    state = world.state
     state["agent"] = "booting"
     dispatch(client)
     body = client.get("/status").json()
