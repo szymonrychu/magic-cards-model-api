@@ -124,9 +124,15 @@ frontend does.
 
 - Default: the cast body carries every untapped mana source the player
   controls, as `seatkit.sources_or_all` does for the MCP and CLI.
-- Preview: the dry-run response gains `tapped: [{card_id, name, mana}]`
-  from the engine's `auto_tap` result. Lands in that list show a tap
-  preview while the strip is open.
+- Preview: the dry-run response gains `tapped` from the engine's `auto_tap`
+  result. Lands in that list show a tap preview while the strip is open.
+
+  As shipped, each entry is `{card_id, name}`: an id and a name, no colour.
+  This paragraph first asked for a `mana` field beside them, and it is not
+  there. The engine's `auto_tap` result does not hand one back per source,
+  and the preview does not need it - its whole job is to light the right
+  cards up on the board, and the board already draws each land's own mana
+  symbols. `tests/test_dry_run_tapped.py` pins the two-key shape.
 - Override: clicking an untapped land while a cast or activation is pending
   pins it as a `ManaSource` with the colour picked from its chips; pinned
   sources go first in `mana_sources`, the rest of the untapped sources

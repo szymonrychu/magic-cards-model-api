@@ -20,6 +20,72 @@ prompt to run by hand in another terminal - the game is fully playable either
 way. See `ai_seat.py` and `docs/ai_seat_brief.md` for the mechanism and the
 brief the agent is given.
 
+### The play screen
+
+The board is laid out the way MTGO and Arena lay it out: the opponent on top,
+the shared stack in the middle, you at the bottom. Everything the game ever
+asks you sits in one side panel on the right, top to bottom: the prompt, the
+priority verbs, the stops panel, and the game log. There is no confirm ribbon
+and no modal dialog.
+
+**One click when there is nothing left to choose.** Clicking a land in your
+hand plays it. Clicking a spell that has no modes, no X, no alternative cost
+and nothing to target dry-runs the cast with automatic mana payment and, if
+the engine allows it, casts it there and then - the lands it is about to tap
+show a tap preview, then tap. Clicking a permanent you control that has
+exactly one activated ability activates it, mana abilities included. A
+permanent with several abilities (or an ability plus Crew) opens a small menu
+anchored to the card, listing each ability with its cost.
+
+**Slots.** A spell that still has something to choose lifts into a casting
+strip above your hand, and the board becomes the prompt, in this order: modes,
+X, alternative or additional costs, target slots, mana. Targets are slots, one
+per requirement, each labelled with the mode it came from ("Mode 1: target
+player"), so a modal spell can put the *same* player in two different slots.
+Kozilek's Command choosing modes 1 and 2 with you as both targets is the case
+this was built for. The active slot is the first unfilled one, the board
+highlights what may legally fill it, clicking a slot chip refocuses it, and
+clicking a chosen target again un-chooses it. The cast fires the moment the
+last required slot is filled and the dry run comes back allowed. A Cast button
+appears only when the player has to say they are done: "up to N" targets, a
+division, pinned mana, or a dry run that came back refused. Escape, or
+clicking the lifted card, cancels.
+
+**Pins.** By default a cast offers every untapped mana source you control and
+lets the engine choose (CR 601.2g: mana abilities are activated before costs
+are paid). To override that, click an untapped land while a cast is pending:
+it is pinned as an explicit source, and a land that makes more than one colour
+asks which first. Pinned sources go first and the rest follow, so the engine
+still fills the remainder. Clicking a pinned land unpins it. With no cast
+pending, clicking a land simply activates it and floats the mana, which the
+you-row shows at all times.
+
+**Combat.** In your declare attackers step (CR 508.1) clicking a creature
+moves it into the red zone between the two battlefields; a defender menu
+appears only when more than one defender is legal for it. "Attack" declares
+them, "No attack" passes. Defending (CR 509.1), you click your creature and
+then the attacker it blocks; the pair is listed, clicking it again removes it,
+and "Block" / "No blocks" ends the step.
+
+**Verbs and stops.** The priority box offers Pass, Pass turn, Pass turn (even
+with a stack), Pass until my next turn, and Pass until I can cast something;
+while one is running it collapses to a single Stop. Auto-passing always halts
+when you are attacked, when a new object reaches the stack, when a decision is
+waiting on you, and at any checked stop. The stops panel is a grid of steps by
+whose turn it is. It starts at your precombat main, your declare attackers,
+your postcombat main, the opponent's declare attackers and the opponent's end
+step, and whatever you check is saved in `localStorage` under `mcm.stops.v1`,
+so it survives a reload. Untap and cleanup give nobody priority, so there the
+box offers an Advance button instead of a pass. Conceding (CR 104.3a) is
+always available and always takes two clicks. The "keep priority" checkbox on
+the casting strip is CR 117.3c's retained priority.
+
+**The log.** The panel reads `GET /api/games/{id}/log?since=` incrementally
+and shows every action with its turn and step. A refused action appears in red
+with the engine's own words, which is the first place to look when a click did
+not do what you expected. The dashed row under your hand appears when
+something grants you a play permission from a zone other than your hand.
+
 Starting a game from the lobby is a clean slate: the previous lobby game is
 ended and deleted, its seat uids stop opening anything, its pregame watcher
 thread stops, and its AI seat is stopped - a subprocess is terminated, a
