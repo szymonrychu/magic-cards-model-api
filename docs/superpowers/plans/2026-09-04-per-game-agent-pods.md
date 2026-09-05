@@ -140,13 +140,13 @@ uv run ruff format . && git add -A && git commit -m "Name what an AI seat runs a
 
 - [ ] **Step 1: Write the failing test**
 
-Copy the two-decklist boot from `tests/test_decks_api.py` (find `def test_` cases that post to `/api/ui/games` and reuse their decklist fixtures by importing the module-level constants they define, or copy the text).
+`tests/test_decks_api.py` defines `LEGAL_DECK` and `LEGAL_DECK_B` (52 basics plus Grizzly Bears and Lightning Bolt); import them under the names below.
 
 ```python
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from test_decks_api import DECK_A, DECK_B  # adjust to the constants that module defines
+from test_decks_api import LEGAL_DECK as DECK_A, LEGAL_DECK_B as DECK_B
 
 
 def create(client: TestClient, agent: dict | None = None, ai: bool = True) -> dict:
@@ -327,7 +327,7 @@ def test_live_game_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
     assert "2" in response.json()["detail"]
 ```
 
-Replace the `create.__globals__` lookups with direct imports of `DECK_A`/`DECK_B` if that reads better.
+Import `DECK_A`/`DECK_B` the way `tests/test_game_agent_settings.py` does.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -336,7 +336,7 @@ Expected: FAIL (first game 404 after the second is created; no `GET /api/ui/game
 
 - [ ] **Step 3: Implement**
 
-`store.py`: `live_ui_games()` returns `[game_id for game_id in self.ui_games() if not finished]` where finished means `game.winner or game.drawn` (read `Game`'s fields for the winner: `grep -n "winner\|drawn" src/magic_cards_model_api/serialize.py`).
+`store.py`: `live_ui_games()` returns `[game_id for game_id in self.ui_games() if not self._games[game_id].is_over]` (`Game.is_over` is the engine's CR 104.1 property: a winner or a draw).
 
 `decks_api.py`:
 
@@ -372,11 +372,12 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
         if game is None:
             continue
         seats = {name: uid for uid, name in store.seat_uids(game_id).items() if uid in mine}
+        view = serialize.state_view(game, game_id)  # turn_number, step, winner, drawn as the seat view reports them
         games.append({
             "game_id": game_id,
             "players": [p.username for p in game.players],
-            "turn_number": game.turn_number,
-            "step": game.step.value if game.step else None,
+            "turn_number": view["turn_number"],
+            "step": view["step"],
             "winner": game.winner,
             "drawn": game.drawn,
             "agents": {name: s.model_dump() for name, s in store.agent_settings(game_id).items()},
@@ -395,7 +396,7 @@ def end_lobby_game(game_id: str, uid: str | None = None, key: str | None = None)
     return lobby.reset_game(game_id, reason="ended from the lobby")
 ```
 
-Check the exact attribute names on `Game` (`turn_number`, `step`, `winner`, `drawn`) in `serialize.state_view` and use those. Remove `lobby.reset_previous_games` and `lobby.record_reset` and every caller; rewrite `tests/test_lobby_reset.py` so each test creates two games and asserts both live, then ends one and asserts the reset audit entry (`game_reset` with reason `ended from the lobby`) and the AI seat release; rewrite `tests/driver/test_lobby_reset_releases_the_agent.py` to trigger the release through `DELETE /api/ui/games/{id}`.
+`serialize.state_view` is the one place that already knows how to read the turn number and step off a `Game`; reuse it rather than reading `Game` attributes directly (it is cheap enough for a lobby list, and it stays correct if the engine renames a field). Remove `lobby.reset_previous_games` and `lobby.record_reset` and every caller; rewrite `tests/test_lobby_reset.py` so each test creates two games and asserts both live, then ends one and asserts the reset audit entry (`game_reset` with reason `ended from the lobby`) and the AI seat release; rewrite `tests/driver/test_lobby_reset_releases_the_agent.py` to trigger the release through `DELETE /api/ui/games/{id}`.
 
 - [ ] **Step 4: Run tests**
 
