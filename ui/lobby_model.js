@@ -14,32 +14,71 @@
 export const MODEL_SUGGESTIONS = ["sonnet", "opus", "haiku", "fable"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
+/** Whether a trimmed `#ai-thinking` value is acceptable: empty (meaning "let
+ * the agent decide" - `agentFrom` sends `null` for that) or a whole,
+ * non-negative number. `AgentSettings.max_thinking_tokens` (the API's
+ * pydantic field) is `int | None = Field(ge=0)` - a fraction ("5.5") or a
+ * negative number is not a legal value for it, so both must be rejected
+ * here rather than silently become `null` and start the game anyway with
+ * the model's default budget. `Number.parseInt` alone is not enough for
+ * this: `Number.parseInt("5.5", 10)` is `5`, truncating instead of
+ * rejecting - `Number()` plus `Number.isInteger` catches the fraction
+ * `parseInt` would silently swallow. */
+export function thinkingTokensAreValid(raw) {
+  const trimmed = String(raw === undefined || raw === null ? "" : raw).trim();
+  if (trimmed === "") return true;
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed >= 0;
+}
+
 export function agentFrom(fields) {
   const model = (fields.model || "").trim() || "sonnet";
   const effort = EFFORTS.includes(fields.effort) ? fields.effort : "high";
   const thinking = String(fields.thinking === undefined || fields.thinking === null ? "" : fields.thinking).trim();
-  return { model, effort, max_thinking_tokens: thinking === "" ? null : Number(thinking) };
+  const max_thinking_tokens = thinkingTokensAreValid(thinking) && thinking !== "" ? Number(thinking) : null;
+  return { model, effort, max_thinking_tokens };
 }
 
 export function lobbyViewModel(games, saved) {
   const mine = new Map((saved || []).map((s) => [s.gameId, s]));
-  return (games || []).map((g) => {
-    const seat = mine.get(g.game_id) || {};
-    const me = Object.keys(g.seats || {})[0] || null;
-    const opponent = (g.players || []).find((p) => p !== me) || (g.players || [])[1] || null;
-    const agent = opponent && g.agents ? g.agents[opponent] : null;
-    return {
-      gameId: g.game_id,
-      opponent,
-      turn: g.turn_number,
-      step: g.step,
-      over: Boolean(g.winner || g.drawn),
-      model: agent ? agent.model : null,
-      effort: agent ? agent.effort : null,
-      myUid: seat.uid || (me ? g.seats[me] : null),
-      aiUid: seat.aiUid || null,
-    };
-  });
+  return (games || [])
+    // `list_lobby_games` lists every lobby-booted game on the server, not
+    // only this browser's own - its own `seats` filter (only uids in the
+    // caller's `?uids=` query) is what actually narrows it, so a game this
+    // browser neither saved nor holds a seat uid in must never render: an
+    // empty `seats` with no saved entry means neither is true, and the row
+    // would otherwise show this browser's own name as some other browser's
+    // "opponent".
+    .filter((g) => mine.has(g.game_id) || Object.keys(g.seats || {}).length > 0)
+    .map((g) => {
+      const seat = mine.get(g.game_id) || {};
+      // `seats` maps username -> uid. Prefer the username whose uid equals
+      // this saved entry's own `uid` (the seat this browser actually
+      // started or opened this game as) over "whichever key comes first" -
+      // object key order here is the server's own dict iteration order, and
+      // `refreshGames` sends *both* this browser's own uid and its aiUid in
+      // the `?uids=` query, so a server response can legally list the AI
+      // seat's username ahead of the human one in `seats`. Falling back to
+      // the first key only when there is no saved uid to match against
+      // (a game this browser holds a seat in by uid alone, never saved).
+      const me =
+        (seat.uid && Object.keys(g.seats || {}).find((name) => g.seats[name] === seat.uid)) ||
+        Object.keys(g.seats || {})[0] ||
+        null;
+      const opponent = (g.players || []).find((p) => p !== me) || (g.players || [])[1] || null;
+      const agent = opponent && g.agents ? g.agents[opponent] : null;
+      return {
+        gameId: g.game_id,
+        opponent,
+        turn: g.turn_number,
+        step: g.step,
+        over: Boolean(g.winner || g.drawn),
+        model: agent ? agent.model : null,
+        effort: agent ? agent.effort : null,
+        myUid: seat.uid || (me ? g.seats[me] : null),
+        aiUid: seat.aiUid || null,
+      };
+    });
 }
 
 // ------------------------------------------------------------- storage ----

@@ -105,6 +105,65 @@ def test_agent_body_from_fields() -> None:
     ) == {"model": "sonnet", "effort": "high", "max_thinking_tokens": 0}
 
 
+def test_agent_body_rejects_a_fraction_or_a_negative_thinking_budget() -> None:
+    """`AgentSettings.max_thinking_tokens` is `int | None = Field(ge=0)` - a
+    fraction or a negative number is not a legal value for it, so `agentFrom`
+    must send `null` rather than truncate or pass either one through."""
+    assert (
+        run_module("lobby_model.js", "m.agentFrom({ thinking: '5.5' })")["max_thinking_tokens"]
+        is None
+    )
+    assert (
+        run_module("lobby_model.js", "m.agentFrom({ thinking: '-1' })")["max_thinking_tokens"]
+        is None
+    )
+
+
+GAMES_MIXED = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": 3,
+        "step": "precombat_main",
+        "winner": None,
+        "drawn": None,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        # Both of this browser's own uids can land in `seats` here - the
+        # human seat "you" (u1) and the AI seat "bot" (u2), since
+        # `refreshGames` sends both uids in its `?uids=` query and the
+        # server includes every `seats` entry whose uid is in that list.
+        # "bot" is listed first on purpose - the row must still name "you"
+        # as `me` (via the saved entry's own `uid`), not "whichever key
+        # comes first".
+        "seats": {"bot": "u2", "you": "u1"},
+    },
+    {
+        # A game this browser never saved and holds no seat uid in -
+        # `lobbyViewModel` must drop it, never fall back to treating
+        # `players[0]` as "the opponent".
+        "game_id": "g2",
+        "players": ["stranger1", "stranger2"],
+        "turn_number": 1,
+        "step": "upkeep",
+        "winner": None,
+        "drawn": None,
+        "agents": {},
+        "seats": {},
+    },
+]
+SAVED_MIXED = [{"gameId": "g1", "uid": "u1", "aiUid": "u2"}]
+
+
+def test_lobby_view_model_keeps_only_owned_games_and_names_the_right_opponent() -> None:
+    rows = run_module(
+        "lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES_MIXED, saved=SAVED_MIXED
+    )
+    assert len(rows) == 1
+    assert rows[0]["gameId"] == "g1"
+    assert rows[0]["opponent"] == "bot"
+    assert rows[0]["myUid"] == "u1"
+
+
 def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
     result = run_module(
         "render/lobby.js",
@@ -214,3 +273,70 @@ def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
     assert "DELETE /api/ui/games/g1?uid=u1" in result["fetchCalls"]
     assert result["rowCountAfter"] == 0
     assert result["savedAfter"] == []
+
+
+def test_lobby_end_keeps_the_row_when_the_server_refuses_the_delete() -> None:
+    """A refused (non-2xx) `DELETE` must not drop the row from `mcm.games.v1`
+    or the table - only a `DELETE` the server actually agreed to may do
+    either. The refusal's message lands in `#start-error` instead."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const table = document.createElement("table");
+          table.setAttribute("id", "games-table");
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          table.appendChild(tbody);
+          document.appendChild(table);
+          const errEl = document.createElement("div");
+          errEl.setAttribute("id", "start-error");
+          document.appendChild(errEl);
+
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+
+          const fetchCalls = [];
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            fetchCalls.push(`${method} ${path}`);
+            if (path.startsWith("/api/ui/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            if (method === "DELETE") {
+              return {
+                ok: false,
+                status: 404,
+                json: async () => ({ detail: "that uid is no seat in this game" }),
+              };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+
+          const actionsCell = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const endBtn = actionsCell.children[1];
+          endBtn.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+
+          return {
+            rowCountAfter: tbody.children.length,
+            savedAfter: JSON.parse(storageData["mcm.games.v1"] || "[]"),
+            errorText: errEl.textContent,
+          };
+        })()
+        """,
+        games=GAMES,
+        saved=SAVED,
+    )
+    assert result["rowCountAfter"] == 1
+    assert result["savedAfter"] == SAVED
+    assert "that uid is no seat in this game" in result["errorText"]

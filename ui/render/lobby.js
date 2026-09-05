@@ -34,6 +34,7 @@
 import { api } from "../api.js";
 import {
   agentFrom,
+  thinkingTokensAreValid,
   lobbyViewModel,
   loadSavedGames,
   saveGames,
@@ -138,6 +139,10 @@ async function startGame(root, handlers) {
     if (err) err.textContent = "the two players need different names";
     return;
   }
+  if (!checkThinkingField(root)) {
+    if (err) err.textContent = "fix the thinking budget field above before starting";
+    return;
+  }
   // Both at once: the two validations are independent, write to different
   // panels, and each can still cost a round trip per uncached card.
   const [youResult, aiResult] = await Promise.all([
@@ -190,6 +195,27 @@ async function startGame(root, handlers) {
 function fieldValue(root, sel) {
   const el = $(root, sel);
   return el ? el.value : "";
+}
+
+/** `#ai-thinking` accepts an empty value ("let the agent decide") or a
+ * whole, non-negative number - `agentFrom` already turns anything else into
+ * `null` rather than sending a fraction or a negative number the API's
+ * `AgentSettings.max_thinking_tokens` (`int | None`, `ge=0`) would refuse,
+ * but silently starting the game with the model's *default* budget instead
+ * of the number the player actually typed is its own kind of wrong. So this
+ * marks the field invalid with `setCustomValidity` (the browser then shows
+ * it as `:invalid` and `reportValidity()` surfaces the native tooltip) and
+ * refuses to start rather than send `null` in place of a typo. Guarded on
+ * `setCustomValidity` existing, since the fake DOM `tests/test_ui_lobby.py`
+ * runs `startGame` against has no such method (and no test here needs it to
+ * - only a real `<input>` gets checked this way). */
+function checkThinkingField(root) {
+  const el = $(root, "#ai-thinking");
+  if (!el || typeof el.setCustomValidity !== "function") return true;
+  const valid = thinkingTokensAreValid(el.value);
+  el.setCustomValidity(valid ? "" : "enter a whole number of tokens, 0 or more, or leave this blank");
+  if (!valid && typeof el.reportValidity === "function") el.reportValidity();
+  return valid;
 }
 
 function currentStorage() {
@@ -250,11 +276,21 @@ function renderGamesTable(root, handlers, rows) {
   }
 }
 
+/** End game: only drop `row` from `mcm.games.v1` (and refresh the table)
+ * once the server has actually agreed to it. A refused or unreachable
+ * `DELETE` (the uid is stale, the game is already gone some other way, the
+ * network drops) must leave the row exactly where it was - dropping it
+ * first and finding out the delete failed after the fact would make the
+ * lobby forget a game that is still live and still holds its uids, with no
+ * way back to it short of the browser having saved them somewhere else. */
 async function endGame(root, handlers, row) {
   try {
     await api("DELETE", `/api/ui/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
   } catch (e) {
-    console.error(`could not end game ${row.gameId}: ${e.message}`);
+    console.error(`could not end game vs ${row.opponent || row.gameId}: ${e.message}`);
+    const err = $(root, "#start-error");
+    if (err) err.textContent = `could not end the game vs ${row.opponent || row.gameId}: ${e.message}`;
+    return;
   }
   const storage = currentStorage();
   saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
