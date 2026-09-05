@@ -80,7 +80,9 @@ def world(tmp_path):
     return client, settings, submitted, state
 
 
-def dispatch(client, uid: str = "secret-uid", game_id: str = "g-1") -> httpx.Response:
+def dispatch(
+    client, uid: str = "secret-uid", game_id: str = "g-1", agent: dict | None = None
+) -> httpx.Response:
     return client.post(
         "/dispatch",
         json={
@@ -88,6 +90,7 @@ def dispatch(client, uid: str = "secret-uid", game_id: str = "g-1") -> httpx.Res
             "game_id": game_id,
             "player": "bob",
             "api_base": "http://game:8000",
+            "agent": agent,
         },
     )
 
@@ -195,6 +198,22 @@ def test_status_reports_the_current_assignment(world):
 def test_status_before_any_dispatch_is_idle(world):
     client, _, _, _ = world
     assert client.get("/status").json()["gameId"] is None
+
+
+def test_status_reports_the_dispatched_agent_settings(world):
+    """`DispatchIn.agent` is carried onto `Assignment` and shown back in
+    `/status`, so the game server (and a human reading the driver's own
+    status) can see what model/effort this container is running under."""
+    client, _, _, _ = world
+    agent = {"model": "opus", "effort": "max", "max_thinking_tokens": None}
+    dispatch(client, agent=agent)
+    assert client.get("/status").json()["agent"] == agent
+
+
+def test_status_agent_is_none_when_dispatch_carried_none(world):
+    client, _, _, _ = world
+    dispatch(client)
+    assert client.get("/status").json()["agent"] is None
 
 
 def test_healthz(world):

@@ -8,12 +8,14 @@ for the mechanism and its fallback.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from . import ai_seat
+from .agent_settings import AgentSettings
 from .store import store
 
 router = APIRouter(prefix="/api/ui", tags=["ui"])
@@ -34,8 +36,9 @@ def start_ai_seat(game_id: str, req: StartAiSeat, request: Request) -> dict[str,
     player = store.player_for_uid(game_id, req.uid)
     if player is None:
         raise KeyError("that uid is no seat in this game")
+    agent = store.agent_settings(game_id).get(player) or AgentSettings.default(os.environ)
     return ai_seat.registry.start(
-        uid=req.uid, game_id=game_id, player=player, api_base=_api_base(request)
+        uid=req.uid, game_id=game_id, player=player, api_base=_api_base(request), agent=agent
     )
 
 

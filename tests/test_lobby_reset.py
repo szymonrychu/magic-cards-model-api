@@ -214,7 +214,9 @@ def test_the_subprocess_seat_is_terminated_and_forgotten_when_ended(
     monkeypatch.setenv("AI_SEAT_MODE", "subprocess")
     monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
     monkeypatch.setattr(
-        ai_seat, "command_for", lambda prompt: ["python3", "-c", "import time; time.sleep(60)"]
+        ai_seat,
+        "command_for",
+        lambda prompt, agent: ["python3", "-c", "import time; time.sleep(60)"],
     )
     booted = boot(client, seed=1, ai=True)
     ai_uid = booted["seat_uids"]["bob"]

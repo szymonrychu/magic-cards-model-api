@@ -40,6 +40,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api import ai_pregame, ai_seat
+from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.seatkit import Seats
@@ -915,12 +916,14 @@ def hold_seat(monkeypatch, info: dict[str, Any], player: str, command: list[str]
     swapping the module's registry is enough to isolate one test's seats."""
     registry = ai_seat.AiSeatRegistry()
     monkeypatch.setattr(ai_seat, "registry", registry)
-    monkeypatch.setattr(ai_seat, "command_for", lambda prompt: command)
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
+    monkeypatch.setattr(ai_seat, "command_for", lambda prompt, agent: command)
     registry.start(
         uid=info["seat_uids"][player],
         game_id=info["game_id"],
         player=player,
         api_base="http://testserver",
+        agent=AgentSettings(model="sonnet"),
     )
     return registry
 

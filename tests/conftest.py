@@ -11,9 +11,26 @@ os.environ["MCM_CACHE_DIR"] = str(Path(__file__).parent / "fixtures" / "scryfall
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from magic_cards_model_api import lobby  # noqa: E402
+from magic_cards_model_api import ai_seat, lobby  # noqa: E402
 from magic_cards_model_api.main import app  # noqa: E402
 from magic_cards_model_api.store import store  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`POST /api/ui/games` now starts each `ai: true` seat itself, right
+    after booting the game - which, in `subprocess` mode, means a game
+    created in a test would otherwise spawn a *real* `claude` process the
+    moment this dev machine happens to have one on PATH (it does).
+
+    `AiSeatRegistry.start` already refuses to spawn when `claude_available()`
+    is false, reporting a harmless fallback instead - so defaulting it to
+    false here is enough to keep every test safe without touching the
+    mechanism itself. Tests that exercise the real spawn path
+    (`test_ai_seat.py`, `test_lobby_reset.py`, `test_mulligans.py`) override
+    it back to `True` themselves, and their own `command_for` stand-in is
+    what keeps the spawned process cheap rather than the real CLI."""
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: False)
 
 
 def add_card(client: TestClient, game_id: str, name: str, player: str, zone: str, **kwargs):

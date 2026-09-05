@@ -56,6 +56,7 @@ class DispatchIn(BaseModel):
     game_id: str
     player: str
     api_base: str = ""
+    agent: dict | None = None
 
 
 class ReleaseIn(BaseModel):
@@ -295,6 +296,7 @@ def build_app(
             decklist=decklist,
             guide=guide,
             match_score=score,
+            agent=body.agent,
         )
 
         settings.workspace.mkdir(parents=True, exist_ok=True)
@@ -504,6 +506,7 @@ def build_app(
                 "gameId": assignment.game_id if assignment else None,
                 "player": assignment.player if assignment else None,
                 "deck": (assignment.guide.slug if assignment and assignment.guide else None),
+                "agent": assignment.agent if assignment else None,
                 "lastTurnId": current["lastTurnId"],
                 "reflected": current["reflected"],
                 "pending": current["pending"],

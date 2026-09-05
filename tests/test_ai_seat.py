@@ -27,6 +27,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api import ai_seat
+from magic_cards_model_api.agent_settings import AgentSettings
+
+#: What every `.start()` call below runs as - the exact model/effort do not
+#: matter to these tests, only that some `AgentSettings` reaches the runner.
+DEFAULT_AGENT = AgentSettings(model="sonnet")
 
 
 def wait_until(predicate, *, max_seconds: float = 5.0, poll: float = 0.05) -> None:
@@ -60,7 +65,7 @@ def test_build_prompt_fills_in_the_seats_own_identifiers() -> None:
 def test_command_for_places_the_prompt_after_a_bare_dash_dash() -> None:
     # Load-bearing: `--allowedTools` is variadic in the real CLI and would
     # otherwise swallow the prompt as another tool name - see module docstring.
-    command = ai_seat.command_for("a prompt with spaces")
+    command = ai_seat.command_for("a prompt with spaces", DEFAULT_AGENT)
     assert command[-2] == "--"
     assert command[-1] == "a prompt with spaces"
     assert "--dangerously-skip-permissions" in command
@@ -72,7 +77,7 @@ def test_claude_unavailable_reports_fallback_with_a_runnable_command(
 ) -> None:
     monkeypatch.setattr(ai_seat, "claude_available", lambda: False)
     status = fresh_registry.start(
-        uid="u1", game_id="g1", player="bob", api_base="http://127.0.0.1:8000"
+        uid="u1", game_id="g1", player="bob", api_base="http://127.0.0.1:8000", agent=DEFAULT_AGENT
     )
     assert status["mechanism"] == "fallback"
     assert "claude" in status["command"]
@@ -83,9 +88,12 @@ def test_claude_unavailable_reports_fallback_with_a_runnable_command(
 def test_a_spawned_runner_completes_and_reports_its_output(
     monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
-    monkeypatch.setattr(ai_seat, "command_for", lambda prompt: ["python3", "-c", "print('DONE')"])
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
+    monkeypatch.setattr(
+        ai_seat, "command_for", lambda prompt, agent: ["python3", "-c", "print('DONE')"]
+    )
     status = fresh_registry.start(
-        uid="u2", game_id="g2", player="bob", api_base="http://127.0.0.1:8000"
+        uid="u2", game_id="g2", player="bob", api_base="http://127.0.0.1:8000", agent=DEFAULT_AGENT
     )
     assert status["mechanism"] == "subprocess"
     assert status["state"] in ("thinking", "stopped")
@@ -101,23 +109,33 @@ def test_start_is_idempotent_for_the_same_uid(
 ) -> None:
     calls = []
 
-    def fake_command(prompt: str) -> list[str]:
+    def fake_command(prompt: str, agent: AgentSettings) -> list[str]:
         calls.append(prompt)
         return ["python3", "-c", "print('DONE')"]
 
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
     monkeypatch.setattr(ai_seat, "command_for", fake_command)
-    fresh_registry.start(uid="u3", game_id="g3", player="bob", api_base="http://x")
-    fresh_registry.start(uid="u3", game_id="g3", player="bob", api_base="http://x")
+    fresh_registry.start(
+        uid="u3", game_id="g3", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    fresh_registry.start(
+        uid="u3", game_id="g3", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
     assert len(calls) == 1, "a second start() for the same uid must not spawn a second process"
 
 
 def test_stop_terminates_a_running_process(
     monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
     monkeypatch.setattr(
-        ai_seat, "command_for", lambda prompt: ["python3", "-c", "import time; time.sleep(30)"]
+        ai_seat,
+        "command_for",
+        lambda prompt, agent: ["python3", "-c", "import time; time.sleep(30)"],
     )
-    fresh_registry.start(uid="u4", game_id="g4", player="bob", api_base="http://x")
+    fresh_registry.start(
+        uid="u4", game_id="g4", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
     wait_until(lambda: fresh_registry.status("u4")["state"] == "thinking")
     assert fresh_registry.stop("u4") is True
     wait_until(lambda: fresh_registry.status("u4")["state"] != "thinking", max_seconds=10)
@@ -126,8 +144,11 @@ def test_stop_terminates_a_running_process(
 def test_spawn_failure_falls_back_cleanly(
     monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
-    monkeypatch.setattr(ai_seat, "command_for", lambda prompt: ["/no/such/binary-at-all"])
-    status = fresh_registry.start(uid="u5", game_id="g5", player="bob", api_base="http://x")
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
+    monkeypatch.setattr(ai_seat, "command_for", lambda prompt, agent: ["/no/such/binary-at-all"])
+    status = fresh_registry.start(
+        uid="u5", game_id="g5", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
     assert status["mechanism"] == "fallback"
     assert status["state"] == "error"
     assert status["error"]

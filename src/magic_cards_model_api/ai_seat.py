@@ -53,6 +53,8 @@ from typing import Any
 
 import httpx
 
+from .agent_settings import AgentSettings
+
 #: Root of this repo (`src/magic_cards_model_api/ai_seat.py` -> repo root),
 #: the working directory `seat_cli` must run from, and where `claude` is
 #: invoked from so its own CLAUDE.md/settings apply the same way they would
@@ -116,14 +118,13 @@ def build_prompt(*, uid: str, game_id: str, player: str, api_base: str) -> str:
     )
 
 
-def command_for(prompt: str) -> list[str]:
+def command_for(prompt: str, agent: AgentSettings) -> list[str]:
     """The argv `claude` is spawned with. `--` is load-bearing - see the
     module docstring for why omitting it breaks the prompt."""
     return [
         "claude",
         "--print",
-        "--model",
-        "sonnet",
+        *agent.claude_args(),
         "--dangerously-skip-permissions",
         "--allowedTools",
         "Bash",
@@ -140,6 +141,7 @@ class AiSeatRunner:
     game_id: str
     player: str
     api_base: str
+    agent: AgentSettings
     process: subprocess.Popen[str] | None = None
     started_at: float = field(default_factory=time.monotonic)
     ended_at: float | None = None
@@ -170,8 +172,9 @@ class AiSeatRunner:
         )
         try:
             self.process = subprocess.Popen(
-                command_for(prompt),
+                command_for(prompt, self.agent),
                 cwd=API_REPO,
+                env={**os.environ, **self.agent.env()},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -243,7 +246,7 @@ class AiSeatRegistry:
         self._lock = threading.Lock()
 
     def _dispatch_to_driver(
-        self, *, uid: str, game_id: str, player: str, api_base: str
+        self, *, uid: str, game_id: str, player: str, api_base: str, agent: AgentSettings
     ) -> dict[str, Any]:
         """Hand this seat to the driver. Never raises: an unreachable driver
         comes back as a fallback, exactly like a missing `claude` binary, so
@@ -254,6 +257,7 @@ class AiSeatRegistry:
             "game_id": game_id,
             "player": player,
             "api_base": api_base,
+            "agent": agent.model_dump(),
         }
         try:
             with _driver_client(base) as client:
@@ -309,7 +313,9 @@ class AiSeatRegistry:
             status["state"] = "pending"
         return status
 
-    def start(self, *, uid: str, game_id: str, player: str, api_base: str) -> dict[str, Any]:
+    def start(
+        self, *, uid: str, game_id: str, player: str, api_base: str, agent: AgentSettings
+    ) -> dict[str, Any]:
         """Start (or report the existing) AI seat for `uid`.
 
         Two mechanisms, chosen by `AI_SEAT_MODE`. `subprocess` (the default)
@@ -329,7 +335,7 @@ class AiSeatRegistry:
                 if uid in self._dispatched:
                     return self._dispatched[uid]
             status = self._dispatch_to_driver(
-                uid=uid, game_id=game_id, player=player, api_base=api_base
+                uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
             )
             # Recorded either way: a dispatch that failed used to be entirely
             # silent here - the UI got a "fallback" status and the container
@@ -367,11 +373,13 @@ class AiSeatRegistry:
                 "mechanism": "fallback",
                 "state": "not_started",
                 "reason": "the `claude` CLI is not on PATH in this server process",
-                "command": " ".join(command_for(prompt)),
+                "command": " ".join(command_for(prompt, agent)),
                 "prompt": prompt,
             }
 
-        runner = AiSeatRunner(uid=uid, game_id=game_id, player=player, api_base=api_base)
+        runner = AiSeatRunner(
+            uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
+        )
         runner.start()
         with self._lock:
             self._runners[uid] = runner
@@ -381,7 +389,7 @@ class AiSeatRegistry:
             # command alongside the error, rather than leaving the caller
             # with only "error" and no way to proceed by hand.
             status["mechanism"] = "fallback"
-            status["command"] = " ".join(command_for(prompt))
+            status["command"] = " ".join(command_for(prompt, agent))
             status["prompt"] = prompt
         return status
 

@@ -4,6 +4,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api import ai_seat
+from magic_cards_model_api.agent_settings import AgentSettings
+
+#: The agent settings threaded through every `.start()` call below - what
+#: matters for these tests is that *some* `AgentSettings` reaches the
+#: dispatch payload, not which one; `test_ai_seat_settings.py` pins the exact
+#: shape of that payload for a chosen model/effort.
+DEFAULT_AGENT = AgentSettings(model="sonnet")
 
 
 @pytest.fixture
@@ -27,7 +34,11 @@ def driver(monkeypatch):
 def test_wrapper_mode_posts_the_seat_to_the_driver(driver):
     registry = ai_seat.AiSeatRegistry()
     status = registry.start(
-        uid="secret-uid", game_id="g-1", player="bob", api_base="http://game:8000"
+        uid="secret-uid",
+        game_id="g-1",
+        player="bob",
+        api_base="http://game:8000",
+        agent=DEFAULT_AGENT,
     )
     assert status["mechanism"] == "wrapper"
     assert status["state"] == "dispatched"
@@ -37,6 +48,7 @@ def test_wrapper_mode_posts_the_seat_to_the_driver(driver):
         "game_id": "g-1",
         "player": "bob",
         "api_base": "http://game:8000",
+        "agent": DEFAULT_AGENT.model_dump(),
     }
 
 
@@ -46,13 +58,19 @@ def test_wrapper_mode_never_spawns_a_subprocess(driver, monkeypatch):
 
     monkeypatch.setattr(ai_seat.subprocess, "Popen", explode)
     registry = ai_seat.AiSeatRegistry()
-    registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
+    registry.start(
+        uid="u", game_id="g", player="bob", api_base="http://game:8000", agent=DEFAULT_AGENT
+    )
 
 
 def test_a_second_start_for_the_same_uid_dispatches_once(driver):
     registry = ai_seat.AiSeatRegistry()
-    registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
-    registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
+    registry.start(
+        uid="u", game_id="g", player="bob", api_base="http://game:8000", agent=DEFAULT_AGENT
+    )
+    registry.start(
+        uid="u", game_id="g", player="bob", api_base="http://game:8000", agent=DEFAULT_AGENT
+    )
     assert len(driver) == 1
 
 
@@ -65,7 +83,7 @@ def test_an_unreachable_driver_reports_a_fallback_not_an_exception(monkeypatch):
 
     monkeypatch.setattr(ai_seat, "_driver_client", broken)
     status = ai_seat.AiSeatRegistry().start(
-        uid="u", game_id="g", player="bob", api_base="http://game:8000"
+        uid="u", game_id="g", player="bob", api_base="http://game:8000", agent=DEFAULT_AGENT
     )
     assert status["mechanism"] == "fallback"
     assert "driver" in status["reason"]
@@ -83,7 +101,9 @@ def test_the_driver_url_defaults_to_the_compose_service(monkeypatch):
 
 def test_status_and_stop_are_harmless_for_a_wrapper_seat(driver):
     registry = ai_seat.AiSeatRegistry()
-    registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
+    registry.start(
+        uid="u", game_id="g", player="bob", api_base="http://game:8000", agent=DEFAULT_AGENT
+    )
     assert registry.status("u")["mechanism"] == "wrapper"
     assert registry.stop("u") is False
 
@@ -125,7 +145,9 @@ def driver_with_status(monkeypatch):
 
 def started(uid: str = "u") -> ai_seat.AiSeatRegistry:
     registry = ai_seat.AiSeatRegistry()
-    registry.start(uid=uid, game_id="g", player="claude", api_base="http://game:8000")
+    registry.start(
+        uid=uid, game_id="g", player="claude", api_base="http://game:8000", agent=DEFAULT_AGENT
+    )
     return registry
 
 
@@ -232,6 +254,8 @@ def test_a_seat_that_could_not_start_says_why(monkeypatch):
 
     monkeypatch.setattr(ai_seat, "_driver_client", broken)
     registry = ai_seat.AiSeatRegistry()
-    registry.start(uid="u", game_id="g", player="bob", api_base="http://game:8000")
+    registry.start(
+        uid="u", game_id="g", player="bob", api_base="http://game:8000", agent=DEFAULT_AGENT
+    )
     assert registry.activity("u") == ai_seat.GONE
     assert "driver" in registry.why_gone("u")

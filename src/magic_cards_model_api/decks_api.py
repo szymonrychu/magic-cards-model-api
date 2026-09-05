@@ -31,11 +31,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
-from . import ai_pregame, audit, lobby, scryfall, serialize
+from . import ai_pregame, ai_seat, audit, lobby, scryfall, serialize
 from .agent_settings import AgentSettings
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
@@ -55,6 +55,13 @@ def max_live_games() -> int:
 #: from, sitting at the repo root next to `pyproject.toml` (three parents up
 #: from this file: `src/magic_cards_model_api/decks_api.py`).
 DECKS_DIR = Path(__file__).resolve().parents[2] / "decks"
+
+
+def _api_base(request: Request) -> str:
+    """Same shape as `ai_seat_api._api_base` - the scheme and host the AI
+    seat should call itself back on, taken off the request that booted the
+    game rather than assumed."""
+    return f"{request.url.scheme}://{request.url.netloc}"
 
 
 @router.get("/decks")
@@ -178,7 +185,7 @@ class NewUiGame(BaseModel):
 
 
 @router.post("/games")
-def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
+def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any]:
     """Boot a new game from two decklists, right now, from an HTTP body -
     the request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing
     its exact boot path (`decks.load_deck_into_game`): CR 103's registration,
@@ -253,6 +260,28 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     # exiting once it decides the pregame is "nothing to act on" - strands the
     # human at a panel no button of theirs can move. See `ai_pregame.py`.
     ai_pregame.start(game_id, ai_players)
+    # Start each AI seat right away rather than making a human click a second
+    # "start" button for a seat they already flagged `ai: true` - the
+    # separate `POST .../ai-seat/start` route stays, both for a seat that
+    # failed to auto-start and for a lobby rejoining an already-live game.
+    # Guarded by `claude_available()` in subprocess mode (the same check
+    # `AiSeatRegistry.start` makes internally) so a test posting here with
+    # `ai: true` never spawns a real `claude` process just because one
+    # happens to be on this machine's PATH.
+    mode = ai_seat.ai_seat_mode()
+    api_base = _api_base(request)
+    for player in req.players:
+        if not player.ai:
+            continue
+        if mode != "wrapper" and not ai_seat.claude_available():
+            continue
+        ai_seat.registry.start(
+            uid=seat_uids[player.username],
+            game_id=game_id,
+            player=player.username,
+            api_base=api_base,
+            agent=agents[player.username],
+        )
     return {
         "game_id": game_id,
         "seat_uids": seat_uids,
