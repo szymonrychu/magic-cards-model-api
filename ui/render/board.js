@@ -18,7 +18,11 @@ import { h, patchChildren, clear, setText } from "../dom.js";
 import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { manaPoolNodes } from "../symbols.js";
 
-function targetingOpts(app, id) {
+// Exported (Task 17's addition to this render module) so `render/panels.js`'s
+// zones popover can highlight a legal graveyard/exile target with the exact
+// same targetable/chosen/dimmed logic the board itself uses, rather than a
+// second copy of it.
+export function targetingOpts(app, id) {
   const action = app.action;
   const decision =
     app.decisionDraft && app.state.pending_decision && app.state.pending_decision.player === app.state.you

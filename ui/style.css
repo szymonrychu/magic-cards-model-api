@@ -116,8 +116,8 @@ h3 { font-size: 14px; }
 #game {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
-  grid-template-rows: auto auto 1fr auto;
-  grid-template-areas: "top top" "banner banner" "board side" "debug debug";
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas: "top top" "banner banner" "board side";
   height: 100vh;
   gap: 8px;
   padding: 8px;
@@ -168,15 +168,8 @@ h3 { font-size: 14px; }
   gap: 12px;
   font-size: 13px;
 }
-#autopilot-banner { background: #1c2536; border: 1px solid var(--accent); }
-#autopilot-banner .why { color: var(--ink-dim); }
 #ai-stall-banner { background: #2a1c1c; border: 1px solid var(--warn); }
 #ai-stall-banner .why { color: var(--ink-dim); }
-#game-over { background: #2a1c1c; border: 1px solid var(--warn); font-weight: 600; }
-/* Refusals and errors, in the page rather than a blocking native dialog. */
-.notice { background: #1d2330; border: 1px solid var(--line-bright); }
-.notice.bad { background: #2c1a1a; border-color: var(--bad); color: var(--bad); }
-.notice button { margin-left: auto; }
 
 /* --------------------------------------------------------- the board ---- */
 
@@ -514,11 +507,7 @@ h3 { font-size: 14px; }
   border-radius: 9px;
   padding: 10px 12px;
 }
-#decision-box { border-color: var(--warn); }
-#decision-box h3 { color: var(--warn); }
-#action-tray { border-color: var(--accent); }
-
-/* The new side panel's four stacked sections: what is being asked
+/* The side panel's four stacked sections: what is being asked
    (`#prompt-box`), the priority controls (`#priority-box`), the stop
    conditions autopilot will halt for (`#stops-box`), and the game log
    (`#log-box`) - which alone takes whatever height the other three leave, so
@@ -606,43 +595,7 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .chip.on { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .chip.player { border-style: dashed; }
 
-.pass-controls { display: flex; flex-direction: column; gap: 7px; }
-.pass-controls .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.pass-controls select { flex: 1; min-width: 0; }
-.pass-controls label { font-size: 12px; color: var(--ink-dim); display: flex; gap: 5px; align-items: center; }
-#action-bar .group { border-top: 1px solid var(--line); margin-top: 9px; padding-top: 9px; }
-#action-bar .group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
-#action-bar .group > .label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--ink-faint);
-  margin-bottom: 5px;
-}
-#action-bar .buttons { display: flex; flex-wrap: wrap; gap: 5px; }
-
-/* --------------------------------------------------- preview & modal ---- */
-
-.card-preview {
-  position: fixed;
-  right: 344px;
-  bottom: 14px;
-  z-index: 40;
-  pointer-events: none;
-  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.75));
-}
-.card-preview img { width: 260px; border-radius: 11px; display: block; }
-.card-preview .fallback-text {
-  width: 260px;
-  background: var(--bg-raised);
-  border: 1px solid var(--line-bright);
-  border-radius: 11px;
-  padding: 12px;
-  font-size: 12px;
-}
-.card-preview .fallback-text .name { font-weight: 700; font-size: 14px; }
-.card-preview .fallback-text .type { color: var(--ink-dim); }
-.card-preview .fallback-text .oracle { margin-top: 7px; white-space: pre-wrap; }
+/* --------------------------------------------------- popovers & modal ---- */
 
 .modal {
   position: fixed;
@@ -674,9 +627,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 }
 .zone-grid { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 14px; }
 .zone-empty { color: var(--ink-faint); font-size: 12px; }
-
-#raw-state-details { grid-area: debug; font-size: 11px; color: var(--ink-dim); }
-#raw-state { max-height: 220px; overflow: auto; background: var(--bg-sunken); padding: 8px; border-radius: 7px; }
 
 .state-error { color: var(--bad); }
 .state-running { color: var(--good); }
@@ -729,7 +679,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .popover .option .hint { display: block; font-size: 10px; margin: 0; }
 
 @media (max-width: 1100px) {
-  #game { grid-template-columns: 1fr; grid-template-areas: "top" "banner" "board" "side" "debug"; height: auto; }
-  .card-preview { right: 14px; }
+  #game { grid-template-columns: 1fr; grid-template-areas: "top" "banner" "board" "side"; height: auto; }
   .deck-pickers { grid-template-columns: 1fr; }
 }

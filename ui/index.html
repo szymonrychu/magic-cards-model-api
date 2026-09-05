@@ -71,19 +71,19 @@
       <div id="ai-panel"></div>
       <div id="conn-status-game" class="pill"></div>
       <button id="open-zones" class="ghost" title="Graveyards, exile, and what you may still cast from it">Zones</button>
+      <button id="report-problem" class="ghost">Report</button>
       <button id="leave-game" class="ghost">Lobby</button>
     </div>
   </header>
 
+  <!-- Game over, CR 103.5/103.6's pregame, a live decision, the in-flight
+       action's summary, and the combat prompt all render inside
+       `#prompt-box` (`ui/render/ribbon.js`'s `renderPromptBox`), in that
+       priority order - so there is exactly one place asking the player
+       anything, not one banner per case. Only the AI seat's own silence -
+       which is not a question the game itself is asking - gets a banner of
+       its own. -->
   <div id="banners">
-    <div id="notice" class="notice" hidden></div>
-    <div id="game-over" hidden></div>
-    <!-- CR 103.5's mulligan and CR 103.6's opening-hand actions: the two
-         steps a freshly booted game rests in before turn 1. -->
-    <div id="pregame" class="notice" hidden></div>
-    <div id="autopilot-banner" hidden></div>
-    <!-- The opponent seat is an agent, and an agent can stop answering. This
-         says so, and offers the one move that always gets the human past it. -->
     <div id="ai-stall-banner" hidden></div>
   </div>
 
@@ -105,26 +105,17 @@
 
   <!-- the one place anything is ever asked of the player -->
   <aside id="side-panel">
-    <div id="decision-box" hidden></div>
-    <div id="action-tray" hidden></div>
-    <div id="action-bar"></div>
     <div id="prompt-box"></div>
     <div id="priority-box"></div>
     <div id="stops-box"></div>
     <div id="log-box"></div>
   </aside>
 
-  <div id="card-preview" class="card-preview" hidden></div>
   <div id="toast" class="toast" hidden></div>
   <div id="popover" class="popover" hidden></div>
   <div id="modal" class="modal" hidden></div>
-
-  <details id="raw-state-details">
-    <summary>Raw state (debug)</summary>
-    <pre id="raw-state"></pre>
-  </details>
 </section>
 
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

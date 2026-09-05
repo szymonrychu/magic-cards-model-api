@@ -26,8 +26,9 @@ have to agree:
     card view `cast` hints  ->  affordance (no modes)  ->  affordance (modes,
     X)  ->  POST /actions/cast
 
-`ui/app.js` reads every one of them, so each test below names the function in
-that file it is standing behind. A regression in any single link empties a
+`ui/app.js` (and the render modules it drives - `ui/render/ribbon.js`,
+`ui/render/board.js`) reads every one of them, so each test below names the
+function it is standing behind. A regression in any single link empties a
 control in the browser without failing anything else.
 
 AND THE SAME DEFECT AGAIN, ON THIS SIDE. Writing these tests turned up a
@@ -84,14 +85,14 @@ def board(client: TestClient, game: str) -> dict:
 
 
 def test_the_card_view_offers_both_an_x_and_every_mode(client, game):
-    """The UI contract behind `actionNeedsX()` and `actionModes()` in
-    ui/app.js. Both read this one blob off the card view, and neither asks
-    the server anything else before drawing its control:
+    """The UI contract behind `ui/render/ribbon.js`'s `renderXInput`/
+    `renderModeChips`. Both read this one blob off the card view, and neither
+    asks the server anything else before drawing its control:
 
-      - `actionNeedsX()` returns `card.cast.needs_x`, and a false here means
-        the tray renders no "Announce X" number input at all.
-      - `actionModes()` returns `card.cast.modes`, and a missing block here
-        means the tray renders no mode chips at all.
+      - `renderXInput` checks `card.cast.needs_x`, and a false here means
+        the strip renders no "Announce X" number input at all.
+      - `renderModeChips` checks `card.cast.modes`, and a missing block here
+        means the strip renders no mode chips at all.
 
     Either regression is silent: the spell still looks castable, the player
     just has no control to reach the choice with, and the cast goes off with
@@ -139,8 +140,8 @@ def test_no_targets_are_offered_until_the_modes_are_chosen(client, game):
     guess.
 
     `understood: false` with `targets_anything: false` is what keeps the UI
-    honest too: `actionTargeting()` hands this to `isPickingTargets()`, which
-    declines to dim the board or open a target picker. The player is asked
+    honest too: `ui/render/board.js`'s `targetingOpts()` reads this affordance
+    and declines to dim the board or open a target picker. The player is asked
     for modes first and only then for targets, which is the order CR 700.2a
     and CR 601.2c put them in.
     """
@@ -221,17 +222,18 @@ def test_announcing_x_before_the_modes_still_asks_for_no_targets(client, game):
     engine fix, because the API reaches the branch by a different door.
 
     This is not a contrived call. It is the browser's, on the ordinary path.
-    `ui/app.js` calls `refreshAffordance()` from `setXValue()` as well as from
-    `toggleMode()`, and puts `modes` in the query only when
-    `action.modes.length` is non-zero. So a player who clicks Kozilek's
+    `ui/app.js` calls `refreshAffordance()` from its ribbon's `onSetX` handler
+    just as much as from its `onToggleMode` handler (`actions.js`'s
+    `affordanceQuery()` puts `modes` in the query only when
+    `action.modes.length` is non-zero). So a player who clicks Kozilek's
     Command and types X BEFORE clicking their two mode chips sends exactly
     this: `x_value` set, `modes` absent.
 
     The old answer to it was `understood=True` with FOUR requirements and a
     minimum of four - the whole card's four bullets read as one non-modal
-    blob with X substituted. `isPickingTargets()` believes that, so the board
-    dimmed and demanded four targets, graveyard cards among them, for a spell
-    that chooses two modes and needs at most two.
+    blob with X substituted. `ui/render/board.js`'s `targetingOpts()` believes
+    that, so the board dimmed and demanded four targets, graveyard cards among
+    them, for a spell that chooses two modes and needs at most two.
 
     CR 700.2c is what makes `understood=False` the only honest answer here:
     "If a spell or ability targets one or more targets only if a particular

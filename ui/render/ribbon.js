@@ -236,6 +236,39 @@ function renderCombatPrompt(state, app, handlers) {
 
 // ------------------------------------------------------------------ #prompt-box
 
+/**
+ * Whether `document.activeElement` is a real, typed-into text control
+ * (`INPUT[type=text/number/...]`, `TEXTAREA`) somewhere inside `el` right
+ * now - never a checkbox or radio, which hold nothing typed. `renderPromptBox`
+ * below skips its own repaint while this is true, the way the old classic
+ * `ui/app.js`'s `setHtml` was meant to (its actual bug: it skipped for
+ * *any* focused INPUT, checkbox and radio included, so ticking CR 103.5's
+ * bottoming checkbox froze the very repaint that would have enabled "Keep").
+ * `#prompt-box` is fully torn down and rebuilt (`clear` + fresh `h()` nodes)
+ * on every store update rather than patched node-by-node, so the only way to
+ * keep a half-typed free-text decision answer (CR 201.4/205.3e's "name a
+ * card"/"name a creature type", `decision_controls.js`'s `renderTextControl`)
+ * from losing its cursor on the next ~1.2s poll tick is to not touch the DOM
+ * at all while it holds focus - a checkbox tick still repaints normally,
+ * since its type is excluded here.
+ */
+function focusedTextInput(el) {
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  if (!active || typeof el.contains !== "function" || !el.contains(active)) return false;
+  // A real DOM's `Element.tagName` is always upper-cased, whatever case the
+  // element was created with (`document.createElement("input")` still
+  // reports "INPUT") - `.toUpperCase()` here makes the check correct there
+  // and tolerant of a fake DOM (`tests/test_ui_pregame_panel.py`) that does
+  // not bother normalizing it.
+  const tag = (active.tagName || "").toUpperCase();
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    const type = (active.type || (active.attrs && active.attrs.type) || "text").toLowerCase();
+    return type !== "checkbox" && type !== "radio";
+  }
+  return false;
+}
+
 function actionTitle(action) {
   if (action.kind === "land") return "Play land";
   if (action.kind === "crew") return "Crew";
@@ -245,6 +278,7 @@ function actionTitle(action) {
 }
 
 function renderPromptBox(el, app, handlers) {
+  if (focusedTextInput(el)) return;
   clear(el);
   const state = app.state;
   if (!state) return;
@@ -414,7 +448,15 @@ function renderCrewProgress(action, offer) {
 
 function renderSlotChips(action, handlers) {
   if (!action.affordance || !action.affordance.targets_anything || !action.slots.length) return null;
-  const active = activeSlotIndex(action.slots);
+  // Task 17's addition: a slot chip click (`handlers.onFocusSlot`) sets
+  // `action.focusSlot` in app.js so the next board click fills that slot
+  // specifically rather than whichever one `activeSlotIndex` would pick on
+  // its own - this only has to agree with that override for the highlight,
+  // not compute it.
+  const active =
+    action.focusSlot !== null && action.focusSlot !== undefined && action.slots[action.focusSlot]
+      ? action.focusSlot
+      : activeSlotIndex(action.slots);
   return h(
     "div",
     { class: "tray-step" },

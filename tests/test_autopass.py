@@ -496,7 +496,7 @@ def test_the_attackers_stop_does_not_guess_whether_anything_could_attack(client,
 
     Summoning sickness, defender, tap state and CR 508.1's restrictions and
     requirements are engine questions; this file defers to the engine rather
-    than reimplementing them, exactly as `ui/app.js` does, so the human's
+    than reimplementing them, exactly as `ui/priority.js`/`ui/combat.js` do, so the human's
     checkbox and this parameter cannot mean two different things. "It is your
     declare-attackers step" is the whole condition.
     """

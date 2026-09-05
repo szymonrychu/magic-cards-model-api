@@ -5,7 +5,7 @@ pre-combat-main and it's stuck", with the live game showing turn 1, step
 untap. The engine had just been corrected to honour CR 502.4 - "No player
 receives priority during the untap step" - so `priority_holder` there is
 `None`, `pass-priority` is refused outright, and the browser's auto-pass
-(`ui/app.js`'s `tickAutopilot`, which bails unless priority is yours) had
+(`ui/app.js`'s `tickRun`, which bails unless priority is yours) had
 nothing it could do. The page never moved again.
 
 Nothing should have to ask a human to leave that step. CR 500.3: "A step in

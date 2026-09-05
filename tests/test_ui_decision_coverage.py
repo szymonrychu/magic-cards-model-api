@@ -10,17 +10,21 @@ no entry in that table - so a future engine addition fails a test here instead
 of silently hanging a live browser game the way `decisions.py`'s module
 docstring already documents happening twice server-side.
 
-**Two tables, both live right now.** `ui/app.js`'s `DECISION_RENDERERS` is the
-table that predates Task 12, and it is still what a live browser actually
-answers a decision through today - Task 12 added `ui/decisions.js`'s
-`DECISION_KINDS` as a pure view-model table, but no screen is wired to it yet
-(that is a later task in this plan), and `ui/app.js` is deliberately not
-edited by this task, so its own decision box keeps serving real games in the
-meantime. A kind missing from *either* table would hang a live game right
-now, so `_TABLES` below parametrizes every kind-coverage check over both -
-`ui/app.js` is deleted in a later task of this same plan, so its case is
-skipped (not failed) once the file is gone, rather than blocking that
-deletion.
+**Two tables, until Task 17.** `ui/app.js`'s `DECISION_RENDERERS` was the
+table that predated Task 12, and it was what a live browser actually answered
+a decision through for a while - Task 12 added `ui/decisions.js`'s
+`DECISION_KINDS` as a pure view-model table, but no screen was wired to it yet
+at the time, so `ui/app.js`'s own decision box kept serving real games in the
+meantime, and `_TABLES` below parametrized every kind-coverage check over
+both so a kind missing from *either* would fail loudly. Task 17 rewrote
+`ui/app.js` as the new buildless module (`render/ribbon.js` and
+`render/decision_controls.js` render every decision through
+`ui/decisions.js`'s `DECISION_KINDS` now), and that rewrite carries no
+`DECISION_RENDERERS` object at all - so `_TABLES` still parametrizes over both
+paths (a regression that reintroduced a stray table would still be caught),
+but `_object_literal_keys` skips (not fails) a path whose own `const_name`
+object literal is genuinely absent, exactly the way it already skipped a
+path that was deleted outright.
 
 Neither table is Python-importable (there is deliberately no build step,
 `CLAUDE.md`/the task brief both say so), so this reads each file's source
@@ -85,11 +89,15 @@ _UI_HANDLED_ELSEWHERE = {
 _NEVER_REACHES_A_LIVE_SEAT: set[DecisionKind] = set()
 
 
-def _object_literal_keys(path: Path, const_name: str) -> set[str]:
-    """Every kind name used as `const_name`'s object-literal key in `path`."""
+def _object_literal_keys(path: Path, const_name: str) -> set[str] | None:
+    """Every kind name used as `const_name`'s object-literal key in `path`, or
+    `None` when `path` no longer defines that object literal at all (Task 17
+    dropped `ui/app.js`'s own `DECISION_RENDERERS` entirely - see the module
+    docstring)."""
     text = path.read_text()
     match = re.search(rf"const {const_name} = \{{(.*?)\n\}};", text, re.S)
-    assert match is not None, f"{path.name} no longer defines {const_name} - update this test"
+    if match is None:
+        return None
     return set(re.findall(r"^\s*(\w+):", match.group(1), re.M))
 
 
@@ -108,6 +116,8 @@ def test_ui_decision_kinds_match_decide_answerable_kinds(path: Path, const_name:
         pytest.skip(f"{path.name} is gone - already removed from the served UI")
     server_side = {kind.value for kind in decisions.ANSWERABLE_KINDS}
     ui_side = _object_literal_keys(path, const_name)
+    if ui_side is None:
+        pytest.skip(f"{path.name} no longer defines {const_name} - its own table is gone")
     missing_in_ui = server_side - ui_side
     assert not missing_in_ui, (
         f"decide() answers {sorted(missing_in_ui)} but {path.name}'s {const_name} "
@@ -136,6 +146,8 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui(
     if not path.is_file():
         pytest.skip(f"{path.name} is gone - already removed from the served UI")
     ui_side = _object_literal_keys(path, const_name)
+    if ui_side is None:
+        pytest.skip(f"{path.name} no longer defines {const_name} - its own table is gone")
     combat_js_text = UI_COMBAT_JS.read_text()
     for kind in DecisionKind:
         if kind in decisions.ANSWERABLE_KINDS:
