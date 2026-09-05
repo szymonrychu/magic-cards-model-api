@@ -477,3 +477,87 @@ def test_a_finished_game_offers_no_concede_at_all() -> None:
         """,
     )
     assert found is False
+
+
+# ------------------------------------------ retrying a refused announcement
+#
+# From the browser pass. A spell whose only slot is a single required target
+# fires the moment that slot is filled, so it never grows a Cast button. When
+# the dry run came back refused ("no combination of the available mana
+# sources can pay ..."), the strip sat there complete, unfired, and with
+# nothing to click: fixing what the refusal named left no way to try again
+# short of cancelling the whole announcement.
+
+ONE_TARGET_SPELL = {
+    "id": "dd",
+    "name": "Demonic Dread",
+    "mana_cost": "{1}{B}{R}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Sorcery",
+    "cast": {
+        "mana_cost": "{1}{B}{R}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {"targets_anything": True, "understood": True, "minimum": 1, "maximum": 1},
+    },
+    "abilities": [],
+}
+
+ONE_TARGET_AFF = {
+    "targets_anything": True,
+    "understood": True,
+    "minimum": 1,
+    "maximum": 1,
+    "requirements": [
+        {
+            "phrase": "target creature",
+            "count": 1,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": None,
+            "mode_text": None,
+        }
+    ],
+    "division": None,
+    "candidates": [{"id": "rag", "kind": "card", "name": "Ragavan", "requirements": [0]}],
+}
+
+
+def _one_target_strip(error: str | None) -> str:
+    return run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const action = {
+            kind: "cast", cardId: spell.id, card: spell, abilityIndex: null, keyword: null,
+            modes: [], xValue: null, color: null, altCost: null,
+            choosing: [], convoke: [], delve: [], crewing: [],
+            slots: [{ index: 0, requirementIndex: 0, label: "target creature",
+                      count: 1, minimum: 1, mode: null, targets: ["rag"] }],
+            shares: {}, pinned: [], freeTargets: [], pendingTargets: [],
+            affordance: aff, error: err, holdPriority: false, done: false,
+          };
+          const store = makeStore(baseApp(baseState({ hands: { alice: [spell] } }), { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#casting-strip").textContent;
+        })()
+        """,
+        spell=ONE_TARGET_SPELL,
+        aff=ONE_TARGET_AFF,
+        err=error,
+    )
+
+
+def test_a_complete_single_target_cast_has_no_cast_button_of_its_own() -> None:
+    """The auto-fire case: nothing left to choose, so nothing to confirm."""
+    assert "Cast" not in _one_target_strip(None).replace("Cast: ", "")
+
+
+def test_a_refused_dry_run_puts_the_cast_button_back() -> None:
+    strip = _one_target_strip("no combination of the available mana sources can pay {1}{B}{R}")
+    assert "no combination of the available mana sources" in strip
+    assert "Cast" in strip.replace("Cast: ", ""), "a refusal needs a way to try again"

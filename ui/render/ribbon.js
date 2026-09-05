@@ -565,7 +565,14 @@ function renderCastingStrip(el, app, handlers) {
   // slot is filled to its cap (an "up to three targets" spell sitting at
   // three chosen still waits for Cast, not an automatic fire), which is why
   // this is a separate check from `slotIsOpen`'s "Done" gate above.
-  if (readyToFire(action) && needsExplicitFire(action)) {
+  //
+  // `action.error` joins it because of the browser pass: a dry run that came
+  // back refused leaves the strip complete but unfired, and with nothing to
+  // click. Fix what the refusal named - tap a land, add the missing source -
+  // and there was no way to try again short of cancelling the whole
+  // announcement and rebuilding it. A refusal is exactly the moment the
+  // player needs the button.
+  if (readyToFire(action) && (needsExplicitFire(action) || action.error)) {
     el.appendChild(h("button", { class: "primary", onClick: handlers.onCast }, title));
   }
 
