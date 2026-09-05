@@ -31,16 +31,25 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
-from . import ai_pregame, audit, lobby, scryfall
+from . import ai_pregame, audit, lobby, scryfall, serialize
 from .agent_settings import AgentSettings
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
 router = APIRouter(prefix="/api/ui", tags=["ui"])
+
+
+def max_live_games() -> int:
+    """How many lobby-booted games may be live at once, `MAX_LIVE_GAMES` in
+    the environment (default 4). Enforced by `start_game_from_decklists`
+    against `store.live_ui_games()`; a finished game (`Game.is_over`, CR
+    104.1) does not count against it, only End game frees up a live one."""
+    return int(os.environ.get("MAX_LIVE_GAMES", "4") or 4)
+
 
 #: `decks/*.txt`, the same bundled decklists `serve.py --deck`/`--match` read
 #: from, sitting at the repo root next to `pyproject.toml` (three parents up
@@ -180,10 +189,10 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     `validate_decklist_text` reports, rather than booting a broken game -
     both decks are validated before either is registered.
 
-    Starting a game here also *ends* the last one the lobby started - its
-    game, its seat uids, its pregame watcher and its AI seat - and says so in
-    both games' audit logs and in the `reset` key of this response. See
-    `lobby.py`; the continuous agent's notes on disk are not touched.
+    Games the lobby boots live side by side - starting one never ends
+    another; `DELETE /api/ui/games/{id}` (End game) is the only reset. Refuses
+    (409) once `MAX_LIVE_GAMES` lobby games are already live, so the table
+    does not grow without bound; ending one from the lobby frees a slot.
     """
     problems: dict[str, Any] = {}
     for player in req.players:
@@ -202,14 +211,15 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
         if player.ai
     }
 
-    # A new game from the lobby is a clean slate: the previous lobby game, its
-    # seat uids, its pregame watcher and its AI seat all stop existing here,
-    # before anything of the new game is built. After validation on purpose -
-    # a decklist typo must not cost a human the game they are still playing -
-    # and before `load_deck_into_game`, so the driver is free by the time the
-    # new game's seat is dispatched to it. See `lobby.py`; the agent's memory
-    # volume is not touched.
-    reset = lobby.reset_previous_games()
+    live = store.live_ui_games()
+    if len(live) >= max_live_games():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{len(live)} games are already live, the cap is {max_live_games()}; "
+                "end one from the lobby first"
+            ),
+        )
 
     match = load_deck_into_game(
         [(player.username, player.decklist_text) for player in req.players],
@@ -218,7 +228,6 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     game = match.games[-1]
     game_id = store.create(game)
     store.register_ui_game(game_id)
-    lobby.record_reset(game_id, reset)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
     store.register_decklists(
@@ -252,8 +261,56 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
         # Every AI seat's chosen (or defaulted) model, effort and thinking
         # budget - `AgentSettings.default` when the request left it unset.
         "agents": {name: settings.model_dump() for name, settings in agents.items()},
-        # What starting this game reset, so the browser (and anyone reading
-        # the response by hand) can see that the previous game was ended
-        # rather than left running somewhere.
-        "reset": reset,
     }
+
+
+@router.get("/games")
+def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
+    """Every live lobby-booted game (`store.ui_games()` - not filtered to
+    `live_ui_games()`, so a finished-but-not-yet-ended game still shows up for
+    End game to clear), for the lobby's game list.
+
+    `uids` is a comma-separated list of seat uids the caller holds, across
+    every game it has ever seen - each game's `seats` in the response is
+    filtered down to only the uids from that list which are actually seats of
+    that game, so a browser never learns a uid that is not already its own.
+    """
+    mine = {u for u in (uids or "").split(",") if u}
+    games = []
+    for game_id in store.ui_games():
+        game = store.get(game_id)
+        if game is None:
+            continue
+        seats = {name: uid for uid, name in store.seat_uids(game_id).items() if uid in mine}
+        view = serialize.state_view(game, game_id)
+        games.append(
+            {
+                "game_id": game_id,
+                "players": [p.username for p in game.players],
+                "turn_number": view["turn_number"],
+                "step": view["step"],
+                "winner": game.winner,
+                "drawn": game.drawn,
+                "agents": {
+                    name: settings.model_dump()
+                    for name, settings in store.agent_settings(game_id).items()
+                },
+                "seats": seats,
+            }
+        )
+    return {"games": games}
+
+
+@router.delete("/games/{game_id}")
+def end_lobby_game(game_id: str, uid: str | None = None, key: str | None = None) -> dict[str, Any]:
+    """End game: the only reset there is now. `uid` must be a seat uid of
+    this game, or `key` this game's admin key - anything else is refused (404)
+    rather than letting an arbitrary caller end somebody else's game."""
+    if store.get(game_id) is None:
+        raise KeyError(f"no game {game_id}")
+    allowed = (uid is not None and store.player_for_uid(game_id, uid) is not None) or (
+        key is not None and store.is_admin(game_id, key)
+    )
+    if not allowed:
+        raise KeyError("that uid is no seat in this game")
+    return lobby.reset_game(game_id, reason="ended from the lobby")

@@ -11,7 +11,9 @@ os.environ["MCM_CACHE_DIR"] = str(Path(__file__).parent / "fixtures" / "scryfall
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from magic_cards_model_api import lobby  # noqa: E402
 from magic_cards_model_api.main import app  # noqa: E402
+from magic_cards_model_api.store import store  # noqa: E402
 
 
 def add_card(client: TestClient, game_id: str, name: str, player: str, zone: str, **kwargs):
@@ -72,6 +74,25 @@ def life_of(state_dict: dict, username: str) -> int:
 def client():
     with TestClient(app) as test_client:
         yield test_client
+    # `store` is a module-level singleton shared by the whole pytest process,
+    # not reset between tests just because `TestClient`'s context manager
+    # exited. Since `POST /api/ui/games` no longer resets a previous lobby
+    # game on its own (`lobby.py` - End game is the only reset now), a test
+    # that boots one and forgets to end or delete it would otherwise leak a
+    # live slot into every test that runs after it: `MAX_LIVE_GAMES`
+    # eventually refuses a perfectly innocent later test's boot, and
+    # `Seats`-style "the one live game" discovery starts pointing at a game
+    # nobody in the current test created (`test_mcp_resilience.py`). This is
+    # the safety net a well-behaved test does not need (it already deletes
+    # what it created), and the one a forgetful test cannot do without: every
+    # game still in the store when a test ends is cleared before the next one
+    # starts, lobby-booted games through `lobby.reset_game` (so their
+    # watcher threads and AI seats are released too, not just deleted out from
+    # under them), everything else through a plain `store.delete`.
+    for game_id in store.ui_games():
+        lobby.reset_game(game_id, reason="test cleanup")
+    for game_id in store.ids():
+        store.delete(game_id)
 
 
 @pytest.fixture()

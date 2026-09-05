@@ -55,10 +55,10 @@ class GameStore:
         # `record_automatic_pregame`.
         self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
         # The games the play UI's lobby booted, oldest first. Only those are
-        # ever reset when the lobby boots another one (`lobby.py`): a game
+        # ever reset through `DELETE /api/ui/games/{id}` (`lobby.py`): a game
         # booted by `serve.py --match` or by `POST /api/games` belongs to
-        # whoever booted it, and the browser starting a game must not delete
-        # somebody else's concurrent one.
+        # whoever booted it, and the browser ending a lobby game must not
+        # touch somebody else's concurrent one.
         self._ui_games: list[str] = []
         self._lock = threading.Lock()
 
@@ -87,6 +87,21 @@ class GameStore:
         """The lobby-booted games still in the store, oldest first."""
         with self._lock:
             return [game_id for game_id in self._ui_games if game_id in self._games]
+
+    def live_ui_games(self) -> list[str]:
+        """The lobby-booted games that have not ended yet, oldest first.
+
+        `Game.is_over` (CR 104.1: a winner or a draw) is what separates a game
+        still worth a seat at the table from one that only hasn't been ended
+        from the lobby yet - this is what `MAX_LIVE_GAMES` counts against, so
+        a finished game does not itself block a new one.
+        """
+        with self._lock:
+            return [
+                game_id
+                for game_id in self._ui_games
+                if game_id in self._games and not self._games[game_id].is_over
+            ]
 
     def register_decklists(self, game_id: str, decklists: dict[str, str]) -> None:
         """Record the decklist text each seat was booted from: username -> text.

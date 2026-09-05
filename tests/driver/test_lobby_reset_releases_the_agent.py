@@ -1,11 +1,16 @@
-"""Wrapper mode: starting a game from the lobby hands the agent back.
+"""Wrapper mode: End game hands the agent back.
 
-The live symptom this closes. One agent container plays one match: the driver
-holds a single assignment and answers 409 - "this agent is already playing
-game <id>" - to any dispatch for another game, and only ever lets go when the
-match it is holding *ends*. A human who goes back to the lobby and starts a
-second game never ends the first, so the second game's seat could not be
-dispatched at all: the play UI showed a fallback, and the opponent never moved.
+The live symptom this used to fix by resetting implicitly. One agent container
+plays one match: the driver holds a single assignment and answers 409 - "this
+agent is already playing game <id>" - to any dispatch for another game, and
+only ever lets go when the match it is holding *ends*. Before End game
+existed, a human who went back to the lobby and started a second game never
+ended the first, so the second game's seat could not be dispatched at all: the
+play UI showed a fallback, and the opponent never moved.
+
+Now games the lobby boots live side by side and `DELETE /api/ui/games/{id}`
+(End game) is the only reset - so this exercises the release through that
+endpoint rather than through starting a second game.
 
 Nothing here is mocked. The driver is the real `build_app`; the game server is
 the real app, booting real games from real Scryfall printings; only the agent
@@ -13,7 +18,7 @@ is a double, and it is a real FastAPI app answering the real wrapper routes
 over ASGI (`tests/driver/test_app.py`'s pattern), because the alternative is
 spawning a real `claude` per test.
 
-The regression this file also guards: the reset must NOT destroy what the
+The regression this file also guards: End game must NOT destroy what the
 continuous agent has learned. Its notes live under `MEMORY_ROOT`, a mounted
 volume; retiring an agent ends its *session* and must leave that directory
 exactly as it found it.
@@ -111,6 +116,15 @@ def boot(client: TestClient, *, seed: int) -> dict[str, Any]:
     return response.json()
 
 
+def end(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
+    """End a lobby game exactly as the browser's End game button does."""
+    response = client.delete(
+        f"/api/ui/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["alice"]}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def start_ai_seat(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
     response = client.post(
         f"/api/ui/games/{booted['game_id']}/ai-seat/start",
@@ -120,21 +134,22 @@ def start_ai_seat(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
-def test_the_new_games_seat_reaches_the_agent(world) -> None:
-    """The whole point: a second game started from the lobby gets a real
-    dispatch, not the 409-turned-fallback the old assignment used to cause."""
+def test_the_next_games_seat_reaches_the_agent_after_end_game(world) -> None:
+    """The whole point: ending a game from the lobby frees the driver, so a
+    game started afterward gets a real dispatch, not the 409-turned-fallback
+    the old assignment used to cause."""
     game_client, driver_client, agent_state, _ = world
     first = boot(game_client, seed=1)
     assert start_ai_seat(game_client, first)["mechanism"] == "wrapper"
     assert driver_client.get("/status").json()["gameId"] == first["game_id"]
 
+    end(game_client, first)
+    # The driver let go of the old game as part of the release.
+    assert driver_client.get("/status").json()["gameId"] is None
+    assert agent_state["deleted"] == 1
+
     second = boot(game_client, seed=2)
     try:
-        # The driver let go of the old game as part of the reset, before the
-        # new game even existed.
-        assert driver_client.get("/status").json()["gameId"] is None
-        assert agent_state["deleted"] == 1
-
         status = start_ai_seat(game_client, second)
         assert status["mechanism"] == "wrapper", status
         assert driver_client.get("/status").json()["gameId"] == second["game_id"]
@@ -142,43 +157,37 @@ def test_the_new_games_seat_reaches_the_agent(world) -> None:
         game_client.delete(f"/api/games/{second['game_id']}")
 
 
-def test_the_agents_memory_survives_the_reset(world) -> None:
-    """The regression that would quietly ruin the continuous agent: resetting
+def test_the_agents_memory_survives_end_game(world) -> None:
+    """The regression that would quietly ruin the continuous agent: ending
     the seat must end the session, not the notes."""
     game_client, _, _, memory = world
     first = boot(game_client, seed=1)
     start_ai_seat(game_client, first)
     before = {path.name: path.read_text() for path in memory.iterdir()}
 
-    second = boot(game_client, seed=2)
-    try:
-        after = {path.name: path.read_text() for path in memory.iterdir()}
-        assert after == before
-        assert memory.is_dir()
-    finally:
-        game_client.delete(f"/api/games/{second['game_id']}")
+    end(game_client, first)
+
+    after = {path.name: path.read_text() for path in memory.iterdir()}
+    assert after == before
+    assert memory.is_dir()
 
 
-def test_the_release_is_recorded_against_the_old_game(world) -> None:
+def test_the_release_is_recorded_against_the_ended_game(world) -> None:
     game_client, _, _, _ = world
     first = boot(game_client, seed=1)
     start_ai_seat(game_client, first)
-    second = boot(game_client, seed=2)
-    try:
-        (covered,) = second["reset"]
-        (released,) = covered["ai_seats_released"]
-        assert released["player"] == "bob"
-        assert released["mechanism"] == "wrapper"
-        assert released["driver"]["released"] is True
-        assert released["driver"]["gameId"] == first["game_id"]
-        # Abandoned, not played out: no reflection turn was written, and the
-        # answer says so rather than leaving it to be assumed.
-        assert released["driver"]["reflected"] is False
-    finally:
-        game_client.delete(f"/api/games/{second['game_id']}")
+    covered = end(game_client, first)
+    (released,) = covered["ai_seats_released"]
+    assert released["player"] == "bob"
+    assert released["mechanism"] == "wrapper"
+    assert released["driver"]["released"] is True
+    assert released["driver"]["gameId"] == first["game_id"]
+    # Abandoned, not played out: no reflection turn was written, and the
+    # answer says so rather than leaving it to be assumed.
+    assert released["driver"]["reflected"] is False
 
 
-def test_the_old_seats_status_is_forgotten(world) -> None:
+def test_the_old_seats_status_is_forgotten_after_end_game(world) -> None:
     """A stale uid must not be able to poll a status out of the registry: the
     game it belonged to is gone, and reporting on it would put a dead game's
     opponent back on the panel of a live one."""
@@ -186,6 +195,7 @@ def test_the_old_seats_status_is_forgotten(world) -> None:
     first = boot(game_client, seed=1)
     start_ai_seat(game_client, first)
     old_uid = first["seat_uids"]["bob"]
+    end(game_client, first)
     second = boot(game_client, seed=2)
     try:
         answer = game_client.get(

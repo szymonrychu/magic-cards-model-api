@@ -1,15 +1,12 @@
-"""Starting a game from the lobby is a fresh start, for the game and the seat.
+"""Ending a game from the lobby is a fresh start, for the game and the seat.
 
-Before this module, `POST /api/ui/games` only ever *added*. Everything the
-previous lobby game had went on existing: its `Game` in the store, its seat
-uids (still openable, still able to act on that game), its pregame watcher
-thread (`ai_pregame.py`, alive for up to `MAX_LIFETIME_SECONDS`), its AI-seat
-record in `ai_seat.registry`, and - the one a human actually felt - the
-driver's assignment, which made every dispatch for the *new* game answer 409
-"this agent is already playing game <the old one>". A second game started from
-the lobby therefore had no opponent at all.
+Games the lobby boots live side by side, up to `MAX_LIVE_GAMES`
+(`decks_api.max_live_games`) - starting a new one from the lobby never touches
+another. **End game** (`DELETE /api/ui/games/{id}`, `decks_api.end_lobby_game`)
+is the only reset there is, and it is explicit: a human picks a game in the
+lobby and ends it, rather than starting a new one silently ending an old one.
 
-So the lobby resets before it boots. `reset_previous_games` covers, per game:
+`reset_game` covers, per game:
 
 - the watcher thread, asked to stop (`ai_pregame.stop`) so nothing can make a
   pregame move in a game nobody is at,
@@ -26,16 +23,15 @@ anything here. Releasing a seat runs the driver's ordinary end-of-match
 `retire`, which ends the agent's *session*; the notes on disk are untouched
 and are exactly what the next game starts from.
 
-**And it is written down.** Every reset records `game_reset` in the abandoned
+**And it is written down.** Every reset records `game_reset` in the ended
 game's own audit log, naming what it covered, before the game is deleted - so
-a transcript ends with the reset rather than trailing off - and
-`reset_previous_games` in the new game's log, naming the games it replaced. A
-transcript never silently spans two games.
+a transcript ends with the reset rather than trailing off.
 
-Only games the lobby booted are ever reset. `store.register_ui_game` is set by
-`POST /api/ui/games` alone; a game booted by `serve.py --match` or by
-`POST /api/games` is somebody else's, and the browser starting a game must
-never delete it.
+Only games the lobby booted are ever reset this way. `store.register_ui_game`
+is set by `POST /api/ui/games` alone; a game booted by `serve.py --match` or by
+`POST /api/games` is somebody else's - `decks_api.end_lobby_game` still finds
+it through the store like any other game, but nothing in this module or in the
+lobby UI ever calls it on a game the lobby did not boot.
 """
 
 from __future__ import annotations
@@ -45,7 +41,7 @@ from typing import Any
 from . import ai_pregame, ai_seat, audit
 from .store import store
 
-DEFAULT_REASON = "a new game was started from the lobby"
+DEFAULT_REASON = "ended from the lobby"
 
 
 def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
@@ -106,30 +102,4 @@ def _note(covered: dict[str, Any], reason: str) -> str:
     )
 
 
-def reset_previous_games(*, reason: str = DEFAULT_REASON) -> list[dict[str, Any]]:
-    """Reset every game the lobby booted before this one, oldest first."""
-    return [reset_game(game_id, reason=reason) for game_id in store.ui_games()]
-
-
-def record_reset(
-    game_id: str, covered: list[dict[str, Any]], *, reason: str = DEFAULT_REASON
-) -> None:
-    """Note in the *new* game's log which games it replaced, and what the
-    reset covered. Recorded even when nothing was reset: "this game replaced
-    nothing" is worth as much to a reader as the list, and its absence would
-    be indistinguishable from a reset that never ran."""
-    audit.record(
-        game_id,
-        "reset_previous_games",
-        reason=reason,
-        note=(
-            "replaced " + ", ".join(entry["game_id"] for entry in covered)
-            if covered
-            else "no previous lobby game to reset"
-        ),
-        games=[entry["game_id"] for entry in covered],
-        covered=covered,
-    )
-
-
-__all__ = ["record_reset", "reset_game", "reset_previous_games"]
+__all__ = ["reset_game"]
