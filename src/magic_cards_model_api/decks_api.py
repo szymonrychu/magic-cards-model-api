@@ -246,7 +246,6 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
                 "end one from the lobby first"
             ),
         )
-    store.register_ui_game(game_id)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
     store.register_decklists(

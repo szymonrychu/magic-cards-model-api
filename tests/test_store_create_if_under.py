@@ -5,7 +5,9 @@
 could both read the live count just under the cap and both go on to create,
 letting the live table grow past the limit `MAX_LIVE_GAMES` exists to
 enforce. `create_if_under` closes that window by taking the store's lock
-once around both the count and the create.
+once around both the count and the create - and, by default, the
+`_ui_games` registration too, so a game can never exist in `_games` without
+yet counting against the cap in `_ui_games`.
 """
 
 from __future__ import annotations
@@ -30,7 +32,6 @@ def test_create_if_under_refuses_once_the_cap_is_reached() -> None:
     store = GameStore()
     first = store.create_if_under(_real_game(), cap=1)
     assert first is not None
-    store.register_ui_game(first)
 
     second = store.create_if_under(_real_game(), cap=1)
     assert second is None
@@ -39,7 +40,6 @@ def test_create_if_under_refuses_once_the_cap_is_reached() -> None:
 def test_create_if_under_ignores_a_finished_game_against_the_cap() -> None:
     store = GameStore()
     first = store.create_if_under(_real_game(), cap=1)
-    store.register_ui_game(first)
     game = store.get(first)
     game.winner = "you"  # ended - no longer counts against the cap
 
@@ -58,8 +58,6 @@ def test_create_if_under_is_atomic_under_concurrent_callers() -> None:
     def attempt() -> None:
         ready.wait(timeout=5)
         game_id = store.create_if_under(_real_game(), cap=1)
-        if game_id is not None:
-            store.register_ui_game(game_id)
         with lock:
             results.append(game_id)
 

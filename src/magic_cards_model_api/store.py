@@ -68,7 +68,7 @@ class GameStore:
         game_id, _created = self._create_locked(game)
         return game_id
 
-    def create_if_under(self, game: Game, cap: int) -> str | None:
+    def create_if_under(self, game: Game, cap: int, *, ui_game: bool = True) -> str | None:
         """`create()`, but refuses (creates nothing, returns `None`) once
         `cap` lobby games are already live.
 
@@ -79,11 +79,22 @@ class GameStore:
         live table grow past the limit `MAX_LIVE_GAMES` exists to enforce.
         This method takes `self._lock` once around both the count and the
         create, closing that window - the two are now one atomic decision.
+
+        `ui_game` (default `True`, matching every caller so far) registers
+        the new game into `_ui_games` in that *same* locked section, rather
+        than the caller making a separate `register_ui_game` call afterwards.
+        That used to leave a second window open: a game could exist in
+        `_games` but not yet in `_ui_games` between this call returning and
+        the caller's own `register_ui_game`, so a concurrent `create_if_under`
+        undercounted the live table during that gap and could still let the
+        cap be crossed.
         """
-        game_id, created = self._create_locked(game, cap=cap)
+        game_id, created = self._create_locked(game, cap=cap, ui_game=ui_game)
         return game_id if created else None
 
-    def _create_locked(self, game: Game, *, cap: int | None = None) -> tuple[str, bool]:
+    def _create_locked(
+        self, game: Game, *, cap: int | None = None, ui_game: bool = False
+    ) -> tuple[str, bool]:
         game_id = uuid4().hex
         mailbox = DecisionMailbox()
         game.decisions.provider = GameDecisionProvider(mailbox=mailbox, game_id=game_id)
@@ -95,6 +106,8 @@ class GameStore:
             self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
             self._mailboxes[game_id] = mailbox
+            if ui_game and game_id not in self._ui_games:
+                self._ui_games.append(game_id)
         return game_id, True
 
     def _live_ui_count_locked(self) -> int:
