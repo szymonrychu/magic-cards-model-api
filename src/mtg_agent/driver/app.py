@@ -16,6 +16,7 @@ recycled - it is the thing that survives to dispatch the next match.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -231,6 +232,13 @@ def build_app(
                         if current["assignment"] is assignment:
                             clear_locked()
                             current["lastError"] = f"agent unreachable: {exc}"
+                    if settings.exit_after_match:
+                        # A per-game Job has no next dispatch to fall back to:
+                        # an agent that never answers within `agent_boot_wait`
+                        # means this match cannot be played at all, so the
+                        # container should exit and fail visibly rather than
+                        # idle until Kubernetes' own deadline finds it.
+                        app.state.should_exit = True
                     log.error(
                         "giving up on game %s: agent unreachable: %s", assignment.game_id, exc
                     )
@@ -544,18 +552,30 @@ def build_app(
         """A per-game Job carries its own match in `DRIVER_ASSIGNMENT_JSON`
         rather than waiting for a caller to `POST /dispatch` it, so it
         self-dispatches here, on startup, through the same `assign` the
-        route uses. A failure is logged and recorded on `/status` rather
-        than raised - raising here would keep the container from ever
-        starting, which is worse than a container that starts idle and
-        reports why."""
+        route uses. `assign` is synchronous (it blocks on `httpx.Client`
+        calls), so it runs in a worker thread rather than the event loop -
+        `to_thread` rather than a bare call, so a slow game server or agent
+        does not stall the ASGI startup phase itself.
+
+        Every failure - a body that will not parse as JSON, one that parses
+        but fails validation, the game server being unreachable, the agent
+        refusing turn 0 outright - is caught here, broadly, logged, and
+        recorded on `/status` rather than raised: raising here would keep the
+        container from ever starting, which is worse than a container that
+        starts idle and reports why. For a per-game Job (`exit_after_match`)
+        a self-dispatch that cannot even begin is terminal - there is no
+        caller left to retry it - so the container is told to exit rather
+        than sit idle until Kubernetes' own deadline finds it."""
         if settings.assignment_json:
-            body = DispatchIn.model_validate_json(settings.assignment_json)
             try:
-                assign(body)
-            except HTTPException as exc:
-                log.error("self-dispatch failed: %s", exc.detail)
+                body = DispatchIn.model_validate_json(settings.assignment_json)
+                await asyncio.to_thread(assign, body)
+            except Exception as exc:  # noqa: BLE001 - any failure here is terminal
+                log.error("self-dispatch failed: %s", exc)
                 with lock:
-                    current["lastError"] = str(exc.detail)
+                    current["lastError"] = str(exc)
+                if settings.exit_after_match:
+                    app.state.should_exit = True
         yield
 
     app.router.lifespan_context = lifespan

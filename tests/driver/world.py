@@ -33,13 +33,15 @@ def build_world(tmp_path) -> SimpleNamespace:
     (guides / "decklist.txt").write_text(DECKLIST)
     (guides / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
 
-    state = {"winner": None, "decklist": DECKLIST, "agent": "up", "deleted": 0}
+    state = {"winner": None, "decklist": DECKLIST, "agent": "up", "game": "up", "deleted": 0}
     submitted: list[dict] = []
 
     game = FastAPI()
 
     @game.get("/api/games/{game_id}")
     def get_game(game_id: str, uid: str):
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
         return {
             "id": game_id,
             "players": [

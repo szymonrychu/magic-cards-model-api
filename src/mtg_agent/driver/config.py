@@ -19,8 +19,10 @@ class DriverSettings:
     http_addr: str = ":8090"
     #: How long a dispatch may keep trying to reach an agent that is booting.
     #: A fresh container needs a pty spawn, the bypass dialog and output
-    #: quiescence - about two minutes in the worst case.
-    agent_boot_wait: float = 180.0
+    #: quiescence. Matches the agent container's own `startupProbe` budget in
+    #: `k8s_seats.py` (36 x 10s = 360s) - a shorter wait here would give up on
+    #: an agent Kubernetes itself is still willing to wait for.
+    agent_boot_wait: float = 360.0
     agent_retry_interval: float = 3.0
     #: A dispatch body (the same shape `POST /dispatch` takes), set when the
     #: container is a per-game Kubernetes Job rather than a long-lived
@@ -47,7 +49,7 @@ class DriverSettings:
             workspace=Path(value("DRIVER_WORKSPACE", "/workspace")),
             self_url=value("DRIVER_SELF_URL", "http://driver:8090"),
             http_addr=value("HTTP_ADDR", ":8090"),
-            agent_boot_wait=float(value("AGENT_BOOT_WAIT_SECONDS", "180")),
+            agent_boot_wait=float(value("AGENT_BOOT_WAIT_SECONDS", "360")),
             agent_retry_interval=float(value("AGENT_RETRY_INTERVAL_SECONDS", "3")),
             assignment_json=value("DRIVER_ASSIGNMENT_JSON", ""),
             exit_after_match=value("DRIVER_EXIT_AFTER_MATCH", "").lower() in ("1", "true", "yes"),

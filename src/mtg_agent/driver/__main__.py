@@ -18,6 +18,7 @@ import threading
 import time
 
 import uvicorn
+from fastapi import FastAPI
 
 from magic_cards_model_api import access_log
 
@@ -25,7 +26,7 @@ from .app import build_app
 from .config import DriverSettings
 
 
-def _watch_for_exit(app, server: uvicorn.Server) -> None:
+def _watch_for_exit(app: FastAPI, server: uvicorn.Server) -> None:
     while not server.should_exit:
         if app.state.should_exit:
             server.should_exit = True
