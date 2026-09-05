@@ -1753,6 +1753,7 @@ uv run ruff format . && git add -A && git commit -m "Carry the effort setting th
 
 ### Task 12: cluster run
 
+- [ ] **Step 0:** The live cluster already has `mtg-agent-memory` bound as `ReadWriteOnce`, and a PVC's access mode is immutable once bound (Task 10 proved it with `kubectl apply --dry-run=server`). Before deploying: scale the old stack to zero, copy the notes out (`kubectl -n mtg-engine cp <old pod>:/workspace/memory ./memory-backup` from a pod that mounts it, or run a one-off pod), delete the PVC, apply the new `ReadWriteMany` claim, and copy the notes back into a pod that mounts the new claim. This is destructive and needs the user's go-ahead; stop and ask before deleting the claim.
 - [ ] **Step 1:** `mise run k8s:deploy` (pushes both images, applies). Label the namespace restricted first: `kubectl label ns mtg-engine pod-security.kubernetes.io/enforce=restricted --overwrite`.
 - [ ] **Step 2:** From two browser tabs, create two games with different models (for example `sonnet` at `high` and `sonnet` at `low`); confirm `kubectl -n mtg-engine get jobs -l app.kubernetes.io/name=mtg-agent` shows two Jobs, both agents play (the AI panel shows `thinking`), and the driver log names its game.
 - [ ] **Step 3:** End one game from the lobby; its Job disappears. Let the other finish; its Job goes `Complete` and vanishes after the TTL. Restart the API Deployment; any leftover Job is garbage-collected.
