@@ -72,3 +72,21 @@ def test_an_unknown_path_is_still_a_404(client: TestClient) -> None:
     """`html=True` on the mount serves `index.html` for a directory, not for
     every miss: a typo must not come back as a cheerful 200."""
     assert client.get("/no-such-page.html").status_code == 404
+
+
+def test_a_crowded_board_row_scrolls_instead_of_painting_over_its_neighbour(
+    client: TestClient,
+) -> None:
+    """From the browser pass. A bare `1fr` battlefield track collapsed to the
+    row's 44px `min-height` once the board ran out of vertical room, and the
+    wrapped cards - which do not clip - painted over the rows beneath. A
+    Forest ended up on top of the casting strip's mode chips and took the
+    click meant for one: Kozilek's Command was uncastable, with nothing in
+    the console to say why.
+
+    Layout is not something Node or the API can assert, so this pins the two
+    declarations that hold it together in the file the browser is served."""
+    css = client.get("/style.css").text
+    assert "minmax(160px, 1fr)" in css, "the battlefield tracks need a one-card floor"
+    rows = css.split(".hand-row, .battlefield-row, .stack-row {", 1)[1].split("}", 1)[0]
+    assert "overflow-y: auto" in rows, "a row with more cards than fit must scroll itself"

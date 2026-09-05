@@ -182,8 +182,16 @@ h3 { font-size: 14px; }
      count at 7 (rather than 10) is what keeps `my-battlefield` on the
      flexible 5th track in the common case. When one of the three becomes
      visible, the grid's default `grid-auto-rows: auto` gives it an implicit
-     row of its own, which is exactly the thin, content-sized row each wants. */
-  grid-template-rows: auto auto 1fr auto 1fr auto auto;
+     row of its own, which is exactly the thin, content-sized row each wants.
+
+     The two battlefield tracks are `minmax(160px, 1fr)`, not a bare `1fr`.
+     A bare `1fr` collapsed to each row's 44px `min-height` as soon as the
+     board ran out of vertical room, and the cards - which do not clip -
+     simply painted over whatever was underneath. In the browser pass that
+     put a Forest on top of the casting strip's mode chips, and a real click
+     landed on the Forest: Kozilek's Command could not be cast at all,
+     because its modes were not reachable. 160px is one `card-md` tall. */
+  grid-template-rows: auto auto minmax(160px, 1fr) auto minmax(160px, 1fr) auto auto;
   gap: 5px;
   min-height: 0;
   background: var(--bg-sunken);
@@ -229,6 +237,10 @@ h3 { font-size: 14px; }
   min-height: 44px;
   padding: 4px;
   border-radius: 7px;
+  /* A row that has more cards than fit scrolls inside its own track. Without
+     this the wrapped cards overflowed the track and painted over the rows
+     below, swallowing their clicks - see the note on `#mtg-board`. */
+  overflow-y: auto;
 }
 .battlefield-row { background: rgba(255, 255, 255, 0.017); align-content: flex-start; }
 .hand-row { background: rgba(107, 164, 255, 0.05); }
