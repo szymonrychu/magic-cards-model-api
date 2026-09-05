@@ -391,16 +391,35 @@ async function beginActivate(card, index) {
   return refreshAffordance();
 }
 
+/** The index of `card`'s first mana ability - what `pinLand` asks
+ * `colorOptions` about, rather than hardcoding index 0. A basic land parses
+ * to exactly one ability at index 0, but a permanent with a printed ability
+ * ahead of its intrinsic mana ability (or several mana abilities) does not,
+ * and `planPermanentClick`'s own `{kind: "pin"}` guard already established
+ * `card` has at least one `is_mana_ability` entry before this is ever
+ * called. */
+function manaAbilityIndex(card) {
+  const index = (card.abilities || []).findIndex((a) => a.is_mana_ability);
+  return index < 0 ? 0 : index;
+}
+
 async function pinLand(card, event) {
   const app = store.get();
-  const colors = colorOptions(card, 0);
+  const abilityIndex = manaAbilityIndex(card);
+  const colors = colorOptions(card, abilityIndex);
   const pinnedAlready = app.action.pinned.some((p) => p.card_id === card.id);
   if (pinnedAlready) {
     store.set({ action: A.unpinSource(app.action, card.id) });
     return previewAndMaybeFire();
   }
   if (colors.length <= 1) {
-    store.set({ action: A.pinSource(app.action, card.id, colors[0] || "C") });
+    // No single colour to pin (`colorOptions` came back empty - a one-option
+    // ability reports `mana_options: null`, `affordances.py`'s own
+    // `ability_hints`) still pins *which* source, with no colour named, so
+    // `mana.js`'s `manaSources` sends it as a bare id and the engine's own
+    // `auto_tap` picks the colour, rather than forcing a colourless `"C"`
+    // choice onto a land that never produces colourless mana at all.
+    store.set({ action: A.pinSource(app.action, card.id, colors[0] || null) });
     return previewAndMaybeFire();
   }
   showPopover(
@@ -445,15 +464,19 @@ export async function tryTarget(id) {
     store.set({ action: A.chooseTarget(action, id) });
     return;
   }
-  // A second click on an already-chosen target is always an un-choose, in
-  // whichever slot it actually sits in - not necessarily the highlighted
-  // one, and not gated on that slot having room (an "up to two" slot
-  // already filled to its cap, or any slot once the action is only waiting
-  // on an explicit Cast/Done, still has to let the player take a target back
-  // out). `actions.js`'s `chooseTarget` already has exactly this logic
-  // (unfill from the last slot the id sits in, unless the active slot can
-  // still take it too), so it is called for this case rather than
-  // reimplemented here.
+  // A second click on an already-chosen target is not always an un-choose:
+  // if the active (highlighted) slot can also legally take this same id -
+  // Kozilek's Command choosing modes 1 and 2 with you as both targets is
+  // exactly this case - the click instead fills that slot too, so the same
+  // object ends up in two different slots rather than being removed from
+  // the one it already sits in. Only when the active slot cannot take it
+  // does this fall back to un-choosing it from whichever slot it actually
+  // sits in - not necessarily the highlighted one, and not gated on that
+  // slot having room (an "up to two" slot already filled to its cap, or any
+  // slot once the action is only waiting on an explicit Cast/Done, still has
+  // to let the player take a target back out). `actions.js`'s `chooseTarget`
+  // already has exactly this logic, so it is called for this case rather
+  // than reimplemented here.
   if (action.slots.some((s) => s.targets.includes(id))) {
     store.set({ action: A.chooseTarget(action, id) });
     return previewAndMaybeFire();

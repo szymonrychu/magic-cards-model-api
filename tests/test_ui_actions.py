@@ -226,6 +226,23 @@ def test_pinned_source_leads_the_mana_sources() -> None:
     assert body["mana_sources"] == [{"card_id": "d1", "colors": ["R"]}, "m1"]
 
 
+def test_a_colourless_pinned_source_leads_the_mana_sources_as_a_bare_id() -> None:
+    """Pinning a source with no colour (`mana.js`'s `pin(pinned, id, null)` -
+    what `app.js`'s `pinLand` now does when `colorOptions` comes back empty,
+    a one-option ability's `mana_options: null`) must not turn into the
+    coloured `{card_id, colors}` shape `test_pinned_source_leads_the_mana_sources`
+    exercises - it goes out as a bare id, same as any other untapped source,
+    still first in the list."""
+    body = run_module(
+        "actions.js",
+        "m.bodyFor(m.pinSource(m.withAffordance(m.chooseTarget("
+        "m.begin('cast', bolt, {}), 'bob'), aff), 'd1', null), 'alice', ['d1', 'm1'])",
+        bolt=BOLT,
+        aff=BOLT_AFF,
+    )
+    assert body["mana_sources"] == ["d1", "m1"]
+
+
 def test_activate_body_and_endpoint() -> None:
     land = {
         "id": "d1",
@@ -667,6 +684,45 @@ def test_from_zone_is_sent_only_when_begun_from_a_permission() -> None:
 
 
 # -- targetSlotIndex: the one place a board click's slot is decided --------
+
+
+# -- item 7: a mode/X change drops a click still queued from before it -----
+
+
+def test_toggling_a_mode_drops_any_queued_pending_target() -> None:
+    """A click queued before the affordance arrived (`chooseTarget`'s own
+    `pendingTargets` escape hatch) must not survive a mode change: the change
+    starts a fresh affordance fetch against a possibly different targeting
+    profile, and replaying a stale click into it once that fetch lands could
+    fill a slot the player never actually clicked for under the new modes."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.chooseTarget(m.begin('cast', koz, {}), 'alice'); "
+        "const queuedBeforeToggle = a.pendingTargets; "
+        "a = m.toggleMode(a, 1); "
+        "const queuedAfterToggle = a.pendingTargets; "
+        "a = m.withAffordance(a, koz_aff); "
+        "return [queuedBeforeToggle, queuedAfterToggle, m.bodyFor(a, 'alice', []).targets]; })()",
+        koz=KOZILEK,
+        koz_aff=KOZ_AFF,
+    )
+    assert result == [["alice"], [], []]
+
+
+def test_announcing_x_drops_any_queued_pending_target() -> None:
+    """Same reasoning as the mode-toggle case above: announcing X restarts
+    the affordance fetch too."""
+    result = run_module(
+        "actions.js",
+        "(() => { let a = m.chooseTarget(m.begin('cast', koz, {}), 'alice'); "
+        "a = m.setX(a, 2); "
+        "const queuedAfterX = a.pendingTargets; "
+        "a = m.withAffordance(a, koz_aff); "
+        "return [queuedAfterX, m.bodyFor(a, 'alice', []).targets]; })()",
+        koz=KOZILEK,
+        koz_aff=KOZ_AFF,
+    )
+    assert result == [[], []]
 
 
 def test_target_slot_index_defers_to_active_slot_index_by_default() -> None:

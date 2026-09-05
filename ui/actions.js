@@ -103,7 +103,19 @@ export function toggleMode(action, n) {
   const modes = action.modes.includes(n)
     ? action.modes.filter((x) => x !== n)
     : [...action.modes, n];
-  return { ...action, modes: modes.sort((a, b) => a - b), slots: [], affordance: null };
+  // `pendingTargets` is a click queued while the *previous* affordance fetch
+  // was still in flight (see `chooseTarget`'s own comment) - a mode change
+  // starts a fresh fetch (`slots`/`affordance` reset below) against a
+  // possibly different targeting profile entirely, so a queued click from
+  // before it must not survive to be replayed against slots it was never
+  // clicked for once the new affordance lands.
+  return {
+    ...action,
+    modes: modes.sort((a, b) => a - b),
+    slots: [],
+    affordance: null,
+    pendingTargets: [],
+  };
 }
 
 export function setX(action, n) {
@@ -112,6 +124,10 @@ export function setX(action, n) {
     xValue: n === null || n === undefined || Number.isNaN(n) ? null : Number(n),
     slots: [],
     affordance: null,
+    // Same reasoning as `toggleMode`: announcing X starts a fresh affordance
+    // fetch, so a click queued against the old one must not be replayed
+    // into it.
+    pendingTargets: [],
   };
 }
 
