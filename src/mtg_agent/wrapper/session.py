@@ -507,6 +507,8 @@ class Manager:
                 "turnsCompleted": completed,
                 "turnsFinished": finished,
                 "model": self.settings.model,
+                "effort": self.settings.effort,
+                "maxThinkingTokens": self.settings.max_thinking_tokens,
                 "currentTurnId": self._current,
                 "stallSuspectedSince": self._stall_suspected_since,
                 "lastFatal": self._last_fatal,

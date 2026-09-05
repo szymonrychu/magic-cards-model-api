@@ -48,7 +48,7 @@ def main() -> None:
 
     bootstrap.render(settings)
 
-    metrics = Metrics()
+    metrics = Metrics(effort=settings.effort)
     store = Store()
     deliverer = Deliverer(
         metrics, retries=settings.webhook_retries, default_url=settings.default_callback_url

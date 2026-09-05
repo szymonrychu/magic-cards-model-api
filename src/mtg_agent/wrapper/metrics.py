@@ -13,8 +13,12 @@ from prometheus_client.exposition import CONTENT_TYPE_LATEST
 
 
 class Metrics:
-    def __init__(self, registry: CollectorRegistry | None = None) -> None:
+    def __init__(self, registry: CollectorRegistry | None = None, effort: str = "") -> None:
         self.registry = registry or CollectorRegistry()
+        #: Set once at process start from `Settings.effort`; carried as a
+        #: label on every token sample rather than passed per-call, since a
+        #: single wrapper process runs one effort for its whole life.
+        self.effort = effort
         r = self.registry
         self.turns_total = Counter("ccw_turns_total", "Turns by result", ["result"], registry=r)
         self.turn_duration_seconds = Histogram(
@@ -31,7 +35,7 @@ class Metrics:
             "ccw_hook_received_total", "Stop-hook callbacks received", registry=r
         )
         self.turn_tokens_total = Counter(
-            "ccw_turn_tokens_total", "Tokens by type", ["type", "model"], registry=r
+            "ccw_turn_tokens_total", "Tokens by type", ["type", "model", "effort"], registry=r
         )
         self.turn_cost_usd_total = Counter(
             "ccw_turn_cost_usd_total", "Cumulative turn cost", registry=r
@@ -47,7 +51,9 @@ class Metrics:
             for key in ("input", "output", "cache_read", "cache_creation"):
                 value = entry.get(key) or 0
                 if value:
-                    self.turn_tokens_total.labels(type=key, model=model).inc(value)
+                    self.turn_tokens_total.labels(type=key, model=model, effort=self.effort).inc(
+                        value
+                    )
 
     def record_cost(self, result_json: Any) -> None:
         if not isinstance(result_json, dict):

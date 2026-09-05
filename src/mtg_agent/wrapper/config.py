@@ -31,6 +31,16 @@ def _int(env: Mapping[str, str], key: str, default: int) -> int:
     return int(_float(env, key, float(default)))
 
 
+def _int_or_none(env: Mapping[str, str], key: str) -> int | None:
+    raw = env.get(key, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(float(raw))
+    except ValueError:
+        return None
+
+
 def _path(env: Mapping[str, str], key: str) -> Path | None:
     raw = env.get(key, "").strip()
     return Path(raw) if raw else None
@@ -49,6 +59,8 @@ class Settings:
     internal_addr: str = "127.0.0.1:8090"
     claude_path: str = "claude"
     model: str = ""
+    effort: str = ""
+    max_thinking_tokens: int | None = None
     workspace: Path = Path("/workspace")
     home_dir: Path = Path("/root")
     permission_mode: str = "bypassPermissions"
@@ -88,6 +100,8 @@ class Settings:
             internal_addr=_str(env, "INTERNAL_ADDR", "127.0.0.1:8090"),
             claude_path=_str(env, "CLAUDE_PATH", "claude"),
             model=_str(env, "MODEL", ""),
+            effort=_str(env, "EFFORT", ""),
+            max_thinking_tokens=_int_or_none(env, "MAX_THINKING_TOKENS"),
             workspace=Path(_str(env, "WORKSPACE", "/workspace")),
             home_dir=Path(_str(env, "HOME_DIR", "/root")),
             permission_mode=_str(env, "PERMISSION_MODE", "bypassPermissions"),
@@ -119,6 +133,8 @@ class Settings:
         args: list[str] = []
         if self.model:
             args += ["--model", self.model]
+        if self.effort:
+            args += ["--effort", self.effort]
         if resume:
             args.append("--continue")
         return args

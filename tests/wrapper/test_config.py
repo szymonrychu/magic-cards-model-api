@@ -50,3 +50,15 @@ def test_claude_args_never_carry_a_permission_or_print_flag():
 
 def test_claude_args_omit_model_when_unset():
     assert Settings.from_env({}).claude_args(resume=False) == []
+
+
+def test_effort_becomes_a_flag() -> None:
+    settings = Settings.from_env(
+        {"MODEL": "opus", "EFFORT": "xhigh", "MAX_THINKING_TOKENS": "4000"}
+    )
+    assert settings.claude_args(resume=False) == ["--model", "opus", "--effort", "xhigh"]
+    assert settings.max_thinking_tokens == 4000
+
+
+def test_no_effort_no_flag() -> None:
+    assert "--effort" not in Settings.from_env({"MODEL": "opus"}).claude_args(resume=False)
