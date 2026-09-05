@@ -20,7 +20,7 @@ import * as P from "./priority.js";
 import * as C from "./combat.js";
 import { untappedSources, colorOptions } from "./mana.js";
 import { viewModel } from "./decisions.js";
-import { fill, unfill, canFill } from "./targeting.js";
+import { fill, canFill } from "./targeting.js";
 import { mountBoard } from "./render/board.js";
 import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
@@ -30,7 +30,12 @@ import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./re
 const POLL_MS = 1200;
 const LS_KEY = "mcm.game";
 
-const store = createStore({
+// Exported for `tests/test_ui_app.py` only - a real (if DOM-less) drive of
+// `tryTarget` needs somewhere to set up the scenario's `action`/`state`
+// before calling it and somewhere to read the result back from, the same
+// reason the old classic script exported its own live `game` object for
+// its tests. Not part of any render module's handler contract.
+export const store = createStore({
   gameId: null,
   uid: null,
   aiUid: null,
@@ -401,7 +406,9 @@ async function pinLand(card, event) {
   );
 }
 
-async function tryTarget(id) {
+// Exported for `tests/test_ui_app.py` only, alongside `store` above - see
+// its own comment there.
+export async function tryTarget(id) {
   const app = store.get();
   const pending = app.state.pending_decision;
   if (pending && pending.player === you() && pending.kind === "choose_targets" && !app.action) {
@@ -428,20 +435,29 @@ async function tryTarget(id) {
     store.set({ action: A.chooseTarget(action, id) });
     return;
   }
-  // `actions.js`'s `targetSlotIndex` is the single place that decides which
-  // slot a click fills - a manual focus from a slot chip's own click
-  // (`onFocusSlot`), or `targeting.js`'s own `activeSlotIndex` guess. It is
-  // the exact same helper `board.js`'s highlight uses, so the outlined slot
-  // and the slot a click actually fills can never disagree - and a click
-  // that lands on something illegal for it says so, rather than a silent
-  // no-op.
+  // A second click on an already-chosen target is always an un-choose, in
+  // whichever slot it actually sits in - not necessarily the highlighted
+  // one, and not gated on that slot having room (an "up to two" slot
+  // already filled to its cap, or any slot once the action is only waiting
+  // on an explicit Cast/Done, still has to let the player take a target back
+  // out). `actions.js`'s `chooseTarget` already has exactly this logic
+  // (unfill from the last slot the id sits in, unless the active slot can
+  // still take it too), so it is called for this case rather than
+  // reimplemented here.
+  if (action.slots.some((s) => s.targets.includes(id))) {
+    store.set({ action: A.chooseTarget(action, id) });
+    return previewAndMaybeFire();
+  }
+  // Not already chosen: `actions.js`'s `targetSlotIndex` is the single place
+  // that decides which slot a fresh click fills - a manual focus from a slot
+  // chip's own click (`onFocusSlot`), or `targeting.js`'s own
+  // `activeSlotIndex` guess. It is the exact same helper `board.js`'s
+  // highlight uses, so the outlined slot and the slot a click actually fills
+  // can never disagree - and a click that lands on something illegal for it
+  // says so, rather than a silent no-op.
   const slotIndex = A.targetSlotIndex(action);
   if (slotIndex < 0 || !action.slots[slotIndex]) return;
   const slot = action.slots[slotIndex];
-  if (slot.targets.includes(id)) {
-    store.set({ action: { ...action, slots: unfill(action.slots, slotIndex, id) } });
-    return previewAndMaybeFire();
-  }
   if (!canFill(action.affordance, slot, id)) {
     toast(`that is not a legal target for ${slot.label}`);
     return;

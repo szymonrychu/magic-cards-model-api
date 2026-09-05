@@ -118,7 +118,11 @@ function patchPermissions(container, permissions, onClick) {
     (p) => cardNode(p.card, "card-md", {}),
     (el, p) => {
       updateCardNode(el, p.card, { dimmed: !p.usable_now });
-      el.title = p.usable_now ? `${p.granted_by} (CR 601.3): ${p.rule || ""}` : p.why_not || "";
+      // `p.rule` already carries its own CR citation (cascade's, suspend's -
+      // whichever effect actually granted this permission), so this only
+      // adds the granting source's name in front of it, not a second CR
+      // 601.3 citation on top.
+      el.title = p.usable_now ? `${p.granted_by}: ${p.rule || ""}` : p.why_not || "";
       el.onclick = (event) => onClick(p, event);
     }
   );

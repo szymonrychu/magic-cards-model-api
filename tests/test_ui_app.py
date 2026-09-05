@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 APP_JS = Path(__file__).resolve().parents[1] / "ui" / "app.js"
+ACTIONS_JS = Path(__file__).resolve().parents[1] / "ui" / "actions.js"
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH")
 
@@ -96,6 +97,84 @@ def test_send_catches_a_rejected_fetch_and_toasts_instead_of_throwing() -> None:
     assert result["res"] is None, "a transport failure must resolve to null, not throw"
     assert result["toastHidden"] is False
     assert "network is down" in result["toastText"]
+
+
+# Electrolyze: "up to two target creatures and/or players" - CR 115.6's "up
+# to" shape, the case where the regression this file guards actually bit.
+# Once both slots are filled, `activeSlotIndex` (and so `targetSlotIndex`)
+# has nowhere left to offer (CR 601.2c never forces every "up to" slot filled
+# all the way) - a second click on an already-chosen target still has to
+# un-choose it rather than being swallowed by that "nowhere to fill" case.
+SPLIT = {
+    "id": "sp1",
+    "name": "Electrolyze",
+    "type_line": "Instant",
+    "zone": "hand",
+    "controller": "alice",
+    "cast": {
+        "mana_cost": "{1}{U}{R}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {"targets_anything": True},
+    },
+}
+SPLIT_AFF = {
+    "targets_anything": True,
+    "understood": True,
+    "minimum": 1,
+    "maximum": 2,
+    "requirements": [
+        {
+            "phrase": "up to two target creatures and/or players",
+            "count": 2,
+            "minimum": 1,
+            "unbounded": False,
+            "variable_count": False,
+            "mode": None,
+            "mode_text": None,
+        }
+    ],
+    "division": None,
+    "candidates": [
+        {"id": "bob", "kind": "player", "name": "bob", "requirements": [0]},
+        {"id": "c9", "kind": "card", "name": "Memnite", "requirements": [0]},
+    ],
+}
+
+
+def test_a_second_click_on_a_chosen_target_still_unchooses_it_once_the_slot_is_full() -> None:
+    """The regression: `tryTarget` started resolving every fresh click
+    through `targetSlotIndex`/`canFill`, and once an "up to two" slot holds
+    both its targets, `targetSlotIndex` has nowhere left to offer (-1) - a
+    second click on one of the two already-chosen targets was silently
+    swallowed before it ever reached `actions.js`'s own `chooseTarget`, which
+    already knows how to unfill an already-chosen target regardless of how
+    much room is left. Drives the real, exported `tryTarget` against the
+    real, exported `store` (both test-only exports - see their own comments
+    in `app.js`) rather than a Python restatement of either."""
+    result = run_app(
+        """(async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          globalThis.document = { querySelector: () => null };
+          const state = { you: "alice", battlefield: [], pending_decision: null };
+          m.store.set({ gameId: "g1", uid: "u1", state });
+          let action = A.withAffordance(A.begin("cast", split, {}), aff);
+          action = A.chooseTarget(action, "bob");
+          action = A.chooseTarget(action, "c9");
+          m.store.set({ action });
+          const fullSlotIndex = A.targetSlotIndex(m.store.get().action);
+          await m.tryTarget("bob");
+          const after = m.store.get().action;
+          return { fullSlotIndex, targetsAfter: after.slots.flatMap((s) => s.targets) };
+        })()""",
+        split=SPLIT,
+        aff=SPLIT_AFF,
+        actionsPath=str(ACTIONS_JS),
+    )
+    assert result["fullSlotIndex"] == -1, (
+        "the slot must already be at its own cap for this to be the regression"
+    )
+    assert result["targetsAfter"] == ["c9"], "a second click on bob must remove it, not no-op"
 
 
 # -- fixtures ----------------------------------------------------------------
