@@ -164,6 +164,75 @@ def test_spawn_failure_falls_back_cleanly(
     assert status["error"]
 
 
+# -- kubernetes mode ----------------------------------------------------------
+#
+# `AI_SEAT_MODE=kubernetes` delegates to `k8s_seats.K8sSeats` rather than
+# spawning a subprocess or dispatching to the driver directly - see
+# `test_k8s_seats.py` for the runner itself against the same shape of fake
+# Kubernetes client. This only checks the wiring: `registry.start` reaches
+# `K8sSeats.start` (which is what actually creates the Job) and
+# `registry.status` reports the `mechanism` the play UI keys off of.
+
+
+class _FakeBatch:
+    def __init__(self) -> None:
+        self.jobs: dict[str, object] = {}
+
+    def create_namespaced_job(self, namespace, body):
+        import types
+
+        name = body["metadata"]["name"]
+        self.jobs[name] = types.SimpleNamespace(
+            metadata=types.SimpleNamespace(name=name, labels=body["metadata"]["labels"])
+        )
+        return self.jobs[name]
+
+    def list_namespaced_job(self, namespace, label_selector=None, **kw):
+        import types
+
+        return types.SimpleNamespace(
+            items=list(self.jobs.values()), metadata=types.SimpleNamespace(resource_version="1")
+        )
+
+    def delete_namespaced_job(self, name, namespace, body=None):
+        self.jobs.pop(name, None)
+
+
+class _FakeCore:
+    def list_namespaced_pod(self, namespace, label_selector=None, **kw):
+        import types
+
+        return types.SimpleNamespace(items=[])
+
+
+@pytest.fixture
+def kubernetes_mode(monkeypatch: pytest.MonkeyPatch):
+    from magic_cards_model_api import k8s_seats
+
+    monkeypatch.setenv("AI_SEAT_MODE", "kubernetes")
+    batch = _FakeBatch()
+    seats = k8s_seats.K8sSeats(k8s_seats.K8sSettings(), batch, _FakeCore())
+    k8s_seats.set_for_tests(seats)
+    yield batch
+    k8s_seats.set_for_tests(None)
+
+
+def test_kubernetes_mode_creates_a_job_and_reports_the_mechanism(
+    kubernetes_mode, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    from magic_cards_model_api.k8s_seats import job_name
+
+    status = fresh_registry.start(
+        uid="u-k8s", game_id="g-k8s", player="bob", api_base="http://x", agent=DEFAULT_AGENT
+    )
+    assert status["mechanism"] == "kubernetes"
+    assert job_name("g-k8s", "u-k8s") in kubernetes_mode.jobs
+
+    live = fresh_registry.status("u-k8s")
+    assert live is not None
+    assert live["mechanism"] == "kubernetes"
+
+
 # -- HTTP layer (ai_seat_api.py) ---------------------------------------------
 
 

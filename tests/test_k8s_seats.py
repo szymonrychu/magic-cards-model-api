@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import types
 
 from kubernetes import client as k8s_client
+from kubernetes.client.exceptions import ApiException
 
 from magic_cards_model_api.agent_settings import AgentSettings
-from magic_cards_model_api.k8s_seats import K8sSettings, build_job, job_name, mcp_config
+from magic_cards_model_api.k8s_seats import (
+    K8sSeats,
+    K8sSettings,
+    build_job,
+    job_name,
+    mcp_config,
+)
 
 ENV = {
     "AGENT_NAMESPACE": "mtg-engine",
@@ -135,3 +143,139 @@ def test_job_is_plain_dicts_the_kubernetes_client_can_serialize() -> None:
     json.dumps(job)
     sanitized = k8s_client.ApiClient().sanitize_for_serialization(job)
     assert isinstance(sanitized, dict)
+
+
+# ---- K8sSeats: create, watch, reconcile, status, stop -----------------------
+#
+# The one allowed fake in this project: a hand-rolled stand-in for the
+# Kubernetes API client, not a mock of behaviour under test. Everything the
+# runner actually does - build the Job body, read pod status, talk to the
+# driver sidecar over HTTP, decide state - runs for real against these fakes.
+
+
+class FakeBatch:
+    def __init__(self):
+        self.jobs = {}
+        self.deleted = []
+
+    def create_namespaced_job(self, namespace, body):
+        name = body["metadata"]["name"]
+        if name in self.jobs:
+            raise ApiException(status=409, reason="AlreadyExists")
+        self.jobs[name] = types.SimpleNamespace(
+            metadata=types.SimpleNamespace(name=name, labels=body["metadata"]["labels"]),
+            status=types.SimpleNamespace(active=1, succeeded=0, failed=0),
+        )
+        return self.jobs[name]
+
+    def list_namespaced_job(self, namespace, label_selector=None, **kw):
+        return types.SimpleNamespace(
+            items=list(self.jobs.values()), metadata=types.SimpleNamespace(resource_version="1")
+        )
+
+    def delete_namespaced_job(self, name, namespace, body=None):
+        self.deleted.append(name)
+        self.jobs.pop(name, None)
+
+
+class FakeCore:
+    def __init__(self, pod_ip="10.0.0.5", phase="Running"):
+        self.pod_ip, self.phase = pod_ip, phase
+
+    def list_namespaced_pod(self, namespace, label_selector=None, **kw):
+        pod = types.SimpleNamespace(
+            status=types.SimpleNamespace(
+                pod_ip=self.pod_ip, phase=self.phase, container_statuses=[]
+            ),
+            metadata=types.SimpleNamespace(name="p1"),
+        )
+        return types.SimpleNamespace(items=[pod])
+
+
+class FakeDriverHttp:
+    def __init__(self, status):
+        self.status, self.posts = status, []
+
+    def __call__(self, base):
+        outer = self
+
+        class Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, path, **kw):
+                return types.SimpleNamespace(status_code=200, json=lambda: outer.status)
+
+            def post(self, path, **kw):
+                outer.posts.append((base, path))
+                return types.SimpleNamespace(status_code=202, json=lambda: {})
+
+        return Client()
+
+
+def make(status=None, **core):
+    batch, corev1 = FakeBatch(), FakeCore(**core)
+    http = FakeDriverHttp(status or {"turnActive": True, "pending": False, "lastError": None})
+    return K8sSeats(K8sSettings.from_env(ENV), batch, corev1, http), batch, http
+
+
+def test_start_creates_the_job_once() -> None:
+    seats, batch, _ = make()
+    first = seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    again = seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    assert first["mechanism"] == "kubernetes" and first["job"] == job_name("g1", "u1")
+    assert again["job"] == first["job"] and list(batch.jobs) == [first["job"]]
+
+
+def test_status_merges_pod_and_driver() -> None:
+    seats, _, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    status = seats.status("u1")
+    assert (
+        status["state"] == "thinking"
+        and status["pod"] == "Running"
+        and status["driver"]["turnActive"] is True
+    )
+
+
+def test_status_is_pending_before_the_pod_runs() -> None:
+    seats, _, _ = make(phase="Pending", pod_ip=None)
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    assert seats.status("u1")["state"] == "pending"
+
+
+def test_release_tells_the_driver_then_deletes_the_job() -> None:
+    seats, batch, http = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    released = seats.release("u1")
+    assert http.posts == [("http://10.0.0.5:8090", "/release")]
+    assert batch.deleted == [job_name("g1", "u1")] and released["deleted"] is True
+    assert seats.status("u1") is None
+
+
+def test_reconcile_deletes_jobs_of_dead_games_and_flags_missing_jobs() -> None:
+    seats, batch, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    seats.start(
+        uid="u2", game_id="g2", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    batch.jobs.pop(job_name("g2", "u2"))  # vanished behind our back
+    report = seats.reconcile(live_game_ids={"g2"})
+    assert batch.deleted == [job_name("g1", "u1")]
+    assert report == {"deleted": [job_name("g1", "u1")], "missing": ["u2"]}
+    assert seats.status("u2")["state"] == "error" and "missing" in seats.status("u2")["reason"]

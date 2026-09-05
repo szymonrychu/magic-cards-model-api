@@ -29,9 +29,18 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+import os
+import threading
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
+from kubernetes import client as k8s_client
+from kubernetes import config as k8s_config
+from kubernetes import watch as k8s_watch
+from kubernetes.client.exceptions import ApiException
 
 from .agent_settings import AgentSettings
 
@@ -325,3 +334,250 @@ def build_job(
             "template": {"metadata": {"labels": labels}, "spec": pod_spec},
         },
     }
+
+
+def _default_http(base: str) -> httpx.Client:
+    return httpx.Client(base_url=base, timeout=10.0)
+
+
+class K8sSeats:
+    """One Kubernetes Job per AI seat: create it, watch it, reconcile it
+    against the games actually still live, and answer status/release for one
+    uid at a time - the runner half of this module; `build_job` above only
+    shapes the body it creates."""
+
+    def __init__(
+        self,
+        settings: K8sSettings,
+        batch_api: Any,
+        core_api: Any,
+        http_client_factory: Callable[[str], Any] = _default_http,
+    ) -> None:
+        self.settings = settings
+        self.batch = batch_api
+        self.core = core_api
+        self.http = http_client_factory
+        self._seats: dict[str, dict[str, Any]] = {}  # uid -> {game_id, player, job, error}
+        self._lock = threading.Lock()
+
+    # -- lifecycle ---------------------------------------------------------
+    def start(self, *, uid: str, game_id: str, player: str, agent: AgentSettings) -> dict[str, Any]:
+        name = job_name(game_id, uid)
+        with self._lock:
+            already_started = uid in self._seats
+            if not already_started:
+                self._seats[uid] = {
+                    "game_id": game_id,
+                    "player": player,
+                    "job": name,
+                    "error": None,
+                }
+        # `status()` below takes `self._lock` itself - it must never be
+        # called while this method still holds it (a plain `threading.Lock`
+        # is not reentrant, so that reader-inside-writer shape deadlocks the
+        # second `start()` call for an already-started uid).
+        if already_started:
+            return self.status(uid) or {}
+        body = build_job(self.settings, game_id=game_id, uid=uid, player=player, agent=agent)
+        try:
+            self.batch.create_namespaced_job(self.settings.namespace, body=body)
+        except ApiException as exc:
+            if exc.status != 409:
+                with self._lock:
+                    self._seats[uid]["error"] = f"could not create job {name}: {exc.reason}"
+                logger.error("job %s not created: %s", name, exc)
+        return self.status(uid) or {}
+
+    def _pod(self, uid: str) -> Any | None:
+        pods = self.core.list_namespaced_pod(
+            self.settings.namespace, label_selector=f"{LABEL_SEAT}={uid}"
+        ).items
+        return pods[0] if pods else None
+
+    def _driver_status(self, pod: Any) -> dict[str, Any] | None:
+        ip = pod.status.pod_ip if pod is not None else None
+        if not ip:
+            return None
+        try:
+            with self.http(f"http://{ip}:8090") as client:
+                response = client.get("/status")
+                return response.json() if response.status_code < 400 else None
+        except Exception:  # noqa: BLE001 - a driver that is not up yet
+            return None
+
+    def status(self, uid: str) -> dict[str, Any] | None:
+        with self._lock:
+            seat = self._seats.get(uid)
+        if seat is None:
+            return None
+        base = {
+            "uid": uid,
+            "mechanism": "kubernetes",
+            "job": seat["job"],
+            "game_id": seat["game_id"],
+            "player": seat["player"],
+        }
+        if seat["error"]:
+            return {**base, "state": "error", "reason": seat["error"], "pod": None, "driver": None}
+        pod = self._pod(uid)
+        phase = pod.status.phase if pod is not None else None
+        waiting = ""
+        for cs in (pod.status.container_statuses or []) if pod is not None else []:
+            state = getattr(cs, "state", None)
+            if (
+                state is not None
+                and getattr(state, "waiting", None) is not None
+                and state.waiting.reason
+            ):
+                waiting = state.waiting.reason
+        if waiting in ("ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff"):
+            return {**base, "state": "error", "reason": waiting, "pod": phase, "driver": None}
+        driver = self._driver_status(pod)
+        if phase in (None, "Pending") or driver is None:
+            state = "gone" if phase in ("Succeeded", "Failed") else "pending"
+            return {**base, "state": state, "reason": phase, "pod": phase, "driver": driver}
+        if driver.get("lastError"):
+            return {
+                **base,
+                "state": "error",
+                "reason": driver["lastError"],
+                "pod": phase,
+                "driver": driver,
+            }
+        state = (
+            "thinking"
+            if driver.get("turnActive")
+            else ("pending" if driver.get("pending") else "idle")
+        )
+        return {**base, "state": state, "reason": None, "pod": phase, "driver": driver}
+
+    def release(self, uid: str) -> dict[str, Any]:
+        with self._lock:
+            seat = self._seats.pop(uid, None)
+        if seat is None:
+            return {"uid": uid, "mechanism": None, "deleted": False}
+        pod = self._pod(uid)
+        if pod is not None and pod.status.pod_ip:
+            try:
+                with self.http(f"http://{pod.status.pod_ip}:8090") as client:
+                    client.post("/release", json={"uid": uid, "game_id": seat["game_id"]})
+            except Exception as exc:  # noqa: BLE001 - the Job is deleted regardless
+                logger.info("driver for %s not told about the release: %s", uid, exc)
+        deleted = True
+        try:
+            self.batch.delete_namespaced_job(
+                seat["job"],
+                self.settings.namespace,
+                body=k8s_client.V1DeleteOptions(propagation_policy="Background"),
+            )
+        except ApiException as exc:
+            deleted = exc.status == 404
+        return {"uid": uid, "mechanism": "kubernetes", "job": seat["job"], "deleted": deleted}
+
+    stop = release
+
+    # -- tracking ------------------------------------------------------------
+    def reconcile(self, live_game_ids: set[str]) -> dict[str, list[str]]:
+        jobs = self.batch.list_namespaced_job(
+            self.settings.namespace, label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}"
+        ).items
+        present = {job.metadata.name for job in jobs}
+        deleted: list[str] = []
+        for job in jobs:
+            game_id = (job.metadata.labels or {}).get(LABEL_GAME)
+            if game_id not in live_game_ids:
+                try:
+                    self.batch.delete_namespaced_job(
+                        job.metadata.name,
+                        self.settings.namespace,
+                        body=k8s_client.V1DeleteOptions(propagation_policy="Background"),
+                    )
+                    deleted.append(job.metadata.name)
+                except ApiException as exc:
+                    logger.warning("could not delete stray job %s: %s", job.metadata.name, exc)
+        missing: list[str] = []
+        with self._lock:
+            for uid, seat in self._seats.items():
+                if seat["job"] not in present and not seat["error"]:
+                    seat["error"] = f"job {seat['job']} is missing from the cluster"
+                    missing.append(uid)
+        return {"deleted": deleted, "missing": missing}
+
+    def run_watch(self, stop: threading.Event) -> None:
+        while not stop.is_set():
+            try:
+                w = k8s_watch.Watch()
+                for event in w.stream(
+                    self.batch.list_namespaced_job,
+                    self.settings.namespace,
+                    label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}",
+                    timeout_seconds=300,
+                ):
+                    job = event["object"]
+                    logger.info(
+                        "job %s %s active=%s succeeded=%s failed=%s",
+                        job.metadata.name,
+                        event["type"],
+                        job.status.active,
+                        job.status.succeeded,
+                        job.status.failed,
+                    )
+                    if stop.is_set():
+                        break
+            except ApiException as exc:
+                logger.warning("job watch ended: %s; relisting", exc.reason)
+                time.sleep(2)
+            except Exception as exc:  # noqa: BLE001 - keep watching
+                logger.warning("job watch error: %s", exc)
+                time.sleep(5)
+
+    def start_background(
+        self, live_games: Callable[[], set[str]], interval: float = 60.0
+    ) -> threading.Event:
+        stop = threading.Event()
+        threading.Thread(
+            target=self.run_watch, args=(stop,), name="k8s-seat-watch", daemon=True
+        ).start()
+
+        def loop() -> None:
+            while not stop.wait(interval):
+                try:
+                    report = self.reconcile(live_games())
+                    if report["deleted"] or report["missing"]:
+                        logger.info("reconcile: %s", report)
+                except Exception as exc:  # noqa: BLE001 - reconcile again next tick
+                    logger.warning("reconcile failed: %s", exc)
+
+        threading.Thread(target=loop, name="k8s-seat-reconcile", daemon=True).start()
+        return stop
+
+
+_seats: K8sSeats | None = None
+
+
+def get() -> K8sSeats:
+    """The process-wide `K8sSeats`, created lazily on first use so importing
+    this module never requires a cluster or kubeconfig - only `AI_SEAT_MODE=
+    kubernetes` calling this reaches for one. `set_for_tests` overrides it
+    (and `None` clears the override), which is how tests exercise
+    `ai_seat.py`'s kubernetes branch against the same fakes `K8sSeats` itself
+    is tested with, without ever touching a real cluster."""
+    global _seats
+    if _seats is None:
+        try:
+            k8s_config.load_incluster_config()
+        except k8s_config.ConfigException:
+            k8s_config.load_kube_config()
+        settings = K8sSettings.from_env(os.environ)
+        _seats = K8sSeats(settings, k8s_client.BatchV1Api(), k8s_client.CoreV1Api())
+        from .store import store  # lazy: store imports nothing from here
+
+        _seats.reconcile(set(store.ids()))
+        _seats.start_background(lambda: set(store.ids()))
+    return _seats
+
+
+def set_for_tests(seats: K8sSeats | None) -> None:
+    """Test-only override for `get()` - see its docstring."""
+    global _seats
+    _seats = seats

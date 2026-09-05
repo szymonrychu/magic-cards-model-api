@@ -53,6 +53,7 @@ from typing import Any
 
 import httpx
 
+from . import k8s_seats
 from .agent_settings import AgentSettings
 
 #: Root of this repo (`src/magic_cards_model_api/ai_seat.py` -> repo root),
@@ -87,9 +88,11 @@ GONE = "gone"
 
 
 def ai_seat_mode() -> str:
-    """`subprocess` (the default, a one-shot `claude --print` per game) or
+    """`subprocess` (the default, a one-shot `claude --print` per game),
     `wrapper` (hand the seat to the driver, which drives a long-lived
-    interactive claude that remembers previous games)."""
+    interactive claude that remembers previous games), or `kubernetes` (each
+    AI seat gets its own Job - agent plus driver sidecar - scheduled and
+    watched by `k8s_seats.K8sSeats`)."""
     return (os.environ.get("AI_SEAT_MODE") or "subprocess").strip().lower()
 
 
@@ -330,18 +333,22 @@ class AiSeatRegistry:
         for a uid already started returns its current status rather than
         starting a second seat.
         """
-        if ai_seat_mode() == "wrapper":
+        mode = ai_seat_mode()
+        if mode in ("wrapper", "kubernetes"):
             with self._lock:
                 if uid in self._dispatched:
                     return self._dispatched[uid]
-            status = self._dispatch_to_driver(
-                uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
-            )
+            if mode == "kubernetes":
+                status = k8s_seats.get().start(uid=uid, game_id=game_id, player=player, agent=agent)
+            else:
+                status = self._dispatch_to_driver(
+                    uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
+                )
             # Recorded either way: a dispatch that failed used to be entirely
             # silent here - the UI got a "fallback" status and the container
             # log said nothing, so an unreachable driver looked exactly like
             # an agent that was simply thinking.
-            if status["mechanism"] == "wrapper":
+            if status["mechanism"] in ("wrapper", "kubernetes"):
                 with self._lock:
                     self._dispatched[uid] = status
                     # A uid that failed to dispatch once (driver unreachable,
@@ -350,11 +357,14 @@ class AiSeatRegistry:
                     # surface in `release()`'s `was_unavailable` for a seat
                     # that, in the end, actually ran.
                     self._unavailable.pop(uid, None)
-                note = (
-                    f"handed to the driver at {status['driver']}: deck="
-                    f"{status.get('deck') or 'unrecognised'} match={status.get('match_score')} "
-                    f"turn={status.get('turn_id')}"
-                )
+                if status["mechanism"] == "kubernetes":
+                    note = f"scheduled as kubernetes Job {status.get('job')}"
+                else:
+                    note = (
+                        f"handed to the driver at {status['driver']}: deck="
+                        f"{status.get('deck') or 'unrecognised'} "
+                        f"match={status.get('match_score')} turn={status.get('turn_id')}"
+                    )
             else:
                 note = f"NOT STARTED - {status.get('reason')}"
                 with self._lock:
@@ -405,7 +415,8 @@ class AiSeatRegistry:
         return status
 
     def _driver_activity(self, dispatched: dict[str, Any]) -> str:
-        """What the driver says about a seat it was handed.
+        """What the driver (or, in kubernetes mode, `K8sSeats.status`) says
+        about a seat it was handed.
 
         `pending` is the driver still trying to reach an agent container that
         is restarting (up to `AGENT_BOOT_WAIT_SECONDS`) - handed over, not yet
@@ -415,7 +426,22 @@ class AiSeatRegistry:
         game is still in its pregame means the agent stopped playing - which
         is the exact shape of the hang `ai_pregame.py` exists for, and is
         `GONE` however healthy the container still looks.
+
+        The kubernetes mechanism is treated the same way: `K8sSeats.status`'s
+        `pending`/`thinking` states map to `STARTING`/`WORKING`, and every
+        other state (`idle`, `gone`, `error`, or a seat `K8sSeats` no longer
+        knows about at all) maps to `GONE`.
         """
+        if dispatched.get("mechanism") == "kubernetes":
+            status = k8s_seats.get().status(dispatched["uid"])
+            if status is None:
+                return GONE
+            state = status.get("state")
+            if state == "pending":
+                return STARTING
+            if state == "thinking":
+                return WORKING
+            return GONE
         try:
             with _driver_client(dispatched.get("driver") or driver_url()) as client:
                 answer = client.get("/status").json()
@@ -488,12 +514,18 @@ class AiSeatRegistry:
             dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
         if dispatched is not None:
+            if dispatched.get("mechanism") == "kubernetes":
+                return k8s_seats.get().status(uid)
             return self._live_driver_status(dispatched)
         return runner.status() if runner is not None else None
 
     def stop(self, uid: str) -> bool:
         with self._lock:
+            dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
+        if dispatched is not None and dispatched.get("mechanism") == "kubernetes":
+            k8s_seats.get().stop(uid)
+            return True
         if runner is None:
             return False
         runner.stop()
@@ -533,18 +565,23 @@ class AiSeatRegistry:
 
         What "reset the AI seat" means for one uid: a `subprocess`-mode runner
         is terminated, a `wrapper`-mode dispatch is handed back to the driver,
-        and every record this registry kept under the uid - runner, dispatch,
-        the reason it was unavailable - is dropped, so a stale status can
-        never be polled back out of a finished game. The agent's own memory on
-        disk is untouched; see `_release_from_driver`.
+        a `kubernetes`-mode dispatch tells the driver sidecar then deletes the
+        Job, and every record this registry kept under the uid - runner,
+        dispatch, the reason it was unavailable - is dropped, so a stale
+        status can never be polled back out of a finished game. The agent's
+        own memory on disk is untouched; see `_release_from_driver` and
+        `K8sSeats.release`.
         """
         with self._lock:
             runner = self._runners.pop(uid, None)
             dispatched = self._dispatched.pop(uid, None)
             unavailable = self._unavailable.pop(uid, None)
+        mechanism = dispatched.get("mechanism") if dispatched is not None else None
+        if mechanism is None and runner is not None:
+            mechanism = "subprocess"
         released: dict[str, Any] = {
             "uid": uid,
-            "mechanism": "wrapper" if dispatched is not None else "subprocess",
+            "mechanism": mechanism,
             "subprocess_stopped": False,
             "driver": None,
             "was_unavailable": unavailable,
@@ -553,9 +590,10 @@ class AiSeatRegistry:
             released["subprocess_stopped"] = runner.running()
             runner.stop()
         if dispatched is not None:
-            released["driver"] = self._release_from_driver(dispatched)
-        if runner is None and dispatched is None:
-            released["mechanism"] = None
+            if mechanism == "kubernetes":
+                released["driver"] = k8s_seats.get().release(uid)
+            else:
+                released["driver"] = self._release_from_driver(dispatched)
         return released
 
 
