@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.k8s_seats import K8sSettings, build_job, job_name, mcp_config
 
@@ -9,6 +11,7 @@ ENV = {
     "API_IMAGE": "harbor/api:abc",
     "POD_NAME": "mtg-stack-1",
     "POD_UID": "uid-1",
+    "POD_NAMESPACE": "mtg-engine",
     "SPELLSLINGER_MCP_URL": "http://ss:8080/mcp",
 }
 
@@ -68,3 +71,51 @@ def test_job_shape() -> None:
     assert '"game_id": "g1"' in denv["DRIVER_ASSIGNMENT_JSON"]
     assert agent["securityContext"]["allowPrivilegeEscalation"] is False
     assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+
+
+def _build(env: dict[str, str]) -> dict:
+    return build_job(
+        K8sSettings.from_env(env),
+        game_id="g1",
+        uid="u1",
+        player="bot",
+        agent=AgentSettings(model="sonnet"),
+    )
+
+
+def test_owner_references_absent_when_uid_missing() -> None:
+    env = {k: v for k, v in ENV.items() if k != "POD_UID"}
+    job = _build(env)
+    assert "ownerReferences" not in job["metadata"]
+
+
+def test_owner_references_absent_when_name_missing() -> None:
+    env = {k: v for k, v in ENV.items() if k != "POD_NAME"}
+    job = _build(env)
+    assert "ownerReferences" not in job["metadata"]
+
+
+def test_owner_references_absent_when_namespaces_differ() -> None:
+    env = {**ENV, "POD_NAMESPACE": "some-other-namespace"}
+    job = _build(env)
+    assert "ownerReferences" not in job["metadata"]
+
+
+def test_mcp_json_round_trips_to_mcp_config() -> None:
+    settings = K8sSettings.from_env(ENV)
+    job = build_job(
+        settings, game_id="g1", uid="u1", player="bot", agent=AgentSettings(model="sonnet")
+    )
+    init_containers = job["spec"]["template"]["spec"]["initContainers"]
+    mcp_container = next(c for c in init_containers if c["name"] == "mcp-config")
+    mcp_env = {e["name"]: e["value"] for e in mcp_container["env"]}
+    assert json.loads(mcp_env["MCP_JSON"]) == mcp_config(settings, "g1")
+
+
+def test_init_containers_present_in_order_with_security_context() -> None:
+    job = _build(ENV)
+    init_containers = job["spec"]["template"]["spec"]["initContainers"]
+    names = [c["name"] for c in init_containers]
+    assert names == ["guides", "mcp-config"]
+    for container in init_containers:
+        assert container["securityContext"]["allowPrivilegeEscalation"] is False

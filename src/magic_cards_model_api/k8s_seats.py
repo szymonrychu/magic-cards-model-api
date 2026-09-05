@@ -9,17 +9,34 @@ is over, so the Job completes on its own.
 A Job rather than a bare Pod: the docs say a bare Pod is not rescheduled,
 `activeDeadlineSeconds` bounds a runaway match, and `ttlSecondsAfterFinished`
 cleans up. `ownerReferences` name this API's own Pod, so an API restart -
-which loses every in-memory game anyway - garbage-collects its Jobs.
+which loses every in-memory game anyway - garbage-collects its Jobs. That
+owner reference is only safe when the owner Pod lives in the same namespace
+as the Job: a cross-namespace `ownerReferences` entry makes the garbage
+collector delete the Job within seconds of creation. `build_job` therefore
+emits it only when `owner_pod_namespace` (from the downward API's
+`POD_NAMESPACE`, i.e. `metadata.namespace`; Task 10 sets it) equals the Job's
+own `namespace`, and logs a warning instead when they differ.
+
+The `memory` volume mounts the `AGENT_MEMORY_PVC` claim (default
+`mtg-agent-memory`) into every concurrent seat's Pod at once, which requires
+the claim's access mode to be `ReadWriteMany`. Today's
+`deploy/k8s/30-storage.yaml` provisions it `ReadWriteOnce` - Task 10 must
+switch it to `ReadWriteMany` before two seats can run concurrently, or the
+second seat's Pod will stick in `ContainerCreating` waiting for the volume.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from .agent_settings import AgentSettings
+
+logger = logging.getLogger(__name__)
 
 LABEL_APP = "app.kubernetes.io/name"
 LABEL_GAME = "mtg/game-id"
@@ -36,6 +53,7 @@ class K8sSettings:
     spellslinger_url: str = ""
     owner_pod_name: str = ""
     owner_pod_uid: str = ""
+    owner_pod_namespace: str = ""
     deadline_seconds: int = 14400
     ttl_seconds: int = 600
     memory_claim: str = "mtg-agent-memory"
@@ -57,6 +75,7 @@ class K8sSettings:
             spellslinger_url=value("SPELLSLINGER_MCP_URL", ""),
             owner_pod_name=value("POD_NAME", ""),
             owner_pod_uid=value("POD_UID", ""),
+            owner_pod_namespace=value("POD_NAMESPACE", ""),
             deadline_seconds=int(value("AGENT_JOB_DEADLINE_SECONDS", "14400")),
             ttl_seconds=int(value("AGENT_JOB_TTL_SECONDS", "600")),
             memory_claim=value("AGENT_MEMORY_PVC", "mtg-agent-memory"),
@@ -94,11 +113,13 @@ def _env(pairs: Mapping[str, str]) -> list[dict[str, str]]:
     return [{"name": k, "value": v} for k, v in pairs.items()]
 
 
-CONTAINER_SECURITY = {
-    "allowPrivilegeEscalation": False,
-    "capabilities": {"drop": ["ALL"]},
-    "runAsNonRoot": True,
-}
+CONTAINER_SECURITY = MappingProxyType(
+    {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+        "runAsNonRoot": True,
+    }
+)
 
 
 def build_job(
@@ -148,14 +169,24 @@ def build_job(
         "annotations": {"mtg/player": player, "mtg/model": agent.model, "mtg/effort": agent.effort},
     }
     if settings.owner_pod_name and settings.owner_pod_uid:
-        metadata["ownerReferences"] = [
-            {
-                "apiVersion": "v1",
-                "kind": "Pod",
-                "name": settings.owner_pod_name,
-                "uid": settings.owner_pod_uid,
-            }
-        ]
+        if settings.owner_pod_namespace == settings.namespace:
+            metadata["ownerReferences"] = [
+                {
+                    "apiVersion": "v1",
+                    "kind": "Pod",
+                    "name": settings.owner_pod_name,
+                    "uid": settings.owner_pod_uid,
+                }
+            ]
+        else:
+            logger.warning(
+                "owner pod %s is in namespace %r but Job %s is in namespace %r; "
+                "omitting ownerReferences to avoid cross-namespace garbage collection",
+                settings.owner_pod_name,
+                settings.owner_pod_namespace,
+                name,
+                settings.namespace,
+            )
     guides_host_and_path = settings.guides_repo.removeprefix("https://")
     guides_script = (
         'test -n "${GH_PAT}" || { echo "GH_PAT is empty" >&2; exit 1; }\n'
@@ -236,12 +267,13 @@ def build_job(
                 "startupProbe": {
                     "httpGet": {"path": "/healthz", "port": 8080},
                     "periodSeconds": 10,
+                    "timeoutSeconds": 3,
                     "failureThreshold": 36,
                 },
                 "readinessProbe": {
                     "httpGet": {"path": "/readyz", "port": 8080},
                     "periodSeconds": 10,
-                    "timeoutSeconds": 3,
+                    "timeoutSeconds": 5,
                     "failureThreshold": 3,
                 },
                 "securityContext": CONTAINER_SECURITY,
