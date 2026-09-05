@@ -182,3 +182,48 @@ def test_flashback_cast_from_the_graveyard_pays_the_flashback_cost_and_exiles(cl
     exiled = find(final["exile"], "Faithful Mending")
     assert exiled["id"] == mending["id"]
     assert final["winner"] is None  # alice's draw did not run her out of cards
+
+
+# -- the refusal is an Outcome, not an uncaught 400 --------------------------
+
+
+def test_a_graveyard_cast_with_no_keyword_is_refused_as_an_outcome(client, game):
+    """CR 601.3, asked a second time once the announcement is complete: a cast
+    from any zone but the hand has to have *claimed* what allows it, so this
+    request is refused by the engine at `Casting.cast()` - the last step of
+    CR 601.2, and the one step of `_drive_cast` that used to be unguarded.
+
+    What matters here is the *shape* of the refusal, not that it happens. An
+    uncaught `ValueError` leaves FastAPI to answer `{"detail": ...}` with no
+    `allowed` key; `seatkit._refused` tests `outcome.get("allowed") is False`,
+    so it reads that body as "not a refusal", `run_action` treats the call as
+    having gone through, and the seat auto-passes priority on a spell that was
+    never cast. A live game desynchronises and nothing about the attempt
+    reaches the log.
+
+    CR 601.6/CR 733.1's rewind is asserted too: the proposal moved the card to
+    the stack, and a refused proposal owes the board exactly what it borrowed -
+    the card back in the graveyard, the lands untapped.
+    """
+    add_card(client, game, "Faithful Mending", "alice", "graveyard")
+    for _ in range(3):
+        add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Plains", "alice", "battlefield")
+    board = state(client, game)
+    mending = find(board["graveyards"]["alice"], "Faithful Mending")
+    sources = [card["id"] for card in board["battlefield"]]
+
+    answer = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": mending["id"], "mana_sources": sources},
+    )
+
+    assert answer.status_code == 200, answer.text
+    cast: dict[str, Any] = answer.json()
+    assert cast["allowed"] is False, cast
+    assert "Flashback" in str(cast)
+
+    final = state(client, game)
+    assert find(final["graveyards"]["alice"], "Faithful Mending")["id"] == mending["id"]
+    assert final["stack"] == []
+    assert all(not card["tapped"] for card in final["battlefield"])

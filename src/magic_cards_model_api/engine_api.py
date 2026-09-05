@@ -353,7 +353,24 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             payment.rewind()
         return refused(exc)
 
-    state = casting.cast()
+    try:
+        # CR 601.2i's last gate, and the only step of CR 601.2 that was ever
+        # left unguarded here. It refuses for reasons no earlier step can
+        # raise - CR 601.3's permission asked a second time, now that the
+        # announcement is complete: a cast from any zone but the hand has to
+        # have *claimed* the thing that allows it (a keyword under CR 601.2b,
+        # or a live permission), not merely have had one available. Faithful
+        # Mending cast from a graveyard with no `keyword` lands here.
+        #
+        # Without this `except`, the `ValueError` escaped as an uncaught 400
+        # whose body is `{"detail": ...}` rather than an `Outcome`. That shape
+        # carries no `allowed` key, so `seatkit._refused` reads it as "not a
+        # refusal", `run_action` treats the call as having gone through, and
+        # the seat auto-passes priority on a spell that was never cast - and
+        # nothing about the attempt reaches the game log either.
+        state = casting.cast()
+    except ValueError as exc:
+        return refused(exc)
     game.put_on_stack(state, casting.caster)
     game.retain_priority(casting.caster)
     return Outcome(True, detail={"spell_id": str(state.id), "cost": str(payment.cost)})
