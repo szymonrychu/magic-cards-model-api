@@ -52,6 +52,7 @@ export const store = createStore({
   aiStatus: null,
   connection: "idle",
   polling: false,
+  concedeArmed: false,
 });
 
 function you() {
@@ -775,7 +776,10 @@ async function main() {
       refreshDecisionTargets();
     },
     onDecide: decide,
-    onVerb,
+    onVerb: (verb) => {
+      store.set({ concedeArmed: false });
+      onVerb(verb);
+    },
     onStopRun: () => store.set({ run: null }),
     onToggleStop: (side, step) =>
       store.set((s) => {
@@ -788,7 +792,16 @@ async function main() {
     onAttackNone: () => passOnce().then(poll),
     onBlockConfirm: confirmBlocks,
     onBlockNone: () => passOnce().then(poll),
+    // Two clicks, never one. Conceding is a legal move at any time
+    // (CR 104.3a) and it is also the only irreversible one in the ribbon:
+    // the first click only arms the button, the second sends it. Any pass
+    // verb disarms it again.
     onConcede: async () => {
+      if (P.concedeIntent(store.get().concedeArmed) === "arm") {
+        store.set({ concedeArmed: true });
+        return;
+      }
+      store.set({ concedeArmed: false });
       const res = await send("POST", gamePath("actions/concede"), { player: you() });
       if (res === null) return;
       await poll();

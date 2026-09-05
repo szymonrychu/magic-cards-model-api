@@ -227,3 +227,13 @@ def test_advance_is_not_offered_on_the_opponents_untap_step() -> None:
         s=board(step="untap", active_player="bob", priority_holder=None),
     )
     assert result is False
+
+
+def test_a_first_click_on_concede_only_arms_it() -> None:
+    """CR 104.3a: "A player can concede the game at any time. A player who
+    concedes leaves the game immediately. That player loses the game." The
+    rule is why the button is always live; the browser pass is why it takes
+    two clicks - with the opponent holding priority the box has no verbs in
+    it, and Concede sat exactly where "Pass" had been a tick earlier."""
+    assert run_module("priority.js", "m.concedeIntent(false)") == "arm"
+    assert run_module("priority.js", "m.concedeIntent(true)") == "concede"

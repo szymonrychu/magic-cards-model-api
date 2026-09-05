@@ -225,3 +225,15 @@ export function passButtonsFor(state) {
 export function advanceOffered(state) {
   return state.active_player === state.you && (state.step === "untap" || state.step === "cleanup");
 }
+
+// CR 104.3a: "A player can concede the game at any time. A player who
+// concedes leaves the game immediately. That player loses the game." - so
+// the button is always live, and that is exactly the problem. Whenever you
+// do not hold priority `passButtonsFor` offers no verbs, and Concede slides
+// up into the spot "Pass" occupied a moment before; one stray click there
+// ended a game during the browser pass, with nothing asked and nothing to
+// undo. So a click on it means "arm" until it is already armed, and only
+// then "concede". Any pass verb disarms it again.
+export function concedeIntent(armed) {
+  return armed ? "concede" : "arm";
+}

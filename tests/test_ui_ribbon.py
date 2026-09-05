@@ -415,3 +415,65 @@ def test_clicking_the_split_controls_move_button_reports_moved() -> None:
         """,
     )
     assert calls == [{"moved": ["a"]}]
+
+
+# --------------------------------------------------------- conceding safely
+#
+# From the browser pass. `passButtonsFor` offers no verbs at all while the
+# opponent holds priority, so the priority box emptied out and Concede rose
+# into the position "Pass" had been in one tick earlier. The next click
+# there ended the game. CR 104.3a keeps conceding legal at any time, so the
+# button stays - it just stops being a single click, and it goes away
+# entirely once somebody has already won.
+
+
+def test_concede_is_a_plain_button_until_it_is_armed() -> None:
+    label = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({ priority_holder: "bob" });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const box = document.querySelector("#priority-box");
+          return box.children.map((c) => c.textContent);
+        })()
+        """,
+    )
+    assert label == ["", "Concede"], "with no verbs on offer, Concede is the only button there"
+
+
+def test_an_armed_concede_says_so_and_asks_for_the_second_click() -> None:
+    label = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({ priority_holder: "bob" });
+          const store = makeStore(baseApp(state, { concedeArmed: true }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return findByText(document, "button", "Concede").textContent;
+        })()
+        """,
+    )
+    assert label == "Concede - click again to confirm"
+
+
+def test_a_finished_game_offers_no_concede_at_all() -> None:
+    found = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({ winner: "bob", priority_holder: "bob" });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return findByText(document.querySelector("#priority-box"), "button", "Concede") !== null;
+        })()
+        """,
+    )
+    assert found is False

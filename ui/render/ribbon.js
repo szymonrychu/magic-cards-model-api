@@ -605,7 +605,20 @@ function renderPriorityBox(el, app, handlers) {
       );
     }
   }
-  el.appendChild(h("button", { class: "ghost danger", onClick: handlers.onConcede }, "Concede"));
+  // CR 104.3a lets a player concede at any time, so the button is always
+  // here - but it takes two clicks, and it is gone once somebody has already
+  // won. Both come from the browser pass: whenever you do not hold priority
+  // `passButtonsFor` offers no verbs at all, which slid Concede up into the
+  // exact spot "Pass" had occupied a moment earlier. One stray click ended
+  // that game with nothing asked and nothing to undo.
+  if (app.state && app.state.winner) return;
+  el.appendChild(
+    h(
+      "button",
+      { class: app.concedeArmed ? "danger armed" : "ghost danger", onClick: handlers.onConcede },
+      app.concedeArmed ? "Concede - click again to confirm" : "Concede"
+    )
+  );
 }
 
 // --------------------------------------------------------------- #stops-box
