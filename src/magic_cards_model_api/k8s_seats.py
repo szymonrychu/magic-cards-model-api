@@ -34,6 +34,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -69,6 +70,12 @@ class K8sSettings:
     agent_secret: str = "mtg-agent"
     git_secret: str = "mtg-decks-git"
     image_pull_secret: str = "regcred"
+    #: How long a `Running` pod gets before an unreachable driver is treated
+    #: as the driver container having died rather than "not up yet" -
+    #: `restartPolicy: Never` means a dead driver container never comes back
+    #: on its own, so without this a pod stuck exactly that way reports
+    #: `pending` forever and `ai_pregame.py`'s backstop never fires.
+    driver_grace_seconds: int = 60
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> K8sSettings:
@@ -91,6 +98,7 @@ class K8sSettings:
             agent_secret=value("AGENT_SECRET", "mtg-agent"),
             git_secret=value("GUIDES_GIT_SECRET", "mtg-decks-git"),
             image_pull_secret=value("IMAGE_PULL_SECRET", "regcred"),
+            driver_grace_seconds=int(value("AGENT_DRIVER_GRACE_SECONDS", "60")),
         )
 
 
@@ -448,6 +456,25 @@ class K8sSeats:
         except Exception:  # noqa: BLE001 - a driver that is not up yet
             return None
 
+    def _driver_grace_elapsed(self, seat: dict[str, Any], pod: Any) -> float:
+        """Seconds since this pod (or, absent a `start_time`, this seat) went
+        live - the clock `status()` checks against `driver_grace_seconds`
+        before calling an unreachable driver in a `Running` pod an error.
+
+        `pod.status.start_time` is preferred: it is Kubernetes' own wall-clock
+        answer for when this pod started running. `seat["created_at"]` (a
+        `time.monotonic()` reading, taken when `start()` first inserted the
+        seat) is the fallback for the brief window right after a pod turns
+        `Running` before the apiserver has populated `start_time` at all.
+        """
+        start_time = getattr(pod.status, "start_time", None)
+        if start_time is not None:
+            now = (
+                datetime.now(start_time.tzinfo) if start_time.tzinfo is not None else datetime.now()
+            )
+            return (now - start_time).total_seconds()
+        return time.monotonic() - seat.get("created_at", time.monotonic())
+
     def status(self, uid: str) -> dict[str, Any] | None:
         with self._lock:
             seat = self._seats.get(uid)
@@ -491,6 +518,7 @@ class K8sSeats:
             with self._lock:
                 seat["last_pod_phase"] = phase
         waiting = ""
+        driver_terminated_reason = ""
         for cs in (pod.status.container_statuses or []) if pod is not None else []:
             state = getattr(cs, "state", None)
             if (
@@ -499,8 +527,24 @@ class K8sSeats:
                 and state.waiting.reason
             ):
                 waiting = state.waiting.reason
+            terminated = getattr(state, "terminated", None) if state is not None else None
+            if getattr(cs, "name", None) == "driver" and terminated is not None:
+                # `restartPolicy: Never` means a dead driver container never
+                # comes back on its own - caught here immediately, rather
+                # than waiting out `driver_grace_seconds` below, because the
+                # pod itself telling us the container is gone is stronger
+                # evidence than an HTTP timeout.
+                driver_terminated_reason = terminated.reason or "driver container terminated"
         if waiting in ("ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff"):
             return {**base, "state": "error", "reason": waiting, "pod": phase, "driver": None}
+        if driver_terminated_reason:
+            return {
+                **base,
+                "state": "error",
+                "reason": driver_terminated_reason,
+                "pod": phase,
+                "driver": None,
+            }
         # Terminal phases are decided before any driver call: the pod's own
         # IP can be recycled onto an unrelated pod the moment it is gone, so
         # asking "is the driver at this IP happy" is meaningless once the pod
@@ -511,6 +555,21 @@ class K8sSeats:
             return {**base, "state": "pending", "reason": phase, "pod": phase, "driver": None}
         driver = self._driver_status(pod)
         if driver is None:
+            if phase == "Running" and self._driver_grace_elapsed(seat, pod) >= (
+                self.settings.driver_grace_seconds
+            ):
+                # `Running` and past the grace period with an unreachable
+                # driver: in a Job with `restartPolicy: Never` that is not
+                # "still booting" any more, it is the driver container having
+                # died silently - the one case that otherwise reported
+                # `pending` forever and never tripped the pregame backstop.
+                return {
+                    **base,
+                    "state": "error",
+                    "reason": "driver unreachable",
+                    "pod": phase,
+                    "driver": None,
+                }
             return {**base, "state": "pending", "reason": phase, "pod": phase, "driver": None}
         if driver.get("lastError"):
             return {
@@ -544,6 +603,7 @@ class K8sSeats:
             except Exception as exc:  # noqa: BLE001 - the Job is deleted regardless
                 logger.info("driver for %s not told about the release: %s", uid, exc)
         deleted = True
+        reason: str | None = None
         try:
             self.batch.delete_namespaced_job(
                 seat["job"],
@@ -552,7 +612,26 @@ class K8sSeats:
             )
         except ApiException as exc:
             deleted = exc.status == 404
-        return {"uid": uid, "mechanism": "kubernetes", "job": seat["job"], "deleted": deleted}
+            if not deleted:
+                reason = str(exc)
+        except Exception as exc:  # noqa: BLE001 - a transport error must not 500 the caller
+            # Narrower than `ApiException` used to catch only the Kubernetes
+            # client's own typed errors - a transport failure (a DNS hiccup,
+            # a dropped connection) is neither of those, propagated straight
+            # up through `release()` into `DELETE /api/ui/games/{id}` as an
+            # unhandled 500, leaving the game undeleted with no reason given.
+            deleted = False
+            reason = str(exc)
+            logger.warning("could not delete job %s for %s: %s", seat["job"], uid, exc)
+        result: dict[str, Any] = {
+            "uid": uid,
+            "mechanism": "kubernetes",
+            "job": seat["job"],
+            "deleted": deleted,
+        }
+        if reason is not None:
+            result["reason"] = reason
+        return result
 
     stop = release
 
@@ -667,6 +746,13 @@ class K8sSeats:
 
 
 _seats: K8sSeats | None = None
+#: Guards the whole build-and-start body below, not just the assignment to
+#: `_seats`. Without it, two threadpool routes racing their first call to
+#: `get()` both see `_seats is None`, both build a `K8sSeats`, and both start
+#: a watch/reconcile thread pair - the first object (and its watch/reconcile
+#: threads) is then simply discarded, orphaned but still running, while the
+#: seats it was tracking are invisible to the `K8sSeats` that wins the race.
+_lock = threading.Lock()
 
 
 def get() -> K8sSeats:
@@ -675,20 +761,42 @@ def get() -> K8sSeats:
     kubernetes` calling this reaches for one. `set_for_tests` overrides it
     (and `None` clears the override), which is how tests exercise
     `ai_seat.py`'s kubernetes branch against the same fakes `K8sSeats` itself
-    is tested with, without ever touching a real cluster."""
+    is tested with, without ever touching a real cluster.
+
+    Double-checked locking: the cheap, lock-free read lets every call after
+    the first skip the lock entirely; `_lock` only serialises the handful of
+    threads that can race the very first call.
+
+    The background watch/reconcile threads are started *before* the initial
+    `reconcile()` call, and that call is wrapped in a broad `except Exception`
+    - a reconcile that fails (an apiserver hiccup on the very first call, say)
+    must not leave `_seats` set with no background threads behind it: that
+    would be a `K8sSeats` that looks alive but whose Jobs are never watched or
+    reconciled again, silently, for the rest of the process's life.
+    """
     global _seats
-    if _seats is None:
+    if _seats is not None:
+        return _seats
+    with _lock:
+        if _seats is not None:
+            return _seats
         try:
             k8s_config.load_incluster_config()
         except k8s_config.ConfigException:
             k8s_config.load_kube_config()
         settings = K8sSettings.from_env(os.environ)
-        _seats = K8sSeats(settings, k8s_client.BatchV1Api(), k8s_client.CoreV1Api())
+        seats = K8sSeats(settings, k8s_client.BatchV1Api(), k8s_client.CoreV1Api())
         from .store import store  # lazy: store imports nothing from here
 
-        _seats.reconcile(set(store.ids()))
-        _seats.start_background(lambda: set(store.ids()))
-    return _seats
+        seats.start_background(lambda: set(store.ids()))
+        try:
+            seats.reconcile(set(store.ids()))
+        except Exception:  # noqa: BLE001 - background reconcile will retry
+            logger.warning(
+                "initial reconcile failed; background reconcile will retry", exc_info=True
+            )
+        _seats = seats
+        return _seats
 
 
 def set_for_tests(seats: K8sSeats | None) -> None:

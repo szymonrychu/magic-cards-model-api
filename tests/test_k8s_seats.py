@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import types
 
 import pytest
@@ -493,3 +494,159 @@ def test_run_watch_sleeps_between_reconnects_when_the_stream_ends_cleanly(
     thread.join(timeout=5)
     assert not thread.is_alive()
     assert sleeps[:2] == [1.0, 1.0]
+
+
+# ---- status: an unreachable driver in a `Running` pod becomes `error` once
+# past the grace period, or immediately if the driver container terminated --
+
+
+def test_status_is_pending_when_the_driver_is_unreachable_within_the_grace_period() -> None:
+    seats, _, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+
+    def unreachable(base):
+        raise ConnectionError("no route to host")
+
+    seats.http = unreachable
+    status = seats.status("u1")
+    assert status["state"] == "pending"
+
+
+def test_status_is_error_when_the_driver_stays_unreachable_past_the_grace_period() -> None:
+    seats, _, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+
+    def unreachable(base):
+        raise ConnectionError("no route to host")
+
+    seats.http = unreachable
+    with seats._lock:
+        seats._seats["u1"]["created_at"] -= 1000  # older than driver_grace_seconds (60s default)
+    status = seats.status("u1")
+    assert status["state"] == "error" and status["reason"] == "driver unreachable"
+
+
+def test_status_is_error_immediately_when_the_driver_container_has_terminated() -> None:
+    seats, _, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    pod = types.SimpleNamespace(
+        status=types.SimpleNamespace(
+            pod_ip="10.0.0.5",
+            phase="Running",
+            container_statuses=[
+                types.SimpleNamespace(
+                    name="driver",
+                    state=types.SimpleNamespace(
+                        waiting=None,
+                        terminated=types.SimpleNamespace(reason="Error"),
+                    ),
+                )
+            ],
+        ),
+        metadata=types.SimpleNamespace(name="p1"),
+    )
+    seats.core.list_namespaced_pod = lambda *a, **kw: types.SimpleNamespace(items=[pod])
+    status = seats.status("u1")
+    # Caught from the pod's own container_statuses, not from a timed-out HTTP
+    # call to a driver that will never answer - so this must not need the
+    # grace period to elapse at all.
+    assert status["state"] == "error" and status["reason"] == "Error"
+
+
+# ---- release: any transport error, not only ApiException, must not 500 ----
+
+
+def test_release_reports_deleted_false_on_a_transport_error_deleting_the_job() -> None:
+    seats, batch, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+
+    def raise_transport_error(*a, **kw):
+        raise RuntimeError("connection reset by peer")
+
+    batch.delete_namespaced_job = raise_transport_error
+    released = seats.release("u1")
+    assert released["deleted"] is False
+    assert "connection reset by peer" in released["reason"]
+
+
+# ---- get(): the module-level singleton is built at most once, even racing,
+# and an initial reconcile failure must not leave it with no background
+# threads --------------------------------------------------------------------
+
+
+def test_get_builds_only_one_instance_under_concurrent_callers(monkeypatch) -> None:
+    k8s_seats.set_for_tests(None)
+    starts: list[object] = []
+
+    def recording_start_background(self, *a, **kw):
+        starts.append(self)
+        return threading.Event()
+
+    monkeypatch.setattr(k8s_seats.K8sSeats, "start_background", recording_start_background)
+
+    def slow_incluster_config():
+        # Slow enough that a second `get()` call, arriving while the first is
+        # still mid-build, reliably lands inside this window rather than
+        # racing to start after the first has already finished - the whole
+        # point of the test being a second thread that must be made to wait
+        # on `_lock` rather than build its own `K8sSeats`.
+        time.sleep(0.2)
+
+    monkeypatch.setattr(k8s_seats.k8s_config, "load_incluster_config", slow_incluster_config)
+    monkeypatch.setattr(k8s_seats.k8s_client, "BatchV1Api", FakeBatch)
+    monkeypatch.setattr(k8s_seats.k8s_client, "CoreV1Api", FakeCore)
+
+    results: list[object] = []
+
+    def call() -> None:
+        results.append(k8s_seats.get())
+
+    try:
+        t1 = threading.Thread(target=call)
+        t2 = threading.Thread(target=call)
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+        assert len(results) == 2
+        assert results[0] is results[1]
+        assert len(starts) == 1
+    finally:
+        k8s_seats.set_for_tests(None)
+
+
+def test_get_starts_background_threads_before_a_failing_initial_reconcile(monkeypatch) -> None:
+    k8s_seats.set_for_tests(None)
+    starts: list[object] = []
+
+    def recording_start_background(self, *a, **kw):
+        starts.append(self)
+        return threading.Event()
+
+    monkeypatch.setattr(k8s_seats.K8sSeats, "start_background", recording_start_background)
+    monkeypatch.setattr(k8s_seats.k8s_config, "load_incluster_config", lambda: None)
+
+    class RaisingOnceBatch(FakeBatch):
+        def list_namespaced_job(self, namespace, label_selector=None, **kw):
+            if not getattr(self, "_raised", False):
+                self._raised = True
+                raise RuntimeError("apiserver hiccup")
+            return super().list_namespaced_job(namespace, label_selector=label_selector, **kw)
+
+    monkeypatch.setattr(k8s_seats.k8s_client, "BatchV1Api", RaisingOnceBatch)
+    monkeypatch.setattr(k8s_seats.k8s_client, "CoreV1Api", FakeCore)
+
+    try:
+        seats = k8s_seats.get()
+        assert seats is not None
+        assert len(starts) == 1  # started even though the initial reconcile raised
+    finally:
+        k8s_seats.set_for_tests(None)
