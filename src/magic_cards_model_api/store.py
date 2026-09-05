@@ -31,6 +31,7 @@ from uuid import uuid4
 
 from magic_cards_model.models import Game
 
+from .agent_settings import AgentSettings
 from .decisions import DecisionMailbox, GameDecisionProvider
 
 
@@ -45,6 +46,9 @@ class GameStore:
         self._mailboxes: dict[str, DecisionMailbox] = {}  # game_id -> its pending decision
         self._decision_timeouts: dict[str, list[dict]] = {}  # game_id -> defaulted decisions
         self._decklists: dict[str, dict[str, str]] = {}  # game_id -> username -> decklist text
+        # game_id -> username -> that seat's AgentSettings. Only AI seats have
+        # an entry - a human seat is never given one, same as `_ai_players`.
+        self._agent_settings: dict[str, dict[str, AgentSettings]] = {}
         self._ai_players: dict[str, set[str]] = {}  # game_id -> usernames driven by a bot
         # game_id -> username -> the pregame moves something made *for* that
         # seat rather than the seat making them itself. See
@@ -111,6 +115,25 @@ class GameStore:
         """
         with self._lock:
             return dict(self._decklists.get(game_id, {}))
+
+    def register_agent_settings(self, game_id: str, agents: dict[str, AgentSettings]) -> None:
+        """Record each AI seat's `AgentSettings`: username -> settings.
+
+        Kept beside the game for the same reason `register_decklists` is:
+        `Game` is the engine's model of a game in progress, and which Claude
+        Code model, effort and thinking budget play a seat is a fact about
+        this deployment, not about the game. Only AI seats get an entry -
+        `decks_api.start_game_from_decklists` builds this dict from `player.ai`
+        already, so a human seat is simply absent rather than recorded as
+        having none.
+        """
+        with self._lock:
+            self._agent_settings[game_id] = dict(agents)
+
+    def agent_settings(self, game_id: str) -> dict[str, AgentSettings]:
+        """username -> `AgentSettings`, for this game's AI seats only."""
+        with self._lock:
+            return dict(self._agent_settings.get(game_id, {}))
 
     def register_ai_players(self, game_id: str, players: list[str]) -> None:
         """Record which seats are meant to be driven by a bot rather than a
@@ -232,6 +255,7 @@ class GameStore:
             self._mailboxes.pop(game_id, None)
             self._decision_timeouts.pop(game_id, None)
             self._decklists.pop(game_id, None)
+            self._agent_settings.pop(game_id, None)
             self._ai_players.pop(game_id, None)
             self._automatic_pregame.pop(game_id, None)
             if game_id in self._ui_games:

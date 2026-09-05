@@ -27,6 +27,7 @@ limits, CR 103's start-of-game sequence) is enforced by the engine through
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
 from . import ai_pregame, audit, lobby, scryfall
+from .agent_settings import AgentSettings
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
@@ -156,6 +158,9 @@ class NewUiPlayer(BaseModel):
     """Whether this seat is meant to be driven by the AI-seat runner - a UI
     hint only (`ai_seat.py` is a separate, opt-in call); carried here so the
     response can tell the UI which uid to auto-start without a second lookup."""
+    agent: AgentSettings | None = None
+    """How the AI seat runs (model, effort, thinking). Only with `ai: true`;
+    absent, the server's defaults apply (`AgentSettings.default`)."""
 
 
 class NewUiGame(BaseModel):
@@ -188,6 +193,15 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     if problems:
         raise ValueError(f"decklist(s) failed validation: {problems}")
 
+    for player in req.players:
+        if player.agent is not None and not player.ai:
+            raise ValueError(f"{player.username}: agent settings are only for an ai seat")
+    agents = {
+        player.username: player.agent or AgentSettings.default(os.environ)
+        for player in req.players
+        if player.ai
+    }
+
     # A new game from the lobby is a clean slate: the previous lobby game, its
     # seat uids, its pregame watcher and its AI seat all stop existing here,
     # before anything of the new game is built. After validation on purpose -
@@ -210,6 +224,7 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     store.register_decklists(
         game_id, {player.username: player.decklist_text for player in req.players}
     )
+    store.register_agent_settings(game_id, agents)
     # Nothing runs CR 103.5 or CR 103.6 here. `Match.start_game` has already
     # left the game resting in `Step.MULLIGAN` (turn 0), and the seats drive it
     # from there through `POST /api/games/{id}/pregame/...` - see `opening.py`
@@ -234,6 +249,9 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
         "seat_uids": seat_uids,
         "admin_key": store.admin_key(game_id),
         "ai_players": [player.username for player in req.players if player.ai],
+        # Every AI seat's chosen (or defaulted) model, effort and thinking
+        # budget - `AgentSettings.default` when the request left it unset.
+        "agents": {name: settings.model_dump() for name, settings in agents.items()},
         # What starting this game reset, so the browser (and anyone reading
         # the response by hand) can see that the previous game was ended
         # rather than left running somewhere.

@@ -15,6 +15,7 @@ from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Z
 
 from . import scryfall
 from .affordances import cast_hints
+from .agent_settings import AgentSettings
 from .engine_api import list_abilities
 from .opening import pregame_view
 from .store import store
@@ -404,7 +405,9 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
     return views
 
 
-def _player_view(player: Player, decklist: str | None = None) -> dict[str, Any]:
+def _player_view(
+    player: Player, decklist: str | None = None, agent: AgentSettings | None = None
+) -> dict[str, Any]:
     """One seat's own block.
 
     `decklist` is the raw decklist text this seat was booted from
@@ -416,6 +419,12 @@ def _player_view(player: Player, decklist: str | None = None) -> dict[str, Any]:
     is what enforces it; this function reports the full truth, exactly as it
     already does for `hands`. `None` for a game built board-first, which has no
     decklist to report.
+
+    `agent` is that seat's `AgentSettings` (`store.register_agent_settings`) -
+    present only for an AI seat, absent for a human one, same as `_ai_players`.
+    Not secret the way `decklist` is: which model, effort and thinking budget
+    play a bot seat is not hidden information under any CR rule, so it is
+    reported on the player block itself rather than filtered per-viewer.
     """
     view = {
         "username": player.username,
@@ -433,6 +442,8 @@ def _player_view(player: Player, decklist: str | None = None) -> dict[str, Any]:
     }
     if decklist is not None:
         view["decklist"] = decklist
+    if agent is not None:
+        view["agent"] = agent.model_dump()
     return view
 
 
@@ -539,6 +550,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     pending = mailbox.snapshot() if mailbox is not None else None
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
     decklists = store.decklists(game_id)
+    agent_settings = store.agent_settings(game_id)
     # CR 500.1 makes a phase part of a turn, and the engine's two pregame steps
     # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) run before CR 103.8's first
     # turn - so they are in no phase and are deliberately absent from
@@ -558,7 +570,10 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "active_player": turn.players[turn.active_index] if turn is not None else None,
         "priority_holder": game.priority.holder if game.priority is not None else None,
         "players": [
-            _player_view(player, decklists.get(player.username)) for player in game.players
+            _player_view(
+                player, decklists.get(player.username), agent_settings.get(player.username)
+            )
+            for player in game.players
         ],
         "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "stack": _stack_view(game, images),
