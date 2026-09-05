@@ -612,13 +612,19 @@ function renderPriorityBox(el, app, handlers) {
       );
     }
   }
-  // CR 104.3a lets a player concede at any time, so the button is always
-  // here - but it takes two clicks, and it is gone once somebody has already
-  // won. Both come from the browser pass: whenever you do not hold priority
-  // `passButtonsFor` offers no verbs at all, which slid Concede up into the
-  // exact spot "Pass" had occupied a moment earlier. One stray click ended
-  // that game with nothing asked and nothing to undo.
-  if (app.state && app.state.winner) return;
+  // CR 104.3a lets a player concede at any time, so the button is here for as
+  // long as the game is live - but it takes two clicks, and it is gone once
+  // the game is over. `winner || drawn` is the same pair `stopReason` and
+  // `renderPromptBox` read as "over": a draw ends the game just as finally as
+  // a win, and offering a concede afterwards would be offering nothing.
+  //
+  // The two clicks come from the browser pass: whenever you do not hold
+  // priority `passButtonsFor` offers no verbs at all, which slid Concede up
+  // into the exact spot "Pass" had occupied a moment earlier. One stray click
+  // ended that game with nothing asked and nothing to undo. The armed button
+  // says so and looks like it (`button.danger.armed` in `style.css`), so the
+  // second click is never the one you did not mean to make.
+  if (app.state && (app.state.winner || app.state.drawn)) return;
   el.appendChild(
     h(
       "button",

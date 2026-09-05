@@ -69,15 +69,20 @@ and "Block" / "No blocks" ends the step.
 
 **Verbs and stops.** The priority box offers Pass, Pass turn, Pass turn (even
 with a stack), Pass until my next turn, and Pass until I can cast something;
-while one is running it collapses to a single Stop. Auto-passing always halts
-when you are attacked, when a new object reaches the stack, when a decision is
-waiting on you, and at any checked stop. The stops panel is a grid of steps by
+while one is running it collapses to a single Stop. Every verb halts when you
+are attacked, when a decision is waiting on you, and at any checked stop.
+Every verb *except* "Pass turn (even with a stack)" also halts when a new
+object reaches the stack - ignoring that is the whole point of that one, and
+why it says so in its own label. The stops panel is a grid of steps by
 whose turn it is. It starts at your precombat main, your declare attackers,
 your postcombat main, the opponent's declare attackers and the opponent's end
 step, and whatever you check is saved in `localStorage` under `mcm.stops.v1`,
 so it survives a reload. Untap and cleanup give nobody priority, so there the
 box offers an Advance button instead of a pass. Conceding (CR 104.3a) is
-always available and always takes two clicks. The "keep priority" checkbox on
+offered for as long as the game is live, whoever holds priority, and always
+takes two clicks: the first arms the button, the second sends it, and any
+pass verb disarms it again. Once somebody has won or the game is drawn it
+goes away. The "keep priority" checkbox on
 the casting strip is CR 117.3c's retained priority.
 
 **The log.** The panel reads `GET /api/games/{id}/log?since=` incrementally

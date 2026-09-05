@@ -25,6 +25,7 @@ not merely plausible-looking markup.
 
 from __future__ import annotations
 
+import pytest
 from ui_node import requires_node, run_module
 
 pytestmark = requires_node
@@ -462,19 +463,24 @@ def test_an_armed_concede_says_so_and_asks_for_the_second_click() -> None:
     assert label == "Concede - click again to confirm"
 
 
-def test_a_finished_game_offers_no_concede_at_all() -> None:
+@pytest.mark.parametrize("over", [{"winner": "bob"}, {"drawn": True}])
+def test_a_finished_game_offers_no_concede_at_all(over: dict) -> None:
+    """`winner || drawn` - a draw ends the game as finally as a win does, and
+    it is the pair the rest of the UI (`stopReason`, `renderPromptBox`) reads
+    as over."""
     found = run_module(
         "render/ribbon.js",
         FAKE_DOM
         + """
         (() => {
-          const state = baseState({ winner: "bob", priority_holder: "bob" });
+          const state = baseState({ ...over, priority_holder: "bob" });
           const store = makeStore(baseApp(state));
           m.mountRibbon(document, store, HANDLERS);
           store.set({});
           return findByText(document.querySelector("#priority-box"), "button", "Concede") !== null;
         })()
         """,
+        over=over,
     )
     assert found is False
 

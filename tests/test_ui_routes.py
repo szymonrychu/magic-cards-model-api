@@ -87,7 +87,20 @@ def test_a_crowded_board_row_scrolls_instead_of_painting_over_its_neighbour(
     Layout is not something Node or the API can assert, so this pins the two
     declarations that hold it together in the file the browser is served."""
     css = client.get("/style.css").text
-    assert "minmax(160px, 1fr)" in css, "the battlefield tracks need a one-card floor"
+    # The declaration itself, not the substring. The `#mtg-board` block's own
+    # comment names `minmax(160px, 1fr)` as well, so a bare `in css` stayed
+    # green with the fix reverted. Scoped to that block and read off the
+    # `grid-template-rows:` line, the way the row assertion below is scoped
+    # to the rule it is about.
+    board = css.split("#mtg-board {", 1)[1].split("}", 1)[0]
+    tracks = [
+        line.strip()
+        for line in board.splitlines()
+        if line.strip().startswith("grid-template-rows:")
+    ]
+    assert tracks == [
+        "grid-template-rows: auto auto minmax(160px, 1fr) auto minmax(160px, 1fr) auto auto;"
+    ], tracks
     rows = css.split(".hand-row, .battlefield-row, .stack-row {", 1)[1].split("}", 1)[0]
     assert "overflow-y: auto" in rows, "a row with more cards than fit must scroll itself"
 
@@ -100,3 +113,11 @@ def test_the_scry_split_row_keeps_room_for_the_card_name(client: TestClient) -> 
     css = client.get("/style.css").text
     row = css.split(".split-row span {", 1)[1].split("}", 1)[0]
     assert "min-width: 6em" in row, "the card's name needs a floor, not a 0% basis"
+
+
+def test_the_armed_concede_button_actually_looks_armed(client: TestClient) -> None:
+    """`ribbon.js` puts an `armed` class on the concede button once the first
+    click has armed it. A class with no rule behind it is a change nobody
+    sees, and this is the one button where seeing it matters."""
+    css = client.get("/style.css").text
+    assert "button.danger.armed {" in css

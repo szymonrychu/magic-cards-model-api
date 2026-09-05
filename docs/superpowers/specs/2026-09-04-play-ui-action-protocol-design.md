@@ -139,6 +139,14 @@ frontend does.
   follow so the engine still fills the remainder. Clicking a pinned land
   unpins it. Clicking a land with no pending cast activates it as today and
   floats the mana.
+
+  As shipped, "the colour picked from its chips" is a menu, not chips: a land
+  that makes more than one colour opens the same anchored popover a
+  multi-ability permanent opens, listing "Tap for {B}" / "Tap for {G}"
+  (`app.js`'s `pinLand`). Nothing is drawn on the card itself. It is anchored
+  to the card and it is not a ribbon step, which is what the Battlefield
+  section above was actually asking for, so the deviation is in the
+  affordance and not in the flow. Confirmed in a browser in Task 19.
 - The floating pool is always visible in the you-info row.
 
 ## Priority
