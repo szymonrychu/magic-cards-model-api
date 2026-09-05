@@ -93,21 +93,27 @@ with the engine's own words, which is the first place to look when a click did
 not do what you expected. The dashed row under your hand appears when
 something grants you a play permission from a zone other than your hand.
 
-Starting a game from the lobby is a clean slate: the previous lobby game is
-ended and deleted, its seat uids stop opening anything, its pregame watcher
-thread stops, and its AI seat is stopped - a subprocess is terminated, a
-wrapper-mode seat is handed back to the driver so the agent is free for the
-new game. Both games' audit logs record it (`game_reset` in the old one,
-`reset_previous_games` in the new one), so a transcript never silently spans
-two games. What the continuous agent has learned is untouched: that lives in
-`./memory`, and nothing in the reset writes there. See `lobby.py`.
+Starting a game from the lobby never touches another: games live side by side,
+up to `MAX_LIVE_GAMES` at once (see "Several games at once" below). **End
+game** is the only reset there is - a human picks a game in the lobby and ends
+it, rather than starting a new one silently ending an old one. Ending a game
+stops opening its seat uids, stops its pregame watcher thread, and stops its
+AI seat - a subprocess is terminated, a wrapper-mode seat is handed back to
+the driver, a kubernetes-mode seat's Job is deleted - freeing a slot under the
+cap. It is written to the game's own audit log (`game_reset`), so a transcript
+ends with the reset rather than trailing off. What the continuous agent has
+learned is untouched: that lives in `./memory`, and nothing in the reset
+writes there. See `lobby.py`.
 
 ## Play against a continuous agent
 
-`docker compose up --build` brings up three containers: the game (this repo,
-with the play UI at `/`), an **agent** running one interactive `claude` under a
-PTY for the length of one match, and a **driver** that tells the agent what it
-is playing and recycles it between matches.
+`docker compose up --build` brings up three containers, running the
+`AI_SEAT_MODE=wrapper` seat: the game (this repo, with the play UI at `/`), an
+**agent** running one interactive `claude` under a PTY for the length of one
+match, and a **driver** that tells the agent what it is playing and recycles
+it between matches. Compose's agent container is a single continuous agent,
+one per stack - see "Several games at once" below for the modes that run more
+than one agent side by side.
 
 The difference from the bundled AI seat is memory. The bundled seat is a
 one-shot `claude --print` that forgets the game when it ends. The agent runs
@@ -131,7 +137,10 @@ spawn, bypass dialog and quiescence take up to about two minutes) is accepted
 with `pending: true`, and the driver keeps offering turn 0 until the agent
 answers or the boot budget (`AGENT_BOOT_WAIT_SECONDS`, default 180) runs out.
 A second *different* game arriving while a match is live is refused with a 409
-naming the game in progress - the agent plays one at a time.
+naming the game in progress - compose's one agent container plays one game at
+a time. That limit is specific to `wrapper` mode's single agent container;
+`kubernetes` mode gives every AI seat its own Job and has no such limit (see
+"Several games at once" below).
 
 What it knows before its first action:
 
@@ -157,7 +166,8 @@ yourself.
 | the agent's notes | `./memory/` |
 
 Set `AI_SEAT_MODE=subprocess` (the default outside compose) to go back to the
-one-shot seat.
+one-shot seat, or `AI_SEAT_MODE=kubernetes` to schedule each AI seat as its own
+Job - see "Several games at once" below.
 
 ### What `docker compose logs` shows
 
@@ -197,6 +207,79 @@ Nothing here needs `LOG_LEVEL=debug`; that is for the wrapper's own internals.
 
 Both are read from `.env` by `docker compose`, so
 `ACCESS_LOG_QUIET=0 docker compose up` is enough to get everything back.
+
+## Several games at once
+
+The lobby (`http://127.0.0.1:8000/`) lists every live game side by side -
+starting one never ends another - with its own model, effort and lobby
+controls per game. How many AI seats can actually run *at the same time*
+depends on `AI_SEAT_MODE`:
+
+| `AI_SEAT_MODE` | what plays each AI seat | how many games at once |
+|---|---|---|
+| `subprocess` (default outside compose) | a one-shot `claude --print` per turn, forgetting the game when it ends | as many as the process can spawn; each seat is independent, nothing shared to contend over |
+| `wrapper` (what `docker compose up` runs) | one continuous interactive `claude` under a PTY, in the compose stack's single **agent** container, recycled between matches (see "Play against a continuous agent" above) | one - a second game's dispatch is refused with a 409 while the one agent container is mid-match |
+| `kubernetes` | one Kubernetes Job per AI seat, each carrying its own `agent` + `driver` sidecar, scheduled through the Kubernetes API (`src/magic_cards_model_api/k8s_seats.py`) | as many as the cluster and `MAX_LIVE_GAMES` allow - every seat gets its own Job, so nothing serializes them |
+
+Compose stays a single continuous agent by design - it is one process
+supervising one PTY, and that does not multiply. Running several games
+against continuous agents at once means running against a cluster in
+`kubernetes` mode instead.
+
+### The lobby
+
+- **List**: `GET /api/ui/games` returns every lobby-booted game - players,
+  turn, step, winner, each AI player's `agent` settings, and (scoped to the
+  seat uids the caller already holds, via a `?uids=` query) the uids it may
+  act through. A game nobody's browser holds a uid for still shows up as an
+  open seat for a new browser to claim.
+- **Open**: click a game in the list to resume it with the uid(s) this
+  browser saved for it (`mcm.games.v1` in `localStorage`, a list of
+  `{gameId, uid, aiUid}` entries - one per game, not one for the whole
+  browser any more).
+- **End game**: `DELETE /api/ui/games/{id}?uid=` (or `?key=` with the game's
+  admin key) is the only reset. It stops that game's AI seat - subprocess
+  terminated, wrapper dispatch handed back to the driver, or kubernetes Job
+  deleted - and deletes the game, freeing a slot under the cap. It never
+  touches `./memory`.
+- **The cap**: `MAX_LIVE_GAMES` (env, default 4) counts lobby games that are
+  not yet over; starting a new one past the cap is refused with a 409 naming
+  the count. A finished game does not count against it; only End game frees a
+  slot for one still in progress.
+
+### Agent settings, per game
+
+`POST /api/ui/games` takes an optional `agent` object per AI player -
+`{model, effort, max_thinking_tokens}` (`AgentSettings` in
+`agent_settings.py`) - carried into whichever mode plays that seat (subprocess
+argv, the wrapper dispatch, or a Job's env), and shown back on `GET
+/api/games/{id}`'s player block and in the lobby list above.
+
+- `model`: any non-empty string. The UI suggests `sonnet`, `opus`, `haiku`,
+  `fable`; the default when `agent` is omitted comes from `AGENT_DEFAULT_MODEL`
+  (env, default `sonnet`).
+- `effort`: one of `low`, `medium`, `high`, `xhigh`, `max`. Default `high`.
+- `max_thinking_tokens`: a non-negative integer, or `null`/omitted to leave
+  Claude Code's own default. `0` disables thinking where the model allows it.
+
+### Seeing the Jobs (`kubernetes` mode)
+
+```sh
+kubectl -n mtg-engine get jobs -l app.kubernetes.io/name=mtg-agent
+kubectl -n mtg-engine logs job/<name> -c agent
+```
+
+Every seat Job carries `app.kubernetes.io/name=mtg-agent` plus `mtg/game-id`
+and `mtg/seat-uid`, so `-l mtg/game-id=<id>` narrows to one game's seat. A Job
+runs its `agent` and `driver` containers for the length of one match and is
+cleaned up automatically (`ttlSecondsAfterFinished`) once it finishes; deleting
+it early is what End game does.
+
+Deploying and operating the cluster - the ServiceAccount and RBAC, the
+`ReadWriteMany` memory claim (**the live cluster's existing claim is bound
+`ReadWriteOnce` and has to be recreated**, since a PVC's access mode is
+immutable once bound), the NetworkPolicy, and the image tags - is all in
+`deploy/k8s/README.md`.
 
 ## Run it
 

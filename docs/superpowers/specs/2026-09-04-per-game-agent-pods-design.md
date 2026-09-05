@@ -118,9 +118,13 @@ uid; each mode's runner reports the same status shape.
   RuntimeDefault`, `allowPrivilegeEscalation: false`, drop ALL.
 - Containers, same images as today:
   - `agent` (wrapper image): env as today plus `MODEL`, `EFFORT`,
-    `MAX_THINKING_TOKENS`, `BASE_MCP_PATH=/etc/mtg/mcp.json`; the MCP
-    ConfigMap is rendered per Job into a `mcp` volume from a template with
-    `--game <id>` and `--api http://<api-service>:8000`; secret `mtg-agent`
+    `MAX_THINKING_TOKENS`, `BASE_MCP_PATH=/etc/mtg/mcp.json`; the MCP config
+    is written by an `mcp-config` initContainer into an emptyDir at
+    `/etc/mtg/mcp.json`, from a `--game <id>`/`--api http://<api-service>:8000`
+    JSON literal baked in by `k8s_seats.mcp_config` and passed to that
+    initContainer as the `MCP_JSON` env var - not a ConfigMap, since a per-Job
+    ConfigMap would need `configmaps` RBAC and there is nothing left for one
+    to hold once the config lives in the Job spec itself; secret `mtg-agent`
     via `envFrom`; memory PVC at `/workspace/memory`; guides from an
     initContainer as today.
   - `driver` (api image, `python -m mtg_agent.driver`): env `GAME_API`,
@@ -167,20 +171,31 @@ uid; each mode's runner reports the same status shape.
   mounted by every agent pod. Per-game files under `memory/<deck>/games/`
   never collide; `vs-<archetype>.md` and `MEMORY.md` are last-writer-wins,
   accepted for now.
+- A PVC's access mode is immutable once bound, so the live cluster's
+  existing claim - bound `ReadWriteOnce` from the single-Pod topology - must
+  be recreated, not patched, to pick up `ReadWriteMany`; documented in
+  `deploy/k8s/README.md`.
 
 ## Cluster manifests
 
 - `40-rbac.yaml`: ServiceAccount `mtg-api`; Role over `batch/jobs` (create,
-  get, list, watch, delete), `pods` (get, list, watch), `pods/log` (get),
-  `configmaps` (create, get, delete, for the per-Job MCP config);
-  RoleBinding.
+  get, list, watch, delete), `pods` (get, list, watch), `pods/log` (get). No
+  `configmaps` rule - the MCP config is written by the Job's own
+  `mcp-config` initContainer from an env var (see "Scheduler" above), so the
+  API never touches a ConfigMap; RoleBinding.
 - `50-deployment.yaml`: `mtg-stack` becomes the API alone with
   `serviceAccountName: mtg-api`, env `AI_SEAT_MODE=kubernetes`,
   `AGENT_NAMESPACE`, `AGENT_IMAGE`, `API_IMAGE`, `API_SERVICE_URL`,
-  `POD_NAME`/`POD_UID` from the downward API, `MAX_LIVE_GAMES`. The agent
-  and driver containers and the guides initContainer move into the Job
-  template, which lives in `k8s_seats.py` as a Python structure rendered
-  from env, with the image tags substituted the same way as today.
+  `POD_NAME`/`POD_UID`/`POD_NAMESPACE` from the downward API, `MAX_LIVE_GAMES`.
+  `POD_NAMESPACE` guards `ownerReferences`: a Job's owner reference must name
+  an object in the Job's own namespace, so `k8s_seats.build_job` sets
+  `ownerReferences` to the API's own Pod only when `owner_pod_namespace`
+  (from `POD_NAMESPACE`) equals the Job's own namespace, and omits it
+  otherwise rather than emit a cross-namespace reference that would either
+  be rejected or garbage-collect the wrong Pod. The agent and driver
+  containers and the guides initContainer move into the Job template, which
+  lives in `k8s_seats.py` as a Python structure rendered from env, with the
+  image tags substituted the same way as today.
 - `45-networkpolicy.yaml`: agent pods accept ingress only from the API pod;
   egress to kube-dns, the API Service, the spellslinger MCP Service, and
   TCP 443 to any address for the Anthropic API.

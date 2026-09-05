@@ -69,9 +69,14 @@ def test_the_base_mcp_points_the_mtg_server_at_the_game_container():
     assert servers["spellslinger"]["type"] == "http"
 
 
+def test_the_agent_carries_the_effort_setting(compose):
+    env = " ".join(str(e) for e in compose["services"]["agent"]["environment"])
+    assert "EFFORT" in env
+
+
 def test_env_example_lists_every_variable_compose_requires(compose):
     example = (ROOT / ".env.example").read_text()
-    for key in ("ANTHROPIC_API_KEY", "MTG_DECKS", "CLAUDE_MODEL"):
+    for key in ("ANTHROPIC_API_KEY", "MTG_DECKS", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
         assert key in example
 
 
