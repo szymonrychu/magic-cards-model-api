@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from . import ai_pregame, ai_seat, audit, lobby, scryfall, serialize
 from .agent_settings import AgentSettings
+from .ai_seat_api import _api_base
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
@@ -55,13 +56,6 @@ def max_live_games() -> int:
 #: from, sitting at the repo root next to `pyproject.toml` (three parents up
 #: from this file: `src/magic_cards_model_api/decks_api.py`).
 DECKS_DIR = Path(__file__).resolve().parents[2] / "decks"
-
-
-def _api_base(request: Request) -> str:
-    """Same shape as `ai_seat_api._api_base` - the scheme and host the AI
-    seat should call itself back on, taken off the request that booted the
-    game rather than assumed."""
-    return f"{request.url.scheme}://{request.url.netloc}"
 
 
 @router.get("/decks")
@@ -273,7 +267,7 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     for player in req.players:
         if not player.ai:
             continue
-        if mode != "wrapper" and not ai_seat.claude_available():
+        if mode == "subprocess" and not ai_seat.claude_available():
             continue
         ai_seat.registry.start(
             uid=seat_uids[player.username],

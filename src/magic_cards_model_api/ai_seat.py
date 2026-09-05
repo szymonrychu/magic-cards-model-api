@@ -344,6 +344,12 @@ class AiSeatRegistry:
             if status["mechanism"] == "wrapper":
                 with self._lock:
                     self._dispatched[uid] = status
+                    # A uid that failed to dispatch once (driver unreachable,
+                    # say) and now succeeds is no longer "unavailable" - stale
+                    # here would otherwise outlive the seat it described and
+                    # surface in `release()`'s `was_unavailable` for a seat
+                    # that, in the end, actually ran.
+                    self._unavailable.pop(uid, None)
                 note = (
                     f"handed to the driver at {status['driver']}: deck="
                     f"{status.get('deck') or 'unrecognised'} match={status.get('match_score')} "
@@ -383,6 +389,11 @@ class AiSeatRegistry:
         runner.start()
         with self._lock:
             self._runners[uid] = runner
+            # Same reasoning as the wrapper branch above: a uid that could not
+            # start earlier and now has - even if this particular spawn goes
+            # on to fail - is no longer the "nothing was ever started" case
+            # `_unavailable` exists to record.
+            self._unavailable.pop(uid, None)
         status = runner.status()
         if status["state"] == "error":
             # Spawn itself failed (`runner.error` set) - report the fallback

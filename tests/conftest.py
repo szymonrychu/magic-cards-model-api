@@ -25,12 +25,21 @@ def _no_real_claude_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
     `AiSeatRegistry.start` already refuses to spawn when `claude_available()`
     is false, reporting a harmless fallback instead - so defaulting it to
-    false here is enough to keep every test safe without touching the
-    mechanism itself. Tests that exercise the real spawn path
-    (`test_ai_seat.py`, `test_lobby_reset.py`, `test_mulligans.py`) override
-    it back to `True` themselves, and their own `command_for` stand-in is
-    what keeps the spawned process cheap rather than the real CLI."""
+    false here is already enough to keep every test safe without touching the
+    mechanism itself. `command_for` is defaulted to a harmless stand-in too,
+    as a second, independent line of defense at the actual spawn boundary -
+    belt and suspenders against a future bug that calls `subprocess.Popen`
+    without checking `claude_available()` first.
+
+    Tests that exercise the real spawn path or the real argv/fallback text
+    (`test_ai_seat.py`, `test_ai_seat_settings.py`, `test_lobby_reset.py`,
+    `test_mulligans.py`) override one or both back themselves - `command_for`
+    either to their own stand-in or to the real function captured at import
+    time, before this fixture ever ran."""
     monkeypatch.setattr(ai_seat, "claude_available", lambda: False)
+    monkeypatch.setattr(
+        ai_seat, "command_for", lambda prompt, agent: ["python3", "-c", "print('DONE')"]
+    )
 
 
 def add_card(client: TestClient, game_id: str, name: str, player: str, zone: str, **kwargs):

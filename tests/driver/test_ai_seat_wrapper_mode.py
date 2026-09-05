@@ -259,3 +259,40 @@ def test_a_seat_that_could_not_start_says_why(monkeypatch):
     )
     assert registry.activity("u") == ai_seat.GONE
     assert "driver" in registry.why_gone("u")
+
+
+# ---- creation itself dispatches the seat (POST /api/ui/games, wrapper mode) -
+#
+# The subprocess-mode counterpart lives in `test_ai_seat_settings.py`; this is
+# the same assertion - `start_game_from_decklists` starting each `ai: true`
+# seat right after `ai_pregame.start`, with no separate call to the start
+# route needed - for the other mechanism `AI_SEAT_MODE` can select.
+
+# 52 Mountain/Forest (unlimited, basic) + 4 Grizzly Bears + 4 Lightning Bolt =
+# 60, legal under CR 100.2a's four-copy limit - same shape `test_decks_api.py`
+# already uses, kept local here to stay self-contained.
+LEGAL_DECK = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
+LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
+
+
+def test_creation_alone_dispatches_the_ai_seat_in_wrapper_mode(client, driver) -> None:
+    response = client.post(
+        "/api/ui/games",
+        json={
+            "players": [
+                {"username": "alice", "decklist_text": LEGAL_DECK},
+                {"username": "bob", "decklist_text": LEGAL_DECK_B, "ai": True},
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    bot_uid = body["seat_uids"]["bob"]
+
+    # No call to `POST .../ai-seat/start` at all - creation alone must have
+    # already dispatched the seat to the (fake) driver.
+    assert len(driver) == 1
+    assert driver[0]["uid"] == bot_uid
+    status = ai_seat.registry.status(bot_uid)
+    assert status is not None
+    assert status["mechanism"] == "wrapper"

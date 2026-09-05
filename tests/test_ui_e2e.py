@@ -96,11 +96,16 @@ def test_full_turn_through_the_ui_endpoints(client: TestClient, booted_game: dic
     bob_uid = boot_body["seat_uids"]["bob"]
 
     # The lobby also offers to start the AI seat right away, same as
-    # `startGame()` in app.js - exercise that call too, with `claude`'s own
-    # availability whatever it is on this machine: either a real subprocess
-    # starts (state != "not_started") or the fallback prompt comes back, both
-    # of which `ai_seat.py`'s own tests cover in more depth. Here we only
-    # need this call to not blow up the game boot flow.
+    # `startGame()` in app.js - exercise that call too. `booted_game` already
+    # posted `ai: true` for bob, so creation itself has already tried this
+    # (see `test_ai_seat_settings.py` for that assertion); this call lands on
+    # an already-started seat or a no-op fallback either way. Which branch -
+    # not this machine's own `claude` availability, but `conftest.py`'s
+    # autouse fixture, which pins `claude_available()` to `False` for the
+    # whole suite - decides is "fallback" here, deterministically; a test
+    # that wants the real subprocess branch opts in with its own
+    # `claude_available`/`command_for` stand-in, the way `ai_seat.py`'s own
+    # tests do. Here we only need this call to not blow up the game boot flow.
     ai_start = client.post(f"/api/ui/games/{game_id}/ai-seat/start", json={"uid": bob_uid})
     assert ai_start.status_code == 200
     assert ai_start.json()["mechanism"] in ("subprocess", "fallback")

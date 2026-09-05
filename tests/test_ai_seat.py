@@ -33,6 +33,12 @@ from magic_cards_model_api.agent_settings import AgentSettings
 #: matter to these tests, only that some `AgentSettings` reaches the runner.
 DEFAULT_AGENT = AgentSettings(model="sonnet")
 
+# Captured at import time, before `tests/conftest.py`'s autouse fixture ever
+# patches `ai_seat.command_for` to a harmless stand-in - the real function,
+# for the tests below that check its actual argv/fallback text rather than a
+# stand-in's.
+_REAL_COMMAND_FOR = ai_seat.command_for
+
 
 def wait_until(predicate, *, max_seconds: float = 5.0, poll: float = 0.05) -> None:
     deadline = time.monotonic() + max_seconds
@@ -62,7 +68,10 @@ def test_build_prompt_fills_in_the_seats_own_identifiers() -> None:
     assert "http://127.0.0.1:9000" in prompt
 
 
-def test_command_for_places_the_prompt_after_a_bare_dash_dash() -> None:
+def test_command_for_places_the_prompt_after_a_bare_dash_dash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ai_seat, "command_for", _REAL_COMMAND_FOR)
     # Load-bearing: `--allowedTools` is variadic in the real CLI and would
     # otherwise swallow the prompt as another tool name - see module docstring.
     command = ai_seat.command_for("a prompt with spaces", DEFAULT_AGENT)
@@ -76,6 +85,7 @@ def test_claude_unavailable_reports_fallback_with_a_runnable_command(
     monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
     monkeypatch.setattr(ai_seat, "claude_available", lambda: False)
+    monkeypatch.setattr(ai_seat, "command_for", _REAL_COMMAND_FOR)
     status = fresh_registry.start(
         uid="u1", game_id="g1", player="bob", api_base="http://127.0.0.1:8000", agent=DEFAULT_AGENT
     )
