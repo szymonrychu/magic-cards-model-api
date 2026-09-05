@@ -64,6 +64,47 @@ function boxed(id) {
 """
 
 
+GAMES = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": 3,
+        "step": "precombat_main",
+        "winner": None,
+        "drawn": None,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        "seats": {"you": "u1"},
+    }
+]
+SAVED = [{"gameId": "g1", "uid": "u1", "aiUid": "u2"}]
+
+
+def test_lobby_rows_join_server_games_with_saved_seats() -> None:
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES, saved=SAVED)
+    assert rows == [
+        {
+            "gameId": "g1",
+            "opponent": "bot",
+            "turn": 3,
+            "step": "precombat_main",
+            "over": False,
+            "model": "opus",
+            "effort": "max",
+            "myUid": "u1",
+            "aiUid": "u2",
+        }
+    ]
+
+
+def test_agent_body_from_fields() -> None:
+    assert run_module(
+        "lobby_model.js", "m.agentFrom({ model: ' fable ', effort: 'low', thinking: '' })"
+    ) == {"model": "fable", "effort": "low", "max_thinking_tokens": None}
+    assert run_module(
+        "lobby_model.js", "m.agentFrom({ model: '', effort: 'high', thinking: '0' })"
+    ) == {"model": "sonnet", "effort": "high", "max_thinking_tokens": 0}
+
+
 def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
     result = run_module(
         "render/lobby.js",
@@ -105,3 +146,71 @@ def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
     ]
     assert result["you"] == expected
     assert result["ai"] == expected
+
+
+def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
+    """`mountLobby` reads `mcm.games.v1`, joins it against
+    `GET /api/ui/games?uids=...` through `lobbyViewModel`, and renders one
+    `<tr>` per row into `#games-tbody`. Clicking a row's End button calls
+    `DELETE /api/ui/games/{id}?uid=<my seat uid>` and drops the row from both
+    the table and `mcm.games.v1` - proven here by the saved list actually
+    being empty afterward, not just the DELETE call having fired."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const table = document.createElement("table");
+          table.setAttribute("id", "games-table");
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          table.appendChild(tbody);
+          document.appendChild(table);
+
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+
+          const fetchCalls = [];
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            fetchCalls.push(`${method} ${path}`);
+            if (path.startsWith("/api/ui/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            if (method === "DELETE") {
+              return { ok: true, status: 200, json: async () => ({ deleted: true }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+
+          const rowText = tbody.children[0].children.map((td) => td.textContent);
+          const actionsCell = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const endBtn = actionsCell.children[1];
+          endBtn.listeners.click();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+
+          return {
+            fetchCalls,
+            rowText,
+            rowCountAfter: tbody.children.length,
+            savedAfter: JSON.parse(storageData["mcm.games.v1"] || "[]"),
+          };
+        })()
+        """,
+        games=GAMES,
+        saved=SAVED,
+    )
+    assert "GET /api/ui/games?uids=u1%2Cu2" in result["fetchCalls"]
+    assert result["rowText"][0] == "bot"
+    assert result["rowText"][3] == "playing"
+    assert "DELETE /api/ui/games/g1?uid=u1" in result["fetchCalls"]
+    assert result["rowCountAfter"] == 0
+    assert result["savedAfter"] == []

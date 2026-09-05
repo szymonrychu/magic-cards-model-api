@@ -26,9 +26,19 @@ import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./render/panels.js";
+import { loadSavedGames, saveGames, upsertSavedGame } from "./lobby_model.js";
 
 const POLL_MS = 1200;
-const LS_KEY = "mcm.game";
+
+function currentStorage() {
+  return typeof localStorage !== "undefined" ? localStorage : null;
+}
+
+// Set once `main()` mounts the lobby - `leaveGame` (defined ahead of `main()`
+// in this file) calls `lobbyApi.refresh()` through it, so the games table
+// is current the moment a player returns to the lobby rather than only on
+// page load or the game's own Start/End.
+let lobbyApi = null;
 
 // Exported for `tests/test_ui_app.py` only - a real (if DOM-less) drive of
 // `tryTarget` needs somewhere to set up the scenario's `action`/`state`
@@ -706,8 +716,12 @@ async function passForAiSeat(aiPlayer) {
   await poll();
 }
 
+/** "Lobby" in the topbar: back to the lobby, but the game itself is left
+ * running - it stays in `mcm.games.v1` and in the lobby's own table, exactly
+ * the point of that table over the old one-game `mcm.game` key it replaced.
+ * Only **End game** (the lobby's own button, `render/lobby.js`'s `endGame`)
+ * actually ends a game. */
 function leaveGame() {
-  localStorage.removeItem(LS_KEY);
   store.set({
     gameId: null,
     uid: null,
@@ -724,13 +738,29 @@ function leaveGame() {
   });
   document.querySelector("#game").hidden = true;
   document.querySelector("#lobby").hidden = false;
+  if (lobbyApi) lobbyApi.refresh().catch((e) => console.error(e));
 }
 
 // ---- boot ----------------------------------------------------------------
 
 export async function startGame(created) {
   store.set({ gameId: created.game_id, uid: created.uid, aiUid: created.aiUid, log: { entries: [], lastSeq: 0 } });
-  localStorage.setItem(LS_KEY, JSON.stringify({ gameId: created.game_id, uid: created.uid, aiUid: created.aiUid }));
+  // Appends rather than overwrites: `mcm.games.v1` is a list, one entry per
+  // game this browser has started or opened, not the single `{gameId, uid,
+  // aiUid}` the old `mcm.game` key held. `upsertSavedGame` also covers Open
+  // on a row already in the list (the game itself is unchanged; only its
+  // `uid`/`aiUid` are refreshed to whatever this call was actually handed).
+  const storage = currentStorage();
+  if (storage) {
+    saveGames(
+      storage,
+      upsertSavedGame(loadSavedGames(storage), {
+        gameId: created.game_id,
+        uid: created.uid,
+        aiUid: created.aiUid,
+      })
+    );
+  }
   document.querySelector("#lobby").hidden = true;
   document.querySelector("#game").hidden = false;
   await poll();
@@ -738,7 +768,7 @@ export async function startGame(created) {
 
 async function main() {
   store.set({ symbols: await loadSymbols(api) });
-  mountLobby(document, store, { startGame });
+  lobbyApi = mountLobby(document, store, { startGame });
   mountBoard(document, store, {
     onHandCard,
     onPermanent,
@@ -850,14 +880,25 @@ async function main() {
     cancel();
     hidePopover();
   });
-  let saved = null;
+  // The lobby is the entry point now that it lists every live game - so
+  // booting straight back into a game is no longer the default. The one
+  // exception: exactly one saved game is the same situation the old
+  // single-game `mcm.game` key always described, and jumping straight back
+  // into it (rather than making a player click through to their only game
+  // every time) is worth keeping. Two or more saved games always land on
+  // the lobby table instead, since there is no longer one obvious game to
+  // resume into.
+  let saved = [];
   try {
-    saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+    saved = loadSavedGames(currentStorage());
   } catch {
     // a corrupted or unreadable localStorage entry is no worse than none
-    saved = null;
+    saved = [];
   }
-  if (saved && saved.gameId) await startGame({ game_id: saved.gameId, uid: saved.uid, aiUid: saved.aiUid });
+  if (saved.length === 1) {
+    const only = saved[0];
+    await startGame({ game_id: only.gameId, uid: only.uid, aiUid: only.aiUid });
+  }
   setInterval(poll, POLL_MS);
 }
 

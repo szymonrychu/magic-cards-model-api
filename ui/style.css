@@ -121,6 +121,21 @@ h3 { font-size: 14px; }
 .lobby-footer { display: flex; align-items: flex-end; gap: 16px; }
 .seed { font-size: 12px; color: var(--ink-dim); }
 
+#games-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+#games-table th, #games-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+#games-table th { color: var(--ink-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+#games-table td:last-child { display: flex; gap: 6px; }
+#games-table tbody tr:hover { background: var(--bg-raised); }
+
 /* -------------------------------------------------------------- game ---- */
 
 #game {

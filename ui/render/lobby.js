@@ -20,8 +20,25 @@
 // whose own poll loop fetches AI-seat status independently - so nothing here
 // needs to await it or show anything for it beyond a console line if it
 // fails outright.
+//
+// Task 9 adds the lobby's own game list: `#games-tbody` gets one row per
+// game this browser has ever started or opened (`mcm.games.v1`, via
+// `lobby_model.js`'s storage helpers), joined against
+// `GET /api/ui/games?uids=...` through `lobbyViewModel`. Open re-enters a
+// game the same way a fresh Start does (`handlers.startGame`); End calls
+// `DELETE /api/ui/games/{id}?uid=` and drops the row from storage. The AI
+// deck picker also gains `#ai-model`/`#ai-effort`/`#ai-thinking`, read
+// through `agentFrom` into the `agent` field `POST /api/ui/games` sends for
+// the AI player.
 
 import { api } from "../api.js";
+import {
+  agentFrom,
+  lobbyViewModel,
+  loadSavedGames,
+  saveGames,
+  dropSavedGame,
+} from "../lobby_model.js";
 
 function $(root, sel) {
   return root.querySelector(sel);
@@ -133,10 +150,15 @@ async function startGame(root, handlers) {
   }
   const seedEl = $(root, "#seed");
   const seedRaw = seedEl ? seedEl.value : "";
+  const agent = agentFrom({
+    model: fieldValue(root, "#ai-model"),
+    effort: fieldValue(root, "#ai-effort"),
+    thinking: fieldValue(root, "#ai-thinking"),
+  });
   const body = {
     players: [
       { username: youName, decklist_text: youText, ai: false },
-      { username: aiName, decklist_text: aiText, ai: true },
+      { username: aiName, decklist_text: aiText, ai: true, agent },
     ],
   };
   if (seedRaw) body.seed = parseInt(seedRaw, 10);
@@ -158,15 +180,125 @@ async function startGame(root, handlers) {
     console.error(`could not start the AI seat: ${e.message}`);
   });
   handlers.startGame({ game_id: created.game_id, uid, aiUid });
+  // Refresh the table too - not awaited, since `handlers.startGame` has
+  // already moved on to the game screen: this only makes sure the row is
+  // there and current the next time the lobby is shown (`app.js`'s own
+  // `startGame` is what actually saves this game to `mcm.games.v1`).
+  refreshGames(root, handlers).catch((e) => console.error(e));
+}
+
+function fieldValue(root, sel) {
+  const el = $(root, sel);
+  return el ? el.value : "";
+}
+
+function currentStorage() {
+  return typeof localStorage !== "undefined" ? localStorage : null;
+}
+
+/** "pending" (still in CR 103.5/103.6's pregame - `booted_game`'s own boot
+ * leaves a game resting at turn 0 until both seats clear it), "playing", or
+ * "over" (a winner or a draw). */
+function gameState(row) {
+  if (row.over) return "over";
+  if (row.turn === 0) return "pending";
+  return "playing";
+}
+
+/** `tbody.replaceChildren()` on a real DOM; falls back to reassigning
+ * `.children` for the plain fake DOM `tests/test_ui_lobby.py` uses, which
+ * has neither `replaceChildren` nor `removeChild`. A real `<tbody>`'s
+ * `.children` has no setter (an ES module always runs in strict mode, so
+ * that assignment would throw `TypeError`) - `replaceChildren` is tried
+ * first for exactly that reason, and it is the one real browsers actually
+ * have. */
+function clearChildren(el) {
+  if (typeof el.replaceChildren === "function") el.replaceChildren();
+  else el.children = [];
+}
+
+function renderGamesTable(root, handlers, rows) {
+  const tbody = $(root, "#games-tbody");
+  if (!tbody) return;
+  clearChildren(tbody);
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    const opponentTd = document.createElement("td");
+    opponentTd.textContent = row.opponent || "(unknown)";
+    const turnTd = document.createElement("td");
+    turnTd.textContent = `${row.turn ?? "-"} / ${row.step || "-"}`;
+    const agentTd = document.createElement("td");
+    agentTd.textContent = row.model ? `${row.model} / ${row.effort || "high"}` : "-";
+    const stateTd = document.createElement("td");
+    stateTd.textContent = gameState(row);
+    const actionsTd = document.createElement("td");
+    const openBtn = document.createElement("button");
+    openBtn.textContent = "Open";
+    openBtn.addEventListener("click", () => {
+      handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
+    });
+    const endBtn = document.createElement("button");
+    endBtn.textContent = "End";
+    endBtn.className = "danger";
+    endBtn.addEventListener("click", () => {
+      endGame(root, handlers, row).catch((e) => console.error(e));
+    });
+    actionsTd.appendChild(openBtn);
+    actionsTd.appendChild(endBtn);
+    for (const cell of [opponentTd, turnTd, agentTd, stateTd, actionsTd]) tr.appendChild(cell);
+    tbody.appendChild(tr);
+  }
+}
+
+async function endGame(root, handlers, row) {
+  try {
+    await api("DELETE", `/api/ui/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
+  } catch (e) {
+    console.error(`could not end game ${row.gameId}: ${e.message}`);
+  }
+  const storage = currentStorage();
+  saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
+  await refreshGames(root, handlers);
+}
+
+/** Read `mcm.games.v1`, ask the server for every one of those games, and
+ * render the joined rows - the "on mount and after Start/End" refresh the
+ * lobby's game list gets. Every saved uid (both seats, not only this
+ * browser's own) goes into the `uids` query so `list_lobby_games`'s own
+ * filter includes this browser's seat in the `seats` it hands back for each
+ * game (`lobbyViewModel` needs at least one seat present to know who "you"
+ * are in that game). With nothing saved, this skips the network call
+ * entirely and just renders an empty table. */
+async function refreshGames(root, handlers) {
+  const storage = currentStorage();
+  const saved = loadSavedGames(storage);
+  const uids = [...new Set(saved.flatMap((g) => [g.uid, g.aiUid]).filter(Boolean))];
+  if (!uids.length) {
+    renderGamesTable(root, handlers, []);
+    return;
+  }
+  let games;
+  try {
+    ({ games } = await api("GET", `/api/ui/games?uids=${encodeURIComponent(uids.join(","))}`));
+  } catch (e) {
+    console.error(`could not load the game list: ${e.message}`);
+    return;
+  }
+  renderGamesTable(root, handlers, lobbyViewModel(games, saved));
 }
 
 /** Mount the lobby into `root`: load the bundled deck list into both
- * selects, wire each seat's bundled-deck/upload/paste/validate controls, and
+ * selects, wire each seat's bundled-deck/upload/paste/validate controls,
  * wire `#start-game` to validate both decks and, on success, call
- * `handlers.startGame({game_id, uid, aiUid})`. `store` is accepted for
- * signature parity with the other `mount*` modules; the lobby itself has no
- * store-driven rendering of its own - everything it reads and writes lives
- * on the lobby's own form fields. */
+ * `handlers.startGame({game_id, uid, aiUid})`, and render the games table
+ * (`#games-tbody`) from `mcm.games.v1` joined against the server. `store` is
+ * accepted for signature parity with the other `mount*` modules; the lobby
+ * itself has no store-driven rendering of its own - everything it reads and
+ * writes lives on the lobby's own form fields and on `localStorage`.
+ *
+ * Returns `{refresh}` - `refresh()` re-reads `mcm.games.v1` and re-renders
+ * the table, for `app.js`'s `leaveGame` to call when a player returns to the
+ * lobby from a game that may have moved on since the table was last drawn. */
 export function mountLobby(root, store, handlers) {
   loadBundledDecks(root).catch((e) => console.error(e));
   wireDeckPicker(root, "you");
@@ -180,4 +312,6 @@ export function mountLobby(root, store, handlers) {
       });
     });
   }
+  refreshGames(root, handlers).catch((e) => console.error(e));
+  return { refresh: () => refreshGames(root, handlers) };
 }

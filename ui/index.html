@@ -48,6 +48,27 @@
       </label>
       <button id="ai-validate">Validate</button>
       <div class="validation" id="ai-validation"></div>
+      <label>Model
+        <input type="text" id="ai-model" list="ai-model-suggestions" placeholder="sonnet" />
+        <datalist id="ai-model-suggestions">
+          <option value="sonnet"></option>
+          <option value="opus"></option>
+          <option value="haiku"></option>
+          <option value="fable"></option>
+        </datalist>
+      </label>
+      <label>Effort
+        <select id="ai-effort">
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high" selected>high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
+      </label>
+      <label>Thinking budget (tokens, optional)
+        <input type="number" id="ai-thinking" min="0" placeholder="model default" />
+      </label>
     </div>
   </div>
 
@@ -58,6 +79,20 @@
     <button id="start-game" class="primary big">Start game</button>
   </div>
   <div id="start-error" class="error"></div>
+
+  <h2>Live games</h2>
+  <table id="games-table">
+    <thead>
+      <tr>
+        <th>Opponent</th>
+        <th>Turn / step</th>
+        <th>Model / effort</th>
+        <th>State</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="games-tbody"></tbody>
+  </table>
 </section>
 
 <!-- ================================= GAME ================================ -->

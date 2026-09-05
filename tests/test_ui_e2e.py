@@ -41,13 +41,26 @@ def booted_game(client: TestClient) -> dict:
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK, "ai": False},
-                {"username": "bob", "decklist_text": LEGAL_DECK_B, "ai": True},
+                {
+                    "username": "bob",
+                    "decklist_text": LEGAL_DECK_B,
+                    "ai": True,
+                    # The lobby's `#ai-model`/`#ai-effort`/`#ai-thinking` fields,
+                    # sent through `agentFrom` - `test_ui_lobby.py` covers that
+                    # function itself; this proves the whole request round trip
+                    # carries it, the same `agent` field `decks_api.py`'s
+                    # `NewUiPlayer` accepts.
+                    "agent": {"model": "opus", "effort": "max", "max_thinking_tokens": None},
+                },
             ],
             "seed": 7,
         },
     )
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["agents"] == {
+        "bob": {"model": "opus", "effort": "max", "max_thinking_tokens": None}
+    }
 
     # The boot leaves the game resting in CR 103.5's mulligan step (turn 0),
     # which is where a human at /play/ now starts: nothing on the board can
