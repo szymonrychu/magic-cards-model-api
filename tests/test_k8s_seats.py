@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from kubernetes import client as k8s_client
+
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.k8s_seats import K8sSettings, build_job, job_name, mcp_config
 
@@ -119,3 +121,17 @@ def test_init_containers_present_in_order_with_security_context() -> None:
     assert names == ["guides", "mcp-config"]
     for container in init_containers:
         assert container["securityContext"]["allowPrivilegeEscalation"] is False
+
+
+def test_job_is_plain_dicts_the_kubernetes_client_can_serialize() -> None:
+    # `create_namespaced_job(namespace, body=dict)` hands this straight to
+    # `ApiClient.sanitize_for_serialization`, which branches on
+    # `isinstance(obj, dict)` - anything that fails that check (a
+    # `types.MappingProxyType`, say) falls into the model-attribute branch and
+    # raises `AttributeError: '...' object has no attribute 'openapi_types'`.
+    # This is the exact code path that would have caught the shared,
+    # module-level `CONTAINER_SECURITY` mapping-proxy regression.
+    job = _build(ENV)
+    json.dumps(job)
+    sanitized = k8s_client.ApiClient().sanitize_for_serialization(job)
+    assert isinstance(sanitized, dict)

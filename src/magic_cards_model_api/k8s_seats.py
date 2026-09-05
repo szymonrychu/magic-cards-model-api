@@ -31,7 +31,6 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any
 
 from .agent_settings import AgentSettings
@@ -113,13 +112,20 @@ def _env(pairs: Mapping[str, str]) -> list[dict[str, str]]:
     return [{"name": k, "value": v} for k, v in pairs.items()]
 
 
-CONTAINER_SECURITY = MappingProxyType(
-    {
+def container_security() -> dict[str, Any]:
+    """A fresh per-container securityContext dict.
+
+    Not a shared module-level constant: the Kubernetes client's
+    `ApiClient.sanitize_for_serialization` branches on `isinstance(obj, dict)`
+    and falls into its model-attribute branch for anything else (a
+    `types.MappingProxyType`, say), raising `AttributeError` rather than
+    serializing it. Every `securityContext` site gets its own plain dict.
+    """
+    return {
         "allowPrivilegeEscalation": False,
         "capabilities": {"drop": ["ALL"]},
         "runAsNonRoot": True,
     }
-)
 
 
 def build_job(
@@ -231,7 +237,7 @@ def build_job(
                     {"name": "HOME", "value": "/agent-home"},
                 ],
                 "volumeMounts": [{"name": "guides", "mountPath": "/guides"}],
-                "securityContext": CONTAINER_SECURITY,
+                "securityContext": container_security(),
                 "resources": {
                     "requests": {"cpu": "50m", "memory": "64Mi"},
                     "limits": {"cpu": "500m", "memory": "256Mi"},
@@ -244,7 +250,7 @@ def build_job(
                 "command": ["/bin/sh", "-euc", "printf '%s' \"$MCP_JSON\" > /etc/mtg/mcp.json"],
                 "env": [{"name": "MCP_JSON", "value": mcp_json}],
                 "volumeMounts": [{"name": "mcp", "mountPath": "/etc/mtg"}],
-                "securityContext": CONTAINER_SECURITY,
+                "securityContext": container_security(),
                 "resources": {
                     "requests": {"cpu": "10m", "memory": "16Mi"},
                     "limits": {"cpu": "100m", "memory": "64Mi"},
@@ -276,7 +282,7 @@ def build_job(
                     "timeoutSeconds": 5,
                     "failureThreshold": 3,
                 },
-                "securityContext": CONTAINER_SECURITY,
+                "securityContext": container_security(),
                 "resources": {
                     "requests": {"cpu": "250m", "memory": "1Gi"},
                     "limits": {"cpu": "2", "memory": "3Gi"},
@@ -300,7 +306,7 @@ def build_job(
                     "timeoutSeconds": 3,
                     "failureThreshold": 3,
                 },
-                "securityContext": CONTAINER_SECURITY,
+                "securityContext": container_security(),
                 "resources": {
                     "requests": {"cpu": "50m", "memory": "128Mi"},
                     "limits": {"cpu": "500m", "memory": "512Mi"},
