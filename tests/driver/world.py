@@ -33,7 +33,23 @@ def build_world(tmp_path) -> SimpleNamespace:
     (guides / "decklist.txt").write_text(DECKLIST)
     (guides / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
 
-    state = {"winner": None, "decklist": DECKLIST, "agent": "up", "game": "up", "deleted": 0}
+    state = {
+        "winner": None,
+        "decklist": DECKLIST,
+        "agent": "up",
+        "game": "up",
+        "deleted": 0,
+        #: Whether the fake wrapper answers `/v1/session` at all - False
+        #: stands in for an older wrapper that predates the route, so a
+        #: test can assert the driver treats its 404 as "not supported,
+        #: continue" rather than failing the dispatch.
+        "session_supported": True,
+    }
+    #: The fake wrapper's own idea of its current model/effort/max_thinking_
+    #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
+    #: Starts empty so a test can assert a push actually changed it.
+    session_settings = {"model": "", "effort": "", "maxThinkingTokens": None}
+    session_posts: list[dict] = []
     submitted: list[dict] = []
 
     game = FastAPI()
@@ -72,6 +88,24 @@ def build_world(tmp_path) -> SimpleNamespace:
         state["agent"] = "booting"
         return {"stopping": True, "exiting": True}
 
+    @wrapper.get("/v1/session")
+    def get_session():
+        if not state["session_supported"]:
+            raise HTTPException(status_code=404, detail="not found")
+        return dict(session_settings)
+
+    @wrapper.post("/v1/session", status_code=202)
+    def post_session(body: dict):
+        if not state["session_supported"]:
+            raise HTTPException(status_code=404, detail="not found")
+        session_posts.append(body)
+        session_settings.update(
+            model=body.get("model", ""),
+            effort=body.get("effort", ""),
+            maxThinkingTokens=body.get("max_thinking_tokens"),
+        )
+        return {"restarting": True}
+
     def client_factory(base_url: str) -> httpx.Client:
         app = game if "game" in base_url else wrapper
         return TestClient(app, base_url=base_url)
@@ -94,6 +128,8 @@ def build_world(tmp_path) -> SimpleNamespace:
         settings=settings,
         submitted=submitted,
         wrapper_posts=submitted,
+        session_settings=session_settings,
+        session_posts=session_posts,
         state=state,
         uid="secret-uid",
         game_id="g-1",

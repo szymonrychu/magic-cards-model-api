@@ -177,6 +177,72 @@ def build_app(
         )
         return turn_id
 
+    def sync_agent_settings(agent: dict | None) -> None:
+        """Push this seat's per-game model/effort/max_thinking_tokens to the
+        wrapper before turn 0, if they differ from what it already reports.
+
+        `agent` is `DispatchIn.agent` - `AgentSettings.model_dump()` from the
+        game server, so its keys are `model`/`effort`/`max_thinking_tokens`.
+        Never raises: a wrapper old enough to answer 404 to both routes (or
+        one simply unreachable) means "not supported, continue" - the seat
+        still gets a match, just not this session's chosen model/effort,
+        exactly as it did before this pass-through existed.
+        """
+        if not agent:
+            return
+        wanted = {
+            "model": agent.get("model") or "",
+            "effort": agent.get("effort") or "",
+            "max_thinking_tokens": agent.get("max_thinking_tokens"),
+        }
+        try:
+            with make_client(settings.wrapper_api) as client:
+                current_response = client.get("/v1/session", headers=wrapper_headers())
+        except Exception as exc:  # noqa: BLE001 - an unreachable wrapper is not fatal here
+            log.warning("could not read wrapper session settings: %s", exc)
+            return
+        if current_response.status_code == 404:
+            log.info("wrapper does not support GET /v1/session; skipping agent settings push")
+            return
+        if current_response.status_code >= 400:
+            log.warning(
+                "wrapper session read answered %s; skipping agent settings push",
+                current_response.status_code,
+            )
+            return
+        live = current_response.json()
+        if (
+            live.get("model") == wanted["model"]
+            and live.get("effort") == wanted["effort"]
+            and live.get("maxThinkingTokens") == wanted["max_thinking_tokens"]
+        ):
+            return
+        try:
+            with make_client(settings.wrapper_api) as client:
+                post_response = client.post("/v1/session", json=wanted, headers=wrapper_headers())
+        except Exception as exc:  # noqa: BLE001 - an unreachable wrapper is not fatal here
+            log.warning("could not push agent settings to the wrapper: %s", exc)
+            return
+        if post_response.status_code == 404:
+            log.info(
+                "wrapper does not support POST /v1/session; continuing with its own boot defaults"
+            )
+            return
+        if post_response.status_code >= 400:
+            log.warning(
+                "wrapper refused agent settings model=%s effort=%s: %s",
+                wanted["model"],
+                wanted["effort"],
+                post_response.status_code,
+            )
+            return
+        log.info(
+            "pushed agent settings to the wrapper: model=%s effort=%s max_thinking_tokens=%s",
+            wanted["model"],
+            wanted["effort"],
+            wanted["max_thinking_tokens"],
+        )
+
     def retire(assignment: Assignment) -> bool:
         """End the agent's life. `DELETE /v1/session` makes it exit, its
         restart policy gives the next match a fresh container, and we drop
@@ -352,6 +418,8 @@ def build_app(
                 turnActive=False,
                 lastError=None,
             )
+
+        sync_agent_settings(body.agent)
 
         try:
             turn_id = push_turn(text)

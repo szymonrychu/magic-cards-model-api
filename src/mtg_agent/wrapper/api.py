@@ -10,6 +10,7 @@ endpoint.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,14 @@ class MessageIn(BaseModel):
 
 class ProbeIn(BaseModel):
     text: str = ""
+
+
+class SessionIn(BaseModel):
+    """A per-game agent settings push - see `POST /v1/session` below."""
+
+    model: str = ""
+    effort: str = ""
+    max_thinking_tokens: int | None = None
 
 
 def build_public_app(
@@ -79,6 +88,30 @@ def build_public_app(
     @app.get("/v1/session", dependencies=guard)
     def get_session() -> dict:
         return manager.snapshot()
+
+    @app.post("/v1/session", status_code=202, dependencies=guard)
+    def post_session(body: SessionIn) -> dict:
+        """Per-game model/effort/max_thinking_tokens, applied for the next
+        turn onward. Requires no turn in flight - a 409 (`BusyError`) means
+        the caller (the driver's `assign`, ahead of turn 0) must retry once
+        the session is free rather than pulling the supervised claude out
+        from under a turn. Restarting the supervised process is how the CLI
+        picks up a new `--model`/`--effort`; there is no way to change either
+        on an already-running claude.
+        """
+        new_settings = replace(
+            manager.settings,
+            model=body.model,
+            effort=body.effort,
+            max_thinking_tokens=body.max_thinking_tokens,
+        )
+        try:
+            manager.restart(new_settings)
+        except BusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except DeadError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"restarting": True, "model": body.model, "effort": body.effort}
 
     @app.delete("/v1/session", status_code=202, dependencies=guard)
     def delete_session(background: BackgroundTasks) -> dict:

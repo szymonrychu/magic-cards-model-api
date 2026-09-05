@@ -3,7 +3,9 @@ from fastapi.testclient import TestClient
 
 from mtg_agent.wrapper.api import build_internal_app, build_public_app
 from mtg_agent.wrapper.config import Settings
-from mtg_agent.wrapper.session import State
+from mtg_agent.wrapper.metrics import Metrics
+from mtg_agent.wrapper.session import Manager, State
+from mtg_agent.wrapper.turns import Store
 from tests.wrapper.test_session import FakeProc, fast_settings, ready_manager
 
 
@@ -15,6 +17,27 @@ def wired(monkeypatch):
     public = TestClient(build_public_app(manager, settings))
     internal = TestClient(build_internal_app(manager))
     yield manager, proc, public, internal
+    manager.shutdown()
+
+
+@pytest.fixture
+def restartable(monkeypatch):
+    """Like `wired`, but `spawn` hands back a fresh `FakeProc` on every call -
+    `wired`'s single fixed proc can't stand in for a `restart()` (or a real
+    claude respawn), which closes the current process and boots a new one."""
+    monkeypatch.setattr("mtg_agent.wrapper.session.MIN_BOOT", 0.01)
+    monkeypatch.setattr("mtg_agent.wrapper.session.IDLE_READY", 0.05)
+    spawned: list[FakeProc] = []
+
+    def spawn(_settings: Settings, _resume: bool) -> FakeProc:
+        proc = FakeProc(b"ready")
+        spawned.append(proc)
+        return proc
+
+    manager = Manager(fast_settings(MODEL="sonnet"), Store(), Metrics(), spawn=spawn)
+    manager.start()
+    public = TestClient(build_public_app(manager, manager.settings))
+    yield manager, spawned, public
     manager.shutdown()
 
 
@@ -206,3 +229,36 @@ def test_the_exit_hook_is_not_reachable_without_the_secret(monkeypatch):
         assert manager._stopping is False
     finally:
         manager.shutdown()
+
+
+# ---- POST /v1/session: per-game model/effort/max_thinking_tokens ----------
+
+
+def test_post_session_restarts_claude_with_the_new_settings(restartable):
+    manager, spawned, public = restartable
+    assert len(spawned) == 1
+    response = public.post(
+        "/v1/session", json={"model": "opus", "effort": "max", "max_thinking_tokens": 4096}
+    )
+    assert response.status_code == 202
+    assert response.json() == {"restarting": True, "model": "opus", "effort": "max"}
+    assert len(spawned) == 2, "the supervised claude must actually be relaunched"
+    snapshot = public.get("/v1/session").json()
+    assert snapshot["model"] == "opus"
+    assert snapshot["effort"] == "max"
+    assert snapshot["maxThinkingTokens"] == 4096
+    assert snapshot["state"] == "ready"
+
+
+def test_post_session_is_409_while_a_turn_is_in_flight(restartable):
+    manager, spawned, public = restartable
+    public.post("/v1/messages", json={"text": "a whole match's worth of turns"})
+    response = public.post("/v1/session", json={"model": "opus"})
+    assert response.status_code == 409
+    assert len(spawned) == 1, "a busy session must not be restarted"
+
+
+def test_post_session_is_503_once_the_session_is_dead(restartable):
+    manager, _, public = restartable
+    manager._state = State.DEAD
+    assert public.post("/v1/session", json={"model": "opus"}).status_code == 503

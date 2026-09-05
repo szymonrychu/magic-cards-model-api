@@ -262,6 +262,15 @@ argv, the wrapper dispatch, or a Job's env), and shown back on `GET
 - `max_thinking_tokens`: a non-negative integer, or `null`/omitted to leave
   Claude Code's own default. `0` disables thinking where the model allows it.
 
+In `wrapper` mode this is not just carried in a dispatch payload and ignored:
+the driver's `assign` reads the wrapper's current settings (`GET
+/v1/session`) and, if they differ from this seat's `agent`, pushes the new
+ones (`POST /v1/session`) before turn 0. The wrapper restarts its supervised
+claude with them - there is no way to change `--model`/`--effort` on an
+already-running claude. An older wrapper that predates the route answers 404
+to both calls, which the driver treats as "not supported, continue": the seat
+still plays, just with whatever model/effort it booted with.
+
 ### Seeing the Jobs (`kubernetes` mode)
 
 ```sh

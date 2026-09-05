@@ -442,3 +442,45 @@ def test_a_dispatch_that_is_still_reaching_the_agent_has_no_live_turn(world):
     body = client.get("/status").json()
     assert body["pending"] is True
     assert body["turnActive"] is False, "a booting agent is not holding a turn"
+
+
+# ---- assign pushes DispatchIn.agent to the wrapper's /v1/session ahead of
+# turn 0, when it differs from what the wrapper already reports -------------
+
+
+def test_dispatch_pushes_differing_agent_settings_to_the_wrapper_before_turn_0(world):
+    client = world.client
+    dispatch(client, agent={"model": "opus", "effort": "max", "max_thinking_tokens": 4096})
+    assert world.session_posts == [{"model": "opus", "effort": "max", "max_thinking_tokens": 4096}]
+    assert world.session_settings == {
+        "model": "opus",
+        "effort": "max",
+        "maxThinkingTokens": 4096,
+    }
+    # And turn 0 was still pushed after the settings push.
+    assert world.submitted
+
+
+def test_dispatch_does_not_push_agent_settings_that_already_match(world):
+    client = world.client
+    world.session_settings.update(model="opus", effort="max", maxThinkingTokens=None)
+    dispatch(client, agent={"model": "opus", "effort": "max", "max_thinking_tokens": None})
+    assert world.session_posts == []
+
+
+def test_dispatch_without_agent_settings_never_touches_the_wrapper_session(world):
+    client = world.client
+    dispatch(client, agent=None)
+    assert world.session_posts == []
+
+
+def test_dispatch_treats_an_older_wrapper_that_404s_session_as_unsupported(world):
+    client = world.client
+    world.state["session_supported"] = False
+    response = dispatch(client, agent={"model": "opus", "effort": "max"})
+    # Not supported, continue: turn 0 still goes out and the dispatch itself
+    # answers normally rather than failing over a wrapper that predates the
+    # per-game settings route.
+    assert response.status_code == 202
+    assert world.session_posts == []
+    assert world.submitted

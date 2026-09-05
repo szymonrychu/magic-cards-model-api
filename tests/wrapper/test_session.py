@@ -210,6 +210,64 @@ def test_submit_after_death_raises_dead(monkeypatch):
         manager.submit("nobody home")
 
 
+# ---- restart: the per-game model/effort pass-through relaunches claude ----
+
+
+def test_restart_relaunches_claude_with_the_new_settings(monkeypatch):
+    monkeypatch.setattr("mtg_agent.wrapper.session.MIN_BOOT", 0.01)
+    monkeypatch.setattr("mtg_agent.wrapper.session.IDLE_READY", 0.05)
+    spawned: list[tuple[Settings, FakeProc]] = []
+
+    def spawn(settings: Settings, resume: bool) -> FakeProc:
+        proc = FakeProc(b"ready")
+        spawned.append((settings, proc))
+        return proc
+
+    store = Store()
+    manager = Manager(fast_settings(MODEL="sonnet"), store, Metrics(), spawn=spawn)
+    manager.start()
+    try:
+        assert manager.state is State.READY
+        assert len(spawned) == 1
+        first_proc = spawned[0][1]
+
+        manager.restart(fast_settings(MODEL="opus", EFFORT="max"))
+
+        assert manager.state is State.READY
+        assert len(spawned) == 2, "a fresh claude process must be spawned"
+        assert first_proc._closed, "the old pty is closed before the new one boots"
+        assert manager.settings.model == "opus" and manager.settings.effort == "max"
+        assert manager.snapshot()["model"] == "opus"
+    finally:
+        manager.shutdown()
+
+
+def test_restart_refuses_with_busy_error_while_a_turn_is_in_flight(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    try:
+        manager.submit("a whole match's worth of turns")
+        with pytest.raises(BusyError):
+            manager.restart(fast_settings(MODEL="opus"))
+        # Refused, so the old settings and the old process are untouched.
+        assert manager.settings.model != "opus"
+        assert not proc._closed
+    finally:
+        manager.shutdown()
+
+
+def test_restart_after_death_raises_dead(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc)
+    proc.die()
+    deadline = time.monotonic() + 5
+    while manager.state is not State.DEAD and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert manager.state is State.DEAD
+    with pytest.raises(DeadError):
+        manager.restart(fast_settings(MODEL="opus"))
+
+
 def test_complete_records_the_result_and_returns_to_ready(monkeypatch):
     proc = FakeProc(b"ready")
     delivered: list = []

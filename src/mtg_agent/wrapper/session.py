@@ -281,7 +281,14 @@ class Manager:
             code = proc.wait()
         except ChildProcessError:
             code = -1
-        if self._stopping:
+        if self._stopping or not self._is_active(proc):
+            # `not self._is_active(proc)`: this is the watcher for a process
+            # `restart()` has already replaced - `_stopping` is only held
+            # true for the narrow window `restart()` closes the old pty in,
+            # and a slow-scheduled thread can wake up to check it after
+            # `restart()` has already reset it and started the replacement.
+            # Checking against the *current* `self._proc` instead of a flag
+            # with a timing window is what actually makes this race-proof.
             return
         tail = self.ring.tail(800)
         log.error("claude exited code=%s pty_tail=%r", code, tail)
@@ -306,6 +313,41 @@ class Manager:
             self._cancel_timer_locked()
         if proc is not None:
             proc.close()
+
+    def restart(self, settings: Settings) -> None:
+        """Swap in new per-game settings (model/effort/max_thinking_tokens)
+        and relaunch the supervised claude with them.
+
+        `POST /v1/session`'s only caller: the driver's `assign` calls this
+        (through the route) before pushing turn 0, when the per-game
+        `AgentSettings` it was dispatched with differ from what this
+        container booted with. Refuses with `BusyError` while a turn is in
+        flight - the supervised claude cannot be pulled out from under one -
+        and with `DeadError` if the session has already died. Otherwise this
+        reuses `shutdown()`'s close-the-pty step and `start()`'s
+        spawn-and-boot step, exactly as a driver-issued `DELETE /v1/session`
+        followed by a fresh container would do, but inside this same
+        process, rather than `on_exit`ing the whole process.
+        """
+        with self._lock:
+            if self._state is State.DEAD:
+                raise DeadError("session dead")
+            if self._current is not None:
+                raise BusyError("session busy")
+            proc = self._proc
+            # Borrow shutdown's own flag so `_watch` (still running for the
+            # about-to-be-replaced `proc`) treats this exit as expected and
+            # does not mark the session DEAD or fire `on_dead` for it.
+            self._stopping = True
+            self._cancel_timer_locked()
+        if proc is not None:
+            proc.close()
+        self.ring.reset()
+        with self._lock:
+            self.settings = settings
+            self._state = State.BOOTING
+            self._stopping = False
+        self.start()
 
     def _is_dead(self) -> bool:
         return self.state is State.DEAD
