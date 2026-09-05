@@ -78,11 +78,13 @@ see `k8s_seats.LABEL_APP`) and, both directions:
 - **Ingress**: only from Pods labelled `app: mtg-stack` (the API Deployment) -
   the driver's `/status` and any control call the API makes land, nothing else
   does.
-- **Egress**: DNS (`kube-system`, UDP/TCP 53), the API on 8000, the
-  `spellslinger-development` namespace on 8080 (the spellslinger MCP Service),
-  and HTTPS (443) to everywhere *except* the RFC1918 private ranges - which is
-  how the agent reaches the Anthropic API without also being able to reach
-  arbitrary other things inside the cluster's own address space.
+- **Egress**: DNS (`kube-system`, UDP/TCP 53 - CoreDNS is `kube-dns`,
+  `10.96.0.10`, confirmed with `kubectl -n kube-system get svc kube-dns` on
+  this cluster), the API on 8000, the `spellslinger-development` namespace on
+  8080 (the spellslinger MCP Service), and HTTPS (443) to everywhere *except*
+  the RFC1918 private ranges. The API and spellslinger are reached through
+  their own selector-based rules above regardless of the ipBlock - those two
+  bullets do not depend on the CIDR math below at all.
 
 The egress `ipBlock`'s `except` list is the RFC1918 ranges
 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), not this cluster's specific
@@ -90,13 +92,26 @@ pod/service CIDRs. Checked directly against this cluster with
 `kubectl cluster-info dump | grep -m1 cluster-cidr` (pod CIDR `10.244.0.0/16`)
 and `grep -m1 service-cluster-ip-range` (service CIDR `10.96.0.0/12`): both
 are already subsets of `10.0.0.0/8`, so the RFC1918 list as committed already
-excludes them - no cluster-specific edit was needed. If you point this at a
-cluster whose pod or service CIDR falls *outside* 10.0.0.0/8 (an
-`icx-cidr`-in-172.32/8 style setup, say), add that range to the `except` list
-too, or agent egress to the cluster's own Pod/Service network stays blocked
-by the ipBlock's own default deny rather than reaching the intended peers -
-which would surface as the agent timing out talking to the API or
-spellslinger, not as an obvious policy error.
+excludes them - no cluster-specific edit was needed.
+
+**What actually goes wrong if this is pointed at a cluster whose pod or
+service CIDR falls *outside* the RFC1918 ranges** (a cluster using
+`100.64.0.0/10` for pods - CGNAT space, not RFC1918 - say): the `except` list
+would *not* cover that range, so the 443-only HTTPS rule would admit egress to
+every other Pod and Service IP in the cluster on port 443, not just the
+Anthropic API - a broader hole, not a block. (Getting this backwards - "the
+agent can no longer reach the API or spellslinger" - is wrong: those two are
+reached through the earlier `podSelector`/`namespaceSelector` rules, which
+that rule cannot affect either way.) If your cluster's ranges are outside
+10.0.0.0/8, `172.16.0.0/12` and `192.168.0.0/16`, add them to the `except`
+list so this policy keeps agent egress scoped to the Anthropic API and
+nothing else on the cluster network.
+
+The `except` list also carries `169.254.0.0/16` (link-local, unrouted -
+notably where a cloud provider's instance-metadata endpoint lives, e.g.
+`169.254.169.254`), so an agent's outbound HTTPS cannot reach the node's own
+metadata service even though it is not part of the cluster's Pod/Service
+address space and RFC1918 does not cover it either.
 
 ## Images: Harbor, and the `__TAG__` placeholder
 
@@ -122,10 +137,13 @@ Deployment sets `AGENT_IMAGE` and `API_IMAGE` env vars to the same
 Job it creates will pull - no separate `__AGENT_IMAGE__`/`__API_IMAGE__`
 placeholder was needed.
 
-If you are not using mise, do the same thing by hand:
+If you are not using mise, do the same thing by hand - `TAG` has to match what
+`mise.toml`'s `k8s:render`/`k8s:deploy` compute (`<api-sha>-<engine-sha>`, the
+two repos' commit shas joined with a hyphen, docker:push tags the image with
+the same string), not just this repo's own sha:
 
 ```sh
-TAG=$(git rev-parse --short HEAD)
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
 sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -
 ```
 
@@ -240,8 +258,9 @@ kubectl apply -f deploy/k8s/40-rbac.yaml
 
 # 5. everything else, with the image tag substituted
 mise run k8s:deploy
-#   or, without mise:
-#   sed "s/__TAG__/$(git rev-parse --short HEAD)/g" deploy/k8s/*.yaml | kubectl apply -f -
+#   or, without mise (TAG must match mise.toml's <api-sha>-<engine-sha>):
+#   TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
+#   sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -
 
 # 6. watch it come up
 kubectl -n mtg-engine get pod -l app=mtg-stack -w
@@ -277,10 +296,29 @@ A PVC's `accessModes` cannot be changed after it is bound - confirmed with
 committing this change. The only fix is delete-and-recreate, and the default
 `Delete` reclaim policy on `rook-ceph-rwx` means deleting the PVC deletes the
 underlying volume too - **which is where the agent's cross-game notes live**.
-Before deleting it, copy `/workspace/memory` out of a running Pod that mounts
-it (`kubectl cp` or a throwaway Pod mounting the same claim), delete the PVC,
-`kubectl apply` the new `ReadWriteMany` one, then copy the notes back in. This
-step was **not** performed as part of writing these manifests - it touches a
+The order that actually works:
+
+1. **Scale the Deployment (or otherwise stop every Pod that mounts the
+   claim) to zero first.** `kubernetes.io/pvc-protection` is a finalizer
+   Kubernetes puts on every PVC that is mounted by a running Pod: `kubectl
+   delete pvc mtg-agent-memory` while the old Pod is still running does not
+   error and does not remove it - it marks the PVC `Terminating` and the
+   delete simply hangs there until the last Pod using it goes away. Nothing
+   is lost by this hang, but it is easy to mistake for the delete having
+   failed outright.
+2. **Copy `/workspace/memory` out** of the (now-stopped, or a throwaway) Pod
+   that still mounts the old claim - `kubectl cp`, run before step 1 if that
+   is easier, or from a one-off Pod you create yourself mounting the same
+   PVC read-only.
+3. Delete the PVC (now it actually goes away, per the finalizer above), then
+   `kubectl apply` the new `ReadWriteMany` spec.
+4. **Copy the notes back in through a one-off Pod that mounts the new
+   claim** - not the API Deployment's own Pod, since that mounts
+   `scryfall-cache` and nothing else; a bare `Pod` spec with
+   `mtg-agent-memory` as its only volume, `kubectl cp` the backed-up
+   `/workspace/memory` into it, then delete that Pod.
+
+This was **not** performed as part of writing these manifests - it touches a
 live volume and was left for whoever actually cuts the cluster over.
 
 ## Reach it
@@ -431,9 +469,14 @@ never start; `30-storage.yaml` explains the fix.
 
 - `uv run pytest tests/test_k8s_manifests.py` - parses every non-template
   manifest with `__TAG__` substituted via `yaml.safe_load_all` and asserts
-  the Deployment is API-only with the right env, the Role/RoleBinding/absence
-  of a ClusterRole, the memory PVC's `ReadWriteMany` mode, the Service's
-  single port, and the NetworkPolicy's selector and policy types.
+  the Deployment is API-only with the right env (including `AGENT_NAMESPACE`,
+  `API_SERVICE_URL`, `SPELLSLINGER_MCP_URL`) and satisfies the restricted Pod
+  Security Standard (`seccompProfile`, `allowPrivilegeEscalation: false`,
+  `capabilities.drop: [ALL]`), the Role/RoleBinding/absence of a ClusterRole
+  including the `pods/log` rule, the memory PVC's `ReadWriteMany` mode, the
+  Service's single port, the NetworkPolicy's selector and policy types, and
+  the cross-file invariant that the NetworkPolicy's ingress source matches
+  the Deployment's own pod-template labels.
 - `kubectl apply --dry-run=client -f <rendered>` - all 11 objects accepted.
 - `kubectl apply --dry-run=server -f <rendered>` against the live cluster
   (context `kubernetes-admin@kubernetes`, namespace `mtg-engine`, which
@@ -446,6 +489,10 @@ never start; `30-storage.yaml` explains the fix.
   `grep -m1 service-cluster-ip-range` against the live cluster, to confirm
   the NetworkPolicy's RFC1918 `except` list already covers this cluster's own
   pod (`10.244.0.0/16`) and service (`10.96.0.0/12`) ranges.
+- `kubectl -n kube-system get svc kube-dns` against the live cluster, to
+  confirm CoreDNS actually lives in `kube-system` under that name
+  (`10.96.0.10`, `53/UDP,TCP`) before pointing the DNS egress rule's
+  `namespaceSelector` there.
 
 ## What remains unverified
 

@@ -30,6 +30,22 @@ def test_api_runs_alone_with_a_service_account_and_job_env() -> None:
     assert env["POD_NAME"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.name"
     assert env["POD_UID"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.uid"
     assert env["POD_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+    assert env["AGENT_NAMESPACE"]["value"] == "mtg-engine"
+    assert env["API_SERVICE_URL"]["value"]
+    assert env["SPELLSLINGER_MCP_URL"]["value"]
+
+
+def test_api_pod_satisfies_the_restricted_pod_security_standard() -> None:
+    docs = rendered()
+    (deploy,) = by_kind(docs, "Deployment")
+    pod = deploy["spec"]["template"]["spec"]
+    pod_security = pod["securityContext"]
+    assert pod_security["runAsNonRoot"] is True
+    assert pod_security["seccompProfile"]["type"] == "RuntimeDefault"
+    (game,) = pod["containers"]
+    container_security = game["securityContext"]
+    assert container_security["allowPrivilegeEscalation"] is False
+    assert container_security["capabilities"]["drop"] == ["ALL"]
 
 
 def test_rbac_is_namespaced_and_minimal() -> None:
@@ -38,6 +54,7 @@ def test_rbac_is_namespaced_and_minimal() -> None:
     rules = {(tuple(r["apiGroups"]), tuple(r["resources"])): set(r["verbs"]) for r in role["rules"]}
     assert rules[(("batch",), ("jobs",))] == {"create", "get", "list", "watch", "delete"}
     assert rules[(("",), ("pods",))] == {"get", "list", "watch"}
+    assert rules[(("",), ("pods/log",))] == {"get"}
     assert not by_kind(docs, "ClusterRole")
     (binding,) = by_kind(docs, "RoleBinding")
     assert binding["subjects"] == [
@@ -62,3 +79,10 @@ def test_network_policy_pins_agent_pods() -> None:
     (policy,) = by_kind(docs, "NetworkPolicy")
     assert policy["spec"]["podSelector"]["matchLabels"] == {"app.kubernetes.io/name": "mtg-agent"}
     assert set(policy["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    # Cross-file invariant: the only ingress source is the API's own Pods, so
+    # this must match the Deployment's pod-template labels exactly, or the
+    # policy silently stops admitting the API's traffic on a label rename.
+    (deploy,) = by_kind(docs, "Deployment")
+    deployment_pod_labels = deploy["spec"]["template"]["metadata"]["labels"]
+    ingress_from_labels = policy["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"]
+    assert ingress_from_labels == deployment_pod_labels

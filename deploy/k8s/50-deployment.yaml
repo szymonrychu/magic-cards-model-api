@@ -64,11 +64,18 @@ spec:
       imagePullSecrets:
         - name: regcred
 
+      # seccompProfile is what the restricted Pod Security Standard actually
+      # checks for beyond runAsNonRoot/runAsUser - the README instructs
+      # labelling this namespace `pod-security.kubernetes.io/enforce=
+      # restricted`, and a Pod missing this would be rejected at admission
+      # rather than merely warned about.
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
 
       volumes:
         - name: scryfall-cache
@@ -83,6 +90,15 @@ spec:
           # short commit sha, so a tag never means two different images and there
           # is nothing for Always to re-check.
           imagePullPolicy: IfNotPresent
+          # allowPrivilegeEscalation/capabilities are the other half of the
+          # restricted Pod Security Standard - the same two fields
+          # `k8s_seats.CONTAINER_SECURITY` already sets on every per-seat Job
+          # container, applied here too so the API Pod itself is admitted
+          # under the same policy it asks the namespace to enforce.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           # CMD from the Dockerfile: uvicorn magic_cards_model_api.main:app.
           ports:
             - name: game
