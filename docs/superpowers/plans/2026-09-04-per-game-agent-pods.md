@@ -1652,6 +1652,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+# No configmaps rule: the Job's initContainer writes the MCP config from an env var.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1725,7 +1726,7 @@ spec:
 
 Adjust the private CIDRs `except` list to the cluster's pod and service ranges (`kubectl cluster-info dump | grep -m1 cluster-cidr`).
 
-`50-deployment.yaml`: remove the `agent` and `driver` containers, the `guides` initContainer, the `guides`, `memory`, `mcp-base`, `driver-workspace` volumes; add `serviceAccountName: mtg-api`; on `game` add env `AI_SEAT_MODE=kubernetes`, `AGENT_NAMESPACE=mtg-engine`, `AGENT_IMAGE=harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__`, `API_IMAGE=harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__`, `API_SERVICE_URL=http://mtg-stack.mtg-engine.svc.cluster.local:8000`, `SPELLSLINGER_MCP_URL=http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp`, `MAX_LIVE_GAMES=4`, `POD_NAME`/`POD_UID` via `fieldRef`; remove `DRIVER_URL`. Rewrite the header comment: the stack is now the API; agents are Jobs. Keep the scryfall cache PVC on the API. `60-service.yaml`: only port 8000, comment updated. `30-storage.yaml`: memory PVC `ReadWriteMany` with a comment on why (several agent pods at once). Delete `20-configmap-mcp.yaml` and explain in `deploy/k8s/README.md` that the Job's initContainer writes the MCP config with `--game`. Update `deploy/k8s/README.md`'s procedure (apply RBAC, label the namespace `pod-security.kubernetes.io/enforce=restricted`, `kubectl get jobs -l app.kubernetes.io/name=mtg-agent`, `kubectl logs job/<name> -c agent`), and `README.md`'s deploy section.
+`50-deployment.yaml`: remove the `agent` and `driver` containers, the `guides` initContainer, the `guides`, `memory`, `mcp-base`, `driver-workspace` volumes; add `serviceAccountName: mtg-api`; on `game` add env `AI_SEAT_MODE=kubernetes`, `AGENT_NAMESPACE=mtg-engine`, `AGENT_IMAGE=harbor.szymonrichert.pl/containers/magic-cards-model-agent:__TAG__`, `API_IMAGE=harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__`, `API_SERVICE_URL=http://mtg-stack.mtg-engine.svc.cluster.local:8000`, `SPELLSLINGER_MCP_URL=http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp`, `MAX_LIVE_GAMES=4`, `POD_NAME`/`POD_UID`/`POD_NAMESPACE` via `fieldRef` (`k8s_seats` sets `ownerReferences` only when `POD_NAMESPACE` equals `AGENT_NAMESPACE`); remove `DRIVER_URL`. Rewrite the header comment: the stack is now the API; agents are Jobs. Keep the scryfall cache PVC on the API. `60-service.yaml`: only port 8000, comment updated. `30-storage.yaml`: memory PVC `ReadWriteMany` with a comment on why (several agent pods at once). Delete `20-configmap-mcp.yaml` and explain in `deploy/k8s/README.md` that the Job's initContainer writes the MCP config with `--game`. Update `deploy/k8s/README.md`'s procedure (apply RBAC, label the namespace `pod-security.kubernetes.io/enforce=restricted`, `kubectl get jobs -l app.kubernetes.io/name=mtg-agent`, `kubectl logs job/<name> -c agent`), and `README.md`'s deploy section.
 
 - [ ] **Step 4: Run tests and render**
 
