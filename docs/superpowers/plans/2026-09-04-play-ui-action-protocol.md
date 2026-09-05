@@ -3233,4 +3233,4 @@ git add -A && git commit -m "Document the play screen's one-click flows, slots a
 
 - Spec coverage: interaction model (Tasks 17, 15, 14), targeting (8, 11, 1, 18), mana (9, 2, 17), priority (10, 17), protocol additions (1-7), code structure (13-17), testing (every task, 18, 19), decisions and log (12, 16, 6, 7).
 - `shares` and `division`: Task 4 and Task 11 (`setShare`, `sharesValid`), rendered in Task 15.
-- The old `PUT mana-pool` and `resolve-top` UI paths are gone on purpose; `advance` stays reachable only through the AI-stall banner's "move the game" button, ported in Task 17.
+- The old `PUT mana-pool` and `resolve-top` UI paths are gone on purpose; `advance` stays reachable through an "Advance" button in the priority box during untap and cleanup, the steps with no priority (restored in Task 17 fix round 1).
