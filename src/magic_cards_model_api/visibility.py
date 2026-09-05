@@ -57,6 +57,10 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     out. Card identities are what this function guards: the opponent's hand,
     the contents and order of every library and sideboard, and - new here -
     the candidate cards of a pending decision that is not this viewer's own.
+    A graveyard or exile card's own identity stays public either way (CR
+    400.2) - what is trimmed for a card that is not the viewer's own is just
+    its `cast_options` affordance (`_redact_cast_options`), the same
+    "own block only" treatment `_redact_player` already gives `decklist`.
     """
     if viewer is ADMIN:
         return view
@@ -78,9 +82,20 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if view.get("pregame") is not None:
         view["pregame"] = _redact_pregame(view["pregame"], viewer)
     if "exile" in view:
-        view["exile"] = [_redact_facedown_card(card, viewer) for card in view["exile"]]
+        view["exile"] = [
+            _redact_cast_options(_redact_facedown_card(card, viewer), viewer)
+            for card in view["exile"]
+        ]
     if "exile_pile" in view:
-        view["exile_pile"] = [_redact_facedown_card(card, viewer) for card in view["exile_pile"]]
+        view["exile_pile"] = [
+            _redact_cast_options(_redact_facedown_card(card, viewer), viewer)
+            for card in view["exile_pile"]
+        ]
+    if "graveyards" in view:
+        view["graveyards"] = {
+            player: [_redact_cast_options(card, viewer) for card in cards]
+            for player, cards in view["graveyards"].items()
+        }
     if "play_permissions" in view:
         view["play_permissions"] = {
             player: [_redact_permission(entry, viewer) for entry in entries]
@@ -178,6 +193,34 @@ def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any
         "card_name": None,
         "exile_pile": card.get("exile_pile"),
     }
+
+
+def _redact_cast_options(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """A graveyard/exile card's `cast_options` (`serialize._cast_options_of`),
+    as `viewer` may see it.
+
+    Graveyard and exile are public zones (CR 400.2) - the card underneath
+    this field is never hidden, and this function does not touch any of the
+    rest of the card's view. What it hides is narrower: `cast_options` is the
+    *affordance* of casting this specific card ("you, specifically, may cast
+    this with Flashback for {1}{W}{U} right now"), and CR 601.2b's keyword
+    permissions on a card sitting off the battlefield are permissions to a
+    *player* - `_cast_options_of` always builds them for the card's own
+    controller-or-owner, because that is the only player who could ever hold
+    one. So the field is kept for that player's own view, the same "own block
+    only" treatment `_redact_player` already gives `decklist`, and dropped for
+    everyone else - an opponent reading this card's row does not need a
+    ready-made list of what its owner could do with it next.
+
+    `None` when the field is not present at all (a card in a zone
+    `_cast_options_of` never adds it to, or one with no live option) - the
+    ordinary case, left untouched."""
+    if "cast_options" not in card or viewer is ADMIN:
+        return card
+    owner = card.get("controller") or card.get("owner")
+    if viewer is not None and owner == viewer:
+        return card
+    return {key: value for key, value in card.items() if key != "cast_options"}
 
 
 def _redact_permission(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:

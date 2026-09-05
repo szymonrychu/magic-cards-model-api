@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
             help="bound on the block that follows the action, unless --hold",
         )
 
-    cast = sub.add_parser("cast", help="cast a spell from your hand")
+    cast = sub.add_parser("cast", help="cast a spell (hand, or graveyard/exile with --keyword)")
     cast.add_argument("card", help="card name or id")
     cast.add_argument("--target", default="", help="comma-separated card ids or player names")
     cast.add_argument(
@@ -148,10 +148,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--keyword",
         default="",
         help=(
-            'the keyword this cast is announced under (CR 601.2b) - "Plot" or '
-            '"Foretell" for a card exiled with suspend/plot cast --from-zone exile '
-            "(a suspended card's free cast is picked up automatically once its "
-            "last time counter is off, no --keyword needed)"
+            "the keyword this cast is announced under (CR 601.2b) - required for "
+            'any cast whose card is not in hand (CR 601.3): "Flashback" or '
+            '"Mayhem" for a graveyard card (CR 702.34a, CR 702.187a/b), "Plot", '
+            '"Foretell" or "Madness" for an exile card (CR 702.170d, CR 702.143a, '
+            'CR 702.35a/b), or "Airbend" for one exiled by an airbend effect '
+            "(CR 701.65a) - read the card's own cast_options in `my_state` for "
+            "which keyword and cost actually apply right now, rather than "
+            "guessing. A card covered by a live PlayPermission instead (suspend's "
+            "free cast once its last time counter is off, cascade, Past in "
+            "Flames) needs no --keyword: it is picked up automatically."
         ),
     )
     blocking(cast)

@@ -6,7 +6,14 @@ from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
 from magic_cards_model.machines.abilities import keywords_in_lines
-from magic_cards_model.machines.casting import MarkedExile, PlayPermission
+from magic_cards_model.machines.casting import (
+    KeywordCastOption,
+    MarkedExile,
+    PlayPermission,
+    castable_from,
+    granted_cast_options,
+    marker_cast_options,
+)
 from magic_cards_model.machines.combat import Keyword
 from magic_cards_model.machines.keywords import cycling_abilities, cycling_activation
 from magic_cards_model.machines.layers import Characteristics
@@ -242,6 +249,90 @@ def _exile_pile(state: CardState) -> dict[str, Any] | None:
     }
 
 
+def _cast_option_view(
+    game: Game,
+    spell: CardState,
+    option: KeywordCastOption,
+    caster: str,
+    granted_by: str | None = None,
+) -> dict[str, Any]:
+    """One `KeywordCastOption` (`machines/casting.py`, CR 601.3's "a rule or
+    effect allows that player to cast it") this graveyard or exile card
+    carries right now, shaped so a seat can drive `POST .../actions/cast`
+    with `keyword=` set to exactly this `keyword` value.
+
+    A real game already hit the gap this closes: Faithful Mending
+    (`Flashback {1}{W}{U}`, CR 702.34a) was cast from a graveyard through this
+    API for its printed `{W}{U}` face cost - the wrong cost, and no keyword
+    named - because nothing in the state a seat reads ever said the card had
+    a flashback option at all, let alone what it cost. `_play_permission_view`
+    above closed the same shape of gap for `PlayPermission`; this is its
+    counterpart for the keyword permissions of CR 601.2b (flashback, mayhem,
+    plot, foretell, madness, airbend, a printed CR 604.6 zone permission, and
+    a keyword granted by another permanent's static ability, CR 610.5/611.3d)
+    - none of which need a live `PlayPermission` object at all, so none of
+    them show up there.
+
+    `usable_now`/`why_not` mirror `_play_permission_view`'s own fields:
+    `option.why_not` already encodes every legality check that option carries
+    (the right zone, an exile marker's owner, `discarded_this_turn`, timing),
+    so this reports its answer rather than re-deriving it.
+    """
+    reason = option.why_not(spell, caster, game)
+    entry: dict[str, Any] = {
+        "keyword": option.keyword,
+        "rule": option.rule,
+        "pays_mana_cost": option.pays_mana_cost,
+        "cost": str(option.cost) if option.cost is not None else None,
+        "usable_now": reason is None,
+        "why_not": reason,
+    }
+    if granted_by is not None:
+        entry["granted_by"] = granted_by
+    return entry
+
+
+def _cast_options_of(game: Game, state: CardState) -> list[dict[str, Any]]:
+    """Every `_cast_option_view` this graveyard or exile card has right now,
+    or `[]` for anything else (a card in any other zone is cast the ordinary
+    way, or - if in hand - is covered by `_special_actions` instead) and for
+    a card with no controller or owner recorded (nobody to be the `caster`
+    `KeywordCastOption.why_not` asks about).
+
+    Three sources, matching `Casting._use_keyword`'s own
+    `printed_options + marker_options + granted_options` (the exact set CR
+    601.2b lets an announcement pick from), so a keyword added to any of them
+    shows up here for free rather than being re-listed by hand:
+
+    - `castable_from(state.card, state.zone)` - the card's own printed
+      keywords whose zone matches where it is sitting (CR 604.1's static
+      abilities, e.g. CR 702.34a flashback, CR 702.187a mayhem, CR 702.170a
+      plot, CR 702.143a foretell, CR 702.35a madness) plus a printed CR 604.6
+      sentence opening an extra zone for one of them (CR 113.6f).
+    - `marker_cast_options(state)` - the permission a CR 406.4 exile pile
+      itself grants rather than the card's own text (CR 701.65a's airbend).
+    - `granted_cast_options` - a keyword another permanent's static ability
+      is granting this card right now (CR 610.5's "as you cast it", or CR
+      611.3d's "while it sits in the zone", both kept alive on the object by
+      CR 400.7b/400.7g once it is on the stack).
+
+    `caster` is this card's own controller-or-owner - the same fallback
+    `_special_actions` uses - because every option here is a permission to
+    a *player*, and the only player who could ever hold it for a card sitting
+    in a graveyard or exile is whoever's card it is.
+    """
+    if state.zone not in (Zone.GRAVEYARD, Zone.EXILE):
+        return []
+    caster = state.controller or state.owner
+    if caster is None:
+        return []
+    options = castable_from(state.card, state.zone) + marker_cast_options(state)
+    views = [_cast_option_view(game, state, option, caster) for option in options]
+    for granted in granted_cast_options(game, state, caster, state.zone):
+        views.append(_cast_option_view(game, state, granted.option, caster, granted.source_name))
+    return views
+
+
 def _play_permission_view(
     game: Game, permission: PlayPermission, images: dict[str, dict[str, str]]
 ) -> dict[str, Any] | None:
@@ -372,6 +463,14 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         exile_pile = _exile_pile(state)
         if exile_pile is not None:
             view["exile_pile"] = exile_pile
+    if state.zone in (Zone.GRAVEYARD, Zone.EXILE):
+        cast_options = _cast_options_of(game, state)
+        if cast_options:
+            # Own-view only: `visibility.redact_view` strips this back out of
+            # a card whose owner/controller is not the viewer, the same shape
+            # `_special_actions` already gets for free by only existing on a
+            # hidden hand - see `visibility._redact_cast_options`.
+            view["cast_options"] = cast_options
     if state.zone is Zone.BATTLEFIELD:
         printed_type_line = state.card.type_line
         printed_power, printed_toughness = state.power, state.toughness

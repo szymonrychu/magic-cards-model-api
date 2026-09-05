@@ -203,19 +203,43 @@ def build_server(seats: Seats) -> MCPServer:
         hold_priority: bool = False,
         max_seconds: float = DEFAULT_MAX_SECONDS,
     ) -> str:
-        """Cast a spell from your hand. `card` is the card's name or id.
-        `targets` is comma-separated card ids or player names. `mana_sources`
-        is comma-separated source ids; leave it empty to offer all your
-        untapped mana sources (the engine taps only what the cost needs).
-        Set `dry_run` to true to ask "could I cast this?" without changing
-        anything (a dry run never blocks).
+        """Cast a spell. Most casts are from your hand, and need nothing
+        else; `card` is the card's name or id. `targets` is comma-separated
+        card ids or player names. `mana_sources` is comma-separated source
+        ids; leave it empty to offer all your untapped mana sources (the
+        engine taps only what the cost needs). Set `dry_run` to true to ask
+        "could I cast this?" without changing anything (a dry run never
+        blocks).
 
-        `keyword` announces this cast under a keyword permission (CR 601.2b) -
-        "Plot" or "Foretell" - required to cast a card you previously exiled
-        with `plot`/`foretell` (state's `exile` entries carry `exile_pile`
-        naming which). A card you `suspend`d needs no `keyword`: once its last
-        time counter is off (see `advance`'s `suspend_upkeep`), the free cast
-        it grants is picked up automatically.
+        A card sitting in your graveyard or exile is castable too, but only
+        under a *named* permission (CR 601.3: "a player can begin to cast a
+        spell only if a rule or effect allows that player to cast it"), and
+        `keyword` is how you name it. Read your `my_state`'s graveyard/exile
+        card - `cast_options` names every keyword that card currently offers,
+        alongside the cost it would pay - rather than guessing; the keywords
+        this engine knows are:
+
+        - `"Flashback"` - a GRAVEYARD card with flashback (CR 702.34a).
+        - `"Mayhem"` - a GRAVEYARD card with mayhem, discarded this turn
+          (CR 702.187a/b).
+        - `"Plot"` - an EXILE card you plotted on an earlier turn
+          (CR 702.170d) - `exile_pile` on the card names which.
+        - `"Foretell"` - an EXILE card you foretold on an earlier turn
+          (CR 702.143a).
+        - `"Madness"` - an EXILE card put there by its own madness trigger
+          this turn (CR 702.35a/b).
+        - `"Airbend"` - an EXILE card an airbend effect exiled, for {2}
+          (CR 701.65a).
+        - a printed sentence opening one of the above from an extra zone
+          (CR 604.6/CR 113.6f), or a keyword another permanent's static
+          ability is granting the spell right now (CR 610.5, CR 611.3d) -
+          `keyword` is still that keyword's own name either way.
+
+        A card you `suspend`d needs no `keyword`: once its last time counter
+        is off (see `advance`'s `suspend_upkeep`), the free cast it grants is
+        picked up automatically as a live `PlayPermission` - the same is true
+        of cascade and Past in Flames, and `play_permissions` in your state
+        names every one that is currently live for you.
 
         Otherwise this does the whole turn of events in one call: cast, then
         - unless `hold_priority` is true - release priority and block until

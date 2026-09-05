@@ -607,26 +607,59 @@ def block_until_wake(
         time.sleep(poll_seconds)
 
 
+def _keyworded_castable_candidates(seat: Seat, state: dict[str, Any]) -> list[tuple[str, str]]:
+    """(card_id, keyword) for every one of this seat's own graveyard/exile
+    cards that `serialize._cast_options_of` found a CR 601.3 permission for -
+    the only non-hand cards worth a dry run at all.
+
+    Reads `cast_options` straight off each card view rather than asking the
+    engine again: `visibility.redact_view` has already stripped that field
+    from anything not this seat's own (`_redact_cast_options`), so a card
+    with nothing on it costs this function nothing - no Lightning Bolt in a
+    graveyard ever reaches a dry run, because it never has a `cast_options`
+    entry to read one out of."""
+    candidates: list[tuple[str, str]] = []
+    graveyard = state.get("graveyards", {}).get(seat.player, []) or []
+    exile = state.get("exile", []) or []
+    for card in graveyard + exile:
+        for option in card.get("cast_options") or []:
+            candidates.append((card["id"], option["keyword"]))
+    return candidates
+
+
 def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     """What this seat can actually do right now, using the engine's own
     dry-run legality checks (`cast`/`activate` with `dry_run: true`) - never
     new rules logic here.
 
-    Only ever looks at `state["hands"][seat.player]` and battlefield
-    permanents `state` already says this seat controls - both already
-    filtered by `visibility.py` before this function ever sees them - so this
-    cannot surface the opponent's hand or either library even if a caller
-    passed an unfiltered view by mistake: there would be nothing under the
-    opponent's name to read to begin with (their hand is `[]` server-side,
-    and libraries are dropped entirely).
+    Looks at `state["hands"][seat.player]`, battlefield permanents `state`
+    already says this seat controls, and - the CR 601.2b keyword-permission
+    half, `_keyworded_castable_candidates` above - this seat's own graveyard
+    and exile cards that `cast_options` names an option for. Every one of
+    those sources is already filtered by `visibility.py` before this function
+    ever sees them - so this cannot surface the opponent's hand, either
+    library, or an opponent's `cast_options` even if a caller passed an
+    unfiltered view by mistake: there would be nothing under the opponent's
+    name to read to begin with (their hand is `[]` server-side, libraries are
+    dropped entirely, and `cast_options` is stripped from any card that is
+    not this seat's own).
 
-    One extra HTTP round trip per hand card and per abililty on a controlled
+    Each candidate `card_id` is dry-run with the `keyword` its own
+    `cast_options` entry names (`None` for an ordinary hand card, which needs
+    none) - "reports which keyword makes each one legal" is the whole point:
+    a seat driving off `castable` can find its Faithful Mending in the
+    graveyard, not just a Lightning Bolt in hand, and knows on the spot which
+    `keyword=` to send `cast` to make the graveyard cast succeed.
+
+    One extra HTTP round trip per hand card, per graveyard/exile card that
+    actually carries a `cast_options` entry, and per ability on a controlled
     permanent - each is a dry run the engine already rewinds, so this is
     "expensive" only in the sense of doing an ordinary legality check for
     everything narrow enough to check, not in the sense of costing anything
-    the API does not already pay for a single such check. A hand and a board
-    are both small (single digits), so this stays cheap; it is not run inside
-    the poll loop above, only once, right before a call returns.
+    the API does not already pay for a single such check. A hand, a board,
+    and the handful of graveyard/exile cards with a live option are all small
+    (single digits), so this stays cheap; it is not run inside the poll loop
+    above, only once, right before a call returns.
 
     Skips every dry run - and returns empty - when `state["pending_decision"]`
     is addressed to this seat, and for a reason sharper than "why bother, the
@@ -667,14 +700,19 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
             return False
         return bool(isinstance(answer, dict) and answer.get("allowed"))
 
-    castable = [
-        card["id"]
-        for card in state.get("hands", {}).get(seat.player, []) or []
-        if dry_run(
-            f"/api/games/{game_id}/actions/cast",
-            {"player": seat.player, "card_id": card["id"]},
-        )
+    hand_candidates: list[tuple[str, str | None]] = [
+        (card["id"], None) for card in state.get("hands", {}).get(seat.player, []) or []
     ]
+    non_hand_candidates: list[tuple[str, str | None]] = [
+        (card_id, keyword) for card_id, keyword in _keyworded_castable_candidates(seat, state)
+    ]
+    castable = []
+    for card_id, keyword in hand_candidates + non_hand_candidates:
+        body: dict[str, Any] = {"player": seat.player, "card_id": card_id}
+        if keyword is not None:
+            body["keyword"] = keyword
+        if dry_run(f"/api/games/{game_id}/actions/cast", body):
+            castable.append({"card_id": card_id, "keyword": keyword})
 
     activatable = []
     for card in state.get("battlefield", []) or []:

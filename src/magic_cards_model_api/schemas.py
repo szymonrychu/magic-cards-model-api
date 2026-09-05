@@ -106,13 +106,41 @@ class CastRequest(BaseModel):
     order. Only for a card whose affordance carries `division`."""
     mana_sources: list[UUID | ManaSource] | None = None
     keyword: str | None = None
-    """The keyword permission this cast is announced under (CR 601.2b), e.g.
-    "Plot" or "Foretell" - required to cast a plotted or foretold card out of
-    exile, since those keywords are what makes the cast legal at all (CR
-    116.2k, CR 116.2h) and what it costs instead of the mana cost. A card
-    freshly granted a `PlayPermission` (suspend's own free cast, CR 702.62a's
-    third ability) needs no `keyword`: that permission is found and used
-    automatically whenever one is live for this player and card."""
+    """The keyword permission this cast is announced under (CR 601.2b) -
+    required for a cast whose card is not in `player`'s hand, since CR 601.3
+    ("a player can begin to cast a spell only if a rule or effect allows
+    that player to cast it") makes casting from anywhere else illegal unless
+    *some* named permission says otherwise, and this is how that permission
+    is named. Every one of these is read straight off the engine's own
+    `machines/casting.py::keyword_cast_options`/`marker_cast_options`/
+    `granted_cast_options` - see `serialize.py`'s `cast_options` field on a
+    graveyard/exile card view (and `available_actions`'s `castable` entries)
+    for which keyword a given card actually offers right now, rather than
+    guessing from this list:
+
+    - `"Flashback"` - a card in the GRAVEYARD with flashback (CR 702.34a).
+    - `"Mayhem"` - a card in the GRAVEYARD with mayhem, discarded this turn
+      (CR 702.187a/b).
+    - `"Plot"` - a card in EXILE, plotted on an earlier turn (CR 702.170d).
+    - `"Foretell"` - a card in EXILE, foretold on an earlier turn
+      (CR 702.143a).
+    - `"Madness"` - a card in EXILE via its madness trigger, same turn
+      (CR 702.35a/b).
+    - `"Airbend"` - a card in EXILE via an airbend effect, for {2}
+      (CR 701.65a).
+    - a printed CR 604.6/CR 113.6f sentence ("You may cast this card from
+      your graveyard using its X ability") opening one of the above keywords
+      in a zone it does not otherwise reach - `keyword` is still that
+      keyword's own name, only the zone changed.
+    - any keyword another permanent's static ability is granting this spell
+      right now (CR 610.5's "... spells you cast ... gain X as you cast
+      them", or CR 611.3d's "each ... card in your graveyard has X") - named
+      the same way a printed one would be.
+
+    A card freshly granted a `PlayPermission` (suspend's own free cast, CR
+    702.62a's third ability; cascade; Past in Flames) needs no `keyword`:
+    that permission is found and used automatically whenever one is live for
+    this player and card - see `play_permissions` on the state view."""
     convoke: list[ConvokeChoice] | None = None
     """Creatures tapped for convoke (CR 702.51a). Applied after the total
     cost is determined, never as part of the announcement."""
