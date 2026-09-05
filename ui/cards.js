@@ -117,7 +117,13 @@ function toggles(card, opts) {
     selected: !!opts.selected,
     attacking: !!opts.attacking,
     blocking: !!opts.blocking,
-    "summoning-sick": !!card.summoning_sick,
+    // CR 302.6's sickness only ever means anything on the battlefield - a
+    // card that only just left it (to a graveyard, back to hand) can still
+    // carry a stale `summoning_sick: true` from the state view that briefly
+    // preceded the move, and `cardNode`/`updateCardNode` are shared across
+    // every zone (the zones popover's graveyard/exile grid included), so the
+    // swirl and greyed-out look must not follow it there.
+    "summoning-sick": !!card.summoning_sick && card.zone === "battlefield",
     targetable: !!opts.targetable,
     chosen: !!opts.chosen,
     dimmed: !!opts.dimmed,

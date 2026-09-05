@@ -18,6 +18,7 @@ import { h, patchChildren, clear, setText } from "../dom.js";
 import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { targetSlotIndex } from "../actions.js";
 import { manaPoolNodes } from "../symbols.js";
+import { opponentOf } from "../combat.js";
 
 // Exported (Task 17's addition to this render module) so `render/panels.js`'s
 // zones popover can highlight a legal graveyard/exile target with the exact
@@ -177,7 +178,7 @@ export function mountBoard(root, store, handlers) {
     permittedRow: $("#permitted-row"),
     youInfo: $("#you-info"),
   };
-  els.oppInfo.onclick = () => handlers.onPlayer(store.get().opponent);
+  els.oppInfo.onclick = () => handlers.onPlayer(opponentOf(store.get().state));
   els.youInfo.onclick = () => handlers.onPlayer(store.get().state.you);
   return store.subscribe((app) => {
     const state = app.state;
