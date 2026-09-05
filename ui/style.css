@@ -693,8 +693,14 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   color: var(--ink-dim);
   margin-bottom: 4px;
 }
-.split-row { display: flex; align-items: center; gap: 5px; font-size: 12px; margin: 3px 0; }
-.split-row span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The card's name comes first and keeps a real width. `flex: 1` gave it a
+   0% basis, so in the side panel's narrow column the three buttons ("up",
+   "down", "Move") took every pixel and the name rendered 0px wide: the
+   browser pass answered a scry without ever being shown which card it was
+   ordering. A 6em basis plus `flex-wrap` puts the buttons on their own line
+   rather than squeezing the name back out. */
+.split-row { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 12px; margin: 3px 0; }
+.split-row span { flex: 1 1 6em; min-width: 6em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .combat-prompt .combat-list { margin: 4px 0; padding-left: 18px; font-size: 12px; }
 .prompt-action-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
