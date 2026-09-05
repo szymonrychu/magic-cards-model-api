@@ -144,3 +144,62 @@ def test_an_api_key_still_works_on_its_own(tmp_path, monkeypatch):
 
     assert "KEY=sk-ant-real-key" in seen
     assert "TOKEN=-" in seen
+
+
+def _thinking_probe(tmp_path):
+    """A stub 'claude' that prints MAX_THINKING_TOKENS as it sees it."""
+    script = tmp_path / "thinking.py"
+    script.write_text(
+        "import os, sys\n"
+        "sys.stdout.write('MTT=%s\\n' % os.environ.get('MAX_THINKING_TOKENS', '-'))\n"
+        "sys.stdout.flush()\n"
+    )
+    return script
+
+
+def test_max_thinking_tokens_reaches_the_child_env(tmp_path):
+    """`Settings.max_thinking_tokens` has no CLI flag - it is carried only
+    through this env var, and `claude_args` never emits it."""
+    script = _thinking_probe(tmp_path)
+    settings = Settings.from_env(
+        {
+            "CLAUDE_PATH": sys.executable,
+            "WORKSPACE": str(tmp_path),
+            "HOME_DIR": str(tmp_path),
+            "MODEL": "",
+            "MAX_THINKING_TOKENS": "12000",
+        }
+    )
+    proc = spawn_claude(settings, resume=False, extra_args=[str(script)])
+    try:
+        seen = read_until(proc, b"MTT=").decode(errors="replace")
+    finally:
+        proc.close()
+        proc.wait()
+
+    assert "MTT=12000" in seen
+
+
+def test_max_thinking_tokens_unset_does_not_inherit_a_stale_boot_value(tmp_path, monkeypatch):
+    """A restart with a cleared budget (`max_thinking_tokens=None`) must not
+    inherit whatever this container originally booted with - `spawn_claude`
+    builds its env from `os.environ`, which still carries the old value."""
+    monkeypatch.setenv("MAX_THINKING_TOKENS", "99999")
+    script = _thinking_probe(tmp_path)
+    settings = Settings.from_env(
+        {
+            "CLAUDE_PATH": sys.executable,
+            "WORKSPACE": str(tmp_path),
+            "HOME_DIR": str(tmp_path),
+            "MODEL": "",
+        }
+    )
+    assert settings.max_thinking_tokens is None
+    proc = spawn_claude(settings, resume=False, extra_args=[str(script)])
+    try:
+        seen = read_until(proc, b"MTT=").decode(errors="replace")
+    finally:
+        proc.close()
+        proc.wait()
+
+    assert "MTT=-" in seen, "a cleared budget must not inherit the stale boot env"

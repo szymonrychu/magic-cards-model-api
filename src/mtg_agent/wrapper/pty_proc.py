@@ -105,6 +105,15 @@ def spawn_claude(
     elif settings.anthropic_api_key:
         env["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
         env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    # Set explicitly rather than left to `claude_args`: there is no CLI flag
+    # for it, only this env var. Popped when None so a `restart()` that
+    # clears the budget does not inherit the boot env's value - `env` starts
+    # as a copy of `os.environ`, which still carries whatever this container
+    # booted with.
+    if settings.max_thinking_tokens is not None:
+        env["MAX_THINKING_TOKENS"] = str(settings.max_thinking_tokens)
+    else:
+        env.pop("MAX_THINKING_TOKENS", None)
 
     pid, master_fd = pty.fork()
     if pid == 0:  # child
