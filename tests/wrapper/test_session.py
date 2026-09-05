@@ -256,6 +256,50 @@ def test_restart_refuses_with_busy_error_while_a_turn_is_in_flight(monkeypatch):
         manager.shutdown()
 
 
+def test_restart_does_not_let_the_old_watch_thread_mark_the_session_dead(monkeypatch):
+    """Regression: the old `_watch` thread's `proc.wait()` returns the
+    instant `restart()` closes the outgoing pty. If `_stopping` is cleared
+    before the new process is actually installed in `self._proc`, that
+    thread can wake during the fork/exec of the replacement, see
+    `_stopping=False` and `self._proc` still pointing at the (closed) old
+    proc, and mark the session DEAD - firing `on_dead`, which exits the
+    whole container mid-restart."""
+    monkeypatch.setattr("mtg_agent.wrapper.session.MIN_BOOT", 0.01)
+    monkeypatch.setattr("mtg_agent.wrapper.session.IDLE_READY", 0.05)
+    exits: list[str] = []
+    spawned: list[FakeProc] = []
+
+    def spawn(settings: Settings, resume: bool) -> FakeProc:
+        if spawned:
+            # Simulate the new process's fork/exec taking a moment - the
+            # exact window the old watch thread can race into.
+            time.sleep(0.3)
+        proc = FakeProc(b"ready")
+        spawned.append(proc)
+        return proc
+
+    store = Store()
+    manager = Manager(
+        fast_settings(MODEL="sonnet"),
+        store,
+        Metrics(),
+        spawn=spawn,
+        on_dead=lambda: exits.append("exit"),
+    )
+    manager.start()
+    try:
+        assert manager.state is State.READY
+
+        manager.restart(fast_settings(MODEL="opus"))
+
+        assert manager.state is State.READY
+        assert manager.settings.model == "opus"
+        assert exits == [], "on_dead must not fire for the outgoing process"
+        assert manager.metrics.claude_restarts_total._value.get() == 0
+    finally:
+        manager.shutdown()
+
+
 def test_restart_after_death_raises_dead(monkeypatch):
     proc = FakeProc(b"ready")
     manager = ready_manager(monkeypatch, proc)

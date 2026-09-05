@@ -175,6 +175,12 @@ class Manager:
         proc = self.spawn(self.settings, False)
         with self._lock:
             self._proc = proc
+            # Cleared here, atomically with the proc swap, not by `restart()`
+            # before calling this: clearing it earlier reopens the window
+            # where the old process's `_watch` thread can see `_stopping`
+            # False *and* `self._proc` still pointing at the old (closed)
+            # proc, and mark the session dead out from under the new one.
+            self._stopping = False
         for target in (self._read_pty, self._watch):
             thread = threading.Thread(target=target, args=(proc,), daemon=True)
             thread.start()
@@ -346,7 +352,13 @@ class Manager:
         with self._lock:
             self.settings = settings
             self._state = State.BOOTING
-            self._stopping = False
+            # `_stopping` stays True across the gap until `start()` installs
+            # the replacement `self._proc` and clears it atomically with that
+            # swap - see the comment there. Clearing it here would let the
+            # outgoing `_watch` thread (whose `proc.wait()` returns promptly
+            # once `close()` above SIGTERMs the child) pass its guard while
+            # `self._proc` still points at the very process it is watching,
+            # since `spawn()` inside `start()` has not returned yet.
         self.start()
 
     def _is_dead(self) -> bool:
