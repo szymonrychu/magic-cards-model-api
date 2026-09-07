@@ -4,8 +4,10 @@ The same seat `mcp.py` exposes, sharing the same "one call, one meaningful
 action" flow (`seatkit.run_action`): the same hidden-information filter - the
 opponent's hand and both libraries never appear - and the same
 cast/play-land/activate/attackers/blockers/resolve/advance/decide/pass
-behaviour: perform the action, then block until this seat next has something
-to do, printing the outcome and the state it woke into together.
+behaviour: perform the action, then check once for this seat's next moment
+to act (poll-and-return - see `seatkit.block_until_wake`'s own docstring),
+printing the outcome and whatever state that check saw together. `wait`
+checks the same way with no action of its own; run it again to keep checking.
 
 Whether priority is released on your behalf first is NOT uniform, and this
 file and `mcp.py` must agree on it command for command:
@@ -103,12 +105,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("state", help="the game as you may see it, right now")
 
-    wait = sub.add_parser("wait", help="block until it is your moment to act")
+    wait = sub.add_parser("wait", help="check once whether it is your moment to act")
     wait.add_argument(
         "--max-seconds",
         type=float,
         default=570.0,
-        help="per-call bound; call again to keep waiting",
+        help=(
+            "accepted for backward compatibility, no longer used: this checks "
+            "once and returns immediately either way (poll-and-return, MCP "
+            "2026-07-28 removed resumability) - run this again to keep checking"
+        ),
     )
 
     def blocking(command: Any) -> None:
@@ -579,7 +585,7 @@ def run(argv: list[str] | None = None) -> int:
         print(json.dumps(current, indent=1, sort_keys=True))
         note(current)
     elif args.command == "wait":
-        woken = block_until_wake(seat, before=None, max_seconds=args.max_seconds)
+        woken = block_until_wake(seat, before=None)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         print(json.dumps(woken["state"], indent=1, sort_keys=True))
         note(woken["state"])

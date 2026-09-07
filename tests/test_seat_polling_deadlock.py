@@ -19,7 +19,6 @@ after and refused, every time.
 
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any
 
@@ -31,14 +30,19 @@ from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
 
 
-def test_a_seat_not_holding_the_lock_still_wakes_promptly_for_its_own_decision(
+def test_a_different_seats_request_that_raises_this_seats_decision_is_seen_at_once(
     client, game, monkeypatch
 ) -> None:
     """Regression guard for the *first* fix, not the second: when it is a
-    genuinely different in-flight request (bob's) that raises alice's own
-    decision, her lock-free poll already notices promptly. Kept here so a
-    future change to `block_until_wake`/`available_actions` cannot silently
-    regress this half while "fixing" the self case below.
+    genuinely different request (bob's) that raises alice's own decision, her
+    own check sees it at once - `block_until_wake` is a plain read and never
+    takes `store.locked`, so it cannot be queued behind whatever lock bob's
+    own mutating request holds while it runs. T11 made this simpler still:
+    there is no longer an internal poll loop whose promptness needs proving,
+    only one read, made after bob's request has actually landed - the same
+    thing a real caller does. Kept here so a future change to
+    `block_until_wake`/`available_actions` cannot silently regress this half
+    while "fixing" the self case below.
     """
     monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
 
@@ -58,32 +62,20 @@ def test_a_seat_not_holding_the_lock_still_wakes_promptly_for_its_own_decision(
         "for this to reproduce the 'different requester' shape"
     )
 
+    # Bob's own pass - a genuinely different requester's mutation - is what
+    # closes the round and crosses into alice's own cleanup discard.
+    bobs_pass = TestClient(app).post(
+        f"/api/games/{game}/actions/pass-priority", json={"player": "bob"}
+    )
+    assert bobs_pass.status_code == 200, bobs_pass.text
+
     alice_seat = seatkit.Seat("alice", uids["alice"], "http://testserver", game)
-    woken: list[dict[str, Any]] = []
-
-    def poll() -> None:
-        woken.append(seatkit.block_until_wake(alice_seat, before=None, max_seconds=20.0))
-
-    poll_thread = threading.Thread(target=poll)
-    poll_thread.start()
-    time.sleep(0.1)  # let alice's poll loop actually start before bob's pass
-
-    def bobs_pass() -> None:
-        TestClient(app).post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
-
-    bob_thread = threading.Thread(target=bobs_pass)
     started = time.monotonic()
-    bob_thread.start()
-
-    poll_thread.join(timeout=10)
+    woken = seatkit.block_until_wake(alice_seat, before=None)
     elapsed = time.monotonic() - started
 
-    assert not poll_thread.is_alive(), "alice's own poll never woke for her decision"
-    assert woken and "decision is waiting" in woken[0]["wake_reason"]
-    assert elapsed < 2.0, f"alice took {elapsed:.1f}s to notice her own pending decision"
-
-    bob_thread.join(timeout=10)
-    assert not bob_thread.is_alive()
+    assert "decision is waiting" in woken["wake_reason"]
+    assert elapsed < 2.0, f"alice's own check took {elapsed:.1f}s - it must never block"
 
 
 def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(

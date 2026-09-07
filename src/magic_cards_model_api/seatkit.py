@@ -548,31 +548,37 @@ def compute_wake_reason(
     return None
 
 
-def block_until_wake(
-    seat: Seat,
-    before: dict[str, Any] | None,
-    max_seconds: float,
-    poll_seconds: float = POLL_SECONDS,
-) -> dict[str, Any]:
-    """Poll this seat's own state until a wake condition holds, or time out.
+#: `block_until_wake`'s answer when it checked and no wake condition holds
+#: yet - poll-and-return (see the module docstring's "No transport-level
+#: block left to outlast"): the caller polls by calling again itself, rather
+#: than this function holding a request open to notice the change for it.
+NOTHING_NEW_YET = "nothing new yet - call again to check"
+
+
+def block_until_wake(seat: Seat, before: dict[str, Any] | None) -> dict[str, Any]:
+    """Check this seat's own state once, right now, and return immediately -
+    never blocks, never sleeps.
+
+    This used to poll in a loop for up to a caller-given `max_seconds`,
+    holding one HTTP request open the whole time it waited. MCP protocol
+    revision 2026-07-28 removed resumability (SEP-2577): a tool call that
+    blocks like that loses the request outright if the underlying stream
+    breaks mid-wait, with no way for either side to recover it - a risk that
+    scales with exactly how long the call sits open, and `wait_for_priority`
+    (`mcp.py`) used to default to holding one for up to 570 seconds. So this
+    is poll-and-return instead: one state fetch, one wake-condition check,
+    one answer, always. A caller that wants to keep waiting calls again -
+    `NOTHING_NEW_YET` says so explicitly, the same way the old "timed out"
+    wake reason did, except every call gets it immediately rather than only
+    after riding out a deadline.
 
     Never touches `store.locked` - see the module docstring's "why this
-    cannot deadlock". Always returns within `max_seconds` (a "still waiting"
-    answer, never an exception, never a silent infinite hang): the timeout
-    wake reason tells a caller to call again rather than leaving it guessing.
+    cannot deadlock", which held before this change and holds more trivially
+    now: a single read cannot deadlock against anything.
     """
-    deadline = time.monotonic() + max(0.0, max_seconds)
-    while True:
-        state = seat.fetch_state()
-        reason = compute_wake_reason(state, before, seat.player)
-        if reason is not None:
-            return {"state": state, "wake_reason": reason}
-        if time.monotonic() >= deadline:
-            return {
-                "state": state,
-                "wake_reason": f"timed out after {max_seconds}s - call again to keep waiting",
-            }
-        time.sleep(poll_seconds)
+    state = seat.fetch_state()
+    reason = compute_wake_reason(state, before, seat.player)
+    return {"state": state, "wake_reason": reason or NOTHING_NEW_YET}
 
 
 def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
@@ -756,15 +762,23 @@ def run_action(
     release: bool = True,
 ) -> dict[str, Any]:
     """Do one action, then behave the way both transports promise: unless
-    told to hold, release priority, then block until this seat next has
-    something to do - and always return the action's own outcome alongside
-    whatever state it woke into, in one answer.
+    told to hold, release priority, then check once for this seat's next
+    moment to act - and always return the action's own outcome alongside
+    whatever state that check saw, in one answer.
 
     `perform` is a zero-argument callable performing the actual HTTP call and
     returning its parsed JSON body. `release` is `False` only for `pass`
     itself (the action already *is* releasing priority - calling
     pass-priority a second time on top of it would just be refused, harmlessly,
     but there is no reason to make the extra request).
+
+    `max_seconds` is accepted for backward compatibility but no longer bounds
+    a wait: `block_until_wake` is poll-and-return now (see its own
+    docstring - MCP 2026-07-28 removed resumability, so this call never holds
+    the request open waiting for something to happen). A caller that wants to
+    keep watching just calls the action tool (or `wait_for_priority`) again;
+    `wake_reason` says `NOTHING_NEW_YET` rather than blocking to make that
+    true.
 
     Refusal and `hold_priority` both return **immediately, never blocking**:
     a refused action leaves this seat exactly where it was (still its move,
@@ -908,7 +922,7 @@ def run_action(
                 "available_actions": available_actions(seat, state),
             }
 
-    woken = block_until_wake(seat, before, max_seconds)
+    woken = block_until_wake(seat, before)
     result: dict[str, Any] = {
         "outcome": outcome,
         "held_priority": False,

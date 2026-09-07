@@ -2,27 +2,34 @@
 by `mcp.py` and `seat_cli.py`.
 
 Every action releases priority (CR 117.3c: the actor already keeps it - this
-only decides whether the harness auto-passes it away) and blocks until this
-seat next has something to do, unless `hold_priority` says otherwise. These
-tests drive the shared flow directly (`seatkit.run_action`/`block_until_wake`)
-and, separately, through both transports, to prove they agree.
+only decides whether the harness auto-passes it away) unless `hold_priority`
+says otherwise, then checks once for this seat's next moment to act
+(poll-and-return - `block_until_wake` never blocks any more, T11: MCP
+2026-07-28 removed resumability). These tests drive the shared flow directly
+(`seatkit.run_action`/`block_until_wake`) and, separately, through both
+transports, to prove they agree. A wake that used to require a second thread
+racing an in-flight blocked call is now just a second call, made after
+whatever it was waiting for has actually happened - the same thing a real
+caller does.
 """
 
 from __future__ import annotations
 
 import asyncio
-import threading
+import json
 import time
 from typing import Any
 
 import httpx
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
+from mcp_types import InputRequiredResult
+from test_decisions import advance_into_cleanup
 
 from magic_cards_model_api import seat_cli
 from magic_cards_model_api.main import app
 from magic_cards_model_api.mcp import build_server
-from magic_cards_model_api.seatkit import Seats, block_until_wake, run_action
+from magic_cards_model_api.seatkit import NOTHING_NEW_YET, Seats, block_until_wake, run_action
 from magic_cards_model_api.store import store
 
 
@@ -65,40 +72,46 @@ def cast_bolt_action(seat: Any, game_id: str, bolt_id: str, mountain_id: str) ->
     )
 
 
-# -- releasing priority and blocking -----------------------------------------
+# -- releasing priority, checking, and checking again -------------------------
 
 
-def test_action_releases_priority_and_the_opponents_pass_wakes_it(client, game, monkeypatch):
+def test_action_releases_priority_and_the_next_check_sees_nothing_yet(client, game, monkeypatch):
+    """`run_action` now checks exactly once, right after the action, rather
+    than blocking until something happens - so right after alice casts and
+    releases priority to bob, before bob has done anything at all, there is
+    nothing new for her to see yet."""
     seats, uids = wired_seats(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
     bolt_id, mountain_id = stock_a_bolt(client, game)
 
-    box: dict[str, Any] = {}
+    result = run_action(alice, cast_bolt_action(alice, game, bolt_id, mountain_id))
+    assert result["outcome"]["allowed"] is True
+    assert result["held_priority"] is False
+    assert result["wake_reason"] == NOTHING_NEW_YET
+    assert result["state"]["priority_holder"] == "bob"
 
-    def do_cast() -> None:
-        box["result"] = run_action(
-            alice, cast_bolt_action(alice, game, bolt_id, mountain_id), max_seconds=5
-        )
 
-    thread = threading.Thread(target=do_cast)
-    thread.start()
-    thread.join(timeout=0.5)
-    assert thread.is_alive(), "alice should be blocked on her own next moment to act"
+def test_a_second_check_after_the_opponents_pass_sees_the_wake(client, game, monkeypatch):
+    """The other half: once bob has actually passed (resolving the bolt on
+    the stack), a fresh check - not the one that already returned above, a
+    new one - sees the board has changed and priority is alice's again."""
+    seats, uids = wired_seats(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    bolt_id, mountain_id = stock_a_bolt(client, game)
+
+    first = run_action(alice, cast_bolt_action(alice, game, bolt_id, mountain_id))
+    assert first["wake_reason"] == NOTHING_NEW_YET
 
     # Bob passes with the bolt on the stack: it resolves, and priority comes
     # back to alice with the board changed (bob took 3, the stack is empty).
     passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
     assert passed.json()["allowed"] is True
 
-    thread.join(timeout=5)
-    assert not thread.is_alive(), "alice's blocked call never returned"
-    result = box["result"]
-    assert result["outcome"]["allowed"] is True
-    assert result["held_priority"] is False
-    assert "you have priority" in result["wake_reason"]
-    assert result["state"]["priority_holder"] == "alice"
-    assert life_of(result["state"], "bob") == 17
-    assert result["state"]["stack"] == []
+    woken = block_until_wake(alice, before=first["state"])
+    assert "you have priority" in woken["wake_reason"]
+    assert woken["state"]["priority_holder"] == "alice"
+    assert life_of(woken["state"], "bob") == 17
+    assert woken["state"]["stack"] == []
 
 
 def test_hold_priority_returns_immediately_and_keeps_priority(client, game, monkeypatch):
@@ -190,189 +203,112 @@ def test_play_land_by_an_unresolvable_name_is_refused_not_a_silent_pass(client, 
 # -- the other wake conditions ------------------------------------------------
 
 
-def test_pending_decision_wakes_a_blocked_call(client, game, monkeypatch):
-    """Reuses `test_decisions.py`'s cleanup-discard mechanism: alice is
-    blocked on her own status (not tied to any particular action) while a
-    second thread drives the turn into cleanup, which asks her a CR 608.2d
-    question - that question is what must wake her.
-
-    A creatureless board still pauses on CR 508.1's `declare_attackers`
-    question on the way there - "declares nobody" is no longer a free,
-    silent default (see `commands.py`'s module docstring/`test_decisions.
-    py`'s `advance_into_cleanup`) - so the advancing thread answers that one
-    with an empty `pairs` and keeps going, and the waiting thread's own loop
-    treats it the same way it already treats a spurious "you have priority"
-    wake: not the wake this test is after, so it keeps polling rather than
-    breaking on it.
-    """
+def test_pending_decision_shows_up_on_the_next_check(client, game, monkeypatch):
+    """Reuses `test_decisions.py`'s cleanup-discard mechanism
+    (`advance_into_cleanup`) to drive the turn into alice's own CR 608.2d
+    cleanup discard, sequentially - no second thread needed any more: a
+    single-shot check either sees the decision or it does not, so "wait for
+    it" is just "check after the thing that raises it has actually
+    happened", the same as any other poll-and-return caller."""
     seats, uids = wired_seats(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
     for _ in range(8):
         add_card(client, game, "Mountain", "alice", "hand")
 
-    box: dict[str, Any] = {}
+    paused = advance_into_cleanup(game, "alice")
+    assert paused is not None, "the discard should have asked, not defaulted silently"
 
-    def do_wait() -> None:
-        # Advancing the turn into cleanup crosses several step boundaries,
-        # each of which hands the active player (alice) priority again (CR
-        # 117.3a) - a legitimate wake in its own right, just not the one this
-        # test is after. A real caller in that situation calls again; this
-        # loop does the same, until the specific wake it wants shows up or
-        # its own deadline runs out.
-        deadline = time.monotonic() + 10
-        before = None
-        result: dict[str, Any] = {}
-        while time.monotonic() < deadline:
-            result = block_until_wake(alice, before=before, max_seconds=1)
-            if "a decision is waiting for you" in result["wake_reason"]:
-                kind = result["state"]["pending_decision"]["kind"]
-                if kind not in ("declare_attackers", "declare_blockers"):
-                    break
-            before = result["state"]
-        box["result"] = result
+    result = block_until_wake(alice, before=None)
+    assert "a decision is waiting for you" in result["wake_reason"]
+    assert result["state"]["pending_decision"]["player"] == "alice"
+    assert result["state"]["pending_decision"]["kind"] == "choose_cards"
 
-    waiter = threading.Thread(target=do_wait)
-    waiter.start()
-
-    def advance_into_cleanup() -> None:
-        stepping = TestClient(app)
-        for _ in range(30):
-            response = stepping.post(f"/api/games/{game}/advance", json={"player": "alice"})
-            if response.status_code != 200:
-                return
-            body = response.json()
-            if body.get("paused"):
-                pending = body["pending_decision"]
-                if pending["kind"] in ("declare_attackers", "declare_blockers"):
-                    stepping.post(
-                        f"/api/games/{game}/decide",
-                        params={"uid": uids[pending["player"]]},
-                        json={"player": pending["player"], "pairs": []},
-                    )
-                    continue
-                return
-            if body.get("advanced_to") == "cleanup":
-                return
-
-    advancer = threading.Thread(target=advance_into_cleanup)
-    advancer.start()
-    try:
-        waiter.join(timeout=15)
-        assert not waiter.is_alive(), "the pending decision never woke the blocked call"
-        result = box["result"]
-        assert "a decision is waiting for you" in result["wake_reason"]
-        assert result["state"]["pending_decision"]["player"] == "alice"
-        assert result["state"]["pending_decision"]["kind"] == "choose_cards"
-
-        # Answer it so the advancing thread can finish cleanly.
-        pending = result["state"]["pending_decision"]
-        client.post(
-            f"/api/games/{game}/decide",
-            params={"uid": uids["alice"]},
-            json={"player": "alice", "card_ids": [pending["cards"][0]]},
-        )
-    finally:
-        advancer.join(timeout=10)
-        assert not advancer.is_alive()
+    # Answer it, proving it is a live decision, not a stale echo.
+    pending = result["state"]["pending_decision"]
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [pending["cards"][0]]},
+    )
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["accepted"] is True
 
 
-def test_game_over_wakes_a_blocked_call(client, game, monkeypatch):
+def test_game_over_shows_up_on_the_next_check(client, game, monkeypatch):
     seats, uids = wired_seats(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
-    # Give away priority so alice's wait does not fire on "you have priority"
-    # instantly - the point here is specifically the game-over wake.
+    # Give away priority so the check below cannot fire on "you have
+    # priority" instead - the point here is specifically the game-over wake.
     client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
 
-    box: dict[str, Any] = {}
-
-    def do_wait() -> None:
-        box["result"] = block_until_wake(alice, before=None, max_seconds=10)
-
-    thread = threading.Thread(target=do_wait)
-    thread.start()
-    thread.join(timeout=0.5)
-    assert thread.is_alive()
+    before = block_until_wake(alice, before=None)
+    assert before["wake_reason"] != "game over"
 
     client.patch(f"/api/games/{game}/players/bob", json={"life": 0})
     client.post(f"/api/games/{game}/state-based-actions")
 
-    thread.join(timeout=10)
-    assert not thread.is_alive()
-    assert box["result"]["wake_reason"] == "game over"
-    assert box["result"]["state"]["winner"] == "alice"
+    result = block_until_wake(alice, before=before["state"])
+    assert result["wake_reason"] == "game over"
+    assert result["state"]["winner"] == "alice"
 
 
-def test_timeout_returns_the_timeout_wake_reason_and_does_not_corrupt_anything(
+def test_nothing_new_returns_the_nothing_new_wake_reason_and_does_not_corrupt_anything(
     client, game, monkeypatch
 ):
     seats, uids = wired_seats(monkeypatch, game)
     bob = seats.seat_for(uids["bob"])  # bob never has priority in this game
-    result = block_until_wake(bob, before=None, max_seconds=0.3)
-    assert "timed out" in result["wake_reason"]
+    started = time.monotonic()
+    result = block_until_wake(bob, before=None)
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0, f"block_until_wake took {elapsed:.1f}s - it must never block"
+    assert result["wake_reason"] == NOTHING_NEW_YET
     # The game is exactly as it was: still alice's priority, nothing broken.
     assert result["state"]["priority_holder"] == "alice"
     still_fine = state(client, game)
     assert still_fine["priority_holder"] == "alice"
 
 
-def test_two_seats_both_blocked_one_acts_the_other_wakes(client, game, monkeypatch):
-    """The realistic case: bob is blocked waiting for his turn to matter;
-    alice, who already has priority, acts and releases it. Bob's blocked wait
-    - and only his - wakes."""
+def test_two_seats_one_acts_the_others_next_check_sees_it(client, game, monkeypatch):
+    """The realistic case: bob has nothing to see yet, waiting for his turn
+    to matter; alice, who already has priority, acts and releases it to him.
+    Bob's next check - and only his - sees the wake."""
     seats, uids = wired_seats(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
     bob = seats.seat_for(uids["bob"])
     bolt_id, mountain_id = stock_a_bolt(client, game)
 
-    bob_box: dict[str, Any] = {}
+    bob_before = block_until_wake(bob, before=None)
+    assert bob_before["wake_reason"] == NOTHING_NEW_YET, "bob has no priority yet"
 
-    def bob_waits() -> None:
-        bob_box["result"] = block_until_wake(bob, before=None, max_seconds=10)
-
-    bob_thread = threading.Thread(target=bob_waits)
-    bob_thread.start()
-    bob_thread.join(timeout=0.5)
-    assert bob_thread.is_alive(), "bob has no priority yet - he should still be blocked"
-
-    # Alice's own call hands priority straight to bob and then has nothing
-    # left to wait for on her own account, so it rides out its bound (kept
-    # short here purely so the test does not sit idle) rather than waking -
-    # proving this is bob's moment, not hers, is what matters below.
-    alice_result = run_action(
-        alice, cast_bolt_action(alice, game, bolt_id, mountain_id), max_seconds=1.5
-    )
+    # Alice's own call hands priority straight to bob - proving this is
+    # bob's moment, not hers, is what the next check below is for.
+    alice_result = run_action(alice, cast_bolt_action(alice, game, bolt_id, mountain_id))
     assert alice_result["outcome"]["allowed"] is True
 
-    bob_thread.join(timeout=10)
-    assert not bob_thread.is_alive(), "bob's blocked wait never woke up"
-    assert "you have priority" in bob_box["result"]["wake_reason"]
-    assert bob_box["result"]["state"]["priority_holder"] == "bob"
+    bob_woken = block_until_wake(bob, before=bob_before["state"])
+    assert "you have priority" in bob_woken["wake_reason"]
+    assert bob_woken["state"]["priority_holder"] == "bob"
 
 
 def test_no_deadlock_block_until_wake_never_holds_the_game_lock(client, game, monkeypatch):
     """The invariant `decisions.py` documents for `decide` versus `Game.ask`
-    applies equally here: a blocked wait must never hold `store.locked`, or it
-    would deadlock against the very request that is supposed to wake it (that
-    request also needs the lock to record its own action). Proven by holding
-    the lock for the whole test and blocking anyway - if `block_until_wake`
-    ever tried to take it, this would hang past the thread's own join timeout
-    instead of finishing well within it."""
+    applies equally here: a check must never hold `store.locked`, or it would
+    deadlock against the very request that is supposed to change what it
+    sees (that request also needs the lock to record its own action).
+
+    `block_until_wake` is a single-shot GET read now (T11: poll-and-return),
+    so this no longer needs a second thread to prove the point - holding the
+    lock in this very thread and calling it directly is enough: if it ever
+    tried to take `store.locked` itself, this would hang."""
     seats, uids = wired_seats(monkeypatch, game)
     bob = seats.seat_for(uids["bob"])
 
-    box: dict[str, Any] = {}
-
-    def do_wait() -> None:
-        started = time.monotonic()
-        box["result"] = block_until_wake(bob, before=None, max_seconds=1.5)
-        box["elapsed"] = time.monotonic() - started
-
-    thread = threading.Thread(target=do_wait)
+    started = time.monotonic()
     with store.locked(game):
-        thread.start()
-        thread.join(timeout=5)
-    assert not thread.is_alive(), "block_until_wake hung - it must have tried to take the game lock"
-    assert box["elapsed"] < 4
+        result = block_until_wake(bob, before=None)
+    elapsed = time.monotonic() - started
+    assert elapsed < 2, "block_until_wake must not have tried to take the game lock"
+    assert result["wake_reason"] == NOTHING_NEW_YET
 
 
 # -- the available-actions summary --------------------------------------------
@@ -425,44 +361,48 @@ def test_available_actions_summary_never_leaks_the_opponents_hand_or_library(
 
 
 def call_mcp_tool(server: Any, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """A tool's answer as a plain dict either way: an ordinary text result is
+    parsed as JSON, and an `InputRequiredResult` (a decision pending for the
+    caller, T11) is unwrapped to the same shape via its own `request_state`,
+    so a caller here need not branch on which wire shape it got back."""
     result = asyncio.run(server.call_tool(name, arguments))
-    text = result.content[0].text
-    import json
-
-    return json.loads(text)
+    if isinstance(result, InputRequiredResult):
+        assert result.request_state is not None
+        return json.loads(result.request_state)
+    return json.loads(result.content[0].text)
 
 
 def test_seat_cli_and_mcp_tool_agree_on_the_same_flow(client, game, monkeypatch, capsys):
-    """The whole "cast, release, block, wake" flow driven once through
-    `seat_cli` and once through the MCP tool surface, on two independent
-    games, proving they behave the same way (same shared `run_action`)."""
+    """The whole "cast, then check" flow driven once through `seat_cli` and
+    once through the MCP tool surface, on two independent games, proving
+    they behave the same way (same shared `run_action`/`seatkit.
+    block_until_wake`). Neither blocks any more (T11: poll-and-return), so
+    this is two sequential calls each - cast, then check again once bob has
+    actually passed - rather than two threads racing a blocked call."""
     seats, uids = wired_seats(monkeypatch, game)
     bolt_id, mountain_id = stock_a_bolt(client, game)
 
     # -- seat_cli path --
-    def cli_cast() -> None:
-        seat_cli.run(
-            [
-                "--uid",
-                uids["alice"],
-                "--game",
-                game,
-                "cast",
-                bolt_id,
-                "--target",
-                "bob",
-                "--sources",
-                mountain_id,
-            ]
-        )
+    seat_cli.run(
+        [
+            "--uid",
+            uids["alice"],
+            "--game",
+            game,
+            "cast",
+            bolt_id,
+            "--target",
+            "bob",
+            "--sources",
+            mountain_id,
+        ]
+    )
+    first_printed = capsys.readouterr().out
+    assert "nothing new yet" in first_printed, "nothing has happened yet - bob has not moved"
 
-    cli_thread = threading.Thread(target=cli_cast)
-    cli_thread.start()
-    cli_thread.join(timeout=0.5)
-    assert cli_thread.is_alive(), "seat_cli cast should also block on its own next moment"
     client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
-    cli_thread.join(timeout=5)
-    assert not cli_thread.is_alive()
+
+    seat_cli.run(["--uid", uids["alice"], "--game", game, "wait"])
     cli_printed = capsys.readouterr().out
     assert "you have priority" in cli_printed
     assert life_of(state(client, game), "bob") == 17
@@ -477,30 +417,23 @@ def test_seat_cli_and_mcp_tool_agree_on_the_same_flow(client, game, monkeypatch,
         bolt_id2, mountain_id2 = stock_a_bolt(client, game2, uid=uids2["alice"])
         server = build_server(seats2)
 
-        mcp_box: dict[str, Any] = {}
+        first = call_mcp_tool(
+            server,
+            "cast",
+            {
+                "player_uid": uids2["alice"],
+                "card": bolt_id2,
+                "targets": "bob",
+                "mana_sources": mountain_id2,
+            },
+        )
+        assert first["outcome"]["allowed"] is True
+        assert first["wake_reason"] == "nothing new yet - call again to check"
 
-        def mcp_cast() -> None:
-            mcp_box["result"] = call_mcp_tool(
-                server,
-                "cast",
-                {
-                    "player_uid": uids2["alice"],
-                    "card": bolt_id2,
-                    "targets": "bob",
-                    "mana_sources": mountain_id2,
-                },
-            )
-
-        mcp_thread = threading.Thread(target=mcp_cast)
-        mcp_thread.start()
-        mcp_thread.join(timeout=0.5)
-        assert mcp_thread.is_alive(), "the MCP tool should block the same way seat_cli does"
         client.post(f"/api/games/{game2}/actions/pass-priority", json={"player": "bob"})
-        mcp_thread.join(timeout=5)
-        assert not mcp_thread.is_alive()
-        result = mcp_box["result"]
-        assert result["outcome"]["allowed"] is True
+
+        result = call_mcp_tool(server, "wait_for_priority", {"player_uid": uids2["alice"]})
         assert "you have priority" in result["wake_reason"]
-        assert life_of(result["state"], "bob") == 17
+        assert life_of(result, "bob") == 17
     finally:
         client.delete(f"/api/games/{game2}")
