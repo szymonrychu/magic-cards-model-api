@@ -36,8 +36,14 @@ jobs:
         with:
           working_directory: magic-cards-model-api
 
-      - name: mise install
+      # `mise install` installs the tools pinned in mise.toml. It does NOT run
+      # the repo's own `install` task, which is what syncs the virtualenv. Both
+      # are needed: without the second, `uv run pytest` fails to spawn pytest.
+      - name: Install pinned tools
         run: mise install
+
+      - name: Sync the virtualenv
+        run: mise run install
 
       - name: Lint
         run: mise run lint
