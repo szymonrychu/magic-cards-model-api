@@ -37,27 +37,52 @@ Two costs, split deliberately:
   expensive, but it is not worth paying on a 1.2s poll for the 30-odd cards
   the player is not currently holding.
 
-`ability_hints`/`cast_hints` overlap `machines.legal_actions.legal_actions`
-(Phase 1, adopted by `seatkit.available_actions` in T11) on one real question:
-whether a cost has an unannounced `{X}` in it (CR 107.3a) - both used to spell
-out `"{X}" in (cost or "")` independently, the same duplicated-rule shape this
-project has paid for twice before (`seatkit.py`'s own module docstring).
-`_needs_x` below is the one place that check is written now, shared by both.
-The rest of what these two report is deliberately NOT folded into
-`legal_actions`'s own `Action` records, because it answers a different
-question at a different granularity: `cast_hints`'s `targeting` is the UI's
-own `TargetingProfile` view (`understood`, per-requirement `phrase`/`count`,
-a `division`) so the board can badge a targeting ability and fall back to
-free-entry when the parser could not read it, where `Action.target_slots` is
-deliberately narrower (`phrase`/`minimum`/`maximum` only - its own docstring)
-and carries no `understood` flag at all; `ability_hints`'s `mana_options` is
-a client-side guess read straight off the parsed ability, not the
-authoritative `game.mana_color_options` call `Action.color_options` is built
-from (see that field's own docstring for the real bug - Steam Vents reporting
-legal when it was not - that made the difference matter once already).
-Reaching for `available_actions` on every card this cheaply would also trade
-a parse-only annotation the UI needs on every card for a full per-player
-legality pass; that trade is not this task's to make.
+What overlaps `machines.legal_actions.legal_actions` (Phase 1, adopted by
+`seatkit.available_actions` in T11), and what was actually folded onto it -
+each piece attempted, not argued about in advance:
+
+- **`ability_hints`'s `mana_options`: folded, and it was the one that
+  mattered.** It used to be read off the parsed ability - `mana.any_color`
+  became a flat WUBRG list, `mana.options` became the colours the printed
+  text can produce - which is a guess off printed text, not what
+  `Game.activate_ability` would accept. `Game.mana_color_options` (CR 605.1a)
+  is the authoritative call, and the one `Action.color_options` is built
+  from; `engine_api.list_abilities` asks it and hands the answer here.
+  The narrowing this used to miss is real: the board-derived CR 106.7 survey,
+  the CR 614.12a chosen colour on the permanent, and Mox Amber's CR 106.5
+  "among legendary creatures and planeswalkers you control". The one shape
+  the engine cannot answer is `list_abilities`' `parse_mana_abilities`
+  fallback loop, whose abilities are not in `Game.activated_abilities` at all
+  and so have no index to look one up by; the printed reading survives there
+  and nowhere else.
+- **The `{X}` check: folded** into `_needs_x` below, the one place either of
+  these writes `"{X}" in (cost or "")` now.
+- **`cast_hints`'s `targeting`, `modes` and `needs_x`: attempted, and kept.**
+  The engine computes all three off the same parsers this module calls
+  (`legal_actions._cast_action` runs `modal_profile` and the same
+  announcement profile), so the *computation* is genuinely duplicated - but
+  `Action` is where it lands, and `Action` is deliberately narrower, in the
+  engine repo, and not this repo's to widen. Building these from it loses,
+  concretely: `TargetingProfile.understood` (`Action.target_slots` is `()`
+  both for "the parser could not read this" and for "it targets nothing", and
+  `ui/app.js`'s `isPickingTargets` branches on the difference to decide
+  between a free-entry box and "nothing is legal"); `division`; each
+  requirement's `count`/`unbounded`/`variable_count`/`mode`/`mode_text`; and
+  every field of `modes` except the bare text - including each mode's
+  `number`, which is what a client sends back, and `minimum`/`maximum`/
+  `entwine_cost`/`escalate_cost`.
+  `needs_x` diverges outright rather than merely narrowing: `Action.x_range`
+  is `None` for a *modal* X spell, because a modal card's X is not
+  enumerable before its modes are chosen (CR 700.2c), while this module
+  answers "this card has an X to announce" - so folding it would take the X
+  box away from Kozilek's Command.
+  There is also a structural mismatch, not a taste one: `legal_actions` only
+  emits a `CAST` action when casting is legal *right now*, and emits nothing
+  but a pending decision's own answers while one stands - whereas
+  `serialize._card_view` attaches these hints to every hand and exile card on
+  every poll, whether or not it could be cast this instant. Folding would
+  make the UI's X box, mode picker and target picker disappear during the
+  opponent's turn.
 """
 
 from __future__ import annotations
@@ -139,7 +164,7 @@ def _needs_x(cost: str | None) -> bool:
     return "{X}" in (cost or "")
 
 
-def ability_hints(ability: Any) -> dict[str, Any]:
+def ability_hints(ability: Any, color_options: tuple[Any, ...] | None = None) -> dict[str, Any]:
     """What activating this ability asks for, beyond the click.
 
     `ability` is one of `Game.activated_abilities`' entries - either a parsed
@@ -147,6 +172,11 @@ def ability_hints(ability: Any) -> dict[str, Any]:
     for a basic land (CR 305.6), which carries no `cost`/`loyalty` of its own.
     Both shapes are read with `getattr` rather than branched on, since the
     intrinsic one is deliberately not an `ActivatedAbility`.
+
+    `color_options` is `Game.mana_color_options(permanent, index)` - the exact
+    call `machines.legal_actions` builds `Action.color_options` from, passed
+    in by `engine_api.list_abilities` rather than re-derived here. See
+    `mana_options` below for why that matters and what it replaced.
     """
     cost = getattr(ability, "cost", None)
     loyalty = getattr(ability, "loyalty", None)
@@ -170,15 +200,29 @@ def ability_hints(ability: Any) -> dict[str, Any]:
     # A Cavern of Souls or a Ravnica dual is unusable from a UI that never
     # asks, and a UI that asks on every land is asking five times too often,
     # so the options are reported here: `None` for an ability with no choice
-    # to make, a list of colour letters for one that offers a fixed set, and
-    # every colour for an "any colour" source (CR 106.1b).
+    # to make, and a list of colour letters for one that offers a real set.
+    #
+    # THE ENGINE'S OWN ANSWER, not this module's. This used to read the
+    # parsed ability directly - `mana.any_color` became a flat WUBRG list,
+    # and `mana.options` became the set of colours its printed text can
+    # produce - which is a *guess off printed text* rather than what
+    # `Game.activate_ability` would actually accept right now.
+    # `Game.mana_color_options` (CR 605.1a) is the authoritative call: it
+    # narrows the printed set by the board-derived CR 106.7 survey, the
+    # CR 614.12a chosen colour on the permanent itself, and Mox Amber's own
+    # CR 106.5 "among legendary creatures and planeswalkers you control"
+    # reading - so an option it drops is one an activation would refuse.
+    # That is exactly the divergence `Action.color_options` exists for, and
+    # keeping a second, looser copy here is the duplicated-rule shape this
+    # project has already paid for twice (`seatkit.py`'s module docstring).
+    #
+    # `()` from the engine means "no real choice at all" (one printed
+    # colour, or the choice already narrowed to nothing, CR 106.5), which is
+    # this field's own `None` - the shape `ui/mana.js` and `ui/actions.js`
+    # already read. Sorted, as the multi-option branch always was.
     mana = getattr(ability, "mana", None)
     if mana is not None:
-        if mana.any_color:
-            hints["mana_options"] = ["W", "U", "B", "R", "G"]
-        else:
-            produced = {color.value for option in mana.options for color in option}
-            hints["mana_options"] = sorted(produced) if len(mana.options) > 1 else None
+        hints["mana_options"] = sorted(color.value for color in color_options or ()) or None
     # An ability's targeting is read off its effect text, which is what
     # `engine_api.check_target` already asks `profile_for_text` for - the same
     # parse the engine itself runs at CR 602.2b announcement.
