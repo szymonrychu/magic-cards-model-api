@@ -275,22 +275,15 @@ def dry_run_copy(game: Game) -> Game:
     a throwaway board to wreck instead: nothing needs to be undone correctly
     if nothing real was ever touched.
 
-    `game.decisions.provider` is swapped out before the copy and restored
-    right after. No game built by this store carries a live provider any
-    more (T7b removed the last thing that ever set one - decisions pause
-    and resume through `commands.py` instead of blocking one), so this
-    swap is inert today; it is kept because `game.decisions.provider` is
-    typed to hold arbitrary caller state (a scenario test's own stub, say),
-    and `copy.deepcopy` - which `model_copy(deep=True)` uses internally -
-    cannot copy just anything a caller might have put there (a lock, an open
-    connection, ...). The copy's own `provider` is set to `None` rather than
-    pointed back at whatever the original held, on the same principle a live
-    provider used to need this for: nothing a dry-run probe triggers should
-    ever reach back into the object a real caller is using. `Game.ask`
-    already treats "no provider" as "let the engine's own `default_answer`
-    speak for the player" (see that method) - the same deterministic,
-    non-blocking answer a scenario test gets, which is the right one for a
-    probe too.
+    A `Game` is fully serializable, so `model_copy(deep=True)` is a plain
+    deep copy with nothing to swap out first. This used to null and restore
+    `game.decisions.provider` around the copy, because that field was typed
+    to hold arbitrary caller state that `copy.deepcopy` could not copy (a
+    lock, an open connection, ...). T8 deleted the field from the engine:
+    there is now exactly one way to answer a decision, and an unanswered one
+    resolves through the engine's own `default_answer` - the same
+    deterministic, non-blocking answer a scenario test gets, which is the
+    right one for a probe too.
 
     One further trap, once the engine grows `game_uid`/`objects_created`
     (deterministic per-object ids keyed on `game_uid`, so a game replays
@@ -306,13 +299,7 @@ def dry_run_copy(game: Game) -> Game:
     dry run at all - so nothing minted on a probe copy has anywhere to
     escape to even before that field exists.
     """
-    provider = game.decisions.provider
-    game.decisions.provider = None
-    try:
-        probe = game.model_copy(deep=True)
-    finally:
-        game.decisions.provider = provider
-    probe.decisions.provider = None
+    probe = game.model_copy(deep=True)
     if hasattr(probe, "game_uid"):
         probe.game_uid = uuid4()
     return probe

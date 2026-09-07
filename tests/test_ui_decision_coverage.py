@@ -82,11 +82,13 @@ _UI_HANDLED_ELSEWHERE = {
 #: `MULLIGAN` used to be the one kind with no live path at all - CR 103.5's
 #: declaration was genuinely asked of each player, but
 #: `machines/decisions.py`'s `ask_mulligan` answered it from
-#: `DecisionScript.take`/`default_answer` without ever consulting
-#: `Game.decisions.provider`, the mailbox `pending_decision` is built from.
-#: The engine closed that: `ask_mulligan` now consults the provider between
-#: the script and the default, so a `mulligan` really does land in a seat's
-#: `pending_decision` whenever `Game.settle_pregame` walks the pregame. It is
+#: `DecisionScript.take`/`default_answer` without ever consulting the live
+#: blocking transport the mailbox `pending_decision` was built from.
+#: Pausing closed that, and T8 then deleted the transport outright:
+#: `ask_mulligan` consults the scripted answer, then the replay tape, then
+#: raises `DecisionPending` when neither has one, so a `mulligan` really does
+#: land in a seat's `pending_decision` whenever `Game.settle_pregame` walks
+#: the pregame. It is
 #: in `decisions.ANSWERABLE_KINDS` and has its own entry in both of
 #: `_TABLES` (a plain yes/no, like `may`). A seat declaring for *itself* has
 #: a second, non-blocking transport that raises no decision at all - the

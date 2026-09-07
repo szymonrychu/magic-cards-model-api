@@ -481,23 +481,13 @@ def _replay_copy(game: Game) -> Game:
     replayed, deterministically, from the same `game_uid` (see this module's
     own docstring on determinism).
 
-    `game.decisions.provider` is nulled here before the copy and restored on
-    `game` right after, the same shape `engine_api.dry_run_copy` uses, for
-    the same defensive reason: `game.decisions.provider` may hold arbitrary
-    caller state `copy.deepcopy` cannot necessarily copy (see
-    `dry_run_copy`'s own docstring, which this mirrors exactly - no game
-    built by this store carries a live provider any more, so this is inert
-    in practice today). The copy's own provider is left `None` rather than
-    pointed back at whatever the original held, on the same principle.
+    A `Game` is fully serializable, so this is a plain deep copy. It used to
+    null and restore `game.decisions.provider` around the copy, mirroring
+    `engine_api.dry_run_copy`, because that field could hold arbitrary caller
+    state `copy.deepcopy` could not necessarily copy. T8 deleted the field
+    from the engine, so there is nothing left to guard against.
     """
-    provider = game.decisions.provider
-    game.decisions.provider = None
-    try:
-        copy = game.model_copy(deep=True)
-    finally:
-        game.decisions.provider = provider
-    copy.decisions.provider = None
-    return copy
+    return game.model_copy(deep=True)
 
 
 def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> RunResult:
