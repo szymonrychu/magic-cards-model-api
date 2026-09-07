@@ -1297,7 +1297,9 @@ def test_until_castable_stops_when_told_something_is_castable() -> None:
         run_module("priority.js", expr, start=board(), later=board(step="end_step"), castable=False)
         is None
     )
-    assert run_module("priority.js", expr, start=board(), later=board(step="end_step"), castable=True)
+    assert run_module(
+        "priority.js", expr, start=board(), later=board(step="end_step"), castable=True
+    )
 
 
 def test_a_stop_halts_every_verb_on_the_right_side() -> None:
