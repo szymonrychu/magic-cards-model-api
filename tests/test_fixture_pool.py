@@ -7,8 +7,9 @@ in the browser is a "validating" spinner that never seems to finish. The pool
 next door already holds those printings, so what these tests pin is that it is
 actually being read: a cold cache that stays *empty* is the whole proof.
 
-No mocks anywhere: the real `tests/fixtures/cards/*.json` from the engine
-checkout, the real `decks/*.txt`, and a real (empty) cache directory.
+No mocks anywhere: the real `data/printings/*.json` corpus shipped inside the
+installed engine package, the real `decks/*.txt`, and a real (empty) cache
+directory.
 """
 
 from __future__ import annotations
@@ -34,9 +35,12 @@ SLOW_DECKS = ["grixis_reanimator", "dimir_frog", "esper_goryo"]
 
 @pytest.fixture()
 def pool() -> Path:
+    """The pool ships inside the installed engine package now, so it is
+    always present - no skip. A missing pool here is a real regression
+    (`scryfall.fixture_pool_dir` failing to resolve the packaged corpus),
+    not an absent optional checkout, so it fails loudly instead of skipping."""
     directory = scryfall.fixture_pool_dir()
-    if directory is None:
-        pytest.skip("engine checkout with tests/fixtures/cards is not present")
+    assert directory is not None, "the engine's packaged printing corpus did not resolve"
     return directory
 
 
@@ -47,6 +51,18 @@ def cold_cache(tmp_path, monkeypatch) -> Path:
     cache.mkdir()
     monkeypatch.setenv("MCM_CACHE_DIR", str(cache))
     return cache
+
+
+def test_fixture_pool_dir_resolves_the_packaged_corpus():
+    """The corpus ships inside the installed `magic_cards_model` package
+    itself now (`data/printings/*.json`), not a sibling engine checkout's
+    `tests/fixtures/cards`. It must resolve with no override at all, in an
+    editable install, a wheel install, or the container image alike - and
+    hold close to the 747 printings the engine ships."""
+    directory = scryfall.fixture_pool_dir()
+    assert directory is not None, "the packaged printing corpus did not resolve"
+    files = list(directory.glob("*.json"))
+    assert len(files) > 700, f"expected roughly 747 printings, found {len(files)}"
 
 
 def test_fixture_slug_follows_the_engines_own_rule():
@@ -121,8 +137,9 @@ def test_a_pool_file_holding_a_different_card_is_refused(pool, tmp_path, monkeyp
 
 
 def test_missing_or_disabled_pool_degrades_quietly(tmp_path, monkeypatch):
-    """The pool is an optimisation, not a dependency: a deployment without
-    the engine checkout beside it must still work, just slowly."""
+    """The pool is an optimisation, not a dependency: `MCM_FIXTURE_CARDS_DIR`
+    pointed at nothing, or the packaged corpus otherwise unavailable, must
+    still work, just slowly."""
     monkeypatch.setenv("MCM_FIXTURE_CARDS_DIR", str(tmp_path / "nowhere"))
     assert scryfall.fixture_pool_dir() is None
     assert scryfall.load_pooled("Otawara, Soaring City") is None

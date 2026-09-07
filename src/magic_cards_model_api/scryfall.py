@@ -8,19 +8,22 @@ Where a card comes from, in order:
 
 1. `cache_dir()` - `MCM_CACHE_DIR`, or `<repo>/.scryfall-cache`. Anything
    fetched before, written by this module.
-2. The engine's scenario-test pool, `tests/fixtures/cards/*.json` in
-   `../magic-cards-model` - **read-only**, and read exactly the way
-   `scripts/survey_cards.py::fetch_printing` reads it over there. Those files
-   are whole Scryfall printings, so they serve `image_uris` and `legalities`
-   as well as the engine's `Card`. This module never writes into that
-   directory, and never needs it to exist.
+2. The engine's bundled printing corpus, shipped inside the installed
+   `magic_cards_model` package itself at `data/printings/*.json` - **read-
+   only**. `MCM_FIXTURE_CARDS_DIR` can override the path outright. Those
+   files are whole Scryfall printings, so they serve `image_uris` and
+   `legalities` as well as the engine's `Card`. This module never writes into
+   that directory, and never needs it to exist.
 3. Scryfall itself, rate-limited, written to `cache_dir()`.
 
 Tier 2 exists because tier 3 costs ~0.35s per distinct card and a decklist has
 sixty of them: validating `grixis_reanimator` against an empty cache took 35s
 of wall clock, which reads in the browser as a hung "validating" spinner. The
-pool already holds ~740 real printings, covering nearly every card in the
-bundled decks, so on a cold cache the same validation is now disk-speed.
+corpus ships with the engine package itself (747 real printings), covering
+nearly every card in the bundled decks, so on a cold cache the same
+validation is disk-speed - in an editable install, a wheel install, or the
+container image alike, since all three lay the installed package out as
+plain files on disk.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import magic_cards_model
 from magic_cards_model.models import Card
 from pydantic import ValidationError
 
@@ -66,37 +70,40 @@ def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
-#: Where the engine checkout lands in the `game` image - `Dockerfile` does
-#: `COPY magic-cards-model /magic-cards-model`, and nothing in
-#: `Dockerfile.dockerignore` excludes `tests/`, so the pool ships with it.
-_CONTAINER_ENGINE_ROOT = Path("/magic-cards-model")
-
-#: A dev checkout: the API repo and the engine sit side by side, which is also
-#: what `pyproject.toml`'s path dependency on the engine already assumes.
-_SIBLING_ENGINE_ROOT = Path(__file__).resolve().parents[3] / "magic-cards-model"
-
-_POOL_SUBPATH = Path("tests") / "fixtures" / "cards"
+def _packaged_pool_dir() -> Path:
+    """The engine's bundled Scryfall printing corpus, inside the installed
+    `magic_cards_model` package itself: `data/printings/*.json`, next to the
+    package's own `__init__.py`. This resolves the same way regardless of how
+    the engine got installed - an editable/path install (this repo's dev
+    setup today), a non-editable wheel install (what a git-sha dependency
+    will give), or a wheel unpacked into a container image - because all
+    three lay the installed package out as plain files on disk at that same
+    relative location. `magic_cards_model.__file__` is always a real path on
+    disk in every one of those cases (this project never zipimports), so a
+    plain `pathlib` join is enough; there is no zipped-package case to guard
+    against with `importlib.resources`.
+    """
+    return Path(magic_cards_model.__file__).resolve().parent / "data" / "printings"
 
 
 def fixture_pool_dir() -> Path | None:
-    """The engine's read-only scenario-test card pool, or None if absent.
+    """The engine's read-only, bundled scenario-test card pool, or None if
+    absent.
 
     `MCM_FIXTURE_CARDS_DIR` names it outright; an empty value turns the tier
-    off. Otherwise the container path wins over the sibling checkout. A path
-    that is not a directory is simply not a source - there is no error, the
-    lookup falls through to the cache and the network.
+    off. Otherwise the corpus packaged inside the installed
+    `magic_cards_model` distribution is used. A path that is not a directory
+    is simply not a source - there is no error, the lookup falls through to
+    the cache and the network.
     """
     env = os.environ.get("MCM_FIXTURE_CARDS_DIR")
     if env is not None:
         if not env.strip():
             return None
-        candidates = [Path(env)]
+        candidate = Path(env)
     else:
-        candidates = [_CONTAINER_ENGINE_ROOT / _POOL_SUBPATH, _SIBLING_ENGINE_ROOT / _POOL_SUBPATH]
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    return None
+        candidate = _packaged_pool_dir()
+    return candidate if candidate.is_dir() else None
 
 
 def _faces(name: str) -> list[str]:
