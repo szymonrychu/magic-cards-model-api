@@ -17,8 +17,14 @@ shape, built on top of it.
 
 from __future__ import annotations
 
+import httpx
 from conftest import add_card, find, state
+from fastapi.testclient import TestClient
 from test_decisions import advance_into_cleanup, stuff_hand
+
+from magic_cards_model_api.main import app
+from magic_cards_model_api.seatkit import Seats, available_actions
+from magic_cards_model_api.store import store
 
 
 def legal_actions(client, game_id: str, player: str = "alice") -> list[dict]:
@@ -102,3 +108,32 @@ def test_a_pending_decision_narrows_the_pool_to_its_own_answers_for_the_player_i
 
     bob_actions = legal_actions(client, game, player="bob")
     assert bob_actions == [], "nothing else is legal while alice's own decision stands"
+
+
+def test_unknown_affordability_reaches_the_seat_through_available_actions(
+    client, game, monkeypatch
+):
+    """The endpoint tests above pin the raw HTTP response; this pins the
+    other end of the wire T11 actually adopted `legal_actions` for -
+    `seatkit.available_actions`, what an MCP/CLI seat's own `cast`/
+    `wait_for_priority` calls embed as `available_actions` in their answer.
+    The old brute-force dry-run probe could only ever report `castable: true`
+    or nothing at all - there was no way for `UNKNOWN` to reach a seat
+    through it, because a dry run either succeeds or it does not. This
+    confirms it now does, unflattened, all the way to `Seat.available_actions`."""
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    for _ in range(3):
+        add_card(client, game, "Wastes", "alice", "battlefield")
+    add_card(client, game, "Kozilek's Command", "alice", "hand")
+    koz = find(state(client, game)["hands"]["alice"], "Kozilek's Command")
+
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    seats = Seats(api="http://testserver", game_id=game)
+    alice = seats.seat_for(uids["alice"])
+
+    result = available_actions(alice, alice.fetch_state())
+    (cast,) = [a for a in result["actions"] if a["kind"] == "cast" and a["card_id"] == koz["id"]]
+    assert cast["affordable"] == "unknown"
+    assert cast["affordable"] not in ("yes", "no"), (
+        "UNKNOWN must reach the seat as its own verdict, not collapsed into a boolean"
+    )
