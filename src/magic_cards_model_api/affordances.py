@@ -54,6 +54,8 @@ from magic_cards_model.machines.targeting import (
 )
 from magic_cards_model.models import CardState, Game, Player, Zone
 
+from .engine_api import dry_run_copy
+
 #: Zones whose contents a spell or ability can realistically be asked to
 #: target, and which every seat may see anyway (CR 400.2's public zones, plus
 #: the stack itself for "target spell"). A hand or library card is not
@@ -343,14 +345,23 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
     and a UI shown only the legal ones cannot tell them apart.
 
     Building a `Casting` is *not* free: CR 601.2a moves the card to the stack
-    as the proposal begins. This function only ever asks a question - it never
-    completes a cast - so the whole thing runs under a `try/finally` that
-    rewinds the proposal (CR 601.6, CR 733.1) on every path, answer or error
-    alike. Without it, opening the alternative-cost row on a card would put it
-    on the stack and leave it there.
+    as the proposal begins, and `Casting.cancel()`'s own rewind re-appends the
+    card to the end of its zone rather than reinserting it where it was
+    (`engine_api.rewind_unfinished`'s docstring has the exact defect) - this
+    function only ever asks a question, so it is run against
+    `engine_api.dry_run_copy(game)` instead of `game` itself, and never
+    assigns the real game to `casting` at all. `state` is looked up again by
+    id in the copy, since a deep copy shares no `CardState` with the
+    original.
     """
+    probe = dry_run_copy(game)
+    probe_state = probe.find_by_id(state.id)
+    if probe_state is None:
+        return []
     try:
-        casting = Casting(spell=state, caster=caster, origin_zone=state.zone, game=game)
+        casting = Casting(
+            spell=probe_state, caster=caster, origin_zone=probe_state.zone, game=probe
+        )
     except ValueError:
         # Not castable from where it is right now (wrong zone, not this
         # player's card). No options rather than an error: the UI simply
@@ -361,9 +372,6 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
         options = casting.alternative_costs
     except Exception:
         return []
-    finally:
-        if not casting.is_settled:
-            casting.cancel()
     return [
         {
             "index": option.index,

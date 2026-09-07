@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from magic_cards_model.machines import Casting, Step
 from magic_cards_model.machines.casting import (
@@ -229,9 +229,72 @@ def rewind_unfinished(casting: Casting) -> None:
     the engine's `_refusing` wrapper already cancels for the announcement steps
     that go through it, so the state is asked before the call rather than the
     exception being swallowed.
+
+    What this does *not* restore: `cancel()` puts the card back with
+    `Player.add`, which appends to the end of its zone's list rather than
+    reinserting at the index it started from - a hand `[A, B, C]` cancelled
+    for A comes back `[B, C, A]`, every field on A correct, its position
+    wrong. That is precisely the corruption `dry_run_copy` below exists to
+    make irrelevant for a probe: this function is still what a genuine
+    abandoned cast (a real refusal on the caller's own game) rewinds with,
+    since there the move must in fact be undone in place, not thrown away.
     """
     if not casting.is_settled:
         casting.cancel()
+
+
+def dry_run_copy(game: Game) -> Game:
+    """An isolated copy of `game` for a probe to build a `Casting` (or any
+    other proposal) against and mutate freely, so answering "would this be
+    legal" never touches the game anyone is actually playing.
+
+    CR 601.2a moves a card to the stack the instant a `Casting` is built,
+    whether or not the caller ever means to finish the cast, and
+    `rewind_unfinished`'s `cancel()` does not put it back where it was - see
+    that function's docstring for the exact defect. Rather than audit every
+    rewind path for that bug (and the next one like it), a dry run is given
+    a throwaway board to wreck instead: nothing needs to be undone correctly
+    if nothing real was ever touched.
+
+    `game.decisions.provider` is swapped out before the copy and restored
+    right after. It is a live `GameDecisionProvider` (`magic_cards_model_api
+    .decisions`) holding a `DecisionMailbox`'s `threading.Lock`/`Condition`,
+    and `copy.deepcopy` - which `model_copy(deep=True)` uses internally -
+    cannot copy a lock (`TypeError: cannot pickle '_thread.lock' object`);
+    left in place, this call would crash every dry run on a real game the
+    moment it had a live seat behind it. The copy's own `provider` is set to
+    `None` rather than pointed back at the original mailbox: a decision the
+    probe somehow triggered must never reach the request a real player is
+    parked on, and must never block forever waiting for an answer nobody
+    will send for a game nobody is playing. `Game.ask` already treats "no
+    provider" as "let the engine's own `default_answer` speak for the
+    player" (see that method) - the same deterministic, non-blocking answer
+    a scenario test gets, which is the right one for a probe too.
+
+    One further trap, once the engine grows `game_uid`/`objects_created`
+    (deterministic per-object ids keyed on `game_uid`, so a game replays
+    byte-for-byte): a copy inherits both verbatim, so an id minted while
+    probing is exactly the id the real `game` mints later for a genuinely
+    new object. Neither field exists on this engine's current `main` yet -
+    checked with `git grep game_uid` in `magic-cards-model`, which finds it
+    only in two in-flight worktrees - so the `hasattr` guard below is inert
+    today and does the right thing the moment that lands, with no further
+    change here. Belt and braces regardless: no dry-run branch in this
+    module ever puts a freshly minted id in the `Outcome` it returns (only
+    pre-existing ids, e.g. `tapped`), and `audit_outcome` never records a
+    dry run at all - so nothing minted on a probe copy has anywhere to
+    escape to even before that field exists.
+    """
+    provider = game.decisions.provider
+    game.decisions.provider = None
+    try:
+        probe = game.model_copy(deep=True)
+    finally:
+        game.decisions.provider = provider
+    probe.decisions.provider = None
+    if hasattr(probe, "game_uid"):
+        probe.game_uid = uuid4()
+    return probe
 
 
 def cast_card(game: Game, req: CastRequest) -> Outcome:
@@ -244,10 +307,12 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
     same way. A dry run in particular is *only* ever a probe: it asks the
     engine what a cast would cost and must leave no trace, which matters
     because `seatkit.available_actions` issues one per card in hand on every
-    poll.
+    poll - so a dry run is driven against `dry_run_copy(game)` instead of
+    `game` itself, and the real game is never assigned to below this point.
     """
+    working_game = dry_run_copy(game) if req.dry_run else game
     try:
-        spell = locate_castable(game, req)
+        spell = locate_castable(working_game, req)
     except (KeyError, ValueError) as exc:
         return refused(exc)
     origin_zone = spell.zone
@@ -260,17 +325,20 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
     # after the move silently found no permission and refused Living End and
     # every suspend free cast.
     permitted = (
-        origin_zone is Zone.EXILE and game.play_permission_for(spell, req.player) is not None
+        origin_zone is Zone.EXILE
+        and working_game.play_permission_for(spell, req.player) is not None
     )
     try:
         # CR 601.3's checks run before CR 601.2a's move, so a `Casting` that
         # fails to build has moved nothing and leaves nothing to rewind.
-        casting = Casting(spell=spell, caster=req.player, origin_zone=origin_zone, game=game)
+        casting = Casting(
+            spell=spell, caster=req.player, origin_zone=origin_zone, game=working_game
+        )
     except ValueError as exc:
         return refused(exc)
 
     try:
-        return _drive_cast(game, req, casting, permitted=permitted)
+        return _drive_cast(working_game, req, casting, permitted=permitted)
     finally:
         rewind_unfinished(casting)
 
