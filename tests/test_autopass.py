@@ -86,11 +86,23 @@ class Opponent:
     other player, and it is a real seat taking the real action through the real
     endpoint, not a stub: nothing here decides anything on the opponent's
     behalf beyond "pass", which is a legal choice at every priority it is
-    offered (CR 117.3d).
+    offered (CR 117.3d) - and, since pausing this task added, "declare
+    nobody" whenever this seat's own `declare_attackers`/`declare_blockers`
+    (CR 508.1, CR 509.1) comes up. Before this task neither kind ever reached
+    a live seat at all (`_ask_declaration` silently defaulted to nobody), so
+    this thread never had to answer either; now that both genuinely pause,
+    an opponent that only knew "pass" would freeze its own combat forever on
+    every turn it is active - a run driven by the seat under test would then
+    time out waiting for a turn boundary that can never arrive. Nothing here
+    still decides anything beyond the same "nobody" default the engine used
+    to give for free - a test that wants this opponent to actually attack or
+    block stages that itself, the same way `stage_an_attack_on_bob` already
+    does for alice.
     """
 
     def __init__(self, game_id: str, player: str) -> None:
         self.game_id, self.player = game_id, player
+        self.uid = seats_for(game_id)[player]
         self.stop = threading.Event()
         self.passes = 0
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -101,6 +113,26 @@ class Opponent:
             board = client.get(f"/api/games/{self.game_id}").json()
             if board.get("winner") or board.get("drawn"):
                 return
+            pending = board.get("pending_decision")
+            if pending is not None and pending.get("player") == self.player:
+                if pending.get("kind") == "declare_attackers":
+                    client.post(
+                        f"/api/games/{self.game_id}/actions/attack",
+                        params={"uid": self.uid},
+                        json={"attackers": []},
+                    )
+                elif pending.get("kind") == "declare_blockers":
+                    client.post(
+                        f"/api/games/{self.game_id}/actions/declare-blockers",
+                        params={"uid": self.uid},
+                        json={"player": self.player, "blocks": []},
+                    )
+                else:
+                    # Some other decision this file does not stage for the
+                    # opponent (nothing here needed one before this task) -
+                    # waiting rather than guessing an answer.
+                    time.sleep(FAST_POLL)
+                continue
             if board.get("priority_holder") == self.player:
                 client.post(
                     f"/api/games/{self.game_id}/actions/pass-priority",
@@ -165,9 +197,17 @@ def stage_an_attack_on_bob(client: TestClient, game_id: str) -> str:
     bear = a_bear_that_can_attack(client, game_id, "alice")
     set_step(client, game_id, "beginning_of_combat")
     client.post(f"/api/games/{game_id}/advance", json={"player": "alice"})
-    assert state(client, game_id)["step"] == "declare_attackers"
+    # `advance` paused here rather than silently declaring nobody (CR 508.1) -
+    # the committed board still shows the step this call was made *from*
+    # (`app.py`'s `advance` docstring), not the one it paused trying to
+    # enter, so the sanity check is the pause itself, not `state()["step"]`
+    # (which only becomes "declare_attackers" for real once the attack below
+    # actually answers it).
+    pending = state(client, game_id)["pending_decision"]
+    assert pending is not None and pending["kind"] == "declare_attackers", pending
     attack = client.post(
         f"/api/games/{game_id}/actions/attack",
+        params={"uid": seats_for(game_id)["alice"]},
         json={"attackers": [{"card_id": bear, "defender": "bob"}]},
     )
     assert attack.json()["allowed"] is True, attack.json()
@@ -379,10 +419,12 @@ def test_a_run_told_not_to_stop_on_the_stack_runs_through_it(client, game, monke
 def test_a_run_stops_when_this_seat_is_being_attacked(client, game, monkeypatch):
     """The condition that decides games. alice attacks with a real creature;
     bob is auto-passing toward his own upkeep, a whole turn away. Declaring
-    blockers is a turn-based action that "doesn't use the stack" (CR 509.1), so
-    the stack condition cannot see the attack and the decision mailbox never
-    carries it - without its own check, bob's run would pass through his
-    declare-blockers step and take the hit."""
+    blockers is a turn-based action that "doesn't use the stack" (CR 509.1),
+    so the stack condition cannot see the attack; pausing does carry the
+    decision now (`decisions.ANSWERABLE_KINDS`), but only as far as freezing
+    the game until answered - without its own check here, bob's run would
+    answer it with "nobody" itself (CR 509.1a's "if any") and pass through
+    his declare-blockers step, taking the hit unblocked."""
     seats, uids = wired(monkeypatch, game)
     bob = seats.seat_for(uids["bob"])
     stock_libraries(client, game)
@@ -393,7 +435,12 @@ def test_a_run_stops_when_this_seat_is_being_attacked(client, game, monkeypatch)
             bob, until_step="upkeep", whose_turn="mine", max_seconds=20, poll_seconds=FAST_POLL
         )
 
-    assert result["state"]["step"] == "declare_blockers", result["stopped_because"]
+    # The pause freezes the board on the step `advance`/`pass-priority` was
+    # called *from* - CR 509.1's turn-based action never finished, so the
+    # step pointer never moved past `declare_attackers` either (see
+    # `stage_an_attack_on_bob`'s own note, and `autopass_stop_reason`'s
+    # docstring in `seatkit.py`).
+    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
     assert "you are being attacked by 1 creature" in result["stopped_because"]
     assert "CR 509.1" in result["stopped_because"], (
         "the stop reason has to say why nothing else woke this seat"
@@ -457,12 +504,15 @@ def test_the_attacked_stop_does_not_fire_on_the_attacking_seat(client, game, mon
 def test_a_run_stops_in_your_own_declare_attackers_step(client, game, monkeypatch):
     """The sibling condition to the blockers one, and the same shape of hole:
     declaring attackers is a turn-based action that "doesn't use the stack"
-    (CR 508.1), and `decisions.py` keeps `DECLARE_ATTACKERS` out of
-    `ANSWERABLE_KINDS`, so a run aimed past combat would pass its own attack by.
+    (CR 508.1). Pausing does carry the decision now
+    (`decisions.ANSWERABLE_KINDS` covers `DECLARE_ATTACKERS`), but only as
+    far as freezing the game until answered - a run aimed past combat would,
+    without its own check, answer it with "nobody" itself and pass its own
+    attack by exactly as silently as the old unscripted default did.
 
     It costs an attack rather than the game - what earns it a stop is that it is
-    silent: the engine's `_ask_declaration` falls through to its default, an
-    unscripted player declares nobody, and the turn simply produces no attack.
+    silent: an unscripted player declares nobody (CR 508.1a's "if any" makes
+    that legal), and the turn simply produces no attack.
 
     Note the board: a real creature that really could attack, so the stop lands
     on a turn where skipping it would genuinely have cost something.
@@ -482,7 +532,11 @@ def test_a_run_stops_in_your_own_declare_attackers_step(client, game, monkeypatc
             poll_seconds=FAST_POLL,
         )
 
-    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
+    # Frozen on the step the pausing call was made *from* (`beginning_of_
+    # combat`), not the one it paused trying to enter - CR 508.1's
+    # turn-based action never finished, so the step pointer never moved
+    # (see `seatkit.autopass_stop_reason`'s docstring).
+    assert result["state"]["step"] == "beginning_of_combat", result["stopped_because"]
     assert result["state"]["active_player"] == "alice"
     assert "it is your declare-attackers step" in result["stopped_because"]
     assert "CR 508.1" in result["stopped_because"], (
@@ -515,7 +569,10 @@ def test_the_attackers_stop_does_not_guess_whether_anything_could_attack(client,
             poll_seconds=FAST_POLL,
         )
 
-    assert result["state"]["step"] == "declare_attackers", result["stopped_because"]
+    # See `test_a_run_stops_in_your_own_declare_attackers_step`'s note: the
+    # pause freezes the board on `beginning_of_combat`, the step the call
+    # was made from, not `declare_attackers` itself.
+    assert result["state"]["step"] == "beginning_of_combat", result["stopped_because"]
 
 
 def test_a_run_told_not_to_stop_when_you_can_attack_runs_through_its_own_combat(
@@ -582,6 +639,13 @@ def test_a_run_started_in_its_own_declare_attackers_step_still_moves(client, gam
     a_bear_that_can_attack(client, game, "alice")
     set_step(client, game, "beginning_of_combat")
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    # Answers the pause with "nobody attacks" (CR 508.1a's "if any") so the
+    # board really is standing in a *real* declare-attackers step (not a
+    # frozen one) by the time the run starts - this test is about the
+    # started-in guard, not about whether the bear attacks.
+    client.post(
+        f"/api/games/{game}/actions/attack", params={"uid": uids["alice"]}, json={"attackers": []}
+    )
     assert state(client, game)["step"] == "declare_attackers"
 
     with Opponent(game, "bob"):
@@ -607,6 +671,16 @@ def test_a_run_started_in_its_own_declare_blockers_step_still_moves(client, game
     stage_an_attack_on_bob(client, game)
     for player in ("alice", "bob"):
         client.post(f"/api/games/{game}/actions/pass-priority", json={"player": player})
+    # The second pass paused on bob's own declare-blockers decision (CR
+    # 509.1) rather than silently entering it - answered here with "nobody
+    # blocks" (CR 509.1a's "if any") so the board is standing in a *real*
+    # declare-blockers step, live attack included, by the time the run
+    # starts.
+    client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": []},
+    )
     board = state(client, game)
     assert board["step"] == "declare_blockers" and board["combat"]["attacks"]
 
@@ -629,10 +703,17 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
     """And the guard is scoped, not a blanket exemption: once the board leaves
     the starting occurrence the stop comes back.
 
-    Both states here are real states fetched from one real game, one turn
-    apart - the same `(turn_number, step)` pair comparison the run itself makes
-    (CR 500.8 and CR 500.9 let an effect add a phase or a step, so one turn can
-    hold two of the same step, which is why the pair and not the step alone).
+    `started_in` here is the *pause itself* - `run` begins already sitting on
+    a live, unanswered `declare_attackers` decision, not one already resolved
+    (`test_a_run_started_in_its_own_declare_attackers_step_still_moves`
+    resolves it first for a different reason - see that test). A paused
+    state freezes `state["step"]` at whatever it was *before* the pause
+    (`seatkit.autopass_stop_reason`'s docstring), so the exemption this test
+    checks is really keyed on `run["started_pending_kind"]` matching the live
+    decision, not on the frozen `(turn_number, step)` pair alone - answering
+    the decision is what actually leaves the occurrence, and it does that by
+    changing `state["step"]` for real (frozen no longer), which is enough for
+    `forget_starting_occurrence`'s own `(turn, step)` comparison to notice.
     """
     seats, uids = wired(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
@@ -641,30 +722,28 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
     set_step(client, game, "beginning_of_combat")
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})
     started_in = alice.fetch_state()
-    assert started_in["step"] == "declare_attackers"
+    assert started_in["step"] == "beginning_of_combat"
+    pending = started_in["pending_decision"]
+    assert pending is not None and pending["kind"] == "declare_attackers", pending
 
     run = seatkit.start_autopass(started_in, "postcombat_main", "mine")
     assert seatkit.autopass_stop_reason(started_in, run, "alice") is None, (
-        "the step the run began in is exempt"
+        "the pause the run began already sitting on is exempt"
     )
 
-    # Let the game really leave that occurrence, then hand the run the board it
-    # would have seen on the way past.
-    with Opponent(game, "bob"):
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            board = alice.fetch_state()
-            if board["step"] != "declare_attackers":
-                break
-            client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
-            time.sleep(FAST_POLL)
+    # Answer the pause for real - CR 508.1a's "if any" makes "nobody" legal -
+    # which is what actually leaves the occurrence: `state["step"]` moves
+    # from the frozen `beginning_of_combat` to the real `declare_attackers`.
+    client.post(
+        f"/api/games/{game}/actions/attack", params={"uid": uids["alice"]}, json={"attackers": []}
+    )
     later = alice.fetch_state()
-    assert later["step"] != "declare_attackers", "the board never left the starting step"
+    assert later["step"] == "declare_attackers", "answering the pause should have moved the step"
 
     seatkit.forget_starting_occurrence(run, later)
     assert run["started_step"] is None, "the stamp survived the board leaving its occurrence"
     assert seatkit.autopass_stop_reason(started_in, run, "alice") is not None, (
-        "with the stamp cleared, a declare-attackers board must stop the run again"
+        "with the stamp cleared, the very same pause must stop the run again"
     )
 
 
@@ -827,7 +906,9 @@ def test_both_front_ends_stop_in_the_same_place_for_the_same_run(client, monkeyp
 
     for front_end, answer in answers.items():
         assert "you are being attacked by 1 creature" in answer["stopped_because"], front_end
-        assert answer["state"]["step"] == "declare_blockers", front_end
+        # Frozen on `declare_attackers`, the step the pausing call was made
+        # from - see `test_a_run_stops_when_this_seat_is_being_attacked`.
+        assert answer["state"]["step"] == "declare_attackers", front_end
         assert answer["until"] == {"step": "upkeep", "whose_turn": "mine"}, front_end
 
 

@@ -107,10 +107,6 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
         view["pending_decision"] = redact_pending_decision(
             view["pending_decision"], viewer, card_lookup
         )
-    if view.get("decision_timeouts"):
-        view["decision_timeouts"] = [
-            redact_decision_timeout(entry, viewer) for entry in view["decision_timeouts"]
-        ]
     if viewer is not None:
         view["you"] = viewer
     return view
@@ -332,26 +328,6 @@ def redact_pending_decision(
         "player": pending.get("player"),
         "kind": pending.get("kind"),
         "prompt": pending.get("prompt"),
-    }
-
-
-def redact_decision_timeout(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
-    """One `decision_timeouts` entry (`store.record_decision_timeout`), as
-    `viewer` may see it. `defaulted_to` can name cards from a hidden zone -
-    a scry/surveil default leaves library cards it names in place, a
-    `choose_cards` default (the cleanup discard) names a hand card before it
-    is discarded - so this follows `redact_pending_decision`'s same CR 101.4a
-    logic: the deciding player and the admin see which cards were defaulted
-    on, everyone else sees only that a default happened, and to what kind of
-    question, not what it named."""
-    if viewer == entry.get("player"):
-        return entry
-    return {
-        "player": entry.get("player"),
-        "kind": entry.get("kind"),
-        "prompt": entry.get("prompt"),
-        "could_answer": entry.get("could_answer"),
-        "rule": entry.get("rule"),
     }
 
 

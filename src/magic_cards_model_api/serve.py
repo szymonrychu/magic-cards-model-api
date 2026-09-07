@@ -18,8 +18,8 @@ Each `--match` is one comma-separated `PLAYER=PATH` pair plus an optional
 describing the same thing - one game's worth of decks and a seed - so every
 matchup, single or several, is built by the same code underneath
 (`_boot_from_spec`). Everything else the store and the endpoints do was
-already per-`game_id` before this - the store keys games, locks, mailboxes,
-and seat uids by id (`store.py`), and every HTTP route already takes a
+already per-`game_id` before this - the store keys games, locks, paused
+commands, and seat uids by id (`store.py`), and every HTTP route already takes a
 `game_id` path segment - so serving several games is a change to this module
 only, not to the store or the API.
 

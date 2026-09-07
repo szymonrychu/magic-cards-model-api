@@ -118,10 +118,20 @@ def test_halts_on_a_pending_decision_for_this_seat() -> None:
     assert reason == "a decision is pending"
 
 
-def test_does_not_halt_on_a_decision_addressed_to_the_opponent() -> None:
+def test_also_halts_on_a_decision_addressed_to_the_opponent() -> None:
+    """This used to read `reason is None` - "only your own pending decision
+    stops the run" - which was the live-lock bug: a paused command rolls the
+    committed game back to before the attempt, so `priority_holder` can
+    still read as this seat's even while the pause is on a DIFFERENT
+    player's decision (a bob `pass-priority` that ends a step and pauses on
+    alice's `declare_attackers`, say). Nothing can make progress until
+    whoever the decision actually belongs to answers it, no matter whose
+    priority the board still nominally shows - so this halts on any pending
+    decision now, not only this seat's own, with a distinct reason string so
+    a caller (or a human reading the toast) can tell the two apart."""
     state = base_state(pending_decision={"player": "bob", "kind": "may", "prompt": "Pay 2 life?"})
     reason = call_stop_reason(state, stops=UPKEEP_STOPS)
-    assert reason is None
+    assert reason == "waiting on another seat's decision"
 
 
 # -- stop condition: the game ends -------------------------------------------
@@ -245,6 +255,23 @@ def test_interpret_pass_outcome_continues_on_success() -> None:
     )
     assert result["ok"] is True
     assert result["reason"] is None
+
+
+def test_interpret_pass_outcome_is_not_ok_on_a_pause() -> None:
+    """`allowed: null, paused: true` is what a `pass-priority` call gets back
+    the moment it ends a step and the engine pauses on somebody's decision -
+    `allowed !== false`, so the old code (`!res || res.allowed === false`)
+    took this as a successful pass and looped forever re-issuing the
+    identical no-op (the live-lock this fixes): nothing was committed, the
+    pause is unchanged, and re-sending the same `pass-priority` reproduces
+    the exact same pause every time. This is the regression pin - a caller
+    that treats `ok: true` here would tick forever the same way."""
+    result = run_module(
+        "priority.js",
+        'm.interpretPassOutcome({"allowed": null, "paused": true, "outcome": null})',
+    )
+    assert result["ok"] is False
+    assert result["outcome"] is None
 
 
 # -- reaching a *named* destination: "auto-pass until <step>" (feature 3) -----

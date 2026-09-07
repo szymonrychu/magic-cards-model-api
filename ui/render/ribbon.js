@@ -227,10 +227,28 @@ function renderDeclareBlockers(app, handlers) {
   return box;
 }
 
+// A `declare_attackers`/`declare_blockers` decision paused (CR 508.1, CR
+// 509.1) freezes `state.step` at whatever it was *before* the pause, not the
+// one it is trying to enter (`app.py`'s `advance` docstring) - so
+// `state.step === "declare_attackers"` alone can only ever be true *after*
+// the decision is already answered, never while it is genuinely outstanding.
+// Reading `state.pending_decision` alongside it is what lets this prompt
+// show up for the moment it actually exists to cover: without it, a human
+// player has no combat UI at all for as long as the game is paused waiting
+// on them, which is every combat now that nothing auto-defaults to "nobody"
+// any more.
 function renderCombatPrompt(state, app, handlers) {
   const you = state.you;
-  if (state.step === "declare_attackers" && state.active_player === you) return renderDeclareAttackers(app, handlers);
-  if (state.step === "declare_blockers" && state.active_player !== you) return renderDeclareBlockers(app, handlers);
+  const pending = state.pending_decision;
+  const pendingKind = pending && pending.player === you ? pending.kind : null;
+  const attackersPending =
+    (state.step === "declare_attackers" && state.active_player === you) ||
+    pendingKind === "declare_attackers";
+  const blockersPending =
+    (state.step === "declare_blockers" && state.active_player !== you) ||
+    pendingKind === "declare_blockers";
+  if (attackersPending) return renderDeclareAttackers(app, handlers);
+  if (blockersPending) return renderDeclareBlockers(app, handlers);
   return null;
 }
 
@@ -293,7 +311,19 @@ function renderPromptBox(el, app, handlers) {
     return;
   }
   const pending = state.pending_decision;
-  if (pending && pending.player === state.you) {
+  // `declare_attackers`/`declare_blockers` reach `pending_decision` now
+  // (pausing put both on the one tape every other kind already answers
+  // through - `decisions.py`'s module docstring), but `ui/decisions.js`'s
+  // `DECISION_KINDS` deliberately carries no entry for either: the dedicated
+  // combat screen below already exists (`renderCombatPrompt`), driven by
+  // `attackBody`/`blockBody` in `ui/combat.js` - see
+  // `tests/test_ui_decision_coverage.py`'s own note on this split. Routing
+  // one of these two through `renderDecision` anyway would fall through
+  // `viewModel`'s "no renderer for ..." placeholder instead: this seat's own
+  // paused attack/block decision has to keep falling through to
+  // `renderCombatPrompt` below, not stop here.
+  const isCombatDeclaration = pending && (pending.kind === "declare_attackers" || pending.kind === "declare_blockers");
+  if (pending && pending.player === state.you && !isCombatDeclaration) {
     el.appendChild(renderDecision(pending, app, handlers));
     return;
   }

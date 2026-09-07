@@ -276,19 +276,21 @@ def dry_run_copy(game: Game) -> Game:
     if nothing real was ever touched.
 
     `game.decisions.provider` is swapped out before the copy and restored
-    right after. It is a live `GameDecisionProvider` (`magic_cards_model_api
-    .decisions`) holding a `DecisionMailbox`'s `threading.Lock`/`Condition`,
+    right after. No game built by this store carries a live provider any
+    more (T7b removed the last thing that ever set one - decisions pause
+    and resume through `commands.py` instead of blocking one), so this
+    swap is inert today; it is kept because `game.decisions.provider` is
+    typed to hold arbitrary caller state (a scenario test's own stub, say),
     and `copy.deepcopy` - which `model_copy(deep=True)` uses internally -
-    cannot copy a lock (`TypeError: cannot pickle '_thread.lock' object`);
-    left in place, this call would crash every dry run on a real game the
-    moment it had a live seat behind it. The copy's own `provider` is set to
-    `None` rather than pointed back at the original mailbox: a decision the
-    probe somehow triggered must never reach the request a real player is
-    parked on, and must never block forever waiting for an answer nobody
-    will send for a game nobody is playing. `Game.ask` already treats "no
-    provider" as "let the engine's own `default_answer` speak for the
-    player" (see that method) - the same deterministic, non-blocking answer
-    a scenario test gets, which is the right one for a probe too.
+    cannot copy just anything a caller might have put there (a lock, an open
+    connection, ...). The copy's own `provider` is set to `None` rather than
+    pointed back at whatever the original held, on the same principle a live
+    provider used to need this for: nothing a dry-run probe triggers should
+    ever reach back into the object a real caller is using. `Game.ask`
+    already treats "no provider" as "let the engine's own `default_answer`
+    speak for the player" (see that method) - the same deterministic,
+    non-blocking answer a scenario test gets, which is the right one for a
+    probe too.
 
     One further trap, once the engine grows `game_uid`/`objects_created`
     (deterministic per-object ids keyed on `game_uid`, so a game replays

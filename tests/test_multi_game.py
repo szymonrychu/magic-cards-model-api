@@ -1,25 +1,28 @@
 """Several concurrent games in one server: `serve`'s multi-boot CLI, per-game
 seat isolation, and per-game (not global) locking.
 
-The store (`store.py`) already keys everything - games, seat uids, admin
-keys, mutation locks, decision mailboxes - by `game_id`, and every HTTP route
-already takes a `game_id` path segment. The only thing that used to boot a
-single game was `serve.py`; this file is the regression cover for its new
-`--match` form (`serve.setup_all`) plus the two correctness properties the
-task calls out explicitly: a uid from one game must be a stranger to every
-other game, and one game's blocked request must never stall another's.
+The store (`repository.py`'s `InMemoryRepository`) already keys everything -
+games, seat uids, admin keys, mutation locks, paused commands - by `game_id`,
+and every HTTP route already takes a `game_id` path segment. `paused_command`/
+`store_paused_command`/`clear_paused_command` are the T7b replacement for what
+this docstring used to call "decision mailboxes": a game that pauses mid-
+command (`commands.py`'s pause-and-resume) has its `(Command, tape,
+PendingDecision)` held there rather than a thread blocked in `Game.ask`
+waiting on an answer. The only thing that used to boot a single game was
+`serve.py`; this file is the regression cover for its new `--match` form
+(`serve.setup_all`) plus the correctness properties the task calls out
+explicitly: a uid from one game must be a stranger to every other game, and
+one game's paused decision must never leak into or disturb another game's own
+state.
 """
 
 from __future__ import annotations
-
-import time
 
 from conftest import state
 from fastapi.testclient import TestClient
 from test_decisions import (
     advance_into_cleanup,
     seats_for,
-    set_short_timeout,
     stuff_hand,
     wait_for_pending,
 )
@@ -173,93 +176,90 @@ def test_a_uid_cannot_answer_a_decision_in_a_game_it_is_not_seated_in(client: Te
         stuff_hand(client, game_a, "alice", 8)
         uids_b = seats_for(client, game_b)  # carol's uid: real, but for game B
 
-        thread = advance_into_cleanup(game_a)
-        assert thread is not None, "the discard should have asked, not defaulted silently"
-        try:
-            uids_a = seats_for(client, game_a)
-            wait_for_pending(client, game_a, uids_a["alice"])
-            pending = state(client, game_a, uid=uids_a["alice"])["pending_decision"]
+        paused = advance_into_cleanup(game_a)
+        assert paused is not None, "the discard should have asked, not defaulted silently"
+        uids_a = seats_for(client, game_a)
+        pending_view = wait_for_pending(client, game_a, uids_a["alice"])
+        pending = pending_view["pending_decision"]
 
-            answer = client.post(
-                f"/api/games/{game_a}/decide",
-                params={"uid": uids_b["carol"]},  # a real uid - for the wrong game
-                json={"player": "alice", "card_ids": [pending["cards"][0]]},
-            )
-            assert answer.status_code == 200
-            assert answer.json()["accepted"] is False
+        answer = client.post(
+            f"/api/games/{game_a}/decide",
+            params={"uid": uids_b["carol"]},  # a real uid - for the wrong game
+            json={"player": "alice", "card_ids": [pending["cards"][0]]},
+        )
+        assert answer.status_code == 200
+        assert answer.json()["accepted"] is False
 
-            # Answer it for real, with the correct game's own uid, so the
-            # background thread can actually finish.
-            correct = client.post(
-                f"/api/games/{game_a}/decide",
-                params={"uid": uids_a["alice"]},
-                json={"player": "alice", "card_ids": [pending["cards"][0]]},
-            )
-            assert correct.status_code == 200
-            assert correct.json()["accepted"] is True
-        finally:
-            thread.join(timeout=10)
-        assert not thread.is_alive()
+        # Answer it for real, with the correct game's own uid.
+        correct = client.post(
+            f"/api/games/{game_a}/decide",
+            params={"uid": uids_a["alice"]},
+            json={"player": "alice", "card_ids": [pending["cards"][0]]},
+        )
+        assert correct.status_code == 200
+        assert correct.json()["accepted"] is True
     finally:
         client.delete(f"/api/games/{game_a}")
         client.delete(f"/api/games/{game_b}")
 
 
-# -- per-game locking: one game's block must not stall another ---------------
+# -- per-game isolation of a paused decision ----------------------------------
 
 
-def test_one_games_blocked_decision_does_not_stall_another_game(client: TestClient) -> None:
-    """The most important correctness question in the task: `store.locked`
-    takes a lock keyed by `game_id` (`store.py`), so a request parked in
-    `Game.ask` for game A - holding game A's lock for up to its full decision
-    timeout - must never make an ordinary request to game B wait behind it.
-    A global lock would serialise every game in the server; this proves the
-    opposite by genuinely parking a thread in game A (the same technique
-    `test_deadlock.py` uses) and timing a plain read and a plain mutation on
-    game B while it is still stuck there.
+def test_a_paused_decision_in_one_game_does_not_touch_another_game(client: TestClient) -> None:
+    """What replaces the old blocking-thread stall test.
+
+    The scenario that test guarded against - a request thread parked deep in
+    `Game.ask` for game A, holding game A's lock for up to a decision
+    timeout, stalling an ordinary request to game B behind it - is now
+    structurally impossible the same way `test_deadlock.py` became
+    impossible: `commands.py`'s pause-and-resume means nothing blocks inside
+    a request at all any more, for any game, so there is no longer a thread
+    to park and no lock held across a wait. `test_locks_are_distinct_objects_
+    per_game` below still covers that `store.locked` hands out a distinct
+    lock per `game_id`.
+
+    What is still real and worth guarding here is store-level isolation:
+    `store.paused_command` (`repository.py`) is keyed by `game_id`, so game
+    A pausing on its own cleanup discard must never surface as game B's
+    pending decision, an ordinary request to game B must proceed normally
+    while game A sits paused, and none of that touches game A's own pause.
     """
     game_a = make_game(client, "alice", "bob")
     game_b = make_game(client, "carol", "dave")
     try:
         stuff_hand(client, game_a, "alice", 8)
-        set_short_timeout(game_a, 5.0)  # long enough to prove B is not waiting on it
 
-        thread = advance_into_cleanup(game_a)
-        assert thread is not None, "game A should be blocked on its own discard decision"
-        try:
-            uids_a = seats_for(client, game_a)
-            wait_for_pending(client, game_a, uids_a["alice"])
-            # Game A's lock is now genuinely held by `thread`, parked deep in
-            # `Game.ask` waiting on this same decision.
+        paused = advance_into_cleanup(game_a)
+        assert paused is not None, "game A should be paused on its own discard decision"
+        uids_a = seats_for(client, game_a)
+        wait_for_pending(client, game_a, uids_a["alice"])
 
-            started = time.monotonic()
-            read = client.get(f"/api/games/{game_b}")
-            assert read.status_code == 200
-            mutate = client.post(
-                f"/api/games/{game_b}/actions/pass-priority", json={"player": "carol"}
-            )
-            assert mutate.status_code == 200
-            elapsed = time.monotonic() - started
+        # Game B never saw game A's pause.
+        uids_b = seats_for(client, game_b)
+        view_b = state(client, game_b, uid=uids_b["carol"])
+        assert view_b.get("pending_decision") is None
 
-            assert elapsed < 1.0, (
-                "a request to game B waited on game A's held lock - locking is "
-                "not genuinely per-game, so three concurrent games would run "
-                "no faster than three sequential ones"
-            )
+        # An ordinary read and an ordinary mutation on game B proceed
+        # normally while game A sits paused.
+        read = client.get(f"/api/games/{game_b}")
+        assert read.status_code == 200
+        mutate = client.post(f"/api/games/{game_b}/actions/pass-priority", json={"player": "carol"})
+        assert mutate.status_code == 200
 
-            # Clean up game A: answer the decision so the thread can finish.
-            uids_a_now = seats_for(client, game_a)
-            pending = state(client, game_a, uid=uids_a_now["alice"])["pending_decision"]
-            answered = client.post(
-                f"/api/games/{game_a}/decide",
-                params={"uid": uids_a_now["alice"]},
-                json={"player": "alice", "card_ids": [pending["cards"][0]]},
-            )
-            assert answered.status_code == 200
-            assert answered.json()["accepted"] is True
-        finally:
-            thread.join(timeout=10)
-        assert not thread.is_alive(), "game A's blocked request never returned"
+        # Neither disturbed game A's own paused decision.
+        still_pending_a = state(client, game_a, uid=uids_a["alice"])["pending_decision"]
+        assert still_pending_a is not None
+        assert still_pending_a["kind"] == "choose_cards"
+
+        # Clean up game A: answer the decision so it resumes cleanly.
+        answered = client.post(
+            f"/api/games/{game_a}/decide",
+            params={"uid": uids_a["alice"]},
+            json={"player": "alice", "card_ids": [still_pending_a["cards"][0]]},
+        )
+        assert answered.status_code == 200
+        assert answered.json()["accepted"] is True
     finally:
         client.delete(f"/api/games/{game_a}")
         client.delete(f"/api/games/{game_b}")

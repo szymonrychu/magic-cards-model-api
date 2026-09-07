@@ -188,6 +188,20 @@ def test_pass_buttons_when_a_decision_is_pending() -> None:
     assert run_module("priority.js", "m.passButtonsFor(s)", s=state) == ["pass"]
 
 
+def test_no_pass_buttons_when_the_pending_decision_is_someone_elses() -> None:
+    """`priority_holder` can still read as `you` while the game is actually
+    paused on a different seat's decision - a pass rolls the committed game
+    back to before the attempt, so it never moved off you at all
+    (`bob` passes, the step ends, and the engine pauses on `alice`'s
+    `declare_attackers`: `priority_holder` is still `bob`). None of `pass`,
+    `pass_turn`, ... can do anything until `alice` answers it, so nothing is
+    offered - the old code offered the full verb list here, which is what
+    let the browser autopilot re-issue an identical no-op pass every tick,
+    forever, for the seat that is NOT the one being asked."""
+    state = board(pending_decision={"player": "bob", "kind": "may", "prompt": "Pay 2 life?"})
+    assert run_module("priority.js", "m.passButtonsFor(s)", s=state) == []
+
+
 def test_pass_buttons() -> None:
     assert run_module("priority.js", "m.passButtonsFor(s)", s=board()) == [
         "pass",

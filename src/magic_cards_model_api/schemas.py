@@ -261,7 +261,14 @@ class AttackPair(BaseModel):
 
 
 class AttackRequest(BaseModel):
-    attackers: list[AttackPair] = Field(min_length=1)
+    attackers: list[AttackPair] = Field(default_factory=list)
+    """Empty is a legal answer, not a missing one: CR 508.1a's "if any" makes
+    "declare nobody" a real attack declaration, the one an autopilot run
+    sends (`seatkit.pass_until`) when it has decided not to stop for combat.
+    A `min_length=1` here used to make that answer inexpressible through this
+    endpoint at all, forcing an empty declaration through `decide()`'s own
+    `pairs` field instead - now both reach `decisions.declared_pairs_answer`
+    with the same, undifferentiated empty list."""
     dry_run: bool = False
 
 
@@ -302,8 +309,32 @@ class BlockPair(BaseModel):
 
 class DeclareBlockersRequest(BaseModel):
     player: str
-    blocks: list[BlockPair] = Field(min_length=1)
-    """(blocker, blocked) pairs, in the order damage should be assigned through them."""
+    blocks: list[BlockPair] = Field(default_factory=list)
+    """(blocker, blocked) pairs, in the order damage should be assigned
+    through them. Empty is a legal answer, not a missing one - CR 509.1a's
+    "if any" makes "declare no blockers" a real declaration, the one an
+    autopilot run sends (`seatkit.pass_until`) when it has decided not to
+    stop for combat; a `min_length=1` here used to make that answer
+    inexpressible through this endpoint, the same gap `AttackRequest.attackers`
+    had."""
+
+
+class DeclaredPairRequest(BaseModel):
+    """One `(creature, defender)` pair for the `declare_attackers`/
+    `declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the
+    request-side twin of the engine's `machines.decisions.DeclaredPair`.
+
+    `defender` is a card id (UUID string) or a player's username, the same
+    token shape `CastRequest.targets`/`ActivateRequest.targets`/
+    `DecideRequest.targets` already use for "a card or a player" - told apart
+    the same way (`decisions.declared_pairs_answer`). A blocker always blocks
+    a creature (CR 509.1a), so `defender` is a card id for every
+    `declare_blockers` pair; an attacker's defender is overwhelmingly a
+    player (CR 508.1b) but can also be a planeswalker or a battle's card id.
+    """
+
+    creature: UUID
+    defender: str
 
 
 class DecideRequest(BaseModel):
@@ -376,6 +407,13 @@ class DecideRequest(BaseModel):
     rather than `card_ids`. **Bottom of the stack first**, so the last id
     listed is the ability that resolves first. Anything that is not a
     permutation (a dropped ability, a duplicate, a stray id) is refused."""
+    pairs: list[DeclaredPairRequest] = Field(default_factory=list)
+    """The `declare_attackers`/`declare_blockers` kinds' answer (CR 508.1,
+    CR 509.1) - the creatures declared and what each attacks or blocks, in
+    declaration order. Empty is a real answer: "declare nobody", always legal
+    ("if any"). The one field both declaration kinds share, the same way
+    `choice` serves both `choose_a_quality` and `choose_a_mode` - see
+    `DeclaredPairRequest`."""
 
 
 class MulliganRequest(BaseModel):
@@ -403,3 +441,21 @@ class OpeningHandActionRequest(BaseModel):
 
     player: str
     card_id: UUID
+
+
+class PregameSettleRequest(BaseModel):
+    """Admin-only: run the whole pregame (CR 103.5's mulligan process, CR
+    103.6's opening-hand actions) forward, all at once, over every seat."""
+
+    use_defaults: bool = False
+    """`False` (the default): run as an ordinary command
+    (`commands.run_command`) - pause on the first `mulligan`/
+    `opening_hand_action`/bottoming `choose_cards` question the engine asks
+    with no scripted answer, exactly like `advance` pauses on a combat
+    declaration, and let a live seat answer it through `POST .../decide`.
+
+    `True`: restore this endpoint's original, headless behaviour - answer
+    every one of those questions with the engine's own default (keep the
+    dealt hand, decline every CR 103.6 action, bottom the back of the hand)
+    before the call returns, so the whole pregame settles in one request
+    with nobody consulted (`commands.run_command_to_completion`)."""

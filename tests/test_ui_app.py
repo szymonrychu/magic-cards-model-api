@@ -177,6 +177,97 @@ def test_a_second_click_on_a_chosen_target_still_unchooses_it_once_the_slot_is_f
     assert result["targetsAfter"] == ["c9"], "a second click on bob must remove it, not no-op"
 
 
+# -- declareNoAttackers / declareNoBlockers -----------------------------------
+#
+# CR 508.1a/509.1a's "if any"/"may" made declaring nobody a real declaration
+# that pauses the game until somebody makes it (`decisions.ANSWERABLE_KINDS`
+# covers both `declare_attackers` and `declare_blockers` now), rather than a
+# no-op the engine defaulted to on its own - these two are new for that
+# reason, and had no test at all. `declareNoAttackers`/`declareNoBlockers`
+# are exported test-only, alongside `store`/`tryTarget` above - see `store`'s
+# own comment - and driven here as real, awaited async calls against a
+# stubbed `fetch` that also answers `poll()`'s own state/log reads
+# afterward, the same way `tryTarget`'s own test drives a real exported
+# function rather than a Python restatement of it.
+
+
+def _fetch_stub_body() -> str:
+    """A `fetch` stub for a POST-then-`poll()` flow: records every call
+    (method, path, parsed body) into `globalThis.__calls`, answers the two
+    GETs `poll()` issues afterward (state, log) with just enough shape for
+    `app.js` to finish its own poll cycle without throwing, and answers any
+    other POST with `{allowed: true}` - a plain acceptance, since these two
+    functions only branch on `res === null` (a transport failure) and
+    `res.allowed === false` (a refusal), never on the rest of the body."""
+    return """
+      globalThis.__calls = [];
+      globalThis.document = { querySelector: () => null };
+      globalThis.fetch = (path, opts) => {
+        const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
+        globalThis.__calls.push({ method: opts ? opts.method : "GET", path, body });
+        if (opts && opts.method === "POST") {
+          return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+        }
+        if (path.includes("/log")) {
+          return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 0 }) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            you: "alice", pending_decision: null, step: "declare_attackers",
+            active_player: "alice", priority_holder: "alice", battlefield: [],
+            hands: { alice: [] }, stack: [], combat: { attacks: [] },
+            winner: null, drawn: false, pregame: null,
+          }),
+        });
+      };
+    """
+
+
+def test_declare_no_attackers_sends_an_empty_attack_declaration() -> None:
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", combatDraft: { a1: "bob" },
+            state: { you: "alice" },
+          });
+          await m.declareNoAttackers();
+          return { calls: globalThis.__calls, combatDraft: m.store.get().combatDraft };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    assert len(posts) == 1, result["calls"]
+    assert posts[0]["path"] == "/api/games/g1/actions/attack?uid=u1"
+    assert posts[0]["body"] == {"attackers": []}, "must override the draft, not send it"
+    assert result["combatDraft"] == {}, "a declared attack (even 'none') clears the draft"
+
+
+def test_declare_no_blockers_sends_an_empty_block_declaration() -> None:
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", combatDraft: { c1: "atk1" },
+            state: { you: "alice" },
+          });
+          await m.declareNoBlockers();
+          return { calls: globalThis.__calls, combatDraft: m.store.get().combatDraft };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    assert len(posts) == 1, result["calls"]
+    assert posts[0]["path"] == "/api/games/g1/actions/declare-blockers?uid=u1"
+    assert posts[0]["body"] == {"player": "alice", "blocks": []}, (
+        "must override the draft, not send it"
+    )
+    assert result["combatDraft"] == {}, "a declared block (even 'none') clears the draft"
+
+
 # -- fixtures ----------------------------------------------------------------
 
 MOUNTAIN = {
@@ -426,6 +517,48 @@ def test_the_defending_players_creature_is_a_block_click() -> None:
         creature=ATTACKING_CREATURE,
         app=base_app(),
         state=base_state(step="declare_blockers", active_player="bob"),
+    )
+    assert plan == {"kind": "block"}
+
+
+def test_a_paused_declare_attackers_decision_still_offers_the_attack_click() -> None:
+    """A `declare_attackers` pause freezes `state.step` at whatever it was
+    *before* the pause (`beginning_of_combat`, here) and `priority_holder`
+    stays equally stale - neither field ever moved, since the turn-based
+    action that would have moved them never finished. A plain
+    `state.step === "declare_attackers"` check can never see the pause
+    itself, only what results after someone answers it - too late to offer
+    the click at all. `pendingDeclareKind` reads the live decision instead,
+    which this pins directly against a state shaped exactly like a real
+    pause: `step` still `beginning_of_combat`, `priority_holder` still
+    whoever it was, but `pending_decision` naming this seat's own
+    `declare_attackers`."""
+    plan = run_app(
+        "m.planPermanentClick(creature, app, state)",
+        creature=ATTACKING_CREATURE,
+        app=base_app(),
+        state=base_state(
+            step="beginning_of_combat",
+            priority_holder="bob",
+            pending_decision={"player": "alice", "kind": "declare_attackers"},
+        ),
+    )
+    assert plan == {"kind": "attack"}
+
+
+def test_a_paused_declare_blockers_decision_still_offers_the_block_click() -> None:
+    """The same pause-freezes-the-step shape as the attackers test above,
+    for the defending player's own `declare_blockers` pause instead."""
+    plan = run_app(
+        "m.planPermanentClick(creature, app, state)",
+        creature=ATTACKING_CREATURE,
+        app=base_app(),
+        state=base_state(
+            step="declare_attackers",
+            active_player="bob",
+            priority_holder="bob",
+            pending_decision={"player": "alice", "kind": "declare_blockers"},
+        ),
     )
     assert plan == {"kind": "block"}
 

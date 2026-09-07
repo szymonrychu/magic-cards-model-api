@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 from fastapi.testclient import TestClient
-from test_decisions import seats_for, set_short_timeout, stuff_hand
+from test_decisions import advance_into_cleanup, seats_for, stuff_hand, wait_for_pending
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
@@ -44,7 +44,6 @@ def test_a_seat_not_holding_the_lock_still_wakes_promptly_for_its_own_decision(
 
     stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard: a real choice
     uids = seats_for(client, game)
-    set_short_timeout(game, 5.0)  # long enough to see a slow wake, short to fail fast
 
     put = client.put(f"/api/games/{game}/step", json={"step": "end_step", "player": "alice"})
     assert put.status_code == 200, put.text
@@ -94,23 +93,33 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
     closes the priority round and walks the turn into cleanup, raising
     *her own* discard decision from inside her own in-flight call.
 
-    Before the fix, `run_action` (via `mcp.py`'s `pass_priority` tool) issued
-    that call directly and blocked on its HTTP response - which would not
-    arrive until the decision was answered, and nothing in this same
-    synchronous caller could ever send that answer, so it always rode the
-    decision out to the server's own timeout and then lost the race
-    answering it (the exact traced symptom). After the fix
-    (`seatkit._call_watching_for_self_decision`), `seat.pass_priority()`
-    itself returns almost immediately with `in_flight_action: True` and the
-    decision's prompt, well before the timeout, so a caller can answer it
-    with a genuinely separate `decide()` call - proven here by actually
-    sending one from a second thread once that wake fires.
+    Before T7b's pause-and-resume rework, `run_action` (via `mcp.py`'s
+    `pass_priority` tool) issued that call directly and blocked on its HTTP
+    response - which would not arrive until the decision was answered, and
+    nothing in this same synchronous caller could ever send that answer, so
+    it always rode the decision out to the server's own timeout and then
+    lost the race answering it (the exact traced symptom).
+
+    After the rework, `perform()` itself (`commands.py`'s pause-and-resume)
+    usually returns almost instantly with `paused: True` and the decision
+    already attached, rather than blocking - so `seatkit._paused` is now the
+    primary way `run_action` notices its own action raised its own decision.
+    Confirmed empirically here (see the comment at the call site below):
+    `_call_watching_for_self_decision`'s background thread finishes in low
+    single-digit milliseconds, well under `POLL_SECONDS` (0.2s), so its
+    polling loop never gets a chance to fire even once and it returns the
+    paused outcome directly rather than `SELF_DECISION_IN_FLIGHT`. The
+    background-thread race is still there as a defensive fallback for the
+    rarer case where a decision surfaces some other way mid-flight, but it
+    is not what fires in this scenario any more, so this asserts the
+    contract that actually matters to a caller - `run_action` itself
+    reporting `in_flight_action: True` with the right prompt - rather than
+    which of the two internal paths happened to notice it.
     """
     monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
 
     stuff_hand(client, game, "alice", 8)
     uids = seats_for(client, game)
-    set_short_timeout(game, 3.0)  # would fail fast if this regresses
 
     put = client.put(f"/api/games/{game}/step", json={"step": "end_step", "player": "alice"})
     assert put.status_code == 200, put.text
@@ -141,20 +150,34 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
             {"player": "alice"},
         )
 
+    # Empirically (run directly against the primitive with a debug print
+    # before this rewrite): `perform()`'s own pause beats the poll loop by
+    # roughly two orders of magnitude (~1-2ms elapsed against a 0.2s
+    # `POLL_SECONDS`), so `_call_watching_for_self_decision` returns
+    # `(paused_outcome, None)` here, not `(SELF_DECISION_IN_FLIGHT,
+    # pending)`. `run_action` (below) is written to treat both shapes
+    # identically via `_paused`, which is the behaviour this test actually
+    # guards.
     started = time.monotonic()
-    outcome, pending = seatkit._call_watching_for_self_decision(alice_seat, perform)
+    result = seatkit.run_action(alice_seat, perform)
     elapsed = time.monotonic() - started
 
-    assert pending is not None, "alice's own pass should have surfaced her own decision"
-    assert outcome == seatkit.SELF_DECISION_IN_FLIGHT
+    assert result["in_flight_action"] is True, (
+        "alice's own pass should have surfaced her own decision"
+    )
+    assert result["outcome"] is None, "the action's own outcome is unknown until decide() answers"
+    pending = result["state"]["pending_decision"]
+    assert pending is not None
     assert pending["kind"] == "choose_cards"
+    assert pending["player"] == "alice"
+    assert "discard" in result["wake_reason"]
     assert elapsed < 1.0, (
-        f"took {elapsed:.1f}s to surface alice's own decision - it rode the decision "
-        "timeout out instead of noticing its own poll, the deadlock is back"
+        f"took {elapsed:.1f}s to surface alice's own decision - it rode a "
+        "timeout out instead of noticing the pause, the deadlock is back"
     )
 
-    # Prove it is a live game, not a silent default: answer it for real, well
-    # within the (short, test-only) timeout, from a genuinely separate call.
+    # Prove it is a live game, not a silent default: answer it for real, from
+    # a genuinely separate call.
     card_id = pending["cards"][0]
     answered = client.post(
         f"/api/games/{game}/decide",
@@ -164,18 +187,56 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
     assert answered.status_code == 200, answered.text
     assert answered.json()["accepted"] is True
 
-    # The abandoned background call (alice's own original pass-priority)
-    # finishes on its own now that it has an answer - nothing left watching
-    # it here, but the server-side effect is real: CR 514.1's discard happened,
-    # so alice is down to seven. The step it lands in is no longer `cleanup`:
-    # that pass settles on past every step nobody receives priority in
-    # (CR 500.3, `engine_api.settle_priorityless_steps`), so what the board
-    # shows is the next turn's upkeep, with a priority holder.
-    for _ in range(100):
-        board = client.get(f"/api/games/{game}", params={"uid": uids["alice"]}).json()
-        if board["step"] == "upkeep" and len(board["hands"]["alice"]) == 7:
-            break
-        time.sleep(0.02)
-    else:
-        raise AssertionError("alice's own abandoned pass-priority call never completed cleanup")
+    # `decide` is an ordinary synchronous mutating request now
+    # (`commands.py`'s pause-and-resume): it resumes and completes alice's
+    # original pass-priority within its own call, so the effect is already
+    # settled by the time it returns - CR 514.1's discard happened, so alice
+    # is down to seven. The step it lands in is no longer `cleanup`: that
+    # pass settles on past every step nobody receives priority in (CR 500.3,
+    # `engine_api.settle_priorityless_steps`), so what the board shows is
+    # the next turn's upkeep, with a priority holder.
+    board = client.get(f"/api/games/{game}", params={"uid": uids["alice"]}).json()
+    assert board["step"] == "upkeep", board["step"]
+    assert len(board["hands"]["alice"]) == 7
     assert board["priority_holder"] is not None
+
+
+def test_available_actions_returns_this_early_shape_for_own_pending_decision(client, game) -> None:
+    """The other half of the original `test_deadlock.py::
+    test_available_actions_does_not_deadlock_on_own_pending_decision`, which
+    this file's own docstring already explains T7b made half moot: the
+    *deadlock* it proved is gone by construction now, because pausing means
+    the request that raised the decision has already returned - and
+    released `store.locked(game_id)` - by the time any caller can ever see
+    this seat's own `pending_decision` at all (`seatkit.available_actions`'s
+    own docstring says so directly). There is no longer a background thread
+    to hold a lock this call could contend for, so there is nothing left to
+    time.
+
+    The *shape* half is not moot, and had no replacement: `available_actions`
+    skips every dry-run probe and returns a fixed early shape - `castable`
+    and `activatable` forced empty (nothing is legal while the decision
+    stands), `attackers_requested`/`blockers_requested` read straight off
+    `pending["kind"]` (the one case where the decision itself names the
+    single legal thing), and `pending_decision` echoed back - rather than
+    the ordinary probed shape. This pins exactly that dict, synchronously,
+    with no thread needed."""
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
+    uids = seats_for(client, game)
+
+    paused = advance_into_cleanup(game)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+    pending_view = wait_for_pending(client, game, uids["alice"])
+    pending = pending_view["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+
+    seat = seatkit.Seat("alice", uids["alice"], "http://testserver", game)
+    actions = seatkit.available_actions(seat, pending_view)
+
+    assert actions == {
+        "castable": [],
+        "activatable": [],
+        "attackers_requested": False,
+        "blockers_requested": False,
+        "pending_decision": pending,
+    }

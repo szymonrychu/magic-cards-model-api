@@ -19,7 +19,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
-from magic_cards_model.machines.decisions import DecisionKind
+from magic_cards_model.machines.decisions import Answer, DecisionKind
+from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 
@@ -27,6 +28,7 @@ from . import (
     affordances,
     ai_seat_api,
     audit,
+    commands,
     decisions,
     decks_api,
     engine_api,
@@ -47,6 +49,7 @@ from .schemas import (
     CycleRequest,
     DecideRequest,
     DeclareBlockersRequest,
+    DeclaredPairRequest,
     ManaPoolUpdate,
     MoveCard,
     MulliganRequest,
@@ -56,6 +59,7 @@ from .schemas import (
     PatchCard,
     PatchPlayer,
     PlayLandRequest,
+    PregameSettleRequest,
     PutCard,
     ReportProblemRequest,
     SpecialActionRequest,
@@ -69,131 +73,6 @@ app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 app.include_router(decks_api.router)
 app.include_router(ai_seat_api.router)
 app.include_router(symbology.router)
-
-
-def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
-    """One card's own observable state, identity included (CR 400.7).
-
-    `zone_change_stamp` is the load-bearing field: "An object that moves from
-    one zone to another becomes a new object with no memory of, or relation
-    to, its previous existence" (CR 400.7), and the engine mutates one
-    `CardState` in place across a zone change rather than replacing it, so
-    `id` alone cannot tell a card that never moved apart from one that left
-    and came back. `move_to` reassigns `zone_change_stamp` on every call,
-    which is exactly the signal a blink needs: Ephemerate exiles a creature
-    and returns it to the battlefield in the same resolution, so the `id`,
-    name, controller, tapped state, and counters can all come back identical
-    while the object itself is a new one CR 400.7's own terms - and only the
-    stamp says so.
-
-    `tapped`, `is_summoning_sick`, `damage`, the sorted counters, and
-    `attachment` ride along so a mutation that does *not* change zones (an
-    aura attaching, a counter added, a tap, a block-time attachment loss)
-    still shows up without needing its own special case.
-    """
-    return (
-        str(state.zone_change_stamp),
-        state.tapped,
-        state.is_summoning_sick(game),
-        state.damage,
-        tuple(sorted(state.counters.root.items())),
-        state.attachment,
-    )
-
-
-def _resolution_state(game: Game) -> dict[str, Any]:
-    """A fingerprint of everything a resolution is meant to change, minus the
-    stack itself.
-
-    Resolving always pops the stack, so the stack cannot say whether the
-    resolution *did* anything. Everything else can - board, hands,
-    graveyards, exile, life, and pools - as long as it is compared by each
-    card's own identity and observable state (`_card_fingerprint`), not by
-    zone-and-name alone: a bare list of names, the shape this used to build
-    from `serialize.snapshot`, cannot tell a card that stayed apart from a
-    card that left and came back to the exact same zone under the exact same
-    name, which is precisely what a blink (Ephemerate) does. Keyed by card
-    id so `_without_own_arrival` can discount one specific object rather than
-    guessing which of several same-named cards changed.
-
-    This is necessary but not sufficient on its own for a *spell*: every
-    spell also leaves the stack somewhere as part of resolving at all
-    (CR 608.2m), and that arrival mutates this fingerprint regardless of
-    whether the spell's own effect ran. `_without_own_arrival` is what
-    discounts that one mandatory move for spells; abilities need no such
-    correction, since CR 608.2n removes a resolved ability from the stack
-    without putting it anywhere (see `machines.triggers.AbilityOnStack`).
-
-    **What this still cannot see**, honestly: the library, the command zone,
-    and the sideboard are not fingerprinted at all (an effect that only
-    shuffles the library, or only changes what is in a face-down command-zone
-    card, reads as "nothing changed"); a card's own printed text or
-    characteristics changed by a continuous effect that touches none of the
-    fields above (e.g. a name change with no P/T, tap, or counter change)
-    is invisible; and two effects that exactly cancel out within the same
-    resolution (a counter added then removed by the same spell) leave no
-    trace, the same blind spot a snapshot diff always has.
-    """
-
-    def zone_fingerprint(cards: Any) -> dict[str, tuple[Any, ...]]:
-        return {str(c.id): _card_fingerprint(c, game) for c in cards if isinstance(c, CardState)}
-
-    return {
-        "life": {player.username: player.life for player in game.players},
-        "pools": {player.username: dict(player.mana_pool.floating) for player in game.players},
-        "battlefield": zone_fingerprint(game.shared_zones.get(Zone.BATTLEFIELD, [])),
-        "hands": {player.username: zone_fingerprint(player.hand) for player in game.players},
-        "graveyards": {
-            player.username: zone_fingerprint(player.graveyard) for player in game.players
-        },
-        "exile": zone_fingerprint(game.shared_zones.get(Zone.EXILE, [])),
-    }
-
-
-def _without_own_arrival(game: Game, spell_id: UUID, after: dict[str, Any]) -> dict[str, Any]:
-    """`after`, with a just-resolved spell's own mandatory landing undone.
-
-    A permanent spell resolving onto the battlefield is not "nothing
-    happened" - a new object started existing under a player's control, and
-    the `changed` marker should say so. So this only touches spells that did
-    *not* land on the battlefield: an instant or sorcery goes to its owner's
-    graveyard (CR 608.2m), and a few cards route themselves to exile instead
-    (flashback, adventure, foretell). That move is the fixed, mandatory
-    conclusion of resolving at all - it happens whether or not the spell's
-    own effect executed - so it is subtracted back out before comparing
-    against `before`. Anything beyond it (a life total, a hand, a second
-    card's zone, the battlefield) is left untouched and is the real signal.
-
-    Removed by the spell's own id, now that `_resolution_state` keys each
-    zone by id rather than by a bare list of names - exact, unlike the old
-    by-name removal, which could not tell two identically named cards
-    landing in the same zone apart.
-
-    A spell that instead ends up in a zone `_resolution_state` does not track
-    at all (library, command, sideboard) needs no discount here: `before` and
-    `after` already agree on those untracked zones, so no false "changed"
-    can arise from that arrival in the first place.
-    """
-    landed = game.find_by_id(spell_id)
-    if landed is None or landed.zone is Zone.BATTLEFIELD:
-        return after
-    landed_key = str(spell_id)
-
-    if landed.zone is Zone.EXILE:
-        return {**after, "exile": {k: v for k, v in after["exile"].items() if k != landed_key}}
-    if landed.zone is Zone.GRAVEYARD:
-        owner = landed.controller_or_owner
-        graveyards = dict(after["graveyards"])
-        if owner in graveyards:
-            graveyards[owner] = {k: v for k, v in graveyards[owner].items() if k != landed_key}
-        return {**after, "graveyards": graveyards}
-    if landed.zone is Zone.HAND:
-        owner = landed.controller_or_owner
-        hands = dict(after["hands"])
-        if owner in hands:
-            hands[owner] = {k: v for k, v in hands[owner].items() if k != landed_key}
-        return {**after, "hands": hands}
-    return after
 
 
 # -- error mapping ---------------------------------------------------------
@@ -228,6 +107,22 @@ def _pregame_overruled(_: Request, exc: opening.PregameOverruled) -> JSONRespons
     See `opening.PregameOverruled` and `ai_pregame.py`.
     """
     return JSONResponse(status_code=409, content={"detail": str(exc), "overruled": True})
+
+
+@app.exception_handler(commands.CommandDivergenceError)
+def _command_divergence(_: Request, exc: commands.CommandDivergenceError) -> JSONResponse:
+    """409: the stored pause is stale, not this request malformed.
+
+    `resume_command`'s replay-divergence guard tripped - replaying the paused
+    command from its committed snapshot with the tape as it stood before this
+    answer no longer reproduces the exact question that was stored (see
+    `commands.CommandDivergenceError`'s own docstring). That is a genuine
+    conflict a caller can only resolve by reading fresh state and trying
+    again, the same shape of problem a 409 already means everywhere else in
+    this api - `PregameOverruled` (below) is the same status for the same
+    reason.
+    """
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.exception_handler(ValueError)
@@ -290,6 +185,125 @@ def audit_outcome(
     return {**outcome.body(), "log_seq": seq}
 
 
+def _run_command(game_id: str, kind: str, request: Any) -> tuple[commands.RunResult, Game]:
+    """Run `kind` fresh against `game_id`'s current committed state
+    (`commands.run_command`), and settle the result into the store: commit
+    the new game on `RunStatus.COMPLETED`, or stash `(command, tape,
+    pending)` for `POST .../decide` (and its `actions/attack`/
+    `actions/declare-blockers` aliases) to resume on `PAUSED`.
+
+    Returns `(result, committed)` - `committed` is the game exactly as it
+    stood before this attempt (the `Game` `store.locked` handed this
+    request), which a few callers (`pass-priority`'s before/after resolution
+    diff) still need after `run_command` returns its own, separate working
+    copy.
+
+    **Deliberately clears any *unrelated* stored pause too.** `store
+    .clear_paused_command` runs here on every `COMPLETED` result, not only
+    one that resumed the paused command it is clearing - so an unrelated
+    mutating call that completes while a *different* decision sits paused
+    (a spectator's board-setup poke, another seat's own unrelated action)
+    discards that stored pause outright rather than leaving it stale
+    alongside a game that has since moved on. This is safe because a paused
+    command was never applied to the committed game in the first place - see
+    `commands.py`'s own module docstring, "no half-applied `Game` kept
+    anywhere" - so nothing here is thrown away but a *question*, and the
+    exact same question resurfaces, byte-identical, the moment whatever
+    would have asked it is attempted again (`run_command`'s replay is
+    deterministic). The alternative - clearing only when the completed
+    command IS the one that was paused - would leave a genuinely stale
+    pause sitting in the store forever once its game state has moved past
+    the point that ever asked it, which is worse: a `pending_decision` a
+    live seat can never actually answer, since resuming it would replay
+    against state that no longer produces the same question at all. See
+    `tests/test_decisions.py::
+    test_an_unrelated_completed_command_clears_an_unrelated_pause` for the
+    pinned behaviour.
+    """
+    command = commands.Command.build(kind, request)
+    with store.locked(game_id) as game:
+        result = commands.run_command(game, command)
+        if result.status is commands.RunStatus.COMPLETED:
+            assert result.game is not None
+            store.replace(game_id, result.game)
+            store.clear_paused_command(game_id)
+        else:
+            assert result.pending is not None
+            store.store_paused_command(game_id, command, result.tape, result.pending)
+        return result, game
+
+
+def _respond(
+    game_id: str, action: str, result: commands.RunResult, *, dry_run: bool = False, **keys: Any
+) -> dict[str, Any]:
+    """Turn a `_run_command` attempt into this route's JSON response,
+    auditing it either way - refused, allowed, or paused waiting on a
+    decision (`allowed: None`) are all real outcomes worth a log entry, the
+    same way a refusal already was. `keys` are the action-specific detail
+    `audit.record` already took for this route (the card cast, the targets
+    offered, ...) before this task, unchanged by which of the three this
+    attempt came to.
+
+    For every route this serves, `PAUSED` was unreachable before this task -
+    the request blocked instead, inside `Game.ask`, until an answer arrived
+    or the provider's timeout defaulted one. `allowed: None` is a new value
+    no existing caller has seen from these routes; `paused: True` and
+    `pending_decision` are new keys - see this module's own report on this
+    task for why that is the intended, minimal shape rather than a full
+    state view merged in, matching every one of these routes' existing,
+    state-free response shape.
+    """
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        body = {
+            "allowed": None,
+            "reason": None,
+            "paused": True,
+            "pending_decision": pending.to_view(),
+        }
+        if dry_run:
+            return {**body, "log_seq": None}
+        seq = audit.record(game_id, action, allowed=None, reason=None, paused=True, **keys)
+        return {**body, "log_seq": seq}
+    assert result.outcome is not None
+    return audit_outcome(game_id, action, result.outcome, dry_run=dry_run, **keys)
+
+
+def _resume(
+    game_id: str,
+    command: commands.Command,
+    tape: tuple[Answer, ...],
+    pending: PendingDecisionEngine,
+    answer: Answer,
+) -> commands.RunResult:
+    """Resume `game_id`'s paused command with `answer` appended to `tape`
+    (`commands.resume_command`), and settle the result into the store
+    exactly like `_run_command` does for a fresh command: commit on
+    `RunStatus.COMPLETED`, restash `(command, tape, pending)` on `PAUSED`.
+
+    Raises `ValueError` when the engine itself refuses `answer` once the
+    command actually replays with it (the same propagation `run_command`
+    already gives `_run_command`'s callers), and
+    `commands.CommandDivergenceError` when the stored pause turns out to be
+    stale (`resume_command`'s own replay-divergence guard) - neither is
+    caught here; `POST .../decide` and its `actions/attack`/
+    `actions/declare-blockers` aliases each turn the first into their own
+    synchronous `{"accepted": False, ...}` refusal, and the second reaches
+    this api's registered 409 handler unchanged.
+    """
+    with store.locked(game_id) as game:
+        result = commands.resume_command(game, command, tape, pending, answer)
+        if result.status is commands.RunStatus.COMPLETED:
+            assert result.game is not None
+            store.replace(game_id, result.game)
+            store.clear_paused_command(game_id)
+        else:
+            assert result.pending is not None
+            store.store_paused_command(game_id, command, result.tape, result.pending)
+        return result
+
+
 # -- landing page when the frontend repo is absent --------------------------
 
 _LANDING = """<!doctype html>
@@ -324,17 +338,17 @@ def health() -> dict[str, Any]:
     against its own build of `seatkit.py` - see that constant's docstring for
     why a long-running MCP server process needs this.
 
-    `decision_timeout_seconds` is `decisions.DEFAULT_TIMEOUT_SECONDS` - the
-    longest a mutating request can legitimately block inside `Game.ask`
-    waiting on a live CR 608.2d answer (`decisions.py`'s module docstring).
-    `seatkit.resolve_client_timeout` reads this to size a seat's own HTTP
-    read timeout so a genuine block never looks like a dead server - the two
-    numbers come from this one field rather than being two constants a
-    future edit to either repo could quietly desynchronise."""
+    No `decision_timeout_seconds` any more: that field existed only to size a
+    `Seat`'s HTTP read timeout against a mutating request's own worst-case
+    block inside `Game.ask` (`decisions.py`, `seatkit.resolve_client_timeout`)
+    - a bound this API no longer needs, because no mutating request blocks on
+    a live decision at all now. A question with no scripted answer pauses and
+    returns immediately instead (`commands.py`); see this task's report on
+    what replaced the two constants this field used to expose.
+    """
     return {
         "status": "ok",
         "protocol_version": seatkit.PROTOCOL_VERSION,
-        "decision_timeout_seconds": decisions.DEFAULT_TIMEOUT_SECONDS,
     }
 
 
@@ -404,28 +418,16 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
     No uid, or one this game does not recognise, sees nothing hidden - the
     same treatment as any other caller talking to the API directly instead
     of through a dispatched agent's seat. A valid seat uid sees its own hand
-    and both public boards; the game's admin key sees everything."""
+    and both public boards; the game's admin key sees everything.
+
+    Used to also mark this seat as watching/delivered on the game's decision
+    mailbox, so a mutating request parked in `Game.ask` could tell a live
+    seat apart from an unattended one. That whole mechanism is gone - a
+    mutating request never blocks on a decision any more, so there is
+    nothing here to be evidence for.
+    """
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
-    if isinstance(viewer, str):
-        # This is the read `Seat.fetch_state` polls (`seatkit.block_until_wake`),
-        # so a real seat reaching here has, by definition, just been shown
-        # whatever `pending_decision` this response carries - including one
-        # addressed to it. Marking that delivered here is what lets
-        # `decisions.DecisionMailbox.wait_for_answer` start its real timeout
-        # clock from "the seat could have seen this" rather than from
-        # `publish()`, when the seat may not have polled yet. A no-op unless
-        # this game currently has a decision pending for `viewer` specifically.
-        mailbox = store.mailbox(game_id)
-        if mailbox is not None:
-            # And, separately, that somebody is behind this seat at all -
-            # true of this read whether or not a decision happens to be
-            # pending for `viewer` right now, which is exactly the evidence
-            # `DecisionMailbox.delivery_bound` needs to tell a live player
-            # from a game nobody is watching. See `decisions.py`'s
-            # `DEFAULT_PRESENCE_SECONDS`.
-            mailbox.mark_watching(viewer)
-            mailbox.mark_delivered(viewer)
     return visibility.redact_view(state_view(game, game_id), viewer)
 
 
@@ -673,20 +675,23 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
 
 @app.post("/api/games/{game_id}/actions/cast")
 def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.cast_card(game, req)
-        return audit_outcome(
-            game_id,
-            "cast",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card=req.card or str(req.card_id),
-            from_zone=req.from_zone,
-            targets=req.targets,
-            mana_sources=[str(source) for source in req.mana_sources or []],
-        )
+    """Cast a card. `dry_run` never asks anything unscripted (it builds and
+    rewinds its `Casting` against an isolated probe copy of the game - see
+    `engine_api.dry_run_copy` - never through the pause/resume tape), so it
+    always completes; a real cast can pause on any CR 601.2 choice this
+    engine still asks interactively (`choose_targets`, `choose_a_mode`, ...)."""
+    result, _ = _run_command(game_id, "cast", req)
+    return _respond(
+        game_id,
+        "cast",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card=req.card or str(req.card_id),
+        from_zone=req.from_zone,
+        targets=req.targets,
+        mana_sources=[str(source) for source in req.mana_sources or []],
+    )
 
 
 @app.post("/api/games/{game_id}/actions/suspend")
@@ -694,36 +699,32 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
     comes off is picked up automatically by `actions/cast` - see `advance`."""
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.suspend_card(game, req)
-        return audit_outcome(
-            game_id,
-            "suspend",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card=req.card or str(req.card_id),
-            mana_sources=[str(source) for source in req.mana_sources or []],
-        )
+    result, _ = _run_command(game_id, "suspend", req)
+    return _respond(
+        game_id,
+        "suspend",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card=req.card or str(req.card_id),
+        mana_sources=[str(source) for source in req.mana_sources or []],
+    )
 
 
 @app.post("/api/games/{game_id}/actions/plot")
 def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.plot_card(game, req)
-        return audit_outcome(
-            game_id,
-            "plot",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card=req.card or str(req.card_id),
-            mana_sources=[str(source) for source in req.mana_sources or []],
-        )
+    result, _ = _run_command(game_id, "plot", req)
+    return _respond(
+        game_id,
+        "plot",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card=req.card or str(req.card_id),
+        mana_sources=[str(source) for source in req.mana_sources or []],
+    )
 
 
 @app.post("/api/games/{game_id}/actions/foretell")
@@ -731,18 +732,16 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
     later turn, for its printed foretell cost."""
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.foretell_card(game, req)
-        return audit_outcome(
-            game_id,
-            "foretell",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card=req.card or str(req.card_id),
-            mana_sources=[str(source) for source in req.mana_sources or []],
-        )
+    result, _ = _run_command(game_id, "foretell", req)
+    return _respond(
+        game_id,
+        "foretell",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card=req.card or str(req.card_id),
+        mana_sources=[str(source) for source in req.mana_sources or []],
+    )
 
 
 @app.post("/api/games/{game_id}/actions/cycle")
@@ -750,19 +749,17 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
     the stack, same as `actions/activate` - resolve it with `resolve-top`."""
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.cycle_card(game, req)
-        return audit_outcome(
-            game_id,
-            "cycle",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card=req.card or str(req.card_id),
-            ability_index=req.ability_index,
-            mana_sources=[str(source) for source in req.mana_sources or []],
-        )
+    result, _ = _run_command(game_id, "cycle", req)
+    return _respond(
+        game_id,
+        "cycle",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card=req.card or str(req.card_id),
+        ability_index=req.ability_index,
+        mana_sources=[str(source) for source in req.mana_sources or []],
+    )
 
 
 @app.post("/api/games/{game_id}/actions/target")
@@ -837,30 +834,40 @@ def get_affordances(
 def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     """Concede (CR 104.3a). A player may do this at any time, and leaves the
     game immediately - there is no priority check and nothing to refuse, which
-    is why this takes no `Outcome` the way the other actions do."""
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        game.concede(req.player, by=req.player)
-        seq = audit.record(game_id, "concede", player=req.player, allowed=True)
-        return {"allowed": True, "winner": game.winner, "log_seq": seq}
+    is why this takes no `Outcome` the way the other actions do. `Game.concede`
+    asks nothing of its own, but this still goes through the pause machinery
+    like every other command, on the chance a state-based check it triggers
+    ever does (a legend rule, a leaves-the-battlefield trigger's targets)."""
+    result, _ = _run_command(game_id, "concede", req)
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        seq = audit.record(game_id, "concede", player=req.player, allowed=None, paused=True)
+        return {
+            "allowed": None,
+            "paused": True,
+            "pending_decision": pending.to_view(),
+            "log_seq": seq,
+        }
+    assert isinstance(result.outcome, dict)
+    seq = audit.record(game_id, "concede", player=req.player, allowed=True)
+    return {"allowed": True, "winner": result.outcome["winner"], "log_seq": seq}
 
 
 @app.post("/api/games/{game_id}/actions/activate")
 def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.activate_ability(game, req)
-        return audit_outcome(
-            game_id,
-            "activate",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card_id=str(req.card_id),
-            ability_index=req.ability_index,
-            targets=req.targets,
-            mana_sources=[str(source) for source in req.mana_sources or []],
-        )
+    result, _ = _run_command(game_id, "activate_ability", req)
+    return _respond(
+        game_id,
+        "activate",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        ability_index=req.ability_index,
+        targets=req.targets,
+        mana_sources=[str(source) for source in req.mana_sources or []],
+    )
 
 
 @app.post("/api/games/{game_id}/actions/crew")
@@ -868,48 +875,137 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
     not mana, and crew is the Vehicle's ability rather than theirs."""
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.crew_vehicle(game, req)
-        return audit_outcome(
-            game_id,
-            "crew",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card_id=str(req.card_id),
-            crewing=[str(card_id) for card_id in req.crewing],
+    result, _ = _run_command(game_id, "crew", req)
+    return _respond(
+        game_id,
+        "crew",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        crewing=[str(card_id) for card_id in req.crewing],
+    )
+
+
+def _answer_declaration(
+    game_id: str,
+    expected_kind: DecisionKind,
+    pairs: list[DeclaredPairRequest],
+    *,
+    action: str,
+    uid: str | None = None,
+    **audit_keys: Any,
+) -> dict[str, Any]:
+    """The shared body of `actions/attack`/`actions/declare-blockers`: both
+    are thin aliases over the standing `DECLARE_ATTACKERS`/`DECLARE_BLOCKERS`
+    decision `POST .../advance` paused on, built from each route's own
+    request shape into `decisions.declared_pairs_answer`'s pair shape and
+    resumed exactly the way `POST .../decide` resumes any other kind
+    (`_resume`) - not a second transport around the tape, which is what
+    these two routes used to be (calling `Game.declare_attackers`/
+    `declare_blockers` directly, bypassing `ask_attackers`/`ask_blockers`
+    entirely). See this task's own report for the full reasoning.
+
+    Refuses (`allowed: False`, 200) rather than raising when there is no
+    such decision pending, or the pending one is a different kind (the
+    caller is at the wrong step) - the same shape every other refusal in
+    this api takes, and it leaves the pending decision untouched either way.
+
+    `uid` gates exactly the way `decide`'s own does (CR 608.2d's "the player
+    announces"): it must open the *deciding* player's own seat, not the
+    admin key and not anyone else's - `visibility.resolve_viewer` returns
+    the `ADMIN` sentinel for the admin key, which is not a `str` and so
+    never satisfies this either. These two routes are aliases over the same
+    paused tape `decide` resumes (not a second transport around it - see
+    above), so the two doors have to agree on who may walk through; before
+    this they did not - `decide` enforced this and `actions/attack`/
+    `actions/declare-blockers` enforced nothing at all.
+    """
+
+    def refuse(reason: str) -> dict[str, Any]:
+        seq = audit.record(game_id, action, allowed=False, reason=reason, **audit_keys)
+        return {"allowed": False, "reason": reason, "log_seq": seq}
+
+    game_or_404(game_id)
+    paused = store.paused_command(game_id)
+    if paused is None:
+        return refuse(f"no pending {expected_kind.value} decision - call POST .../advance first")
+    command, tape, pending = paused
+    engine_decision = pending.decision
+    if engine_decision.kind is not expected_kind:
+        return refuse(
+            f"the pending decision is {engine_decision.kind.value!r}, not "
+            f"{expected_kind.value!r} - answer that one first (POST .../decide, "
+            f"or the matching action)"
         )
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer != engine_decision.player or not isinstance(viewer, str):
+        return refuse("that uid does not open the deciding player's seat")
+    try:
+        value = decisions.declared_pairs_answer(pairs)
+        decisions.validate_answer(engine_decision, value)
+    except ValueError as exc:
+        return refuse(str(exc))
+    answer = Answer(
+        seq=pending.seq, kind=engine_decision.kind, player=engine_decision.player, pairs=value
+    )
+    try:
+        result = _resume(game_id, command, tape, pending, answer)
+    except ValueError as exc:
+        return refuse(str(exc))
+    seq = audit.record(game_id, action, allowed=True, reason=None, **audit_keys)
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        next_pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        return {
+            "allowed": True,
+            "paused": True,
+            "pending_decision": next_pending.to_view(),
+            "log_seq": seq,
+        }
+    return {"allowed": True, "log_seq": seq}
 
 
 @app.post("/api/games/{game_id}/actions/attack")
-def action_attack(game_id: str, req: AttackRequest) -> dict[str, Any]:
-    with store.locked(game_id) as game:
+def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> dict[str, Any]:
+    """Declare attackers (CR 508.1) - see `_answer_declaration`. `dry_run`
+    answers without touching the pending decision at all: it only checks
+    each pair's legality (`Game.why_cannot_attack`) against the game as it
+    stands right now, the same probe it always was - so it needs no `uid`
+    gate any more than any other dry run does; only a real declaration does.
+    """
+    attackers_detail = [
+        {"card": str(pair.card_id), "defender": pair.defender} for pair in req.attackers
+    ]
+    if req.dry_run:
+        game = game_or_404(game_id)
         outcome = engine_api.declare_attack(game, req)
-        return audit_outcome(
-            game_id,
-            "attack",
-            outcome,
-            attackers=[
-                {"card": str(pair.card_id), "defender": pair.defender} for pair in req.attackers
-            ],
-            dry_run=req.dry_run,
-        )
+        return audit_outcome(game_id, "attack", outcome, attackers=attackers_detail, dry_run=True)
+    pairs = [
+        DeclaredPairRequest(creature=pair.card_id, defender=pair.defender) for pair in req.attackers
+    ]
+    return _answer_declaration(
+        game_id,
+        DecisionKind.DECLARE_ATTACKERS,
+        pairs,
+        action="attack",
+        uid=uid,
+        attackers=attackers_detail,
+        dry_run=False,
+    )
 
 
 @app.post("/api/games/{game_id}/actions/play-land")
 def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
-    with store.locked(game_id) as game:
-        game.player(req.player)
-        outcome = engine_api.play_land(game, req)
-        return audit_outcome(
-            game_id,
-            "play_land",
-            outcome,
-            dry_run=req.dry_run,
-            player=req.player,
-            card=req.card or str(req.card_id),
-        )
+    result, _ = _run_command(game_id, "play_land", req)
+    return _respond(
+        game_id,
+        "play_land",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card=req.card or str(req.card_id),
+    )
 
 
 @app.post("/api/games/{game_id}/actions/pass-priority")
@@ -917,67 +1013,71 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     """Pass priority - "I am done for now". `outcome` tells the caller what
     the pass caused: `resolve_top` (the stack's top resolved, priority goes
     round again) or `end_step` (everyone passed on an empty stack, so the
-    step ended and the next has already begun - CR 117.4, 405.5).
+    step ended and the next has already begun - CR 117.4, 405.5). Resolving
+    the stack's top is exactly where a spell or ability's own CR 608.2d
+    question is asked, so this can pause the same way `resolve-top` can.
 
-    If that next step is one in which no player receives priority, this does
-    not stop there: `engine_api.settle_priorityless_steps` runs the game on to
-    the first step somebody can act in (CR 500.3), and `settled_through` lists
-    the steps crossed. A player who has passed has said "I am done for now",
-    and nothing in CR 500.3's untap or cleanup steps is waiting on them - so
-    handing the pass back with `priority_holder: null` would be handing back a
-    state no client, human or otherwise, is allowed to move."""
-    with store.locked(game_id) as game:
-        resolving_obj = game.stack[-1] if game.stack else None
-        resolving = resolving_obj.name if resolving_obj is not None else None
-        resolving_spell_id = resolving_obj.id if isinstance(resolving_obj, CardState) else None
-        before = _resolution_state(game)
-        try:
-            outcome = game.pass_priority(req.player)
-        except ValueError as exc:  # not this player's decision to make
-            seq = audit.record(
-                game_id, "pass_priority", player=req.player, allowed=False, reason=str(exc)
-            )
-            return {"allowed": False, "reason": str(exc), "outcome": None, "log_seq": seq}
-        detail: dict[str, Any] = {"outcome": outcome.value}
-        if outcome is PriorityOutcome.RESOLVE_TOP:
-            # What resolved, and whether it changed anything. A spell whose
-            # effect the engine does not know resolves and leaves the game
-            # untouched, and without this the log cannot tell that apart from
-            # one that worked.
-            detail["resolved"] = resolving
-            after = _resolution_state(game)
-            if resolving_spell_id is not None:
-                after = _without_own_arrival(game, resolving_spell_id, after)
-            detail["changed"] = after != before
-        settled = engine_api.settle_priorityless_steps(game)
-        if settled:
-            detail["settled_through"] = settled
+    If that next step is one in which no player receives priority,
+    `commands._run_pass_priority` does not stop there: it runs the game on to
+    the first step somebody can act in (CR 500.3) as part of this same
+    command, and `settled_through` lists the steps crossed. A player who has
+    passed has said "I am done for now", and nothing in CR 500.3's untap or
+    cleanup steps is waiting on them - so handing the pass back with
+    `priority_holder: null` would be handing back a state no client, human or
+    otherwise, is allowed to move."""
+    try:
+        result, _ = _run_command(game_id, "pass_priority", req)
+    except ValueError as exc:  # not this player's decision to make
         seq = audit.record(
-            game_id, "pass_priority", player=req.player, allowed=True, reason=None, **detail
+            game_id, "pass_priority", player=req.player, allowed=False, reason=str(exc)
         )
+        return {"allowed": False, "reason": str(exc), "outcome": None, "log_seq": seq}
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        seq = audit.record(game_id, "pass_priority", player=req.player, allowed=None, paused=True)
         return {
-            "allowed": True,
-            "reason": None,
-            "outcome": outcome.value,
-            "settled_through": settled,
+            "allowed": None,
+            "paused": True,
+            "pending_decision": pending.to_view(),
+            "outcome": None,
             "log_seq": seq,
         }
+    assert isinstance(result.outcome, dict)
+    outcome_detail = dict(result.outcome)
+    priority_outcome: PriorityOutcome = outcome_detail.pop("outcome")
+    settled = outcome_detail.pop("settled_through", None) or []
+    audit_detail: dict[str, Any] = {"outcome": priority_outcome.value, **outcome_detail}
+    if settled:
+        audit_detail["settled_through"] = settled
+    seq = audit.record(
+        game_id, "pass_priority", player=req.player, allowed=True, reason=None, **audit_detail
+    )
+    return {
+        "allowed": True,
+        "reason": None,
+        "outcome": priority_outcome.value,
+        "settled_through": settled,
+        "log_seq": seq,
+    }
 
 
 @app.post("/api/games/{game_id}/actions/declare-blockers")
-def action_declare_blockers(game_id: str, req: DeclareBlockersRequest) -> dict[str, Any]:
-    with store.locked(game_id) as game:
-        pairs = [(card_or_404(game, b.blocker), card_or_404(game, b.blocked)) for b in req.blocks]
-        keys = dict(
-            player=req.player,
-            blocks=[{"blocker": str(b.blocker), "blocked": str(b.blocked)} for b in req.blocks],
-        )
-        try:
-            game.declare_blockers(pairs)
-        except ValueError as exc:  # the engine's own refusal text
-            return audit_outcome(game_id, "declare_blockers", engine_api.refused(exc), **keys)
-        outcome = engine_api.Outcome(True, detail={"blocks": len(pairs)})
-        return audit_outcome(game_id, "declare_blockers", outcome, **keys)
+def action_declare_blockers(
+    game_id: str, req: DeclareBlockersRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """Declare blockers (CR 509.1) - see `_answer_declaration`."""
+    blocks_detail = [{"blocker": str(b.blocker), "blocked": str(b.blocked)} for b in req.blocks]
+    pairs = [DeclaredPairRequest(creature=b.blocker, defender=str(b.blocked)) for b in req.blocks]
+    return _answer_declaration(
+        game_id,
+        DecisionKind.DECLARE_BLOCKERS,
+        pairs,
+        action="declare_blockers",
+        uid=uid,
+        player=req.player,
+        blocks=blocks_detail,
+    )
 
 
 # -- running the game forward ------------------------------------------------
@@ -985,30 +1085,47 @@ def action_declare_blockers(game_id: str, req: DeclareBlockersRequest) -> dict[s
 
 @app.post("/api/games/{game_id}/state-based-actions")
 def state_based_actions(game_id: str) -> dict[str, Any]:
-    with store.locked(game_id) as game:
-        result = engine_api.run_state_based_actions(game)
-        audit.record(
-            game_id,
-            "state_based_actions",
-            destroyed=result["destroyed"],
-            changed=result["changed"],
-        )
-        return {**state_view(game, game_id), **result}
+    result, _ = _run_command(game_id, "state_based_actions", ActorRequest())
+    if result.status is commands.RunStatus.PAUSED:
+        seq = audit.record(game_id, "state_based_actions", allowed=None, paused=True)
+        game = game_or_404(game_id)
+        return {**state_view(game, game_id), "allowed": None, "paused": True, "log_seq": seq}
+    assert result.game is not None and isinstance(result.outcome, dict)
+    audit.record(
+        game_id,
+        "state_based_actions",
+        destroyed=result.outcome["destroyed"],
+        changed=result.outcome["changed"],
+    )
+    return {**state_view(result.game, game_id), **result.outcome}
 
 
 @app.post("/api/games/{game_id}/resolve-top")
 def resolve_top(
     game_id: str, req: ActorRequest | None = None, uid: str | None = None
 ) -> dict[str, Any]:
-    with store.locked(game_id) as game:
-        result = engine_api.resolve_top(game)
-        seq = audit.record(game_id, "resolve_top", player=req.player if req else None, **result)
-        viewer = visibility.resolve_viewer(game_id, uid)
+    result, _ = _run_command(game_id, "resolve_top", req or ActorRequest())
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if result.status is commands.RunStatus.PAUSED:
+        seq = audit.record(
+            game_id, "resolve_top", player=req.player if req else None, allowed=None, paused=True
+        )
+        game = game_or_404(game_id)
         return {
             **visibility.redact_view(state_view(game, game_id), viewer),
-            **result,
+            "resolved": None,
+            "zone": None,
+            "allowed": None,
+            "paused": True,
             "log_seq": seq,
         }
+    assert result.game is not None and isinstance(result.outcome, dict)
+    seq = audit.record(game_id, "resolve_top", player=req.player if req else None, **result.outcome)
+    return {
+        **visibility.redact_view(state_view(result.game, game_id), viewer),
+        **result.outcome,
+        "log_seq": seq,
+    }
 
 
 @app.post("/api/games/{game_id}/advance")
@@ -1017,39 +1134,49 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     performed when the stack is non-empty in a step that grants priority
     (CR 500.2, 117.4) - the engine's own refusal, not a transport error, so
     the caller's next move is `pass-priority`, not a retry - or when the
-    caller is not the active player or their controller (CR 117.3a, 723.5)."""
-    player = req.player
-    with store.locked(game_id) as game:
-        assert game.turn is not None
-        before = game.turn.step.value
-        try:
-            step = game.advance(player)
-        except ValueError as exc:  # the engine's own refusal text
-            seq = audit.record(game_id, "advance", player=player, allowed=False, reason=str(exc))
-            return {"allowed": False, "reason": str(exc), "log_seq": seq}
-        suspend_upkeep: list[dict[str, Any]] = []
-        if step is Step.UPKEEP:
-            # CR 702.62a's second/third abilities: nothing in `Game.advance`
-            # dispatches this trigger on its own (see `engine_api.
-            # drive_suspend_upkeep`), so it is driven by hand here, once,
-            # for whoever's upkeep was just entered.
-            suspend_upkeep = engine_api.drive_suspend_upkeep(game, game.turn.active_player)
-        seq = audit.record(
-            game_id,
-            "advance",
-            player=player,
-            allowed=True,
-            suspend_upkeep=suspend_upkeep,
-            **{"from": before, "to": step.value},
-        )
-        viewer = visibility.resolve_viewer(game_id, uid)
+    caller is not the active player or their controller (CR 117.3a, 723.5).
+
+    Entering a step whose turn-based action asks something with no scripted
+    answer - the cleanup discard, CR 508.1's/CR 509.1's combat declarations -
+    pauses instead of silently defaulting: the committed game is left exactly
+    as it was (this response's board reflects the step `advance` was called
+    from, not the one it was trying to enter), with the question attached as
+    `pending_decision`, answerable through `POST .../decide` or its
+    `actions/attack`/`actions/declare-blockers` aliases.
+    """
+    try:
+        result, committed = _run_command(game_id, "advance", req)
+    except ValueError as exc:  # the engine's own refusal text
+        seq = audit.record(game_id, "advance", player=req.player, allowed=False, reason=str(exc))
+        return {"allowed": False, "reason": str(exc), "log_seq": seq}
+    before = committed.turn.step.value if committed.turn is not None else None
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if result.status is commands.RunStatus.PAUSED:
+        seq = audit.record(game_id, "advance", player=req.player, allowed=None, paused=True)
         return {
-            **visibility.redact_view(state_view(game, game_id), viewer),
-            "advanced_to": step.value,
-            "suspend_upkeep": suspend_upkeep,
-            "allowed": True,
+            **visibility.redact_view(state_view(committed, game_id), viewer),
+            "allowed": None,
+            "paused": True,
             "log_seq": seq,
         }
+    assert result.game is not None and isinstance(result.outcome, dict)
+    step_value = result.outcome["advanced_to"]
+    suspend_upkeep = result.outcome["suspend_upkeep"]
+    seq = audit.record(
+        game_id,
+        "advance",
+        player=req.player,
+        allowed=True,
+        suspend_upkeep=suspend_upkeep,
+        **{"from": before, "to": step_value},
+    )
+    return {
+        **visibility.redact_view(state_view(result.game, game_id), viewer),
+        "advanced_to": step_value,
+        "suspend_upkeep": suspend_upkeep,
+        "allowed": True,
+        "log_seq": seq,
+    }
 
 
 @app.post("/api/games/{game_id}/report")
@@ -1063,38 +1190,18 @@ def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
 
 @app.post("/api/games/{game_id}/decide")
 def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str, Any]:
-    """Answer this game's pending decision - most kinds CR 608.2d, `choose_targets`
-    CR 603.3d/601.2c and `order_triggers` CR 603.3b instead
-    (`decisions.rule_for_kind`) - such as the cleanup discard's choice of
-    which card to put in the graveyard.
+    """Answer this game's pending decision - most kinds CR 608.2d,
+    `choose_targets` CR 603.3d/601.2c, `order_triggers` CR 603.3b, and
+    `declare_attackers`/`declare_blockers` CR 508.1/509.1 instead - such as
+    the cleanup discard's choice of which card to put in the graveyard.
 
-    Deliberately does not call `store.locked(game_id)` or touch the `Game`
-    object at all - only the mailbox. It cannot: the request that published
-    this decision is *itself* holding that lock, parked inside `Game.ask`
-    waiting for this call to answer the mailbox. Taking the lock here would
-    queue this request behind the one it exists to unblock, which is a
-    deadlock, not a wait. See `decisions.py`'s module docstring.
-
-    `audit.record` is safe to call here even though the lock above is not:
-    it only ever calls `store.get(game_id)` (a plain read of the store's own
-    lock, not the per-game one) to pull a snapshot for the log entry - the
-    same reason `decisions.GameDecisionProvider._log_timeout` already calls
-    it from inside `Game.ask`. Every answer is recorded, accepted or refused,
-    with this endpoint's own reason verbatim - this used to be the one
-    mutating-shaped endpoint with no audit trail at all, which is why a
-    player who answered a decision correctly could still look, from the log
-    alone, like they had never answered it.
-
-    The accepted-answer audit entry below is written *before*
-    `mailbox.answer_if` is called, not after, and that ordering is load
-    bearing, not incidental: `answer_if` is what wakes the resolving request
-    parked in `Game.ask`, which then resumes mutating the `Game` object under
-    its own lock - a lock this endpoint never holds. Reading a snapshot of
-    that same `Game` *after* calling `answer_if` would race a thread that
-    might already be back to mutating it; reading it in the instant before,
-    while that thread is still provably parked in `DecisionMailbox.wait_for_answer`'s
-    condition wait, cannot. See `test_deadlock.py`'s
-    `test_decide_never_races_the_resolving_thread_for_the_audit_snapshot`.
+    An ordinary mutating request now, like any other: it loads the game's
+    paused command (`store.paused_command`), resumes it with this answer
+    appended to the tape (`commands.resume_command`, via `_resume`), and
+    commits whatever that produces. There is no longer a resolving thread
+    parked in `Game.ask` for this to avoid racing, and no lock it must avoid
+    taking - see `commands.py`'s module docstring and `repository.py`'s
+    `InMemoryRepository` docstring for what replaced that invariant.
 
     `uid` must open the deciding player's own seat - not the opponent's, not
     a bystander's - matching CR 608.2d's "the player announces": nobody else
@@ -1107,30 +1214,26 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         )
         return {"accepted": False, "reason": reason, "log_seq": seq}
 
+    game_or_404(game_id)
     player = visibility.resolve_viewer(game_id, uid)
-    mailbox = store.mailbox(game_id)
-    if mailbox is None:
-        raise KeyError(f"no game {game_id}")
     if player != req.player or not isinstance(player, str):
         return refuse("that uid does not open the deciding player's seat")
-    current = mailbox.current()
-    if current is None or current[0].player != req.player:
+    paused = store.paused_command(game_id)
+    if paused is None or paused[2].decision.player != req.player:
         return refuse("no pending decision for you")
-    pending, engine_decision = current
-    try:
-        kind = DecisionKind(pending.kind)
-    except ValueError:
-        kind = None
-    detail: dict[str, Any] = {"kind": pending.kind, "prompt": pending.prompt}
+    command, tape, pending = paused
+    engine_decision = pending.decision
+    kind = engine_decision.kind
+    detail: dict[str, Any] = {"kind": kind.value, "prompt": engine_decision.prompt}
     if kind is DecisionKind.CHOOSE_CARDS:
         try:
-            answer = decisions.card_ids_answer(req.card_ids)
+            answer_value: Any = decisions.card_ids_answer(req.card_ids)
         except ValueError as exc:
             return refuse(f"bad card id: {exc}", **detail)
         detail["card_ids"] = req.card_ids
     elif kind is DecisionKind.CHOOSE_TARGETS:
         try:
-            answer = decisions.targets_answer(req.targets)
+            answer_value = decisions.targets_answer(req.targets)
         except ValueError as exc:
             return refuse(f"bad target: {exc}", **detail)
         detail["targets"] = req.targets
@@ -1144,7 +1247,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # itself is checked by `validate_answer` below, against the same
         # `Decision` `ask_trigger_order` will check it against.
         try:
-            answer = decisions.order_answer(req.order)
+            answer_value = decisions.order_answer(req.order)
         except ValueError as exc:
             return refuse(f"bad ability id: {exc}", **detail)
         detail["order"] = req.order
@@ -1153,109 +1256,107 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         DecisionKind.PAY_LIFE,
         DecisionKind.PAY_ENERGY,
         DecisionKind.PAY_MANA,
-        # CR 103.6's "may take any such actions": the same yes/no shape,
-        # asked through `Game.ask` - see `decisions.ANSWERABLE_KINDS`.
+        # CR 103.6's "may take any such actions": the same yes/no shape.
         DecisionKind.OPENING_HAND_ACTION,
-        # CR 103.5's declaration, "will you take a mulligan", which
-        # `machines/decisions.py`'s `ask_mulligan` puts to the provider. Only
-        # `Game.settle_pregame` asks it that way - a seat declaring for itself
-        # uses `POST .../pregame/mulligan`, which blocks on nothing - but that
-        # path is real and reaches a live seat, so this branch is not dead.
-        # Yes/no like the rest of this tuple; the *bottoming* that follows a
-        # kept hand is a separate CHOOSE_CARDS question and needs nothing here.
+        # CR 103.5's declaration, "will you take a mulligan" - only
+        # `pregame_settle` (`Game.settle_pregame`) ever pauses on this one,
+        # and only when called with `use_defaults=False` (its default): a
+        # seat declaring for itself instead uses `POST .../pregame/
+        # mulligan`, which pauses on nothing. Yes/no like the rest of this
+        # tuple; the *bottoming* that follows a kept hand is a separate
+        # CHOOSE_CARDS question and needs nothing here.
         DecisionKind.MULLIGAN,
     ):
         try:
-            answer = decisions.bool_answer(req.accept)
+            answer_value = decisions.bool_answer(req.accept)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["accept"] = req.accept
     elif kind is DecisionKind.PAY_ENERGY_AMOUNT:
         try:
-            answer = decisions.energy_amount_answer(req.energy_amount)
+            answer_value = decisions.energy_amount_answer(req.energy_amount)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["energy_amount"] = req.energy_amount
     elif kind is DecisionKind.PAY_LIFE_AMOUNT:
         try:
-            answer = decisions.life_amount_answer(req.life_amount)
+            answer_value = decisions.life_amount_answer(req.life_amount)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["life_amount"] = req.life_amount
     elif kind is DecisionKind.CHOOSE_A_QUALITY:
         try:
-            answer = decisions.quality_answer(req.choice)
+            answer_value = decisions.quality_answer(req.choice)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["choice"] = req.choice
     elif kind is DecisionKind.CHOOSE_A_MODE:
         try:
-            answer = decisions.mode_answer(req.choice)
+            answer_value = decisions.mode_answer(req.choice)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["choice"] = req.choice
     elif kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
         try:
-            answer = decisions.top_or_bottom_answer(req.top)
+            answer_value = decisions.top_or_bottom_answer(req.top)
         except ValueError as exc:
             return refuse(str(exc), **detail)
         detail["top"] = req.top
     elif kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
         try:
-            answer = decisions.card_split_answer(req.moved, req.top_order)
+            answer_value = decisions.card_split_answer(req.moved, req.top_order)
         except ValueError as exc:
             return refuse(f"bad card id: {exc}", **detail)
         detail["moved"] = req.moved
         detail["top_order"] = req.top_order
-    else:
-        # `kind` is either unparseable (a future `DecisionKind` this API has
-        # not been told about) or one of `MULLIGAN`/`DECLARE_ATTACKERS`/
-        # `DECLARE_BLOCKERS`, none of which this mailbox ever carries - see
-        # `decisions.ANSWERABLE_KINDS`/`decisions.SERVED_ELSEWHERE`. Either
-        # way, refuse by name rather than guessing a shape or silently
-        # letting the engine's own default stand in: "the player announces"
-        # fails loudly here, not quietly in a decision_timeout log
-        # `decisions.DEFAULT_TIMEOUT_SECONDS` from now. The reason names how
-        # to actually answer it when one is known, rather than leaving a
-        # stuck player to guess a fifth argument shape that will never work -
-        # see the reported bug this replaced, where a live player tried four
-        # shapes against `choose_a_quality` with no path to a fifth that
-        # would have worked either, because none existed.
-        hint = decisions.SERVED_ELSEWHERE.get(
-            kind, "this is a new DecisionKind decide has not been taught yet"
-        )
+    elif kind in (DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS):
+        # CR 508.1/509.1's combat declarations - answerable here directly
+        # (the same pair shape `actions/attack`/`actions/declare-blockers`
+        # build from their own request shape, see those routes) as well as
+        # through the two aliases.
+        try:
+            answer_value = decisions.declared_pairs_answer(req.pairs)
+        except ValueError as exc:
+            return refuse(f"bad pair: {exc}", **detail)
+        detail["pairs"] = [{"creature": str(p.creature), "defender": p.defender} for p in req.pairs]
+    else:  # pragma: no cover - unreachable: ANSWERABLE_KINDS == every DecisionKind
         return refuse(
-            f"this endpoint does not know how to answer a {pending.kind!r} decision: {hint}",
-            **detail,
+            f"this endpoint does not know how to answer a {kind.value!r} decision", **detail
         )
-    # The last gate before this answer is trusted: everything `Game.ask`
-    # itself would check (the right number of cards, a target actually
-    # offered, an amount in range, ...) run here first, against the same
-    # `Decision` the engine handed this API when it asked the question. An
-    # answer that fails this is refused right here, synchronously, to the
-    # seat that gave it - never posted to the mailbox, never logged
-    # `allowed: true`, and the decision stays pending so the same seat can
-    # answer again. See `decisions.validate_answer`'s docstring for why this
-    # cannot simply be left to `Game.ask` on the other side of the mailbox.
+    # The last gate before this answer is trusted: everything the engine's
+    # own asker for this kind would check (the right number of cards, a
+    # target actually offered, an amount in range, ...) runs here first,
+    # against the same `Decision` the engine raised when it asked the
+    # question. An answer that fails this is refused right here,
+    # synchronously, to the seat that gave it - never appended to the tape,
+    # never logged `allowed: true`, and the decision stays pending so the
+    # same seat can answer again. See `decisions.validate_answer`'s
+    # docstring for the rest of this reasoning.
     try:
-        decisions.validate_answer(engine_decision, answer)
+        decisions.validate_answer(engine_decision, answer_value)
     except ValueError as exc:
         return refuse(str(exc), **detail)
-    # Recorded before `answer_if`, not after - see the docstring above on why
-    # that ordering is what keeps this read of the `Game` race-free.
+    field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]
+    answer = Answer(seq=pending.seq, kind=kind, player=req.player, **{field_name: answer_value})
+    try:
+        result = _resume(game_id, command, tape, pending, answer)
+    except ValueError as exc:
+        # The engine itself refused this answer once the command actually
+        # replayed with it - reached, in practice, only by the two
+        # declaration kinds (`validate_answer`'s own docstring), since every
+        # other kind's shape check above already mirrors what the engine
+        # would check. Refused the same synchronous way as every check above.
+        return refuse(str(exc), **detail)
     seq = audit.record(game_id, "decide", player=req.player, allowed=True, reason=None, **detail)
-    accepted = mailbox.answer_if(req.player, answer)
-    if not accepted:
-        # A genuine race: the pending decision moved on (answered elsewhere,
-        # or timed out and defaulted) between `snapshot()` above and this
-        # call. The entry just written said "allowed: True" in good faith -
-        # correct it with a second entry rather than leave a wrong one
-        # standing as the only record of what happened.
-        reason = "the pending decision changed before this answer arrived"
-        seq = audit.record(
-            game_id, "decide", player=req.player, allowed=False, reason=reason, **detail
-        )
-        return {"accepted": False, "reason": reason, "log_seq": seq}
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        next_pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        return {
+            "accepted": True,
+            "paused": True,
+            "pending_decision": next_pending.to_view(),
+            "log_seq": seq,
+        }
     return {"accepted": True, "log_seq": seq}
 
 
@@ -1364,22 +1465,74 @@ def pregame_opening_hand_finish(
 
 
 @app.post("/api/games/{game_id}/pregame/settle")
-def pregame_settle(game_id: str, uid: str | None = None) -> dict[str, Any]:
-    """Run the whole pregame on the engine's own defaults: every seat keeps the
-    hand it was dealt and declines every CR 103.6 action.
+def pregame_settle(
+    game_id: str, req: PregameSettleRequest | None = None, uid: str | None = None
+) -> dict[str, Any]:
+    """Run the whole pregame (CR 103.5's mulligan process, CR 103.6's
+    opening-hand actions) forward, over every seat at once.
 
-    The headless path, for a harness or a bot that wants a game to *play*
-    rather than a game to start correctly - `Game.settle_pregame`, unchanged
-    engine behaviour, immediate and deterministic because it consults nobody.
-    Admin-key only: it makes both seats' CR 103.5 declarations at once, which
-    is the operator's call over a game they created, never one seat's over the
-    other's.
+    An ordinary command now (`commands.run_command`/`_run_command`), like
+    `advance`: it pauses on the first `mulligan`/`opening_hand_action`/
+    bottoming `choose_cards` question the engine asks with no scripted
+    answer, and a live seat answers it through `POST .../decide` from there
+    - see `PregameSettleRequest.use_defaults` for the headless alternative,
+    which pre-fills every one of those with the engine's own default instead
+    (`commands.run_command_to_completion`) and so still returns a fully
+    settled, playable game from this one call, exactly as this endpoint
+    always did before pausing existed.
+
+    Admin-key only: it makes every seat's CR 103.5 declaration at once (or,
+    with `use_defaults=False`, opens the whole pregame up to be answered),
+    which is the operator's call over a game they created, never one seat's
+    over the other's.
     """
+    req = req or PregameSettleRequest()
     if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
-    with store.locked(game_id) as game:
-        result = opening.settle_pregame(game_id, game)
-        return _settled(game, result)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if req.use_defaults:
+        command = commands.Command.build("pregame_settle", req)
+        with store.locked(game_id) as game:
+            result = commands.run_command_to_completion(game, command)
+            assert result.status is commands.RunStatus.COMPLETED
+            assert result.game is not None
+            store.replace(game_id, result.game)
+            store.clear_paused_command(game_id)
+    else:
+        result, _ = _run_command(game_id, "pregame_settle", req)
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        seq = audit.record(game_id, "pregame_settle", allowed=None, paused=True)
+        game = game_or_404(game_id)
+        return {
+            **visibility.redact_view(state_view(game, game_id), viewer),
+            "allowed": None,
+            "paused": True,
+            "log_seq": seq,
+        }
+    assert result.game is not None and isinstance(result.outcome, dict)
+    hands = ", ".join(f"{player.username}={len(player.hand)}" for player in result.game.players)
+    mulligans = ", ".join(
+        f"{player.username}={player.mulligans_taken}" for player in result.game.players
+    )
+    seq = audit.record(
+        game_id,
+        "pregame_settled",
+        hands=hands,
+        mulligans=mulligans,
+        # The opposite of `declare_mulligan`'s entry: `use_defaults=True`
+        # asked nobody, so every declaration is the engine's default rather
+        # than a seat's own choice. `use_defaults=False` genuinely opened
+        # every question up to a live `POST .../decide` answer along the
+        # way (even where nothing was actually pending to ask).
+        live=not req.use_defaults,
+        step=result.outcome["step"],
+    )
+    return {
+        **visibility.redact_view(state_view(result.game, game_id), viewer),
+        "allowed": True,
+        "log_seq": seq,
+    }
 
 
 # -- the play-vs-AI UI --------------------------------------------------------

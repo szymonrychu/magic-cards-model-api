@@ -166,8 +166,17 @@ function sameOccurrence(state, run) {
 
 export function stopReason(state, run, stops, castable) {
   if (state.winner || state.drawn) return "the game is over";
-  if (state.pending_decision && state.pending_decision.player === state.you) {
-    return "a decision is pending";
+  if (state.pending_decision) {
+    // A pause rolls the committed game back to before the paused command
+    // ran, so `priority_holder` still reads as whoever it was before the
+    // pause - it is not necessarily the deciding player. A command that is
+    // paused cannot make progress no matter who calls `pass-priority`
+    // against it, own decision or not, so this stops (or never starts
+    // ticking) on *either* - see `interpretPassOutcome`'s and
+    // `passButtonsFor`'s own notes for the rest of this fix.
+    return state.pending_decision.player === state.you
+      ? "a decision is pending"
+      : "waiting on another seat's decision";
   }
   if (attackedNow(state) && !sameOccurrence(state, run)) return "you are being attacked";
   const stackIds = (state.stack || []).map((o) => o.id);
@@ -205,12 +214,32 @@ export function stopReason(state, run, stops, castable) {
 
 export function interpretPassOutcome(res) {
   if (!res || res.allowed === false) return { ok: false, reason: (res && res.reason) || "pass refused" };
+  if (res.paused) {
+    // `allowed: null, paused: true`: the command paused on some decision -
+    // possibly not even the caller's own - and the committed game rolled
+    // back to before this attempt, unchanged (`commands.py`'s own
+    // docstring on `RunResult.PAUSED`). `allowed !== false` alone cannot
+    // tell a real pass from this: nothing happened, so this is not `ok`,
+    // and a caller that treated it as one (the old code did) would replay
+    // the identical no-op pass forever - the tick-forever bug this and
+    // `stopReason`'s own pending-decision check fix together.
+    return { ok: false, reason: "paused on a pending decision", outcome: null, settledThrough: null };
+  }
   return { ok: true, reason: null, outcome: res.outcome || null, settledThrough: res.settled_through || null };
 }
 
 export function passButtonsFor(state) {
   if (state.priority_holder !== state.you) return [];
-  if (state.pending_decision && state.pending_decision.player === state.you) return ["pass"];
+  if (state.pending_decision) {
+    // Your own decision is answered through the decision panel, not a
+    // pass, but the pass button has always stayed live alongside it (a
+    // resolution mid-way through your own priority). Anyone else's
+    // decision is not yours to answer and not something a pass can get
+    // past either - `interpretPassOutcome` above turns the attempt into a
+    // no-op now, but there is nothing for the button to usefully do, so it
+    // is not offered at all.
+    return state.pending_decision.player === state.you ? ["pass"] : [];
+  }
   return [...VERBS];
 }
 

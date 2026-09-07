@@ -57,7 +57,8 @@ A blocked call returns as soon as one of these holds, for this seat:
   merely "has priority" - that would also fire the instant this seat's own
   action hands priority right back with nothing new to react to);
 - a pending decision (CR 608.2d for most kinds; a `choose_targets` decision is
-  CR 603.3d/601.2c instead - see `decisions.rule_for_kind`) is addressed to it;
+  CR 603.3d/601.2c instead, `declare_attackers`/`declare_blockers` CR 508.1/
+  509.1) is addressed to it;
 - the game is over (a winner is set, or it is a draw);
 - the step gives nobody priority (untap, cleanup) and this seat is the active
   player - the harness has no other way to make the turn proceed but calling
@@ -68,42 +69,42 @@ A blocked call returns as soon as one of these holds, for this seat:
 `block_until_wake` polls `GET /api/games/{id}` - a read that takes no lock
 beyond what that endpoint already takes internally, and releases it before
 returning. It never holds `store.locked(game_id)` (`store.py`) across the
-poll loop; if it did, the same-seat action that is supposed to wake it (or
-the opponent's) would queue behind this call forever, since that action needs
-the very lock this call would be sitting on. This is the same invariant
-`decisions.py` documents for `POST .../decide` versus `Game.ask` - a blocking
-wait and the request that clears it must never share a lock - restated here
-because `run_action` is the second place in this codebase with the same
-shape. `hold_priority=True` additionally guarantees the *action* path never
-enters `block_until_wake` at all: the check happens before the loop is ever
-reached, by construction, not by timing.
+poll loop. `hold_priority=True` additionally guarantees the *action* path
+never enters `block_until_wake` at all: the check happens before the loop is
+ever reached, by construction, not by timing.
 
-This used to be wrong in one more place, past the loop: every return path of
-`run_action` called `available_actions(seat, state)` unconditionally, and
-*that* function issues `POST .../actions/cast?dry_run=true` for every card in
-hand (and `.../activate` for every ability) - each of which takes
-`store.locked(game_id)` (`app.py`). When this seat wakes because a decision is
-now pending *for it*, that lock is not free: it is held by the opponent's
-request, parked deep inside `Game.ask` (`decisions.py`) waiting on this same
-seat to answer through `POST .../decide`. Calling `available_actions` there
+This used to be wrong in one more place, past the loop, in a shape specific
+to the old blocking decision transport: every return path of `run_action`
+called `available_actions(seat, state)` unconditionally, and *that* function
+issues `POST .../actions/cast?dry_run=true` for every card in hand (and
+`.../activate` for every ability) - each of which takes `store.locked
+(game_id)` (`app.py`). When this seat woke because a decision was now
+pending *for it*, that lock used to not be free: it was held by the
+opponent's request, parked deep inside `Game.ask` waiting on this same seat
+to answer through `POST .../decide`. Calling `available_actions` there
 queued this call behind the very decision it was returning to let the seat
-answer, for the full decision timeout - a real deadlock, not a wait, that
-`available_actions` itself now avoids: see its own docstring for the fix.
+answer, for the full decision timeout - a real deadlock, not a wait.
+`available_actions` still skips every dry run when a decision is pending for
+this seat (see its own docstring), which is no longer load-bearing against a
+deadlock - no request blocks on a decision at all any more
+(`commands.py`'s pause-and-resume) - but is still the right behaviour: while
+a decision is outstanding nothing else is legal anyway.
 
-## The other block: a single request, not the wait loop
+## No transport-level block left to outlast
 
-`block_until_wake`'s own polling is quick reads and cannot itself run into a
-client read timeout. The real risk is upstream of it: `perform()` - one
-mutating call (`cast`/`activate`/`attack`/`pass-priority`/`resolve-top`/
-`advance`) - can cross a live decision question (CR 608.2d, or CR 603.3d/601.2c
-for `choose_targets`) and block *inside that one request*, in `Game.ask`
-(`decisions.py`), for up to the server's own
-`decision_timeout_seconds`. A `Seat`'s HTTP client timeout is sized to
-comfortably outlast that (`resolve_client_timeout`), so a legitimate hold
-never reads as a dead server; if a read/write/pool timeout happens anyway,
-`Seat.call_json` reports it as `UNKNOWN_OUTCOME` - an action whose outcome is
-genuinely unknown, not a refusal - rather than raising, so a caller is never
-tempted to retry blind and risk a duplicate cast/activation/attack.
+`block_until_wake`'s own polling is quick reads and was never the risk.
+`perform()` - one mutating call (`cast`/`activate`/`attack`/`pass-priority`/
+`resolve-top`/`advance`) - used to be able to cross a live decision question
+and block *inside that one request*, in `Game.ask`, for up to the server's
+own `decision_timeout_seconds`; `Seat`'s HTTP client timeout used to be sized
+to comfortably outlast that (`resolve_client_timeout`, since removed - see
+`CLIENT_TIMEOUT_SECONDS`). That hazard is gone: a question with no scripted
+answer now pauses and returns immediately instead of blocking the request at
+all, so there is no long server-side hold for a client timeout to be shorter
+than. `Seat.call_json` still reports a genuine read/write/pool timeout as
+`UNKNOWN_OUTCOME` rather than raising - ordinary network jitter can still
+happen - so a caller is never tempted to retry blind and risk a duplicate
+cast/activation/attack.
 """
 
 from __future__ import annotations
@@ -115,8 +116,6 @@ import time
 from typing import Any
 
 import httpx
-
-from .decisions import DEFAULT_TIMEOUT_SECONDS as SERVER_DECISION_TIMEOUT_SECONDS
 
 DEFAULT_API = "http://127.0.0.1:8000"
 
@@ -157,10 +156,9 @@ NO_SUCH_SEAT = (
 )
 
 #: How often a blocked call re-fetches state while waiting for a wake
-#: condition. Small: this loop runs inside the caller's own process/thread,
-#: unlike `DecisionMailbox` (`decisions.py`), which is woken by a condition
-#: variable rather than polling - polling is simpler here because there is no
-#: single "the answer arrived" event, only "check the board again".
+#: condition. Small: this loop runs inside the caller's own process/thread
+#: and has no condition variable to be woken by - there is no single "the
+#: answer arrived" event here, only "check the board again".
 POLL_SECONDS = 0.2
 
 #: The default bound for a blocked action, when a tool/command does not name
@@ -168,37 +166,30 @@ POLL_SECONDS = 0.2
 #: to keep waiting just calls again.
 DEFAULT_MAX_SECONDS = 60.0
 
-#: Slack a `Seat`'s/`Seats`' own HTTP read timeout carries over the server's
-#: longest *legitimate* single-request block, so ordinary network jitter
-#: never masquerades as "the block itself ran over budget". That block is
-#: not `DEFAULT_MAX_SECONDS` above - `run_action`'s own wait loop
-#: (`block_until_wake`) polls with short, quick reads and re-fetches state
-#: repeatedly, so no single HTTP call there is at risk. The real one is a
-#: single mutating call (`cast`/`activate`/`attack`/`pass-priority`/
-#: `resolve-top`/`advance`) crossing a live decision question (CR 608.2d, or
-#: CR 603.3d/601.2c for `choose_targets`): `Game.ask`
-#: (`decisions.py`) blocks that one request, inside the game's lock, for up
-#: to the server's own `decision_timeout_seconds` (reported at
-#: `/api/health`) before falling back to the engine's default answer. A
-#: fixed client-side timeout shorter than that turned a legitimate hold into
-#: a false "the action failed" - see `resolve_client_timeout`.
-TIMEOUT_MARGIN_SECONDS = 30.0
-
-#: Timeout for the one-off bootstrap request `resolve_client_timeout` makes
-#: to learn the server's real decision-block bound before building the real
-#: client. Short and fixed on purpose: this call must never itself become
-#: the thing waiting on a long block, since nothing has decided anything yet.
-BOOTSTRAP_TIMEOUT_SECONDS = 10.0
+#: The HTTP client read timeout every `Seat`/`Seats` builds with.
+#:
+#: This used to be derived from the server's own worst-case block
+#: (`resolve_client_timeout`, since removed): a mutating call
+#: (`cast`/`activate`/`attack`/`pass-priority`/`resolve-top`/`advance`)
+#: crossing a live decision question used to block *inside that one
+#: request*, in `Game.ask`, for up to the server's own
+#: `decision_timeout_seconds` - and a client-side timeout shorter than that
+#: turned a legitimate hold into a false "the action failed". That hazard is
+#: gone, not merely mitigated: no mutating request blocks on a live decision
+#: any more (`commands.py`'s pause-and-resume) - a question with no scripted
+#: answer returns immediately instead of parking the request - so there is
+#: no longer a server-side block for a client timeout to be shorter than.
+#: `CLIENT_TIMEOUT_SECONDS` is just a generous, fixed bound against ordinary
+#: network jitter and a slow deployment, the same as any other HTTP client.
+CLIENT_TIMEOUT_SECONDS = 30.0
 
 #: Shown in place of a raised exception whenever a request genuinely times
 #: out waiting for an answer (`httpx.ReadTimeout`/`WriteTimeout`/`PoolTimeout`
 #: - a request that was sent, unlike a bare connection failure). The action
-#: may already have been performed server-side - the whole point of this
-#: module's `resolve_client_timeout` is to make that rare, not to make it
-#: impossible - so this must never read like an ordinary refusal (`run_action`
-#: checks for it before its normal "refused" branch) and must never invite a
-#: blind retry, which is exactly the duplicate-action hazard this exists to
-#: prevent.
+#: may already have been performed server-side, so this must never read like
+#: an ordinary refusal (`run_action` checks for it before its normal
+#: "refused" branch) and must never invite a blind retry, which is exactly
+#: the duplicate-action hazard this exists to prevent.
 #: The `httpx` timeout flavours that mean "a request was sent and we do not
 #: know what happened to it" - as opposed to `httpx.ConnectTimeout`/
 #: `ConnectError`, which mean the request never left this process, so there
@@ -215,31 +206,6 @@ UNKNOWN_OUTCOME = (
     "happened first, then decide what to do from that - never from this "
     "timeout alone."
 )
-
-
-def resolve_client_timeout(bootstrap: httpx.Client) -> float:
-    """The read timeout a `Seat`'s/`Seats`' own `httpx.Client` should use,
-    derived from the live server's own decision-block bound
-    (`/api/health`'s `decision_timeout_seconds`, `decisions.DEFAULT_TIMEOUT_SECONDS`
-    on the server) plus `TIMEOUT_MARGIN_SECONDS` of slack - never a bare
-    constant sized independently of the thing it must outlast, which is
-    exactly how a previous wave shipped a client timeout shorter than a
-    legitimate server-side block.
-
-    `bootstrap` is used for exactly one request and is the caller's own
-    client (so tests that monkeypatch `httpx.Client` are honoured, same as
-    `api_trouble`); an unreachable server or an old build missing the field
-    falls back to this process's own import of the server's default
-    (`SERVER_DECISION_TIMEOUT_SECONDS`) rather than raising - `api_trouble`
-    is what reports that problem loudly on every subsequent call, this only
-    needs *a* safe number to build a client with right now.
-    """
-    try:
-        health = bootstrap.get("/api/health").json()
-        decision_timeout = float(health["decision_timeout_seconds"])
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        decision_timeout = SERVER_DECISION_TIMEOUT_SECONDS
-    return decision_timeout + TIMEOUT_MARGIN_SECONDS
 
 
 def api_trouble(http: httpx.Client, api: str) -> str | None:
@@ -290,14 +256,12 @@ class Seat:
         self.uid = uid
         self.api = api.rstrip("/")
         self._game_id = game_id
-        #: `timeout` is normally `Seats.http.timeout` (resolved once, in
-        #: `Seats.__init__`, against the live server) - `Seats.seat_for`
-        #: passes it down so the many `Seat` objects it mints do not each pay
-        #: for their own bootstrap health call. `None` (a `Seat` built
-        #: directly, outside `Seats`) resolves its own, once, the same way.
+        #: `timeout` is normally `Seats.http.timeout` - `Seats.seat_for`
+        #: passes it down so the many `Seat` objects it mints all share one
+        #: value. `None` (a `Seat` built directly, outside `Seats`) falls
+        #: back to the same fixed default.
         if timeout is None:
-            with httpx.Client(base_url=self.api, timeout=BOOTSTRAP_TIMEOUT_SECONDS) as bootstrap:
-                timeout = resolve_client_timeout(bootstrap)
+            timeout = CLIENT_TIMEOUT_SECONDS
         self.http = httpx.Client(base_url=self.api, timeout=timeout)
         # Belt and suspenders, as a bare float (see `Seats.__init__`'s same
         # comment on why not `httpx.Timeout(...)`): tests monkeypatch
@@ -428,12 +392,10 @@ class Seats:
         self._pinned_game_id = game_id
         self._last_seen_game_id: str | None = None
         self._by_uid: dict[str, str] = {}
-        # Bootstrap with a short, fixed timeout for the one health probe
-        # `resolve_client_timeout` needs, then widen it to the derived value
-        # for every real call this client makes from here on - resolved
+        # One fixed timeout for every real call this client makes - resolved
         # once for this whole process's life, not per `Seat` (`seat_for`
         # hands the same value to every `Seat` it mints, below).
-        self.http = httpx.Client(base_url=self.api, timeout=BOOTSTRAP_TIMEOUT_SECONDS)
+        self.http = httpx.Client(base_url=self.api, timeout=CLIENT_TIMEOUT_SECONDS)
         # A bare float, not `httpx.Timeout(...)`: tests monkeypatch
         # `httpx.Client` itself to hand back a `TestClient` (built on the
         # unrelated `httpx2` package here), so anything constructed through
@@ -442,7 +404,7 @@ class Seats:
         # a real `httpx.Timeout` object (a foreign type to `httpx2`) breaks
         # that client's own `__repr__`. A float is what every implementation
         # of `.timeout =` already accepts and normalises itself.
-        self.http.timeout = resolve_client_timeout(self.http)
+        self.http.timeout = CLIENT_TIMEOUT_SECONDS
 
     def game_id(self) -> str:
         """The game to play: the one pinned via `--game`, or whichever the
@@ -664,26 +626,34 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     Skips every dry run - and returns empty - when `state["pending_decision"]`
     is addressed to this seat, and for a reason sharper than "why bother, the
     engine has frozen mid-resolution anyway": while that decision is
-    outstanding nothing else is legal (whichever CR governs it - see
-    `decisions.rule_for_kind`), so an honest legality check would say no to
+    outstanding nothing else is legal (whichever CR governs it), so an honest
+    legality check would say no to
     all of them regardless. The `cast`/`activate` dry runs below
-    each take `store.locked(game_id)` (`app.py`), and that lock is exactly
-    what is held by the request that raised this decision, parked inside
-    `Game.ask` waiting on this seat's own answer (`POST .../decide`, which
-    deliberately never takes that lock - see `decisions.py`'s module
-    docstring). Probing anyway would queue this call behind the very decision
-    it exists to let the seat answer, for the full decision timeout - the
-    deadlock this function used to cause on every wake into a pending
-    decision, traced live: 18 decision timeouts in one game, because
-    `run_action` calls this on every return path (see the module docstring).
+    each take `store.locked(game_id)` (`app.py`) - a lock a *blocking*
+    transport's parked request would have been holding, back when this
+    function's `18 decision timeouts in one game` deadlock was traced live.
+    Pausing removed that thread (the request that raised the decision has
+    already returned by the time a caller ever sees it here), so the lock
+    itself is no longer the danger - skipping the dry runs below is now
+    purely the first sentence's reasoning, not a deadlock avoidance any more.
+
+    `attackers_requested`/`blockers_requested` are the one part of this early
+    return that is not simply "empty": a `declare_attackers`/
+    `declare_blockers` pause (CR 508.1, CR 509.1) addressed to this seat *is*
+    this seat's `attackers_requested`/`blockers_requested` moment - unlike
+    every other decision kind, where nothing is legal until it is answered,
+    here the decision itself names the exact one thing that is. So each flag
+    reads directly off `pending["kind"]` rather than being forced `False` the
+    way `castable`/`activatable` still are.
     """
     pending = state.get("pending_decision")
     if pending is not None and pending.get("player") == seat.player:
+        kind = pending.get("kind")
         return {
             "castable": [],
             "activatable": [],
-            "attackers_requested": False,
-            "blockers_requested": False,
+            "attackers_requested": kind == "declare_attackers",
+            "blockers_requested": kind == "declare_blockers",
             "pending_decision": pending,
         }
 
@@ -773,6 +743,21 @@ def _unknown_outcome(outcome: Any) -> bool:
     "nothing changed, still your move" about a call that may well have gone
     through."""
     return isinstance(outcome, dict) and outcome.get("unknown_outcome") is True
+
+
+def _paused(outcome: Any) -> bool:
+    """Whether `outcome` is a command that paused on a decision rather than
+    completing - `commands.py`'s pause-and-resume: the mutating call itself
+    returns immediately with the question attached (`allowed: None`,
+    `paused: True`, `pending_decision`), instead of blocking for it the way
+    it used to. `run_action` treats this exactly like a decision that used to
+    surface mid-flight through `_call_watching_for_self_decision` (below) -
+    both mean this seat has to answer through `decide()` before it can tell
+    what its own action did. In practice `perform()` now returns fast enough,
+    paused or not, that `_call_watching_for_self_decision`'s own polling
+    loop rarely gets a chance to fire at all - this is the check that
+    actually catches it now."""
+    return isinstance(outcome, dict) and outcome.get("paused") is True
 
 
 #: Marker `_call_watching_for_self_decision` returns in place of an outcome
@@ -882,6 +867,11 @@ def run_action(
     """
     before = seat.fetch_state()
     outcome, self_decision = _call_watching_for_self_decision(seat, perform)
+    if self_decision is None and _paused(outcome):
+        # `perform()` itself paused (`commands.py`) rather than a decision
+        # surfacing mid-flight through the polling race above - see
+        # `_paused`'s own docstring for why this is the common case now.
+        self_decision = outcome.get("pending_decision")
 
     if self_decision is not None:
         state = seat.fetch_state()
@@ -957,6 +947,8 @@ def run_action(
             )
 
         pass_outcome, pass_self_decision = _call_watching_for_self_decision(seat, perform_pass)
+        if pass_self_decision is None and _paused(pass_outcome):
+            pass_self_decision = pass_outcome.get("pending_decision")
         if pass_self_decision is not None:
             # Releasing priority - not the action above, which already came
             # back clean - is what crossed a decision only this seat could
@@ -1080,7 +1072,9 @@ def autopass_target_error(until_step: str, whose_turn: str) -> str | None:
 
 def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> dict[str, Any]:
     """The bookkeeping one auto-pass run carries, stamped from the board it
-    starts on. Mirrors `ui/app.js`'s `startAutopilot`.
+    starts on. Mirrors `ui/priority.js`'s `startRun` (the buildless-UI port
+    of the old `ui/app.js` autopilot this function itself was always the
+    Python twin of).
 
     `started_turn`/`started_step` are the reason this is a function and not a
     literal: naming the step you are *already standing in* means the NEXT
@@ -1091,15 +1085,29 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
     `forget_starting_occurrence` clears the stamp the moment the board leaves
     it.
 
+    `started_pending_kind` narrows that same exemption for
+    `declare_attackers`/`declare_blockers` specifically: a paused decision
+    freezes `state["step"]` at whatever it was *before* the pause (see
+    `autopass_stop_reason`'s docstring), so a declare-blockers pause can show
+    the exact same `(turn_number, step)` pair a run's own declare-attackers
+    step already stamped as its start - two genuinely different occurrences
+    that would otherwise look identical to the `(turn, step)` pair alone.
+    Comparing the pending decision's own kind alongside it is what tells
+    "the pause the run began already sitting on" apart from "a different
+    pause that merely inherited the same frozen step" - `None` when the run
+    did not begin mid-pause at all.
+
     `known_stack_ids` is the same idea for the stack: only objects that arrive
     *after* the run began count as "something new landed", or a run started
     with a spell already resolving would stop immediately on it.
     """
+    pending = state.get("pending_decision")
     return {
         "step": until_step,
         "whose_turn": whose_turn,
         "started_turn": state.get("turn_number"),
         "started_step": state.get("step"),
+        "started_pending_kind": pending.get("kind") if pending is not None else None,
         "known_stack_ids": {obj.get("id") for obj in (state.get("stack") or [])},
     }
 
@@ -1172,11 +1180,32 @@ def autopass_stop_reason(
     that "doesn't use the stack" (CR 508.1 for attackers, CR 509.1 for
     blockers; CR 703.4i and CR 703.4j put each immediately after its step
     begins - all verified with `knowledge_search` in the session that wrote
-    this), so condition 6 can never see either of them.** Nor can condition 2:
-    `decisions.py` keeps `DECLARE_ATTACKERS` and `DECLARE_BLOCKERS` out of
-    `ANSWERABLE_KINDS` because each has its own action (`actions/attack`,
-    `actions/declare-blockers`) rather than the decision mailbox, so
-    `pending_decision` is never set for either.
+    this), so condition 6 can never see either of them.** Condition 2 is
+    different now than it once was: pausing put `DECLARE_ATTACKERS` and
+    `DECLARE_BLOCKERS` in `decisions.ANSWERABLE_KINDS` alongside every other
+    kind, so `pending_decision` really is set for both - `actions/attack`/
+    `actions/declare-blockers` are thin aliases over the same paused-command
+    tape `decide` resumes, not a second transport `pending_decision` cannot
+    see. So condition 2 has to know to step aside for exactly these two kinds
+    and let conditions 4/5 govern them on their own toggles
+    (`stop_when_you_can_attack`/`stop_when_attacked`) instead - a bare
+    `pending.player == player` check would otherwise fire condition 2 for a
+    combat declaration even when the caller explicitly asked not to stop for
+    one, since a `pending_decision` addressed to this seat is exactly what a
+    paused `declare_attackers`/`declare_blockers` looks like.
+
+    One more wrinkle conditions 4 and 5 both have to work around: a paused
+    `POST .../advance` (or the `pass-priority` that crosses the same
+    turn-based action while releasing priority) leaves `state["step"]` naming
+    the step the call was made *from*, not the one it paused trying to enter
+    (`app.py`'s `advance` docstring - "the committed game is left exactly as
+    it was") - the turn-based action that would have moved the step pointer
+    never finished, so it never moved. A `state["step"] == "declare_attackers"`
+    check can therefore never see the pause itself, only the state that
+    results *after* it is answered - which is too late to be a stop. Both
+    conditions read `pending_decision["kind"]` instead, which is stamped the
+    moment the question is asked, before anything about the step itself has
+    changed.
 
     The two costs are different and worth stating separately rather than
     lumping together:
@@ -1217,17 +1246,33 @@ def autopass_stop_reason(
     if isinstance(state.get("pregame"), dict):
         return "the game has not started yet: the pregame (CR 103.5, CR 103.6) is still open"
     pending = state.get("pending_decision")
-    if pending is not None and pending.get("player") == player:
+    pending_kind = pending.get("kind") if pending is not None else None
+    addressed_to_you = pending is not None and pending.get("player") == player
+    if addressed_to_you and pending_kind not in ("declare_attackers", "declare_blockers"):
         return f"a decision is waiting for you: {pending.get('prompt')}"
 
     # Hoisted above all three conditions that use it - the destination and
     # both combat stops - rather than computed inside the destination check,
     # because "not the occurrence this run started in" is one rule that all
-    # three obey. `ui/app.js` hoists the same value for the same reason.
+    # three obey. `ui/priority.js`'s `sameOccurrence` hoists the same value
+    # for the same reason.
     same_occurrence_this_run_started_in = (
         run.get("started_step") is not None
         and state.get("step") == run["started_step"]
         and state.get("turn_number") == run["started_turn"]
+    )
+    # Conditions 4 and 5 cannot reuse that value on its own: a paused
+    # decision freezes `state["step"]` at whatever it was *before* the pause
+    # (see this function's own docstring above), so a declare-blockers pause
+    # can show the exact same `(turn, step)` pair a declare-attackers step
+    # already stamped as the run's start - two different occurrences that
+    # would otherwise look identical. `started_pending_kind`
+    # (`start_autopass`) is what tells them apart: the exemption for a given
+    # combat kind only holds when the run began already sitting on *that*
+    # kind's own pause, not merely on a `(turn, step)` pair a later, different
+    # pause happens to have inherited.
+    same_combat_pause_this_run_started_in = (
+        same_occurrence_this_run_started_in and run.get("started_pending_kind") == pending_kind
     )
 
     wanted = run.get("step")
@@ -1240,9 +1285,9 @@ def autopass_stop_reason(
 
     if (
         stop_when_you_can_attack
-        and not same_occurrence_this_run_started_in
-        and state.get("step") == "declare_attackers"
-        and state.get("active_player") == player
+        and not same_combat_pause_this_run_started_in
+        and addressed_to_you
+        and pending_kind == "declare_attackers"
     ):
         return (
             "it is your declare-attackers step: declaring attackers does not use "
@@ -1252,10 +1297,9 @@ def autopass_stop_reason(
 
     if (
         stop_when_attacked
-        and not same_occurrence_this_run_started_in
-        and state.get("step") == "declare_blockers"
-        and state.get("active_player") is not None
-        and state.get("active_player") != player
+        and not same_combat_pause_this_run_started_in
+        and addressed_to_you
+        and pending_kind == "declare_blockers"
     ):
         attacks = ((state.get("combat") or {}).get("attacks")) or []
         if attacks:
@@ -1298,6 +1342,16 @@ def pass_until(
     holds `store.locked` (it only reads state and posts ordinary actions), so
     it cannot deadlock against the opponent's own moves - the same invariant
     `block_until_wake` documents.
+
+    A `declare_attackers`/`declare_blockers` pause (CR 508.1, CR 509.1)
+    addressed to this seat is not always a stop - `stop_when_you_can_attack`/
+    `stop_when_attacked` may say not to - but it always freezes the game
+    until answered (the turn-based action that would move `state["step"]`
+    past it never finished), so when `autopass_stop_reason` does not stop for
+    one, this loop answers it with "nobody" (`actions/attack`/
+    `actions/declare-blockers`, "if any" makes that always legal) before
+    looking again, exactly the way it answers "no priority to pass" by
+    waiting rather than by giving up.
 
     Always returns within `max_seconds`, never raises for a timeout and never
     hangs: running out of budget is reported as its own stop reason with
@@ -1349,6 +1403,89 @@ def pass_until(
         run["known_stack_ids"] = {obj.get("id") for obj in (state.get("stack") or [])}
         forget_starting_occurrence(run, state)
 
+        pending = state.get("pending_decision")
+        pending_kind = pending.get("kind") if pending is not None else None
+        if (
+            pending is not None
+            and pending.get("player") == seat.player
+            and pending_kind in ("declare_attackers", "declare_blockers")
+        ):
+            # `autopass_stop_reason` above already decided not to stop for
+            # this pause - either it is not addressed to this seat's combat
+            # toggles at all, or the seat asked not to stop for combat
+            # (`stop_when_you_can_attack=False`/`stop_when_attacked=False`).
+            # Either way the game is genuinely frozen (CR 508.1/CR 509.1's
+            # turn-based action never finished, so `state["step"]` never
+            # moved past it either - see `autopass_stop_reason`'s docstring)
+            # until *somebody* answers, and "declare nobody" is always legal
+            # ("if any"). `actions/attack`/`actions/declare-blockers` are the
+            # aliases that already build the right `pairs` shape for this
+            # decision (`app.py`'s `action_attack`/`action_declare_blockers`,
+            # thin wrappers over the same paused-command tape `decide`
+            # resumes) - used here rather than posting to `decide()` directly
+            # with a hand-built answer, matching how a live client answers
+            # these two kinds.
+            if pending_kind == "declare_attackers":
+                path = f"/api/games/{seat.game_id()}/actions/attack"
+                body: dict[str, Any] = {"attackers": []}
+            else:
+                path = f"/api/games/{seat.game_id()}/actions/declare-blockers"
+                body = {"player": seat.player, "blocks": []}
+
+            def perform_declare(path: str = path, body: dict[str, Any] = body) -> Any:
+                # Bound as defaults, not closed over directly: this closure
+                # is called before either loop-local is ever reassigned, but
+                # ruff's B023 cannot see that this loop always `continue`s or
+                # `return`s before its next reassignment, so it flags the
+                # bare closure as if the call could run late and see a
+                # different `path`/`body` than the one built for it.
+                return seat.call_json("POST", path, body)
+
+            outcome, self_decision = _call_watching_for_self_decision(seat, perform_declare)
+            if self_decision is None and _paused(outcome):
+                self_decision = outcome.get("pending_decision")
+            if self_decision is not None:
+                return answer(
+                    seat.fetch_state(),
+                    "declaring nobody raised a decision only you can answer: "
+                    f"{self_decision.get('prompt')} - answer it with decide() now",
+                )
+            if _unknown_outcome(outcome):
+                return answer(seat.fetch_state(), UNKNOWN_OUTCOME)
+            if _refused(outcome):
+                return answer(
+                    seat.fetch_state(),
+                    f"declaring nobody was refused, so the run stopped: {outcome.get('reason')}",
+                )
+            # Answering a declaration is a turn-based action (CR 508.1, CR
+            # 509.1), not a priority pass, so `passes` deliberately does not
+            # count it - a caller reading `passes` is asking how many
+            # priorities this run gave up, not how many turn-based actions it
+            # answered on this seat's behalf.
+            if time.monotonic() < deadline:
+                continue
+            return timed_out(seat.fetch_state())
+
+        if pending is not None and pending_kind in ("declare_attackers", "declare_blockers"):
+            # Addressed to the *other* seat (the branch above already
+            # handled this seat's own pause). `state["priority_holder"]`
+            # cannot be trusted here: CR 508.1/CR 509.1's turn-based action
+            # never finished, so `priority.reset` never ran either, and the
+            # value this state carries is simply whatever it was before the
+            # freeze - not "nobody has priority", which is what a frozen
+            # game actually is. Trusting it anyway (attempting a pass this
+            # seat does not really hold) is exactly the race that used to
+            # surface here: this seat's pass could land *after* the other
+            # seat's declaration resolves and genuinely regrants priority to
+            # them, and get refused for a reason this seat had no way to see
+            # coming ("alice does not have priority, bob does"). Waiting for
+            # the other seat to answer avoids attempting a pass this state
+            # can never honestly justify.
+            if time.monotonic() >= deadline:
+                return timed_out(state)
+            time.sleep(poll_seconds)
+            continue
+
         if state.get("priority_holder") == seat.player:
 
             def perform_pass() -> Any:
@@ -1363,6 +1500,48 @@ def pass_until(
             # this seat can ever answer, which this seat's own single in-flight
             # call could never get to. Hand it back rather than sit behind it.
             outcome, self_decision = _call_watching_for_self_decision(seat, perform_pass)
+            if self_decision is None and _paused(outcome):
+                # Unlike `_call_watching_for_self_decision`'s own polling
+                # (which only ever hands back a decision addressed to this
+                # seat - see its docstring), `perform_pass`'s own response
+                # carries whatever `pending_decision` the pause landed on,
+                # addressed to whoever it names - not necessarily this seat.
+                # A pass on the *opponent's* turn is exactly what can cross
+                # into their own `declare_attackers` (CR 508.1): this seat's
+                # priority round still runs on their turn, and the second
+                # pass of that round is what triggers the turn-based action,
+                # whichever seat happens to make it.
+                self_decision = outcome.get("pending_decision")
+            if self_decision is not None and self_decision.get("kind") in (
+                "declare_attackers",
+                "declare_blockers",
+            ):
+                if self_decision.get("player") == seat.player:
+                    # This very pass is what crossed into CR 508.1/CR 509.1's
+                    # turn-based action, addressed to this seat itself - not
+                    # a decision this seat necessarily has to break out of
+                    # the run to answer through `decide()`. Looping back lets
+                    # the top of the loop see it fresh: `autopass_stop_reason`
+                    # decides whether to stop for it (the same as if it had
+                    # been there before this pass was even attempted), and
+                    # the branch above answers it with "nobody" when it does
+                    # not. Deliberately not counted in `passes` either way -
+                    # the pass itself never committed (the paused command's
+                    # mutated copy was discarded, same as any other pause),
+                    # so nothing here actually released priority yet.
+                    if time.monotonic() < deadline:
+                        continue
+                    return timed_out(seat.fetch_state())
+                # Addressed to the *other* seat (the case the comment above
+                # explains): this seat cannot answer it and spinning on more
+                # passes would just cross the exact same wall every time -
+                # wait for the other seat the same way the final branch below
+                # waits for its own turn, rather than the tight, sleepless
+                # loop a bare `continue` here would be.
+                if time.monotonic() >= deadline:
+                    return timed_out(seat.fetch_state())
+                time.sleep(poll_seconds)
+                continue
             if self_decision is not None:
                 return answer(
                     seat.fetch_state(),

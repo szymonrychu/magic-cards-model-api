@@ -11,6 +11,8 @@ from magic_cards_model.machines import PriorityOutcome
 from magic_cards_model.machines.effects import effect_for as real_effect_for
 from magic_cards_model.models import game as game_module
 
+from magic_cards_model_api.store import store  # noqa: E402
+
 
 def log_of(client: TestClient, game: str) -> list[dict]:
     response = client.get(f"/api/games/{game}/log")
@@ -190,43 +192,58 @@ def test_declare_blockers(client, game):
     assert resolved["resolved"] == "Grizzly Bears"
     alice_bears = cast.json()["spell_id"]  # two bears on the battlefield: use ids, not names
 
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
     client.patch(f"/api/games/{game}/cards/{alice_bears}", json={"summoning_sick": False})
     client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})  # declare_attackers
     attack = client.post(
         f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
         json={"attackers": [{"card_id": alice_bears, "defender": "bob"}]},
     )
     assert attack.json()["allowed"] is True
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})  # declare_blockers
 
-    blocked = client.post(
-        f"/api/games/{game}/actions/declare-blockers",
-        json={"player": "bob", "blocks": [{"blocker": bob_bears, "blocked": alice_bears}]},
-    )
-    blocked_body = blocked.json()
-    assert isinstance(blocked_body.pop("log_seq"), int)
-    assert blocked_body == {"allowed": True, "reason": None, "blocks": 1}
-    combat = state(client, game)["combat"]["attacks"][0]
-    assert combat["attacker"] == alice_bears
-    assert combat["blockers"] == [bob_bears]
-
-    # blocking something that is not attacking is refused in the engine's words
+    # Blocking something that is not attacking is refused in the engine's
+    # words, and - since a refused declaration never touches the standing
+    # pending decision (`_answer_declaration`'s own reasoning) - tried first,
+    # while `declare_blockers` is still genuinely pending: answering it
+    # correctly right after consumes that pending decision for good, so a
+    # second, illegal attempt afterward would only ever see "no pending
+    # decision", not the engine's real legality refusal.
     not_attacking = client.post(
         f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
         json={"player": "bob", "blocks": [{"blocker": bob_bears, "blocked": bob_bears}]},
     )
     assert not_attacking.json()["allowed"] is False
     assert not_attacking.json()["reason"] == "Grizzly Bears is not attacking"
 
+    blocked = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": [{"blocker": bob_bears, "blocked": alice_bears}]},
+    )
+    blocked_body = blocked.json()
+    assert isinstance(blocked_body.pop("log_seq"), int)
+    # `_answer_declaration`'s success shape is deliberately thin (no `reason`,
+    # no `blocks` echo) now that it is a thin alias over the pause/resume
+    # tape rather than its own transport - the full detail (`blocks`, the
+    # player, ...) lands in the audit log instead, checked below via
+    # `entries[1]["detail"]`.
+    assert blocked_body == {"allowed": True}
+    combat = state(client, game)["combat"]["attacks"][0]
+    assert combat["attacker"] == alice_bears
+    assert combat["blockers"] == [bob_bears]
+
     log = log_of(client, game)
     entries = [entry for entry in log if entry["action"] == "declare_blockers"]
-    assert entries[0]["detail"]["allowed"] is True
-    assert entries[0]["detail"]["player"] == "bob"
-    assert entries[0]["detail"]["blocks"] == [{"blocker": bob_bears, "blocked": alice_bears}]
-    assert entries[0]["step"] == "declare_blockers"
-    assert entries[1]["detail"]["allowed"] is False
-    assert entries[1]["detail"]["reason"] == "Grizzly Bears is not attacking"
+    assert entries[0]["detail"]["allowed"] is False
+    assert entries[0]["detail"]["reason"] == "Grizzly Bears is not attacking"
+    assert entries[1]["detail"]["allowed"] is True
+    assert entries[1]["detail"]["player"] == "bob"
+    assert entries[1]["detail"]["blocks"] == [{"blocker": bob_bears, "blocked": alice_bears}]
+    assert entries[1]["step"] == "declare_blockers"
 
 
 def test_a_resolution_records_what_resolved_and_whether_it_changed_anything(client, game):
@@ -415,3 +432,28 @@ def test_an_implemented_instant_that_leaves_the_stack_records_changed_true(clien
     entry = entry_of(log_of(client, game), "pass_priority")
     assert entry["detail"]["resolved"] == "Lightning Bolt"
     assert entry["detail"]["changed"] is True
+
+
+def test_dry_run_cast_is_not_audited(client, game):
+    """A `dry_run` cast probe - what `seatkit.available_actions` issues per
+    hand card - must never appear in the game log: it changes nothing, and
+    auditing it anyway is how one traced game's log grew to 2410 entries with
+    956 of them refusal noise from exactly this kind of probe. Moved here
+    from the now-deleted `test_deadlock.py` (T7b): the deadlock it guarded
+    against cannot occur any more (no mutating request blocks on a decision
+    at all - see `commands.py`), but this assertion about dry-run auditing is
+    unrelated to that and still holds."""
+    add_card(client, game, "Mountain", "alice", "hand")
+    board = state(client, game)
+    mountain_id = board["hands"]["alice"][0]["id"]
+
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": mountain_id, "dry_run": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["log_seq"] is None
+
+    log = client.get(f"/api/games/{game}/log").json()["log"]
+    casts = [entry for entry in log if entry["action"] == "cast"]
+    assert casts == [], "a dry-run cast must never be written to the audit log"

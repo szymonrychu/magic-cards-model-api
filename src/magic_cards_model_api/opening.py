@@ -343,30 +343,14 @@ def finish_opening_hand_actions(
     return result
 
 
-def settle_pregame(game_id: str, game: Game) -> dict[str, Any]:
-    """Walk the whole pregame through the engine's own decision defaults.
-
-    The headless path - `Game.settle_pregame`, unchanged engine behaviour and
-    unchanged speed: every declaration keeps the dealt hand and every CR 103.6
-    action is declined, immediately and deterministically, because no seat is
-    consulted. For a bot harness or a test that wants a game to *play*, not a
-    game to start correctly.
-    """
-    step = game.settle_pregame()
-    hands = ", ".join(f"{player.username}={len(player.hand)}" for player in game.players)
-    mulligans = ", ".join(f"{player.username}={player.mulligans_taken}" for player in game.players)
-    audit.record(
-        game_id,
-        "pregame_settled",
-        hands=hands,
-        mulligans=mulligans,
-        # The opposite of `declare_mulligan`'s entry, and deliberately so: this
-        # path asks nobody, so every declaration here is the engine's default
-        # for an unscripted player, not a choice a seat made.
-        live=False,
-        step=step.value,
-    )
-    return {"step": step.value, "pregame": pregame_view(game)}
+#: `Game.settle_pregame` itself - walking the whole pregame through the
+#: engine's own decision defaults or a live seat's pause/resume answers - is
+#: no longer wrapped here. `app.py`'s `pregame_settle` route runs it as an
+#: ordinary command (`commands._run_pregame_settle`, `COMMAND_HANDLERS`)
+#: instead, the same way every other engine-driving route works, and audits
+#: it *after* the command commits rather than from inside this module - see
+#: `commands.py`'s own `COMMAND_HANDLERS` docstring for why the rest of this
+#: module's functions still audit internally and this one no longer does.
 
 
 __all__ = [
@@ -375,6 +359,5 @@ __all__ = [
     "finish_opening_hand_actions",
     "in_pregame",
     "pregame_view",
-    "settle_pregame",
     "take_opening_hand_action",
 ]

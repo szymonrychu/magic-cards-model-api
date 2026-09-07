@@ -531,11 +531,12 @@ def test_a_seat_cannot_see_the_opponents_opening_hand_options(client: TestClient
 
 
 def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> None:
-    """`Game.settle_pregame` - unchanged engine behaviour for a harness that
-    wants a game to play rather than a game to start correctly. Every seat keeps
-    the dealt hand and declines every CR 103.6 action, immediately, because it
-    consults nobody; the audit entry says `live: false` so a transcript never
-    implies a player chose it."""
+    """`Game.settle_pregame`, driven with `use_defaults=True` - unchanged
+    engine behaviour for a harness that wants a game to play rather than a
+    game to start correctly. Every seat keeps the dealt hand and declines
+    every CR 103.6 action, immediately, because it consults nobody; the
+    audit entry says `live: false` so a transcript never implies a player
+    chose it."""
     info = boot(
         client,
         alice_deck=LEYLINE_DECK,
@@ -545,7 +546,9 @@ def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> N
     try:
         started = time.monotonic()
         settled = client.post(
-            f"/api/games/{info['game_id']}/pregame/settle", params={"uid": info["admin_key"]}
+            f"/api/games/{info['game_id']}/pregame/settle",
+            params={"uid": info["admin_key"]},
+            json={"use_defaults": True},
         )
         assert settled.status_code == 200, settled.text
         assert time.monotonic() - started < PREGAME_WITHIN_SECONDS
@@ -570,68 +573,60 @@ def test_a_live_seat_answers_the_mulligan_declaration_through_decide(client: Tes
     """`DecisionKind.MULLIGAN` is answerable, and this is the path that makes
     it so.
 
-    `Game.settle_pregame` puts each declaration through
-    `machines/decisions.py`'s `ask_mulligan`, which consults
-    `Game.decisions.provider` between the scripted answer and the default - so
-    it really does land in this API's mailbox as a `mulligan`
-    `pending_decision`, and a seat really does answer it with
-    `POST .../decide`. CR 103.5's bottoming follows as an ordinary
-    `choose_cards` question, and this answers it with the **front** card of the
-    hand - deliberately not the engine's default of the back, so the assertion
-    that it reached the bottom of the library can only pass if the answer was
-    used.
-
-    The settle call blocks while it asks, so it runs on its own thread; the
-    poll-and-answer loop below is what a live seat's browser does.
-    `POST .../decide` never takes the game lock, which is what lets it clear a
-    request parked inside `Game.ask` (see `decisions.py`)."""
-    import threading
-
+    An admin `pregame/settle` call with `use_defaults` left `False` (the
+    default) runs `Game.settle_pregame` as an ordinary command
+    (`commands._run_pregame_settle`): the moment `ask_mulligan` finds no
+    scripted answer it pauses, exactly like `advance` pauses on a combat
+    declaration, and a seat answers with `POST .../decide` - no thread, no
+    blocking request, `pending_decision` on every read in between. CR 103.5's
+    bottoming follows as an ordinary `choose_cards` question, answered here
+    with the **front** card of the hand - deliberately not the engine's
+    default of the back, so the assertion that it reached the bottom of the
+    library can only pass if alice's own answer was actually used, not the
+    default."""
     info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
     game_id = info["game_id"]
-    # Every declaration below is answered within milliseconds, so the provider
-    # never waits; a short timeout only bounds the failure mode.
-    store.get(game_id).decisions.provider.timeout_seconds = 15.0
     answers: list[str] = []
     chosen: list[str] = []
 
-    def settle() -> None:
-        client.post(f"/api/games/{game_id}/pregame/settle", params={"uid": info["admin_key"]})
+    def pending_of(response: Any) -> dict[str, Any] | None:
+        body = response.json()
+        assert response.status_code == 200, body
+        return body.get("pending_decision")
 
-    def answer_everything() -> None:
-        """Alice mulligans once, then keeps and bottoms her front card; bob
-        keeps straight away."""
-        deadline = time.monotonic() + PREGAME_WITHIN_SECONDS
-        while time.monotonic() < deadline and len(answers) < 4:
-            for player in ("alice", "bob"):
-                pending = view(client, info, player).get("pending_decision")
-                if pending is None or pending["player"] != player:
-                    continue
-                body: dict[str, Any] = {"player": player}
-                if pending["kind"] == "mulligan":
-                    # alice's first declaration is the only "yes".
-                    body["accept"] = player == "alice" and "mulligan:alice" not in answers
-                    answers.append(f"mulligan:{player}")
-                elif pending["kind"] == "choose_cards":
-                    chosen.append(pending["cards"][0])
-                    body["card_ids"] = [pending["cards"][0]]
-                    answers.append(f"choose_cards:{player}")
-                else:
-                    continue
-                client.post(
-                    f"/api/games/{game_id}/decide",
-                    params={"uid": info["seat_uids"][player]},
-                    json=body,
-                )
-            time.sleep(0.01)
+    def answer(player: str, **body: Any) -> Any:
+        return client.post(
+            f"/api/games/{game_id}/decide",
+            params={"uid": info["seat_uids"][player]},
+            json={"player": player, **body},
+        )
 
     try:
-        worker = threading.Thread(target=settle, name="settle-pregame")
-        worker.start()
-        answer_everything()
-        worker.join(timeout=PREGAME_WITHIN_SECONDS)
-        assert not worker.is_alive(), "the settle request never came back"
+        started = time.monotonic()
+        settled = client.post(
+            f"/api/games/{game_id}/pregame/settle", params={"uid": info["admin_key"]}
+        )
+        pending = pending_of(settled)
 
+        # alice mulligans once, then keeps and bottoms her front card; bob
+        # keeps straight away. Driven purely by what each response's own
+        # `pending_decision` says is next - never a fixed script - so this
+        # fails loudly instead of silently passing if the order changes.
+        while pending is not None and time.monotonic() < started + PREGAME_WITHIN_SECONDS:
+            player = pending["player"]
+            if pending["kind"] == "mulligan":
+                take = player == "alice" and "mulligan:alice" not in answers
+                answers.append(f"mulligan:{player}")
+                pending = pending_of(answer(player, accept=take))
+            elif pending["kind"] == "choose_cards":
+                front = pending["cards"][0]
+                chosen.append(front)
+                answers.append(f"choose_cards:{player}")
+                pending = pending_of(answer(player, card_ids=[front]))
+            else:  # pragma: no cover - nothing else offered by this deck/seed
+                raise AssertionError(f"unexpected pending decision: {pending}")
+
+        assert pending is None, "the settle command never finished pausing and resuming"
         assert answers == ["mulligan:alice", "mulligan:bob", "mulligan:alice", "choose_cards:alice"]
         game = store.get(game_id)
         alice = game.player("alice")
@@ -641,6 +636,7 @@ def test_a_live_seat_answers_the_mulligan_declaration_through_decide(client: Tes
         # The front card, which the default would never have picked.
         assert str(alice.library[-1].id) == chosen[0]
         assert chosen[0] not in [str(card.id) for card in alice.hand]
+        assert game.turn is not None and game.turn.step.value == FIRST_PLAYABLE_STEP
     finally:
         delete(client, info)
 

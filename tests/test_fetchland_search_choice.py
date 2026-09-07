@@ -48,15 +48,12 @@ in the session that wrote it.
 
 from __future__ import annotations
 
-import threading
-import time
 from typing import Any
 
 from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
 from ui_node import requires_node, run_module
 
-from magic_cards_model_api.main import app
 from magic_cards_model_api.store import store
 
 # -- the API payload, and the fetch it drives --------------------------------
@@ -71,10 +68,6 @@ def stock_the_fetch(client: TestClient, game_id: str) -> dict[str, Any]:
     the two cards its "Mountain or Forest card" clause can find: a basic
     Forest and Breeding Pool ("Land - Forest Island", so a Forest card by type
     even though it is not a basic and not green)."""
-    # A question this test fails to answer should fail the test, not park the
-    # resolving thread for the deployment default (300s). Every question here
-    # is answered within milliseconds of being published.
-    store.get(game_id).decisions.provider.timeout_seconds = 20.0
     add_card(client, game_id, "Wooded Foothills", "alice", "battlefield")
     add_card(client, game_id, "Forest", "alice", "library")
     add_card(client, game_id, "Breeding Pool", "alice", "library")
@@ -82,52 +75,46 @@ def stock_the_fetch(client: TestClient, game_id: str) -> dict[str, Any]:
     return {"foothills": find(board["battlefield"], "Wooded Foothills")}
 
 
-def activate_and_resolve_in_background(game_id: str, card_id: str) -> threading.Thread:
-    """Activate the fetch and resolve it off the answering thread.
-
-    The search happens on resolution (CR 608.2d: the choices an effect offers
-    are announced "while applying the effect"), and the ask parks the
-    resolving request until an answer lands on the mailbox - so it cannot be
-    the thread that is going to answer."""
-
-    def call() -> None:
-        stepping = TestClient(app)
-        activated = stepping.post(
-            f"/api/games/{game_id}/actions/activate",
-            json={"player": "alice", "card_id": card_id, "ability_index": 0},
-        )
-        assert activated.status_code == 200, activated.text
-        stepping.post(f"/api/games/{game_id}/resolve-top")
-
-    thread = threading.Thread(target=call)
-    thread.start()
-    return thread
+def activate_and_resolve(
+    client: TestClient, game_id: str, uid: str, card_id: str
+) -> dict[str, Any]:
+    """Activate the fetch and resolve it - synchronously now: the search
+    happens on resolution (CR 608.2d: the choices an effect offers are
+    announced "while applying the effect"), and `resolve-top` returns the
+    instant it crosses that question rather than parking a thread for an
+    answer to land on. Returns `resolve-top`'s own paused response, `uid`'s
+    own view so `pending_decision` carries the candidates and their labels."""
+    activated = client.post(
+        f"/api/games/{game_id}/actions/activate",
+        json={"player": "alice", "card_id": card_id, "ability_index": 0},
+    )
+    assert activated.status_code == 200, activated.text
+    resolved = client.post(f"/api/games/{game_id}/resolve-top", params={"uid": uid})
+    assert resolved.status_code == 200, resolved.text
+    return resolved.json()
 
 
-def wait_for_pending(client: TestClient, game_id: str, uid: str, kind: str) -> dict[str, Any]:
-    for _ in range(1000):
-        view = client.get(f"/api/games/{game_id}", params={"uid": uid}).json()
-        pending = view.get("pending_decision")
-        if pending is not None and pending["kind"] == kind:
-            return pending
-        time.sleep(0.01)
-    raise AssertionError(f"no {kind} decision showed up in time")
-
-
-def settle_the_shockland(client: TestClient, game_id: str, uid: str) -> None:
+def settle_the_shockland(
+    client: TestClient, game_id: str, uid: str, result: dict[str, Any]
+) -> None:
     """Breeding Pool's own "As this land enters, you may pay 2 life. If you
-    don't, it enters tapped." - a `pay_life` question (CR 119.4) raised by the
-    fetch putting it onto the battlefield. Declined here, so it enters tapped:
-    the fetch is what this file is about, and an unanswered question would
-    park the resolving thread until the provider's timeout and take the
-    engine's default in place of a choice."""
-    wait_for_pending(client, game_id, uid, "pay_life")
+    don't, it enters tapped." - a `pay_life` question (CR 119.4) raised, in
+    the same resolution, by the fetch putting it onto the battlefield: CR
+    614's replacement effects apply as the permanent enters, with no priority
+    pass in between, so the `decide` that answers the search resumes straight
+    into this one. Declined here, so it enters tapped - the fetch is what
+    this file is about. `result` is whatever answered the search, expected to
+    carry this pause already merged in (`paused: True`, `pending_decision`)."""
+    assert result.get("paused") is True, result
+    pending = result["pending_decision"]
+    assert pending["kind"] == "pay_life", pending
     answered = client.post(
         f"/api/games/{game_id}/decide",
         params={"uid": uid},
         json={"player": "alice", "accept": False},
     )
     assert answered.status_code == 200, answered.text
+    assert answered.json()["accepted"] is True, answered.json()
 
 
 def test_the_search_offers_every_legal_find_by_name_in_one_question(client, game) -> None:
@@ -136,24 +123,22 @@ def test_the_search_offers_every_legal_find_by_name_in_one_question(client, game
     makes the library hidden and `redact_view` strips it."""
     uids = seats_for(game)
     board = stock_the_fetch(client, game)
-    thread = activate_and_resolve_in_background(game, board["foothills"]["id"])
-    try:
-        pending = wait_for_pending(client, game, uids["alice"], "choose_cards")
-        breeding = [
-            card_id
-            for card_id, name in zip(pending["cards"], pending["card_labels"], strict=True)
-            if name == "Breeding Pool"
-        ]
-        answered = client.post(
-            f"/api/games/{game}/decide",
-            params={"uid": uids["alice"]},
-            json={"player": "alice", "card_ids": breeding},
-        )
-        settle_the_shockland(client, game, uids["alice"])
-    finally:
-        thread.join(timeout=30)
-    assert not thread.is_alive()
+    resolved = activate_and_resolve(client, game, uids["alice"], board["foothills"]["id"])
+    assert resolved["paused"] is True, resolved
+    pending = resolved["pending_decision"]
+    assert pending["kind"] == "choose_cards", pending
+    breeding = [
+        card_id
+        for card_id, name in zip(pending["cards"], pending["card_labels"], strict=True)
+        if name == "Breeding Pool"
+    ]
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": breeding},
+    )
     assert answered.status_code == 200, answered.text
+    settle_the_shockland(client, game, uids["alice"], answered.json())
 
     assert pending["source"] == "Wooded Foothills", (
         "the picker has to say which card is searching, or the choice is a guess"
@@ -194,18 +179,17 @@ def test_declining_the_whole_search_is_one_answer_not_one_refusal_per_card(clien
     no shape of answer that says "none of these" at all."""
     uids = seats_for(game)
     board = stock_the_fetch(client, game)
-    thread = activate_and_resolve_in_background(game, board["foothills"]["id"])
-    try:
-        pending = wait_for_pending(client, game, uids["alice"], "choose_cards")
-        answered = client.post(
-            f"/api/games/{game}/decide",
-            params={"uid": uids["alice"]},
-            json={"player": "alice", "card_ids": []},
-        )
-    finally:
-        thread.join(timeout=30)
-    assert not thread.is_alive()
+    resolved = activate_and_resolve(client, game, uids["alice"], board["foothills"]["id"])
+    assert resolved["paused"] is True, resolved
+    pending = resolved["pending_decision"]
+    assert pending["kind"] == "choose_cards", pending
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": []},
+    )
     assert answered.status_code == 200, answered.text
+    assert answered.json()["accepted"] is True, answered.json()
     assert len(pending["cards"]) == 2
 
     after = state(client, game)
