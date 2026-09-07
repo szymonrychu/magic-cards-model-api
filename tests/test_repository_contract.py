@@ -21,19 +21,64 @@ from __future__ import annotations
 import threading
 
 import pytest
+from conftest import require_postgres_database_url
 from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind, PendingDecision
 from magic_cards_model.models import Game
+from sqlalchemy import text
 from test_decks_api import LEGAL_DECK, LEGAL_DECK_B
 
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.commands import Command
+from magic_cards_model_api.db import make_engine
 from magic_cards_model_api.decks import load_deck_into_game
 from magic_cards_model_api.repository import GameRepository, InMemoryRepository
+from magic_cards_model_api.repository_postgres import PostgresRepository
 
-# T9 adds its postgres factory here, e.g. `_REPOSITORY_FACTORIES.append(...)`
-# or, if it needs per-test setup/teardown, a wrapping factory function with
-# the same zero-argument, fresh-instance signature as `InMemoryRepository`.
-_REPOSITORY_FACTORIES = [InMemoryRepository]
+#: Set by `mise run test:pg` (or by hand) to a postgres DSN whose schema is
+#: already at `alembic upgrade head` - never read by the plain `mise run
+#: test`, so a fresh checkout with no database configured stays docker-free.
+_TEST_DATABASE_URL_ENV = "MCM_TEST_DATABASE_URL"
+
+#: One connection pool shared across every postgres-backed `repo` instance
+#: this test session creates - `PostgresRepository`'s identity-preserving
+#: cache is per-*instance*, not per-engine, so sharing the pool does not
+#: leak state between tests; it only avoids opening a fresh pool per test.
+_pg_engine = None
+
+
+def _postgres_repository_factory() -> PostgresRepository:
+    """A fresh, empty `PostgresRepository` against `MCM_TEST_DATABASE_URL` -
+    the same zero-argument, fresh-instance signature `InMemoryRepository`
+    itself has. Skips (readably) when that variable is not set, which is the
+    default for the plain `mise run test` run - only `mise run test:pg` sets
+    it, after applying migrations. Under `mise run test:pg`
+    (`MCM_REQUIRE_POSTGRES_TESTS=1`) a missing URL is a hard failure instead
+    of a skip - see `conftest.require_postgres_database_url`."""
+    global _pg_engine
+    url = require_postgres_database_url(_TEST_DATABASE_URL_ENV)
+    if _pg_engine is None:
+        _pg_engine = make_engine(url)
+    with _pg_engine.begin() as conn:
+        # Every test gets a clean pair of tables - `ids()`, `test_ids_lists_
+        # exactly_the_created_games` and friends assume nothing but what this
+        # test itself created is in there.
+        conn.execute(text("TRUNCATE TABLE records, games RESTART IDENTITY CASCADE"))
+    return PostgresRepository(url, engine=_pg_engine)
+
+
+# T9 adds its postgres factory here rather than copying this file - the
+# per-test setup/teardown (truncating the tables) needed a wrapping factory
+# function rather than the bare class `InMemoryRepository` uses.
+_REPOSITORY_FACTORIES = [InMemoryRepository, _postgres_repository_factory]
+
+
+def test_the_postgres_factory_is_still_parameterised_into_the_contract_suite() -> None:
+    """A cheap, always-runs (never skipped) guard against the whole postgres
+    parameterisation quietly disappearing from `repo` - `_postgres_repository_
+    factory` skipping/failing when it actually runs is a separate concern
+    (see it and `conftest.require_postgres_database_url`); this only pins
+    that it is still *in the list* to run at all."""
+    assert _postgres_repository_factory in _REPOSITORY_FACTORIES
 
 
 def _real_game() -> Game:
