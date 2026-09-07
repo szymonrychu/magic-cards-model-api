@@ -620,24 +620,72 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     names the single legal thing to do rather than merely narrowing the pool
     (which `legal_actions` itself already does server-side: while a decision
     stands, `actions` holds nothing but that decision's own answers, for the
-    player it addresses - see the endpoint's own docstring)."""
-    response = seat.http.get(
-        f"/api/games/{seat.game_id()}/legal-actions",
-        params={"uid": seat.uid, "player": seat.player},
-    )
+    player it addresses - see the endpoint's own docstring).
+
+    **An empty `actions` means "you legally cannot do anything", and nothing
+    else.** Every way this call can fail instead - the API unreachable, a
+    read timeout, a 4xx/5xx, a body that is not the expected JSON - comes
+    back with `actions_error` naming what went wrong, and `run_action`
+    embeds that in all seven of its own answers. Without it a 404 or a 500
+    carrying a JSON body parsed cleanly into `payload.get("actions", [])` and
+    reached the seat as a silent, confident empty pool - and `Seat.http`
+    never calls `raise_for_status`, so nothing upstream would have caught it
+    either. The old per-candidate probe degraded on `httpx.HTTPError` for
+    exactly this reason; one call in place of N makes the single failure
+    total rather than partial, which is a reason to guard it harder, not
+    less. The timeout guard is the same `_AMBIGUOUS_TIMEOUTS` split
+    `call_json` documents, for the same reason: this is a plain read, so a
+    timeout here changed nothing server-side - it is reported, never raised,
+    because `run_action` calls this on paths that have already performed a
+    mutating action and must still return that action's own outcome.
+    """
+    try:
+        response = seat.http.get(
+            f"/api/games/{seat.game_id()}/legal-actions",
+            params={"uid": seat.uid, "player": seat.player},
+        )
+    except _AMBIGUOUS_TIMEOUTS as exc:
+        return _actions_unavailable(state, f"the legal-actions call timed out: {exc}")
+    except httpx.HTTPError as exc:
+        return _actions_unavailable(state, f"could not reach the API for legal actions: {exc}")
     try:
         payload = response.json()
     except ValueError:
-        payload = {}
-    actions = payload.get("actions", []) if isinstance(payload, dict) else []
+        payload = None
+    if response.status_code != 200 or not isinstance(payload, dict):
+        detail = payload.get("detail") if isinstance(payload, dict) else response.text.strip()
+        return _actions_unavailable(
+            state, f"the legal-actions call answered HTTP {response.status_code}: {detail}"
+        )
+    return _actions_view(state, payload.get("actions") or [], None)
+
+
+def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) -> dict[str, Any]:
     pending = state.get("pending_decision")
     kind = pending.get("kind") if pending is not None else None
-    return {
+    view: dict[str, Any] = {
         "actions": actions,
         "attackers_requested": kind == "declare_attackers",
         "blockers_requested": kind == "declare_blockers",
         "pending_decision": pending,
     }
+    if error is not None:
+        view["actions_error"] = error
+    return view
+
+
+def _actions_unavailable(state: dict[str, Any], reason: str) -> dict[str, Any]:
+    """`available_actions`' answer when the call itself failed: an empty pool
+    that says so, rather than one a reader would take for "nothing is legal".
+    `attackers_requested`/`blockers_requested`/`pending_decision` are still
+    filled in - they are read off the state this seat already has in hand,
+    not off the failed call, so they stay true."""
+    return _actions_view(
+        state,
+        [],
+        f"{reason} - this is NOT 'you have nothing legal to do': the list could not be "
+        "fetched at all. Read your state, or call again.",
+    )
 
 
 def _refused(outcome: Any) -> bool:

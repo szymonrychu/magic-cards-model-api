@@ -832,7 +832,7 @@ def get_affordances(
 
 
 @app.get("/api/games/{game_id}/legal-actions")
-def get_legal_actions(game_id: str, player: str) -> dict[str, Any]:
+def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict[str, Any]:
     """Every action `player` could legally take right now
     (`machines.legal_actions.legal_actions`, Phase 1) - the api's own door
     onto the engine's enumeration surface, and what `seatkit.available_actions`
@@ -853,12 +853,43 @@ def get_legal_actions(game_id: str, player: str) -> dict[str, Any]:
     the answer is that decision's own legal answers and nothing else, for
     the player it addresses only (`legal_actions`'s own module docstring).
 
-    Every action is already `player`'s own by construction - hand cards,
-    controlled permanents, this player's own graveyard/exile cast options -
-    so, like `get_affordances`, this needs no `visibility.redact_view` pass:
-    there is nothing of the opponent's in here to redact.
+    **`uid` must open `player`'s own seat, or be this game's admin key.**
+    Every action here is `player`'s own by construction - hand cards,
+    controlled permanents, that player's own graveyard/exile cast options -
+    and that is exactly why this is hidden information rather than why it is
+    not: the answer names each card in the seat's hand by id, its exact cost,
+    the zone it would be cast from, what it would target, and whether that
+    seat can pay for it. `player` is a bare query parameter with nothing
+    authenticating it, so without this check naming the opponent was enough
+    to read their hand out of the answer - while `GET /api/games/{game_id}`,
+    one route up, correctly hands the same caller `hands.<opponent> == []`.
+    `visibility.py` is the rule that binds both: "a caller that presents
+    nothing must never see more than one that presents garbage, and neither
+    may see more than one that presents someone else's seat".
+
+    `get_affordances` needs no such guard and is not a precedent for
+    skipping one: every candidate it names is an object in a public zone
+    (CR 400.2) or a player, so there is nothing hidden in its answer to
+    begin with.
+
+    Refused rather than answered empty, and this is the deliberate half of
+    the choice: `{"actions": []}` is a real answer this endpoint gives (a
+    seat has nothing legal while a decision addressed to the *other* player
+    stands - see `legal_actions`'s own docstring), so redacting to an empty
+    list would make "you may not ask that" indistinguishable from "there is
+    nothing you can do", which is precisely the ambiguity
+    `seatkit.available_actions` must be able to tell apart. The refusal is
+    the api's own existing shape for a credential that does not open what it
+    names - `ValueError` -> 400, the same as `pregame_settle`'s admin-key
+    check - rather than a 403, which appears nowhere else in this api.
     """
     game = game_or_404(game_id)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer is not visibility.ADMIN and viewer != player:
+        raise ValueError(
+            f"that uid does not open {player}'s seat - these are that player's own "
+            "legal actions, and naming them is not enough to read them"
+        )
     paused = store.paused_command(game_id)
     pending = paused[2] if paused is not None else None
     actions = compute_legal_actions(game, player, pending=pending)

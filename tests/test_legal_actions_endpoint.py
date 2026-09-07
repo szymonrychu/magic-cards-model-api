@@ -18,17 +18,29 @@ shape, built on top of it.
 from __future__ import annotations
 
 import httpx
-from conftest import add_card, find, state
+from conftest import _ADMIN_KEYS, add_card, find, state
 from fastapi.testclient import TestClient
 from test_decisions import advance_into_cleanup, stuff_hand
 
 from magic_cards_model_api.main import app
-from magic_cards_model_api.seatkit import Seats, available_actions
+from magic_cards_model_api.seatkit import Seat, Seats, available_actions
 from magic_cards_model_api.store import store
 
 
+def seat_uid(game_id: str, player: str) -> str:
+    """The secret uid that opens `player`'s own seat in `game_id`."""
+    return {name: uid for uid, name in store.seat_uids(game_id).items()}[player]
+
+
 def legal_actions(client, game_id: str, player: str = "alice") -> list[dict]:
-    response = client.get(f"/api/games/{game_id}/legal-actions", params={"player": player})
+    """The endpoint as that player's own seat sees it - the only caller it
+    answers. Every test here presents a real uid, because the endpoint's whole
+    answer is that seat's hidden information: what is in its hand, what each
+    card costs, and whether it can pay."""
+    response = client.get(
+        f"/api/games/{game_id}/legal-actions",
+        params={"player": player, "uid": seat_uid(game_id, player)},
+    )
     assert response.status_code == 200, response.text
     return response.json()["actions"]
 
@@ -137,3 +149,181 @@ def test_unknown_affordability_reaches_the_seat_through_available_actions(
     assert cast["affordable"] not in ("yes", "no"), (
         "UNKNOWN must reach the seat as its own verdict, not collapsed into a boolean"
     )
+
+
+# -- who may ask ------------------------------------------------------------
+#
+# The answer is one seat's hidden information end to end: which cards are in
+# its hand, what each of them costs, where each would be cast from, what it
+# would target, and whether this seat can pay for it. `visibility.py`'s own
+# contract - "a caller that presents nothing must never see more than one that
+# presents garbage, and neither may see more than one that presents someone
+# else's seat" - therefore governs this route exactly as it governs
+# `GET /api/games/{id}`, whose `hands.bob` is already `[]` for all three.
+#
+# A refusal rather than an empty list, deliberately: `{"actions": []}` is a
+# real answer this endpoint gives (a seat with a pending decision addressed to
+# the other player has genuinely nothing legal), and a caller - `seatkit.
+# available_actions` above all - must be able to tell "you may not ask that"
+# from "there is nothing you can do". The shape is the api's own existing one
+# for a credential that does not open what it names (`ValueError` -> 400, the
+# same as `pregame_settle`'s admin-key check); there is no 403 anywhere in
+# this api to match.
+
+
+def hidden_card_names(client, game_id: str) -> set[str]:
+    """Every card in bob's hand, by name - the identities no caller without
+    bob's own uid may learn."""
+    return {card["name"] for card in state(client, game_id)["hands"]["bob"]}
+
+
+def ask(client, game_id: str, player: str, uid: str | None = None):
+    params = {"player": player}
+    if uid is not None:
+        params["uid"] = uid
+    return client.get(f"/api/games/{game_id}/legal-actions", params=params)
+
+
+def test_a_caller_with_no_uid_is_refused_and_learns_nothing(client, game):
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    secrets = hidden_card_names(client, game)
+    assert secrets, "the fixture must actually have put something hidden in bob's hand"
+
+    response = ask(client, game, "bob")
+    assert response.status_code == 400, response.text
+    for name in secrets:
+        assert name not in response.text
+
+
+def test_a_uid_minted_for_a_different_game_is_refused(client, game):
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    secrets = hidden_card_names(client, game)
+    other = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    ).json()
+    try:
+        response = ask(client, game, "bob", uid=seat_uid(other["game_id"], "bob"))
+        assert response.status_code == 400, response.text
+        for name in secrets:
+            assert name not in response.text
+    finally:
+        client.delete(f"/api/games/{other['game_id']}", params={"key": other["admin_key"]})
+
+
+def test_an_unknown_uid_is_refused(client, game):
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    secrets = hidden_card_names(client, game)
+
+    response = ask(client, game, "bob", uid="not-a-uid-anybody-ever-minted")
+    assert response.status_code == 400, response.text
+    for name in secrets:
+        assert name not in response.text
+
+
+def test_one_seats_uid_may_not_ask_about_the_other_seats_player(client, game):
+    """The leak this route shipped with: `player` is a query parameter with
+    nothing authenticating it, so alice - a real seat, holding a real uid -
+    could name bob and read his hand out of the answer."""
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    secrets = hidden_card_names(client, game)
+
+    response = ask(client, game, "bob", uid=seat_uid(game, "alice"))
+    assert response.status_code == 400, response.text
+    for name in secrets:
+        assert name not in response.text
+
+
+def test_a_seat_may_ask_about_itself(client, game):
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+
+    response = ask(client, game, "bob", uid=seat_uid(game, "bob"))
+    assert response.status_code == 200, response.text
+    assert by_kind(response.json()["actions"], "cast"), "bob must still see his own cast"
+
+
+def test_the_admin_key_may_ask_about_either_seat(client, game):
+    """`visibility.resolve_viewer`'s third answer: the game's admin key is the
+    operator's own eye over a game they created, and sees everything - the
+    same trust level `GET /api/games/{id}` and `audit.snapshot` already grant
+    it. The browser UI's own board is served under it."""
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+
+    response = ask(client, game, "bob", uid=_ADMIN_KEYS[game])
+    assert response.status_code == 200, response.text
+    assert by_kind(response.json()["actions"], "cast")
+
+
+# -- when the call itself fails ---------------------------------------------
+#
+# `seatkit.available_actions` is one HTTP call where the old probe was N, so
+# its single failure is total rather than partial. `Seat.http` never calls
+# `raise_for_status`, and a 404 or a 500 carrying a JSON body parses cleanly
+# into `payload.get("actions", [])` - an empty pool no reader could tell from
+# "this seat legally cannot do anything", embedded verbatim in all seven of
+# `run_action`'s return paths.
+
+
+def test_a_refused_legal_actions_call_says_so_instead_of_reporting_an_empty_pool(
+    client, game, monkeypatch
+):
+    """A seat asking about a player its uid does not open is refused with 400
+    (`app.get_legal_actions`). The JSON body parses fine, so nothing before
+    this made the answer anything but a confident empty list."""
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+
+    impostor = Seat("bob", seat_uid(game, "alice"), "http://testserver", game)
+    result = available_actions(impostor, state(client, game))
+
+    assert result["actions"] == []
+    assert "400" in result["actions_error"]
+    assert "NOT" in result["actions_error"], "it must not read like 'nothing is legal'"
+
+
+def test_a_404_from_the_legal_actions_call_says_so_instead_of_reporting_an_empty_pool(
+    client, game, monkeypatch
+):
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    lost = Seat("alice", seat_uid(game, "alice"), "http://testserver", "no-such-game")
+
+    result = available_actions(lost, state(client, game))
+
+    assert result["actions"] == []
+    assert "404" in result["actions_error"]
+
+
+def test_a_read_timeout_is_reported_not_raised_out_of_every_run_action_path(
+    client, game, monkeypatch
+):
+    """`httpx.ReadTimeout` used to propagate straight out of this call, and so
+    out of every one of `run_action`'s returns - including the ones that have
+    already performed a mutating action and owe the caller its outcome."""
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    seat = Seat("alice", seat_uid(game, "alice"), "http://testserver", game)
+    board = state(client, game)
+
+    def timeout(*args, **kwargs):
+        raise httpx.ReadTimeout("took too long")
+
+    monkeypatch.setattr(seat.http, "get", timeout)
+    result = available_actions(seat, board)
+
+    assert result["actions"] == []
+    assert "timed out" in result["actions_error"]
+
+
+def test_a_working_call_carries_no_actions_error_at_all(client, game, monkeypatch):
+    """The other half of the contract: `actions_error` is absent on the happy
+    path, so its mere presence is the signal."""
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    seat = Seat("alice", seat_uid(game, "alice"), "http://testserver", game)
+
+    result = available_actions(seat, state(client, game))
+
+    assert "actions_error" not in result
+    assert by_kind(result["actions"], "pass_priority")
