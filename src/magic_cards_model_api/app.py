@@ -343,8 +343,14 @@ def create_game(req: NewGame) -> dict[str, Any]:
     names = [player.username for player in req.players]
     if len(set(names)) != len(names):
         raise ValueError("player names must be unique")
+    # The engine gained a required `schema_version` so a state written by one
+    # engine cannot be decoded by another without a signal. Stamp it when the
+    # engine we are built against has it, so this works either side of that
+    # change rather than pinning the two repos to one release.
+    stamp = getattr(Game, "CURRENT_SCHEMA_VERSION", None)
     game = Game(
-        players=[Player(username=player.username, life=player.life) for player in req.players]
+        players=[Player(username=player.username, life=player.life) for player in req.players],
+        **({"schema_version": stamp} if stamp is not None else {}),
     )
     active = req.active_player or names[0]
     index = names.index(active)
