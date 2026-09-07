@@ -78,7 +78,7 @@ from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind,
 from magic_cards_model.models import Game
 from magic_cards_model.models.card_state import TargetRef
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import Engine
 
 from .agent_settings import AgentSettings
@@ -398,13 +398,41 @@ class PostgresRepository:
             return None
         return game
 
-    def replace(self, game_id: str, game: Game) -> None:
+    def _next_seq(self, conn: Any, game_id: str) -> int:
+        """The next `records.seq` for `game_id`, serialised against every
+        other writer of this game's records with a transaction-scoped
+        advisory lock (`pg_advisory_xact_lock`, released automatically at
+        commit/rollback - the same reasoning `create_if_under`'s `LOCK TABLE`
+        gives for never taking a session-scoped lock that could leak across a
+        pooled connection, just narrowed to one game's own rows rather than
+        the whole table).
+
+        T10 decouples `records.seq` from `games.version`: T9 had every row
+        come from a successful `replace()`, so `seq == new_version` held by
+        construction. Once a refused action that never touches `games` at
+        all (a `ValueError` caught before any command ran, an early
+        `_answer_declaration` refusal, an admin action) also needs a row -
+        the whole point of this task - a strict `seq == version` mapping is
+        no longer expressible: the same game can commit fewer `games` writes
+        than `records` rows. `seq` is now what `audit.py`'s old in-memory
+        log always called it, a plain per-game append order, computed here
+        from the table itself rather than borrowed from another column.
+        See `MEMORY.md` for the T9 note this supersedes.
+        """
+        conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:gid))"), {"gid": game_id})
+        current = conn.execute(
+            select(func.coalesce(func.max(records.c.seq), 0)).where(records.c.game_id == game_id)
+        ).scalar_one()
+        return int(current) + 1
+
+    def replace(self, game_id: str, game: Game, *, record: dict[str, Any] | None = None) -> int:
         expected_version = self._cached_version(game_id)
         new_version = expected_version + 1
         new_state = game.model_dump(mode="json")
         now = datetime.now(UTC)
         conflict: VersionConflict | None = None
         missing = False
+        seq = 0
         with self._engine.begin() as conn:
             result = conn.execute(
                 update(games)
@@ -426,13 +454,15 @@ class PostgresRepository:
                         game_id, expected_version, actual_version, current_game
                     )
             else:
+                # Same transaction as the `games` CAS above - T9's own
+                # guarantee, unchanged. `record` (T10) is the caller's full
+                # payload when it already has one ready, `{}` (a placeholder
+                # `fill_record` fills in later) when it does not yet - see
+                # this method's own docstring.
+                seq = self._next_seq(conn, game_id)
                 conn.execute(
                     insert(records).values(
-                        game_id=game_id,
-                        seq=new_version,
-                        # T10's to fill in - see db.py's module docstring.
-                        payload={},
-                        created_at=now,
+                        game_id=game_id, seq=seq, payload=record or {}, created_at=now
                     )
                 )
         if missing:
@@ -441,6 +471,52 @@ class PostgresRepository:
             raise conflict
         with self._cache_lock:
             self._cache[game_id] = (game, new_version)
+        return seq
+
+    def append_record(self, game_id: str, payload: dict[str, Any]) -> int:
+        # No existence check, deliberately: `records.game_id` carries no
+        # `ForeignKey` (`db.py`'s own docstring) and never raises for an
+        # unknown id - see the protocol's own docstring on this method for
+        # why (`audit.record`'s long-standing leniency, more than one
+        # existing caller depends on it).
+        now = datetime.now(UTC)
+        with self._engine.begin() as conn:
+            seq = self._next_seq(conn, game_id)
+            conn.execute(
+                insert(records).values(game_id=game_id, seq=seq, payload=payload, created_at=now)
+            )
+        return seq
+
+    def fill_record(self, game_id: str, seq: int, payload: dict[str, Any]) -> None:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                update(records)
+                .where(records.c.game_id == game_id, records.c.seq == seq)
+                .values(payload=payload)
+            )
+        if result.rowcount == 0:
+            raise KeyError(f"no records row {game_id}/{seq}")
+
+    def records(self, game_id: str) -> list[dict[str, Any]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(records.c.seq, records.c.payload, records.c.created_at)
+                .where(records.c.game_id == game_id)
+                .order_by(records.c.seq.asc())
+            ).all()
+        result = []
+        for row in rows:
+            stamp = row.created_at
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            result.append(
+                {
+                    "seq": row.seq,
+                    "payload": row.payload,
+                    "created_at": stamp.astimezone(UTC).isoformat(),
+                }
+            )
+        return result
 
     def delete(self, game_id: str) -> bool:
         if not _looks_like_id(game_id):

@@ -7,9 +7,21 @@ Two tables. `games` is the CAS-versioned row `PostgresRepository` reads and
 writes: `state` is `Game.model_dump(mode="json")`; `command`/`tape`/`pending`
 are the paused-command bookkeeping `store_paused_command`/`paused_command`/
 `clear_paused_command` need, `None` when nothing is paused; `version` is the
-optimistic-concurrency counter `replace()` compares-and-swaps on. `records` is
-the append-only audit trail T10 fills in - this task only owns the table and
-the one-row-per-commit write path, not the payload shape.
+optimistic-concurrency counter `replace()` compares-and-swaps on. `records`
+is the append-only audit trail (T9 built the table, T10 fills in its
+payload and every write path that is not tied to a `games` commit -
+`append_record`/`fill_record`).
+
+**`records.game_id` carries no `ForeignKey`, deliberately (T10).** T9's
+original schema had one, `ON DELETE CASCADE` - reasonable while every row's
+payload was still `{}`, but wrong once this table became the actual audit
+trail: `lobby.reset_game`'s whole point is that a deleted game's last
+`records` row is the reset itself, so the transcript "ends with the reset
+rather than trailing off" (its own docstring) - a `CASCADE` would delete
+that very row the instant the game it describes is removed, silently
+defeating the feature. `records` is an independent, append-only ledger that
+outlives the game it describes; the two tables are linked only by the
+`game_id` values matching, never by a constraint the database enforces.
 
 `ui_game_registered_at` is separate from `created_at` on purpose:
 `InMemoryRepository._ui_games` is a list appended to at whichever moment
@@ -43,7 +55,6 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    ForeignKey,
     Integer,
     MetaData,
     String,
@@ -79,17 +90,20 @@ records = Table(
     "records",
     metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
-    Column(
-        "game_id",
-        String,
-        ForeignKey("games.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
+    # No `ForeignKey` (T10, deliberate - see this module's own docstring):
+    # this is an independent, append-only ledger, not a child row that
+    # should disappear with its game. `game_id` is a plain string, matching
+    # `games.id`'s own shape, but the two are linked only by convention.
+    Column("game_id", String, nullable=False),
     Column("seq", Integer, nullable=False),
-    # T10's to fill: what was done, what else was legal, the engine's
-    # outcome, the seat's stated reasoning. This task only owns the shape
-    # of the write path - one row per committed game update, in the same
-    # transaction as the `games` CAS - not the payload's content.
+    # T10: what was done, what else was legal at that moment
+    # (`records.legal_actions_before`), the engine's own outcome (allowed/
+    # refused, its reason verbatim), and the seat's stated reasoning -
+    # `audit.record`'s payload, verbatim. One row per audited action, not
+    # one per `games` commit: a refusal that never touched `games` at all
+    # still gets a row (`repository_postgres.PostgresRepository.
+    # append_record`), which is why `seq` is this table's own append order
+    # rather than borrowed from `games.version` - see `MEMORY.md`.
     Column("payload", JSONB, nullable=False, server_default="{}"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("game_id", "seq", name="uq_records_game_id_seq"),

@@ -34,11 +34,13 @@ from . import (
     decks_api,
     engine_api,
     opening,
+    records,
     scryfall,
     seatkit,
     symbology,
     visibility,
 )
+from .repository_postgres import VersionConflict
 from .schemas import (
     ActivateRequest,
     ActorRequest,
@@ -110,6 +112,48 @@ def _pregame_overruled(_: Request, exc: opening.PregameOverruled) -> JSONRespons
     return JSONResponse(status_code=409, content={"detail": str(exc), "overruled": True})
 
 
+@app.exception_handler(records.MissingReasoning)
+def _missing_reasoning(_: Request, exc: records.MissingReasoning) -> JSONResponse:
+    """422, shaped like `RequestValidationError`'s own body
+    (`detail: [{"loc", "msg", "type"}]`) - naming the missing field the same
+    way a genuinely absent required field would, rather than the bare 400 a
+    `ValueError` gets everywhere else in this api. This is not the request
+    being malformed; it is a well-formed request an agent seat is not
+    allowed to make without saying why (T10)."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": [
+                {"loc": ["body", "reasoning"], "msg": str(exc), "type": "missing"},
+            ]
+        },
+    )
+
+
+@app.exception_handler(VersionConflict)
+def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
+    """409: another writer's `replace()` committed a newer version first
+    (`repository_postgres.py`'s own module docstring - optimistic
+    concurrency, no server-side retry). The body carries the game's current
+    state, redacted exactly the way `GET /api/games/{id}` redacts it for the
+    same `uid` this request itself carried - the loser is never handed more
+    than it was already entitled to see - so the loser can re-read and
+    recompute its attempt against what is actually committed, rather than
+    retrying blind against the state it already knows is stale."""
+    uid = request.query_params.get("uid")
+    viewer = visibility.resolve_viewer(exc.game_id, uid)
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": str(exc),
+            "game_id": exc.game_id,
+            "current_state": visibility.redact_view(
+                state_view(exc.current_game, exc.game_id), viewer
+            ),
+        },
+    )
+
+
 @app.exception_handler(commands.CommandDivergenceError)
 def _command_divergence(_: Request, exc: commands.CommandDivergenceError) -> JSONResponse:
     """409: the stored pause is stale, not this request malformed.
@@ -159,7 +203,15 @@ def card_or_404(game: Game, card_id: UUID) -> CardState:
 
 
 def audit_outcome(
-    game_id: str, action: str, outcome: engine_api.Outcome, *, dry_run: bool = False, **keys: Any
+    game_id: str,
+    action: str,
+    outcome: engine_api.Outcome,
+    *,
+    dry_run: bool = False,
+    reasoning: str | None = None,
+    legal_actions_before: list[dict[str, Any]] | None = None,
+    seq_hint: int | None = None,
+    **keys: Any,
 ) -> dict[str, Any]:
     """Record an action attempt and hand the engine's answer to the caller.
 
@@ -179,25 +231,55 @@ def audit_outcome(
     actually made. A caller of a dry run already has its own legality answer
     in `outcome`/the HTTP response; `log_seq` is `None` here because there is
     no log entry for it to identify.
+
+    **T10**: `reasoning` and `legal_actions_before` ride straight through to
+    `audit.record` unchanged - this function does not compute either, only
+    passes along what `_run_command`/`_respond` (or a direct caller such as
+    `move_card`/`tap_card`) already worked out. `seq_hint`, when given, is
+    the `records` row `store.replace` already wrote for this exact commit
+    (T9's same-transaction guarantee) - passing it through as `audit.
+    record`'s `_fill_seq` fills that row instead of appending a second,
+    orphaned one for the same action.
     """
     if dry_run:
         return {**outcome.body(), "log_seq": None}
-    seq = audit.record(game_id, action, allowed=outcome.allowed, reason=outcome.reason, **keys)
+    seq = audit.record(
+        game_id,
+        action,
+        allowed=outcome.allowed,
+        reason=outcome.reason,
+        reasoning=reasoning,
+        legal_actions_before=legal_actions_before,
+        _fill_seq=seq_hint,
+        **keys,
+    )
     return {**outcome.body(), "log_seq": seq}
 
 
-def _run_command(game_id: str, kind: str, request: Any) -> tuple[commands.RunResult, Game]:
+def _run_command(
+    game_id: str, kind: str, request: Any
+) -> tuple[commands.RunResult, Game, list[dict[str, Any]] | None, int | None]:
     """Run `kind` fresh against `game_id`'s current committed state
     (`commands.run_command`), and settle the result into the store: commit
     the new game on `RunStatus.COMPLETED`, or stash `(command, tape,
     pending)` for `POST .../decide` (and its `actions/attack`/
     `actions/declare-blockers` aliases) to resume on `PAUSED`.
 
-    Returns `(result, committed)` - `committed` is the game exactly as it
-    stood before this attempt (the `Game` `store.locked` handed this
-    request), which a few callers (`pass-priority`'s before/after resolution
-    diff) still need after `run_command` returns its own, separate working
-    copy.
+    Returns `(result, committed, legal_actions_before, seq)`. `committed` is
+    the game exactly as it stood before this attempt (the `Game` `store.
+    locked` handed this request), which a few callers (`pass-priority`'s
+    before/after resolution diff) still need after `run_command` returns its
+    own, separate working copy.
+
+    **T10**: `legal_actions_before` is `records.legal_actions_before` read
+    against that same pre-mutation `committed` game and this game's paused
+    decision (if any), for `request.player` - computed here, inside the
+    `with store.locked(game_id):` block, *before* `commands.run_command` is
+    even called, which is what guarantees "before, not after" (`records.py`'s
+    own module docstring). `seq` is the `records` row `store.replace` wrote
+    for this commit (`None` on `PAUSED`, since nothing was replaced) - a
+    caller threads it into `_respond`/`audit_outcome` as `seq_hint` so the
+    row gets filled in rather than duplicated once the outcome is known.
 
     **Deliberately clears any *unrelated* stored pause too.** `store
     .clear_paused_command` runs here on every `COMPLETED` result, not only
@@ -220,22 +302,52 @@ def _run_command(game_id: str, kind: str, request: Any) -> tuple[commands.RunRes
     `tests/test_decisions.py::
     test_an_unrelated_completed_command_clears_an_unrelated_pause` for the
     pinned behaviour.
+
+    **A `dry_run` request commits nothing (T10).** `request.dry_run`, when
+    the request shape carries one, never reaches `store.replace`/`store.
+    store_paused_command` at all - a dry run's own engine-level probe
+    (`engine_api.dry_run_copy`) already never mutates the real game, but
+    `commands.run_command` still returns `RunStatus.COMPLETED` for it (a
+    dry run "asks nothing unscripted, so it always completes" - `cast`'s own
+    docstring), and `store.replace` does not know or care that the `Game` it
+    is handed is state-identical to what is already committed - it would
+    bump `version` and write a fresh `records` row regardless. Before this
+    guard, that row's payload never got filled in (`_respond`'s `dry_run`
+    branch skips `audit.record` entirely, on purpose - see its own
+    docstring), so every dry-run probe left an orphaned, empty `records` row
+    behind it, which `audit.entries` then choked on. Skipping persistence
+    outright is what "changes nothing" was always supposed to mean.
     """
     command = commands.Command.build(kind, request)
+    player = getattr(request, "player", None)
+    dry_run = getattr(request, "dry_run", False)
     with store.locked(game_id) as game:
+        paused = store.paused_command(game_id)
+        legal_before = records.legal_actions_before(game, player, paused[2] if paused else None)
         result = commands.run_command(game, command)
-        if result.status is commands.RunStatus.COMPLETED:
+        seq: int | None = None
+        if dry_run:
+            pass
+        elif result.status is commands.RunStatus.COMPLETED:
             assert result.game is not None
-            store.replace(game_id, result.game)
+            seq = store.replace(game_id, result.game)
             store.clear_paused_command(game_id)
         else:
             assert result.pending is not None
             store.store_paused_command(game_id, command, result.tape, result.pending)
-        return result, game
+        return result, game, legal_before, seq
 
 
 def _respond(
-    game_id: str, action: str, result: commands.RunResult, *, dry_run: bool = False, **keys: Any
+    game_id: str,
+    action: str,
+    result: commands.RunResult,
+    *,
+    dry_run: bool = False,
+    reasoning: str | None = None,
+    legal_actions_before: list[dict[str, Any]] | None = None,
+    seq_hint: int | None = None,
+    **keys: Any,
 ) -> dict[str, Any]:
     """Turn a `_run_command` attempt into this route's JSON response,
     auditing it either way - refused, allowed, or paused waiting on a
@@ -243,7 +355,8 @@ def _respond(
     same way a refusal already was. `keys` are the action-specific detail
     `audit.record` already took for this route (the card cast, the targets
     offered, ...) before this task, unchanged by which of the three this
-    attempt came to.
+    attempt came to. `reasoning`/`legal_actions_before`/`seq_hint` are T10's
+    additions - see `_run_command`'s and `audit_outcome`'s own docstrings.
 
     For every route this serves, `PAUSED` was unreachable before this task -
     the request blocked instead, inside `Game.ask`, until an answer arrived
@@ -265,10 +378,32 @@ def _respond(
         }
         if dry_run:
             return {**body, "log_seq": None}
-        seq = audit.record(game_id, action, allowed=None, reason=None, paused=True, **keys)
+        # No `seq_hint` here: PAUSED means `_run_command` never called
+        # `store.replace` at all - there is no row to fill in, so this is a
+        # fresh standalone append, the same as any refusal caught before a
+        # command ever ran.
+        seq = audit.record(
+            game_id,
+            action,
+            allowed=None,
+            reason=None,
+            paused=True,
+            reasoning=reasoning,
+            legal_actions_before=legal_actions_before,
+            **keys,
+        )
         return {**body, "log_seq": seq}
     assert result.outcome is not None
-    return audit_outcome(game_id, action, result.outcome, dry_run=dry_run, **keys)
+    return audit_outcome(
+        game_id,
+        action,
+        result.outcome,
+        dry_run=dry_run,
+        reasoning=reasoning,
+        legal_actions_before=legal_actions_before,
+        seq_hint=seq_hint,
+        **keys,
+    )
 
 
 def _resume(
@@ -277,11 +412,19 @@ def _resume(
     tape: tuple[Answer, ...],
     pending: PendingDecisionEngine,
     answer: Answer,
-) -> commands.RunResult:
+    *,
+    player: str | None = None,
+) -> tuple[commands.RunResult, list[dict[str, Any]] | None, int | None]:
     """Resume `game_id`'s paused command with `answer` appended to `tape`
     (`commands.resume_command`), and settle the result into the store
     exactly like `_run_command` does for a fresh command: commit on
     `RunStatus.COMPLETED`, restash `(command, tape, pending)` on `PAUSED`.
+
+    Returns `(result, legal_actions_before, seq)` - see `_run_command`'s own
+    docstring for what each means; `player` here is the caller's own
+    resolved actor (`_answer_declaration`'s `engine_decision.player`, or
+    `decide`'s `req.player`), since a paused command carries no live request
+    object of its own to read `.player` off.
 
     Raises `ValueError` when the engine itself refuses `answer` once the
     command actually replays with it (the same propagation `run_command`
@@ -294,15 +437,17 @@ def _resume(
     this api's registered 409 handler unchanged.
     """
     with store.locked(game_id) as game:
+        legal_before = records.legal_actions_before(game, player, pending)
         result = commands.resume_command(game, command, tape, pending, answer)
+        seq: int | None = None
         if result.status is commands.RunStatus.COMPLETED:
             assert result.game is not None
-            store.replace(game_id, result.game)
+            seq = store.replace(game_id, result.game)
             store.clear_paused_command(game_id)
         else:
             assert result.pending is not None
             store.store_paused_command(game_id, command, result.tape, result.pending)
-        return result
+        return result, legal_before, seq
 
 
 # -- landing page when the frontend repo is absent --------------------------
@@ -376,6 +521,13 @@ def create_game(req: NewGame) -> dict[str, Any]:
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
     engine_api.set_step(game, Step(req.step))
+    # T10: this game's seat kind, recorded once here rather than invented as
+    # a second marker - `records.require_reasoning` reads the same
+    # `ai_players` set `decks_api.start_game_from_decklists` already
+    # populates for a decklist-booted game.
+    agents = [player.username for player in req.players if player.is_agent]
+    if agents:
+        store.register_ai_players(game_id, agents)
     audit.record(game_id, "create_game", players=names, active_player=active, step=req.step)
     # The creator gets the seat uids AND the admin key in this one response -
     # already holding the keys to every seat, an unredacted view here tells
@@ -681,7 +833,8 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     `engine_api.dry_run_copy` - never through the pause/resume tape), so it
     always completes; a real cast can pause on any CR 601.2 choice this
     engine still asks interactively (`choose_targets`, `choose_a_mode`, ...)."""
-    result, _ = _run_command(game_id, "cast", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "cast", req)
     return _respond(
         game_id,
         "cast",
@@ -692,6 +845,9 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
         from_zone=req.from_zone,
         targets=req.targets,
         mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -700,7 +856,8 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
     comes off is picked up automatically by `actions/cast` - see `advance`."""
-    result, _ = _run_command(game_id, "suspend", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "suspend", req)
     return _respond(
         game_id,
         "suspend",
@@ -709,6 +866,9 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
         player=req.player,
         card=req.card or str(req.card_id),
         mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -716,7 +876,8 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
 def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
-    result, _ = _run_command(game_id, "plot", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "plot", req)
     return _respond(
         game_id,
         "plot",
@@ -725,6 +886,9 @@ def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
         player=req.player,
         card=req.card or str(req.card_id),
         mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -733,7 +897,8 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
     later turn, for its printed foretell cost."""
-    result, _ = _run_command(game_id, "foretell", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "foretell", req)
     return _respond(
         game_id,
         "foretell",
@@ -742,6 +907,9 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
         player=req.player,
         card=req.card or str(req.card_id),
         mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -750,7 +918,8 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
     the stack, same as `actions/activate` - resolve it with `resolve-top`."""
-    result, _ = _run_command(game_id, "cycle", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "cycle", req)
     return _respond(
         game_id,
         "cycle",
@@ -760,6 +929,9 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
         card=req.card or str(req.card_id),
         ability_index=req.ability_index,
         mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -904,25 +1076,43 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     asks nothing of its own, but this still goes through the pause machinery
     like every other command, on the chance a state-based check it triggers
     ever does (a legend rule, a leaves-the-battlefield trigger's targets)."""
-    result, _ = _run_command(game_id, "concede", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "concede", req)
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
         pending = decisions.PendingDecision.from_engine(result.pending.decision)
-        seq = audit.record(game_id, "concede", player=req.player, allowed=None, paused=True)
+        logged = audit.record(
+            game_id,
+            "concede",
+            player=req.player,
+            allowed=None,
+            paused=True,
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
+        )
         return {
             "allowed": None,
             "paused": True,
             "pending_decision": pending.to_view(),
-            "log_seq": seq,
+            "log_seq": logged,
         }
     assert isinstance(result.outcome, dict)
-    seq = audit.record(game_id, "concede", player=req.player, allowed=True)
-    return {"allowed": True, "winner": result.outcome["winner"], "log_seq": seq}
+    logged = audit.record(
+        game_id,
+        "concede",
+        player=req.player,
+        allowed=True,
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        _fill_seq=seq,
+    )
+    return {"allowed": True, "winner": result.outcome["winner"], "log_seq": logged}
 
 
 @app.post("/api/games/{game_id}/actions/activate")
 def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
-    result, _ = _run_command(game_id, "activate_ability", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "activate_ability", req)
     return _respond(
         game_id,
         "activate",
@@ -933,6 +1123,9 @@ def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
         ability_index=req.ability_index,
         targets=req.targets,
         mana_sources=[str(source) for source in req.mana_sources or []],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -941,7 +1134,8 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
     not mana, and crew is the Vehicle's ability rather than theirs."""
-    result, _ = _run_command(game_id, "crew", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "crew", req)
     return _respond(
         game_id,
         "crew",
@@ -950,6 +1144,9 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
         player=req.player,
         card_id=str(req.card_id),
         crewing=[str(card_id) for card_id in req.crewing],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -960,6 +1157,7 @@ def _answer_declaration(
     *,
     action: str,
     uid: str | None = None,
+    reasoning: str | None = None,
     **audit_keys: Any,
 ) -> dict[str, Any]:
     """The shared body of `actions/attack`/`actions/declare-blockers`: both
@@ -988,11 +1186,19 @@ def _answer_declaration(
     `actions/declare-blockers` enforced nothing at all.
     """
 
-    def refuse(reason: str) -> dict[str, Any]:
-        seq = audit.record(game_id, action, allowed=False, reason=reason, **audit_keys)
+    def refuse(reason: str, legal_before: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        seq = audit.record(
+            game_id,
+            action,
+            allowed=False,
+            reason=reason,
+            reasoning=reasoning,
+            legal_actions_before=legal_before,
+            **audit_keys,
+        )
         return {"allowed": False, "reason": reason, "log_seq": seq}
 
-    game_or_404(game_id)
+    game = game_or_404(game_id)
     paused = store.paused_command(game_id)
     if paused is None:
         return refuse(f"no pending {expected_kind.value} decision - call POST .../advance first")
@@ -1004,22 +1210,38 @@ def _answer_declaration(
             f"{expected_kind.value!r} - answer that one first (POST .../decide, "
             f"or the matching action)"
         )
+    # T10: computed once the pending decision's own player is known, and
+    # reused for every branch below (including a later refusal) - always the
+    # *pre*-mutation enumeration, since nothing here has touched `game` yet.
+    legal_before = records.legal_actions_before(game, engine_decision.player, pending)
     viewer = visibility.resolve_viewer(game_id, uid)
     if viewer != engine_decision.player or not isinstance(viewer, str):
-        return refuse("that uid does not open the deciding player's seat")
+        return refuse("that uid does not open the deciding player's seat", legal_before)
+    records.require_reasoning(game_id, engine_decision.player, reasoning)
     try:
         value = decisions.declared_pairs_answer(pairs)
         decisions.validate_answer(engine_decision, value)
     except ValueError as exc:
-        return refuse(str(exc))
+        return refuse(str(exc), legal_before)
     answer = Answer(
         seq=pending.seq, kind=engine_decision.kind, player=engine_decision.player, pairs=value
     )
     try:
-        result = _resume(game_id, command, tape, pending, answer)
+        result, _, seq_hint = _resume(
+            game_id, command, tape, pending, answer, player=engine_decision.player
+        )
     except ValueError as exc:
-        return refuse(str(exc))
-    seq = audit.record(game_id, action, allowed=True, reason=None, **audit_keys)
+        return refuse(str(exc), legal_before)
+    seq = audit.record(
+        game_id,
+        action,
+        allowed=True,
+        reason=None,
+        reasoning=reasoning,
+        legal_actions_before=legal_before,
+        _fill_seq=seq_hint,
+        **audit_keys,
+    )
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
         next_pending = decisions.PendingDecision.from_engine(result.pending.decision)
@@ -1056,6 +1278,7 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
         pairs,
         action="attack",
         uid=uid,
+        reasoning=req.reasoning,
         attackers=attackers_detail,
         dry_run=False,
     )
@@ -1063,7 +1286,8 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
 
 @app.post("/api/games/{game_id}/actions/play-land")
 def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
-    result, _ = _run_command(game_id, "play_land", req)
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq = _run_command(game_id, "play_land", req)
     return _respond(
         game_id,
         "play_land",
@@ -1071,6 +1295,9 @@ def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
         dry_run=req.dry_run,
         player=req.player,
         card=req.card or str(req.card_id),
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
     )
 
 
@@ -1091,17 +1318,40 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     cleanup steps is waiting on them - so handing the pass back with
     `priority_holder: null` would be handing back a state no client, human or
     otherwise, is allowed to move."""
+    records.require_reasoning(game_id, req.player, req.reasoning)
     try:
-        result, _ = _run_command(game_id, "pass_priority", req)
+        result, _, legal_before, seq_hint = _run_command(game_id, "pass_priority", req)
     except ValueError as exc:  # not this player's decision to make
+        # No `_run_command` attempt ever ran (the engine refused before
+        # `commands.run_command` returned), so there is no `game` handed
+        # back to read "what else was legal" off - fetched fresh here,
+        # exactly as it stood the instant this request was refused.
+        game = game_or_404(game_id)
+        legal_before = records.legal_actions_before(
+            game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
+        )
         seq = audit.record(
-            game_id, "pass_priority", player=req.player, allowed=False, reason=str(exc)
+            game_id,
+            "pass_priority",
+            player=req.player,
+            allowed=False,
+            reason=str(exc),
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
         )
         return {"allowed": False, "reason": str(exc), "outcome": None, "log_seq": seq}
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
         pending = decisions.PendingDecision.from_engine(result.pending.decision)
-        seq = audit.record(game_id, "pass_priority", player=req.player, allowed=None, paused=True)
+        seq = audit.record(
+            game_id,
+            "pass_priority",
+            player=req.player,
+            allowed=None,
+            paused=True,
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
+        )
         return {
             "allowed": None,
             "paused": True,
@@ -1117,7 +1367,15 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     if settled:
         audit_detail["settled_through"] = settled
     seq = audit.record(
-        game_id, "pass_priority", player=req.player, allowed=True, reason=None, **audit_detail
+        game_id,
+        "pass_priority",
+        player=req.player,
+        allowed=True,
+        reason=None,
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        _fill_seq=seq_hint,
+        **audit_detail,
     )
     return {
         "allowed": True,
@@ -1141,6 +1399,7 @@ def action_declare_blockers(
         pairs,
         action="declare_blockers",
         uid=uid,
+        reasoning=req.reasoning,
         player=req.player,
         blocks=blocks_detail,
     )
@@ -1151,9 +1410,15 @@ def action_declare_blockers(
 
 @app.post("/api/games/{game_id}/state-based-actions")
 def state_based_actions(game_id: str) -> dict[str, Any]:
-    result, _ = _run_command(game_id, "state_based_actions", ActorRequest())
+    result, _, legal_before, seq_hint = _run_command(game_id, "state_based_actions", ActorRequest())
     if result.status is commands.RunStatus.PAUSED:
-        seq = audit.record(game_id, "state_based_actions", allowed=None, paused=True)
+        seq = audit.record(
+            game_id,
+            "state_based_actions",
+            allowed=None,
+            paused=True,
+            legal_actions_before=legal_before,
+        )
         game = game_or_404(game_id)
         return {**state_view(game, game_id), "allowed": None, "paused": True, "log_seq": seq}
     assert result.game is not None and isinstance(result.outcome, dict)
@@ -1162,6 +1427,8 @@ def state_based_actions(game_id: str) -> dict[str, Any]:
         "state_based_actions",
         destroyed=result.outcome["destroyed"],
         changed=result.outcome["changed"],
+        legal_actions_before=legal_before,
+        _fill_seq=seq_hint,
     )
     return {**state_view(result.game, game_id), **result.outcome}
 
@@ -1170,11 +1437,20 @@ def state_based_actions(game_id: str) -> dict[str, Any]:
 def resolve_top(
     game_id: str, req: ActorRequest | None = None, uid: str | None = None
 ) -> dict[str, Any]:
-    result, _ = _run_command(game_id, "resolve_top", req or ActorRequest())
+    if req is not None:
+        records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq_hint = _run_command(game_id, "resolve_top", req or ActorRequest())
     viewer = visibility.resolve_viewer(game_id, uid)
+    reasoning = req.reasoning if req else None
     if result.status is commands.RunStatus.PAUSED:
         seq = audit.record(
-            game_id, "resolve_top", player=req.player if req else None, allowed=None, paused=True
+            game_id,
+            "resolve_top",
+            player=req.player if req else None,
+            allowed=None,
+            paused=True,
+            reasoning=reasoning,
+            legal_actions_before=legal_before,
         )
         game = game_or_404(game_id)
         return {
@@ -1186,7 +1462,15 @@ def resolve_top(
             "log_seq": seq,
         }
     assert result.game is not None and isinstance(result.outcome, dict)
-    seq = audit.record(game_id, "resolve_top", player=req.player if req else None, **result.outcome)
+    seq = audit.record(
+        game_id,
+        "resolve_top",
+        player=req.player if req else None,
+        reasoning=reasoning,
+        legal_actions_before=legal_before,
+        _fill_seq=seq_hint,
+        **result.outcome,
+    )
     return {
         **visibility.redact_view(state_view(result.game, game_id), viewer),
         **result.outcome,
@@ -1210,15 +1494,39 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     `pending_decision`, answerable through `POST .../decide` or its
     `actions/attack`/`actions/declare-blockers` aliases.
     """
+    records.require_reasoning(game_id, req.player, req.reasoning)
     try:
-        result, committed = _run_command(game_id, "advance", req)
+        result, committed, legal_before, seq_hint = _run_command(game_id, "advance", req)
     except ValueError as exc:  # the engine's own refusal text
-        seq = audit.record(game_id, "advance", player=req.player, allowed=False, reason=str(exc))
+        # No `_run_command` attempt ever ran - fetched fresh, exactly as it
+        # stood the instant this request was refused.
+        game = game_or_404(game_id)
+        pending_now = store.paused_command(game_id)
+        legal_before = records.legal_actions_before(
+            game, req.player, pending_now[2] if pending_now else None
+        )
+        seq = audit.record(
+            game_id,
+            "advance",
+            player=req.player,
+            allowed=False,
+            reason=str(exc),
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
+        )
         return {"allowed": False, "reason": str(exc), "log_seq": seq}
     before = committed.turn.step.value if committed.turn is not None else None
     viewer = visibility.resolve_viewer(game_id, uid)
     if result.status is commands.RunStatus.PAUSED:
-        seq = audit.record(game_id, "advance", player=req.player, allowed=None, paused=True)
+        seq = audit.record(
+            game_id,
+            "advance",
+            player=req.player,
+            allowed=None,
+            paused=True,
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
+        )
         return {
             **visibility.redact_view(state_view(committed, game_id), viewer),
             "allowed": None,
@@ -1234,6 +1542,9 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
         player=req.player,
         allowed=True,
         suspend_upkeep=suspend_upkeep,
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        _fill_seq=seq_hint,
         **{"from": before, "to": step_value},
     )
     return {
@@ -1276,17 +1587,32 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
 
     def refuse(reason: str, **detail: Any) -> dict[str, Any]:
         seq = audit.record(
-            game_id, "decide", player=req.player, allowed=False, reason=reason, **detail
+            game_id,
+            "decide",
+            player=req.player,
+            allowed=False,
+            reason=reason,
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
+            **detail,
         )
         return {"accepted": False, "reason": reason, "log_seq": seq}
 
-    game_or_404(game_id)
+    game = game_or_404(game_id)
+    # T10: computed once, from `player`'s side of the board before this
+    # answer runs, and reused for every refusal below and the eventual
+    # success - `game` here is never touched by anything until `_resume`
+    # takes its own lock and works against its own copy.
+    legal_before = records.legal_actions_before(
+        game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
+    )
     player = visibility.resolve_viewer(game_id, uid)
     if player != req.player or not isinstance(player, str):
         return refuse("that uid does not open the deciding player's seat")
     paused = store.paused_command(game_id)
     if paused is None or paused[2].decision.player != req.player:
         return refuse("no pending decision for you")
+    records.require_reasoning(game_id, req.player, req.reasoning)
     command, tape, pending = paused
     engine_decision = pending.decision
     kind = engine_decision.kind
@@ -1405,7 +1731,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     field_name = decisions.ANSWER_FIELD_FOR_KIND[kind]
     answer = Answer(seq=pending.seq, kind=kind, player=req.player, **{field_name: answer_value})
     try:
-        result = _resume(game_id, command, tape, pending, answer)
+        result, _, seq_hint = _resume(game_id, command, tape, pending, answer, player=req.player)
     except ValueError as exc:
         # The engine itself refused this answer once the command actually
         # replayed with it - reached, in practice, only by the two
@@ -1413,7 +1739,17 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # other kind's shape check above already mirrors what the engine
         # would check. Refused the same synchronous way as every check above.
         return refuse(str(exc), **detail)
-    seq = audit.record(game_id, "decide", player=req.player, allowed=True, reason=None, **detail)
+    seq = audit.record(
+        game_id,
+        "decide",
+        player=req.player,
+        allowed=True,
+        reason=None,
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        _fill_seq=seq_hint,
+        **detail,
+    )
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
         next_pending = decisions.PendingDecision.from_engine(result.pending.decision)
@@ -1484,11 +1820,22 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
     one per counted mulligan; it is pre-provided to the engine rather than
     asked back through `decide`, so this request never blocks. See
     `opening.py`.
+
+    Not gated by `records.require_reasoning` (T10), unlike every seat action
+    below `actions/`: CR 103.5's declaration is routinely made *for* an agent
+    seat by `ai_pregame.py`'s own backstop when the agent has gone quiet
+    (`opening.declare_mulligan`'s `automatic=True`), and is exercised directly
+    by test harnesses and race-condition tests that have no reasoning of
+    their own to give - unlike a targeted spell or an attack, there is no
+    live "why" behind a pregame declaration this api can require honestly.
+    `reasoning` is still accepted and recorded when a caller does give one.
     """
     _pregame_seat(game_id, uid, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)  # 404 for a player who is not in this game
-        return opening.declare_mulligan(game_id, game, req.player, req.take, req.bottom)
+        return opening.declare_mulligan(
+            game_id, game, req.player, req.take, req.bottom, reasoning=req.reasoning
+        )
 
 
 @app.post("/api/games/{game_id}/pregame/opening-hand/action")
@@ -1502,11 +1849,16 @@ def pregame_opening_hand_action(
     whom right now, is `pregame.opening_hand_options` / `pregame.
     opening_hand_actor` on the state view; a seat that wants none of them calls
     the `finish` endpoint below instead.
+
+    Not gated by `records.require_reasoning` - see `pregame_mulligan`'s
+    docstring for why no pregame declaration is.
     """
     _pregame_seat(game_id, uid, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)
-        return opening.take_opening_hand_action(game_id, game, req.player, req.card_id)
+        return opening.take_opening_hand_action(
+            game_id, game, req.player, req.card_id, reasoning=req.reasoning
+        )
 
 
 @app.post("/api/games/{game_id}/pregame/opening-hand/finish")
@@ -1520,13 +1872,18 @@ def pregame_opening_hand_finish(
     502.4). Nobody has to be asked to leave that step (CR 500.3), so the
     response's `step` is the first one somebody can act in: `upkeep`. See
     `engine_api.settle_priorityless_steps`.
+
+    Not gated by `records.require_reasoning` - see `pregame_mulligan`'s
+    docstring for why no pregame declaration is.
     """
     if not req.player:
         raise ValueError("finishing CR 103.6's actions needs the player who is finishing")
     _pregame_seat(game_id, uid, req.player)
     with store.locked(game_id) as game:
         game.player(req.player)
-        result = opening.finish_opening_hand_actions(game_id, game, req.player)
+        result = opening.finish_opening_hand_actions(
+            game_id, game, req.player, reasoning=req.reasoning
+        )
         return _settled(game, result)
 
 
@@ -1556,16 +1913,17 @@ def pregame_settle(
     if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
     viewer = visibility.resolve_viewer(game_id, uid)
+    seq_hint: int | None = None
     if req.use_defaults:
         command = commands.Command.build("pregame_settle", req)
         with store.locked(game_id) as game:
             result = commands.run_command_to_completion(game, command)
             assert result.status is commands.RunStatus.COMPLETED
             assert result.game is not None
-            store.replace(game_id, result.game)
+            seq_hint = store.replace(game_id, result.game)
             store.clear_paused_command(game_id)
     else:
-        result, _ = _run_command(game_id, "pregame_settle", req)
+        result, _, _, seq_hint = _run_command(game_id, "pregame_settle", req)
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
         seq = audit.record(game_id, "pregame_settle", allowed=None, paused=True)
@@ -1584,6 +1942,7 @@ def pregame_settle(
     seq = audit.record(
         game_id,
         "pregame_settled",
+        _fill_seq=seq_hint,
         hands=hands,
         mulligans=mulligans,
         # The opposite of `declare_mulligan`'s entry: `use_defaults=True`

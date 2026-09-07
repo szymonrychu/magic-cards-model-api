@@ -147,7 +147,14 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: at boot, never again" was the defect. See `api_trouble`.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-3"
+PROTOCOL_VERSION = "seatkit-4"
+#: `seatkit-4` (T10) gave every mutating tool a `reasoning` parameter - "why
+#: are you doing this", in the seat's own words - required by the API for an
+#: agent seat (refused 422 when it is missing) and optional for a human one.
+#: An MCP process from before this omits the parameter entirely, so an agent
+#: seat it drives would have every mutating call refused outright rather than
+#: silently accepted with no reasoning recorded.
+#:
 #: `seatkit-3` removed `max_seconds` from every tool and command that carried
 #: it - nothing blocks any more, so nothing was left for it to bound, and a
 #: parameter that bounds nothing is a promise an MCP client cannot see
@@ -815,6 +822,7 @@ def run_action(
     *,
     hold_priority: bool = False,
     release: bool = True,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     """Do one action, then behave the way both transports promise: unless
     told to hold, release priority, then check once for this seat's next
@@ -857,6 +865,14 @@ def run_action(
     ...), which - unlike a decision addressed to someone else - this seat's
     own single in-flight call could never otherwise answer. See that
     function's docstring for the full shape of why.
+
+    `reasoning` (T10): the *triggering* action's own stated reasoning, not a
+    second one for the auto-pass this function issues on its behalf. That
+    auto-pass is this harness releasing priority after an agent's already-
+    reasoned action, not a fresh decision of its own - mcp.py's `act` passes
+    the same string through here that the tool call itself gave, so an agent
+    seat's auto-release never gets refused with a 422 for a reasoning field
+    nothing here would know how to fill in honestly.
     """
     before = seat.fetch_state()
     outcome, self_decision = _call_watching_for_self_decision(seat, perform)
@@ -933,10 +949,11 @@ def run_action(
     if release:
 
         def perform_pass() -> Any:
+            body: dict[str, Any] = {"player": seat.player}
+            if reasoning:
+                body["reasoning"] = reasoning
             return seat.call_json(
-                "POST",
-                f"/api/games/{seat.game_id()}/actions/pass-priority",
-                {"player": seat.player},
+                "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
             )
 
         pass_outcome, pass_self_decision = _call_watching_for_self_decision(seat, perform_pass)
@@ -1367,6 +1384,7 @@ def pass_until(
     stop_when_attacked: bool = True,
     stop_when_you_can_attack: bool = True,
     resume: dict[str, Any] | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
@@ -1430,6 +1448,11 @@ def pass_until(
 
     A pass refused mid-run stops the run and reports the refusal rather than
     hammering the same refused call again.
+
+    `reasoning` (T10): threaded onto every individual pass this run makes,
+    same as `run_action`'s own - "I am auto-passing through this stretch" is
+    itself the reasoning an agent seat gives once, for the whole run, not a
+    fresh one per pass.
     """
     before = seat.fetch_state()
     run = resume_autopass(resume, before, until_step, whose_turn)
@@ -1566,10 +1589,11 @@ def pass_until(
                 )
 
             def perform_pass() -> Any:
+                body: dict[str, Any] = {"player": seat.player}
+                if reasoning:
+                    body["reasoning"] = reasoning
                 return seat.call_json(
-                    "POST",
-                    f"/api/games/{seat.game_id()}/actions/pass-priority",
-                    {"player": seat.player},
+                    "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
                 )
 
             # Same shape as `run_action`'s auto-pass: releasing priority runs

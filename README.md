@@ -356,6 +356,19 @@ All under `/api`. Interactive docs at `/docs`.
 | `GET /api/games/{id}` | full state (below) |
 | `DELETE /api/games/{id}` | drop the session |
 
+`POST /api/games`'s `players` entries also take `is_agent?` (default
+`false`) - a seat's kind, recorded once at creation. It is what
+`records.require_reasoning` reads to decide whether a mutating action from
+that seat needs `reasoning` - see "The heart: legality questions" below.
+
+A postgres-backed deployment's mutating routes can answer `409` instead of
+`200`/`400`: another writer committed a newer version of the game first
+(`repository_postgres.py`'s optimistic-concurrency CAS). The body carries
+`{detail, game_id, current_state}` - the game exactly as it now stands,
+redacted for the caller's own `uid` the same way `GET /api/games/{id}` is -
+so the loser can re-read and recompute its attempt against what actually
+committed. There is no server-side retry.
+
 ### Cards
 
 | | |
@@ -383,7 +396,21 @@ take the `player` as the controller. Counter kinds: `+1/+1`, `-1/-1`,
 ### The heart: legality questions
 
 Each returns `{allowed: bool, reason: str | null, ...}` and performs the
-action only when allowed and `dry_run` is not set.
+action only when allowed and `dry_run` is not set. Every action below (and
+`resolve-top`/`advance`/`decide`/`state-based-actions`) also takes an
+optional `reasoning` string - the seat's own stated reason for this action -
+**required** for a seat this game registered as an agent (`is_agent` at
+creation, or a decklist-booted seat's `ai: true`): omitting it there is
+refused with `422`, naming the missing field, before the engine ever sees
+the request. Optional and unenforced for a human seat. Every mutating action
+writes exactly one row to this game's log, refusals included, carrying the
+engine's own outcome, this `reasoning`, and every action the acting seat
+could otherwise have taken at that exact moment (`legal-actions`'s own
+enumeration, captured before the action ran) - `GET /api/games/{id}/log?
+uid=&since=` reads that log back, oldest first; a real seat's `uid` gets its
+own hand redacted out of it (including that `legal_actions_before` field,
+which is exactly as much hidden information as `legal-actions` itself is),
+`uid`-less or the admin key gets it in full.
 
 | | |
 |---|---|

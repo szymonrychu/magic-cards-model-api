@@ -155,8 +155,13 @@ def test_full_turn_through_the_ui_endpoints(client: TestClient, booted_game: dic
     assert life_of(after, "bob") == before_life - 3
 
     # Passing priority as the other seat's uid is refused - the seat API's
-    # own authorization, not a UI shortcut.
-    wrong_pass = client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": "bob"})
+    # own authorization, not a UI shortcut. bob is this game's agent seat
+    # (`ai: true` at boot), so this call needs its own `reasoning` (T10) -
+    # unrelated to what is actually being tested here.
+    wrong_pass = client.post(
+        f"/api/games/{game_id}/actions/pass-priority",
+        json={"player": "bob", "reasoning": "checking whether it is my turn to pass"},
+    )
     # bob does not hold priority right after alice's cast/resolve in this
     # sequence unless the engine handed it back - either a clean refusal or
     # an accepted pass is fine here; what must never happen is a 5xx.

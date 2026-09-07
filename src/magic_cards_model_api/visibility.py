@@ -349,11 +349,24 @@ _HIDDEN_ZONES = {"hand", "library", "sideboard"}
 
 def redact_log_entry(entry: dict[str, Any], viewer: str) -> dict[str, Any]:
     """One log entry, as a real seat may read it: its snapshot filtered the
-    same way state is, and the card name blanked when the action itself put
-    a card into (or read it out of) a hidden zone that is not viewer's own.
+    same way state is, the card name blanked when the action itself put a
+    card into (or read it out of) a hidden zone that is not viewer's own,
+    and (T10) `legal_actions_before` dropped outright unless this entry's
+    own actor is `viewer`.
 
-    This only catches actions that record a `zone`/`to_zone` alongside the
-    card (`add_card`, `move_card`) - see the report for what is not covered.
+    That last one mirrors `GET .../legal-actions` (T11) at one remove:
+    that endpoint refuses a caller who does not present the named player's
+    own uid or the admin key, because the answer names cards in that
+    player's hand. `legal_actions_before` is the exact same answer, just
+    written into the log instead of returned live - so it needs the exact
+    same gate, or reading the log would be a second, unguarded door onto
+    what the live endpoint already protects. `redact_log_entry` itself is
+    only ever called for a real seat viewer (`app.py`'s `GET .../log` skips
+    it for admin/no-uid, matching `legal-actions`'s own admin exemption).
+
+    The `zone`/`to_zone` card-blanking below only catches actions that record
+    one of those keys alongside the card (`add_card`, `move_card`) - see the
+    report for what is not covered.
     """
     entry = dict(entry)
     if entry.get("snapshot"):
@@ -363,4 +376,6 @@ def redact_log_entry(entry: dict[str, Any], viewer: str) -> dict[str, Any]:
     owner = detail.get("player") or detail.get("controller")
     if zone in _HIDDEN_ZONES and owner != viewer and "card" in detail:
         entry["detail"] = {**detail, "card": "<hidden>"}
+    if entry.get("legal_actions_before") is not None and detail.get("player") != viewer:
+        entry["legal_actions_before"] = None
     return entry

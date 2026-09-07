@@ -67,7 +67,6 @@ def upgrade() -> None:
             "payload", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["game_id"], ["games.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("game_id", "seq", name="uq_records_game_id_seq"),
     )

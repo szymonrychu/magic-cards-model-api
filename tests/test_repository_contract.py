@@ -519,6 +519,118 @@ def test_replace_raises_key_error_for_an_unknown_game(repo: GameRepository) -> N
 
 
 # ---------------------------------------------------------------------------
+# records (T10) - the append-only audit trail `audit.py` now reads and
+# writes through the repository, rather than a module-global dict. This
+# section is what makes `InMemoryRepository`'s copy of that behaviour a
+# tested contract rather than an untested assumption the docker-free suite
+# happens to exercise only indirectly through `app.py`'s routes.
+# ---------------------------------------------------------------------------
+
+
+def test_replace_returns_the_seq_of_the_records_row_it_wrote(repo: GameRepository) -> None:
+    """Every successful `replace` writes one `records` row for that commit
+    and returns its own `seq` - `app.py`'s `_run_command`/`_resume` thread
+    this straight into `audit.record`'s `_fill_seq` so the row is filled in
+    rather than duplicated once the caller knows the full payload."""
+    game_id = repo.create(_real_game())
+    seq = repo.replace(game_id, _real_game())
+    assert seq == 1
+    rows = repo.records(game_id)
+    assert [row["seq"] for row in rows] == [1]
+    assert rows[0]["payload"] == {}
+
+
+def test_replace_with_a_record_payload_writes_it_atomically(repo: GameRepository) -> None:
+    """A caller that already has the full payload ready (T10's atomic path)
+    gets it written in the very same commit, not `{}` waiting on a later
+    `fill_record`."""
+    game_id = repo.create(_real_game())
+    payload = {"action": "advance", "detail": {"allowed": True}}
+    seq = repo.replace(game_id, _real_game(), record=payload)
+    rows = repo.records(game_id)
+    assert rows[-1]["seq"] == seq
+    assert rows[-1]["payload"] == payload
+
+
+def test_append_record_is_standalone_and_does_not_touch_the_game(
+    repo: GameRepository,
+) -> None:
+    """A refusal caught before any command ran, or an admin action, has no
+    game mutation to be atomic with - `append_record` is the write path for
+    exactly that case, and it changes nothing about the committed game."""
+    game_id = repo.create(_real_game())
+    game_before = repo.get(game_id)
+    seq = repo.append_record(game_id, {"action": "cast", "detail": {"allowed": False}})
+    assert seq == 1
+    assert repo.get(game_id) is game_before
+    assert repo.records(game_id)[0]["payload"]["action"] == "cast"
+
+
+def test_append_record_never_raises_for_an_unknown_game(repo: GameRepository) -> None:
+    """`audit.record`'s own long-standing promise - a game that is no longer
+    in the store, or was never in it, still gets its entry - now backed by
+    the repository rather than a permissive module-global dict. More than
+    one existing caller (a test harness probing an id that was never
+    created, `ai_seat.AiSeatRegistry` dispatching before a game exists)
+    relies on this."""
+    seq = repo.append_record("no-such-game-at-all", {"action": "ai_seat"})
+    assert seq == 1
+    assert repo.records("no-such-game-at-all")[0]["payload"]["action"] == "ai_seat"
+
+
+def test_records_are_returned_oldest_first_across_append_and_replace(
+    repo: GameRepository,
+) -> None:
+    game_id = repo.create(_real_game())
+    seq1 = repo.append_record(game_id, {"action": "create_game"})
+    seq2 = repo.replace(game_id, _real_game(), record={"action": "advance"})
+    seq3 = repo.append_record(game_id, {"action": "report_problem"})
+    rows = repo.records(game_id)
+    assert [row["seq"] for row in rows] == [seq1, seq2, seq3] == [1, 2, 3]
+    assert [row["payload"]["action"] for row in rows] == [
+        "create_game",
+        "advance",
+        "report_problem",
+    ]
+
+
+def test_fill_record_replaces_an_existing_rows_payload(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    seq = repo.replace(game_id, _real_game())  # writes seq=1 with payload {}
+    repo.fill_record(game_id, seq, {"action": "cast", "detail": {"allowed": True}})
+    rows = repo.records(game_id)
+    assert len(rows) == 1
+    assert rows[0]["payload"] == {"action": "cast", "detail": {"allowed": True}}
+
+
+def test_fill_record_raises_key_error_for_a_row_that_does_not_exist(
+    repo: GameRepository,
+) -> None:
+    game_id = repo.create(_real_game())
+    with pytest.raises(KeyError):
+        repo.fill_record(game_id, 1, {"action": "cast"})
+
+
+def test_records_is_empty_for_a_game_with_none(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    assert repo.records(game_id) == []
+
+
+def test_records_survive_the_games_own_deletion(repo: GameRepository) -> None:
+    """The audit trail outlives the game it describes - `delete` must never
+    remove it (T10, `db.py`'s dropped `ForeignKey` and `repository.py`'s
+    `InMemoryRepository.delete` both say why): `lobby.reset_game`'s own
+    `game_reset` row, written just before the delete, has to still be there
+    for `GET /api/games/{id}/log` afterward, or a transcript would trail off
+    exactly where it matters most."""
+    game_id = repo.create(_real_game())
+    repo.append_record(game_id, {"action": "game_reset"})
+    assert repo.delete(game_id) is True
+    rows = repo.records(game_id)
+    assert [row["payload"]["action"] for row in rows] == ["game_reset"]
+
+
+# ---------------------------------------------------------------------------
 # paused commands - (Command, tape, PendingDecision), the property T7 exists
 # to make durable: everything `commands.resume_command` needs to replay a
 # paused command with one more answer appended, held by the repository
