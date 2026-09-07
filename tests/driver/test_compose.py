@@ -89,3 +89,41 @@ def test_env_example_lists_every_variable_compose_requires(compose):
 
 def test_the_real_env_file_is_gitignored():
     assert "\n.env\n" in "\n" + (ROOT / ".gitignore").read_text()
+
+
+def test_migrate_is_profile_gated_so_a_plain_up_never_starts_it(compose):
+    """The plan's binding requirement: migrations run "as a one-shot ... never
+    from app startup and never from an init container". `profiles` is what
+    keeps `docker compose up` (no `--profile`) from ever starting `migrate`
+    on its own - dropping this key is exactly the regression this pins."""
+    assert compose["services"]["migrate"].get("profiles") == ["migrate"]
+
+
+def test_no_service_depends_on_migrate(compose):
+    """Nothing may wait on `migrate` in its `depends_on` - that would turn
+    the one-shot into something `docker compose up` starts transitively,
+    the same failure mode `profiles` alone is not enough to rule out if a
+    later change adds a dependency edge instead of removing the gate."""
+    for name, service in compose["services"].items():
+        depends_on = service.get("depends_on") or {}
+        assert "migrate" not in depends_on, name
+
+
+def test_no_application_entrypoint_runs_alembic_upgrade_head():
+    """Migrations must never run from `game`'s own startup or from an init
+    container - only from the one-shot `migrate` service/`mise run
+    db:migrate`. `docker-compose.yml`'s `game`/`agent`/`driver` services have
+    no `command` override (they use the image's own `CMD`), so this checks
+    the one place a startup path could hide: the `Dockerfile`s' `CMD`/
+    `ENTRYPOINT`, plus any `command:` a service might someday set."""
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    for name, service in compose["services"].items():
+        command = service.get("command")
+        if command is None:
+            continue
+        joined = " ".join(command) if isinstance(command, list) else str(command)
+        assert "alembic" not in joined or name == "migrate", name
+
+    for dockerfile in ("Dockerfile", "Dockerfile.agent"):
+        text = (ROOT / dockerfile).read_text()
+        assert "alembic" not in text, dockerfile
