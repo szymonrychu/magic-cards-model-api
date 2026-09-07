@@ -15,15 +15,17 @@ row through the one thing that actually serialises them across processes -
 
 Skips (readably) under the same `MCM_TEST_DATABASE_URL` condition as the
 contract suite, so the docker-free default `mise run test` run never touches
-postgres.
+postgres - and, like the contract suite, fails loudly instead of skipping
+under `mise run test:pg` (`MCM_REQUIRE_POSTGRES_TESTS=1`); see
+`conftest.require_postgres_database_url`.
 """
 
 from __future__ import annotations
 
-import os
 import threading
 
 import pytest
+from conftest import require_postgres_database_url
 from sqlalchemy import text
 from test_decks_api import LEGAL_DECK, LEGAL_DECK_B
 
@@ -36,13 +38,7 @@ _TEST_DATABASE_URL_ENV = "MCM_TEST_DATABASE_URL"
 
 @pytest.fixture
 def database_url() -> str:
-    url = os.environ.get(_TEST_DATABASE_URL_ENV)
-    if not url:
-        pytest.skip(
-            f"{_TEST_DATABASE_URL_ENV} is not set - postgres CAS tests are "
-            "skipped (run `mise run test:pg` to exercise them)"
-        )
-    return url
+    return require_postgres_database_url(_TEST_DATABASE_URL_ENV)
 
 
 @pytest.fixture

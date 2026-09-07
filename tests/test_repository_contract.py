@@ -18,10 +18,10 @@ implementation uses internally to enforce them.
 
 from __future__ import annotations
 
-import os
 import threading
 
 import pytest
+from conftest import require_postgres_database_url
 from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind, PendingDecision
 from magic_cards_model.models import Game
 from sqlalchemy import text
@@ -51,14 +51,11 @@ def _postgres_repository_factory() -> PostgresRepository:
     the same zero-argument, fresh-instance signature `InMemoryRepository`
     itself has. Skips (readably) when that variable is not set, which is the
     default for the plain `mise run test` run - only `mise run test:pg` sets
-    it, after applying migrations."""
+    it, after applying migrations. Under `mise run test:pg`
+    (`MCM_REQUIRE_POSTGRES_TESTS=1`) a missing URL is a hard failure instead
+    of a skip - see `conftest.require_postgres_database_url`."""
     global _pg_engine
-    url = os.environ.get(_TEST_DATABASE_URL_ENV)
-    if not url:
-        pytest.skip(
-            f"{_TEST_DATABASE_URL_ENV} is not set - postgres contract tests are "
-            "skipped (run `mise run test:pg` to exercise them)"
-        )
+    url = require_postgres_database_url(_TEST_DATABASE_URL_ENV)
     if _pg_engine is None:
         _pg_engine = make_engine(url)
     with _pg_engine.begin() as conn:
@@ -73,6 +70,15 @@ def _postgres_repository_factory() -> PostgresRepository:
 # per-test setup/teardown (truncating the tables) needed a wrapping factory
 # function rather than the bare class `InMemoryRepository` uses.
 _REPOSITORY_FACTORIES = [InMemoryRepository, _postgres_repository_factory]
+
+
+def test_the_postgres_factory_is_still_parameterised_into_the_contract_suite() -> None:
+    """A cheap, always-runs (never skipped) guard against the whole postgres
+    parameterisation quietly disappearing from `repo` - `_postgres_repository_
+    factory` skipping/failing when it actually runs is a separate concern
+    (see it and `conftest.require_postgres_database_url`); this only pins
+    that it is still *in the list* to run at all."""
+    assert _postgres_repository_factory in _REPOSITORY_FACTORIES
 
 
 def _real_game() -> Game:
