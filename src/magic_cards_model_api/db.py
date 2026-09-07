@@ -34,6 +34,10 @@ those away before any query reaches the driver, string column or not.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
+from urllib.parse import quote
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -90,6 +94,54 @@ records = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("game_id", "seq", name="uq_records_game_id_seq"),
 )
+
+
+#: The component variables a DSN is assembled from when `DATABASE_URL` is not
+#: set. They are named for what CloudNativePG publishes in a cluster's Secret
+#: (`host`, `port`, `user`, `password`, `dbname`), so the Helm chart maps them
+#: straight through with `valueFrom.secretKeyRef` and no values file ever has to
+#: carry a URL.
+_URL_COMPONENTS = ("POSTGRES_HOST", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")
+
+
+def database_url_from_env(env: Mapping[str, str] | None = None) -> str:
+    """The database URL, from `DATABASE_URL` or assembled from components.
+
+    `DATABASE_URL` wins when it is set, so nothing that already passes one has
+    to change. Otherwise the URL is built from `POSTGRES_HOST`, `POSTGRES_PORT`
+    (default 5432), `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB`.
+
+    Two reasons for the component path. Kubernetes is the first: CloudNativePG
+    hands a workload its credentials as separate Secret keys, so assembling here
+    means the chart never interpolates a URL and the password never appears in a
+    values file. The second is that a committed `docker-compose.yml` carrying a
+    `://user:password@host` shape is flagged by secret scanning even when every
+    part of it is a variable reference, and a security check that is always red
+    is a security check nobody reads.
+
+    User and password are percent-encoded. A hand-set password containing `@`
+    or `/` would otherwise silently redirect the connection to a different host
+    or database rather than failing.
+    """
+    env = os.environ if env is None else env
+
+    explicit = env.get("DATABASE_URL")
+    if explicit:
+        return explicit
+
+    missing = [name for name in _URL_COMPONENTS if not env.get(name)]
+    if missing:
+        raise RuntimeError(
+            "no database URL: set DATABASE_URL, or all of "
+            f"{', '.join(_URL_COMPONENTS)} (missing: {', '.join(missing)})."
+        )
+
+    user = quote(env["POSTGRES_USER"], safe="")
+    password = quote(env["POSTGRES_PASSWORD"], safe="")
+    host = env["POSTGRES_HOST"]
+    port = env.get("POSTGRES_PORT") or "5432"
+    name = env["POSTGRES_DB"]
+    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
 
 
 def make_engine(database_url: str) -> Engine:

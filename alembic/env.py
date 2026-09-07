@@ -4,7 +4,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-from magic_cards_model_api.db import metadata
+from magic_cards_model_api.db import database_url_from_env, metadata
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -20,11 +20,14 @@ if config.config_file_name is not None:
 # written by hand from them rather than the other way round.
 target_metadata = metadata
 
-# `DATABASE_URL` overrides whatever `alembic.ini` has, which is a
+# The environment overrides whatever `alembic.ini` has, which is a
 # non-functional placeholder - secrets load through `mise`/`.env`, never
 # through a committed ini file (see the api's `.env.example`).
-if os.environ.get("DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+# `database_url_from_env` takes `DATABASE_URL` when it is set and otherwise
+# assembles one from the POSTGRES_* components, which is how the Kubernetes
+# chart will pass CloudNativePG's Secret keys through.
+if os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_HOST"):
+    config.set_main_option("sqlalchemy.url", database_url_from_env())
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
