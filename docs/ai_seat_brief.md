@@ -121,8 +121,8 @@ board as one card can punish.
 
 ## Passing a whole stretch at once, and when not to
 
-`pass --until <step>` keeps passing every priority you are given until a named
-point in the turn, instead of handing you back one priority at a time:
+`pass --until <step>` keeps passing every priority you currently hold until a
+named point in the turn, instead of handing you back one priority at a time:
 
     ... pass --until upkeep                        # round to your next upkeep
     ... pass --until precombat_main --until-whose-turn opponent
@@ -132,13 +132,30 @@ Naming the step you are standing in means its NEXT occurrence, never this one -
 what "until my upkeep" means when you say it out loud. `untap` and `cleanup`
 are not offered: nobody receives priority in either (CR 502.4, CR 514.3).
 
-It stops early, and tells you which of these stopped it: the destination is
-reached, something new lands on the stack, a decision is addressed to you, it
-is your own declare-attackers step, you are being attacked in your own
-declare-blockers step, a pass is refused, the game ends, or the time bound runs
-out (call it again). A combat stop never fires on the step you were standing in
-when you started the run - asking to pass past combat from inside it is you
-having already looked at combat.
+This does not block either, so a long run takes several commands. Read
+`finished` in the JSON it prints:
+
+- `finished: true` - a real stop, and `stopped_because` names it: the
+  destination is reached, something new landed on the stack, a decision is
+  addressed to you, it is your own declare-attackers step, you are being
+  attacked in your own declare-blockers step, a pass was refused, the game
+  ended.
+- `finished: false` - it got as far as it could on its own and handed the
+  board back, because your opponent holds priority or owes a declaration only
+  they can make. **Sleep, then run it again with the answer's `resume` object
+  handed back verbatim:**
+
+      sleep 2 && ... pass --until upkeep --resume '<the resume object>'
+
+  Dropping `--resume` does not merely lose your place: the next command
+  re-stamps the "do not stop in the step this run started in" exemption onto
+  wherever you are standing right now, so a run resumed from inside your own
+  declare-attackers step would pass straight through your attack without
+  stopping - silently, which is exactly what that stop exists to prevent.
+
+A combat stop never fires on the step you were standing in when you started
+the run - asking to pass past combat from inside it is you having already
+looked at combat.
 
 Three of those stops can be switched off, and each defends you against
 something you cannot see going wrong, so leave them on unless you have a reason
@@ -209,12 +226,20 @@ per priority.
 - If `pass` is refused with "you do not have priority", call `wait` again.
   NEVER `advance` to escape that - it strands the stack.
 - `wait` (and every other command) checks once and returns at once -
-  poll-and-return, never a real wait. `--max-seconds` is accepted but does
-  nothing any more: a `wake_reason` of "nothing new yet" means exactly that,
-  and calling again immediately is the right response, not a mistake to
-  avoid. There is no way to background yourself into doing nothing - each
-  call is fast, so simply keep calling `wait` (or take an action) until
-  something changes.
+  poll-and-return, never a real wait. There is no `--max-seconds` on any of
+  them any more, because there is no wait for one to bound. **A `wake_reason`
+  of "nothing new yet" means sleep, then check again:**
+
+      sleep 2 && <seat_cli ...> wait
+
+  Two seconds is the right order of magnitude when a human is thinking on the
+  other side. Pace yourself like that every time the answer is "nothing new
+  yet" - a bare `wait` loop with no sleep in it issues back-to-back calls for
+  the whole time your opponent is deciding, which does not make them decide
+  any sooner and burns your own budget on the same answer. The old
+  `--max-seconds 30` used to do this throttling by accident, by making a
+  fruitless check cost 30 seconds inside the call; nothing does it for you
+  now.
 - A pending decision FREEZES the game. Answering it is the only legal move,
   and a command may return early specifically to hand you one. An unanswered
   decision times out to a default and wastes the card.

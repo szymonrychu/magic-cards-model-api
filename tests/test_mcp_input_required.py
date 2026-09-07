@@ -221,3 +221,39 @@ def test_the_pass_priority_tool_no_longer_takes_a_max_seconds_at_all(client, gam
         assert "max_seconds" not in parameters, (
             f"{name} still takes max_seconds, which bounds nothing"
         )
+
+
+def test_both_briefs_tell_the_seat_to_pace_its_own_polling():
+    """Poll-and-return moved the pacing onto the caller, and nothing replaced
+    the throttle it removed.
+
+    The old instruction bounded each wait at 30s, which self-throttled by
+    accident: a fruitless check cost 30 seconds of wall clock *inside* the
+    call. With that gone, a brief that says "there is no way to strand your
+    turn by calling it in a loop, since each call returns at once" is arguing
+    for exactly the defect a predecessor on this repo shipped - a pass
+    re-issued every 1200ms forever. Both briefs must now name a real wait the
+    tooling actually supports (`Bash: sleep`, which is the one tool both the
+    one-shot `claude --print --allowedTools Bash` seat and the continuous
+    PTY-wrapped agent have), and say why back-to-back calls are wrong."""
+    from pathlib import Path
+
+    from mtg_agent.driver import prompt as prompt_module
+
+    brief = (Path(__file__).resolve().parents[1] / "docs" / "ai_seat_brief.md").read_text()
+    driver_prompt = Path(prompt_module.__file__).read_text()
+
+    for text, name in ((brief, "ai_seat_brief.md"), (driver_prompt, "prompt.py")):
+        flat = " ".join(text.split())
+        assert "sleep 2" in flat, f"{name} never tells the seat to wait between checks"
+        assert "nothing new yet" in flat, f"{name} never says which answer means 'check again'"
+        assert "Back-to-back" in flat or "back-to-back" in flat, (
+            f"{name} never says why an unthrottled poll loop is wrong"
+        )
+        assert "resume" in flat, (
+            f"{name} never tells the seat to hand back the resume token an "
+            "unfinished pass_priority(until=...) run carries"
+        )
+        assert "no way to strand your turn by calling it in a loop" not in flat, (
+            f"{name} still argues for an unthrottled poll loop"
+        )
