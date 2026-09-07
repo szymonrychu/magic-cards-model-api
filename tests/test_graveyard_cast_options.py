@@ -1,5 +1,5 @@
 """`cast_options` on a graveyard/exile card, and `available_actions`'s
-`castable` offering them: the state-view surface over the non-hand halves of
+`cast`-kind actions offering them: the state-view surface over the non-hand halves of
 CR 601.2b's keyword permissions (flashback, mayhem, plot, foretell, madness,
 airbend, a granted keyword) - `machines/casting.py`'s
 `keyword_cast_options`/`marker_cast_options`/`granted_cast_options`.
@@ -44,8 +44,8 @@ def seats_for(game_id: str) -> dict[str, str]:
 
 def wired_seats(monkeypatch, game_id: str) -> tuple[Seats, dict[str, str]]:
     """`Seats` pointed at the in-process `TestClient`, the same trick
-    `test_action_flow.py` uses so `available_actions`'s own dry-run HTTP
-    calls land on the test app rather than the network."""
+    `test_action_flow.py` uses so `available_actions`'s own `GET
+    .../legal-actions` call lands on the test app rather than the network."""
     monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
     return Seats(api="http://testserver", game_id=game_id), seats_for(game_id)
 
@@ -110,7 +110,8 @@ def test_available_actions_offers_the_flashback_cast_with_its_keyword(client, ga
     mending = find(as_alice["graveyards"]["alice"], "Faithful Mending")
 
     actions = available_actions(alice, as_alice)
-    assert {"card_id": mending["id"], "keyword": "Flashback"} in actions["castable"]
+    casts = [a for a in actions["actions"] if a["kind"] == "cast" and a["card_id"] == mending["id"]]
+    assert any(cast["keyword"] == "Flashback" for cast in casts), casts
 
 
 def test_available_actions_does_not_offer_a_graveyard_card_with_no_option(
@@ -124,7 +125,8 @@ def test_available_actions_does_not_offer_a_graveyard_card_with_no_option(
     bolt = find(as_alice["graveyards"]["alice"], "Lightning Bolt")
 
     actions = available_actions(alice, as_alice)
-    assert all(entry["card_id"] != bolt["id"] for entry in actions["castable"])
+    casts = [a for a in actions["actions"] if a["kind"] == "cast"]
+    assert all(cast["card_id"] != bolt["id"] for cast in casts)
 
 
 # -- the cast round trip: keyword="Flashback" from the graveyard --------------

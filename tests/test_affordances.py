@@ -221,3 +221,128 @@ def test_a_permanent_with_no_choice_carries_no_choice_field(client, game):
     add_card(client, game, "Grizzly Bears", "alice", "battlefield")
     bears = find(state(client, game)["battlefield"], "Grizzly Bears")
     assert "choice" not in bears
+
+
+# -- one answer, from the engine ---------------------------------------------
+#
+# `ability_hints`'s `mana_options` used to be read straight off the parsed
+# ability: `mana.any_color` became a flat WUBRG list, `mana.options` became
+# the set of colours the printed text can produce. That is a guess off printed
+# text. `Game.mana_color_options` (CR 605.1a) is what `Game.activate_ability`
+# would actually accept right now - the printed set narrowed by the
+# board-derived CR 106.7 survey, the CR 614.12a chosen colour on the permanent
+# itself, and Mox Amber's CR 106.5 "among legendary creatures and
+# planeswalkers you control" reading - and it is the exact call
+# `machines.legal_actions` builds `Action.color_options` from. Two readings of
+# one rule is the shape this project has already paid for twice; there is one
+# now, and this pins that the two surfaces cannot drift apart again.
+
+
+def mana_sources_on_the_board(client: TestClient, game: str, admin_key: str) -> list[dict]:
+    board = client.get(f"/api/games/{game}", params={"uid": admin_key}).json()["battlefield"]
+    return [card for card in board if any(a["mana"] for a in card["abilities"])]
+
+
+def test_mana_options_are_the_engines_own_color_options_not_a_second_reading(client, game):
+    """Every mana ability on a real board, both surfaces, one comparison. The
+    lands are picked to cover each shape the old reading handled separately: a
+    Ravnica dual (two printed colours), an "any color" source that also prints
+    a fixed colourless ability (Cavern of Souls, two abilities with different
+    answers), a basic (no choice at all), and a pain-style dual whose cost is
+    not just {T}."""
+    from conftest import _ADMIN_KEYS
+
+    admin_key = _ADMIN_KEYS[game]
+    for name in ("Steam Vents", "Cavern of Souls", "Mountain", "Sunbaked Canyon"):
+        add_card(client, game, name, "alice", "battlefield")
+
+    actions = client.get(
+        f"/api/games/{game}/legal-actions", params={"player": "alice", "uid": admin_key}
+    ).json()["actions"]
+    from_engine = {
+        (action["card_id"], action["ability_index"]): sorted(action["color_options"])
+        for action in actions
+        if action["kind"] == "activate_mana"
+    }
+    assert from_engine, "the board must actually offer some mana abilities"
+
+    seen = 0
+    for card in mana_sources_on_the_board(client, game, admin_key):
+        for ability in card["abilities"]:
+            if not ability["mana"]:
+                continue
+            engine = from_engine.get((card["id"], ability["index"]))
+            assert engine is not None, f"{card['name']} #{ability['index']} is not enumerated"
+            seen += 1
+            # `()` from the engine and `None` on the card view are the same
+            # answer - "no real choice to make" - and `ui/mana.js` reads the
+            # `None` shape, so the mapping is deliberate, not a mismatch.
+            assert (ability["mana_options"] or []) == engine, (
+                f"{card['name']} #{ability['index']}: the card view says "
+                f"{ability['mana_options']}, the engine says {engine}"
+            )
+    assert seen >= 5, f"only compared {seen} abilities - the board did not cover the shapes"
+
+
+def test_a_choice_offering_ability_still_names_its_colours(client, game):
+    """The counterweight: folding onto the engine must not quietly answer
+    `None` everywhere. A dual and an "any color" source each still name a real
+    set for the UI to ask with, and a basic still names none."""
+    from conftest import _ADMIN_KEYS
+
+    for name in ("Steam Vents", "Cavern of Souls", "Mountain"):
+        add_card(client, game, name, "alice", "battlefield")
+    sources = {
+        card["name"]: card for card in mana_sources_on_the_board(client, game, _ADMIN_KEYS[game])
+    }
+
+    (dual,) = [a for a in sources["Steam Vents"]["abilities"] if a["mana"]]
+    assert dual["mana_options"] == ["R", "U"]
+
+    any_color = [
+        a for a in sources["Cavern of Souls"]["abilities"] if "any color" in (a["text"] or "")
+    ]
+    assert any_color and any_color[0]["mana_options"] == ["B", "G", "R", "U", "W"]
+
+    (basic,) = [a for a in sources["Mountain"]["abilities"] if a["mana"]]
+    assert basic["mana_options"] is None, "one printed colour is no choice to ask about"
+
+
+def test_an_any_color_ability_reports_the_narrowed_set_the_engine_hands_it(client, game):
+    """The fold, proved rather than merely pinned.
+
+    `Game.mana_color_options` narrows an "any color" source by the live board
+    (CR 106.7's survey, CR 614.12a's chosen colour, CR 106.5's "among
+    legendary creatures and planeswalkers you control"), so it can legally
+    answer with fewer colours than the printed text names. The old code could
+    not: it read `mana.any_color` off the parsed ability and returned all five
+    every time, whatever the board said, which is exactly the class of "the
+    api reported it legal when it was not" this fold exists to end. Given a
+    narrowed answer, `ability_hints` must report the narrowed answer.
+    """
+    from uuid import UUID
+
+    from magic_cards_model.models import Color
+
+    from magic_cards_model_api.affordances import ability_hints
+    from magic_cards_model_api.store import store
+
+    add_card(client, game, "Cavern of Souls", "alice", "battlefield")
+    cavern = find(state(client, game)["battlefield"], "Cavern of Souls")
+    real_game = store.get(game)
+    permanent = real_game.find_by_id(UUID(cavern["id"]))
+    (any_color_index, ability) = next(
+        (index, ability)
+        for index, ability in enumerate(real_game.activated_abilities(permanent))
+        if getattr(ability, "mana", None) is not None and ability.mana.any_color
+    )
+
+    assert ability.mana.any_color, "the printed text really does say 'any color'"
+    unnarrowed = real_game.mana_color_options(permanent, any_color_index)
+    assert sorted(color.value for color in unnarrowed) == ["B", "G", "R", "U", "W"]
+
+    narrowed = ability_hints(ability, (Color.RED, Color.WHITE))
+    assert narrowed["mana_options"] == ["R", "W"], (
+        "ability_hints re-derived the colours from the printed text instead of "
+        "reporting the engine's own answer"
+    )

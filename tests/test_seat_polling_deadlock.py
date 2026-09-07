@@ -19,7 +19,6 @@ after and refused, every time.
 
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any
 
@@ -31,14 +30,19 @@ from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
 
 
-def test_a_seat_not_holding_the_lock_still_wakes_promptly_for_its_own_decision(
+def test_a_different_seats_request_that_raises_this_seats_decision_is_seen_at_once(
     client, game, monkeypatch
 ) -> None:
     """Regression guard for the *first* fix, not the second: when it is a
-    genuinely different in-flight request (bob's) that raises alice's own
-    decision, her lock-free poll already notices promptly. Kept here so a
-    future change to `block_until_wake`/`available_actions` cannot silently
-    regress this half while "fixing" the self case below.
+    genuinely different request (bob's) that raises alice's own decision, her
+    own check sees it at once - `block_until_wake` is a plain read and never
+    takes `store.locked`, so it cannot be queued behind whatever lock bob's
+    own mutating request holds while it runs. T11 made this simpler still:
+    there is no longer an internal poll loop whose promptness needs proving,
+    only one read, made after bob's request has actually landed - the same
+    thing a real caller does. Kept here so a future change to
+    `block_until_wake`/`available_actions` cannot silently regress this half
+    while "fixing" the self case below.
     """
     monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
 
@@ -58,32 +62,20 @@ def test_a_seat_not_holding_the_lock_still_wakes_promptly_for_its_own_decision(
         "for this to reproduce the 'different requester' shape"
     )
 
+    # Bob's own pass - a genuinely different requester's mutation - is what
+    # closes the round and crosses into alice's own cleanup discard.
+    bobs_pass = TestClient(app).post(
+        f"/api/games/{game}/actions/pass-priority", json={"player": "bob"}
+    )
+    assert bobs_pass.status_code == 200, bobs_pass.text
+
     alice_seat = seatkit.Seat("alice", uids["alice"], "http://testserver", game)
-    woken: list[dict[str, Any]] = []
-
-    def poll() -> None:
-        woken.append(seatkit.block_until_wake(alice_seat, before=None, max_seconds=20.0))
-
-    poll_thread = threading.Thread(target=poll)
-    poll_thread.start()
-    time.sleep(0.1)  # let alice's poll loop actually start before bob's pass
-
-    def bobs_pass() -> None:
-        TestClient(app).post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
-
-    bob_thread = threading.Thread(target=bobs_pass)
     started = time.monotonic()
-    bob_thread.start()
-
-    poll_thread.join(timeout=10)
+    woken = seatkit.block_until_wake(alice_seat, before=None)
     elapsed = time.monotonic() - started
 
-    assert not poll_thread.is_alive(), "alice's own poll never woke for her decision"
-    assert woken and "decision is waiting" in woken[0]["wake_reason"]
-    assert elapsed < 2.0, f"alice took {elapsed:.1f}s to notice her own pending decision"
-
-    bob_thread.join(timeout=10)
-    assert not bob_thread.is_alive()
+    assert "decision is waiting" in woken["wake_reason"]
+    assert elapsed < 2.0, f"alice's own check took {elapsed:.1f}s - it must never block"
 
 
 def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
@@ -201,26 +193,29 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
     assert board["priority_holder"] is not None
 
 
-def test_available_actions_returns_this_early_shape_for_own_pending_decision(client, game) -> None:
+def test_available_actions_returns_this_early_shape_for_own_pending_decision(
+    client, game, monkeypatch
+) -> None:
     """The other half of the original `test_deadlock.py::
     test_available_actions_does_not_deadlock_on_own_pending_decision`, which
     this file's own docstring already explains T7b made half moot: the
     *deadlock* it proved is gone by construction now, because pausing means
     the request that raised the decision has already returned - and
     released `store.locked(game_id)` - by the time any caller can ever see
-    this seat's own `pending_decision` at all (`seatkit.available_actions`'s
-    own docstring says so directly). There is no longer a background thread
-    to hold a lock this call could contend for, so there is nothing left to
-    time.
+    this seat's own `pending_decision` at all. There is no longer a
+    background thread to hold a lock this call could contend for, so there
+    is nothing left to time.
 
-    The *shape* half is not moot, and had no replacement: `available_actions`
-    skips every dry-run probe and returns a fixed early shape - `castable`
-    and `activatable` forced empty (nothing is legal while the decision
-    stands), `attackers_requested`/`blockers_requested` read straight off
+    The *shape* half is not moot, and had no replacement: since T11,
+    `available_actions` is one call into `GET .../legal-actions`, which
+    itself asks the engine's `legal_actions(game, player, pending=...)` -
+    while a decision is outstanding, that enumeration answers *only* its own
+    legal answers (`answer_decision`-kind actions) for the player it
+    addresses, nothing else (`legal_actions`'s own module docstring).
+    `attackers_requested`/`blockers_requested` still read straight off
     `pending["kind"]` (the one case where the decision itself names the
-    single legal thing), and `pending_decision` echoed back - rather than
-    the ordinary probed shape. This pins exactly that dict, synchronously,
-    with no thread needed."""
+    single legal thing), and `pending_decision` is still echoed back. This
+    pins exactly that dict, synchronously, with no thread needed."""
     stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
     uids = seats_for(client, game)
 
@@ -230,13 +225,12 @@ def test_available_actions_returns_this_early_shape_for_own_pending_decision(cli
     pending = pending_view["pending_decision"]
     assert pending["kind"] == "choose_cards"
 
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
     seat = seatkit.Seat("alice", uids["alice"], "http://testserver", game)
     actions = seatkit.available_actions(seat, pending_view)
 
-    assert actions == {
-        "castable": [],
-        "activatable": [],
-        "attackers_requested": False,
-        "blockers_requested": False,
-        "pending_decision": pending,
-    }
+    assert actions["attackers_requested"] is False
+    assert actions["blockers_requested"] is False
+    assert actions["pending_decision"] == pending
+    assert actions["actions"], "the pending decision's own answers should still be offered"
+    assert all(entry["kind"] == "answer_decision" for entry in actions["actions"])

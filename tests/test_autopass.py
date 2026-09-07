@@ -46,6 +46,7 @@ from typing import Any
 import httpx
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
+from mcp_types import InputRequiredResult
 from test_card_split_labels import boot as boot_the_devourer
 from test_card_split_labels import (
     reach_the_devourer_upkeep,
@@ -66,6 +67,13 @@ from magic_cards_model_api.store import store
 #: unchanged; this is the one knob `pass_until` exposes for exactly this.
 FAST_POLL = 0.01
 
+#: What "returns promptly" means for one `pass_until` call, asserted on every
+#: lap of `run_to_stop`. Generous by design - these tests run a real engine
+#: over a real HTTP stack - but far below any deadline the old loop could have
+#: been given: the version this replaced blocked for a measured 6.0s at
+#: `max_seconds=6.0`, and its MCP schema let an agent ask for 570.
+MAX_CALL_SECONDS = 3.0
+
 
 def seats_for(game_id: str) -> dict[str, str]:
     return {name: uid for uid, name in store.seat_uids(game_id).items()}
@@ -76,6 +84,62 @@ def wired(monkeypatch, game_id: str) -> tuple[Seats, dict[str, str]]:
     uses."""
     monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
     return Seats(api="http://testserver", game_id=game_id), seats_for(game_id)
+
+
+def run_to_stop(seat: Any, *, drive_seconds: float = 30.0, **kwargs: Any) -> dict[str, Any]:
+    """Drive `seatkit.pass_until` the way its contract now says a caller must:
+    call it, and if it comes back `finished: false`, hand its `resume` token
+    straight back and call again.
+
+    `pass_until` used to be a deadline loop that slept until `max_seconds`,
+    which is why every test below used to be one call. It is poll-and-return
+    now (MCP 2026-07-28 removed resumability - a tool call that holds the
+    request open loses it if the stream breaks), so a run that has to wait for
+    the opponent hands the board back instead. The *stops* being tested did not
+    change; only who does the waiting did, and it is the caller - here, this
+    helper, and in production the agent or the CLI user.
+
+    Two things are asserted on every single lap, so the whole file is also a
+    test of the no-blocking property rather than only of the stop conditions:
+    each individual call returns well inside `MAX_CALL_SECONDS`, and any
+    unfinished answer really does carry the `resume` token the next call
+    needs. `drive_seconds` bounds this helper - never `pass_until` - and
+    failing it is a genuine test failure, not a stop reason.
+
+    Returns the final (finished) answer, plus `total_passes` summed across
+    every call and `calls`. `passes` on the returned dict stays the last
+    call's own count, which is what `pass_until` actually reports.
+    """
+    resume = None
+    total_passes = 0
+    calls = 0
+    give_up_at = time.monotonic() + drive_seconds
+    while True:
+        started = time.monotonic()
+        result = pass_until(seat, resume=resume, **kwargs)
+        elapsed = time.monotonic() - started
+        calls += 1
+        total_passes += result["passes"]
+        assert elapsed < MAX_CALL_SECONDS, (
+            f"one pass_until call took {elapsed:.1f}s - it is supposed to return "
+            f"as soon as it would have to wait: {result['stopped_because']}"
+        )
+        if result["finished"]:
+            return {**result, "total_passes": total_passes, "calls": calls}
+        assert "resume" in result, (
+            "an unfinished run must hand back a resume token, or the next call "
+            "re-stamps the starting-occurrence exemption where the seat is now"
+        )
+        resume = result["resume"]
+        assert time.monotonic() < give_up_at, (
+            f"the run never finished in {drive_seconds}s across {calls} calls; "
+            f"last answer: {result['stopped_because']}"
+        )
+        # The caller's own pacing - `pass_until` does none of its own any
+        # more, deliberately. A real seat paces itself the same way (see
+        # `docs/ai_seat_brief.md`); here it is short because both seats are
+        # driven in-process.
+        time.sleep(FAST_POLL)
 
 
 class Opponent:
@@ -226,7 +290,7 @@ def test_a_run_stops_at_the_named_step(client, game, monkeypatch):
     set_step(client, game, "upkeep")
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="end_step",
             whose_turn="mine",
@@ -234,13 +298,11 @@ def test_a_run_stops_at_the_named_step(client, game, monkeypatch):
             # halt it there - correctly, and with its own tests below. Switched
             # off so this test is about the destination and nothing else.
             stop_when_you_can_attack=False,
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
     assert result["finished"] is True
-    assert result["passes"] > 0, "a run that passed nothing did not run"
+    assert result["total_passes"] > 0, "a run that passed nothing did not run"
     assert result["state"]["step"] == "end_step"
     assert result["state"]["active_player"] == "alice"
     assert result["state"]["turn_number"] == 1, "alice's own end step is still turn 1"
@@ -259,7 +321,7 @@ def test_naming_the_step_you_are_standing_in_means_the_next_one(client, game, mo
     assert before["step"] == "upkeep" and before["active_player"] == "alice"
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="upkeep",
             whose_turn="mine",
@@ -267,8 +329,6 @@ def test_naming_the_step_you_are_standing_in_means_the_next_one(client, game, mo
             # the CR 508.1 stop has its own tests, and this one is about the
             # off-by-one.
             stop_when_you_can_attack=False,
-            max_seconds=60,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your upkeep"
@@ -293,19 +353,17 @@ def test_whose_turn_any_takes_whichever_comes_first(client, game, monkeypatch):
     set_step(client, game, "upkeep")
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="upkeep",
             whose_turn="any",
             stop_when_you_can_attack=False,  # alice's own combat is on the way
-            max_seconds=30,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached the next upkeep"
     assert result["state"]["step"] == "upkeep"
     assert result["state"]["active_player"] == "bob"
-    assert result["passes"] > 0
+    assert result["total_passes"] > 0
 
 
 # -- something new on the stack ----------------------------------------------
@@ -347,9 +405,7 @@ def test_a_spell_landing_on_the_stack_stops_the_run(client, game, monkeypatch):
     thread = threading.Thread(target=bob_bolts, daemon=True)
     thread.start()
     try:
-        result = pass_until(
-            alice, until_step="end_step", whose_turn="mine", max_seconds=20, poll_seconds=FAST_POLL
-        )
+        result = run_to_stop(alice, until_step="end_step", whose_turn="mine")
     finally:
         thread.join(timeout=10)
 
@@ -397,14 +453,12 @@ def test_a_run_told_not_to_stop_on_the_stack_runs_through_it(client, game, monke
     thread = threading.Thread(target=bob_bolts_then_passes, daemon=True)
     thread.start()
     try:
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="end_step",
             whose_turn="mine",
             stop_on_stack=False,
             stop_when_you_can_attack=False,  # alice's own combat is on the way
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
     finally:
         thread.join(timeout=1)
@@ -431,9 +485,7 @@ def test_a_run_stops_when_this_seat_is_being_attacked(client, game, monkeypatch)
     stage_an_attack_on_bob(client, game)
 
     with Opponent(game, "alice"):
-        result = pass_until(
-            bob, until_step="upkeep", whose_turn="mine", max_seconds=20, poll_seconds=FAST_POLL
-        )
+        result = run_to_stop(bob, until_step="upkeep", whose_turn="mine")
 
     # The pause freezes the board on the step `advance`/`pass-priority` was
     # called *from* - CR 509.1's turn-based action never finished, so the
@@ -462,13 +514,11 @@ def test_a_run_told_not_to_stop_when_attacked_runs_through_its_own_blockers_step
     stage_an_attack_on_bob(client, game)
 
     with Opponent(game, "alice"):
-        result = pass_until(
+        result = run_to_stop(
             bob,
             until_step="upkeep",
             whose_turn="mine",
             stop_when_attacked=False,
-            max_seconds=30,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your upkeep", result["stopped_because"]
@@ -490,9 +540,7 @@ def test_the_attacked_stop_does_not_fire_on_the_attacking_seat(client, game, mon
     stage_an_attack_on_bob(client, game)
 
     with Opponent(game, "bob"):
-        result = pass_until(
-            alice, until_step="end_step", whose_turn="mine", max_seconds=20, poll_seconds=FAST_POLL
-        )
+        result = run_to_stop(alice, until_step="end_step", whose_turn="mine")
 
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
     assert result["state"]["step"] == "end_step"
@@ -524,12 +572,10 @@ def test_a_run_stops_in_your_own_declare_attackers_step(client, game, monkeypatc
     set_step(client, game, "precombat_main")
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
 
     # Frozen on the step the pausing call was made *from* (`beginning_of_
@@ -561,12 +607,10 @@ def test_the_attackers_stop_does_not_guess_whether_anything_could_attack(client,
     assert state(client, game)["battlefield"] == [], "the point is an empty board"
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
 
     # See `test_a_run_stops_in_your_own_declare_attackers_step`'s note: the
@@ -589,13 +633,11 @@ def test_a_run_told_not_to_stop_when_you_can_attack_runs_through_its_own_combat(
     set_step(client, game, "precombat_main")
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
             stop_when_you_can_attack=False,
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your postcombat main", result["stopped_because"]
@@ -616,9 +658,7 @@ def test_the_attackers_stop_does_not_fire_on_the_defending_seat(client, game, mo
     set_step(client, game, "precombat_main")
 
     with Opponent(game, "alice"):
-        result = pass_until(
-            bob, until_step="upkeep", whose_turn="mine", max_seconds=30, poll_seconds=FAST_POLL
-        )
+        result = run_to_stop(bob, until_step="upkeep", whose_turn="mine")
 
     assert result["stopped_because"] == "reached your upkeep", result["stopped_because"]
     assert result["state"]["active_player"] == "bob"
@@ -649,16 +689,14 @@ def test_a_run_started_in_its_own_declare_attackers_step_still_moves(client, gam
     assert state(client, game)["step"] == "declare_attackers"
 
     with Opponent(game, "bob"):
-        result = pass_until(
+        result = run_to_stop(
             alice,
             until_step="postcombat_main",
             whose_turn="mine",
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached your postcombat main", result["stopped_because"]
-    assert result["passes"] > 0, "the run stopped on the state it started on - a dead call"
+    assert result["total_passes"] > 0, "the run stopped on the state it started on - a dead call"
 
 
 def test_a_run_started_in_its_own_declare_blockers_step_still_moves(client, game, monkeypatch):
@@ -685,18 +723,16 @@ def test_a_run_started_in_its_own_declare_blockers_step_still_moves(client, game
     assert board["step"] == "declare_blockers" and board["combat"]["attacks"]
 
     with Opponent(game, "alice"):
-        result = pass_until(
+        result = run_to_stop(
             bob,
             until_step="postcombat_main",
             whose_turn="any",
-            max_seconds=20,
-            poll_seconds=FAST_POLL,
         )
 
     assert result["stopped_because"] == "reached the next postcombat main", result[
         "stopped_because"
     ]
-    assert result["passes"] > 0
+    assert result["total_passes"] > 0
 
 
 def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, monkeypatch):
@@ -765,12 +801,10 @@ def test_a_decision_addressed_to_this_seat_stops_the_run(client, monkeypatch):
         try:
             pending = wait_for_pending(client, game_id, uid)
             alice = Seats(api="http://testserver", game_id=game_id).seat_for(uid)
-            result = pass_until(
+            result = run_to_stop(
                 alice,
                 until_step="end_step",
                 whose_turn="mine",
-                max_seconds=5,
-                poll_seconds=FAST_POLL,
             )
             answered = client.post(
                 f"/api/games/{game_id}/decide",
@@ -781,31 +815,97 @@ def test_a_decision_addressed_to_this_seat_stops_the_run(client, monkeypatch):
             thread.join(timeout=15)
         assert answered.status_code == 200, answered.text
         assert result["stopped_because"].startswith("a decision is waiting for you:")
-        assert result["passes"] == 0, "nothing may be passed while a decision is outstanding"
+        assert result["total_passes"] == 0, "nothing may be passed while a decision is outstanding"
         assert result["finished"] is True
     finally:
         client.delete(f"/api/games/{game_id}")
 
 
-def test_a_run_out_of_time_says_so_and_never_raises(client, game, monkeypatch):
-    """`max_seconds` is a bound, not an error. bob has no priority to pass at
-    alice's precombat main and no destination in sight, so the run simply runs
-    out of budget - and comes back as an ordinary answer telling the caller to
-    call again, the way `block_until_wake` already does."""
+# -- it returns rather than waits ---------------------------------------------
+
+
+def test_a_run_with_nothing_to_pass_hands_the_board_straight_back(client, game, monkeypatch):
+    """The replacement for the old "ran out of `max_seconds`" answer, and the
+    core of what this call now is.
+
+    bob has no priority to pass at alice's precombat main and nobody is moving.
+    The old loop slept here, one `poll_seconds` at a time, until its deadline -
+    a measured 6.0s at `max_seconds=6.0`, and an MCP client could ask for 570.
+    Now it looks once, sees there is nothing it can do without somebody else
+    acting, and returns: `finished: false`, a `resume` token, and a reason
+    saying so. This asserts against wall-clock time deliberately - the whole
+    defect was time spent inside one call."""
     seats, uids = wired(monkeypatch, game)
     bob = seats.seat_for(uids["bob"])
     set_step(client, game, "precombat_main")
 
     started = time.monotonic()
-    result = pass_until(
-        bob, until_step="end_step", whose_turn="mine", max_seconds=0.2, poll_seconds=FAST_POLL
-    )
+    result = pass_until(bob, until_step="end_step", whose_turn="mine")
+    elapsed = time.monotonic() - started
 
-    assert time.monotonic() - started < 10
+    assert elapsed < MAX_CALL_SECONDS, f"it waited {elapsed:.1f}s instead of returning"
     assert result["finished"] is False
-    assert "timed out after 0.2s" in result["stopped_because"]
-    assert "call again to keep going" in result["stopped_because"]
+    assert "you do not hold priority" in result["stopped_because"]
+    assert "Call again" in result["stopped_because"]
     assert result["passes"] == 0
+    assert result["resume"], "an unfinished run has to say how to continue it"
+
+
+def test_a_run_returns_promptly_even_though_the_opponent_never_acts(client, game, monkeypatch):
+    """The same property while the seat genuinely does have work to do: alice
+    holds priority, passes it, and then - with no `Opponent` thread anywhere in
+    this test - has nothing left to do but wait. It does not wait. This is the
+    exact shape the finding measured at 6.0s."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    started = time.monotonic()
+    result = pass_until(
+        alice, until_step="end_step", whose_turn="mine", stop_when_you_can_attack=False
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < MAX_CALL_SECONDS, f"it waited {elapsed:.1f}s for an opponent that never moved"
+    assert result["finished"] is False
+    assert result["passes"] >= 1, "it should still have passed the priority it did hold"
+    assert result["state"]["priority_holder"] == "bob"
+
+
+def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, game, monkeypatch):
+    """What the `resume` token is for, and why `pass_until` cannot simply
+    re-stamp itself on every call.
+
+    `start_autopass` exempts the occurrence a run *began* in from every stop -
+    otherwise "auto-pass past combat", asked from inside combat, would stop
+    before it moved at all. Under one long blocking call that stamp was taken
+    once. Under poll-and-return the run spans several calls, and a call that
+    happened to begin while sitting on this seat's own `declare_attackers`
+    pause would re-stamp the exemption onto it and pass straight through the
+    attack - silently, which is the whole reason CR 508.1's stop exists
+    (`autopass_stop_reason`'s own docstring). Carrying the token forward is
+    what keeps it one run.
+
+    alice runs from her upkeep to her postcombat main with every stop on; the
+    run must stop at her own declare-attackers step no matter how many calls it
+    took to get there."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    a_bear_that_can_attack(client, game, "alice")
+    set_step(client, game, "upkeep")
+
+    with Opponent(game, "bob"):
+        result = run_to_stop(alice, until_step="postcombat_main", whose_turn="mine")
+
+    assert result["calls"] > 1, (
+        "this test is only meaningful if the run really did span several calls"
+    )
+    assert "it is your declare-attackers step" in result["stopped_because"], result[
+        "stopped_because"
+    ]
+    assert "CR 508.1" in result["stopped_because"]
 
 
 # -- naming a destination that cannot be run to ------------------------------
@@ -853,6 +953,75 @@ def fresh_game(client: TestClient) -> str:
     return response.json()["game_id"]
 
 
+def answer_text(raw: Any) -> str:
+    """One tool answer as text, whichever wire shape it arrived in.
+
+    A run that stops *on* a decision addressed to this seat now comes back as
+    an `InputRequiredResult` (`mcp._tool_result`), not a `CallToolResult` - the
+    CR 509.1 stop this parity test uses is exactly such a decision, so the
+    comparison has to read both shapes rather than assume the plain one.
+    """
+    if isinstance(raw, InputRequiredResult):
+        assert raw.request_state is not None
+        return raw.request_state
+    return raw.content[0].text
+
+
+def drive_mcp(server: Any, uid: str) -> dict[str, Any]:
+    """`pass_priority(until=...)` through the MCP tool, driven to its stop the
+    way an agent must now drive it: hand `resume` back until `finished`."""
+    resume = ""
+    for _ in range(200):
+        answer = json.loads(
+            answer_text(
+                asyncio.run(
+                    server.call_tool(
+                        "pass_priority",
+                        {
+                            "player_uid": uid,
+                            "until": "upkeep",
+                            "until_whose_turn": "mine",
+                            "resume": resume,
+                        },
+                    )
+                )
+            )
+        )
+        if answer["finished"]:
+            return answer
+        resume = json.dumps(answer["resume"])
+        time.sleep(FAST_POLL)
+    raise AssertionError("the mcp front end never finished its run")
+
+
+def drive_cli(capsys: Any, uid: str, game_id: str) -> dict[str, Any]:
+    """The same run through `seat_cli pass --until`, driven the same way."""
+    resume = ""
+    for _ in range(200):
+        argv = [
+            "--uid",
+            uid,
+            "--game",
+            game_id,
+            "pass",
+            "--until",
+            "upkeep",
+            "--until-whose-turn",
+            "mine",
+        ]
+        if resume:
+            argv += ["--resume", resume]
+        rc = seat_cli.run(argv)
+        printed = capsys.readouterr().out
+        assert rc == 0, printed
+        answer = json.loads(printed)
+        if answer["finished"]:
+            return answer
+        resume = json.dumps(answer["resume"])
+        time.sleep(FAST_POLL)
+    raise AssertionError("the cli front end never finished its run")
+
+
 def test_both_front_ends_stop_in_the_same_place_for_the_same_run(client, monkeypatch, capsys):
     """The parity half, in the style of `tests/test_front_end_parity.py`: the
     MCP tool and the CLI command run the same board to the same stop, because
@@ -870,37 +1039,9 @@ def test_both_front_ends_stop_in_the_same_place_for_the_same_run(client, monkeyp
             with Opponent(game_id, "alice"):
                 if front_end == "mcp":
                     server = build_server(Seats(api="http://testserver", game_id=game_id))
-                    raw = asyncio.run(
-                        server.call_tool(
-                            "pass_priority",
-                            {
-                                "player_uid": uids["bob"],
-                                "until": "upkeep",
-                                "until_whose_turn": "mine",
-                                "max_seconds": 20,
-                            },
-                        )
-                    )
-                    answers[front_end] = json.loads(raw.content[0].text)
+                    answers[front_end] = drive_mcp(server, uids["bob"])
                 else:
-                    rc = seat_cli.run(
-                        [
-                            "--uid",
-                            uids["bob"],
-                            "--game",
-                            game_id,
-                            "pass",
-                            "--until",
-                            "upkeep",
-                            "--until-whose-turn",
-                            "mine",
-                            "--max-seconds",
-                            "20",
-                        ]
-                    )
-                    printed = capsys.readouterr().out
-                    assert rc == 0, printed
-                    answers[front_end] = json.loads(printed)
+                    answers[front_end] = drive_cli(capsys, uids["bob"], game_id)
         finally:
             client.delete(f"/api/games/{game_id}")
 

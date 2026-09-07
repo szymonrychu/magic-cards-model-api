@@ -189,9 +189,7 @@ def test_the_seat_cli_activate_omits_targets_key_and_gets_asked(monkeypatch, cap
                 assert pending is not None, "activating never asked alice for a target"
                 assert pending["kind"] == "choose_targets"
 
-                rc = seat_cli.run(
-                    ["--uid", uids["alice"], "--game", game_id, "wait", "--max-seconds", "3"]
-                )
+                rc = seat_cli.run(["--uid", uids["alice"], "--game", game_id, "wait"])
                 assert rc == 0
                 printed = capsys.readouterr().out
                 assert "a decision is waiting for you" in printed

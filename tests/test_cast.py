@@ -89,9 +89,11 @@ def test_an_allowed_dry_run_leaves_the_stack_clean(client, game):
     happens before anything knows whether the cost can be paid - so an
     affordable probe puts the card on the stack exactly as an unaffordable
     one does, and has exactly as much to rewind (CR 601.6, CR 733.1). This
-    path is the hot one: `seatkit.available_actions` dry-runs every card in
-    hand on every poll, and the castable ones are the ones that come back
-    `allowed: true`.
+    path used to be the hot one: before T11 pointed `seatkit.available_actions`
+    at the engine's own enumeration instead, it dry-ran every card in hand on
+    every poll, and the castable ones were the ones that came back
+    `allowed: true`. `actions/cast?dry_run=true` is still a real, directly
+    callable request shape either way, so this still needs pinning.
     """
     add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Lightning Bolt", "alice", "hand")

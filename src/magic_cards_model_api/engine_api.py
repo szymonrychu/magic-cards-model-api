@@ -1074,6 +1074,18 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
 
     listed = []
     for index, ability in enumerate(abilities):
+        # The colours `Game.activate_ability` would actually accept for this
+        # ability right now (CR 605.1a) - the same call
+        # `machines.legal_actions` builds `Action.color_options` from, asked
+        # once here and handed to `ability_hints` rather than letting that
+        # module keep its own looser reading of the printed text. Only for a
+        # mana ability: `mana_color_options` returns `()` for anything else,
+        # and skipping the call for the rest keeps this off the board scan.
+        color_options = (
+            game.mana_color_options(state, index)
+            if getattr(ability, "mana", None) is not None
+            else ()
+        )
         listed.append(
             {
                 "index": index,
@@ -1086,18 +1098,38 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 # an empty target list for the one that targets is read by the
                 # engine as "I choose none" rather than "not chosen yet" - see
                 # `affordances.py`'s module docstring.
-                **ability_hints(ability),
+                **ability_hints(ability, color_options),
             }
         )
     if any(entry["mana"] for entry in listed):
         return listed
     for offset, ability in enumerate(parse_mana_abilities(state.card)):
+        # The one shape `mana_color_options` cannot answer: these abilities
+        # are parsed off the printed card and are NOT in
+        # `game.activated_abilities(state)` at all (see this function's own
+        # docstring), so there is no index for the engine to look one up by.
+        # The printed reading stays here, and only here.
+        parsed = getattr(ability, "mana", None)
+        if parsed is not None and parsed.any_color:
+            # CR 106.1b's five colours; `Color.COLORLESS` is not one of them
+            # and "any color" never offers it.
+            printed: tuple[Color, ...] = (
+                Color.WHITE,
+                Color.BLUE,
+                Color.BLACK,
+                Color.RED,
+                Color.GREEN,
+            )
+        elif parsed is not None and len(parsed.options) > 1:
+            printed = tuple({color for option in parsed.options for color in option})
+        else:
+            printed = ()
         listed.append(
             {
                 "index": len(abilities) + offset,
                 "text": _mana_ability_text(ability),
                 "mana": True,
-                **ability_hints(ability),
+                **ability_hints(ability, printed),
             }
         )
     return listed

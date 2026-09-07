@@ -117,7 +117,6 @@ def test_activating_a_mana_ability_keeps_priority_and_the_mana(client, game, mon
             {"player": "alice", "card_id": forest, "ability_index": 0},
         ),
         hold_priority=False,
-        max_seconds=2,
     )
 
     assert result["outcome"]["allowed"] is True, result
@@ -191,7 +190,6 @@ def test_an_ability_that_uses_the_stack_still_releases(client, game, monkeypatch
             },
         ),
         hold_priority=False,
-        max_seconds=2,
     )
 
     assert result["outcome"]["allowed"] is True, result

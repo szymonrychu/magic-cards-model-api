@@ -128,7 +128,7 @@ def test_run_action_never_reports_an_unknown_outcome_as_an_ordinary_refusal(
             "unknown_outcome": True,
         }
 
-    result = seatkit.run_action(seat, perform, hold_priority=False, max_seconds=1.0)
+    result = seatkit.run_action(seat, perform, hold_priority=False)
 
     assert result["wake_reason"] == seatkit.UNKNOWN_OUTCOME
     assert result["held_priority"] is None, "cannot claim to hold or not hold what it cannot see"

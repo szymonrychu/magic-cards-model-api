@@ -396,6 +396,7 @@ action only when allowed and `dry_run` is not set.
 | `POST /api/games/{id}/actions/cycle` | `{player, card_id | card, ability_index? (default 0), mana_sources?, dry_run?}` - CR 702.29a: discard a card with cycling from hand to draw (or typecycle); puts the ability on the stack |
 | `POST /api/games/{id}/actions/attack` | `{attackers: [{card_id, defender: username or planeswalker card_id}], dry_run?}` |
 | `POST /api/games/{id}/actions/play-land` | `{player, card_id | card}` - the land-drop rules come with it |
+| `GET /api/games/{id}/legal-actions?player=&uid=` | `{actions: [Action, ...]}` - every action `player` could legally take right now (`machines.legal_actions`), not just the ones above: `pass_priority`/`concede` always included, `answer_decision`-only while a decision is pending for that player. Each `Action` carries `affordable: "yes"\|"no"\|"unknown"` and `unaffordable_reason` alongside its `kind` (CR 118.6: an unpayable action is still a legal one, so nothing here is dropped for being unaffordable) - what `seatkit.available_actions` calls instead of dry-running every candidate itself. `uid` must open `player`'s own seat (or be the game's admin key): the answer is that seat's hidden information - each hand card by id, its cost, its origin zone and whether it can be paid for - so any other caller is refused with 400 rather than answered empty, which an empty pool would be indistinguishable from |
 
 ### Running the game forward
 

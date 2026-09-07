@@ -4,8 +4,10 @@ The same seat `mcp.py` exposes, sharing the same "one call, one meaningful
 action" flow (`seatkit.run_action`): the same hidden-information filter - the
 opponent's hand and both libraries never appear - and the same
 cast/play-land/activate/attackers/blockers/resolve/advance/decide/pass
-behaviour: perform the action, then block until this seat next has something
-to do, printing the outcome and the state it woke into together.
+behaviour: perform the action, then check once for this seat's next moment
+to act (poll-and-return - see `seatkit.block_until_wake`'s own docstring),
+printing the outcome and whatever state that check saw together. `wait`
+checks the same way with no action of its own; run it again to keep checking.
 
 Whether priority is released on your behalf first is NOT uniform, and this
 file and `mcp.py` must agree on it command for command:
@@ -45,7 +47,6 @@ from .seatkit import (
     AUTOPASS_STEPS,
     AUTOPASS_WHOSE_TURN,
     DEFAULT_API,
-    DEFAULT_MAX_SECONDS,
     Seats,
     _parse_ids,
     _parse_pairs,
@@ -103,32 +104,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("state", help="the game as you may see it, right now")
 
-    wait = sub.add_parser("wait", help="block until it is your moment to act")
-    wait.add_argument(
-        "--max-seconds",
-        type=float,
-        default=570.0,
-        help="per-call bound; call again to keep waiting",
+    sub.add_parser(
+        "wait",
+        help=(
+            "check once whether it is your moment to act, and return - this "
+            "never waits, so run it again to keep checking"
+        ),
     )
 
-    def blocking(command: Any) -> None:
-        """Every action shares these two: hold priority instead of blocking,
-        and the bound on how long a block may last."""
+    def priority_flag(command: Any) -> None:
+        """The one flag every action shares: keep priority instead of
+        releasing it.
+
+        There is no companion `--max-seconds` any more, and this function is
+        no longer called `blocking`, because nothing here blocks: an action
+        performs, releases priority unless `--hold`, then checks once for
+        this seat's next moment to act and prints what it saw
+        (`seatkit.run_action`, poll-and-return). The old flag bounded a wait
+        that no longer exists, and its help text ("bound on the block that
+        follows the action") was the last place still telling a seat
+        otherwise.
+        """
         command.add_argument(
             "--hold",
             action="store_true",
             help=(
                 "keep priority instead of releasing it (CR 117.3c: you already "
-                "keep it after acting) - never blocks. play-land, suspend, plot, "
+                "keep it after acting). Neither way waits for anything - run "
+                "the command again to keep checking. play-land, suspend, plot, "
                 "foretell and cycle hold with or without this; activate holds "
                 "with or without it when the ability was a mana ability"
             ),
-        )
-        command.add_argument(
-            "--max-seconds",
-            type=float,
-            default=DEFAULT_MAX_SECONDS,
-            help="bound on the block that follows the action, unless --hold",
         )
 
     cast = sub.add_parser("cast", help="cast a spell (hand, or graveyard/exile with --keyword)")
@@ -160,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Flames) needs no --keyword: it is picked up automatically."
         ),
     )
-    blocking(cast)
+    priority_flag(cast)
 
     def special_action(name: str, help_text: str) -> Any:
         """suspend/plot/foretell share this shape: name or id of a hand card,
@@ -176,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(
             "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
         )
-        blocking(parser)
+        priority_flag(parser)
         return parser
 
     special_action(
@@ -203,11 +209,11 @@ def build_parser() -> argparse.ArgumentParser:
     cycle.add_argument(
         "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
     )
-    blocking(cycle)
+    priority_flag(cycle)
 
     land = sub.add_parser("play-land", help="play a land from your hand")
     land.add_argument("card", help="card name or id")
-    blocking(land)
+    priority_flag(land)
 
     activate = sub.add_parser(
         "activate",
@@ -233,15 +239,15 @@ def build_parser() -> argparse.ArgumentParser:
     activate.add_argument(
         "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
     )
-    blocking(activate)
+    priority_flag(activate)
 
     attackers = sub.add_parser("attackers", help="declare attackers (JSON list)")
     attackers.add_argument("pairs", help='[{"card": "<id>", "defender": "<player>"}]')
-    blocking(attackers)
+    priority_flag(attackers)
 
     blockers = sub.add_parser("blockers", help="declare blockers (JSON list)")
     blockers.add_argument("pairs", help='[{"blocker": "<id>", "blocked": "<id>"}]')
-    blocking(blockers)
+    priority_flag(blockers)
 
     decide = sub.add_parser("decide", help="answer your pending decision (CR 608.2d)")
     decide.add_argument(
@@ -370,14 +376,21 @@ def build_parser() -> argparse.ArgumentParser:
             "pending_decision.prompt numbers those positionally against cards"
         ),
     )
-    blocking(decide)
+    priority_flag(decide)
 
     passer = sub.add_parser("pass", help="pass priority - 'I am done for now'")
     passer.add_argument(
-        "--max-seconds",
-        type=float,
-        default=DEFAULT_MAX_SECONDS,
-        help="bound on the block that follows",
+        "--resume",
+        default="",
+        metavar="JSON",
+        help=(
+            "the `resume` object a previous `--until` run printed, handed back "
+            "verbatim, so this call continues that run instead of starting a "
+            "new one. A run prints one whenever its `finished` is false; "
+            "without it the next call re-stamps the run where you are standing "
+            "now and would skip the very combat step it should stop you at "
+            "(see seatkit.pass_until)"
+        ),
     )
     passer.add_argument(
         "--until",
@@ -385,8 +398,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="STEP",
         help=(
             f"one of: {', '.join(AUTOPASS_STEPS)}. "
-            "Keep passing every priority you are given until this step, "
-            "instead of handing back one priority at a time. Naming the step "
+            "Keep passing every priority you currently hold until this step, "
+            "instead of handing back one priority at a time. This waits for "
+            "nothing either: it returns the moment it would have to wait for "
+            "your opponent, printing finished=false and a --resume token to "
+            "carry on with. Naming the step "
             "you are standing in means its NEXT occurrence, never this one - "
             "'--until upkeep' asked in your upkeep passes a whole turn round. "
             "untap and cleanup are not offered: nobody receives priority in "
@@ -442,10 +458,10 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = sub.add_parser(
         "resolve", help="resolve the top of the stack (only if a pass left it unresolved)"
     )
-    blocking(resolve)
+    priority_flag(resolve)
 
     advance = sub.add_parser("advance", help="move through untap/cleanup on your own turn")
-    blocking(advance)
+    priority_flag(advance)
 
     step = sub.add_parser("set-step", help="jump the turn marker to a named step")
     step.add_argument("step")
@@ -570,7 +586,7 @@ def run(argv: list[str] | None = None) -> int:
             print(json.dumps(perform(), indent=1, sort_keys=True))
             return
         hold = args.hold or args.command in SPECIAL_ACTIONS
-        result = run_action(seat, perform, hold_priority=hold, max_seconds=args.max_seconds)
+        result = run_action(seat, perform, hold_priority=hold)
         print(json.dumps(result, indent=1, sort_keys=True))
         note(result.get("state") if isinstance(result, dict) else None)
 
@@ -579,7 +595,7 @@ def run(argv: list[str] | None = None) -> int:
         print(json.dumps(current, indent=1, sort_keys=True))
         note(current)
     elif args.command == "wait":
-        woken = block_until_wake(seat, before=None, max_seconds=args.max_seconds)
+        woken = block_until_wake(seat, before=None)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         print(json.dumps(woken["state"], indent=1, sort_keys=True))
         note(woken["state"])
@@ -690,7 +706,7 @@ def run(argv: list[str] | None = None) -> int:
             stop_on_stack=not args.no_stop_on_stack,
             stop_when_attacked=not args.no_stop_when_attacked,
             stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
-            max_seconds=args.max_seconds,
+            resume=json.loads(args.resume) if args.resume else None,
         )
         print(json.dumps(result, indent=1, sort_keys=True))
         note(result.get("state"))
@@ -701,7 +717,6 @@ def run(argv: list[str] | None = None) -> int:
                 "POST", f"/api/games/{gid}/actions/pass-priority", {"player": seat.player}
             ),
             hold_priority=False,
-            max_seconds=args.max_seconds,
             release=False,
         )
         print(json.dumps(result, indent=1, sort_keys=True))

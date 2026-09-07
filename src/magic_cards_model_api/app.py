@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
+from magic_cards_model.machines.legal_actions import legal_actions as compute_legal_actions
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 
@@ -828,6 +829,71 @@ def get_affordances(
     if object_costs:
         result["object_costs"] = object_costs
     return result
+
+
+@app.get("/api/games/{game_id}/legal-actions")
+def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict[str, Any]:
+    """Every action `player` could legally take right now
+    (`machines.legal_actions.legal_actions`, Phase 1) - the api's own door
+    onto the engine's enumeration surface, and what `seatkit.available_actions`
+    calls instead of brute-forcing one HTTP `dry_run` per candidate (T11).
+
+    Each entry carries the engine's own `affordable` verdict
+    (`"yes"`/`"no"`/`"unknown"`) alongside its legality - CR 118.6: an
+    unpayable cast is still a legal one, so it is still listed, never dropped.
+    `"unknown"` is a real, distinct answer (a modal or X spell before its
+    parameters are announced) and is reported as such rather than folded into
+    `"no"`, which is the whole reason this replaces the old probe: a dry run
+    can only ever say yes or no, never "I cannot tell yet".
+
+    Reads whichever decision is currently paused for this game straight off
+    the repository's own paused-command slot (`store.paused_command`, the
+    same source `serialize.state_view`'s own `pending_decision` reads from)
+    and hands it to `legal_actions` as `pending` - when one is outstanding,
+    the answer is that decision's own legal answers and nothing else, for
+    the player it addresses only (`legal_actions`'s own module docstring).
+
+    **`uid` must open `player`'s own seat, or be this game's admin key.**
+    Every action here is `player`'s own by construction - hand cards,
+    controlled permanents, that player's own graveyard/exile cast options -
+    and that is exactly why this is hidden information rather than why it is
+    not: the answer names each card in the seat's hand by id, its exact cost,
+    the zone it would be cast from, what it would target, and whether that
+    seat can pay for it. `player` is a bare query parameter with nothing
+    authenticating it, so without this check naming the opponent was enough
+    to read their hand out of the answer - while `GET /api/games/{game_id}`,
+    one route up, correctly hands the same caller `hands.<opponent> == []`.
+    `visibility.py` is the rule that binds both: "a caller that presents
+    nothing must never see more than one that presents garbage, and neither
+    may see more than one that presents someone else's seat".
+
+    `get_affordances` needs no such guard and is not a precedent for
+    skipping one: every candidate it names is an object in a public zone
+    (CR 400.2) or a player, so there is nothing hidden in its answer to
+    begin with.
+
+    Refused rather than answered empty, and this is the deliberate half of
+    the choice: `{"actions": []}` is a real answer this endpoint gives (a
+    seat has nothing legal while a decision addressed to the *other* player
+    stands - see `legal_actions`'s own docstring), so redacting to an empty
+    list would make "you may not ask that" indistinguishable from "there is
+    nothing you can do", which is precisely the ambiguity
+    `seatkit.available_actions` must be able to tell apart. The refusal is
+    the api's own existing shape for a credential that does not open what it
+    names - `ValueError` -> 400, the same as `pregame_settle`'s admin-key
+    check - rather than a 403, which appears nowhere else in this api.
+    """
+    game = game_or_404(game_id)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer is not visibility.ADMIN and viewer != player:
+        raise ValueError(
+            f"that uid does not open {player}'s seat - these are that player's own "
+            "legal actions, and naming them is not enough to read them"
+        )
+    paused = store.paused_command(game_id)
+    pending = paused[2] if paused is not None else None
+    actions = compute_legal_actions(game, player, pending=pending)
+    return {"actions": [action.model_dump(mode="json") for action in actions]}
 
 
 @app.post("/api/games/{game_id}/actions/concede")

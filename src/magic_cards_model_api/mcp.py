@@ -18,10 +18,19 @@ the API directly (skipping this process) got the unfiltered one instead.
 Every action tool below - `cast`, `play_land`, `suspend`, `plot`, `foretell`,
 `cycle`, `activate`, `declare_attackers`, `declare_blockers`, `resolve_top`,
 `advance`, `decide`, `pass_priority` - is "one call, one meaningful action":
-it performs the action, blocks until this seat next has something to do, and
-returns the outcome plus the state it woke into, all in one answer. The whole
-flow (wake conditions, `hold_priority`, the no-deadlock invariant) lives in
-`seatkit.run_action`, shared with `seat_cli.py` - see that module's docstring.
+it performs the action, checks once for this seat's next moment to act, and
+returns the outcome plus whatever state that check saw, all in one answer.
+This never blocks - MCP protocol revision 2026-07-28 removed resumability
+(SEP-2577), so a tool call that holds the request open waiting for something
+to happen loses it outright if the underlying stream breaks mid-wait -
+poll-and-return instead (`seatkit.block_until_wake`'s own docstring): call
+again to keep checking. A decision pending for the caller - whether this
+very call raised it or something else did - arrives shaped `input_required`
+(`InputRequiredResult`, `result_type: "input_required"` on the wire) rather
+than as plain text a caller could skim past. The whole flow (wake
+conditions, `hold_priority`, the no-deadlock invariant, the
+`input_required` shaping) lives in `seatkit.run_action`/`mcp._tool_result`,
+shared with `seat_cli.py` - see that module's docstring.
 
 Whether the harness auto-passes priority on the seat's behalf is NOT uniform,
 and the tools that differ say so in capitals in their own docstrings:
@@ -69,12 +78,12 @@ from typing import Any
 
 import httpx
 from mcp.server.mcpserver import MCPServer
+from mcp_types import InputRequiredResult
 
 from . import seatkit
 from .seatkit import (
     _UUID,
     DEFAULT_API,
-    DEFAULT_MAX_SECONDS,
     NO_SUCH_SEAT,
     Seat,
     Seats,
@@ -118,42 +127,83 @@ def build_server(seats: Seats) -> MCPServer:
     def resolve(player_uid: str) -> Seat | None:
         return seats.seat_for(player_uid)
 
+    def _tool_result(seat: Seat, payload: dict[str, Any]) -> str | InputRequiredResult:
+        """Shape one tool's JSON answer, surfacing a decision pending for
+        this very seat as an MCP 2026-07-28 `input_required` result
+        (`InputRequiredResult`, `result_type: "input_required"` on the wire)
+        instead of plain text.
+
+        `payload` is either a whole state view (`wait_for_priority`) or a
+        `run_action` result carrying one under `"state"` (every action tool,
+        via `act`) - either shape puts `pending_decision` at the same key a
+        level down from `payload` itself: `payload["pending_decision"]` for
+        the former, `payload["state"]["pending_decision"]` for the latter.
+        Checking both, rather than requiring a caller to say which shape it
+        has, is what lets `wait_for_priority` and `act` share this one
+        function instead of each hand-rolling the same check - a duplicate
+        this project has paid for twice before (this module's own
+        docstring).
+
+        Only a decision addressed to *this* seat gets the treatment: one
+        pending for the opponent is not this call's business to interrupt
+        for, and comes back as ordinary text the same as "nothing new yet".
+        An MCP client that understands the 2026-07-28 surface can branch on
+        `resultType` without parsing prose; one that does not still gets a
+        answer either way - `InputRequiredResult` is a distinct wire shape,
+        never a crash for an older client, since `MCPServer` dispatches
+        `CallToolResult`/`InputRequiredResult` by declared return type per
+        tool (`Tool.from_function`'s own registration check)."""
+        state = payload.get("state") if "state" in payload else payload
+        pending = state.get("pending_decision") if isinstance(state, dict) else None
+        text = json.dumps(payload, indent=1, sort_keys=True)
+        if isinstance(pending, dict) and pending.get("player") == seat.player:
+            return InputRequiredResult(request_state=text)
+        return text
+
     def act(
         seat: Seat,
         perform: Any,
         hold_priority: bool,
-        max_seconds: float,
         release: bool = True,
-    ) -> str:
-        result = run_action(
-            seat, perform, hold_priority=hold_priority, max_seconds=max_seconds, release=release
-        )
-        return json.dumps(result, indent=1, sort_keys=True)
+    ) -> str | InputRequiredResult:
+        result = run_action(seat, perform, hold_priority=hold_priority, release=release)
+        return _tool_result(seat, result)
 
     @server.tool()
     @_guarded(seats)
-    def wait_for_priority(player_uid: str, max_seconds: float = 570.0) -> str:
-        """Block until it is your moment to act, then hand you the board.
+    def wait_for_priority(player_uid: str) -> str | InputRequiredResult:
+        """Check once whether it is your moment to act, then hand you the
+                board - never blocks.
 
-        Returns as soon as one of these holds:
-        - a decision is waiting for you (CR 608.2d - use decide() to answer),
-        - you have priority (act, or pass_priority),
-        - the game is over (a winner is set, or it is a draw),
-        - the step gives nobody priority (untap, cleanup) and you are the
-          active player - your move is to advance the turn.
+                The check looks for exactly one of these, right now:
+                - a decision is waiting for you (CR 608.2d - use decide() to answer;
+                  the answer itself arrives shaped `input_required` rather than
+                  plain text, so an MCP client that understands the 2026-07-28
+                  surface can tell at a glance that this call cannot go further
+                  until you resolve it),
+                - you have priority (act, or pass_priority),
+                - the game is over (a winner is set, or it is a draw),
+                - the step gives nobody priority (untap, cleanup) and you are the
+                  active player - your move is to advance the turn.
 
-        Bounded by `max_seconds` (default 570s): on expiry the answer's
-        `wake_reason` says "timed out" and carries the current state anyway -
-        call again to keep waiting. Every other action tool already blocks
-        the same way after it runs, so you normally do not need this
-        separately - it exists for "I have done nothing yet, is it my turn".
+        This used to poll for up to a caller-given `max_seconds` (570s by
+                default), holding one request open the whole time; that parameter is
+                gone rather than kept and documented as inert. MCP protocol revision
+                2026-07-28 removed resumability (SEP-2577), so a call that blocks like
+                that loses the request outright if the underlying stream breaks
+                mid-wait - poll-and-return instead: one check, one answer, always.
+                When nothing is new, the state's own `wake_reason` says so
+                plainly (`nothing new yet - call again to check`) rather than making
+                you wait to hear it. Every other action tool already checks the same
+                way right after it runs, so you normally do not need this
+                separately - it exists for "I have done nothing yet, is it my turn".
         """
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        woken = seatkit.block_until_wake(seat, before=None, max_seconds=max_seconds)
+        woken = seatkit.block_until_wake(seat, before=None)
         woken["state"]["wake_reason"] = woken["wake_reason"]
-        return json.dumps(woken["state"], indent=1, sort_keys=True)
+        return _tool_result(seat, woken["state"])
 
     @server.tool()
     @_guarded(seats)
@@ -201,54 +251,64 @@ def build_server(seats: Seats) -> MCPServer:
         keyword: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Cast a spell. Most casts are from your hand, and need nothing
-        else; `card` is the card's name or id. `targets` is comma-separated
-        card ids or player names. `mana_sources` is comma-separated source
-        ids; leave it empty to offer all your untapped mana sources (the
-        engine taps only what the cost needs). Set `dry_run` to true to ask
-        "could I cast this?" without changing anything (a dry run never
-        blocks).
+                else; `card` is the card's name or id. `targets` is comma-separated
+                card ids or player names. `mana_sources` is comma-separated source
+                ids; leave it empty to offer all your untapped mana sources (the
+                engine taps only what the cost needs). Set `dry_run` to true to ask
+                "could I cast this?" without changing anything (a dry run never
+                blocks).
 
-        A card sitting in your graveyard or exile is castable too, but only
-        under a *named* permission (CR 601.3: "a player can begin to cast a
-        spell only if a rule or effect allows that player to cast it"), and
-        `keyword` is how you name it. Read your `my_state`'s graveyard/exile
-        card - `cast_options` names every keyword that card currently offers,
-        alongside the cost it would pay - rather than guessing; the keywords
-        this engine knows are:
+                A card sitting in your graveyard or exile is castable too, but only
+                under a *named* permission (CR 601.3: "a player can begin to cast a
+                spell only if a rule or effect allows that player to cast it"), and
+                `keyword` is how you name it. Read your `my_state`'s graveyard/exile
+                card - `cast_options` names every keyword that card currently offers,
+                alongside the cost it would pay - rather than guessing; the keywords
+                this engine knows are:
 
-        - `"Flashback"` - a GRAVEYARD card with flashback (CR 702.34a).
-        - `"Mayhem"` - a GRAVEYARD card with mayhem, discarded this turn
-          (CR 702.187a/b).
-        - `"Plot"` - an EXILE card you plotted on an earlier turn
-          (CR 702.170d) - `exile_pile` on the card names which.
-        - `"Foretell"` - an EXILE card you foretold on an earlier turn
-          (CR 702.143a).
-        - `"Madness"` - an EXILE card put there by its own madness trigger
-          this turn (CR 702.35a/b).
-        - `"Airbend"` - an EXILE card an airbend effect exiled, for {2}
-          (CR 701.65a).
-        - a printed sentence opening one of the above from an extra zone
-          (CR 604.6/CR 113.6f), or a keyword another permanent's static
-          ability is granting the spell right now (CR 610.5, CR 611.3d) -
-          `keyword` is still that keyword's own name either way.
+                - `"Flashback"` - a GRAVEYARD card with flashback (CR 702.34a).
+                - `"Mayhem"` - a GRAVEYARD card with mayhem, discarded this turn
+                  (CR 702.187a/b).
+                - `"Plot"` - an EXILE card you plotted on an earlier turn
+                  (CR 702.170d) - `exile_pile` on the card names which.
+                - `"Foretell"` - an EXILE card you foretold on an earlier turn
+                  (CR 702.143a).
+                - `"Madness"` - an EXILE card put there by its own madness trigger
+                  this turn (CR 702.35a/b).
+                - `"Airbend"` - an EXILE card an airbend effect exiled, for {2}
+                  (CR 701.65a).
+                - a printed sentence opening one of the above from an extra zone
+                  (CR 604.6/CR 113.6f), or a keyword another permanent's static
+                  ability is granting the spell right now (CR 610.5, CR 611.3d) -
+                  `keyword` is still that keyword's own name either way.
 
-        A card you `suspend`d needs no `keyword`: once its last time counter
-        is off (see `advance`'s `suspend_upkeep`), the free cast it grants is
-        picked up automatically as a live `PlayPermission` - the same is true
-        of cascade and Past in Flames, and `play_permissions` in your state
-        names every one that is currently live for you.
+                A card you `suspend`d needs no `keyword`: once its last time counter
+                is off (see `advance`'s `suspend_upkeep`), the free cast it grants is
+                picked up automatically as a live `PlayPermission` - the same is true
+                of cascade and Past in Flames, and `play_permissions` in your state
+                names every one that is currently live for you.
 
         Otherwise this does the whole turn of events in one call: cast, then
-        - unless `hold_priority` is true - release priority and block until
-        you next have something to do (`max_seconds` bounds the wait). The
-        answer carries the cast's own outcome, the state you woke into, and a
-        `wake_reason`. Set `hold_priority` to cast again, or to respond to
-        your own spell, without giving up the chance to act again first (CR
-        117.3c: you already keep priority after casting - this only decides
-        whether the harness auto-passes it for you)."""
+                - unless `hold_priority` is true - release priority and check once
+                for your next moment to act. **No tool in this server ever blocks or
+                waits**, this one included (poll-and-return - MCP 2026-07-28 removed
+                resumability, `seatkit.block_until_wake`'s own docstring); there is no
+                `max_seconds` on any of them, because there is nothing left for one to
+                bound. If `wake_reason` says "nothing new yet",
+                call this (or `wait_for_priority`) again to keep checking. The
+                answer carries the cast's own outcome, the state that check saw, and
+                that `wake_reason` - except when the check finds a decision pending
+                for you (yours to answer with `decide`, whether this cast itself
+                raised it or something else did), in which case the whole answer
+                arrives shaped `input_required` instead of plain text (an
+                `InputRequiredResult`, `result_type: "input_required"` on the wire) -
+                every tool built on this same flow shares that shape, not just this
+                one. Set `hold_priority` to cast again, or to respond to your own
+                spell, without giving up the chance to act again first (CR 117.3c:
+                you already keep priority after casting - this only decides whether
+                the harness auto-passes it for you)."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -275,7 +335,7 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cast", body)
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     def _special_action_tool(action: str) -> Any:
         """suspend/plot/foretell share `cast`'s exact shape, minus targeting
@@ -289,8 +349,7 @@ def build_server(seats: Seats) -> MCPServer:
             mana_sources: str = "",
             dry_run: bool = False,
             hold_priority: bool = False,
-            max_seconds: float = DEFAULT_MAX_SECONDS,
-        ) -> str:
+        ) -> str | InputRequiredResult:
             seat = resolve(player_uid)
             if seat is None:
                 return NO_SUCH_SEAT
@@ -309,7 +368,7 @@ def build_server(seats: Seats) -> MCPServer:
             def perform() -> Any:
                 return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/{action}", body)
 
-            return act(seat, perform, hold_priority, max_seconds)
+            return act(seat, perform, hold_priority)
 
         return tool
 
@@ -321,8 +380,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
         its suspend cost, with N time counters on it. `card` is the card's
         name or id in your hand. `mana_sources` is comma-separated source ids;
@@ -339,10 +397,11 @@ def build_server(seats: Seats) -> MCPServer:
         does not use the stack (CR 116.1), so there is nothing to release
         priority for - releasing would just end your own main phase with the
         rest of your plan unplayed. Pass `hold_priority=false` only when you
-        really do want to hand priority over. See `cast`'s docstring for the
+        really do want to hand priority over - which still does not block or
+        wait, no branch of this tool does. See `cast`'s docstring for the
         answer's shape."""
         return _special_action_tool("suspend")(
-            player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
+            player_uid, card, mana_sources, dry_run, hold_priority
         )
 
     @server.tool()
@@ -353,8 +412,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """CR 116.2k/702.170b: exile a card with plot from your hand, paying
         its plot cost. `card` is the card's name or id in your hand.
         `mana_sources` is comma-separated source ids; leave it empty to offer
@@ -369,11 +427,10 @@ def build_server(seats: Seats) -> MCPServer:
         action does not use the stack (CR 116.1), so there is nothing to
         release priority for - releasing would just end your own main phase
         with the rest of your plan unplayed. Pass `hold_priority=false` only
-        when you really do want to hand priority over. See `cast`'s docstring
+        when you really do want to hand priority over - which still does not
+        block or wait, no branch of this tool does. See `cast`'s docstring
         for the answer's shape."""
-        return _special_action_tool("plot")(
-            player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
-        )
+        return _special_action_tool("plot")(player_uid, card, mana_sources, dry_run, hold_priority)
 
     @server.tool()
     @_guarded(seats)
@@ -383,8 +440,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """CR 116.2h/702.143b: pay {2} and exile a card with foretell from
         your hand, face down (opponents see only that a face-down card is
         there, not what it is). `card` is the card's name or id in your hand.
@@ -400,10 +456,11 @@ def build_server(seats: Seats) -> MCPServer:
         action does not use the stack (CR 116.1), so there is nothing to
         release priority for - releasing would just end your own main phase
         with the rest of your plan unplayed. Pass `hold_priority=false` only
-        when you really do want to hand priority over. See `cast`'s docstring
+        when you really do want to hand priority over - which still does not
+        block or wait, no branch of this tool does. See `cast`'s docstring
         for the answer's shape."""
         return _special_action_tool("foretell")(
-            player_uid, card, mana_sources, dry_run, hold_priority, max_seconds
+            player_uid, card, mana_sources, dry_run, hold_priority
         )
 
     @server.tool()
@@ -415,8 +472,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """CR 702.29a: discard a card with cycling from your hand, paying its
         cycling cost, to draw a card (or search your library for a card of the
         named type, for a typecycling ability). `card` is the card's name or
@@ -440,7 +496,9 @@ def build_server(seats: Seats) -> MCPServer:
         almost always means to keep playing, not to hand the turn over before
         the draw has even resolved. Pass `hold_priority=false` when you really
         do want to release (and note that the cycling ability only resolves
-        once someone does). See `cast`'s docstring for the answer's shape."""
+        once someone does) - releasing does not block or wait either, no
+        branch of this tool does. See `cast`'s docstring for the answer's
+        shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -463,7 +521,7 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cycle", body)
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
@@ -471,8 +529,7 @@ def build_server(seats: Seats) -> MCPServer:
         player_uid: str,
         card: str,
         hold_priority: bool = True,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Play a land from your hand (your one-per-turn allowance, unless an
         effect says otherwise). `card` is the card's name or id.
 
@@ -483,7 +540,8 @@ def build_server(seats: Seats) -> MCPServer:
         a seat played Flagstones of Trokair in precombat main, released, and
         concluded it would have to wait until postcombat to cast the one-drop
         the land had just paid for. Pass `hold_priority=false` only when you
-        really do mean to hand priority over. See `cast`'s docstring for the
+        really do mean to hand priority over - which still does not block or
+        wait, no branch of this tool does. See `cast`'s docstring for the
         answer's shape."""
         seat = resolve(player_uid)
         if seat is None:
@@ -497,7 +555,7 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/play-land", body)
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
@@ -510,8 +568,7 @@ def build_server(seats: Seats) -> MCPServer:
         color: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Activate one ability of a permanent you control. Find the ability's
         number in your state view's `abilities` list for that card (indexing
         starts at 0; intrinsic mana abilities come after printed ones).
@@ -534,11 +591,11 @@ def build_server(seats: Seats) -> MCPServer:
           pool empties" as it does (CR 500.5) - so an auto-pass here could
           bin the mana this very call just made. Spend it, or `pass_priority`
           deliberately to throw it away.
-        - any other ability releases priority and blocks for your next moment
-          to act unless `hold_priority` is true.
+        - any other ability releases priority and then checks once for your
+          next moment to act, unless `hold_priority` is true.
 
-        A dry run never blocks. See `cast`'s docstring for the full shape of
-        the answer."""
+        Never blocks or waits, whichever branch it takes - see `cast`'s
+        docstring for the full shape of the answer."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -562,7 +619,7 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/activate", body)
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
@@ -570,13 +627,13 @@ def build_server(seats: Seats) -> MCPServer:
         player_uid: str,
         attackers: str,
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Declare attackers during your declare attackers step. `attackers`
         is a JSON list: [{"card": "<attacker id>", "defender": "<player
         name or planeswalker id>"}]. Declare all attackers at once. Releases
-        priority and blocks for your next moment to act unless
-        `hold_priority` is true - see `cast`'s docstring for the shape."""
+        priority and then checks once for your next moment to act, unless
+        `hold_priority` is true - it never blocks or waits; see `cast`'s
+        docstring for the shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -591,7 +648,7 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/attack", body)
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
@@ -599,13 +656,12 @@ def build_server(seats: Seats) -> MCPServer:
         player_uid: str,
         blocks: str,
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Declare blockers during the declare blockers step. `blocks` is a
         JSON list: [{"blocker": "<your creature id>", "blocked": "<attacker
-        id>"}]. Declare all blocks at once. Releases priority and blocks for
-        your next moment to act unless `hold_priority` is true - see
-        `cast`'s docstring for the shape."""
+        id>"}]. Declare all blocks at once. Releases priority and then checks
+        once for your next moment to act, unless `hold_priority` is true - it
+        never blocks or waits; see `cast`'s docstring for the shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -622,7 +678,7 @@ def build_server(seats: Seats) -> MCPServer:
                 "POST", f"/api/games/{seat.game_id()}/actions/declare-blockers", body
             )
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
@@ -639,8 +695,7 @@ def build_server(seats: Seats) -> MCPServer:
         top: bool | None = None,
         order: str = "",
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `my_state`'s
         `pending_decision` field says what is being asked, by `kind`.
 
@@ -864,8 +919,9 @@ def build_server(seats: Seats) -> MCPServer:
         follows the same shape as every other tool here for one reason:
         answering it is very often what was blocking your own next turn at
         priority, so waking straight back into whatever comes next saves the
-        extra round trip. Releases priority and blocks unless `hold_priority`
-        is true."""
+        extra round trip. Releases priority and then checks once for your
+        next moment to act, unless `hold_priority` is true - it never blocks
+        or waits."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -896,29 +952,34 @@ def build_server(seats: Seats) -> MCPServer:
                 return {"allowed": False, "reason": answer.get("reason"), **answer}
             return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
     def pass_priority(
         player_uid: str,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
         until: str = "",
         until_whose_turn: str = "mine",
+        resume: str = "",
         stop_on_stack: bool = True,
         stop_when_attacked: bool = True,
         stop_when_you_can_attack: bool = True,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Pass priority - "I am done for now". If everyone passes with
         spells on the stack, the top of the stack resolves. If everyone
         passes with the stack empty, the step ends and the game rolls to the
         next step on its own (the outcome says "end_step") - you do NOT call
         advance() for that.
 
-        Blocks until you next have something to do, bounded by
-        `max_seconds` - there is no `hold_priority` here (passing already is
-        giving priority up); a refusal (it was not your turn to decide)
-        returns immediately without blocking.
+        Checks once for your next moment to act and returns immediately -
+        never blocks (poll-and-return, `seatkit.block_until_wake`'s own
+        docstring: MCP 2026-07-28 removed resumability). Call again to keep
+        checking, the same as any other action tool. There is no
+        `hold_priority` here (passing already is giving priority up); a
+        refusal (it was not your turn to decide) returns immediately either
+        way, the same as it always did. A decision this very pass raises for
+        you comes back shaped `input_required` rather than plain text - see
+        `wait_for_priority`'s own docstring.
 
         ## `until`: pass repeatedly, up to a named point in the turn
 
@@ -940,14 +1001,31 @@ def build_server(seats: Seats) -> MCPServer:
         passes a whole turn round to your next one, which is what "until my
         upkeep" means when you say it out loud.
 
-        The run stops, and the answer's `stopped_because` says which of these
-        it was: the destination is reached; a decision is addressed to you
-        (CR 608.2d); something new lands on the stack; it is your own
-        declare-attackers step; you are being attacked and it is your
-        declare-blockers step; a pass is refused; the game ends; or
-        `max_seconds` runs out, which comes back as an ordinary answer with
-        `finished: false` - call again to keep going. `passes` counts the
-        priorities it actually gave up.
+        **`until` does not block either.** It passes every priority you
+        currently hold - one after another, with no waiting between them,
+        each paid for by a pass that already went through - and returns the
+        moment it would otherwise have to wait for your opponent. It never
+        sleeps and never sits on a deadline; there is no `max_seconds`, and
+        there never should have been one.
+
+        `finished` says which kind of answer you got:
+
+        - `finished: true` - a real stop condition fired, and
+          `stopped_because` says which: the destination is reached; a
+          decision is addressed to you (CR 608.2d), which arrives shaped
+          `input_required`; something new landed on the stack; it is your own
+          declare-attackers step; you are being attacked and it is your
+          declare-blockers step; a pass was refused; the game ended.
+        - `finished: false` - the run got as far as it could on its own and
+          handed the board back, because your opponent holds priority or owes
+          a declaration only they can make. The answer carries a `resume`
+          token; **pass it back verbatim as `resume` on your next call**, and
+          the run continues as one run. Without it the next call starts a
+          fresh run stamped where you are standing right now, which would
+          make it skip the very combat step it is supposed to stop you at
+          (the exemption for "the step the run began in" - see below).
+
+        `passes` counts the priorities it actually gave up, in this call.
 
         A combat stop never fires on the step the run *started* in, the same
         way the destination never does: asking to auto-pass past combat while
@@ -1012,7 +1090,28 @@ def build_server(seats: Seats) -> MCPServer:
             problem = seatkit.autopass_target_error(until, until_whose_turn)
             if problem:
                 return problem
-            return json.dumps(
+            try:
+                resumed = json.loads(resume) if resume else None
+            except ValueError as exc:
+                return (
+                    f"`resume` is not JSON: {exc}. Hand it back exactly as the "
+                    "previous answer gave it to you, or leave it out to start a new run."
+                )
+            if resumed is not None and not isinstance(resumed, dict):
+                return (
+                    "`resume` must be the object a previous `pass_priority(until=...)` "
+                    "answer carried under `resume`, handed back unchanged."
+                )
+            # Through `_tool_result`, not `json.dumps`: a run stops *on* a
+            # decision addressed to this seat (`seatkit.pass_until` returns
+            # the moment `autopass_stop_reason` sees one, with the whole
+            # state under `"state"`), which is exactly the case
+            # `InputRequiredResult` exists for. This was the one action tool
+            # returning raw text on that path, so the one tool most likely to
+            # be mid-run when a decision arrives was also the only one that
+            # could not say so on the wire.
+            return _tool_result(
+                seat,
                 seatkit.pass_until(
                     seat,
                     until_step=until,
@@ -1020,10 +1119,8 @@ def build_server(seats: Seats) -> MCPServer:
                     stop_on_stack=stop_on_stack,
                     stop_when_attacked=stop_when_attacked,
                     stop_when_you_can_attack=stop_when_you_can_attack,
-                    max_seconds=max_seconds,
+                    resume=resumed,
                 ),
-                indent=1,
-                sort_keys=True,
             )
         body = {"player": seat.player}
 
@@ -1032,20 +1129,19 @@ def build_server(seats: Seats) -> MCPServer:
                 "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
             )
 
-        return act(seat, perform, hold_priority=False, max_seconds=max_seconds, release=False)
+        return act(seat, perform, hold_priority=False, release=False)
 
     @server.tool()
     @_guarded(seats)
     def resolve_top(
         player_uid: str,
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Resolve the top object on the stack. Normally the engine does this
         for you when everyone passes; use this only if a pass left the stack
-        unresolved. Releases priority and blocks for your next moment to act
-        unless `hold_priority` is true - see `cast`'s docstring for the
-        shape."""
+        unresolved. Releases priority and then checks once for your next
+        moment to act, unless `hold_priority` is true - it never blocks or
+        waits; see `cast`'s docstring for the shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -1055,20 +1151,20 @@ def build_server(seats: Seats) -> MCPServer:
             answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/resolve-top", body)
             return {"allowed": answer.get("reason") is None, **answer}
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)
     def advance(
         player_uid: str,
         hold_priority: bool = False,
-        max_seconds: float = DEFAULT_MAX_SECONDS,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Move to the next step or phase. Passing priority already rolls the
         game through every step where players get priority; this is only for
         the steps nobody gets priority in - untap and cleanup on your own
-        turn. Releases priority and blocks for your next moment to act unless
-        `hold_priority` is true - see `cast`'s docstring for the shape."""
+        turn. Releases priority and then checks once for your next moment to
+        act, unless `hold_priority` is true - it never blocks or waits; see
+        `cast`'s docstring for the shape."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -1080,7 +1176,7 @@ def build_server(seats: Seats) -> MCPServer:
                 **seat.call_json("POST", f"/api/games/{seat.game_id()}/advance", body),
             }
 
-        return act(seat, perform, hold_priority, max_seconds)
+        return act(seat, perform, hold_priority)
 
     @server.tool()
     @_guarded(seats)

@@ -18,22 +18,30 @@ multi-card hand specifically so a reorder would be visible, and would have
 failed before that fix (`cast`'s dry run) and before `alternative_costs` was
 pointed at a copy of its own.
 
-`seatkit.available_actions` is `magic-cards-model-api`'s heaviest user of
-this path - one dry run per hand card, per graveyard/exile card with a cast
-option, and per battlefield ability - so its own multi-candidate run is
-covered here too, end to end through the real HTTP surface (`wired_seats`,
+`seatkit.available_actions` used to be `magic-cards-model-api`'s heaviest user
+of this path - one dry run per hand card, per graveyard/exile card with a cast
+option, and per battlefield ability - which is why its own multi-candidate run
+is covered here too, end to end through the real HTTP surface (`wired_seats`,
 the same trick `test_graveyard_cast_options.py` uses). One nuance worth being
-honest about: a full sweep that dry-runs *every* hand card once, in the
-same left-to-right order the hand is already in, is a queue rotated exactly
-once per element - the corrupted `cancel()` moves each probed card to the
-back in turn, and after the last one that is, arithmetically, a full cycle
-back to the original order, whether or not the underlying bug is fixed.
-Checked directly against the unfixed code before writing this file. So the
-`available_actions`-level test below is real end-to-end coverage (nothing
-else in that path may mutate `game` either), but the two single/partial-probe
-tests above it - not a full, order-matched sweep - are what actually pin the
-reorder: both were confirmed to fail on the unfixed code before this file
-was finished.
+honest about, from when that history mattered: a full sweep that dry-runs
+*every* hand card once, in the same left-to-right order the hand is already
+in, is a queue rotated exactly once per element - the corrupted `cancel()`
+moved each probed card to the back in turn, and after the last one that is,
+arithmetically, a full cycle back to the original order, whether or not the
+underlying bug was fixed. Checked directly against the unfixed code before
+this file was written. So the `available_actions`-level test below was real
+end-to-end coverage of `cast`'s own dry run at the time, but the two
+single/partial-probe tests above it - not a full, order-matched sweep - are
+what actually pin the reorder: both were confirmed to fail on the unfixed code
+before this file was finished.
+
+T11 replaced `available_actions`'s dry-run probe with one call into the
+engine's own enumeration (`machines.legal_actions.legal_actions`), which is a
+pure read of the committed `Game` - no `Casting` is ever built, so there is
+nothing here left for it to rewind. The `available_actions`-level test below
+still guards against a mutation somewhere in that path (server round trip
+included), just no longer against the specific `cancel()` reorder the rest of
+this file pins.
 """
 
 from __future__ import annotations
@@ -152,7 +160,8 @@ def test_available_actions_does_not_reorder_or_mutate_the_board(client, game, mo
     hand_before = [c["name"] for c in before["hands"]["alice"]]
 
     actions = available_actions(alice, before)
-    assert actions["castable"], actions  # sanity: this run actually probed something
+    casts = [a for a in actions["actions"] if a["kind"] == "cast"]
+    assert casts, actions  # sanity: this run actually found something castable
 
     after = state(client, game, uid=uids["alice"])
     assert [c["name"] for c in after["hands"]["alice"]] == hand_before

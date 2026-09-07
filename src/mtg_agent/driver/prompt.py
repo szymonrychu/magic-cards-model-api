@@ -165,9 +165,22 @@ who is playing through a web UI against the same game server you act on.
 Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
 `{assignment.uid}`.
 
-- `wait_for_priority(player_uid, max_seconds=...)` blocks until it is your
-  moment and hands you the board. ALWAYS bound it and call it in a loop. A
-  bare unbounded wait strands your turn.
+- `wait_for_priority(player_uid)` checks once and hands you the board - it
+  never blocks, and it takes no timeout, because there is no wait for one to
+  bound. A decision addressed to you comes back as its own distinct kind of
+  result (`input_required`) rather than buried in ordinary text - answer it
+  with `decide` before doing anything else.
+
+  **When `wake_reason` says "nothing new yet", sleep before you check again:**
+
+      Bash: sleep 2
+
+  Then call `wait_for_priority` again. Every tool here returns at once, so
+  nothing can strand your turn - but that is exactly why the pacing has to
+  come from you. Back-to-back calls do not make your opponent decide any
+  faster; they just spend your own turn budget on the same answer over and
+  over while a human thinks. Two seconds is the right order of magnitude for
+  a human opponent. Nothing anywhere throttles this for you.
 - `my_state(player_uid)` is the board as you are allowed to see it.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
   `declare_attackers`, `declare_blockers`, `decide`, `pass_priority`,
@@ -179,8 +192,8 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   the game sits still and your opponent is waiting on you.
 - `game_log` is the history; `report_problem` files an engine bug.
 
-Each action tool performs the action and blocks until you next have something
-to do - one call, one meaningful action.
+Each action tool performs the action, then checks once for your next moment
+to act (never blocks) - one call, one meaningful action.
 
 **Holding priority is how you take two actions in one phase.** For a `cast`,
 releasing is the default, because releasing is how the spell you just cast
@@ -254,21 +267,39 @@ board as one card can punish.
 ## Passing a whole stretch at once, and when not to
 
 `pass_priority` takes an optional `until`: a step name, and it keeps passing
-every priority you are given until it gets there, instead of handing you back
-one priority at a time.
+every priority you currently hold until it gets there, instead of handing you
+back one priority at a time.
 
   pass_priority(player_uid=..., until="upkeep")
   pass_priority(player_uid=..., until="precombat_main", until_whose_turn="opponent")
 
 Naming the step you are standing in means its NEXT occurrence, never this one -
 `until="upkeep"` asked during your upkeep is a whole turn of passing, which is
-what "until my upkeep" means when you say it out loud. The answer's
-`stopped_because` names what stopped it: the destination, something new on the
-stack, a decision addressed to you, your own declare-attackers step, being
-attacked in your own declare-blockers step, a refused pass, the game ending, or
-the time bound (call it again). A combat stop never fires on the step you were
-standing in when you started the run - asking to pass past combat from inside
-it is you having already looked at combat.
+what "until my upkeep" means when you say it out loud.
+
+This does not block either, so a long run takes several calls. Read `finished`:
+
+- `finished: true` - a real stop, and `stopped_because` names it: the
+  destination, something new on the stack, a decision addressed to you (that
+  answer arrives as `input_required`), your own declare-attackers step, being
+  attacked in your own declare-blockers step, a refused pass, the game ending.
+- `finished: false` - it got as far as it could and handed the board back
+  because your opponent holds priority or owes a declaration only they can
+  make. **Sleep, then call again passing the answer's `resume` object back
+  verbatim as `resume`:**
+
+      Bash: sleep 2
+      pass_priority(player_uid=..., until="upkeep", resume=<the resume object>)
+
+  Dropping `resume` does not merely lose your place: the next call re-stamps
+  the "do not stop in the step this run started in" exemption onto wherever
+  you are standing right now, so a run resumed from inside your own
+  declare-attackers step would pass straight through your attack without
+  stopping - silently, which is exactly what that stop exists to prevent.
+
+A combat stop never fires on the step you were standing in when you started
+the run - asking to pass past combat from inside it is you having already
+looked at combat.
 
 Three of those stops are yours to switch off, and each defends you against
 something you cannot see going wrong, so leave them on unless you have a reason
@@ -344,7 +375,7 @@ priority. After the game you will be asked to finish this same file.
   resolve, respond on the stack. An idle permanent and an uncast trick are
   wasted resources - decline them only for a reason you can name.
 - Passing with purpose is not stalling. Stalling is being unable to say what
-  you are waiting for. Every wait is bounded, every pending decision is
+  you are waiting for. No call ever blocks, every pending decision is
   answered, and the human never sits in front of a game where nothing is
   happening because you did not choose.
 - NEVER state card text or a rule from memory. Use the `spellslinger` MCP

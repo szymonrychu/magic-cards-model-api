@@ -76,7 +76,7 @@ ever reached, by construction, not by timing.
 This used to be wrong in one more place, past the loop, in a shape specific
 to the old blocking decision transport: every return path of `run_action`
 called `available_actions(seat, state)` unconditionally, and *that* function
-issues `POST .../actions/cast?dry_run=true` for every card in hand (and
+issued `POST .../actions/cast?dry_run=true` for every card in hand (and
 `.../activate` for every ability) - each of which takes `store.locked
 (game_id)` (`app.py`). When this seat woke because a decision was now
 pending *for it*, that lock used to not be free: it was held by the
@@ -84,15 +84,23 @@ opponent's request, parked deep inside `Game.ask` waiting on this same seat
 to answer through `POST .../decide`. Calling `available_actions` there
 queued this call behind the very decision it was returning to let the seat
 answer, for the full decision timeout - a real deadlock, not a wait.
-`available_actions` still skips every dry run when a decision is pending for
-this seat (see its own docstring), which is no longer load-bearing against a
-deadlock - no request blocks on a decision at all any more
-(`commands.py`'s pause-and-resume) - but is still the right behaviour: while
-a decision is outstanding nothing else is legal anyway.
+
+T11 removed the dry-run probe entirely: `available_actions` is now one `GET
+.../legal-actions` call onto `machines.legal_actions.legal_actions` (Phase
+1), which takes no lock at all - a pure read against the committed `Game`,
+same as `GET /api/games/{id}` itself. The old deadlock shape cannot recur
+because there is no longer a mutating request in this path to queue behind.
+Whether a decision is pending for this seat is still read once, by the
+server, before it enumerates anything - while one is outstanding, the answer
+is that decision's own legal answers and nothing else (`legal_actions`'s own
+module docstring) - which is correctness, not deadlock avoidance: nothing
+else is legal while a decision stands, regardless of any lock.
 
 ## No transport-level block left to outlast
 
-`block_until_wake`'s own polling is quick reads and was never the risk.
+`block_until_wake` does one quick read and returns; so does `pass_until`,
+which used to be the last deadline loop here (it slept until `max_seconds`,
+so one MCP tool call sat open for as long as the opponent took to think).
 `perform()` - one mutating call (`cast`/`activate`/`attack`/`pass-priority`/
 `resolve-top`/`advance`) - used to be able to cross a live decision question
 and block *inside that one request*, in `Game.ask`, for up to the server's
@@ -112,7 +120,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 from typing import Any
 
 import httpx
@@ -140,7 +147,16 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: at boot, never again" was the defect. See `api_trouble`.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-2"
+PROTOCOL_VERSION = "seatkit-3"
+#: `seatkit-3` removed `max_seconds` from every tool and command that carried
+#: it - nothing blocks any more, so nothing was left for it to bound, and a
+#: parameter that bounds nothing is a promise an MCP client cannot see
+#: corrected (it receives no `description` on any parameter). It also gave
+#: `pass_priority(until=...)`/`pass --until` a `resume` token, because that
+#: run is poll-and-return now and spans several calls, and made that path
+#: return `input_required` when it stops on a decision. An MCP process from
+#: before this passes `max_seconds=` to tools that no longer take it.
+#:
 #: `seatkit-2` added the pregame tools (`mulligan`, `opening_hand_action`) and
 #: the `pregame` block every state view now carries: a game booted from
 #: decklists rests in CR 103.5's mulligan step until its seats declare, and an
@@ -155,16 +171,14 @@ NO_SUCH_SEAT = (
     "a seat uid is given to you when you are dispatched."
 )
 
-#: How often a blocked call re-fetches state while waiting for a wake
-#: condition. Small: this loop runs inside the caller's own process/thread
-#: and has no condition variable to be woken by - there is no single "the
-#: answer arrived" event here, only "check the board again".
+#: How often `_call_watching_for_self_decision` re-fetches state while one
+#: mutating call of its own is genuinely in flight on another thread - the
+#: only loop in this module that still polls at all, and it polls for the
+#: duration of a request it is already waiting on rather than for anything to
+#: happen at the table. Small: it has no condition variable to be woken by,
+#: only "check the board again". Nothing else here sleeps: `block_until_wake`,
+#: `wait_for_priority` and `pass_until` are all poll-and-return.
 POLL_SECONDS = 0.2
-
-#: The default bound for a blocked action, when a tool/command does not name
-#: its own. Every wait is bounded (never blocks forever); a caller that wants
-#: to keep waiting just calls again.
-DEFAULT_MAX_SECONDS = 60.0
 
 #: The HTTP client read timeout every `Seat`/`Seats` builds with.
 #:
@@ -542,172 +556,141 @@ def compute_wake_reason(
     return None
 
 
-def block_until_wake(
-    seat: Seat,
-    before: dict[str, Any] | None,
-    max_seconds: float,
-    poll_seconds: float = POLL_SECONDS,
-) -> dict[str, Any]:
-    """Poll this seat's own state until a wake condition holds, or time out.
+#: `block_until_wake`'s answer when it checked and no wake condition holds
+#: yet - poll-and-return (see the module docstring's "No transport-level
+#: block left to outlast"): the caller polls by calling again itself, rather
+#: than this function holding a request open to notice the change for it.
+NOTHING_NEW_YET = "nothing new yet - call again to check"
+
+
+def block_until_wake(seat: Seat, before: dict[str, Any] | None) -> dict[str, Any]:
+    """Check this seat's own state once, right now, and return immediately -
+    never blocks, never sleeps.
+
+    This used to poll in a loop for up to a caller-given `max_seconds`,
+    holding one HTTP request open the whole time it waited. MCP protocol
+    revision 2026-07-28 removed resumability (SEP-2577): a tool call that
+    blocks like that loses the request outright if the underlying stream
+    breaks mid-wait, with no way for either side to recover it - a risk that
+    scales with exactly how long the call sits open, and `wait_for_priority`
+    (`mcp.py`) used to default to holding one for up to 570 seconds. So this
+    is poll-and-return instead: one state fetch, one wake-condition check,
+    one answer, always. A caller that wants to keep waiting calls again -
+    `NOTHING_NEW_YET` says so explicitly, the same way the old "timed out"
+    wake reason did, except every call gets it immediately rather than only
+    after riding out a deadline.
 
     Never touches `store.locked` - see the module docstring's "why this
-    cannot deadlock". Always returns within `max_seconds` (a "still waiting"
-    answer, never an exception, never a silent infinite hang): the timeout
-    wake reason tells a caller to call again rather than leaving it guessing.
+    cannot deadlock", which held before this change and holds more trivially
+    now: a single read cannot deadlock against anything.
     """
-    deadline = time.monotonic() + max(0.0, max_seconds)
-    while True:
-        state = seat.fetch_state()
-        reason = compute_wake_reason(state, before, seat.player)
-        if reason is not None:
-            return {"state": state, "wake_reason": reason}
-        if time.monotonic() >= deadline:
-            return {
-                "state": state,
-                "wake_reason": f"timed out after {max_seconds}s - call again to keep waiting",
-            }
-        time.sleep(poll_seconds)
-
-
-def _keyworded_castable_candidates(seat: Seat, state: dict[str, Any]) -> list[tuple[str, str]]:
-    """(card_id, keyword) for every one of this seat's own graveyard/exile
-    cards that `serialize._cast_options_of` found a CR 601.3 permission for -
-    the only non-hand cards worth a dry run at all.
-
-    Reads `cast_options` straight off each card view rather than asking the
-    engine again: `visibility.redact_view` has already stripped that field
-    from anything not this seat's own (`_redact_cast_options`), so a card
-    with nothing on it costs this function nothing - no Lightning Bolt in a
-    graveyard ever reaches a dry run, because it never has a `cast_options`
-    entry to read one out of."""
-    candidates: list[tuple[str, str]] = []
-    graveyard = state.get("graveyards", {}).get(seat.player, []) or []
-    exile = state.get("exile", []) or []
-    for card in graveyard + exile:
-        for option in card.get("cast_options") or []:
-            candidates.append((card["id"], option["keyword"]))
-    return candidates
+    state = seat.fetch_state()
+    reason = compute_wake_reason(state, before, seat.player)
+    return {"state": state, "wake_reason": reason or NOTHING_NEW_YET}
 
 
 def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
-    """What this seat can actually do right now, using the engine's own
-    dry-run legality checks (`cast`/`activate` with `dry_run: true`) - never
-    new rules logic here.
+    """What this seat can actually do right now - `GET .../legal-actions`
+    (`app.py`), the api's own door onto Phase 1's enumeration surface,
+    `machines.legal_actions.legal_actions(game, player)` in the engine.
 
-    Looks at `state["hands"][seat.player]`, battlefield permanents `state`
-    already says this seat controls, and - the CR 601.2b keyword-permission
-    half, `_keyworded_castable_candidates` above - this seat's own graveyard
-    and exile cards that `cast_options` names an option for. Every one of
-    those sources is already filtered by `visibility.py` before this function
-    ever sees them - so this cannot surface the opponent's hand, either
-    library, or an opponent's `cast_options` even if a caller passed an
-    unfiltered view by mistake: there would be nothing under the opponent's
-    name to read to begin with (their hand is `[]` server-side, libraries are
-    dropped entirely, and `cast_options` is stripped from any card that is
-    not this seat's own).
+    T11 replaces what this function used to be: one HTTP `dry_run` round trip
+    per hand card, per graveyard/exile card with a `cast_options` entry, and
+    per battlefield ability, each collapsed into a bare boolean before ever
+    reaching this seat. That probe could only ever report "yes" or "no" - a
+    dry run either succeeds or it does not - so a modal or X spell whose
+    affordability genuinely cannot be judged yet (CR 107.3a: X is not
+    announced until the spell is cast) always came back `castable: false`,
+    indistinguishable from a card with no red mana in play. The engine's own
+    enumeration carries a third answer, `Affordability.UNKNOWN`
+    (`models/action.py`), and this function surfaces it rather than hiding it
+    the way the old probe structurally had to - each entry under `actions`
+    below carries its own `affordable` (`"yes"`/`"no"`/`"unknown"`) and
+    `unaffordable_reason`, in the engine's own words.
 
-    Each candidate `card_id` is dry-run with the `keyword` its own
-    `cast_options` entry names (`None` for an ordinary hand card, which needs
-    none) - "reports which keyword makes each one legal" is the whole point:
-    a seat driving off `castable` can find its Faithful Mending in the
-    graveyard, not just a Lightning Bolt in hand, and knows on the spot which
-    `keyword=` to send `cast` to make the graveyard cast succeed.
+    One HTTP call, not N: the server computes the whole pool in one request
+    (CR 118.6 - an unpayable cast is still a legal one, so nothing here is
+    dropped for being unaffordable), rather than this seat driving one dry
+    run per candidate itself.
 
-    One extra HTTP round trip per hand card, per graveyard/exile card that
-    actually carries a `cast_options` entry, and per ability on a controlled
-    permanent - each is a dry run the engine already rewinds, so this is
-    "expensive" only in the sense of doing an ordinary legality check for
-    everything narrow enough to check, not in the sense of costing anything
-    the API does not already pay for a single such check. A hand, a board,
-    and the handful of graveyard/exile cards with a live option are all small
-    (single digits), so this stays cheap; it is not run inside the poll loop
-    above, only once, right before a call returns.
+    Nothing here can leak the opponent's hand, either library, or an
+    opponent's own cast options: `legal_actions` enumerates only what
+    `seat.player` themself controls or holds (its own module docstring), the
+    same guarantee the old probe leaned on `visibility.py`'s redaction for.
 
-    Skips every dry run - and returns empty - when `state["pending_decision"]`
-    is addressed to this seat, and for a reason sharper than "why bother, the
-    engine has frozen mid-resolution anyway": while that decision is
-    outstanding nothing else is legal (whichever CR governs it), so an honest
-    legality check would say no to
-    all of them regardless. The `cast`/`activate` dry runs below
-    each take `store.locked(game_id)` (`app.py`) - a lock a *blocking*
-    transport's parked request would have been holding, back when this
-    function's `18 decision timeouts in one game` deadlock was traced live.
-    Pausing removed that thread (the request that raised the decision has
-    already returned by the time a caller ever sees it here), so the lock
-    itself is no longer the danger - skipping the dry runs below is now
-    purely the first sentence's reasoning, not a deadlock avoidance any more.
-
-    `attackers_requested`/`blockers_requested` are the one part of this early
-    return that is not simply "empty": a `declare_attackers`/
+    `attackers_requested`/`blockers_requested` are read straight off
+    `state["pending_decision"]["kind"]` - a `declare_attackers`/
     `declare_blockers` pause (CR 508.1, CR 509.1) addressed to this seat *is*
-    this seat's `attackers_requested`/`blockers_requested` moment - unlike
-    every other decision kind, where nothing is legal until it is answered,
-    here the decision itself names the exact one thing that is. So each flag
-    reads directly off `pending["kind"]` rather than being forced `False` the
-    way `castable`/`activatable` still are.
+    this seat's moment to declare, the one case where a pending decision
+    names the single legal thing to do rather than merely narrowing the pool
+    (which `legal_actions` itself already does server-side: while a decision
+    stands, `actions` holds nothing but that decision's own answers, for the
+    player it addresses - see the endpoint's own docstring).
+
+    **An empty `actions` means "you legally cannot do anything", and nothing
+    else.** Every way this call can fail instead - the API unreachable, a
+    read timeout, a 4xx/5xx, a body that is not the expected JSON - comes
+    back with `actions_error` naming what went wrong, and `run_action`
+    embeds that in all seven of its own answers. Without it a 404 or a 500
+    carrying a JSON body parsed cleanly into `payload.get("actions", [])` and
+    reached the seat as a silent, confident empty pool - and `Seat.http`
+    never calls `raise_for_status`, so nothing upstream would have caught it
+    either. The old per-candidate probe degraded on `httpx.HTTPError` for
+    exactly this reason; one call in place of N makes the single failure
+    total rather than partial, which is a reason to guard it harder, not
+    less. The timeout guard is the same `_AMBIGUOUS_TIMEOUTS` split
+    `call_json` documents, for the same reason: this is a plain read, so a
+    timeout here changed nothing server-side - it is reported, never raised,
+    because `run_action` calls this on paths that have already performed a
+    mutating action and must still return that action's own outcome.
     """
+    try:
+        response = seat.http.get(
+            f"/api/games/{seat.game_id()}/legal-actions",
+            params={"uid": seat.uid, "player": seat.player},
+        )
+    except _AMBIGUOUS_TIMEOUTS as exc:
+        return _actions_unavailable(state, f"the legal-actions call timed out: {exc}")
+    except httpx.HTTPError as exc:
+        return _actions_unavailable(state, f"could not reach the API for legal actions: {exc}")
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if response.status_code != 200 or not isinstance(payload, dict):
+        detail = payload.get("detail") if isinstance(payload, dict) else response.text.strip()
+        return _actions_unavailable(
+            state, f"the legal-actions call answered HTTP {response.status_code}: {detail}"
+        )
+    return _actions_view(state, payload.get("actions") or [], None)
+
+
+def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) -> dict[str, Any]:
     pending = state.get("pending_decision")
-    if pending is not None and pending.get("player") == seat.player:
-        kind = pending.get("kind")
-        return {
-            "castable": [],
-            "activatable": [],
-            "attackers_requested": kind == "declare_attackers",
-            "blockers_requested": kind == "declare_blockers",
-            "pending_decision": pending,
-        }
-
-    game_id = seat.game_id()
-    sources = seat.my_untapped_sources(state)
-
-    def dry_run(path: str, body: dict[str, Any]) -> bool:
-        body = {**body, "dry_run": True}
-        if sources:
-            body["mana_sources"] = sources
-        try:
-            answer = seat.call_json("POST", path, body)
-        except httpx.HTTPError:
-            return False
-        return bool(isinstance(answer, dict) and answer.get("allowed"))
-
-    hand_candidates: list[tuple[str, str | None]] = [
-        (card["id"], None) for card in state.get("hands", {}).get(seat.player, []) or []
-    ]
-    non_hand_candidates: list[tuple[str, str | None]] = [
-        (card_id, keyword) for card_id, keyword in _keyworded_castable_candidates(seat, state)
-    ]
-    castable = []
-    for card_id, keyword in hand_candidates + non_hand_candidates:
-        body: dict[str, Any] = {"player": seat.player, "card_id": card_id}
-        if keyword is not None:
-            body["keyword"] = keyword
-        if dry_run(f"/api/games/{game_id}/actions/cast", body):
-            castable.append({"card_id": card_id, "keyword": keyword})
-
-    activatable = []
-    for card in state.get("battlefield", []) or []:
-        if card.get("controller") != seat.player:
-            continue
-        for ability in card.get("abilities", []) or []:
-            if dry_run(
-                f"/api/games/{game_id}/actions/activate",
-                {
-                    "player": seat.player,
-                    "card_id": card["id"],
-                    "ability_index": ability["index"],
-                },
-            ):
-                activatable.append({"card_id": card["id"], "ability_index": ability["index"]})
-
-    step = state.get("step")
-    is_active = state.get("active_player") == seat.player
-    return {
-        "castable": castable,
-        "activatable": activatable,
-        "attackers_requested": step == "declare_attackers" and is_active,
-        "blockers_requested": step == "declare_blockers" and not is_active,
-        "pending_decision": state.get("pending_decision"),
+    kind = pending.get("kind") if pending is not None else None
+    view: dict[str, Any] = {
+        "actions": actions,
+        "attackers_requested": kind == "declare_attackers",
+        "blockers_requested": kind == "declare_blockers",
+        "pending_decision": pending,
     }
+    if error is not None:
+        view["actions_error"] = error
+    return view
+
+
+def _actions_unavailable(state: dict[str, Any], reason: str) -> dict[str, Any]:
+    """`available_actions`' answer when the call itself failed: an empty pool
+    that says so, rather than one a reader would take for "nothing is legal".
+    `attackers_requested`/`blockers_requested`/`pending_decision` are still
+    filled in - they are read off the state this seat already has in hand,
+    not off the failed call, so they stay true."""
+    return _actions_view(
+        state,
+        [],
+        f"{reason} - this is NOT 'you have nothing legal to do': the list could not be "
+        "fetched at all. Read your state, or call again.",
+    )
 
 
 def _refused(outcome: Any) -> bool:
@@ -831,19 +814,29 @@ def run_action(
     perform: Any,
     *,
     hold_priority: bool = False,
-    max_seconds: float = DEFAULT_MAX_SECONDS,
     release: bool = True,
 ) -> dict[str, Any]:
     """Do one action, then behave the way both transports promise: unless
-    told to hold, release priority, then block until this seat next has
-    something to do - and always return the action's own outcome alongside
-    whatever state it woke into, in one answer.
+    told to hold, release priority, then check once for this seat's next
+    moment to act - and always return the action's own outcome alongside
+    whatever state that check saw, in one answer.
 
     `perform` is a zero-argument callable performing the actual HTTP call and
     returning its parsed JSON body. `release` is `False` only for `pass`
     itself (the action already *is* releasing priority - calling
     pass-priority a second time on top of it would just be refused, harmlessly,
     but there is no reason to make the extra request).
+
+    **Nothing here bounds a wait, because nothing here waits.**
+    `block_until_wake` is poll-and-return (see its own docstring - MCP
+    2026-07-28 removed resumability, so this call never holds the request open
+    waiting for something to happen), so there is no deadline to accept and
+    this takes no `max_seconds`: a parameter that bounds nothing is a lie an
+    agent reads as a promise, and the MCP wire format shows a caller no
+    per-parameter description to correct it with. A caller that wants to keep
+    watching just calls the action tool (or `wait_for_priority`) again;
+    `wake_reason` says `NOTHING_NEW_YET` rather than blocking to make that
+    true.
 
     Refusal and `hold_priority` both return **immediately, never blocking**:
     a refused action leaves this seat exactly where it was (still its move,
@@ -987,7 +980,7 @@ def run_action(
                 "available_actions": available_actions(seat, state),
             }
 
-    woken = block_until_wake(seat, before, max_seconds)
+    woken = block_until_wake(seat, before)
     result: dict[str, Any] = {
         "outcome": outcome,
         "held_priority": False,
@@ -1099,7 +1092,10 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
 
     `known_stack_ids` is the same idea for the stack: only objects that arrive
     *after* the run began count as "something new landed", or a run started
-    with a spell already resolving would stop immediately on it.
+    with a spell already resolving would stop immediately on it. A list rather
+    than a set, like every other value here: the whole dict is handed back to
+    the caller as `pass_until`'s `resume` token and has to survive a JSON
+    round trip through an MCP tool argument.
     """
     pending = state.get("pending_decision")
     return {
@@ -1108,8 +1104,32 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
         "started_turn": state.get("turn_number"),
         "started_step": state.get("step"),
         "started_pending_kind": pending.get("kind") if pending is not None else None,
-        "known_stack_ids": {obj.get("id") for obj in (state.get("stack") or [])},
+        "known_stack_ids": [obj.get("id") for obj in (state.get("stack") or [])],
     }
+
+
+def resume_autopass(
+    resume: dict[str, Any] | None, state: dict[str, Any], until_step: str, whose_turn: str
+) -> dict[str, Any]:
+    """The run `pass_until` is continuing, or a fresh one stamped from the
+    board when there is nothing to continue.
+
+    A `resume` token is a previous call's own run dict handed straight back
+    (`pass_until`'s answer carries one whenever `finished` is `false`), so
+    everything it holds - above all the starting-occurrence stamp
+    `start_autopass` documents - stays the stamp of where the run *began*,
+    not of wherever the seat happens to be standing when the caller gets
+    round to calling again. `step`/`whose_turn` are taken from the arguments
+    rather than the token, so a caller that changes its destination mid-run
+    gets the new one; every other field is the token's.
+    """
+    if not resume:
+        return start_autopass(state, until_step, whose_turn)
+    run = dict(resume)
+    run["step"] = until_step
+    run["whose_turn"] = whose_turn
+    run.setdefault("known_stack_ids", [])
+    return run
 
 
 def forget_starting_occurrence(run: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -1323,6 +1343,21 @@ def autopass_stop_reason(
     return None
 
 
+#: How many priorities one `pass_until` call will give up before handing the
+#: board back of its own accord.
+#:
+#: NOT a wait bound - nothing in that loop waits any more, and every iteration
+#: past the first is paid for by a real, completed `pass-priority` that moved
+#: the game. This is the safety net under that reasoning: if a pass were ever
+#: to come back `allowed: True` without actually releasing priority, the loop's
+#: "keep going while I still hold priority" condition would be true forever and
+#: nothing else in it would ever stop. A cap on *work done* is honest where a
+#: cap on *seconds waited* was not; hitting it is reported as its own stop
+#: reason with `finished: false`, the same shape every other early return
+#: takes.
+MAX_PASSES_PER_CALL = 100
+
+
 def pass_until(
     seat: Seat,
     *,
@@ -1331,46 +1366,77 @@ def pass_until(
     stop_on_stack: bool = True,
     stop_when_attacked: bool = True,
     stop_when_you_can_attack: bool = True,
-    max_seconds: float = DEFAULT_MAX_SECONDS,
-    poll_seconds: float = POLL_SECONDS,
+    resume: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Keep passing priority until a named point in the turn, or until
-    something worth this seat's attention happens.
+    """Pass every priority this seat is *currently* able to pass, up to a named
+    point in the turn - then return. Never sleeps, never waits for the
+    opponent, never holds the request open for a deadline.
 
-    One pass per poll tick, exactly like the UI's autopilot: check the stop
-    conditions, then at most one `pass-priority` call, then look again. Never
-    holds `store.locked` (it only reads state and posts ordinary actions), so
-    it cannot deadlock against the opponent's own moves - the same invariant
-    `block_until_wake` documents.
+    This used to run a deadline loop: `max_seconds` (60 by default, and an MCP
+    client could ask for more) with a `time.sleep` in every branch that had
+    nothing to do yet, so one tool call sat open for as long as the opponent
+    took to think. MCP protocol revision 2026-07-28 removed resumability
+    (SEP-2577) - a call that blocks like that loses the request outright if the
+    underlying stream breaks mid-wait - and this was the tool most likely to be
+    holding one open when it did. `block_until_wake` and `wait_for_priority`
+    were converted for that reason; this is the same conversion, and
+    `max_seconds`/`poll_seconds` are gone rather than kept as inert
+    parameters.
+
+    So: check the stop conditions, act, look again, and **return the moment
+    this seat would otherwise have to wait for somebody else** - the other
+    seat holding priority, or a combat declaration only they can answer. The
+    answer says where the run got to; the caller calls again.
+
+    Progress within one call is not waiting and is not capped by the clock:
+    every extra lap is paid for by a `pass-priority` that already completed
+    and moved the game (or by answering this seat's own frozen combat
+    declaration). A seat whose opponent answers promptly can therefore still
+    cross several steps in one call, exactly as before - what it can no longer
+    do is sit there while nothing happens. `MAX_PASSES_PER_CALL` bounds the
+    work rather than the wall clock; see its own comment.
+
+    `resume` is what makes a run that spans several calls one run rather than
+    a fresh one each time, and it is not optional bookkeeping: the
+    starting-occurrence exemption (`start_autopass`, and conditions 3/4/5 of
+    `autopass_stop_reason`) deliberately does not stop for the step the run
+    *began* in. Restarting the run on every call would re-stamp that exemption
+    against wherever the seat happens to be standing - so a run that came back
+    while sitting on its own `declare_attackers` pause would, on the very next
+    call, treat that pause as "the step I started in" and pass straight
+    through its own attack. That is the exact silent-no-attack defect
+    condition 4 exists to prevent. Every answer with `finished: false`
+    therefore carries a `resume` token; hand it back unchanged.
+
+    Never touches `store.locked` (it only reads state and posts ordinary
+    actions), so it cannot deadlock against the opponent's own moves - the
+    same invariant `block_until_wake` documents.
 
     A `declare_attackers`/`declare_blockers` pause (CR 508.1, CR 509.1)
     addressed to this seat is not always a stop - `stop_when_you_can_attack`/
     `stop_when_attacked` may say not to - but it always freezes the game
     until answered (the turn-based action that would move `state["step"]`
     past it never finished), so when `autopass_stop_reason` does not stop for
-    one, this loop answers it with "nobody" (`actions/attack`/
+    one, this call answers it with "nobody" (`actions/attack`/
     `actions/declare-blockers`, "if any" makes that always legal) before
-    looking again, exactly the way it answers "no priority to pass" by
-    waiting rather than by giving up.
+    looking again. That is progress this seat can make on its own, so it does
+    not end the call.
 
-    Always returns within `max_seconds`, never raises for a timeout and never
-    hangs: running out of budget is reported as its own stop reason with
-    "call again to keep going", the way `block_until_wake` reports it. The
-    answer carries `stopped_because` (which condition fired), `passes` (how
-    many priorities this call actually gave up), `finished` (`False` only for
-    the timeout), the state it stopped on, and this seat's
-    `available_actions` in it.
+    The answer carries `stopped_because` (which condition fired, or why it
+    handed the board back), `passes` (how many priorities this call actually
+    gave up), `finished` (`True` only when a real stop condition fired -
+    `False` means "call again, with `resume`"), the state it stopped on, and
+    this seat's `available_actions` in it.
 
     A pass refused mid-run stops the run and reports the refusal rather than
-    hammering the same refused call for the rest of the bound.
+    hammering the same refused call again.
     """
     before = seat.fetch_state()
-    run = start_autopass(before, until_step, whose_turn)
-    deadline = time.monotonic() + max(0.0, max_seconds)
+    run = resume_autopass(resume, before, until_step, whose_turn)
     passes = 0
 
     def answer(state: dict[str, Any], reason: str, finished: bool = True) -> dict[str, Any]:
-        return {
+        result = {
             "stopped_because": reason,
             "passes": passes,
             "finished": finished,
@@ -1378,12 +1444,18 @@ def pass_until(
             "state": state,
             "available_actions": available_actions(seat, state),
         }
+        if not finished:
+            # A plain copy: `run` is JSON-safe by construction (see
+            # `start_autopass`), and this is the token `resume_autopass`
+            # takes straight back on the next call.
+            result["resume"] = dict(run)
+        return result
 
-    def timed_out(state: dict[str, Any]) -> dict[str, Any]:
+    def handed_back(state: dict[str, Any], reason: str) -> dict[str, Any]:
         return answer(
             state,
-            f"timed out after {max_seconds}s with {passes} priorities passed - "
-            "call again to keep going",
+            f"{reason} - this call is not waiting for it: {passes} "
+            "priorities passed so far. Call again (with `resume`) to keep going.",
             finished=False,
         )
 
@@ -1400,7 +1472,7 @@ def pass_until(
         if reason is not None:
             return answer(state, reason)
 
-        run["known_stack_ids"] = {obj.get("id") for obj in (state.get("stack") or [])}
+        run["known_stack_ids"] = [obj.get("id") for obj in (state.get("stack") or [])]
         forget_starting_occurrence(run, state)
 
         pending = state.get("pending_decision")
@@ -1424,7 +1496,8 @@ def pass_until(
             # thin wrappers over the same paused-command tape `decide`
             # resumes) - used here rather than posting to `decide()` directly
             # with a hand-built answer, matching how a live client answers
-            # these two kinds.
+            # these two kinds. This is progress this seat can make with
+            # nobody's help, so the call carries on rather than handing back.
             if pending_kind == "declare_attackers":
                 path = f"/api/games/{seat.game_id()}/actions/attack"
                 body: dict[str, Any] = {"attackers": []}
@@ -1462,31 +1535,35 @@ def pass_until(
             # count it - a caller reading `passes` is asking how many
             # priorities this run gave up, not how many turn-based actions it
             # answered on this seat's behalf.
-            if time.monotonic() < deadline:
-                continue
-            return timed_out(seat.fetch_state())
-
-        if pending is not None and pending_kind in ("declare_attackers", "declare_blockers"):
-            # Addressed to the *other* seat (the branch above already
-            # handled this seat's own pause). `state["priority_holder"]`
-            # cannot be trusted here: CR 508.1/CR 509.1's turn-based action
-            # never finished, so `priority.reset` never ran either, and the
-            # value this state carries is simply whatever it was before the
-            # freeze - not "nobody has priority", which is what a frozen
-            # game actually is. Trusting it anyway (attempting a pass this
-            # seat does not really hold) is exactly the race that used to
-            # surface here: this seat's pass could land *after* the other
-            # seat's declaration resolves and genuinely regrants priority to
-            # them, and get refused for a reason this seat had no way to see
-            # coming ("alice does not have priority, bob does"). Waiting for
-            # the other seat to answer avoids attempting a pass this state
-            # can never honestly justify.
-            if time.monotonic() >= deadline:
-                return timed_out(state)
-            time.sleep(poll_seconds)
             continue
 
+        if pending is not None and pending_kind in ("declare_attackers", "declare_blockers"):
+            # Addressed to the *other* seat (the branch above already handled
+            # this seat's own pause). Nothing this seat can do moves the game
+            # until they answer: `state["priority_holder"]` cannot be trusted
+            # here either, because CR 508.1/CR 509.1's turn-based action never
+            # finished, so `priority.reset` never ran and the value this state
+            # carries is simply whatever it was before the freeze - not
+            # "nobody has priority", which is what a frozen game actually is.
+            # Attempting a pass on the strength of it is the race that used to
+            # surface here: it could land *after* their declaration resolves
+            # and genuinely regrants them priority, and be refused for a reason
+            # this seat had no way to see coming. So this is a hand-back, which
+            # is what the old code slept through.
+            return handed_back(
+                state,
+                f"the game is frozen on {pending.get('player')}'s own "
+                f"{pending_kind} (CR 508.1, CR 509.1) and only they can answer it",
+            )
+
         if state.get("priority_holder") == seat.player:
+            if passes >= MAX_PASSES_PER_CALL:
+                return handed_back(
+                    state,
+                    f"this one call has already passed {MAX_PASSES_PER_CALL} priorities "
+                    "without ever having to wait, which is more than any real stretch "
+                    "of a turn needs - handing the board back so you can look at it",
+                )
 
             def perform_pass() -> Any:
                 return seat.call_json(
@@ -1529,19 +1606,16 @@ def pass_until(
                     # the pass itself never committed (the paused command's
                     # mutated copy was discarded, same as any other pause),
                     # so nothing here actually released priority yet.
-                    if time.monotonic() < deadline:
-                        continue
-                    return timed_out(seat.fetch_state())
+                    continue
                 # Addressed to the *other* seat (the case the comment above
                 # explains): this seat cannot answer it and spinning on more
-                # passes would just cross the exact same wall every time -
-                # wait for the other seat the same way the final branch below
-                # waits for its own turn, rather than the tight, sleepless
-                # loop a bare `continue` here would be.
-                if time.monotonic() >= deadline:
-                    return timed_out(seat.fetch_state())
-                time.sleep(poll_seconds)
-                continue
+                # passes would just cross the exact same wall every time.
+                return handed_back(
+                    seat.fetch_state(),
+                    f"passing crossed {self_decision.get('player')}'s own "
+                    f"{self_decision.get('kind')} (CR 508.1, CR 509.1), which only "
+                    "they can answer",
+                )
             if self_decision is not None:
                 return answer(
                     seat.fetch_state(),
@@ -1556,10 +1630,9 @@ def pass_until(
                     f"a pass was refused, so the run stopped: {outcome.get('reason')}",
                 )
             passes += 1
-            if time.monotonic() < deadline:
-                continue
-            return timed_out(seat.fetch_state())
+            continue
 
-        if time.monotonic() >= deadline:
-            return timed_out(state)
-        time.sleep(poll_seconds)
+        return handed_back(
+            state,
+            "you do not hold priority right now, so there is nothing here to pass",
+        )
