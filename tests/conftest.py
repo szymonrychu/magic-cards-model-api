@@ -15,6 +15,38 @@ from magic_cards_model_api import ai_seat, lobby  # noqa: E402
 from magic_cards_model_api.main import app  # noqa: E402
 from magic_cards_model_api.store import store  # noqa: E402
 
+#: Set only by `mise run test:pg` - never by the plain `mise run test`, which
+#: explicitly `unset`s it. With this set, a postgres-only test that cannot
+#: get a database URL must fail loudly (`require_postgres_database_url`
+#: below), not skip: a plain `pytest.skip` inside a fixture is invisible to
+#: CI's pass/fail line, so a variable name that ever drifts between
+#: mise.toml/CI and a test file would otherwise leave the entire postgres
+#: suite silently unexecuted while `test:pg` still reports success.
+MCM_REQUIRE_POSTGRES_TESTS = "MCM_REQUIRE_POSTGRES_TESTS"
+
+
+def require_postgres_database_url(env_var: str) -> str:
+    """The postgres DSN read from `env_var`, or a skip/hard-failure depending
+    on whether this run is required to actually exercise postgres. Every
+    postgres-only fixture (the contract suite's postgres parameterisation,
+    the CAS race tests) calls this instead of inlining its own
+    `pytest.skip`, so the fail-instead-of-skip behaviour lives in exactly one
+    place."""
+    url = os.environ.get(env_var)
+    if url:
+        return url
+    if os.environ.get(MCM_REQUIRE_POSTGRES_TESTS):
+        pytest.fail(
+            f"{env_var} is not set, but {MCM_REQUIRE_POSTGRES_TESTS}=1 (set by "
+            "`mise run test:pg`) - the postgres suite is required to actually "
+            "run, not skip"
+        )
+    pytest.skip(
+        f"{env_var} is not set - postgres tests are skipped (run `mise run "
+        "test:pg` to exercise them)"
+    )
+    raise AssertionError("unreachable: pytest.skip/pytest.fail always raise")
+
 
 @pytest.fixture(autouse=True)
 def _no_real_claude_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
