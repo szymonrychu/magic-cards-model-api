@@ -25,11 +25,15 @@ jobs:
       # own checkout, at ../magic-cards-model relative to the working
       # directory set above. This step goes away once T5 replaces the path
       # dependency with a git-sha dependency.
+      # Both repos are private, so the default GITHUB_TOKEN cannot reach the
+      # engine. ENGINE_DEPLOY_KEY is the private half of a read-only deploy key
+      # registered on szymonrychu/magic-cards-model.
       - name: Checkout magic-cards-model (engine, sibling of this checkout)
         uses: actions/checkout@v7
         with:
           repository: szymonrychu/magic-cards-model
           path: magic-cards-model
+          ssh-key: ${{ secrets.ENGINE_DEPLOY_KEY }}
 
       - name: Install mise
         uses: jdx/mise-action@v4
