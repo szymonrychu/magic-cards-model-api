@@ -435,14 +435,17 @@ def test_an_implemented_instant_that_leaves_the_stack_records_changed_true(clien
 
 
 def test_dry_run_cast_is_not_audited(client, game):
-    """A `dry_run` cast probe - what `seatkit.available_actions` issues per
-    hand card - must never appear in the game log: it changes nothing, and
-    auditing it anyway is how one traced game's log grew to 2410 entries with
-    956 of them refusal noise from exactly this kind of probe. Moved here
-    from the now-deleted `test_deadlock.py` (T7b): the deadlock it guarded
-    against cannot occur any more (no mutating request blocks on a decision
-    at all - see `commands.py`), but this assertion about dry-run auditing is
-    unrelated to that and still holds."""
+    """A `dry_run` cast probe - what `seatkit.available_actions` used to
+    issue per hand card, before T11 pointed it at the engine's own
+    enumeration instead - must never appear in the game log: it changes
+    nothing, and auditing it anyway is how one traced game's log grew to
+    2410 entries with 956 of them refusal noise from exactly this kind of
+    probe. A dry-run cast is still a real, directly-callable request shape
+    (`actions/cast?dry_run=true`), so this still pins the same invariant for
+    it. Moved here from the now-deleted `test_deadlock.py` (T7b): the
+    deadlock it guarded against cannot occur any more (no mutating request
+    blocks on a decision at all - see `commands.py`), but this assertion
+    about dry-run auditing is unrelated to that and still holds."""
     add_card(client, game, "Mountain", "alice", "hand")
     board = state(client, game)
     mountain_id = board["hands"]["alice"][0]["id"]

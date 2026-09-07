@@ -114,9 +114,9 @@ class CastRequest(BaseModel):
     is named. Every one of these is read straight off the engine's own
     `machines/casting.py::keyword_cast_options`/`marker_cast_options`/
     `granted_cast_options` - see `serialize.py`'s `cast_options` field on a
-    graveyard/exile card view (and `available_actions`'s `castable` entries)
-    for which keyword a given card actually offers right now, rather than
-    guessing from this list:
+    graveyard/exile card view (and `available_actions`'s `cast`-kind entries,
+    each naming its own `keyword`) for which keyword a given card actually
+    offers right now, rather than guessing from this list:
 
     - `"Flashback"` - a card in the GRAVEYARD with flashback (CR 702.34a).
     - `"Mayhem"` - a card in the GRAVEYARD with mayhem, discarded this turn

@@ -165,9 +165,13 @@ who is playing through a web UI against the same game server you act on.
 Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
 `{assignment.uid}`.
 
-- `wait_for_priority(player_uid, max_seconds=...)` blocks until it is your
-  moment and hands you the board. ALWAYS bound it and call it in a loop. A
-  bare unbounded wait strands your turn.
+- `wait_for_priority(player_uid, max_seconds=...)` checks once and hands you
+  the board - it never blocks (`max_seconds` is accepted but does nothing).
+  If `wake_reason` says "nothing new yet", call it again; there is no way to
+  strand your turn by calling it in a loop, since each call returns at once.
+  A decision addressed to you comes back as its own distinct kind of result
+  (`input_required`) rather than buried in ordinary text - answer it with
+  `decide` before doing anything else.
 - `my_state(player_uid)` is the board as you are allowed to see it.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
   `declare_attackers`, `declare_blockers`, `decide`, `pass_priority`,
@@ -179,8 +183,8 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   the game sits still and your opponent is waiting on you.
 - `game_log` is the history; `report_problem` files an engine bug.
 
-Each action tool performs the action and blocks until you next have something
-to do - one call, one meaningful action.
+Each action tool performs the action, then checks once for your next moment
+to act (never blocks) - one call, one meaningful action.
 
 **Holding priority is how you take two actions in one phase.** For a `cast`,
 releasing is the default, because releasing is how the spell you just cast
@@ -344,7 +348,7 @@ priority. After the game you will be asked to finish this same file.
   resolve, respond on the stack. An idle permanent and an uncast trick are
   wasted resources - decline them only for a reason you can name.
 - Passing with purpose is not stalling. Stalling is being unable to say what
-  you are waiting for. Every wait is bounded, every pending decision is
+  you are waiting for. No call ever blocks, every pending decision is
   answered, and the human never sits in front of a game where nothing is
   happening because you did not choose.
 - NEVER state card text or a rule from memory. Use the `spellslinger` MCP

@@ -18,9 +18,11 @@ blockers, decide, pass, resolve, advance, set-step, log, report. Run
 `<subcommand> --help` when unsure of arguments.
 
 **`--hold` is how you take two actions in one phase.** A `cast` releases
-priority by default and blocks until you next have something to do. If you
-mean to act again before the phase moves on - cast two spells, hold up an
-instant - pass `--hold`, or the phase can end between your two actions:
+priority by default and checks once for your next moment to act - it does not
+wait for one (`wake_reason` may say "nothing new yet"; run the same command,
+or `wait`, again to check once more). If you mean to act again before the
+phase moves on - cast two spells, hold up an instant - pass `--hold`, or the
+phase can end between your two actions:
 
     ... --uid U --game G --hold cast "Sakura-Tribe Elder"
     ... --uid U --game G --hold cast "Amulet of Vigor"
@@ -206,9 +208,13 @@ per priority.
   a main phase skips your own turn.
 - If `pass` is refused with "you do not have priority", call `wait` again.
   NEVER `advance` to escape that - it strands the stack.
-- ALWAYS bound your waits: `wait --max-seconds 30`, called in a loop. A bare
-  wait blocks forever, the shell backgrounds it, and your turn ends having
-  done nothing. A bounded wait returns promptly and you simply call it again.
+- `wait` (and every other command) checks once and returns at once -
+  poll-and-return, never a real wait. `--max-seconds` is accepted but does
+  nothing any more: a `wake_reason` of "nothing new yet" means exactly that,
+  and calling again immediately is the right response, not a mistake to
+  avoid. There is no way to background yourself into doing nothing - each
+  call is fast, so simply keep calling `wait` (or take an action) until
+  something changes.
 - A pending decision FREEZES the game. Answering it is the only legal move,
   and a command may return early specifically to hand you one. An unanswered
   decision times out to a default and wastes the card.
@@ -216,7 +222,7 @@ per priority.
   resolve, respond on the stack. An idle permanent and an uncast trick are
   wasted resources - decline them only for a reason you can name.
 - Passing with purpose is not stalling. Stalling is being unable to say what
-  you are waiting for. Every wait is bounded, every pending decision is
+  you are waiting for. No call ever blocks, every pending decision is
   answered, and the human never sits in front of a game where nothing is
   happening because you did not choose.
 - NEVER state card text or a rule from memory. If you have `resolve_cards`

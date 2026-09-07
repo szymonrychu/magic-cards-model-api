@@ -36,6 +36,28 @@ Two costs, split deliberately:
   picks a card up. At ~35 objects times a handful of requirements it is not
   expensive, but it is not worth paying on a 1.2s poll for the 30-odd cards
   the player is not currently holding.
+
+`ability_hints`/`cast_hints` overlap `machines.legal_actions.legal_actions`
+(Phase 1, adopted by `seatkit.available_actions` in T11) on one real question:
+whether a cost has an unannounced `{X}` in it (CR 107.3a) - both used to spell
+out `"{X}" in (cost or "")` independently, the same duplicated-rule shape this
+project has paid for twice before (`seatkit.py`'s own module docstring).
+`_needs_x` below is the one place that check is written now, shared by both.
+The rest of what these two report is deliberately NOT folded into
+`legal_actions`'s own `Action` records, because it answers a different
+question at a different granularity: `cast_hints`'s `targeting` is the UI's
+own `TargetingProfile` view (`understood`, per-requirement `phrase`/`count`,
+a `division`) so the board can badge a targeting ability and fall back to
+free-entry when the parser could not read it, where `Action.target_slots` is
+deliberately narrower (`phrase`/`minimum`/`maximum` only - its own docstring)
+and carries no `understood` flag at all; `ability_hints`'s `mana_options` is
+a client-side guess read straight off the parsed ability, not the
+authoritative `game.mana_color_options` call `Action.color_options` is built
+from (see that field's own docstring for the real bug - Steam Vents reporting
+legal when it was not - that made the difference matter once already).
+Reaching for `available_actions` on every card this cheaply would also trade
+a parse-only annotation the UI needs on every card for a full per-player
+legality pass; that trade is not this task's to make.
 """
 
 from __future__ import annotations
@@ -108,6 +130,15 @@ def _no_targets() -> dict[str, Any]:
     return _profile_view(TargetingProfile())
 
 
+def _needs_x(cost: str | None) -> bool:
+    """Whether a cost string carries an unannounced `{X}` (CR 107.3a) - the
+    one check `ability_hints` and `cast_hints` both used to spell out on
+    their own (`legal_actions._mana_affordability`'s own `mana.x_count`
+    check is the engine's version of the same question, asked once X has
+    been parsed into a `ManaCost` rather than off the raw printed string)."""
+    return "{X}" in (cost or "")
+
+
 def ability_hints(ability: Any) -> dict[str, Any]:
     """What activating this ability asks for, beyond the click.
 
@@ -123,7 +154,7 @@ def ability_hints(ability: Any) -> dict[str, Any]:
     effect = getattr(ability, "effect", None) or text
     hints: dict[str, Any] = {
         "cost": cost,
-        "needs_x": "{X}" in (cost or ""),
+        "needs_x": _needs_x(cost),
         "is_mana_ability": getattr(ability, "mana", None) is not None,
     }
     if loyalty is not None:
@@ -171,7 +202,7 @@ def cast_hints(state: CardState) -> dict[str, Any]:
     modal = modal_profile(card)
     hints: dict[str, Any] = {
         "mana_cost": card.mana_cost,
-        "needs_x": "{X}" in (card.mana_cost or ""),
+        "needs_x": _needs_x(card.mana_cost),
         "targeting": _profile_view(targeting_profile(card)),
     }
     if modal is not None:

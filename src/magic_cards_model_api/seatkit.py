@@ -167,9 +167,12 @@ NO_SUCH_SEAT = (
 #: answer arrived" event here, only "check the board again".
 POLL_SECONDS = 0.2
 
-#: The default bound for a blocked action, when a tool/command does not name
-#: its own. Every wait is bounded (never blocks forever); a caller that wants
-#: to keep waiting just calls again.
+#: The default `max_seconds` an action tool/command declares when it does not
+#: name its own. `run_action` accepts it for backward compatibility but no
+#: longer uses it for anything (`block_until_wake` is poll-and-return, T11) -
+#: `pass_until`'s own internal loop is the one place left where this genuinely
+#: bounds a wait; a caller of anything else that wants to keep checking just
+#: calls again.
 DEFAULT_MAX_SECONDS = 60.0
 
 #: The HTTP client read timeout every `Seat`/`Seats` builds with.
