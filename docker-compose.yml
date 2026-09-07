@@ -28,7 +28,7 @@ services:
     image: postgres:16-alpine
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-mtg}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mtg}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?run via mise (test:pg, compose, db:migrate), which generates one - see scripts/postgres-password.sh}
       - POSTGRES_DB=${POSTGRES_DB:-mtg}
     ports:
       - "5432:5432"
@@ -52,7 +52,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD:-mtg}@postgres:5432/${POSTGRES_DB:-mtg}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD:?run via mise, which generates one - see scripts/postgres-password.sh}@postgres:5432/${POSTGRES_DB:-mtg}
     # Never started by a bare `docker compose up` - run explicitly with
     # `docker compose run --rm migrate` (or `mise run db:migrate`, which does
     # that against a locally-running `postgres` service).

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -127,3 +128,51 @@ def test_no_application_entrypoint_runs_alembic_upgrade_head():
     for dockerfile in ("Dockerfile", "Dockerfile.agent"):
         text = (ROOT / dockerfile).read_text()
         assert "alembic" not in text, dockerfile
+
+
+# -- no committed password literal ------------------------------------------
+#: GitGuardian failed T9's pull request on three hardcoded `mtg` postgres
+#: passwords, in `.env.example`, `.github/workflows/ci.yml` and
+#: `docker-compose.yml`. They were throwaway local values, but a security check
+#: that is always red is a security check nobody reads, and phase 2b creates six
+#: more repos that each get a compose file. The password now comes from
+#: `scripts/postgres-password.sh`, which generates one into the gitignored
+#: `.postgres-password` on first use. These pin that it stays that way.
+
+
+def _repo_file(name: str) -> str:
+    return (ROOT / name).read_text()
+
+
+def test_no_committed_file_carries_a_postgres_password_literal() -> None:
+    """`POSTGRES_PASSWORD` must never be assigned a literal in a tracked file.
+
+    Only two forms are allowed: empty (`.env.example`, documenting the key), or
+    a shell interpolation of the variable itself.
+    """
+    interpolation = re.compile(r"\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*")
+    assignment = re.compile(r"POSTGRES_PASSWORD\s*[=:]\s*(\S+)")
+    offenders = []
+    for name in (".env.example", "docker-compose.yml", ".github/workflows/ci.yml", "mise.toml"):
+        for line in _repo_file(name).splitlines():
+            # Blank every shell interpolation first, so a line like
+            # `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?...}` is not read as an
+            # assignment of the text inside its own default clause.
+            stripped = interpolation.sub("", line)
+            match = assignment.search(stripped)
+            # Once interpolations are blanked, an allowed line leaves nothing
+            # but quotes behind: `POSTGRES_PASSWORD=""` or `POSTGRES_PASSWORD=`.
+            if match and match.group(1).strip("\"'"):
+                offenders.append(f"{name}: {line.strip()}")
+    assert offenders == [], f"a postgres password literal is committed: {offenders}"
+
+
+def test_compose_refuses_to_interpolate_without_a_password() -> None:
+    """No `:-` default: compose must fail loudly rather than fall back."""
+    compose = _repo_file("docker-compose.yml")
+    assert "POSTGRES_PASSWORD:-" not in compose
+    assert "${POSTGRES_PASSWORD:?" in compose
+
+
+def test_the_generated_password_file_is_gitignored() -> None:
+    assert ".postgres-password" in _repo_file(".gitignore")

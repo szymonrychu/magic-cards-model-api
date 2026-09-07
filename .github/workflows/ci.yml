@@ -13,24 +13,6 @@ jobs:
     defaults:
       run:
         working-directory: magic-cards-model-api
-    # T9's postgres-backed contract/CAS tests need a real database.
-    # MCM_TEST_DATABASE_URL below (set on the "Test postgres" step) points
-    # `mise run test:pg` at this service container instead of the docker
-    # compose `postgres` it would otherwise bring up itself for local use.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: mtg
-          POSTGRES_PASSWORD: mtg
-          POSTGRES_DB: mtg
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mtg -d mtg"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
     steps:
       - name: Checkout magic-cards-model-api
         uses: actions/checkout@v7
@@ -73,7 +55,10 @@ jobs:
       - name: Test
         run: mise run test
 
+      # No `services:` block and no MCM_TEST_DATABASE_URL: `test:pg` brings up
+      # docker compose's own `postgres` and generates its password through
+      # scripts/postgres-password.sh, so CI exercises exactly the path a
+      # developer runs rather than a second, differently-configured database.
+      # It fails the job rather than skipping if postgres never comes up.
       - name: Test postgres
-        env:
-          MCM_TEST_DATABASE_URL: postgresql+psycopg://mtg:mtg@localhost:5432/mtg
         run: mise run test:pg
