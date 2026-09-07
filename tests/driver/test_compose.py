@@ -13,14 +13,21 @@ def compose() -> dict:
     return yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 
 
-def test_three_services(compose):
-    assert set(compose["services"]) == {"game", "agent", "driver"}
+def test_five_services(compose):
+    """`postgres`/`migrate` (T9) joined the original three - see docker-
+    compose.yml's own module comment for why they are not yet wired into
+    `game`."""
+    assert set(compose["services"]) == {"game", "agent", "driver", "postgres", "migrate"}
 
 
-def test_every_build_context_is_the_parent_so_the_engine_is_in_scope(compose):
+def test_every_built_services_context_is_the_parent_so_the_engine_is_in_scope(compose):
     """magic-cards-model is a path dependency at ../magic-cards-model, so a
-    build context of `.` cannot see it."""
+    build context of `.` cannot see it. `postgres` is a stock image with no
+    `build` of its own, so only the services this repo actually builds need
+    this."""
     for name, service in compose["services"].items():
+        if "build" not in service:
+            continue
         assert service["build"]["context"] == "..", name
 
 

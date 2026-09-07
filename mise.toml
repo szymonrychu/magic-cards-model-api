@@ -4,6 +4,7 @@ uv = "latest"
 
 [env]
 _.python.venv = { path = ".venv", create = true }
+_.file = { path = ".env", missing = "ignore" }
 UV_PYTHON_DOWNLOADS = "never"
 # Images live in harbor under the `containers` project. One image serves both
 # the game and the driver - the driver only overrides the command.
@@ -29,6 +30,33 @@ run = "uv run ruff check ."
 [tasks.fmt]
 description = "Ruff format and fix"
 run = "uv run ruff format . && uv run ruff check --fix ."
+
+[tasks."db:migrate"]
+description = "Apply postgres schema migrations. One-shot - never from app startup, never from an init container (see docker-compose.yml's `migrate` service)."
+run = "uv run alembic upgrade head"
+
+[tasks."test:pg"]
+description = "Run the full suite against real postgres (T9): brings up docker compose's `postgres` locally, or uses MCM_TEST_DATABASE_URL as-is when it is already set (CI's service container)"
+run = """
+set -eu
+if [ -z "${MCM_TEST_DATABASE_URL:-}" ]; then
+  # `docker compose` interpolates every service's variables even when only
+  # `postgres` is targeted - `game`/`agent`/`driver` require MTG_DECKS
+  # (see .env.example), which this postgres-only run has no reason to need
+  # for real, so a harmless placeholder stands in when it is not set.
+  export MTG_DECKS="${MTG_DECKS:-/tmp}"
+  docker compose up -d postgres
+  for _ in $(seq 1 60); do
+    if docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-mtg}" -d "${POSTGRES_DB:-mtg}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  export MCM_TEST_DATABASE_URL="postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD:-mtg}@localhost:5432/${POSTGRES_DB:-mtg}"
+fi
+DATABASE_URL="$MCM_TEST_DATABASE_URL" uv run alembic upgrade head
+MCM_TEST_DATABASE_URL="$MCM_TEST_DATABASE_URL" uv run pytest
+"""
 
 [tasks.compose]
 description = "Bring up game + continuous agent + driver"

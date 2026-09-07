@@ -11,8 +11,53 @@
 #
 # Every build context is `..` because the engine is a path dependency at
 # ../magic-cards-model.
+#
+# `postgres`/`migrate` (T9) are not yet wired into `game` - the process-wide
+# `store` singleton (`store.py`) is still `InMemoryRepository`; switching it
+# over is a later task's job, not this one's. They exist here so
+# `PostgresRepository` has something to run against locally, the same way
+# `mise run test:pg` brings them up for the postgres-backed test suite.
+# `migrate` is a **one-shot**, never started by `docker compose up` on its
+# own (see its `profiles`) - alembic migrations run once, by hand or by CI,
+# never from an init container or from `game`'s own startup: alembic takes no
+# lock, and concurrent `upgrade head` from replicas is a real hazard, not a
+# hypothetical one.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-mtg}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mtg}
+      - POSTGRES_DB=${POSTGRES_DB:-mtg}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mtg} -d ${POSTGRES_DB:-mtg}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ..
+      dockerfile: magic-cards-model-api/Dockerfile
+      platforms:
+        - ${DOCKER_PLATFORM:-linux/amd64}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD:-mtg}@postgres:5432/${POSTGRES_DB:-mtg}
+    # Never started by a bare `docker compose up` - run explicitly with
+    # `docker compose run --rm migrate` (or `mise run db:migrate`, which does
+    # that against a locally-running `postgres` service).
+    profiles: ["migrate"]
+
   game:
     platform: ${DOCKER_PLATFORM:-linux/amd64}
     build:
@@ -117,3 +162,4 @@ services:
 
 volumes:
   scryfall-cache:
+  postgres-data:
