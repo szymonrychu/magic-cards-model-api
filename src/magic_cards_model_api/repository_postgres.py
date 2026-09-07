@@ -23,10 +23,14 @@ and-postgres.md`):
   decision with no long-running work inside it, so it uses an ordinary
   transaction-scoped `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE`: released
   automatically at commit/rollback, never a session-scoped advisory lock that
-  could leak across a pooled connection. This is not the per-game row lock
-  decision 5 rules out - it is a table lock bounded to the rare "create a
-  lobby game" path, not the per-turn gameplay path CAS exists to keep
-  unlocked.
+  could leak across a pooled connection. `SHARE ROW EXCLUSIVE` conflicts with
+  `ROW EXCLUSIVE` - the lock every plain `INSERT`/`UPDATE`/`DELETE` takes - so
+  it genuinely blocks every concurrent `replace()` for as long as the
+  transaction holding it is open, table-wide, not just the row it eventually
+  inserts. That is acceptable here only because "create a lobby game" is a
+  cold path with a short, bounded critical section (one count query plus one
+  insert, no waiting on a decision or a human) - not because it leaves the
+  per-turn gameplay path unlocked, which it does not.
 
 **The identity-preserving read cache.** `locked()`/`get()` hand back the
 *same* `Game` object across repeated calls in this process, as long as
@@ -89,9 +93,11 @@ def _looks_like_id(game_id: str) -> bool:
     repository itself mints (`uuid4().hex`) is, but a caller (or a contract-
     suite test) probing for an id that was never created at all commonly
     passes a plain sentinel string like `"no-such-game"`, which is not. The
-    `id` column is native postgres `uuid`; querying it with a non-uuid string
-    would otherwise surface as a driver `DataError`, not the `KeyError`/
-    `None`/`False` every caller here is written to expect for an unknown id."""
+    `id` column is plain `String` (see `db.py`'s module docstring for why),
+    so a query against it with a non-uuid string is not a driver error - it
+    is just a normal lookup that matches no row. This check exists purely to
+    short-circuit that lookup before it reaches the driver at all, saving a
+    round trip on every probe with an id that cannot possibly exist."""
     try:
         UUID(game_id)
     except (ValueError, AttributeError, TypeError):

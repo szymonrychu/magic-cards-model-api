@@ -22,15 +22,14 @@ registration order, not by `created_at`.
 though every value in them is one: every id this repository hands out and
 accepts is a literal `uuid4().hex` string (matching `InMemoryRepository` and
 every existing caller, which treats `GameRepository.create()`'s return value
-as an opaque, exact `str`, never a `uuid.UUID` object) - and native `uuid`
-does two things that break that. It normalises on read-back to the canonical
-`8-4-4-4-12` dashed form, so a value round-tripped through the column no
-longer string-equals the undashed hex this repository minted it as
-(`"...".join(...) in ui_games()`-shaped checks would silently fail). And it
-rejects, at the driver, any string that is not valid uuid syntax at all -
-which the contract suite deliberately probes with (`"no-such-game"`, an
-"unknown id" sentinel that is not uuid-shaped), turning what every caller
-here expects to be `None`/`False`/`KeyError` into an unhandled `DataError`.
+as an opaque, exact `str`, never a `uuid.UUID` object), and native `uuid`
+normalises on read-back to the canonical `8-4-4-4-12` dashed form - so a
+value round-tripped through the column would no longer string-equal the
+undashed hex this repository minted it as (`"...".join(...) in ui_games()`-
+shaped checks would silently fail). A probe with a non-uuid-shaped sentinel
+like `"no-such-game"` (the contract suite's "unknown id" case) is not a
+second reason: `repository_postgres.py`'s `_looks_like_id` already turns
+those away before any query reaches the driver, string column or not.
 """
 
 from __future__ import annotations
