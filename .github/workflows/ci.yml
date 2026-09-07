@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Local suite takes ~196s; this leaves generous headroom for a colder CI
+    # runner plus checkout and mise install.
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: magic-cards-model-api
+    steps:
+      - name: Checkout magic-cards-model-api
+        uses: actions/checkout@v7
+        with:
+          path: magic-cards-model-api
+
+      # The engine is a PATH dependency: pyproject.toml has
+      # [tool.uv.sources] magic-cards-model = { path = "../magic-cards-model", editable = true }.
+      # `uv sync` needs the engine checked out as a sibling of this repo's
+      # own checkout, at ../magic-cards-model relative to the working
+      # directory set above. This step goes away once T5 replaces the path
+      # dependency with a git-sha dependency.
+      - name: Checkout magic-cards-model (engine, sibling of this checkout)
+        uses: actions/checkout@v7
+        with:
+          repository: szymonrychu/magic-cards-model
+          path: magic-cards-model
+
+      - name: Install mise
+        uses: jdx/mise-action@v4
+        with:
+          working_directory: magic-cards-model-api
+
+      - name: mise install
+        run: mise install
+
+      - name: Lint
+        run: mise run lint
+
+      - name: Test
+        run: mise run test
