@@ -403,8 +403,21 @@ def test_available_actions_summary_never_leaks_the_opponents_hand_or_library(
     assert result["state"]["hands"]["bob"] == []
     # bob's Mountain is public (battlefield), but its activatable mana ability
     # must not be offered to alice - only permanents *she* controls may be.
-    activatable_ids = {entry["card_id"] for entry in result["available_actions"]["activatable"]}
-    bobs_mountain = find(state(client, game)["battlefield"], "Mountain")
+    activatable_ids = {
+        entry["card_id"]
+        for entry in result["available_actions"]["actions"]
+        if entry["kind"] in ("activate", "activate_mana")
+    }
+    # `find()` returns the first name match, and alice has a Mountain of her
+    # own on the battlefield too (`stock_a_bolt`) - filter on controller as
+    # well, or this would silently compare against alice's own (by now
+    # tapped, from paying for the bolt) Mountain instead of bob's untapped
+    # one, which would pass for the wrong reason (tapped, not "not hers").
+    bobs_mountain = next(
+        card
+        for card in state(client, game)["battlefield"]
+        if card["name"] == "Mountain" and card["controller"] == "bob"
+    )
     assert bobs_mountain["id"] not in activatable_ids
 
 

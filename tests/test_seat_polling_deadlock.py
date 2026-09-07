@@ -201,26 +201,29 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
     assert board["priority_holder"] is not None
 
 
-def test_available_actions_returns_this_early_shape_for_own_pending_decision(client, game) -> None:
+def test_available_actions_returns_this_early_shape_for_own_pending_decision(
+    client, game, monkeypatch
+) -> None:
     """The other half of the original `test_deadlock.py::
     test_available_actions_does_not_deadlock_on_own_pending_decision`, which
     this file's own docstring already explains T7b made half moot: the
     *deadlock* it proved is gone by construction now, because pausing means
     the request that raised the decision has already returned - and
     released `store.locked(game_id)` - by the time any caller can ever see
-    this seat's own `pending_decision` at all (`seatkit.available_actions`'s
-    own docstring says so directly). There is no longer a background thread
-    to hold a lock this call could contend for, so there is nothing left to
-    time.
+    this seat's own `pending_decision` at all. There is no longer a
+    background thread to hold a lock this call could contend for, so there
+    is nothing left to time.
 
-    The *shape* half is not moot, and had no replacement: `available_actions`
-    skips every dry-run probe and returns a fixed early shape - `castable`
-    and `activatable` forced empty (nothing is legal while the decision
-    stands), `attackers_requested`/`blockers_requested` read straight off
+    The *shape* half is not moot, and had no replacement: since T11,
+    `available_actions` is one call into `GET .../legal-actions`, which
+    itself asks the engine's `legal_actions(game, player, pending=...)` -
+    while a decision is outstanding, that enumeration answers *only* its own
+    legal answers (`answer_decision`-kind actions) for the player it
+    addresses, nothing else (`legal_actions`'s own module docstring).
+    `attackers_requested`/`blockers_requested` still read straight off
     `pending["kind"]` (the one case where the decision itself names the
-    single legal thing), and `pending_decision` echoed back - rather than
-    the ordinary probed shape. This pins exactly that dict, synchronously,
-    with no thread needed."""
+    single legal thing), and `pending_decision` is still echoed back. This
+    pins exactly that dict, synchronously, with no thread needed."""
     stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
     uids = seats_for(client, game)
 
@@ -230,13 +233,12 @@ def test_available_actions_returns_this_early_shape_for_own_pending_decision(cli
     pending = pending_view["pending_decision"]
     assert pending["kind"] == "choose_cards"
 
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
     seat = seatkit.Seat("alice", uids["alice"], "http://testserver", game)
     actions = seatkit.available_actions(seat, pending_view)
 
-    assert actions == {
-        "castable": [],
-        "activatable": [],
-        "attackers_requested": False,
-        "blockers_requested": False,
-        "pending_decision": pending,
-    }
+    assert actions["attackers_requested"] is False
+    assert actions["blockers_requested"] is False
+    assert actions["pending_decision"] == pending
+    assert actions["actions"], "the pending decision's own answers should still be offered"
+    assert all(entry["kind"] == "answer_decision" for entry in actions["actions"])

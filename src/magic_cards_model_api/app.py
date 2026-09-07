@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
+from magic_cards_model.machines.legal_actions import legal_actions as compute_legal_actions
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 
@@ -828,6 +829,40 @@ def get_affordances(
     if object_costs:
         result["object_costs"] = object_costs
     return result
+
+
+@app.get("/api/games/{game_id}/legal-actions")
+def get_legal_actions(game_id: str, player: str) -> dict[str, Any]:
+    """Every action `player` could legally take right now
+    (`machines.legal_actions.legal_actions`, Phase 1) - the api's own door
+    onto the engine's enumeration surface, and what `seatkit.available_actions`
+    calls instead of brute-forcing one HTTP `dry_run` per candidate (T11).
+
+    Each entry carries the engine's own `affordable` verdict
+    (`"yes"`/`"no"`/`"unknown"`) alongside its legality - CR 118.6: an
+    unpayable cast is still a legal one, so it is still listed, never dropped.
+    `"unknown"` is a real, distinct answer (a modal or X spell before its
+    parameters are announced) and is reported as such rather than folded into
+    `"no"`, which is the whole reason this replaces the old probe: a dry run
+    can only ever say yes or no, never "I cannot tell yet".
+
+    Reads whichever decision is currently paused for this game straight off
+    the repository's own paused-command slot (`store.paused_command`, the
+    same source `serialize.state_view`'s own `pending_decision` reads from)
+    and hands it to `legal_actions` as `pending` - when one is outstanding,
+    the answer is that decision's own legal answers and nothing else, for
+    the player it addresses only (`legal_actions`'s own module docstring).
+
+    Every action is already `player`'s own by construction - hand cards,
+    controlled permanents, this player's own graveyard/exile cast options -
+    so, like `get_affordances`, this needs no `visibility.redact_view` pass:
+    there is nothing of the opponent's in here to redact.
+    """
+    game = game_or_404(game_id)
+    paused = store.paused_command(game_id)
+    pending = paused[2] if paused is not None else None
+    actions = compute_legal_actions(game, player, pending=pending)
+    return {"actions": [action.model_dump(mode="json") for action in actions]}
 
 
 @app.post("/api/games/{game_id}/actions/concede")
