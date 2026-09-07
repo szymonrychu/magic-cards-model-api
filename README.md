@@ -410,21 +410,29 @@ action only when allowed and `dry_run` is not set.
 
 Some turn-based actions ask the player something instead of the engine
 choosing for them - the cleanup discard (CR 514.1, 701.9b) is the first one.
-Most of these questions are CR 608.2d; `choose_targets` is the one exception
+Most of these questions are CR 608.2d; `choose_targets` is one exception
 (CR 603.3d, CR 601.2c instead - see `decisions.rule_for_kind`), since it is
 choosing targets *while* a spell or ability goes on the stack, exactly the
-case 608.2d's own wording excludes. When a question comes up, the mutating
-request (`advance`, so far) blocks - starting once the deciding seat's own
-state read has shown it the question (`decisions.DecisionMailbox.mark_delivered`),
-not from the moment it was raised - for a server-side timeout (5 minutes by
-default, `MCM_DECISION_TIMEOUT_SECONDS`) waiting for a seat to answer through
-`decide`; on timeout it falls back to the engine's documented default and
-writes a `decision_timeout` line to the game log *and* the state object's own
-`decision_timeouts` list (naming the default taken and the rule), because a
-default is a harness failure standing in for a real answer and should not be
-readable only by digging through the log. The state object's `pending_decision`
-field carries `{player, kind, prompt}` for every seat, plus `cards` and
-`amount` for the deciding player (and the admin key) only - everyone else may
+case 608.2d's own wording excludes; `declare_attackers`/`declare_blockers`
+(CR 508.1, CR 509.1) are turn-based declarations rather than resolution
+questions, and `mulligan` (CR 103.5) is asked outside the game entirely, but
+all three are answered through the same mechanism as every other kind.
+
+Answering is pause-and-resume, not blocking (`commands.py`). Any
+engine-driving mutating request (`advance`, `pass-priority`, `cast`,
+`activate`, ..., and `pregame/settle` with `use_defaults` left `false`) that
+crosses a question with no scripted answer returns *immediately* -
+`allowed: null, paused: true, pending_decision: {...}` - instead of parking
+the request; the game itself is left exactly as it was before the attempt,
+and the paused command is remembered so `POST /api/games/{id}/decide?uid=`
+can resume it with one more answer appended. There is no server-side
+decision timeout configuration any more, nothing ever silently takes the
+engine's default in place of a live answer, and the state object carries no
+list of defaulted decisions - a decision simply stays paused, however long
+that takes, until a seat answers it through `decide`.
+The state object's `pending_decision` field carries `{player, kind, prompt}`
+for every seat, plus `cards` and `amount` (and the rest of the kind-specific
+detail) for the deciding player (and the admin key) only - everyone else may
 see that a choice is being made, never what it is a choice among.
 
 ### The state object
@@ -436,7 +444,7 @@ summoning sickness, resolved target names, Scryfall image links, and the
 activated abilities the engine would let you index into. The stack comes
 top-first; spells and abilities are distinguishable by `kind`. `pending_decision`
 is `null` unless a decision (CR 608.2d, or CR 603.3d/601.2c for `choose_targets`)
-is currently blocked on an answer - see Decisions below.
+is currently paused, waiting on an answer - see Decisions below.
 
 `exile_pile` is the CR 406.4-marked cards sitting in `exile` (suspended, with
 their time counters; foretold; plotted; a cascade hit awaiting its cast) -

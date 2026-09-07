@@ -76,12 +76,18 @@ from typing import Any
 from uuid import UUID
 
 from magic_cards_model.machines import Step
-from magic_cards_model.machines.decisions import Answer, DecisionPending, PendingDecision
+from magic_cards_model.machines.decisions import (
+    Answer,
+    DecisionPending,
+    PendingDecision,
+    default_answer,
+)
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import CardState, Game, Zone
 from pydantic import BaseModel
 
 from . import engine_api
+from .decisions import ANSWER_FIELD_FOR_KIND
 from .schemas import (
     ActivateRequest,
     AdvanceRequest,
@@ -351,29 +357,70 @@ def _run_state_based_actions(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.run_state_based_actions(game)
 
 
+def _run_pregame_settle(game: Game, payload: dict[str, Any]) -> Any:
+    """Walk the whole pregame forward (`Game.settle_pregame`) as an ordinary
+    command: pauses the moment it asks a `mulligan`, `opening_hand_action`,
+    or a mulliganed seat's bottoming `choose_cards` question with no
+    scripted answer, exactly like every other command handler here. `payload`
+    is unused - `PregameSettleRequest.use_defaults` is read by `app.py`'s
+    `pregame_settle` route, not by this handler, since it decides *how the
+    route drives this command* (one attempt that may pause, vs
+    `run_command_to_completion` looping it to the end with defaults), not
+    anything the command itself needs to know.
+
+    `settle_priorityless_steps` runs inside this handler too, after
+    `Game.settle_pregame` itself, on the same reasoning `_run_pass_priority`'s
+    and `_run_advance`'s docstrings give for calling it inside theirs: CR
+    103.8's first turn begins at its untap step, which grants nobody
+    priority (CR 502.4) and CR 500.3 ends of its own accord, and that has to
+    be part of the same deterministic replay a pause resumes into rather
+    than a second mutation performed outside `run_command` once the command
+    finally completes - which, for `pregame_settle`, can be several
+    `POST .../decide` calls later, well after `app.py`'s own route function
+    returned.
+    """
+    step = game.settle_pregame()
+    settled_through = engine_api.settle_priorityless_steps(game)
+    if settled_through and game.turn is not None:
+        step = game.turn.step
+    return {"step": step.value, "settled_through": settled_through}
+
+
 #: Every command kind `run_command` knows how to replay, mapped to the
 #: function that actually drives it - `engine_api` for most, or a thin
 #: wrapper right above for the handful (`concede`, `pass_priority`,
-#: `advance`, `state_based_actions`) that call the engine's `Game` methods
-#: directly rather than through an `engine_api.Outcome`-returning function.
+#: `advance`, `state_based_actions`, `pregame_settle`) that call the
+#: engine's `Game` methods directly rather than through an
+#: `engine_api.Outcome`-returning function.
 #:
 #: Deliberately not every mutating route this API has - see this module's
-#: own docstring, `app.py`'s route-by-route conversion notes (T7b), and the
-#: pregame endpoints (`opening.py`), which are deliberately NOT here: every
-#: one of them is told an answer already made (a pre-scripted bottoming
-#: choice, an engine method with no live question of its own) and so never
-#: pauses in practice, while each also calls `audit.record(game_id, ...)`
-#: *internally*, reading the *committed* game back out of the store for its
-#: snapshot (`audit.record`'s own lazy `store.get(game_id)`). Running that
-#: audit call from inside a command handler - against `working`, a copy the
-#: store has not yet been told about - would snapshot the *previous*
-#: committed state, one command stale, for every pregame audit entry. Routes
-#: with no exposure to a live CR 608.2d/CR 508.1/CR 509.1 question buy
-#: nothing from pausing, so they are left exactly as they were rather than
-#: risking that regression for no benefit. Board-setup routes (`app.py`'s
-#: "setting the board up" section) are the same judgement for a simpler
-#: reason: they are test-harness affordances, not engine-driving actions, and
-#: never touch a live decision at all.
+#: own docstring and `app.py`'s route-by-route conversion notes (T7b). The
+#: rest of `opening.py`'s pregame endpoints (`pregame/mulligan`, `pregame/
+#: opening-hand/action`, `pregame/opening-hand/finish`) are still NOT here:
+#: each is told an answer already made (a pre-scripted bottoming choice, an
+#: engine method with no live question of its own) and so never pauses in
+#: practice, while each also calls `audit.record(game_id, ...)` *internally*,
+#: reading the *committed* game back out of the store for its snapshot
+#: (`audit.record`'s own lazy `store.get(game_id)`). Running that audit call
+#: from inside a command handler - against `working`, a copy the store has
+#: not yet been told about - would snapshot the *previous* committed state,
+#: one command stale, for every pregame audit entry. Those three routes have
+#: no exposure to a live CR 608.2d/CR 508.1/CR 509.1 question and buy nothing
+#: from pausing, so they are left exactly as they were rather than risking
+#: that regression for no benefit.
+#:
+#: `pregame_settle` is the one pregame route that IS a command (T7b's own
+#: audit found MULLIGAN/OPENING_HAND_ACTION otherwise unreachable through
+#: any live transport - `ask_mulligan` and `Game.take_opening_hand_actions`
+#: only ever ran from here). `app.py`'s route audits *after* `_run_command`/
+#: `run_command_to_completion` returns, against the newly committed game,
+#: the same way every other command-backed route already does - so it does
+#: not hit the staleness problem above.
+#:
+#: Board-setup routes (`app.py`'s "setting the board up" section) are the
+#: same judgement as the three direct pregame routes, for a simpler reason:
+#: they are test-harness affordances, not engine-driving actions, and never
+#: touch a live decision at all.
 COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "cast": _run_cast,
     "play_land": _run_play_land,
@@ -387,6 +434,7 @@ COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "concede": _run_concede,
     "pass_priority": _run_pass_priority,
     "advance": _run_advance,
+    "pregame_settle": _run_pregame_settle,
     "state_based_actions": _run_state_based_actions,
 }
 
@@ -484,6 +532,42 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
 
     working.decisions.finish_replay()
     return RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape))
+
+
+def run_command_to_completion(game: Game, command: Command) -> RunResult:
+    """Run `command` against `game` all the way to `COMPLETED`, answering
+    every pause along the way with the engine's own `default_answer` for
+    that exact decision, rather than a live seat's.
+
+    This is what makes a headless caller's "just settle it, consult nobody"
+    request possible without a second, bespoke code path around
+    `pause_when_unanswered`: it drives the same tape every live `POST .../
+    decide` call would build, pre-filled with `default_answer` instead of a
+    seat's own choice - `ask_mulligan`/`Game.ask` read the tape before ever
+    reaching `pause_when_unanswered` (see the engine's own `ask_mulligan`
+    docstring), so a fully pre-filled tape produces the identical committed
+    game a genuinely unattended run would, deterministically, in one call.
+
+    `app.py`'s `pregame_settle` route is the one caller today
+    (`PregameSettleRequest.use_defaults=True`), but nothing here is specific
+    to the pregame - any command this module can run, it can settle with
+    defaults the same way.
+    """
+    tape: list[Answer] = []
+    result = run_command(game, command, tape)
+    while result.status is RunStatus.PAUSED:
+        assert result.pending is not None
+        decision = result.pending.decision
+        field = ANSWER_FIELD_FOR_KIND[decision.kind]
+        answer = Answer(
+            seq=result.pending.seq,
+            kind=decision.kind,
+            player=decision.player,
+            **{field: default_answer(decision)},
+        )
+        tape.append(answer)
+        result = run_command(game, command, tape)
+    return result
 
 
 class CommandDivergenceError(RuntimeError):

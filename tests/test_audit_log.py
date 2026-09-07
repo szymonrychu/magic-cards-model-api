@@ -11,6 +11,8 @@ from magic_cards_model.machines import PriorityOutcome
 from magic_cards_model.machines.effects import effect_for as real_effect_for
 from magic_cards_model.models import game as game_module
 
+from magic_cards_model_api.store import store  # noqa: E402
+
 
 def log_of(client: TestClient, game: str) -> list[dict]:
     response = client.get(f"/api/games/{game}/log")
@@ -190,11 +192,13 @@ def test_declare_blockers(client, game):
     assert resolved["resolved"] == "Grizzly Bears"
     alice_bears = cast.json()["spell_id"]  # two bears on the battlefield: use ids, not names
 
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
     client.patch(f"/api/games/{game}/cards/{alice_bears}", json={"summoning_sick": False})
     client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
     client.post(f"/api/games/{game}/advance", json={"player": "alice"})  # declare_attackers
     attack = client.post(
         f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
         json={"attackers": [{"card_id": alice_bears, "defender": "bob"}]},
     )
     assert attack.json()["allowed"] is True
@@ -209,6 +213,7 @@ def test_declare_blockers(client, game):
     # decision", not the engine's real legality refusal.
     not_attacking = client.post(
         f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
         json={"player": "bob", "blocks": [{"blocker": bob_bears, "blocked": bob_bears}]},
     )
     assert not_attacking.json()["allowed"] is False
@@ -216,6 +221,7 @@ def test_declare_blockers(client, game):
 
     blocked = client.post(
         f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
         json={"player": "bob", "blocks": [{"blocker": bob_bears, "blocked": alice_bears}]},
     )
     blocked_body = blocked.json()

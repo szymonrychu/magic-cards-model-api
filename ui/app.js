@@ -567,7 +567,7 @@ function toggleAttacker(card, event) {
 
 async function confirmAttack() {
   const body = C.attackBody(store.get().combatDraft);
-  const res = await send("POST", gamePath("actions/attack"), body);
+  const res = await send("POST", withUid(gamePath("actions/attack"), store.get().uid), body);
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
@@ -581,9 +581,16 @@ async function confirmAttack() {
  * say so. Sends the same empty `attackers` `confirmAttack` would for an
  * empty draft, whatever the draft actually holds right now - "no attack"
  * overrides an in-progress draft rather than requiring it to be cleared by
- * hand first. */
-async function declareNoAttackers() {
-  const res = await send("POST", gamePath("actions/attack"), C.attackBody({}));
+ * hand first.
+ *
+ * Exported for `tests/test_ui_app.py` only, alongside `store`/`tryTarget`
+ * above - see `store`'s own comment. */
+export async function declareNoAttackers() {
+  const res = await send(
+    "POST",
+    withUid(gamePath("actions/attack"), store.get().uid),
+    C.attackBody({})
+  );
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
@@ -603,7 +610,11 @@ function toggleBlock(card) {
 }
 
 async function confirmBlocks() {
-  const res = await send("POST", gamePath("actions/declare-blockers"), C.blockBody(store.get().combatDraft, you()));
+  const res = await send(
+    "POST",
+    withUid(gamePath("actions/declare-blockers"), store.get().uid),
+    C.blockBody(store.get().combatDraft, you())
+  );
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
@@ -612,9 +623,16 @@ async function confirmBlocks() {
 
 /** "No blocks" - `declareNoAttackers`'s sibling for CR 509.1a's own "if
  * any". Sends the same empty `blocks` `confirmBlocks` would for an empty
- * draft, overriding whatever is currently drafted. */
-async function declareNoBlockers() {
-  const res = await send("POST", gamePath("actions/declare-blockers"), C.blockBody({}, you()));
+ * draft, overriding whatever is currently drafted.
+ *
+ * Exported for `tests/test_ui_app.py` only - see `declareNoAttackers`'s own
+ * comment above. */
+export async function declareNoBlockers() {
+  const res = await send(
+    "POST",
+    withUid(gamePath("actions/declare-blockers"), store.get().uid),
+    C.blockBody({}, you())
+  );
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });

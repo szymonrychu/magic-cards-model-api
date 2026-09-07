@@ -65,7 +65,7 @@ logger = logging.getLogger("mcm.decisions")
 #: question, `Game.ask` had nowhere live to route it, and `decide` refused
 #: every shape the player tried, so the "as this enters, choose a color"
 #: replacement effect never got its answer and the whole match sat stuck
-#: behind it. `test_decision_kinds.test_every_decision_kind_is_answerable_or_served_elsewhere`
+#: behind it. `test_decision_kinds.test_every_decision_kind_is_answerable`
 #: is the regression test: it enumerates the engine's own `DecisionKind` and
 #: fails, by name, the moment a new one is added to
 #: `magic_cards_model.machines.decisions` without a matching entry here -
@@ -166,15 +166,20 @@ logger = logging.getLogger("mcm.decisions")
 #: the default, exactly as `Game.ask` does.
 #:
 #: Which path reaches it matters, and both exist. `Game.settle_pregame` - the
-#: headless walk of the whole pregame, exposed here as the admin-only
-#: `POST /api/games/{id}/pregame/settle` - goes through `ask_mulligan` for
-#: real; its own command handler turns `pause_when_unanswered` back off before
-#: calling it, since an admin settle is meant to take the engine's own
-#: defaults immediately, never to pause (see `commands._run_pregame_settle`).
-#: A seat declaring for *itself* instead uses `POST /api/games/{id}/pregame/
-#: mulligan`, which calls `Game.declare_mulligan`: told an answer already
-#: made, asking nobody, pausing on nothing. Both are real; neither makes the
-#: other dead code.
+#: whole-pregame walk exposed here as the admin-only `POST /api/games/{id}/
+#: pregame/settle` (`commands._run_pregame_settle`, an ordinary command like
+#: any other) - goes through `ask_mulligan` for real, and by default (`Post
+#: .../pregame/settle`'s `use_defaults=False`) genuinely pauses on it, the
+#: same as any other command pauses on any other kind: `pending_decision`
+#: carries it, and a live seat answers through `POST /api/games/{id}/decide`.
+#: `use_defaults=True` instead pre-fills the tape with `default_answer` for
+#: every pause the run hits (`commands.run_command_to_completion`), so an
+#: admin settle can still take the engine's own defaults immediately and
+#: never actually pause, without a second `pause_when_unanswered`-toggling
+#: code path to keep in sync with this one. A seat declaring for *itself*
+#: instead uses `POST /api/games/{id}/pregame/mulligan`, which calls
+#: `Game.declare_mulligan`: told an answer already made, asking nobody,
+#: pausing on nothing. All three are real; none makes another dead code.
 #:
 #: `validate_answer` gives `MULLIGAN` its own branch even so, because the
 #: engine-side authority for a mulligan answer is `ask_mulligan`'s own

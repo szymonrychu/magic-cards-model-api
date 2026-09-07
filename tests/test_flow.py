@@ -90,6 +90,7 @@ def test_declare_attackers(client, game):
 
     attack = client.post(
         f"/api/games/{game}/actions/attack",
+        params={"uid": seats_for(game)["alice"]},
         json={"attackers": [{"card_id": bears, "defender": "bob"}]},
     )
     attack_body = attack.json()
@@ -102,6 +103,56 @@ def test_declare_attackers(client, game):
     assert len(board["combat"]["attacks"]) == 1
     assert board["combat"]["attacks"][0]["defender"] == "bob"
     assert find(board["battlefield"], "Grizzly Bears")["tapped"] is True
+
+
+def test_the_opponents_uid_cannot_declare_your_attackers(client, game):
+    """`actions/attack` and `actions/declare-blockers` are thin aliases over
+    the same paused tape `decide` resumes (`_answer_declaration`'s own
+    docstring), and `decide` refuses unless `uid` opens the *deciding*
+    player's own seat (CR 608.2d's "the player announces" - nobody else may
+    make this choice for them). Before this, `actions/attack` and
+    `actions/declare-blockers` enforced nothing at all: any uid, or no uid,
+    got the same answer a live seat did - the two doors onto the same tape
+    disagreed about who could walk through. This pins that they now agree.
+    """
+    bears = cast_and_resolve_bears(client, game)
+    client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    paused = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert paused.json()["pending_decision"]["kind"] == "declare_attackers"
+
+    uids = seats_for(game)
+
+    # bob's own uid does not open alice's declare_attackers decision.
+    wrong_seat = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["bob"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert wrong_seat.json()["allowed"] is False
+    assert "does not open the deciding player's seat" in wrong_seat.json()["reason"]
+
+    # No uid at all is refused the same way - not silently accepted, and not
+    # silently attributed to whichever seat the caller happened to claim to
+    # be in the request body (this route takes no `player` field at all).
+    no_uid = client.post(
+        f"/api/games/{game}/actions/attack",
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert no_uid.json()["allowed"] is False
+    assert "does not open the deciding player's seat" in no_uid.json()["reason"]
+
+    # The decision is still genuinely pending after both refusals - neither
+    # touched the tape - and alice's own uid still answers it for real.
+    still_pending = state(client, game)["pending_decision"]
+    assert still_pending is not None and still_pending["kind"] == "declare_attackers"
+
+    real = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert real.json()["allowed"] is True, real.json()
 
 
 def test_state_based_actions_kill_a_lethal_creature(client, game):
@@ -183,6 +234,7 @@ def test_advance_keeps_combat_steps_after_a_declaration(client, game):
     assert into_declare_attackers.json()["paused"] is True, into_declare_attackers.json()
     attack = client.post(
         f"/api/games/{game}/actions/attack",
+        params={"uid": seats_for(game)["alice"]},
         json={"attackers": [{"card_id": bears, "defender": "bob"}]},
     )
     assert attack.json()["allowed"] is True
@@ -191,6 +243,43 @@ def test_advance_keeps_combat_steps_after_a_declaration(client, game):
     # but no longer a free default - before the skipped steps happen.
     advanced = advance_collecting_steps(client, game, 3)
     assert advanced == ["declare_blockers", "combat_damage", "end_of_combat"]
+
+
+def test_the_opponents_uid_cannot_declare_your_blockers(client, game):
+    """`actions/declare-blockers`'s own half of `test_the_opponents_uid_
+    cannot_declare_your_attackers` above."""
+    bears = cast_and_resolve_bears(client, game)
+    client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    uids = seats_for(game)
+    attack = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert attack.json()["allowed"] is True
+    paused = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert paused.json()["pending_decision"]["kind"] == "declare_blockers"
+
+    # alice's own uid does not open bob's declare_blockers decision.
+    wrong_seat = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["alice"]},
+        json={"player": "bob", "blocks": []},
+    )
+    assert wrong_seat.json()["allowed"] is False
+    assert "does not open the deciding player's seat" in wrong_seat.json()["reason"]
+
+    still_pending = state(client, game)["pending_decision"]
+    assert still_pending is not None and still_pending["kind"] == "declare_blockers"
+
+    real = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": []},
+    )
+    assert real.json()["allowed"] is True, real.json()
 
 
 def test_target_check(client, game):

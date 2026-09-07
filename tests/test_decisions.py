@@ -127,6 +127,70 @@ def test_a_seat_sees_and_answers_its_pending_decision(client, game):
     assert final.get("pending_decision") is None, "answered decisions do not linger"
 
 
+def test_an_unrelated_completed_command_clears_an_unrelated_pause(client, game):
+    """`app.py`'s `_run_command` calls `store.clear_paused_command` on
+    *every* `COMPLETED` result, not only the one that resumed the pause it
+    is clearing - so a totally unrelated mutating call that completes while
+    a decision sits paused discards that stored pause outright, rather than
+    leaving it sitting there stale.
+
+    Deliberately safe: a paused command was never applied to the committed
+    game (`commands.py`'s own module docstring, "no half-applied `Game` kept
+    anywhere"), so nothing here throws away a real answer, only a *question*
+    - and the exact same question resurfaces, byte-identical, the moment
+    whatever would have asked it runs again, because replay is
+    deterministic. This pins that: the discard's pause is discarded by an
+    unrelated `state-based-actions` call, nothing about the game moved (the
+    discard never silently happened), and asking again reproduces the
+    identical pause and can still be answered for real.
+    """
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
+    uids = seats_for(client, game)
+
+    paused = advance_into_cleanup(game)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+    first_pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert first_pending["kind"] == "choose_cards"
+
+    # An unrelated command, against the same game, that completes rather
+    # than pausing on anything - `state-based-actions` never asks a
+    # question at all.
+    sba = client.post(f"/api/games/{game}/state-based-actions")
+    assert sba.status_code == 200, sba.text
+
+    cleared = state(client, game, uid=uids["alice"])
+    assert cleared.get("pending_decision") is None, "the unrelated pause must be cleared"
+    assert cleared["step"] == "end_step", "nothing about the paused discard was silently applied"
+    assert len(cleared["hands"]["alice"]) == 8, "the discard never happened on its own"
+
+    # Asking again reproduces the identical pause - the same question, not a
+    # different or corrupted one - and it can still be answered for real.
+    # `advance_into_cleanup`'s own response is read as an anonymous viewer
+    # (no `uid`), so its `pending_decision` is redacted down to
+    # `{player, kind, prompt}` - `wait_for_pending` reads it back as alice's
+    # own seat instead, the same way `first_pending` was read, for the full,
+    # unredacted `cards`/`amount` to compare.
+    replayed = advance_into_cleanup(game)
+    assert replayed is not None
+    second_pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert second_pending["kind"] == first_pending["kind"]
+    assert second_pending["player"] == first_pending["player"]
+    assert second_pending["amount"] == first_pending["amount"]
+    assert set(second_pending["cards"]) == set(first_pending["cards"])
+
+    to_discard = second_pending["cards"][0]
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [to_discard]},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["accepted"] is True
+    final = state(client, game, uid=uids["alice"])
+    assert final["step"] == "cleanup"
+    assert len(final["hands"]["alice"]) == 7
+
+
 def test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed(client, game):
     """The defect this regresses: a `choose_cards` decision that needs
     exactly 1 card (CR 514.1's cleanup discard, `decision.exact`), answered

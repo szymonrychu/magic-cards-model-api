@@ -311,7 +311,19 @@ function renderPromptBox(el, app, handlers) {
     return;
   }
   const pending = state.pending_decision;
-  if (pending && pending.player === state.you) {
+  // `declare_attackers`/`declare_blockers` reach `pending_decision` now
+  // (pausing put both on the one tape every other kind already answers
+  // through - `decisions.py`'s module docstring), but `ui/decisions.js`'s
+  // `DECISION_KINDS` deliberately carries no entry for either: the dedicated
+  // combat screen below already exists (`renderCombatPrompt`), driven by
+  // `attackBody`/`blockBody` in `ui/combat.js` - see
+  // `tests/test_ui_decision_coverage.py`'s own note on this split. Routing
+  // one of these two through `renderDecision` anyway would fall through
+  // `viewModel`'s "no renderer for ..." placeholder instead: this seat's own
+  // paused attack/block decision has to keep falling through to
+  // `renderCombatPrompt` below, not stop here.
+  const isCombatDeclaration = pending && (pending.kind === "declare_attackers" || pending.kind === "declare_blockers");
+  if (pending && pending.player === state.you && !isCombatDeclaration) {
     el.appendChild(renderDecision(pending, app, handlers));
     return;
   }

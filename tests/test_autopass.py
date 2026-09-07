@@ -102,6 +102,7 @@ class Opponent:
 
     def __init__(self, game_id: str, player: str) -> None:
         self.game_id, self.player = game_id, player
+        self.uid = seats_for(game_id)[player]
         self.stop = threading.Event()
         self.passes = 0
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -115,10 +116,15 @@ class Opponent:
             pending = board.get("pending_decision")
             if pending is not None and pending.get("player") == self.player:
                 if pending.get("kind") == "declare_attackers":
-                    client.post(f"/api/games/{self.game_id}/actions/attack", json={"attackers": []})
+                    client.post(
+                        f"/api/games/{self.game_id}/actions/attack",
+                        params={"uid": self.uid},
+                        json={"attackers": []},
+                    )
                 elif pending.get("kind") == "declare_blockers":
                     client.post(
                         f"/api/games/{self.game_id}/actions/declare-blockers",
+                        params={"uid": self.uid},
                         json={"player": self.player, "blocks": []},
                     )
                 else:
@@ -201,6 +207,7 @@ def stage_an_attack_on_bob(client: TestClient, game_id: str) -> str:
     assert pending is not None and pending["kind"] == "declare_attackers", pending
     attack = client.post(
         f"/api/games/{game_id}/actions/attack",
+        params={"uid": seats_for(game_id)["alice"]},
         json={"attackers": [{"card_id": bear, "defender": "bob"}]},
     )
     assert attack.json()["allowed"] is True, attack.json()
@@ -636,7 +643,9 @@ def test_a_run_started_in_its_own_declare_attackers_step_still_moves(client, gam
     # board really is standing in a *real* declare-attackers step (not a
     # frozen one) by the time the run starts - this test is about the
     # started-in guard, not about whether the bear attacks.
-    client.post(f"/api/games/{game}/actions/attack", json={"attackers": []})
+    client.post(
+        f"/api/games/{game}/actions/attack", params={"uid": uids["alice"]}, json={"attackers": []}
+    )
     assert state(client, game)["step"] == "declare_attackers"
 
     with Opponent(game, "bob"):
@@ -667,7 +676,11 @@ def test_a_run_started_in_its_own_declare_blockers_step_still_moves(client, game
     # blocks" (CR 509.1a's "if any") so the board is standing in a *real*
     # declare-blockers step, live attack included, by the time the run
     # starts.
-    client.post(f"/api/games/{game}/actions/declare-blockers", json={"player": "bob", "blocks": []})
+    client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": []},
+    )
     board = state(client, game)
     assert board["step"] == "declare_blockers" and board["combat"]["attacks"]
 
@@ -721,7 +734,9 @@ def test_the_stamp_only_covers_the_occurrence_the_run_started_in(client, game, m
     # Answer the pause for real - CR 508.1a's "if any" makes "nobody" legal -
     # which is what actually leaves the occurrence: `state["step"]` moves
     # from the frozen `beginning_of_combat` to the real `declare_attackers`.
-    client.post(f"/api/games/{game}/actions/attack", json={"attackers": []})
+    client.post(
+        f"/api/games/{game}/actions/attack", params={"uid": uids["alice"]}, json={"attackers": []}
+    )
     later = alice.fetch_state()
     assert later["step"] == "declare_attackers", "answering the pause should have moved the step"
 

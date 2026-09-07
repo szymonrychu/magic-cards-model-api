@@ -461,7 +461,17 @@ def test_a_decision_for_this_seat_still_wins_in_the_same_step() -> None:
     assert result["stopped"]["reason"] == "a decision is pending", result
 
 
-def test_a_decision_for_the_other_seat_still_does_not_stop_the_run() -> None:
+def test_a_decision_for_the_other_seat_also_stops_the_run() -> None:
+    """This used to read `result["stopped"]["turn"] == 3` - "the condition is
+    addressed-to-you, not any decision at all", i.e. a decision pending for
+    the OTHER seat was not a stop and the run ticked straight through it to
+    the destination three turns later. That was the live-lock bug: a pass
+    that ends a step and pauses the engine on someone else's decision rolls
+    the committed game back to before the attempt, so nothing this run does
+    can ever actually reach turn 3 - `priority_holder` may still read as
+    this seat's, but re-issuing the identical pass reproduces the identical
+    pause forever. `stopReason` now halts on any pending decision, this
+    seat's or not, right where it first appears."""
     timeline = [
         board("draw", 2, "bob", pending_decision={"player": "bob", "prompt": "scry 1"}),
     ] + turn_cycle(3, "alice")
@@ -469,8 +479,9 @@ def test_a_decision_for_the_other_seat_still_does_not_stop_the_run() -> None:
 
     result = run_until_stop(board("end_step", 1), "until_castable", stops, timeline)
 
-    assert result["stopped"]["turn"] == 3, result
-    assert result["stopped"]["step"] == "precombat_main", result
+    assert result["stopped"]["reason"] == "waiting on another seat's decision", result
+    assert result["stopped"]["turn"] == 2, result
+    assert result["stopped"]["step"] == "draw", result
 
 
 def test_reaching_the_destination_still_wins_when_it_is_this_very_step() -> None:

@@ -22,6 +22,25 @@ refusal or a raised exception, because the action may already have gone
 through server-side and a caller must never retry blind. `audit.record`'s
 `log_seq`, carried on every action response, is the idempotency marker a
 caller uses to check that afterward.
+
+**Real-socket coverage did not go with the rest.** Every test above this
+point, and every other API test in this repo, drives the app through
+`fastapi.testclient.TestClient` - which runs the ASGI app in-process, with no
+real transport underneath it at all (no socket, no HTTP framing, no actual
+connection). That hides a whole class of bug a live server can hit and an
+in-process client cannot, which is exactly why the two tests this file used
+to end with booted a real `uvicorn` server on a real socket. Their specific
+proof (a client whose timeout is shorter than a server-side block genuinely
+times out; one derived from the server's own report does not) is gone with
+the block itself - there is nothing left that holds a request open server
+side to time a client out against. But "does the pause/resume round trip
+actually work over a real socket" is a different, still-live question -
+nothing about `TestClient` proves real HTTP framing carries `paused: true`
+and `pending_decision` faithfully, or that a second real request against a
+real connection resumes it correctly - so `live_server` and
+`test_pause_and_resume_round_trip_over_a_real_socket` below restore that
+coverage in the new shape, against the current pause/resume transport
+instead of the old blocking one.
 """
 
 from __future__ import annotations
@@ -29,9 +48,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import socket
+import threading
+import time
+from collections.abc import Iterator
 
 import httpx
 import pytest
+import uvicorn
 from conftest import add_card, state
 from fastapi.testclient import TestClient
 
@@ -211,3 +235,98 @@ def test_log_seq_lets_a_caller_detect_a_repeated_action(client, game) -> None:
         json={"player": "alice", "card_id": second_mountain["id"]},
     ).json()
     assert second["log_seq"] > seq1
+
+
+# -- the real thing: a live server, a real socket, a real pause/resume ------
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture()
+def live_server() -> Iterator[str]:
+    """A real uvicorn server on a real (ephemeral, non-8000) port, serving
+    the same `app`/`store` this whole test session already imports - the
+    only way to exercise real HTTP framing and a real socket-level
+    connection, which an in-process `TestClient` (no real transport
+    underneath it) cannot."""
+    port = _free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert server.started, "uvicorn did not start in time"
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+def test_pause_and_resume_round_trip_over_a_real_socket(live_server: str) -> None:
+    """The pause/resume transport (`commands.py`, `POST .../decide`) proven
+    over a real socket rather than `TestClient`'s in-process shortcut - the
+    same CR 514.1 cleanup discard `test_decisions.py`'s
+    `test_a_seat_sees_and_answers_its_pending_decision` proves over
+    `TestClient`, driven here instead through real HTTP requests against a
+    live `uvicorn` server: real framing of `paused`/`pending_decision` out,
+    a real second connection back in to resume it. Nothing here needs a
+    server-side block or a tuned timeout any more - pausing returns
+    immediately - so this only has to show the round trip survives an actual
+    socket, not merely Starlette's in-process request/response shortcut.
+    """
+    with httpx.Client(base_url=live_server, timeout=10.0) as http:
+        created = http.post(
+            "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+        ).json()
+        game_id = created["game_id"]
+        admin_key = created["admin_key"]
+        uids = created["seat_uids"]
+        try:
+            for _ in range(8):  # 7 max hand size + 1 to force the discard
+                r = http.post(
+                    f"/api/games/{game_id}/cards",
+                    json={"card": "Mountain", "player": "alice", "zone": "hand"},
+                )
+                assert r.status_code == 200, r.text
+            jump = http.put(
+                f"/api/games/{game_id}/step", json={"step": "end_step", "player": "alice"}
+            )
+            assert jump.status_code == 200, jump.text
+            board = http.get(f"/api/games/{game_id}", params={"uid": admin_key}).json()
+            mountains = [card["id"] for card in board["hands"]["alice"]]
+            to_discard = mountains[3]  # an arbitrary one, to prove it is a real choice
+
+            paused = http.post(
+                f"/api/games/{game_id}/advance",
+                params={"uid": admin_key},
+                json={"player": "alice"},
+            ).json()
+            assert paused["paused"] is True, paused
+            pending = paused["pending_decision"]
+            assert pending["kind"] == "choose_cards"
+            assert pending["player"] == "alice"
+            assert to_discard in pending["cards"]
+
+            answered = http.post(
+                f"/api/games/{game_id}/decide",
+                params={"uid": uids["alice"]},
+                json={"player": "alice", "card_ids": [to_discard]},
+            )
+            assert answered.status_code == 200, answered.text
+            assert answered.json()["accepted"] is True
+
+            final = http.get(f"/api/games/{game_id}", params={"uid": admin_key}).json()
+            assert final["step"] == "cleanup"
+            assert len(final["hands"]["alice"]) == 7
+            discarded_ids = [card["id"] for card in final["graveyards"]["alice"]]
+            assert discarded_ids == [to_discard]
+            assert final.get("pending_decision") is None
+        finally:
+            http.delete(f"/api/games/{game_id}", params={"key": admin_key})

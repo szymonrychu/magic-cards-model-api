@@ -86,6 +86,21 @@ def test_same_player_for_both_modes_casts_and_resolves(client: TestClient, game:
             json={"player": "alice", "moved": [], "top_order": None},
         )
         assert decide.json()["accepted"] is True, decide.json()
+        # `decide()`'s own response carries no `outcome` field to check
+        # directly the way `pass_priority`'s own response does in the
+        # `else` branch below - resuming a paused command never surfaces
+        # the underlying command's outcome over HTTP. The audit log's own
+        # entry for *this* call is the equivalent proof: bob's `pass_priority`
+        # paused with the stack still holding Kozilek's Command (the log
+        # entry above this one), so a stack of 0 and the spell sitting in
+        # alice's graveyard on the entry *this* `decide` call itself wrote
+        # can only mean this exact call was the one that resolved it via
+        # CR 117.4's `resolve_top` - not board state merely observed to be
+        # settled by the time some later, unrelated read happens to check it.
+        log_entry = client.get(f"/api/games/{game}/log").json()["log"][-1]
+        assert log_entry["action"] == "decide", log_entry
+        assert log_entry["stack_size"] == 0, log_entry
+        assert "Kozilek's Command" in log_entry["snapshot"]["graveyards"]["alice"], log_entry
     else:
         assert bob_response["outcome"] == "resolve_top", bob_response
 

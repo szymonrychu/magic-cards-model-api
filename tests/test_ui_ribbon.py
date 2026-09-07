@@ -319,6 +319,70 @@ def test_mounting_a_may_decision_renders_prompt_and_yes_no() -> None:
     assert "cleanup" not in result["stops"]
 
 
+# -- renderCombatPrompt: a paused declare_attackers/declare_blockers -------
+#
+# `state.step` and `state.priority_holder` are both frozen at whatever they
+# were *before* a combat-declaration pause (`app.py`'s `advance` docstring),
+# never the step the pause is trying to enter - so `renderCombatPrompt` reads
+# `state.pending_decision` instead, which is stamped the moment the question
+# is actually asked. These two are the first tests this file has ever had for
+# that branch, or for `renderCombatPrompt`/`renderDeclareAttackers`/
+# `renderDeclareBlockers` at all.
+
+
+def test_a_paused_declare_attackers_decision_renders_the_attack_prompt() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const calls = [];
+          const state = baseState({
+            step: "beginning_of_combat",
+            pending_decision: { player: "alice", kind: "declare_attackers" },
+          });
+          const handlers = { ...HANDLERS, onAttackNone: () => calls.push("no-attack") };
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          const prompt = document.querySelector("#prompt-box");
+          click(findByText(prompt, "button", "No attack"));
+          return { text: prompt.textContent, calls };
+        })()
+        """,
+    )
+    assert "Declare attackers" in result["text"]
+    assert "508.1" in result["text"]
+    assert result["calls"] == ["no-attack"]
+
+
+def test_a_paused_declare_blockers_decision_renders_the_block_prompt() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const calls = [];
+          const state = baseState({
+            step: "declare_attackers",
+            active_player: "bob",
+            pending_decision: { player: "alice", kind: "declare_blockers" },
+          });
+          const handlers = { ...HANDLERS, onBlockNone: () => calls.push("no-blocks") };
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          const prompt = document.querySelector("#prompt-box");
+          click(findByText(prompt, "button", "No blocks"));
+          return { text: prompt.textContent, calls };
+        })()
+        """,
+    )
+    assert "Declare blockers" in result["text"]
+    assert "509.1" in result["text"]
+    assert result["calls"] == ["no-blocks"]
+
+
 def test_mounting_a_kozilek_command_action_renders_strip_with_two_slots() -> None:
     result = run_module(
         "render/ribbon.js",

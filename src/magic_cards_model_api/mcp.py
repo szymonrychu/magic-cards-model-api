@@ -851,11 +851,13 @@ def build_server(seats: Seats) -> MCPServer:
         different mechanisms. `mulligan` reaches you through
         `pregame/mulligan`'s own declaration for your own seat during a
         normal game boot (CR 103.5) - this tool's `mulligan` kind is what you
-        answer only if an admin-driven headless settle
-        (`pregame/settle`) is what actually put the question to you, which is
-        not the ordinary play path. Answering when nothing is pending, or
-        when the pending decision is not yours, is refused rather than
-        accepted.
+        answer only if an admin's `pregame/settle` call is what actually put
+        the question to you (and only when that call was made with
+        `use_defaults` left `False`, its default - a `use_defaults=True`
+        settle never pauses at all, it pre-fills every such question with
+        the engine's own default before the call returns), which is not the
+        ordinary play path. Answering when nothing is pending, or when the
+        pending decision is not yours, is refused rather than accepted.
 
         Answering a decision does not, itself, involve priority (CR 608.2d is
         the resolving effect asking a question, not a priority action), but

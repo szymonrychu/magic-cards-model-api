@@ -59,6 +59,7 @@ from .schemas import (
     PatchCard,
     PatchPlayer,
     PlayLandRequest,
+    PregameSettleRequest,
     PutCard,
     ReportProblemRequest,
     SpecialActionRequest,
@@ -196,6 +197,28 @@ def _run_command(game_id: str, kind: str, request: Any) -> tuple[commands.RunRes
     request), which a few callers (`pass-priority`'s before/after resolution
     diff) still need after `run_command` returns its own, separate working
     copy.
+
+    **Deliberately clears any *unrelated* stored pause too.** `store
+    .clear_paused_command` runs here on every `COMPLETED` result, not only
+    one that resumed the paused command it is clearing - so an unrelated
+    mutating call that completes while a *different* decision sits paused
+    (a spectator's board-setup poke, another seat's own unrelated action)
+    discards that stored pause outright rather than leaving it stale
+    alongside a game that has since moved on. This is safe because a paused
+    command was never applied to the committed game in the first place - see
+    `commands.py`'s own module docstring, "no half-applied `Game` kept
+    anywhere" - so nothing here is thrown away but a *question*, and the
+    exact same question resurfaces, byte-identical, the moment whatever
+    would have asked it is attempted again (`run_command`'s replay is
+    deterministic). The alternative - clearing only when the completed
+    command IS the one that was paused - would leave a genuinely stale
+    pause sitting in the store forever once its game state has moved past
+    the point that ever asked it, which is worse: a `pending_decision` a
+    live seat can never actually answer, since resuming it would replay
+    against state that no longer produces the same question at all. See
+    `tests/test_decisions.py::
+    test_an_unrelated_completed_command_clears_an_unrelated_pause` for the
+    pinned behaviour.
     """
     command = commands.Command.build(kind, request)
     with store.locked(game_id) as game:
@@ -870,6 +893,7 @@ def _answer_declaration(
     pairs: list[DeclaredPairRequest],
     *,
     action: str,
+    uid: str | None = None,
     **audit_keys: Any,
 ) -> dict[str, Any]:
     """The shared body of `actions/attack`/`actions/declare-blockers`: both
@@ -886,6 +910,16 @@ def _answer_declaration(
     such decision pending, or the pending one is a different kind (the
     caller is at the wrong step) - the same shape every other refusal in
     this api takes, and it leaves the pending decision untouched either way.
+
+    `uid` gates exactly the way `decide`'s own does (CR 608.2d's "the player
+    announces"): it must open the *deciding* player's own seat, not the
+    admin key and not anyone else's - `visibility.resolve_viewer` returns
+    the `ADMIN` sentinel for the admin key, which is not a `str` and so
+    never satisfies this either. These two routes are aliases over the same
+    paused tape `decide` resumes (not a second transport around it - see
+    above), so the two doors have to agree on who may walk through; before
+    this they did not - `decide` enforced this and `actions/attack`/
+    `actions/declare-blockers` enforced nothing at all.
     """
 
     def refuse(reason: str) -> dict[str, Any]:
@@ -904,6 +938,9 @@ def _answer_declaration(
             f"{expected_kind.value!r} - answer that one first (POST .../decide, "
             f"or the matching action)"
         )
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer != engine_decision.player or not isinstance(viewer, str):
+        return refuse("that uid does not open the deciding player's seat")
     try:
         value = decisions.declared_pairs_answer(pairs)
         decisions.validate_answer(engine_decision, value)
@@ -930,11 +967,12 @@ def _answer_declaration(
 
 
 @app.post("/api/games/{game_id}/actions/attack")
-def action_attack(game_id: str, req: AttackRequest) -> dict[str, Any]:
+def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> dict[str, Any]:
     """Declare attackers (CR 508.1) - see `_answer_declaration`. `dry_run`
     answers without touching the pending decision at all: it only checks
     each pair's legality (`Game.why_cannot_attack`) against the game as it
-    stands right now, the same probe it always was.
+    stands right now, the same probe it always was - so it needs no `uid`
+    gate any more than any other dry run does; only a real declaration does.
     """
     attackers_detail = [
         {"card": str(pair.card_id), "defender": pair.defender} for pair in req.attackers
@@ -951,6 +989,7 @@ def action_attack(game_id: str, req: AttackRequest) -> dict[str, Any]:
         DecisionKind.DECLARE_ATTACKERS,
         pairs,
         action="attack",
+        uid=uid,
         attackers=attackers_detail,
         dry_run=False,
     )
@@ -1024,7 +1063,9 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
 
 
 @app.post("/api/games/{game_id}/actions/declare-blockers")
-def action_declare_blockers(game_id: str, req: DeclareBlockersRequest) -> dict[str, Any]:
+def action_declare_blockers(
+    game_id: str, req: DeclareBlockersRequest, uid: str | None = None
+) -> dict[str, Any]:
     """Declare blockers (CR 509.1) - see `_answer_declaration`."""
     blocks_detail = [{"blocker": str(b.blocker), "blocked": str(b.blocked)} for b in req.blocks]
     pairs = [DeclaredPairRequest(creature=b.blocker, defender=str(b.blocked)) for b in req.blocks]
@@ -1033,6 +1074,7 @@ def action_declare_blockers(game_id: str, req: DeclareBlockersRequest) -> dict[s
         DecisionKind.DECLARE_BLOCKERS,
         pairs,
         action="declare_blockers",
+        uid=uid,
         player=req.player,
         blocks=blocks_detail,
     )
@@ -1217,9 +1259,9 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # CR 103.6's "may take any such actions": the same yes/no shape.
         DecisionKind.OPENING_HAND_ACTION,
         # CR 103.5's declaration, "will you take a mulligan" - only
-        # `Game.settle_pregame` ever pauses on this one (its own command
-        # handler turns pausing back off, so in practice it never does
-        # either); a seat declaring for itself uses `POST .../pregame/
+        # `pregame_settle` (`Game.settle_pregame`) ever pauses on this one,
+        # and only when called with `use_defaults=False` (its default): a
+        # seat declaring for itself instead uses `POST .../pregame/
         # mulligan`, which pauses on nothing. Yes/no like the rest of this
         # tuple; the *bottoming* that follows a kept hand is a separate
         # CHOOSE_CARDS question and needs nothing here.
@@ -1423,22 +1465,74 @@ def pregame_opening_hand_finish(
 
 
 @app.post("/api/games/{game_id}/pregame/settle")
-def pregame_settle(game_id: str, uid: str | None = None) -> dict[str, Any]:
-    """Run the whole pregame on the engine's own defaults: every seat keeps the
-    hand it was dealt and declines every CR 103.6 action.
+def pregame_settle(
+    game_id: str, req: PregameSettleRequest | None = None, uid: str | None = None
+) -> dict[str, Any]:
+    """Run the whole pregame (CR 103.5's mulligan process, CR 103.6's
+    opening-hand actions) forward, over every seat at once.
 
-    The headless path, for a harness or a bot that wants a game to *play*
-    rather than a game to start correctly - `Game.settle_pregame`, unchanged
-    engine behaviour, immediate and deterministic because it consults nobody.
-    Admin-key only: it makes both seats' CR 103.5 declarations at once, which
-    is the operator's call over a game they created, never one seat's over the
-    other's.
+    An ordinary command now (`commands.run_command`/`_run_command`), like
+    `advance`: it pauses on the first `mulligan`/`opening_hand_action`/
+    bottoming `choose_cards` question the engine asks with no scripted
+    answer, and a live seat answers it through `POST .../decide` from there
+    - see `PregameSettleRequest.use_defaults` for the headless alternative,
+    which pre-fills every one of those with the engine's own default instead
+    (`commands.run_command_to_completion`) and so still returns a fully
+    settled, playable game from this one call, exactly as this endpoint
+    always did before pausing existed.
+
+    Admin-key only: it makes every seat's CR 103.5 declaration at once (or,
+    with `use_defaults=False`, opens the whole pregame up to be answered),
+    which is the operator's call over a game they created, never one seat's
+    over the other's.
     """
+    req = req or PregameSettleRequest()
     if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
-    with store.locked(game_id) as game:
-        result = opening.settle_pregame(game_id, game)
-        return _settled(game, result)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if req.use_defaults:
+        command = commands.Command.build("pregame_settle", req)
+        with store.locked(game_id) as game:
+            result = commands.run_command_to_completion(game, command)
+            assert result.status is commands.RunStatus.COMPLETED
+            assert result.game is not None
+            store.replace(game_id, result.game)
+            store.clear_paused_command(game_id)
+    else:
+        result, _ = _run_command(game_id, "pregame_settle", req)
+    if result.status is commands.RunStatus.PAUSED:
+        assert result.pending is not None
+        seq = audit.record(game_id, "pregame_settle", allowed=None, paused=True)
+        game = game_or_404(game_id)
+        return {
+            **visibility.redact_view(state_view(game, game_id), viewer),
+            "allowed": None,
+            "paused": True,
+            "log_seq": seq,
+        }
+    assert result.game is not None and isinstance(result.outcome, dict)
+    hands = ", ".join(f"{player.username}={len(player.hand)}" for player in result.game.players)
+    mulligans = ", ".join(
+        f"{player.username}={player.mulligans_taken}" for player in result.game.players
+    )
+    seq = audit.record(
+        game_id,
+        "pregame_settled",
+        hands=hands,
+        mulligans=mulligans,
+        # The opposite of `declare_mulligan`'s entry: `use_defaults=True`
+        # asked nobody, so every declaration is the engine's default rather
+        # than a seat's own choice. `use_defaults=False` genuinely opened
+        # every question up to a live `POST .../decide` answer along the
+        # way (even where nothing was actually pending to ask).
+        live=not req.use_defaults,
+        step=result.outcome["step"],
+    )
+    return {
+        **visibility.redact_view(state_view(result.game, game_id), viewer),
+        "allowed": True,
+        "log_seq": seq,
+    }
 
 
 # -- the play-vs-AI UI --------------------------------------------------------

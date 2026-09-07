@@ -531,11 +531,12 @@ def test_a_seat_cannot_see_the_opponents_opening_hand_options(client: TestClient
 
 
 def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> None:
-    """`Game.settle_pregame` - unchanged engine behaviour for a harness that
-    wants a game to play rather than a game to start correctly. Every seat keeps
-    the dealt hand and declines every CR 103.6 action, immediately, because it
-    consults nobody; the audit entry says `live: false` so a transcript never
-    implies a player chose it."""
+    """`Game.settle_pregame`, driven with `use_defaults=True` - unchanged
+    engine behaviour for a harness that wants a game to play rather than a
+    game to start correctly. Every seat keeps the dealt hand and declines
+    every CR 103.6 action, immediately, because it consults nobody; the
+    audit entry says `live: false` so a transcript never implies a player
+    chose it."""
     info = boot(
         client,
         alice_deck=LEYLINE_DECK,
@@ -545,7 +546,9 @@ def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> N
     try:
         started = time.monotonic()
         settled = client.post(
-            f"/api/games/{info['game_id']}/pregame/settle", params={"uid": info["admin_key"]}
+            f"/api/games/{info['game_id']}/pregame/settle",
+            params={"uid": info["admin_key"]},
+            json={"use_defaults": True},
         )
         assert settled.status_code == 200, settled.text
         assert time.monotonic() - started < PREGAME_WITHIN_SECONDS
@@ -566,27 +569,76 @@ def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> N
         delete(client, info)
 
 
-# `test_a_live_seat_answers_the_mulligan_declaration_through_decide` was
-# deleted here (T7b): it proved that a live seat could opportunistically
-# answer a `mulligan` decision through `POST .../decide` while
-# `POST pregame/settle` was in flight - a side effect of the old blocking
-# design (`ask_mulligan` consulted `Game.decisions.provider`, the live
-# mailbox, while the settle request sat parked). That side effect could
-# only ever exist for a design that blocks briefly for a live answer and
-# then silently takes a default (`decisions.py`'s old three timeout
-# tiers); this codebase no longer has that shape at all - a decision now
-# either pauses until answered or is never asked, with nothing in between.
-# Making `pregame_settle` pause the same way every other command does
-# would fix this test, but would break `test_the_admin_can_settle_the_
-# whole_pregame_at_once` right above it: an admin settle's whole point is
-# to hand back a playable game immediately, on the engine's own defaults,
-# for a harness that has no live seat to ask at all - the two tests want
-# incompatible behaviour from the same endpoint, and `pregame_settle` is
-# deliberately left out of the pause/resume conversion (see
-# `commands.py`'s `COMMAND_HANDLERS` docstring) so the endpoint keeps that
-# guarantee. A live seat's own CR 103.5 declaration is still answered
-# through `POST pregame/mulligan`, unaffected by any of this - see the
-# tests above.
+def test_a_live_seat_answers_the_mulligan_declaration_through_decide(client: TestClient) -> None:
+    """`DecisionKind.MULLIGAN` is answerable, and this is the path that makes
+    it so.
+
+    An admin `pregame/settle` call with `use_defaults` left `False` (the
+    default) runs `Game.settle_pregame` as an ordinary command
+    (`commands._run_pregame_settle`): the moment `ask_mulligan` finds no
+    scripted answer it pauses, exactly like `advance` pauses on a combat
+    declaration, and a seat answers with `POST .../decide` - no thread, no
+    blocking request, `pending_decision` on every read in between. CR 103.5's
+    bottoming follows as an ordinary `choose_cards` question, answered here
+    with the **front** card of the hand - deliberately not the engine's
+    default of the back, so the assertion that it reached the bottom of the
+    library can only pass if alice's own answer was actually used, not the
+    default."""
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
+    game_id = info["game_id"]
+    answers: list[str] = []
+    chosen: list[str] = []
+
+    def pending_of(response: Any) -> dict[str, Any] | None:
+        body = response.json()
+        assert response.status_code == 200, body
+        return body.get("pending_decision")
+
+    def answer(player: str, **body: Any) -> Any:
+        return client.post(
+            f"/api/games/{game_id}/decide",
+            params={"uid": info["seat_uids"][player]},
+            json={"player": player, **body},
+        )
+
+    try:
+        started = time.monotonic()
+        settled = client.post(
+            f"/api/games/{game_id}/pregame/settle", params={"uid": info["admin_key"]}
+        )
+        pending = pending_of(settled)
+
+        # alice mulligans once, then keeps and bottoms her front card; bob
+        # keeps straight away. Driven purely by what each response's own
+        # `pending_decision` says is next - never a fixed script - so this
+        # fails loudly instead of silently passing if the order changes.
+        while pending is not None and time.monotonic() < started + PREGAME_WITHIN_SECONDS:
+            player = pending["player"]
+            if pending["kind"] == "mulligan":
+                take = player == "alice" and "mulligan:alice" not in answers
+                answers.append(f"mulligan:{player}")
+                pending = pending_of(answer(player, accept=take))
+            elif pending["kind"] == "choose_cards":
+                front = pending["cards"][0]
+                chosen.append(front)
+                answers.append(f"choose_cards:{player}")
+                pending = pending_of(answer(player, card_ids=[front]))
+            else:  # pragma: no cover - nothing else offered by this deck/seed
+                raise AssertionError(f"unexpected pending decision: {pending}")
+
+        assert pending is None, "the settle command never finished pausing and resuming"
+        assert answers == ["mulligan:alice", "mulligan:bob", "mulligan:alice", "choose_cards:alice"]
+        game = store.get(game_id)
+        alice = game.player("alice")
+        assert alice.mulligans_taken == 1, "alice's 'yes' was really taken, not defaulted"
+        assert len(alice.hand) == 6
+        assert game.player("bob").mulligans_taken == 0
+        # The front card, which the default would never have picked.
+        assert str(alice.library[-1].id) == chosen[0]
+        assert chosen[0] not in [str(card.id) for card in alice.hand]
+        assert game.turn is not None and game.turn.step.value == FIRST_PLAYABLE_STEP
+    finally:
+        delete(client, info)
 
 
 def test_a_seat_cannot_settle_the_pregame_for_the_whole_table(client: TestClient) -> None:

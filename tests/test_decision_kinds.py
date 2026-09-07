@@ -1166,6 +1166,7 @@ def declare_gargaroth_attacking(client: TestClient, game_id: str, uids: dict[str
     client.post(f"/api/games/{game_id}/advance", json={"player": "alice"})
     attack = client.post(
         f"/api/games/{game_id}/actions/attack",
+        params={"uid": uids["alice"]},
         json={"player": "alice", "attackers": [{"card_id": gargaroth, "defender": "bob"}]},
     )
     assert attack.status_code == 200, attack.text

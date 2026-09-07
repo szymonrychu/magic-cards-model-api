@@ -434,8 +434,8 @@ def test_every_answerable_kind_has_a_drift_case(board: dict[str, Any]) -> None:
     """The case table above must cover every kind the API claims to answer -
     otherwise the parity sweep below would silently skip a kind that joined
     `ANSWERABLE_KINDS` after this file was written, exactly the shape of gap
-    `test_decision_kinds.test_every_decision_kind_is_answerable_or_served_elsewhere`
-    already guards on the other side of that set."""
+    `test_decision_kinds.test_every_decision_kind_is_answerable` already
+    guards on the other side of that set."""
     cases = _cases(board)
     assert set(cases) == set(ANSWERABLE_KINDS)
 

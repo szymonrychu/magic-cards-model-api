@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 from fastapi.testclient import TestClient
-from test_decisions import seats_for, stuff_hand
+from test_decisions import advance_into_cleanup, seats_for, stuff_hand, wait_for_pending
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
@@ -199,3 +199,44 @@ def test_a_seats_own_call_that_raises_its_own_decision_no_longer_stalls(
     assert board["step"] == "upkeep", board["step"]
     assert len(board["hands"]["alice"]) == 7
     assert board["priority_holder"] is not None
+
+
+def test_available_actions_returns_this_early_shape_for_own_pending_decision(client, game) -> None:
+    """The other half of the original `test_deadlock.py::
+    test_available_actions_does_not_deadlock_on_own_pending_decision`, which
+    this file's own docstring already explains T7b made half moot: the
+    *deadlock* it proved is gone by construction now, because pausing means
+    the request that raised the decision has already returned - and
+    released `store.locked(game_id)` - by the time any caller can ever see
+    this seat's own `pending_decision` at all (`seatkit.available_actions`'s
+    own docstring says so directly). There is no longer a background thread
+    to hold a lock this call could contend for, so there is nothing left to
+    time.
+
+    The *shape* half is not moot, and had no replacement: `available_actions`
+    skips every dry-run probe and returns a fixed early shape - `castable`
+    and `activatable` forced empty (nothing is legal while the decision
+    stands), `attackers_requested`/`blockers_requested` read straight off
+    `pending["kind"]` (the one case where the decision itself names the
+    single legal thing), and `pending_decision` echoed back - rather than
+    the ordinary probed shape. This pins exactly that dict, synchronously,
+    with no thread needed."""
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
+    uids = seats_for(client, game)
+
+    paused = advance_into_cleanup(game)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+    pending_view = wait_for_pending(client, game, uids["alice"])
+    pending = pending_view["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+
+    seat = seatkit.Seat("alice", uids["alice"], "http://testserver", game)
+    actions = seatkit.available_actions(seat, pending_view)
+
+    assert actions == {
+        "castable": [],
+        "activatable": [],
+        "attackers_requested": False,
+        "blockers_requested": False,
+        "pending_decision": pending,
+    }

@@ -441,3 +441,21 @@ class OpeningHandActionRequest(BaseModel):
 
     player: str
     card_id: UUID
+
+
+class PregameSettleRequest(BaseModel):
+    """Admin-only: run the whole pregame (CR 103.5's mulligan process, CR
+    103.6's opening-hand actions) forward, all at once, over every seat."""
+
+    use_defaults: bool = False
+    """`False` (the default): run as an ordinary command
+    (`commands.run_command`) - pause on the first `mulligan`/
+    `opening_hand_action`/bottoming `choose_cards` question the engine asks
+    with no scripted answer, exactly like `advance` pauses on a combat
+    declaration, and let a live seat answer it through `POST .../decide`.
+
+    `True`: restore this endpoint's original, headless behaviour - answer
+    every one of those questions with the engine's own default (keep the
+    dealt hand, decline every CR 103.6 action, bottom the back of the hand)
+    before the call returns, so the whole pregame settles in one request
+    with nobody consulted (`commands.run_command_to_completion`)."""
