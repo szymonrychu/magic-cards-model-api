@@ -44,7 +44,6 @@ import time
 from typing import Any
 
 from fastapi.testclient import TestClient
-from magic_cards_model.models.zone import Zone
 from ui_node import requires_node, run_module
 
 from magic_cards_model_api.main import app
@@ -187,12 +186,78 @@ def test_the_devourer_decision_says_exile_and_never_says_bottom(client: TestClie
         # other three were exiled (CR 406.1), none went to the bottom.
         game = store.get(game_id)
         alice = game.player("alice")
-        exiled = [state.id for state in alice.cards_in(Zone.EXILE)]
+        # `game.exile`, the one shared exile zone (CR 400.1: "Each player has
+        # their own library, hand, and graveyard. The other zones are shared by
+        # all players"). Reading `alice.cards_in(Zone.EXILE)` here is what hid
+        # the reported bug for as long as it did: the effect was exiling into a
+        # per-player pile, which that read finds and every seat's board view
+        # does not.
+        exiled = [state.id for state in game.exile]
         assert len(exiled) == 3, f"three of the four should be exiled, got {len(exiled)}"
         assert str(alice.library[0].id) == pending["cards"][0], (
             "the card the answer named is the one kept on top, not one sent to the bottom"
         )
         assert {str(card_id) for card_id in exiled} == set(pending["cards"][1:])
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
+def test_declining_the_split_exiles_all_four_and_the_seat_can_see_them(
+    client: TestClient,
+) -> None:
+    """The reported bug, end to end and in the browser's own words.
+
+    "You may put one of those cards back on top of your library. Exile the
+    rest." has exactly two outcomes: one card on top and three exiled, or -
+    the choice declined (CR 608.2d, "the player announces these while applying
+    the effect") - all four exiled. A player who picks nothing and presses
+    Done posts `moved: []` with `top_order` naming the four cards in the order
+    shown, which is what `ui/decisions.js`'s `split` builds from an untouched
+    draft; this is that request, byte for byte.
+
+    The assertion that matters is the *view*, not the engine's own bookkeeping:
+    exile is a shared zone (CR 400.1) and the seat's board reads
+    `Game.shared_zones[Zone.EXILE]`, so an effect that exiled into a
+    per-player pile left the player looking at an empty exile with four cards
+    gone from the top of their library - neither of the ability's two
+    outcomes, from the only seat that can see the board.
+    """
+    info = boot(client)
+    game_id, uids = info["game_id"], info["seat_uids"]
+    try:
+        reach_the_devourer_upkeep(client, info)
+        # The browser's own route: both seats pass priority in CR 103.7's
+        # first upkeep, and the trigger's resolution pauses on the question.
+        pending = None
+        for player in ("alice", "bob"):
+            passed = client.post(
+                f"/api/games/{game_id}/actions/pass-priority",
+                params={"uid": uids[player]},
+                json={"player": player},
+            )
+            assert passed.status_code == 200, passed.text
+            if passed.json().get("pending_decision") is not None:
+                pending = passed.json()["pending_decision"]
+                break
+        assert pending is not None, "the delayed trigger never asked its question"
+        assert pending["source"] == "Devourer of Destiny"
+
+        answered = client.post(
+            f"/api/games/{game_id}/decide",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "moved": [], "top_order": pending["cards"]},
+        )
+        assert answered.status_code == 200, answered.text
+        assert answered.json()["accepted"] is True
+
+        view = client.get(f"/api/games/{game_id}", params={"uid": uids["alice"]}).json()
+        assert [card["id"] for card in view["exile"]] == pending["cards"], (
+            "declining exiles all four (CR 406.2), and a seat has to be able to "
+            f"see them: the board shows {view['exile']}"
+        )
+        (alice_view,) = [p for p in view["players"] if p["username"] == "alice"]
+        assert alice_view["library_count"] == 49, "and none of the four went back on top"
+        assert view["stack"] == []
     finally:
         client.delete(f"/api/games/{game_id}")
 
