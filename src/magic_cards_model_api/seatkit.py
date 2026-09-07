@@ -98,7 +98,9 @@ else is legal while a decision stands, regardless of any lock.
 
 ## No transport-level block left to outlast
 
-`block_until_wake`'s own polling is quick reads and was never the risk.
+`block_until_wake` does one quick read and returns; so does `pass_until`,
+which used to be the last deadline loop here (it slept until `max_seconds`,
+so one MCP tool call sat open for as long as the opponent took to think).
 `perform()` - one mutating call (`cast`/`activate`/`attack`/`pass-priority`/
 `resolve-top`/`advance`) - used to be able to cross a live decision question
 and block *inside that one request*, in `Game.ask`, for up to the server's
@@ -145,7 +147,16 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: at boot, never again" was the defect. See `api_trouble`.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-2"
+PROTOCOL_VERSION = "seatkit-3"
+#: `seatkit-3` removed `max_seconds` from every tool and command that carried
+#: it - nothing blocks any more, so nothing was left for it to bound, and a
+#: parameter that bounds nothing is a promise an MCP client cannot see
+#: corrected (it receives no `description` on any parameter). It also gave
+#: `pass_priority(until=...)`/`pass --until` a `resume` token, because that
+#: run is poll-and-return now and spans several calls, and made that path
+#: return `input_required` when it stops on a decision. An MCP process from
+#: before this passes `max_seconds=` to tools that no longer take it.
+#:
 #: `seatkit-2` added the pregame tools (`mulligan`, `opening_hand_action`) and
 #: the `pregame` block every state view now carries: a game booted from
 #: decklists rests in CR 103.5's mulligan step until its seats declare, and an
@@ -160,10 +171,13 @@ NO_SUCH_SEAT = (
     "a seat uid is given to you when you are dispatched."
 )
 
-#: How often a blocked call re-fetches state while waiting for a wake
-#: condition. Small: this loop runs inside the caller's own process/thread
-#: and has no condition variable to be woken by - there is no single "the
-#: answer arrived" event here, only "check the board again".
+#: How often `_call_watching_for_self_decision` re-fetches state while one
+#: mutating call of its own is genuinely in flight on another thread - the
+#: only loop in this module that still polls at all, and it polls for the
+#: duration of a request it is already waiting on rather than for anything to
+#: happen at the table. Small: it has no condition variable to be woken by,
+#: only "check the board again". Nothing else here sleeps: `block_until_wake`,
+#: `wait_for_priority` and `pass_until` are all poll-and-return.
 POLL_SECONDS = 0.2
 
 #: The HTTP client read timeout every `Seat`/`Seats` builds with.
