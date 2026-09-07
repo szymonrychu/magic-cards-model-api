@@ -3,6 +3,48 @@
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 
+from magic_cards_model_api.store import store
+
+
+def seats_for(game_id: str) -> dict[str, str]:
+    return {name: uid for uid, name in store.seat_uids(game_id).items()}
+
+
+def advance_collecting_steps(client: TestClient, game: str, count: int) -> list[str]:
+    """`POST .../advance`, `count` genuine step transitions' worth -
+    transparently answering any `declare_attackers`/`declare_blockers` pause
+    met on the way with "nobody" (CR 508.1/CR 509.1's "if any", always
+    legal), the same idiom `test_decisions.py`'s `advance_into_cleanup` uses:
+    "declare nobody" is no longer a free, silent default, so a creatureless
+    - or simply undeclared - board still pauses there and has to be answered
+    before `advance` can complete into the next real step.
+
+    `decide`'s own response never echoes the resumed command's outcome (just
+    `accepted`/`log_seq`), so the step landed in is read back off state
+    rather than out of that response.
+    """
+    uids = seats_for(game)
+    steps: list[str] = []
+    while len(steps) < count:
+        response = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        if body.get("paused"):
+            pending = body["pending_decision"]
+            assert pending["kind"] in ("declare_attackers", "declare_blockers"), pending
+            decided = client.post(
+                f"/api/games/{game}/decide",
+                params={"uid": uids[pending["player"]]},
+                json={"player": pending["player"], "pairs": []},
+            )
+            decided_body = decided.json()
+            assert decided.status_code == 200 and decided_body["accepted"] is True, decided_body
+            assert not decided_body.get("paused"), decided_body
+            steps.append(state(client, game)["step"])
+            continue
+        steps.append(body["advanced_to"])
+    return steps
+
 
 def cast_and_resolve_bears(client: TestClient, game: str) -> str:
     add_card(client, game, "Forest", "alice", "battlefield")
@@ -37,8 +79,14 @@ def test_declare_attackers(client, game):
 
     client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
     client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
-    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
-    assert state(client, game)["step"] == "declare_attackers"
+    advance = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    advance_body = advance.json()
+    # `advance` now pauses on CR 508.1's own declare_attackers question rather
+    # than completing into the step - the committed board this response shows
+    # is still `beginning_of_combat`, the step `advance` was called from (see
+    # its own docstring), not the one it is trying to enter.
+    assert advance_body["paused"] is True, advance_body
+    assert advance_body["pending_decision"]["kind"] == "declare_attackers"
 
     attack = client.post(
         f"/api/games/{game}/actions/attack",
@@ -46,8 +94,11 @@ def test_declare_attackers(client, game):
     )
     attack_body = attack.json()
     assert isinstance(attack_body.pop("log_seq"), int)  # the audit entry's own idempotency marker
-    assert attack_body == {"allowed": True, "reason": None, "attackers": 1}
+    # `_answer_declaration`'s success shape is deliberately thin now that it
+    # is a thin alias over the pause/resume tape, not its own transport.
+    assert attack_body == {"allowed": True}
     board = state(client, game)
+    assert board["step"] == "declare_attackers"
     assert len(board["combat"]["attacks"]) == 1
     assert board["combat"]["attacks"][0]["defender"] == "bob"
     assert find(board["battlefield"], "Grizzly Bears")["tapped"] is True
@@ -118,10 +169,7 @@ def test_play_land_by_a_name_that_matches_nothing_is_refused_not_raised(client, 
 
 def test_advance_walks_the_turn(client, game):
     client.put(f"/api/games/{game}/step", json={"step": "precombat_main"})
-    steps = []
-    for _ in range(3):
-        response = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
-        steps.append(response.json()["advanced_to"])
+    steps = advance_collecting_steps(client, game, 3)
     # No attacker was declared, so the engine skips declare blockers and
     # combat damage entirely: the third advance lands on end of combat.
     assert steps == ["beginning_of_combat", "declare_attackers", "end_of_combat"]
@@ -131,17 +179,17 @@ def test_advance_keeps_combat_steps_after_a_declaration(client, game):
     bears = cast_and_resolve_bears(client, game)
     client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
     client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
-    client.post(f"/api/games/{game}/advance", json={"player": "alice"})  # declare_attackers step
+    into_declare_attackers = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert into_declare_attackers.json()["paused"] is True, into_declare_attackers.json()
     attack = client.post(
         f"/api/games/{game}/actions/attack",
         json={"attackers": [{"card_id": bears, "defender": "bob"}]},
     )
     assert attack.json()["allowed"] is True
-    advanced = [
-        client.post(f"/api/games/{game}/advance", json={"player": "alice"}).json()["advanced_to"]
-        for _ in range(3)
-    ]
-    # With an attack declared, the skipped steps happen.
+    # With an attacker declared, bob still has to answer CR 509.1's own
+    # declare_blockers question - "declares no creatures blocking" is legal
+    # but no longer a free default - before the skipped steps happen.
+    advanced = advance_collecting_steps(client, game, 3)
     assert advanced == ["declare_blockers", "combat_damage", "end_of_combat"]
 
 

@@ -55,12 +55,21 @@ _TABLES = [
     pytest.param(UI_DECISIONS_JS, "DECISION_KINDS", id="decisions.js:DECISION_KINDS"),
 ]
 
-#: `declare_attackers`/`declare_blockers` never reach `decide` at all
-#: (`decisions.SERVED_ELSEWHERE`) - the UI answers them through
-#: `POST .../actions/attack` and `POST .../actions/declare-blockers`
-#: instead, via `attackBody`/`blockBody` in `ui/combat.js`. Checked by name
+#: `declare_attackers`/`declare_blockers` reach `decide` now (pausing put
+#: both in `decisions.ANSWERABLE_KINDS` alongside every other kind), but the
+#: UI never routes a human through the generic decision box for either: it
+#: already has its own dedicated attack/block screen (`app.js`'s
+#: `planPermanentClick` -> `{kind: "attack"}`/`{kind: "block"}`,
+#: `confirmAttack`/`confirmBlocks`), driven by `attackBody`/`blockBody` in
+#: `ui/combat.js` and posted straight to `actions/attack`/
+#: `actions/declare-blockers` - the same two aliases `decide()` itself
+#: resumes the paused command through (`app.py`'s `_answer_declaration`), not
+#: a second transport around it. So `ui/decisions.js`'s `DECISION_KINDS`
+#: deliberately carries no entry for either: a flat yes/no-shaped control has
+#: nothing useful to render for "pick which creatures attack, and whom", and
+#: the dedicated screen already exists and already works. Checked by name
 #: below rather than assumed, the same way `test_decision_kinds.py` proves
-#: `decide`'s refusal for them rather than merely citing the module
+#: `decide`'s answerability for them rather than merely citing the module
 #: docstring.
 _UI_HANDLED_ELSEWHERE = {
     DecisionKind.DECLARE_ATTACKERS: "attackBody",
@@ -111,14 +120,25 @@ def test_ui_decision_kinds_match_decide_answerable_kinds(path: Path, const_name:
     in this table, and vice versa - no kind the UI claims to handle that the
     server would actually refuse. See the module docstring for why both
     `ui/app.js`'s `DECISION_RENDERERS` and `ui/decisions.js`'s
-    `DECISION_KINDS` are checked."""
+    `DECISION_KINDS` are checked.
+
+    `_UI_HANDLED_ELSEWHERE` kinds are excluded from the "missing" half on
+    purpose: `decide` genuinely answers `declare_attackers`/
+    `declare_blockers` now, but this flat table is not how a human answers
+    either - see `_UI_HANDLED_ELSEWHERE`'s own docstring for the dedicated
+    screen that is. They stay *in* the "stale" half below: if this table ever
+    grew an entry for one anyway, that would be dead code (the dedicated
+    screen would still be the one actually posting the answer), worth
+    catching the same way any other stale entry is.
+    """
     if not path.is_file():
         pytest.skip(f"{path.name} is gone - already removed from the served UI")
     server_side = {kind.value for kind in decisions.ANSWERABLE_KINDS}
+    handled_elsewhere = {kind.value for kind in _UI_HANDLED_ELSEWHERE}
     ui_side = _object_literal_keys(path, const_name)
     if ui_side is None:
         pytest.skip(f"{path.name} no longer defines {const_name} - its own table is gone")
-    missing_in_ui = server_side - ui_side
+    missing_in_ui = server_side - ui_side - handled_elsewhere
     assert not missing_in_ui, (
         f"decide() answers {sorted(missing_in_ui)} but {path.name}'s {const_name} "
         "has no form for it - a human playing through the browser cannot answer this "
@@ -136,13 +156,23 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui(
     path: Path, const_name: str
 ) -> None:
     """Every `DecisionKind` the engine can ask is, from a browser player's own
-    point of view, one of: answerable through the decision box
-    (`ANSWERABLE_KINDS`), answerable through a dedicated action UI
-    (`_UI_HANDLED_ELSEWHERE`), or provably unable to ever reach a live seat
-    at all (`_NEVER_REACHES_A_LIVE_SEAT`). A kind in none of the three is the
-    exact drift this test exists to catch. Parametrized the same way as
+    point of view, one of: answerable through a dedicated action UI
+    (`_UI_HANDLED_ELSEWHERE`), answerable through the generic decision box
+    (`ANSWERABLE_KINDS`), or provably unable to ever reach a live seat at all
+    (`_NEVER_REACHES_A_LIVE_SEAT`). A kind in none of the three is the exact
+    drift this test exists to catch. Parametrized the same way as
     `test_ui_decision_kinds_match_decide_answerable_kinds` above - see the
-    module docstring."""
+    module docstring.
+
+    `_UI_HANDLED_ELSEWHERE` is checked *before* `ANSWERABLE_KINDS`, not
+    `elif`-excluded by it: `declare_attackers`/`declare_blockers` are both
+    server-answerable (in `ANSWERABLE_KINDS`) *and* UI-handled-elsewhere at
+    once now, which the two-branch, mutually-exclusive shape this test used
+    to have could not express - it would have demanded a flat `DECISION_KINDS`
+    entry for a kind the dedicated combat screen already owns. Checking the
+    dedicated-UI membership first is what lets a kind be both without this
+    test contradicting itself.
+    """
     if not path.is_file():
         pytest.skip(f"{path.name} is gone - already removed from the served UI")
     ui_side = _object_literal_keys(path, const_name)
@@ -150,16 +180,16 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui(
         pytest.skip(f"{path.name} no longer defines {const_name} - its own table is gone")
     combat_js_text = UI_COMBAT_JS.read_text()
     for kind in DecisionKind:
-        if kind in decisions.ANSWERABLE_KINDS:
-            assert kind.value in ui_side, (
-                f"{kind} is answerable server-side but {path.name}'s {const_name} has "
-                "no entry for it"
-            )
-        elif kind in _UI_HANDLED_ELSEWHERE:
+        if kind in _UI_HANDLED_ELSEWHERE:
             marker = _UI_HANDLED_ELSEWHERE[kind]
             assert marker in combat_js_text, (
                 f"{kind} is supposed to be handled by {marker}() in ui/combat.js, "
                 "but that function is no longer there"
+            )
+        elif kind in decisions.ANSWERABLE_KINDS:
+            assert kind.value in ui_side, (
+                f"{kind} is answerable server-side but {path.name}'s {const_name} has "
+                "no entry for it"
             )
         elif kind in _NEVER_REACHES_A_LIVE_SEAT:
             pass

@@ -1,9 +1,16 @@
-"""The command runner (T7a): replays a mutating api action against the
-engine's pause-and-resume machinery (`magic_cards_model.machines.decisions`)
-instead of blocking a request thread inside `Game.ask` (see `decisions.py`'s
-`GameDecisionProvider`, which stays exactly as it is - this module is
-additive only, nothing here is wired into an HTTP route yet, and T7b is what
-switches the routes over and removes the old blocking machinery).
+"""The command runner: replays a mutating api action against the engine's
+pause-and-resume machinery (`magic_cards_model.machines.decisions`) instead
+of blocking a request thread inside `Game.ask`.
+
+Built in two passes: T7a added this module additively, against `decisions.py`'s
+old `GameDecisionProvider`/`DecisionMailbox` (a live provider blocking a
+request thread until an answer arrived, or a timeout defaulted one), with
+nothing here yet wired into an HTTP route. T7b is what actually switched
+every route over to run through here and deleted that old blocking machinery
+outright - there is no provider, no mailbox, and no decision timeout left
+anywhere in this api; `app.py`'s routes call `run_command`/`resume_command`
+directly, and `decisions.py` now holds only the JSON view, the per-kind
+answer coercion, and `validate_answer`.
 
 **The shape a paused game keeps** (see the engine's own `memory/pause-is-
 snapshot-plus-tape.md`): `(committed Game, Command, answers so far)`. There
@@ -66,13 +73,26 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
+from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionPending, PendingDecision
-from magic_cards_model.models import Game
+from magic_cards_model.machines.priority import PriorityOutcome
+from magic_cards_model.models import CardState, Game, Zone
 from pydantic import BaseModel
 
 from . import engine_api
-from .schemas import ActivateRequest, CastRequest, PlayLandRequest
+from .schemas import (
+    ActivateRequest,
+    AdvanceRequest,
+    CastRequest,
+    ConcedeRequest,
+    CrewRequest,
+    CycleRequest,
+    PassPriorityRequest,
+    PlayLandRequest,
+    SpecialActionRequest,
+)
 
 logger = logging.getLogger("mcm.commands")
 
@@ -129,24 +149,245 @@ def _run_resolve_top(game: Game, payload: dict[str, Any]) -> Any:
     return engine_api.resolve_top(game)
 
 
+def _run_suspend(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.suspend_card(game, SpecialActionRequest.model_validate(payload))
+
+
+def _run_plot(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.plot_card(game, SpecialActionRequest.model_validate(payload))
+
+
+def _run_foretell(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.foretell_card(game, SpecialActionRequest.model_validate(payload))
+
+
+def _run_cycle(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.cycle_card(game, CycleRequest.model_validate(payload))
+
+
+def _run_crew(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.crew_vehicle(game, CrewRequest.model_validate(payload))
+
+
+def _run_concede(game: Game, payload: dict[str, Any]) -> Any:
+    """CR 104.3a: no engine refusal to catch - a player may concede at any
+    time, and leaves the game immediately. Never asks anything, so this never
+    pauses in practice, but `run_command` handles that uniformly either way.
+    """
+    req = ConcedeRequest.model_validate(payload)
+    game.player(req.player)
+    game.concede(req.player, by=req.player)
+    return {"winner": game.winner}
+
+
+def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
+    """One card's own observable state, identity included (CR 400.7) - see
+    `_resolution_state`."""
+    return (
+        str(state.zone_change_stamp),
+        state.tapped,
+        state.is_summoning_sick(game),
+        state.damage,
+        tuple(sorted(state.counters.root.items())),
+        state.attachment,
+    )
+
+
+def _resolution_state(game: Game) -> dict[str, Any]:
+    """A fingerprint of everything a resolution is meant to change, minus the
+    stack itself - moved here (from `app.py`) with `_run_pass_priority` in
+    T7b, so the fingerprint taken right after `Game.pass_priority` resolves
+    something is taken *inside* the same deterministic replay a pause resumes
+    into, before `settle_priorityless_steps` gets a chance to run and change
+    tracked state (CR 500.5's mana-pool emptying) for a reason that has
+    nothing to do with what actually resolved.
+
+    Resolving always pops the stack, so the stack cannot say whether the
+    resolution *did* anything. Everything else can - board, hands,
+    graveyards, exile, life, and pools - as long as it is compared by each
+    card's own identity and observable state (`_card_fingerprint`), not by
+    zone-and-name alone: a bare list of names cannot tell a card that stayed
+    apart from a card that left and came back to the exact same zone under
+    the exact same name, which is precisely what a blink (Ephemerate) does.
+    Keyed by card id so `_without_own_arrival` can discount one specific
+    object rather than guessing which of several same-named cards changed.
+
+    This is necessary but not sufficient on its own for a *spell*: every
+    spell also leaves the stack somewhere as part of resolving at all
+    (CR 608.2m), and that arrival mutates this fingerprint regardless of
+    whether the spell's own effect ran. `_without_own_arrival` is what
+    discounts that one mandatory move for spells; abilities need no such
+    correction, since CR 608.2n removes a resolved ability from the stack
+    without putting it anywhere (see `machines.triggers.AbilityOnStack`).
+
+    **What this still cannot see**, honestly: the library, the command zone,
+    and the sideboard are not fingerprinted at all (an effect that only
+    shuffles the library, or only changes what is in a face-down command-zone
+    card, reads as "nothing changed"); a card's own printed text or
+    characteristics changed by a continuous effect that touches none of the
+    fields above (e.g. a name change with no P/T, tap, or counter change)
+    is invisible; and two effects that exactly cancel out within the same
+    resolution (a counter added then removed by the same spell) leave no
+    trace, the same blind spot a snapshot diff always has.
+    """
+
+    def zone_fingerprint(cards: Any) -> dict[str, tuple[Any, ...]]:
+        return {str(c.id): _card_fingerprint(c, game) for c in cards if isinstance(c, CardState)}
+
+    return {
+        "life": {player.username: player.life for player in game.players},
+        "pools": {player.username: dict(player.mana_pool.floating) for player in game.players},
+        "battlefield": zone_fingerprint(game.shared_zones.get(Zone.BATTLEFIELD, [])),
+        "hands": {player.username: zone_fingerprint(player.hand) for player in game.players},
+        "graveyards": {
+            player.username: zone_fingerprint(player.graveyard) for player in game.players
+        },
+        "exile": zone_fingerprint(game.shared_zones.get(Zone.EXILE, [])),
+    }
+
+
+def _without_own_arrival(game: Game, spell_id: UUID, after: dict[str, Any]) -> dict[str, Any]:
+    """`after`, with a just-resolved spell's own mandatory landing undone.
+
+    A permanent spell resolving onto the battlefield is not "nothing
+    happened" - a new object started existing under a player's control, and
+    the `changed` marker should say so. So this only touches spells that did
+    *not* land on the battlefield: an instant or sorcery goes to its owner's
+    graveyard (CR 608.2m), and a few cards route themselves to exile instead
+    (flashback, adventure, foretell). That move is the fixed, mandatory
+    conclusion of resolving at all - it happens whether or not the spell's
+    own effect executed - so it is subtracted back out before comparing
+    against `before`. Anything beyond it (a life total, a hand, a second
+    card's zone, the battlefield) is left untouched and is the real signal.
+
+    Removed by the spell's own id, now that `_resolution_state` keys each
+    zone by id rather than by a bare list of names - exact, unlike a
+    by-name removal, which could not tell two identically named cards
+    landing in the same zone apart.
+
+    A spell that instead ends up in a zone `_resolution_state` does not track
+    at all (library, command, sideboard) needs no discount here: `before` and
+    `after` already agree on those untracked zones, so no false "changed"
+    can arise from that arrival in the first place.
+    """
+    landed = game.find_by_id(spell_id)
+    if landed is None or landed.zone is Zone.BATTLEFIELD:
+        return after
+    landed_key = str(spell_id)
+
+    if landed.zone is Zone.EXILE:
+        return {**after, "exile": {k: v for k, v in after["exile"].items() if k != landed_key}}
+    if landed.zone is Zone.GRAVEYARD:
+        owner = landed.controller_or_owner
+        graveyards = dict(after["graveyards"])
+        if owner in graveyards:
+            graveyards[owner] = {k: v for k, v in graveyards[owner].items() if k != landed_key}
+        return {**after, "graveyards": graveyards}
+    if landed.zone is Zone.HAND:
+        owner = landed.controller_or_owner
+        hands = dict(after["hands"])
+        if owner in hands:
+            hands[owner] = {k: v for k, v in hands[owner].items() if k != landed_key}
+        return {**after, "hands": hands}
+    return after
+
+
+def _run_pass_priority(game: Game, payload: dict[str, Any]) -> Any:
+    """`Game.pass_priority` resolves the stack's top object when both players
+    have passed in succession on a non-empty stack (CR 117.4) - and resolving
+    is exactly where a spell or ability's own CR 608.2d question gets asked,
+    the same as `resolve_top`. A refusal (not this player's priority to pass)
+    raises `ValueError`, which - unlike `DecisionPending` - is not caught
+    here, so it propagates out of `run_command` for the caller to turn into
+    an `allowed: False` response the way `app.py` always has.
+
+    `settle_priorityless_steps` runs inside this handler too, after
+    `pass_priority` itself, so a step crossed automatically (CR 500.3) is
+    part of the same deterministic replay a pause resumes into, rather than
+    a second mutation `app.py` performed outside `run_command` entirely -
+    the same reasoning `_run_advance`'s docstring gives for
+    `drive_suspend_upkeep`. The resolution fingerprint is taken *before* it
+    runs - see `_resolution_state`'s own docstring for why the order matters.
+    """
+    req = PassPriorityRequest.model_validate(payload)
+    resolving_obj = game.stack[-1] if game.stack else None
+    resolving = resolving_obj.name if resolving_obj is not None else None
+    resolving_spell_id = resolving_obj.id if isinstance(resolving_obj, CardState) else None
+    before = _resolution_state(game)
+    outcome = game.pass_priority(req.player)
+    detail: dict[str, Any] = {"outcome": outcome}
+    if outcome is PriorityOutcome.RESOLVE_TOP:
+        detail["resolved"] = resolving
+        after = _resolution_state(game)
+        if resolving_spell_id is not None:
+            after = _without_own_arrival(game, resolving_spell_id, after)
+        detail["changed"] = after != before
+    detail["settled_through"] = engine_api.settle_priorityless_steps(game)
+    return detail
+
+
+def _run_advance(game: Game, payload: dict[str, Any]) -> Any:
+    """Move the turn marker forward (CR 500.1). Entering a step whose
+    turn-based action asks something with no scripted answer - the cleanup
+    discard, CR 508.1's/CR 509.1's combat declarations - pauses here exactly
+    like a resolution does.
+
+    `drive_suspend_upkeep` runs INSIDE this handler, against the same
+    `game` `Game.advance` just mutated, not after `run_command` returns -
+    it has to, so that a paused-then-resumed attempt replays the very same
+    time-counter removal and free-cast permission grant rather than skipping
+    it on a resumed attempt or double-applying it on a completed one.
+    """
+    req = AdvanceRequest.model_validate(payload)
+    step = game.advance(req.player)
+    suspend_upkeep: list[dict[str, Any]] = []
+    if step is Step.UPKEEP:
+        assert game.turn is not None
+        suspend_upkeep = engine_api.drive_suspend_upkeep(game, game.turn.active_player)
+    return {"advanced_to": step.value, "suspend_upkeep": suspend_upkeep}
+
+
+def _run_state_based_actions(game: Game, payload: dict[str, Any]) -> Any:
+    return engine_api.run_state_based_actions(game)
+
+
 #: Every command kind `run_command` knows how to replay, mapped to the
-#: `engine_api` function that actually drives it. Deliberately not every
-#: mutating route this API has (see this module's own docstring and the
-#: T7a task that built it) - two announcement-style commands that put
-#: something on the stack or the battlefield with no engine decision of
-#: their own (`cast`, `play_land`), one more announcement-style command
-#: whose payment can involve a live choice on some abilities
-#: (`activate_ability`), and the one resolution-style command
-#: (`resolve_top`) that is where a spell or ability's own CR 608.2d
-#: questions actually get asked - the two categories the acceptance tests
-#: for this task require at least one of each from. A following task can
-#: extend this table the same way `decisions.ANSWERABLE_KINDS` grows, one
-#: entry at a time.
+#: function that actually drives it - `engine_api` for most, or a thin
+#: wrapper right above for the handful (`concede`, `pass_priority`,
+#: `advance`, `state_based_actions`) that call the engine's `Game` methods
+#: directly rather than through an `engine_api.Outcome`-returning function.
+#:
+#: Deliberately not every mutating route this API has - see this module's
+#: own docstring, `app.py`'s route-by-route conversion notes (T7b), and the
+#: pregame endpoints (`opening.py`), which are deliberately NOT here: every
+#: one of them is told an answer already made (a pre-scripted bottoming
+#: choice, an engine method with no live question of its own) and so never
+#: pauses in practice, while each also calls `audit.record(game_id, ...)`
+#: *internally*, reading the *committed* game back out of the store for its
+#: snapshot (`audit.record`'s own lazy `store.get(game_id)`). Running that
+#: audit call from inside a command handler - against `working`, a copy the
+#: store has not yet been told about - would snapshot the *previous*
+#: committed state, one command stale, for every pregame audit entry. Routes
+#: with no exposure to a live CR 608.2d/CR 508.1/CR 509.1 question buy
+#: nothing from pausing, so they are left exactly as they were rather than
+#: risking that regression for no benefit. Board-setup routes (`app.py`'s
+#: "setting the board up" section) are the same judgement for a simpler
+#: reason: they are test-harness affordances, not engine-driving actions, and
+#: never touch a live decision at all.
 COMMAND_HANDLERS: dict[str, Callable[[Game, dict[str, Any]], Any]] = {
     "cast": _run_cast,
     "play_land": _run_play_land,
     "activate_ability": _run_activate_ability,
     "resolve_top": _run_resolve_top,
+    "suspend": _run_suspend,
+    "plot": _run_plot,
+    "foretell": _run_foretell,
+    "cycle": _run_cycle,
+    "crew": _run_crew,
+    "concede": _run_concede,
+    "pass_priority": _run_pass_priority,
+    "advance": _run_advance,
+    "state_based_actions": _run_state_based_actions,
 }
 
 
@@ -192,14 +433,14 @@ def _replay_copy(game: Game) -> Game:
     replayed, deterministically, from the same `game_uid` (see this module's
     own docstring on determinism).
 
-    `game.decisions.provider` cannot survive `copy.deepcopy` (a live
-    `GameDecisionProvider` holds a `threading.Lock` -
-    `TypeError: cannot pickle '_thread.lock' object`) - nulled here before
-    the copy and restored on `game` right after, the same shape
-    `engine_api.dry_run_copy` uses for the same reason. The copy's own
-    provider is left `None`, not pointed back at the original mailbox - see
-    `dry_run_copy`'s docstring for why that matters, which applies here
-    identically.
+    `game.decisions.provider` is nulled here before the copy and restored on
+    `game` right after, the same shape `engine_api.dry_run_copy` uses, for
+    the same defensive reason: `game.decisions.provider` may hold arbitrary
+    caller state `copy.deepcopy` cannot necessarily copy (see
+    `dry_run_copy`'s own docstring, which this mirrors exactly - no game
+    built by this store carries a live provider any more, so this is inert
+    in practice today). The copy's own provider is left `None` rather than
+    pointed back at whatever the original held, on the same principle.
     """
     provider = game.decisions.provider
     game.decisions.provider = None

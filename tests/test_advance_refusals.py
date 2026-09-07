@@ -20,13 +20,17 @@ from magic_cards_model_api.store import store
 
 def test_advance_is_refused_while_the_stack_is_non_empty(client, game):
     """Bob's exact reported shape, one seat: activate an ability, refuse the
-    advance that used to strand it, then resolve it the way it should."""
+    advance that used to strand it, then resolve it the way it should.
+
+    The fetch's own "did you find one?" question (CR 701.23a's search) now
+    pauses `resolve-top` instead of blocking a thread for a live-decision
+    provider's answer (`test_decisions.py`'s module docstring) - so this
+    drives it the same way: read `pending_decision` off the paused response
+    and resume with a real `POST .../decide` naming the Plains found.
+    """
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
     strand = add_card(client, game, "Flooded Strand", "alice", "battlefield")["added"]["card_id"]
     add_card(client, game, "Plains", "alice", "library")
-    # The fetch asks "did you find one?" through the live decision provider
-    # (`test_decisions.py`'s module docstring); shrink its wait so a
-    # correctly-defaulted answer does not cost this test 60 real seconds.
-    store.get(game).decisions.provider.timeout_seconds = 0.05
 
     activated = client.post(
         f"/api/games/{game}/actions/activate",
@@ -44,8 +48,19 @@ def test_advance_is_refused_while_the_stack_is_non_empty(client, game):
     assert len(state(client, game)["stack"]) == 1
 
     # the way out the refusal names actually works, and nothing was lost
-    resolved = client.post(f"/api/games/{game}/resolve-top").json()
-    assert "Flooded Strand" in resolved["resolved"]
+    resolved = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}).json()
+    assert resolved["paused"] is True, resolved
+    pending = resolved["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+    assert pending["source"] == "Flooded Strand"
+
+    decided = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [pending["cards"][0]]},
+    ).json()
+    assert decided["accepted"] is True, decided
+
     assert state(client, game)["stack"] == []
     assert any(c["name"] == "Plains" for c in state(client, game)["battlefield"])
 

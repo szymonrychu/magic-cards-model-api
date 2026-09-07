@@ -134,18 +134,15 @@ def test_flashback_cast_from_the_graveyard_pays_the_flashback_cost_and_exiles(cl
     """Faithful Mending itself draws two cards then forces a discard of two
     (CR 608.2d, mid-resolution) - alice needs a library to draw from, or the
     draw alone would empty it and cost her the game (CR 104.3c) before this
-    test ever gets to the fact under test. Nobody is polling this game as
-    alice, so that discard decision would otherwise sit through a real
-    `presence_seconds` probe (`decisions.py`) before defaulting; shrunk here
-    the same way `test_transport_timeout.py`'s `_setup_pending_discard` does,
-    since what this test cares about is the flashback mechanic, not the
-    discard."""
-    provider = store.get(game).decisions.provider
-    assert provider is not None
-    provider.timeout_seconds = 0.2
-    provider.delivery_seconds = 0.2
-    provider.presence_seconds = 0.2
+    test ever gets to the fact under test.
 
+    `resolve-top` now pauses on that discard, `choose_cards`, instead of
+    blocking a thread for a live-decision provider's answer (see
+    `test_decisions.py`'s module docstring) - so this drives it the same way:
+    read `pending_decision` off the paused response and resume with a real
+    `POST .../decide` discarding both drawn cards.
+    """
+    uids = seats_for(game)
     add_card(client, game, "Faithful Mending", "alice", "graveyard")
     for _ in range(3):
         add_card(client, game, "Island", "alice", "battlefield")
@@ -168,9 +165,18 @@ def test_flashback_cast_from_the_graveyard_pays_the_flashback_cost_and_exiles(cl
     assert cast["allowed"] is True, cast
     assert cast["cost"] == "{1}{W}{U}"
 
-    resolved = client.post(f"/api/games/{game}/resolve-top").json()
-    assert resolved["resolved"] == "Faithful Mending"
-    assert resolved["zone"] == "exile"
+    resolved = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]}).json()
+    assert resolved["paused"] is True, resolved
+    pending = resolved["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+    assert pending["amount"] == 2
+
+    decided = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": pending["cards"]},
+    ).json()
+    assert decided["accepted"] is True, decided
 
     final = state(client, game)
     # CR 702.34a: "cast it from the graveyard ... rather than paying its mana

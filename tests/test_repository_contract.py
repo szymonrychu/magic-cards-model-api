@@ -21,10 +21,12 @@ from __future__ import annotations
 import threading
 
 import pytest
+from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind, PendingDecision
 from magic_cards_model.models import Game
 from test_decks_api import LEGAL_DECK, LEGAL_DECK_B
 
 from magic_cards_model_api.agent_settings import AgentSettings
+from magic_cards_model_api.commands import Command
 from magic_cards_model_api.decks import load_deck_into_game
 from magic_cards_model_api.repository import GameRepository, InMemoryRepository
 
@@ -41,6 +43,18 @@ def _real_game() -> Game:
     with a legal deck each will do."""
     match = load_deck_into_game([("you", LEGAL_DECK), ("bot", LEGAL_DECK_B)])
     return match.games[-1]
+
+
+def _real_pending(seq: int = 0) -> PendingDecision:
+    """A real engine `PendingDecision` - the same dataclass `commands.
+    run_command` builds from a real `DecisionPending`, just constructed
+    directly rather than by actually pausing a command: the contract only
+    needs *a* well-formed one to round-trip through the store, the same way
+    `_real_game` only needs *a* well-formed `Game`."""
+    decision = Decision(kind=DecisionKind.MAY, player="you", prompt="you may draw a card")
+    return PendingDecision(
+        seq=seq, decision=decision, rule="CR 608.2d (a choice made while the effect applies)"
+    )
 
 
 @pytest.fixture(params=_REPOSITORY_FACTORIES, ids=lambda factory: factory.__name__)
@@ -435,3 +449,108 @@ def test_create_if_under_admits_are_each_fully_visible_under_concurrency(
         t.join(timeout=5)
 
     assert failures == []
+
+
+# ---------------------------------------------------------------------------
+# replace - swapping in a command's completed working copy
+# ---------------------------------------------------------------------------
+
+
+def test_replace_swaps_in_the_new_game(repo: GameRepository) -> None:
+    """`commands.run_command` never mutates the `Game` it is given - a
+    completed command's result is a brand new object - so `replace` is how
+    that new object becomes what `get`/`locked` hand back next."""
+    game_id = repo.create(_real_game())
+    new_game = _real_game()
+
+    repo.replace(game_id, new_game)
+
+    assert repo.get(game_id) is new_game
+
+
+def test_replace_raises_key_error_for_an_unknown_game(repo: GameRepository) -> None:
+    with pytest.raises(KeyError):
+        repo.replace("no-such-game", _real_game())
+
+
+# ---------------------------------------------------------------------------
+# paused commands - (Command, tape, PendingDecision), the property T7 exists
+# to make durable: everything `commands.resume_command` needs to replay a
+# paused command with one more answer appended, held by the repository
+# rather than by a resolving thread's own stack frame.
+# ---------------------------------------------------------------------------
+
+
+def test_paused_command_is_none_for_a_game_with_no_pause(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    assert repo.paused_command(game_id) is None
+
+
+def test_store_and_read_back_a_paused_command(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    command = Command(kind="cast", payload={"player": "you", "card": "Opt"})
+    pending = _real_pending()
+    tape = (Answer(seq=0, kind=DecisionKind.MAY, player="you", accept=True),)
+
+    repo.store_paused_command(game_id, command, tape, pending)
+    stored = repo.paused_command(game_id)
+
+    assert stored is not None
+    stored_command, stored_tape, stored_pending = stored
+    assert stored_command == command
+    assert stored_tape == tape
+    assert stored_pending == pending
+
+
+def test_storing_a_paused_command_again_replaces_it(repo: GameRepository) -> None:
+    """A game has at most one live pause at a time - the same invariant the
+    old `DecisionMailbox` held for a single pending question - so a second
+    `store_paused_command` call overwrites the first rather than needing a
+    `clear_paused_command` in between."""
+    game_id = repo.create(_real_game())
+    first = Command(kind="cast", payload={"player": "you"})
+    second = Command(kind="advance", payload={"player": "you"})
+    pending = _real_pending()
+
+    repo.store_paused_command(game_id, first, (), pending)
+    repo.store_paused_command(game_id, second, (), pending)
+
+    stored_command, _stored_tape, _stored_pending = repo.paused_command(game_id)
+    assert stored_command == second
+
+
+def test_clear_paused_command_removes_it(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.store_paused_command(game_id, Command(kind="cast", payload={}), (), _real_pending())
+
+    repo.clear_paused_command(game_id)
+
+    assert repo.paused_command(game_id) is None
+
+
+def test_clear_paused_command_is_a_no_op_when_nothing_was_pending(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    repo.clear_paused_command(game_id)  # must not raise
+
+    assert repo.paused_command(game_id) is None
+
+
+def test_paused_commands_are_isolated_per_game(repo: GameRepository) -> None:
+    game_a = repo.create(_real_game())
+    game_b = repo.create(_real_game())
+    repo.store_paused_command(game_a, Command(kind="cast", payload={}), (), _real_pending())
+
+    assert repo.paused_command(game_b) is None
+    assert repo.paused_command(game_a) is not None
+
+
+def test_delete_clears_the_paused_command_too(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.store_paused_command(game_id, Command(kind="cast", payload={}), (), _real_pending())
+
+    assert repo.delete(game_id) is True
+
+    assert repo.get(game_id) is None
+    assert repo.paused_command(game_id) is None

@@ -261,7 +261,14 @@ class AttackPair(BaseModel):
 
 
 class AttackRequest(BaseModel):
-    attackers: list[AttackPair] = Field(min_length=1)
+    attackers: list[AttackPair] = Field(default_factory=list)
+    """Empty is a legal answer, not a missing one: CR 508.1a's "if any" makes
+    "declare nobody" a real attack declaration, the one an autopilot run
+    sends (`seatkit.pass_until`) when it has decided not to stop for combat.
+    A `min_length=1` here used to make that answer inexpressible through this
+    endpoint at all, forcing an empty declaration through `decide()`'s own
+    `pairs` field instead - now both reach `decisions.declared_pairs_answer`
+    with the same, undifferentiated empty list."""
     dry_run: bool = False
 
 
@@ -302,8 +309,32 @@ class BlockPair(BaseModel):
 
 class DeclareBlockersRequest(BaseModel):
     player: str
-    blocks: list[BlockPair] = Field(min_length=1)
-    """(blocker, blocked) pairs, in the order damage should be assigned through them."""
+    blocks: list[BlockPair] = Field(default_factory=list)
+    """(blocker, blocked) pairs, in the order damage should be assigned
+    through them. Empty is a legal answer, not a missing one - CR 509.1a's
+    "if any" makes "declare no blockers" a real declaration, the one an
+    autopilot run sends (`seatkit.pass_until`) when it has decided not to
+    stop for combat; a `min_length=1` here used to make that answer
+    inexpressible through this endpoint, the same gap `AttackRequest.attackers`
+    had."""
+
+
+class DeclaredPairRequest(BaseModel):
+    """One `(creature, defender)` pair for the `declare_attackers`/
+    `declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the
+    request-side twin of the engine's `machines.decisions.DeclaredPair`.
+
+    `defender` is a card id (UUID string) or a player's username, the same
+    token shape `CastRequest.targets`/`ActivateRequest.targets`/
+    `DecideRequest.targets` already use for "a card or a player" - told apart
+    the same way (`decisions.declared_pairs_answer`). A blocker always blocks
+    a creature (CR 509.1a), so `defender` is a card id for every
+    `declare_blockers` pair; an attacker's defender is overwhelmingly a
+    player (CR 508.1b) but can also be a planeswalker or a battle's card id.
+    """
+
+    creature: UUID
+    defender: str
 
 
 class DecideRequest(BaseModel):
@@ -376,6 +407,13 @@ class DecideRequest(BaseModel):
     rather than `card_ids`. **Bottom of the stack first**, so the last id
     listed is the ability that resolves first. Anything that is not a
     permutation (a dropped ability, a duplicate, a stray id) is refused."""
+    pairs: list[DeclaredPairRequest] = Field(default_factory=list)
+    """The `declare_attackers`/`declare_blockers` kinds' answer (CR 508.1,
+    CR 509.1) - the creatures declared and what each attacks or blocks, in
+    declaration order. Empty is a real answer: "declare nobody", always legal
+    ("if any"). The one field both declaration kinds share, the same way
+    `choice` serves both `choose_a_quality` and `choose_a_mode` - see
+    `DeclaredPairRequest`."""
 
 
 class MulliganRequest(BaseModel):

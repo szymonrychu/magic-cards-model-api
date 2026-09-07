@@ -28,36 +28,14 @@ and cached the same way.
 
 from __future__ import annotations
 
-import threading
-import time
-from typing import Any
-
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 
-from magic_cards_model_api.main import app
 from magic_cards_model_api.store import store
 
 
 def seats_for(client: TestClient, game_id: str) -> dict[str, str]:
     return {name: uid for uid, name in store.seat_uids(game_id).items()}
-
-
-def run_in_background(post: Any) -> threading.Thread:
-    thread = threading.Thread(target=post)
-    thread.start()
-    thread.join(timeout=0.5)
-    assert thread.is_alive(), "expected this call to block on a CR 608.2d question"
-    return thread
-
-
-def wait_for_pending(client: TestClient, game_id: str, uid: str, tries: int = 300) -> dict:
-    for _ in range(tries):
-        view = state(client, game_id, uid=uid)
-        if view.get("pending_decision") is not None:
-            return view
-        time.sleep(0.01)
-    raise AssertionError("no pending decision showed up in time")
 
 
 # -- suspend: the standing "when used" grant --------------------------------
@@ -280,40 +258,37 @@ def test_cascade_into_living_end_is_seen_and_driven_through_the_permission(clien
     lands = _lands(client, game)
     agent = state(client, game)["hands"]["alice"][0]
 
-    def cast_agent() -> None:
-        stepping_client = TestClient(app)
-        cast = stepping_client.post(
-            f"/api/games/{game}/actions/cast",
-            json={
-                "player": "alice",
-                "card_id": agent["id"],
-                "mana_sources": [lands["Forest"][0], lands["Island"][0], lands["Forest"][1]],
-            },
-        )
-        assert cast.status_code == 200, cast.text
-        assert cast.json()["allowed"] is True, cast.json()
-        # The cascade trigger sits above Shardless Agent - resolve it, which
-        # is where CR 608.2d's "you may cast it" question is actually asked.
-        top = stepping_client.post(f"/api/games/{game}/resolve-top")
-        assert top.status_code == 200, top.text
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": agent["id"],
+            "mana_sources": [lands["Forest"][0], lands["Island"][0], lands["Forest"][1]],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    assert cast.json()["allowed"] is True, cast.json()
 
-    thread = run_in_background(cast_agent)
-    try:
-        pending_view = wait_for_pending(client, game, uids["alice"])
-        pending = pending_view["pending_decision"]
-        assert pending["kind"] == "may"
-        assert pending["source"] == "Shardless Agent"
+    # The cascade trigger sits above Shardless Agent - resolving it is where
+    # CR 608.2d's "you may cast it" question is actually asked, and now
+    # pauses on it rather than blocking a thread for the answer.
+    top = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
+    assert top.status_code == 200, top.text
+    top_body = top.json()
+    assert top_body.get("paused") is True, (
+        "expected the cascade trigger to pause on its may question"
+    )
+    pending = top_body["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["source"] == "Shardless Agent"
 
-        answer = client.post(
-            f"/api/games/{game}/decide",
-            params={"uid": uids["alice"]},
-            json={"player": "alice", "accept": True},
-        )
-        assert answer.status_code == 200, answer.text
-        assert answer.json()["accepted"] is True
-    finally:
-        thread.join(timeout=10)
-    assert not thread.is_alive()
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["accepted"] is True
 
     # The trigger resolved: Living End is in exile, and the seat can now see
     # exactly the permission a real player needed and did not get before.

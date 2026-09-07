@@ -194,7 +194,17 @@ def test_pending_decision_wakes_a_blocked_call(client, game, monkeypatch):
     """Reuses `test_decisions.py`'s cleanup-discard mechanism: alice is
     blocked on her own status (not tied to any particular action) while a
     second thread drives the turn into cleanup, which asks her a CR 608.2d
-    question - that question is what must wake her."""
+    question - that question is what must wake her.
+
+    A creatureless board still pauses on CR 508.1's `declare_attackers`
+    question on the way there - "declares nobody" is no longer a free,
+    silent default (see `commands.py`'s module docstring/`test_decisions.
+    py`'s `advance_into_cleanup`) - so the advancing thread answers that one
+    with an empty `pairs` and keeps going, and the waiting thread's own loop
+    treats it the same way it already treats a spurious "you have priority"
+    wake: not the wake this test is after, so it keeps polling rather than
+    breaking on it.
+    """
     seats, uids = wired_seats(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
     for _ in range(8):
@@ -215,7 +225,9 @@ def test_pending_decision_wakes_a_blocked_call(client, game, monkeypatch):
         while time.monotonic() < deadline:
             result = block_until_wake(alice, before=before, max_seconds=1)
             if "a decision is waiting for you" in result["wake_reason"]:
-                break
+                kind = result["state"]["pending_decision"]["kind"]
+                if kind not in ("declare_attackers", "declare_blockers"):
+                    break
             before = result["state"]
         box["result"] = result
 
@@ -224,11 +236,22 @@ def test_pending_decision_wakes_a_blocked_call(client, game, monkeypatch):
 
     def advance_into_cleanup() -> None:
         stepping = TestClient(app)
-        for _ in range(20):
+        for _ in range(30):
             response = stepping.post(f"/api/games/{game}/advance", json={"player": "alice"})
             if response.status_code != 200:
                 return
-            if response.json().get("advanced_to") == "cleanup":
+            body = response.json()
+            if body.get("paused"):
+                pending = body["pending_decision"]
+                if pending["kind"] in ("declare_attackers", "declare_blockers"):
+                    stepping.post(
+                        f"/api/games/{game}/decide",
+                        params={"uid": uids[pending["player"]]},
+                        json={"player": pending["player"], "pairs": []},
+                    )
+                    continue
+                return
+            if body.get("advanced_to") == "cleanup":
                 return
 
     advancer = threading.Thread(target=advance_into_cleanup)

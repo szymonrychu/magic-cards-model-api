@@ -23,6 +23,7 @@ from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Z
 from . import scryfall
 from .affordances import cast_hints
 from .agent_settings import AgentSettings
+from .decisions import PendingDecision
 from .engine_api import list_abilities
 from .opening import pregame_view
 from .store import store
@@ -645,8 +646,14 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
 
     turn = game.turn
     step = turn.step if turn is not None else Step.UNTAP
-    mailbox = store.mailbox(game_id)
-    pending = mailbox.snapshot() if mailbox is not None else None
+    # The pending decision a paused command is waiting to resume, if any -
+    # read from the repository's own paused-command slot (`commands.py`,
+    # `repository.store_paused_command`) rather than a live mailbox: a
+    # mutating request that crosses an unanswered question pauses and returns
+    # immediately, and this is what a state read shows for it until
+    # `POST .../decide` resumes it.
+    paused = store.paused_command(game_id)
+    pending = PendingDecision.from_engine(paused[2].decision) if paused is not None else None
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
     decklists = store.decklists(game_id)
     agent_settings = store.agent_settings(game_id)
@@ -659,7 +666,6 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     return {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
-        "decision_timeouts": store.decision_timeouts(game_id),
         "turn_number": turn.turn_number if turn is not None else None,
         "step": step.value,
         "phase": phase.value if phase is not None else None,

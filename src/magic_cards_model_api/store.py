@@ -26,10 +26,9 @@ and every direct `GameStore()` construction in tests keeps working - this is
 literally the same class, not a copy of it."""
 
 # Typed as `InMemoryRepository`, not the narrower `GameRepository` protocol:
-# callers here (`serialize.py`, `opening.py`, `decisions.py`, `app.py`) also
-# use `mailbox`, `decision_timeouts` and `automatic_pregame`, which are
+# callers here (`opening.py`, `app.py`) also use `automatic_pregame`, which is
 # deliberately off the protocol (see `repository.py`'s module docstring) but
-# still exist on the concrete singleton every one of those calls.
+# still exists on the concrete singleton every one of those calls.
 store = GameStore()
 
 

@@ -566,83 +566,27 @@ def test_the_admin_can_settle_the_whole_pregame_at_once(client: TestClient) -> N
         delete(client, info)
 
 
-def test_a_live_seat_answers_the_mulligan_declaration_through_decide(client: TestClient) -> None:
-    """`DecisionKind.MULLIGAN` is answerable, and this is the path that makes
-    it so.
-
-    `Game.settle_pregame` puts each declaration through
-    `machines/decisions.py`'s `ask_mulligan`, which consults
-    `Game.decisions.provider` between the scripted answer and the default - so
-    it really does land in this API's mailbox as a `mulligan`
-    `pending_decision`, and a seat really does answer it with
-    `POST .../decide`. CR 103.5's bottoming follows as an ordinary
-    `choose_cards` question, and this answers it with the **front** card of the
-    hand - deliberately not the engine's default of the back, so the assertion
-    that it reached the bottom of the library can only pass if the answer was
-    used.
-
-    The settle call blocks while it asks, so it runs on its own thread; the
-    poll-and-answer loop below is what a live seat's browser does.
-    `POST .../decide` never takes the game lock, which is what lets it clear a
-    request parked inside `Game.ask` (see `decisions.py`)."""
-    import threading
-
-    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
-    game_id = info["game_id"]
-    # Every declaration below is answered within milliseconds, so the provider
-    # never waits; a short timeout only bounds the failure mode.
-    store.get(game_id).decisions.provider.timeout_seconds = 15.0
-    answers: list[str] = []
-    chosen: list[str] = []
-
-    def settle() -> None:
-        client.post(f"/api/games/{game_id}/pregame/settle", params={"uid": info["admin_key"]})
-
-    def answer_everything() -> None:
-        """Alice mulligans once, then keeps and bottoms her front card; bob
-        keeps straight away."""
-        deadline = time.monotonic() + PREGAME_WITHIN_SECONDS
-        while time.monotonic() < deadline and len(answers) < 4:
-            for player in ("alice", "bob"):
-                pending = view(client, info, player).get("pending_decision")
-                if pending is None or pending["player"] != player:
-                    continue
-                body: dict[str, Any] = {"player": player}
-                if pending["kind"] == "mulligan":
-                    # alice's first declaration is the only "yes".
-                    body["accept"] = player == "alice" and "mulligan:alice" not in answers
-                    answers.append(f"mulligan:{player}")
-                elif pending["kind"] == "choose_cards":
-                    chosen.append(pending["cards"][0])
-                    body["card_ids"] = [pending["cards"][0]]
-                    answers.append(f"choose_cards:{player}")
-                else:
-                    continue
-                client.post(
-                    f"/api/games/{game_id}/decide",
-                    params={"uid": info["seat_uids"][player]},
-                    json=body,
-                )
-            time.sleep(0.01)
-
-    try:
-        worker = threading.Thread(target=settle, name="settle-pregame")
-        worker.start()
-        answer_everything()
-        worker.join(timeout=PREGAME_WITHIN_SECONDS)
-        assert not worker.is_alive(), "the settle request never came back"
-
-        assert answers == ["mulligan:alice", "mulligan:bob", "mulligan:alice", "choose_cards:alice"]
-        game = store.get(game_id)
-        alice = game.player("alice")
-        assert alice.mulligans_taken == 1, "alice's 'yes' was really taken, not defaulted"
-        assert len(alice.hand) == 6
-        assert game.player("bob").mulligans_taken == 0
-        # The front card, which the default would never have picked.
-        assert str(alice.library[-1].id) == chosen[0]
-        assert chosen[0] not in [str(card.id) for card in alice.hand]
-    finally:
-        delete(client, info)
+# `test_a_live_seat_answers_the_mulligan_declaration_through_decide` was
+# deleted here (T7b): it proved that a live seat could opportunistically
+# answer a `mulligan` decision through `POST .../decide` while
+# `POST pregame/settle` was in flight - a side effect of the old blocking
+# design (`ask_mulligan` consulted `Game.decisions.provider`, the live
+# mailbox, while the settle request sat parked). That side effect could
+# only ever exist for a design that blocks briefly for a live answer and
+# then silently takes a default (`decisions.py`'s old three timeout
+# tiers); this codebase no longer has that shape at all - a decision now
+# either pauses until answered or is never asked, with nothing in between.
+# Making `pregame_settle` pause the same way every other command does
+# would fix this test, but would break `test_the_admin_can_settle_the_
+# whole_pregame_at_once` right above it: an admin settle's whole point is
+# to hand back a playable game immediately, on the engine's own defaults,
+# for a harness that has no live seat to ask at all - the two tests want
+# incompatible behaviour from the same endpoint, and `pregame_settle` is
+# deliberately left out of the pause/resume conversion (see
+# `commands.py`'s `COMMAND_HANDLERS` docstring) so the endpoint keeps that
+# guarantee. A live seat's own CR 103.5 declaration is still answered
+# through `POST pregame/mulligan`, unaffected by any of this - see the
+# tests above.
 
 
 def test_a_seat_cannot_settle_the_pregame_for_the_whole_table(client: TestClient) -> None:

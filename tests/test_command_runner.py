@@ -29,7 +29,7 @@ from uuid import UUID, uuid4
 import pytest
 from conftest import add_card
 from magic_cards_model.machines.decisions import Answer, DecisionKind
-from magic_cards_model.models import Zone
+from magic_cards_model.models import Game, Zone
 
 from magic_cards_model_api.commands import (
     Command,
@@ -38,6 +38,7 @@ from magic_cards_model_api.commands import (
     resume_command,
     run_command,
 )
+from magic_cards_model_api.repository import InMemoryRepository
 from magic_cards_model_api.schemas import ActivateRequest, CastRequest, PlayLandRequest
 from magic_cards_model_api.store import store
 
@@ -386,3 +387,119 @@ def test_the_divergence_guard_rejects_completion_where_a_pause_was_expected(clie
 
     assert excinfo.value.status_code == 409
     assert "completed instead of pausing again" in str(excinfo.value)
+
+
+# -- the property this whole task exists to buy ------------------------------
+
+
+def test_a_paused_decision_survives_a_simulated_process_restart(client, game):
+    """A paused command's state lives entirely in the repository, not in any
+    in-process object - no live provider, no parked thread, no mailbox (see
+    this module's own docstring, and `repository.py`'s `InMemoryRepository`).
+    So a process that pauses, dies, and comes back with nothing but the
+    repository's own contents must still be able to resume correctly.
+
+    Simulated here by round-tripping the paused game and command through
+    plain JSON - `Command.to_json`/`from_json` and `Game.model_dump`/
+    `model_validate` are both designed for exactly this (see `Command`'s own
+    docstring: "that is what lets it become a postgres column later (T9)
+    with no second serialisation layer of its own") - then discarding every
+    other in-memory object this test built (`committed`, `first.pending`,
+    the original `Game` instance) and resuming purely from the rehydrated
+    copies against a brand new `InMemoryRepository`, standing in for a fresh
+    process.
+
+    The `PendingDecision` itself is not asserted to round-trip through JSON
+    directly (T9's own concern, not this task's) - instead it is *re-derived*
+    from the rehydrated game and command with an empty tape, which is exactly
+    the same replay `resume_command`'s own divergence guard already performs
+    on every resume, paused or not. Trusting that re-derivation here is not
+    extra trust beyond what every resume already places in the replay
+    guarantee.
+    """
+    _malevolent_rumble_setup(client, game)
+    committed = _cast_malevolent_rumble(client, game)
+
+    resolve_cmd = Command(kind="resolve_top")
+    first = run_command(committed, resolve_cmd)
+    assert first.status is RunStatus.PAUSED
+    assert first.pending is not None
+    assert first.pending.decision.kind is DecisionKind.MAY
+
+    # Everything a real process would have to persist for this pause to
+    # survive a restart - captured as plain JSON, round-tripped through
+    # `json.dumps`/`json.loads` for good measure, the same shape a postgres
+    # row (T9) would hold.
+    game_blob = json.loads(json.dumps(committed.model_dump(mode="json")))
+    command_blob = json.loads(json.dumps(resolve_cmd.to_json()))
+
+    # "The process restarts": nothing but the two JSON blobs above survives -
+    # not `committed`, not `first`, not this test's own `resolve_cmd` object
+    # (a fresh, equal-but-not-identical one is rebuilt from `command_blob`) -
+    # and a brand new repository is what a real restart would boot with too.
+    fresh_repo = InMemoryRepository()
+    restarted_game = Game.model_validate(game_blob)
+    restarted_command = Command.from_json(command_blob)
+    assert restarted_command == resolve_cmd
+
+    fresh_game_id = fresh_repo.create(restarted_game)
+
+    # Re-derive the pause from the rehydrated game and command - the same
+    # replay `resume_command`'s own divergence guard performs on every
+    # resume (see this test's own docstring).
+    reproved = run_command(restarted_game, restarted_command, tape=())
+    assert reproved.status is RunStatus.PAUSED
+    assert reproved.pending is not None
+    assert reproved.pending.decision.kind is DecisionKind.MAY
+    assert reproved.pending.decision.player == first.pending.decision.player
+    assert reproved.pending.decision.source == first.pending.decision.source
+    assert reproved.pending.seq == first.pending.seq
+    fresh_repo.store_paused_command(fresh_game_id, restarted_command, (), reproved.pending)
+
+    # Answer it for real, entirely against the fresh repository - the MAY
+    # question is Malevolent Rumble's first of two (see
+    # `test_a_command_with_two_decisions_pauses_twice_then_resumes_to_completion`),
+    # so accepting pauses again, on the CHOOSE_CARDS that follows it.
+    accept = Answer(seq=0, kind=DecisionKind.MAY, player="alice", accept=True)
+    stored_command, stored_tape, stored_pending = fresh_repo.paused_command(fresh_game_id)
+    with fresh_repo.locked(fresh_game_id) as game_obj:
+        resumed = resume_command(
+            game_obj,
+            stored_command,
+            stored_tape,
+            expected_pending=stored_pending,
+            new_answer=accept,
+        )
+        if resumed.status is RunStatus.COMPLETED:
+            fresh_repo.replace(fresh_game_id, resumed.game)
+            fresh_repo.clear_paused_command(fresh_game_id)
+        else:
+            fresh_repo.store_paused_command(
+                fresh_game_id, stored_command, resumed.tape, resumed.pending
+            )
+
+    assert resumed.status is RunStatus.PAUSED
+    assert resumed.pending is not None
+    assert resumed.pending.decision.kind is DecisionKind.CHOOSE_CARDS
+    assert resumed.pending.decision.player == "alice"
+
+    # And it can be driven the rest of the way to completion, still entirely
+    # within the "restarted" process's own fresh repository.
+    wall = next(
+        state
+        for state in fresh_repo.get(fresh_game_id).player("alice").library
+        if state.name == "Wall of Omens"
+    )
+    choose_wall = Answer(seq=1, kind=DecisionKind.CHOOSE_CARDS, player="alice", card_ids=(wall.id,))
+    with fresh_repo.locked(fresh_game_id) as game_obj:
+        final = resume_command(
+            game_obj,
+            stored_command,
+            (accept,),
+            expected_pending=resumed.pending,
+            new_answer=choose_wall,
+        )
+
+    assert final.status is RunStatus.COMPLETED
+    assert final.outcome["resolved"] == "Malevolent Rumble"
+    assert [state.name for state in final.game.player("alice").hand] == ["Wall of Omens"]

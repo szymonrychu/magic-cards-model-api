@@ -12,23 +12,35 @@ collections (`register_agent_settings`/`agent_settings`,
 `register_ai_players`/`ai_players`, `register_ui_game`/`ui_games`/
 `live_ui_games`).
 
-Two things on `InMemoryRepository` deliberately stay OFF the protocol:
+One thing on `InMemoryRepository` deliberately stays OFF the protocol:
+`_locks` and its `locked()` internals are process-local by nature - a
+postgres implementation (T9) makes `locked()` a transaction instead, but
+nothing about *how* it does that belongs in the interface. `locked()` itself
+IS on the protocol (its signature is the transaction boundary every
+implementation must offer); only the lock dict backing this one is not.
 
-- `_locks` and its `locked()` internals are process-local by nature - a
-  postgres implementation (T9) makes `locked()` a transaction instead, but
-  nothing about *how* it does that belongs in the interface. `locked()`
-  itself IS on the protocol (its signature is the transaction boundary every
-  implementation must offer); only the lock dict backing this one is not.
-- `_mailboxes` / `mailbox()`, `_decision_timeouts` /
-  `record_decision_timeout()` / `decision_timeouts()`, and
-  `_automatic_pregame` / `record_automatic_pregame()` / `automatic_pregame()`
-  are the decision-transport machinery T7 replaces (the mailbox is deleted
-  entirely once the blocking transport becomes pause/tape). They stay exactly
-  as `GameStore` had them, just no longer part of the interface this task is
-  carving out - moving or reshaping them now would be scope this task does
-  not own.
+`_automatic_pregame` / `record_automatic_pregame()` / `automatic_pregame()`
+stay exactly as `GameStore` had them, just no longer part of the interface
+this task is carving out - moving or reshaping them now would be scope this
+task does not own.
 
-Nothing about `InMemoryRepository`'s behaviour changes here: this is
+`_paused_commands` / `store_paused_command()` / `paused_command()` /
+`clear_paused_command()` are new here (T7b): the old `_mailboxes` /
+`mailbox()` this docstring used to describe, and the `_decision_timeouts` /
+`record_decision_timeout()` / `decision_timeouts()` beside it, were the
+decision-transport machinery a blocking `Game.ask` needed - a live question
+and, when nobody answered it in time, a record of what default was taken
+instead. Pausing needs neither: a command that crosses an unanswered question
+does not block and cannot time out, it returns immediately with the question
+attached, and what a caller persists until it is answered is not a question
+in flight but `(Command, tape, PendingDecision)` - everything
+`commands.resume_command` needs to replay the same command with one more
+answer appended. These three methods ARE on the protocol: T9's postgres
+implementation must persist a paused command exactly as durably as the game
+itself, which is the property this whole task exists to buy - see
+`tests/test_command_runner.py`'s restart-survival test.
+
+Nothing else about `InMemoryRepository`'s behaviour changes here: this is
 `store.GameStore`'s previous body, moved and renamed, with `store.GameStore`
 now an alias for it so every existing import keeps working.
 """
@@ -42,10 +54,11 @@ from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
+from magic_cards_model.machines.decisions import Answer, PendingDecision
 from magic_cards_model.models import Game
 
 from .agent_settings import AgentSettings
-from .decisions import DecisionMailbox, GameDecisionProvider
+from .commands import Command
 
 
 @runtime_checkable
@@ -73,6 +86,22 @@ class GameRepository(Protocol):
 
     def get(self, game_id: str) -> Game | None:
         """The game for this id, or `None` if there is none."""
+        ...
+
+    def replace(self, game_id: str, game: Game) -> None:
+        """Replace `game_id`'s committed game outright with `game`. Raises
+        `KeyError` for an unknown game.
+
+        `commands.run_command`/`resume_command` never mutate the `Game` they
+        are given - a command runs to completion (or pauses) against an
+        internal deep copy - so a caller that gets back a `RunStatus.
+        COMPLETED` `RunResult` has a brand new `Game` object to persist as
+        this game's next committed state, not an in-place mutation of the one
+        `locked()` handed it. This is how that new object actually replaces
+        the old one. Called from inside the same `with locked(game_id):`
+        block a command ran under, so the whole read-run-commit sequence
+        stays covered by one held lock.
+        """
         ...
 
     def delete(self, game_id: str) -> bool:
@@ -165,6 +194,43 @@ class GameRepository(Protocol):
         Lobby-owned."""
         ...
 
+    def store_paused_command(
+        self,
+        game_id: str,
+        command: Command,
+        tape: tuple[Answer, ...],
+        pending: PendingDecision,
+    ) -> None:
+        """Remember that `game_id` is paused mid-`command`, having replied to
+        `tape` and now waiting on `pending`.
+
+        Replaces whatever this game's previously stored paused command was,
+        if any - a game has at most one live pause at a time, the same
+        invariant `decisions.DecisionMailbox` used to hold ("every decision
+        kind this module reaches ... never has two questions pending on the
+        same player at once"). Called from a mutating route the moment
+        `commands.run_command`/`resume_command` returns `RunStatus.PAUSED`.
+        """
+        ...
+
+    def paused_command(
+        self, game_id: str
+    ) -> tuple[Command, tuple[Answer, ...], PendingDecision] | None:
+        """The paused command `game_id` is waiting to resume, or `None` when
+        nothing is pending. This is where `serialize.state_view`'s
+        `pending_decision` is read from, and what `POST .../decide` (and its
+        `actions/attack`/`actions/declare-blockers` aliases) resume against.
+        """
+        ...
+
+    def clear_paused_command(self, game_id: str) -> None:
+        """Forget `game_id`'s paused command - called once it resumes to
+        `RunStatus.COMPLETED`, or once a fresh command runs and pauses on a
+        *different* question, in which case `store_paused_command` overwrites
+        rather than needing this called first. A no-op when nothing was
+        pending."""
+        ...
+
 
 class InMemoryRepository:
     """The in-memory `GameRepository`: game id -> engine `Game`. Nothing
@@ -183,14 +249,14 @@ class InMemoryRepository:
     creation, exactly like a seat uid, and it never appears in any state view
     either.
 
-    Each game also gets, at creation, a mutation lock and a `DecisionMailbox`
-    (`decisions.py`). The lock closes a latent race this store used to leave
-    open: `get()` used to hand out the shared `Game` with nothing stopping
-    two requests from mutating it at once. `locked()` is that fix - every
-    mutating endpoint holds it for the request's whole body. The mailbox is
-    what `Game.ask` talks to when nobody scripted an answer; see
-    `decisions.py`'s module docstring for why the endpoint that answers it
-    must never take this same lock.
+    Each game also gets, at creation, a mutation lock. It closes a latent race
+    this store used to leave open: `get()` used to hand out the shared `Game`
+    with nothing stopping two requests from mutating it at once. `locked()`
+    is that fix - every mutating endpoint holds it for the request's whole
+    body. Answering a paused decision (`POST .../decide`) is an ordinary
+    mutating request now and takes this same lock like any other - see
+    `commands.py`'s module docstring for why that is safe: nothing blocks
+    inside it any more.
     """
 
     def __init__(self) -> None:
@@ -201,12 +267,10 @@ class InMemoryRepository:
         # game_id -> its mutation lock. Process-local by nature, and not part
         # of `GameRepository` - only `locked()` itself is.
         self._locks: dict[str, threading.Lock] = {}
-        # game_id -> its pending decision. Decision-transport machinery (T7
-        # owns it), not part of `GameRepository`.
-        self._mailboxes: dict[str, DecisionMailbox] = {}
-        # game_id -> defaulted decisions. Decision-transport machinery (T7
-        # owns it), not part of `GameRepository`.
-        self._decision_timeouts: dict[str, list[dict]] = {}
+        # game_id -> the command it is paused mid-way through, the tape of
+        # answers already accepted, and the question it is waiting on. At
+        # most one per game (`store_paused_command`'s own docstring).
+        self._paused_commands: dict[str, tuple[Command, tuple[Answer, ...], PendingDecision]] = {}
         self._decklists: dict[str, dict[str, str]] = {}  # game_id -> username -> decklist text
         # Lobby-owned. game_id -> username -> that seat's AgentSettings. Only
         # AI seats have an entry - a human seat is never given one, same as
@@ -259,8 +323,6 @@ class InMemoryRepository:
         self, game: Game, *, cap: int | None = None, ui_game: bool = False
     ) -> tuple[str, bool]:
         game_id = uuid4().hex
-        mailbox = DecisionMailbox()
-        game.decisions.provider = GameDecisionProvider(mailbox=mailbox, game_id=game_id)
         with self._lock:
             if cap is not None and self._live_ui_count_locked() >= cap:
                 return "", False
@@ -268,7 +330,6 @@ class InMemoryRepository:
             self._admin_keys[game_id] = uuid4().hex
             self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
-            self._mailboxes[game_id] = mailbox
             if ui_game and game_id not in self._ui_games:
                 self._ui_games.append(game_id)
         return game_id, True
@@ -410,10 +471,10 @@ class InMemoryRepository:
         """Hold `game_id`'s mutation lock for a whole request, yielding the
         `Game`. Raises `KeyError` for an unknown game before taking any lock.
 
-        This is the lock the class docstring describes; `decisions.py`'s
-        `GameDecisionProvider.decide` runs *inside* a call to this - a request
-        parked here, deep in `Game.ask`, is exactly what a decision answer
-        must never wait behind (see that module).
+        This is the lock the class docstring describes. Nothing parks inside
+        it any more - `commands.run_command` never blocks, so a request that
+        answers a paused decision (`POST .../decide`) takes this lock for its
+        whole body exactly like any other mutating request.
         """
         with self._lock:
             game = self._games.get(game_id)
@@ -423,32 +484,25 @@ class InMemoryRepository:
         with lock:
             yield game
 
-    def mailbox(self, game_id: str) -> DecisionMailbox | None:
-        """This game's pending-decision mailbox, or `None` if unknown.
-
-        Looked up without `locked()` and without touching `Game` at all: the
-        `decide` endpoint uses only this, which is the whole point of keeping
-        the mailbox's lock separate from the game's.
-        """
+    def store_paused_command(
+        self,
+        game_id: str,
+        command: Command,
+        tape: tuple[Answer, ...],
+        pending: PendingDecision,
+    ) -> None:
         with self._lock:
-            return self._mailboxes.get(game_id)
+            self._paused_commands[game_id] = (command, tape, pending)
 
-    def record_decision_timeout(self, game_id: str, record: dict) -> None:
-        """A decision that timed out and took the engine's default, for this
-        game - appended so `decision_timeouts` (`serialize.state_view`) can
-        show it in the game state itself, not only the audit log. A default
-        answer produces a plausible-looking transcript of a game that was
-        never actually played through that choice, so it belongs where every
-        reader of the current state sees it, not only where someone thought
-        to look at history. Called from `decisions.GameDecisionProvider`,
-        itself lazy-importing this module (see that call site's own comment)."""
+    def paused_command(
+        self, game_id: str
+    ) -> tuple[Command, tuple[Answer, ...], PendingDecision] | None:
         with self._lock:
-            self._decision_timeouts.setdefault(game_id, []).append(record)
+            return self._paused_commands.get(game_id)
 
-    def decision_timeouts(self, game_id: str) -> list[dict]:
-        """Every decision timeout recorded for this game so far, oldest first."""
+    def clear_paused_command(self, game_id: str) -> None:
         with self._lock:
-            return list(self._decision_timeouts.get(game_id, []))
+            self._paused_commands.pop(game_id, None)
 
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""
@@ -479,14 +533,19 @@ class InMemoryRepository:
         with self._lock:
             return self._games.get(game_id)
 
+    def replace(self, game_id: str, game: Game) -> None:
+        with self._lock:
+            if game_id not in self._games:
+                raise KeyError(f"no game {game_id}")
+            self._games[game_id] = game
+
     def delete(self, game_id: str) -> bool:
         with self._lock:
             self._seats.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
             self._created_at.pop(game_id, None)
             self._locks.pop(game_id, None)
-            self._mailboxes.pop(game_id, None)
-            self._decision_timeouts.pop(game_id, None)
+            self._paused_commands.pop(game_id, None)
             self._decklists.pop(game_id, None)
             self._agent_settings.pop(game_id, None)
             self._ai_players.pop(game_id, None)

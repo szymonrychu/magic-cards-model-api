@@ -1,4 +1,4 @@
-"""The live decision provider, for a triggered ability's targets (CR 603.3d).
+"""Pause-and-resume, for a triggered ability's targets (CR 603.3d).
 
 `test_decisions.py` covers the cleanup discard (`choose_cards`); this file is
 the same mechanism for `choose_targets`, added so that a triggered ability
@@ -7,10 +7,13 @@ target permanent that's one or more colors." is the reported case - can
 actually be answered by a seat sitting outside the engine, rather than always
 going on the stack with no target because nobody was ever asked.
 
-Casting Devourer of Destiny is itself the blocking call here (`Game.put_on_stack`
-puts the cast trigger on the stack synchronously, which is where
-`Game.ask` blocks), the same shape `test_decisions.py`'s `advance_into_cleanup`
-uses for the turn-based action that blocks on the discard.
+Casting Devourer of Destiny is itself the call that crosses the question here
+(`Game.put_on_stack` puts the cast trigger on the stack synchronously, which
+is where the ask happens): `cast` now pauses and returns immediately, the
+question attached, rather than blocking a thread inside `Game.ask`
+(`test_decisions.py`'s module docstring) - `cast_devourer_in_background`
+below still runs it on its own thread purely so every test here keeps one
+shared call shape, but that thread finishes almost as soon as it starts.
 """
 
 from __future__ import annotations
@@ -198,7 +201,15 @@ def test_giving_no_target_for_a_mandatory_target_is_refused(client, game):
         body = empty.json()
         assert body["accepted"] is False
         assert "at least 1 target(s) must be chosen" in body["reason"]
-        assert thread.is_alive(), "a refused answer must not have unblocked the resolving thread"
+        # A refused answer must not have cleared the pending decision - the
+        # cast itself already paused and returned (see this module's own
+        # note above: `cast` now pauses synchronously rather than blocking a
+        # thread inside `Game.ask`), so what proves the refusal changed
+        # nothing is the decision still standing, not a thread still alive.
+        still_pending = state(client, game, uid=uids["alice"]).get("pending_decision")
+        assert still_pending is not None and still_pending["kind"] == "choose_targets", (
+            "a refused answer must not have cleared the pending decision"
+        )
 
         answer = client.post(
             f"/api/games/{game}/decide",

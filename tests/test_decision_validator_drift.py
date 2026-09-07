@@ -42,7 +42,10 @@ from magic_cards_model.machines.decisions import (
     CardSplit,
     Decision,
     DecisionKind,
+    DeclaredPair,
     ScriptedAnswer,
+    ask_attackers,
+    ask_blockers,
     ask_mulligan,
     ask_trigger_order,
 )
@@ -77,8 +80,26 @@ def board(client: TestClient, game: str) -> dict[str, Any]:
     )
     add_card(client, game, "Delver of Secrets", "alice", "battlefield")
     add_card(client, game, "Delver of Secrets", "alice", "battlefield")
+    alice_uid = next(u for u, name in store.seat_uids(game).items() if name == "alice")
     client.put(f"/api/games/{game}/step", json={"step": "untap", "player": "alice"})
-    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    advanced = client.post(
+        f"/api/games/{game}/advance", params={"uid": alice_uid}, json={"player": "alice"}
+    )
+    body = advanced.json()
+    if body.get("paused"):
+        # CR 603.3b: nothing scripts an answer for these two simultaneous
+        # triggers, so the advance that puts them on the stack pauses on
+        # `order_triggers` instead of completing - resume it (any
+        # permutation is legal; the offered order is as good as any) so the
+        # triggers are actually on the stack for this fixture to read.
+        pending = body["pending_decision"]
+        assert pending["kind"] == "order_triggers", pending
+        answered = client.post(
+            f"/api/games/{game}/decide",
+            params={"uid": alice_uid},
+            json={"player": "alice", "order": pending["cards"]},
+        )
+        assert answered.status_code == 200 and answered.json()["accepted"] is True, answered.json()
     triggers = tuple((ability.id, ability.source_name) for ability in _game(game).stack)
     assert len(triggers) == 2, f"expected two simultaneous upkeep triggers, got {triggers}"
     # The wording the engine really used, read off the `Decision` that advance
@@ -137,6 +158,26 @@ def _engine_ask(engine_game: Game, decision: Decision) -> object:
         # source twice.
         abilities = tuple((ability.id, ability.source_name) for ability in engine_game.stack)
         return ask_trigger_order(engine_game.decisions, decision.player, abilities)
+    if decision.kind is DecisionKind.DECLARE_ATTACKERS:
+        # CR 508.1's declaration: the third kind whose engine-side authority
+        # is not `Game.ask` but its own asker, `ask_attackers` (by way of
+        # `_ask_declaration`) - see that function's own docstring for why it
+        # deliberately does not consult a live provider the way `Game.ask`
+        # does, which is irrelevant to this parity check either way, since
+        # both sides here are scripted rather than live.
+        return ask_attackers(engine_game.decisions, decision.player, prompt=decision.prompt)
+    if decision.kind is DecisionKind.DECLARE_BLOCKERS:
+        # CR 509.1's declaration - same shape as `DECLARE_ATTACKERS` above,
+        # via the shared `ask_blockers`. `attackers` carries the attacker ids
+        # offered as context (`decision.cards`, echoed by `PendingDecision.
+        # from_engine`) - the same ids `validate_answer`'s own tests build
+        # `decision.cards` from below.
+        return ask_blockers(
+            engine_game.decisions,
+            decision.player,
+            prompt=decision.prompt,
+            attackers=decision.cards,
+        )
     return engine_game.ask(decision)
 
 
@@ -350,6 +391,40 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
     cases[DecisionKind.PUT_ON_TOP_OR_BOTTOM] = (
         Decision(kind=DecisionKind.PUT_ON_TOP_OR_BOTTOM, player="alice", prompt="top or bottom"),
         [True, False, "top", None],
+    )
+
+    # CR 508.1's declaration. The engine side is `ask_attackers` (by way of
+    # `_ask_declaration`), not `Game.ask` - see `_engine_ask`. Only shape is
+    # checked on either side (`validate_answer`'s own docstring): full attack
+    # legality is `Game.declare_attackers`'s job, downstream of answering
+    # this decision at all, so no stray/legality candidate is exercised here
+    # the way `CHOOSE_TARGETS` above exercises one.
+    cases[DecisionKind.DECLARE_ATTACKERS] = (
+        Decision(kind=DecisionKind.DECLARE_ATTACKERS, player="alice", prompt="declare attackers"),
+        [
+            (DeclaredPair(creature=bears_id, defender_player="bob"),),
+            (),
+            "not a sequence",
+            (DeclaredPair(creature=bears_id, defender_player="bob"), "not a pair"),
+        ],
+    )
+    # CR 509.1's declaration - same shape as `DECLARE_ATTACKERS` above, via
+    # the shared `_ask_declaration`. `cards` carries the attacker ids offered
+    # as context, echoing what `ask_blockers`'s own `attackers=` argument is
+    # built from in `_engine_ask`.
+    cases[DecisionKind.DECLARE_BLOCKERS] = (
+        Decision(
+            kind=DecisionKind.DECLARE_BLOCKERS,
+            player="alice",
+            prompt="declare blockers",
+            cards=(bears_id,),
+        ),
+        [
+            (DeclaredPair(creature=library_ids[0], defender_card=bears_id),),
+            (),
+            "not a sequence",
+            (DeclaredPair(creature=library_ids[0], defender_card=bears_id), "not a pair"),
+        ],
     )
 
     return cases

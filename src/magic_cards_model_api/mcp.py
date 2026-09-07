@@ -840,18 +840,21 @@ def build_server(seats: Seats) -> MCPServer:
         silently discarding the choice (see `decisions.py`'s module docstring
         on the API side for the CR 608.2d fallback rule).
 
-        `mulligan`, `declare_attackers`, and `declare_blockers` decisions
-        never reach this tool no matter what it supports - each is answered
-        straight off the engine's own decision script, never through this
-        mailbox. Attacking and blocking have the dedicated
-        `attackers`/`blockers` actions instead. The mulligan does not have a
-        replacement: CR 103.5's declaration really is put to you when your
-        game is created, but the engine answers it with its own default (keep
-        the hand as dealt) without ever showing it to a seat, so you are
-        never asked and cannot mulligan through this API at all. The
-        `opening_hand_action` above, asked at the end of that same sequence,
-        is the part you do get to answer. Answering when nothing is pending,
-        or when the pending decision is not yours, is refused rather than
+        `mulligan`, `declare_attackers`, and `declare_blockers` are answerable
+        through this same tool too, exactly like every other kind - there is
+        no longer a decision kind this tool cannot answer. `declare_attackers`/
+        `declare_blockers` are also reachable through the dedicated
+        `attackers`/`blockers` actions, which build the same pair-shaped
+        answer this tool takes for those two kinds and resume the identical
+        paused decision - use whichever reads more naturally for the call
+        you are making, they are two doors onto the same thing, not two
+        different mechanisms. `mulligan` reaches you through
+        `pregame/mulligan`'s own declaration for your own seat during a
+        normal game boot (CR 103.5) - this tool's `mulligan` kind is what you
+        answer only if an admin-driven headless settle
+        (`pregame/settle`) is what actually put the question to you, which is
+        not the ordinary play path. Answering when nothing is pending, or
+        when the pending decision is not yours, is refused rather than
         accepted.
 
         Answering a decision does not, itself, involve priority (CR 608.2d is

@@ -159,15 +159,35 @@ export function planPermanentClick(card, app, state) {
     }
     return { kind: "target", id: card.id };
   }
+  // A `declare_attackers`/`declare_blockers` decision paused (CR 508.1, CR
+  // 509.1) freezes `state.step` at whatever it was *before* the pause, not
+  // the one it is trying to enter (`app.py`'s `advance` docstring), and
+  // `state.priority_holder` is equally stale - CR 508.1/509.1's turn-based
+  // action never finished, so neither field ever moved. A plain
+  // `state.step === "declare_attackers"` check can therefore never see the
+  // pause itself, only the state that results *after* someone answers it -
+  // too late to offer this click at all. `pendingDeclareKind` reads the
+  // live decision instead, which is stamped the moment the question is
+  // asked: a click can attack or block while the game is genuinely waiting
+  // on this seat to say so, exactly as it always could once the step
+  // actually became real.
+  const pendingDeclareKind =
+    state.pending_decision && state.pending_decision.player === seat
+      ? state.pending_decision.kind
+      : null;
   if (
-    state.step === "declare_attackers" &&
+    card.controller === seat &&
     state.active_player === seat &&
-    state.priority_holder === seat &&
-    card.controller === seat
+    ((state.step === "declare_attackers" && state.priority_holder === seat) ||
+      pendingDeclareKind === "declare_attackers")
   ) {
     return { kind: "attack" };
   }
-  if (state.step === "declare_blockers" && state.active_player !== seat && state.priority_holder === seat) {
+  if (
+    state.active_player !== seat &&
+    ((state.step === "declare_blockers" && state.priority_holder === seat) ||
+      pendingDeclareKind === "declare_blockers")
+  ) {
     return { kind: "block" };
   }
   if (card.controller !== seat) return { kind: "none" };
@@ -554,6 +574,22 @@ async function confirmAttack() {
   await poll();
 }
 
+/** "No attack" - CR 508.1a's "if any" makes declaring nobody a real, legal
+ * declaration, not merely "do nothing": the game genuinely pauses on this
+ * question now (`decisions.ANSWERABLE_KINDS` covers `declare_attackers`)
+ * rather than silently defaulting to nobody on its own, so somebody has to
+ * say so. Sends the same empty `attackers` `confirmAttack` would for an
+ * empty draft, whatever the draft actually holds right now - "no attack"
+ * overrides an in-progress draft rather than requiring it to be cleared by
+ * hand first. */
+async function declareNoAttackers() {
+  const res = await send("POST", gamePath("actions/attack"), C.attackBody({}));
+  if (res === null) return;
+  if (res.allowed === false) return toast(res.reason);
+  store.set({ combatDraft: {} });
+  await poll();
+}
+
 let pendingBlocker = null;
 function toggleBlock(card) {
   const app = store.get();
@@ -568,6 +604,17 @@ function toggleBlock(card) {
 
 async function confirmBlocks() {
   const res = await send("POST", gamePath("actions/declare-blockers"), C.blockBody(store.get().combatDraft, you()));
+  if (res === null) return;
+  if (res.allowed === false) return toast(res.reason);
+  store.set({ combatDraft: {} });
+  await poll();
+}
+
+/** "No blocks" - `declareNoAttackers`'s sibling for CR 509.1a's own "if
+ * any". Sends the same empty `blocks` `confirmBlocks` would for an empty
+ * draft, overriding whatever is currently drafted. */
+async function declareNoBlockers() {
+  const res = await send("POST", gamePath("actions/declare-blockers"), C.blockBody({}, you()));
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
@@ -842,9 +889,9 @@ async function main() {
         return { stops };
       }),
     onAttackConfirm: confirmAttack,
-    onAttackNone: () => passOnce().then(poll),
+    onAttackNone: declareNoAttackers,
     onBlockConfirm: confirmBlocks,
-    onBlockNone: () => passOnce().then(poll),
+    onBlockNone: declareNoBlockers,
     // Two clicks, never one. Conceding is a legal move at any time
     // (CR 104.3a) and it is also the only irreversible one in the ribbon:
     // the first click only arms the button, the second sends it. Any pass

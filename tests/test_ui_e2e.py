@@ -185,21 +185,15 @@ def test_decision_round_trip_through_decide(client: TestClient, booted_game: dic
     )
     assert cast.json()["allowed"] is True, cast.json()
 
-    import threading
+    # `resolve-top` now pauses on the scry and returns immediately, the
+    # question attached, rather than blocking a thread inside `Game.ask`
+    # (`test_decisions.py`'s module docstring) - so this drives it
+    # synchronously, the same way `ui/app.js` does.
+    resolved = client.post(f"/api/games/{game_id}/resolve-top", params={"uid": alice_uid})
+    resolved_body = resolved.json()
+    assert resolved_body["paused"] is True, resolved_body
 
-    result: dict = {}
-
-    def do_resolve() -> None:
-        result["response"] = client.post(f"/api/games/{game_id}/resolve-top")
-
-    thread = threading.Thread(target=do_resolve)
-    thread.start()
-    thread.join(timeout=0.5)
-    assert thread.is_alive(), "expected resolving Preordain to block on its scry decision"
-
-    # alice's own filtered read shows the pending decision and delivers it.
-    pending_view = state(client, game_id, alice_uid)
-    pending = pending_view["pending_decision"]
+    pending = resolved_body["pending_decision"]
     assert pending is not None
     assert pending["kind"] == "scry"
     assert pending["player"] == "alice"
@@ -210,8 +204,13 @@ def test_decision_round_trip_through_decide(client: TestClient, booted_game: dic
         params={"uid": alice_uid},
         json={"player": "alice", "moved": [], "top_order": None},
     )
-    assert decide.json()["accepted"] is True
+    decide_body = decide.json()
+    assert decide_body["accepted"] is True, decide_body
+    assert not decide_body.get("paused"), decide_body
 
-    thread.join(timeout=5)
-    assert not thread.is_alive()
-    assert result["response"].json()["resolved"] == "Preordain"
+    # `decide`'s own response never echoes the resumed command's outcome
+    # (just `accepted`/`log_seq`), so what actually resolved is read back off
+    # state: the spell left the stack, and its draw put a card in hand.
+    final = state(client, game_id, alice_uid)
+    assert final["stack"] == []
+    assert final["pending_decision"] is None
