@@ -55,7 +55,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-mtg}
+      # Components, not an assembled URL: alembic's env.py builds the DSN
+      # through db.database_url_from_env, which is the same path the Helm chart
+      # uses to pass CloudNativePG's Secret keys. It also keeps a
+      # user:password@host shape out of this committed file.
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-mtg}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?}
+      - POSTGRES_DB=${POSTGRES_DB:-mtg}
     # Never started by a bare `docker compose up` - run explicitly with
     # `docker compose run --rm migrate` (or `mise run db:migrate`, which does
     # that against a locally-running `postgres` service).

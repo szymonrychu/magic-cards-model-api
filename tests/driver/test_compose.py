@@ -176,3 +176,36 @@ def test_compose_refuses_to_interpolate_without_a_password() -> None:
 
 def test_the_generated_password_file_is_gitignored() -> None:
     assert ".postgres-password" in _repo_file(".gitignore")
+
+
+def test_the_migrate_service_is_given_components_not_an_assembled_dsn() -> None:
+    """`alembic/env.py` builds the DSN through `db.database_url_from_env`.
+
+    Passing components rather than a URL is what the Helm chart will do with
+    CloudNativePG's Secret keys, and it keeps a `user:password@host` shape out
+    of this committed file - secret scanning flags that pattern even when every
+    part of it is a variable reference.
+    """
+    migrate = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]["migrate"]
+    env = dict(pair.split("=", 1) for pair in migrate["environment"])
+    assert "DATABASE_URL" not in env
+    for key in (
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+    ):
+        assert key in env, f"migrate needs {key} to build its DSN"
+
+
+def test_no_committed_file_carries_a_credentialed_uri() -> None:
+    """No `scheme://user:password@host` anywhere, assembled or not."""
+    uri = re.compile(r"://[^/\s\"']*:[^/\s\"']*@")
+    offenders = [
+        f"{name}: {line.strip()}"
+        for name in ("docker-compose.yml", ".github/workflows/ci.yml", ".env.example")
+        for line in _repo_file(name).splitlines()
+        if uri.search(line)
+    ]
+    assert offenders == [], f"a credentialed URI is committed: {offenders}"
