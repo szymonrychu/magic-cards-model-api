@@ -4,6 +4,7 @@ uv = "latest"
 
 [env]
 _.python.venv = { path = ".venv", create = true }
+_.file = { path = ".env", missing = "ignore" }
 UV_PYTHON_DOWNLOADS = "never"
 # Images live in harbor under the `containers` project. One image serves both
 # the game and the driver - the driver only overrides the command.
@@ -19,8 +20,12 @@ alias = "default"
 run = "uv run uvicorn magic_cards_model_api.main:app --host 127.0.0.1 --port 8000"
 
 [tasks.test]
-description = "Run the API tests"
-run = "uv run pytest"
+description = "Run the API tests - always docker-free against InMemoryRepository, even if MCM_TEST_DATABASE_URL is set in .env or the shell (use `mise run test:pg` for postgres)"
+run = """
+set -eu
+unset MCM_TEST_DATABASE_URL MCM_REQUIRE_POSTGRES_TESTS
+uv run pytest
+"""
 
 [tasks.lint]
 description = "Ruff check"
@@ -30,9 +35,63 @@ run = "uv run ruff check ."
 description = "Ruff format and fix"
 run = "uv run ruff format . && uv run ruff check --fix ."
 
+[tasks."db:migrate"]
+description = "Apply postgres schema migrations. One-shot - never from app startup, never from an init container (see docker-compose.yml's `migrate` service)."
+run = "uv run alembic upgrade head"
+
+[tasks."test:pg"]
+description = "Run the full suite against real postgres (T9): brings up docker compose's `postgres` locally, or uses MCM_TEST_DATABASE_URL as-is when it is already set (CI's service container). Always exercises the postgres-backed tests - fails loudly rather than skip if it cannot reach a database."
+run = """
+set -eu
+if [ -z "${MCM_TEST_DATABASE_URL:-}" ]; then
+  # `docker compose` interpolates every service's variables even when only
+  # `postgres` is targeted - `game`/`agent`/`driver` require MTG_DECKS
+  # (see .env.example), which this postgres-only run has no reason to need
+  # for real, so a harmless placeholder stands in when it is not set.
+  export MTG_DECKS="${MTG_DECKS:-/tmp}"
+  POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+  export POSTGRES_PASSWORD
+  docker compose up -d postgres
+  ready=0
+  for _ in $(seq 1 60); do
+    if docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-mtg}" -d "${POSTGRES_DB:-mtg}" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "test:pg: postgres never became ready (pg_isready kept failing for 60s) - refusing to silently skip the postgres suite" >&2
+    exit 1
+  fi
+  export MCM_TEST_DATABASE_URL="postgresql+psycopg://${POSTGRES_USER:-mtg}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB:-mtg}"
+fi
+DATABASE_URL="$MCM_TEST_DATABASE_URL" uv run alembic upgrade head
+# MCM_REQUIRE_POSTGRES_TESTS=1 turns a missing/unreachable database into a
+# hard pytest failure instead of a quiet skip (see conftest.py's
+# require_postgres_database_url) - test:pg must never report success while
+# the postgres-parameterised tests did not actually run.
+MCM_TEST_DATABASE_URL="$MCM_TEST_DATABASE_URL" MCM_REQUIRE_POSTGRES_TESTS=1 uv run pytest
+"""
+
 [tasks.compose]
-description = "Bring up game + continuous agent + driver"
-run = "docker compose up --build"
+description = "Bring up postgres + game + continuous agent + driver"
+run = """
+set -eu
+POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+export POSTGRES_PASSWORD
+docker compose up --build
+"""
+
+[tasks."compose:down"]
+description = "Stop the compose stack. Pass -v to drop the postgres and cache volumes."
+run = """
+set -eu
+POSTGRES_PASSWORD="$(./scripts/postgres-password.sh)"
+export POSTGRES_PASSWORD
+export MTG_DECKS="${MTG_DECKS:-/tmp}"
+docker compose down "$@"
+"""
 
 [tasks.image-tag]
 description = "Print the tag the image tasks would use: <api sha>-<engine sha>"
