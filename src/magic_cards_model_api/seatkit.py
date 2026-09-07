@@ -118,7 +118,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 from typing import Any
 
 import httpx
@@ -166,14 +165,6 @@ NO_SUCH_SEAT = (
 #: and has no condition variable to be woken by - there is no single "the
 #: answer arrived" event here, only "check the board again".
 POLL_SECONDS = 0.2
-
-#: The default `max_seconds` an action tool/command declares when it does not
-#: name its own. `run_action` accepts it for backward compatibility but no
-#: longer uses it for anything (`block_until_wake` is poll-and-return, T11) -
-#: `pass_until`'s own internal loop is the one place left where this genuinely
-#: bounds a wait; a caller of anything else that wants to keep checking just
-#: calls again.
-DEFAULT_MAX_SECONDS = 60.0
 
 #: The HTTP client read timeout every `Seat`/`Seats` builds with.
 #:
@@ -809,7 +800,6 @@ def run_action(
     perform: Any,
     *,
     hold_priority: bool = False,
-    max_seconds: float = DEFAULT_MAX_SECONDS,
     release: bool = True,
 ) -> dict[str, Any]:
     """Do one action, then behave the way both transports promise: unless
@@ -823,11 +813,14 @@ def run_action(
     pass-priority a second time on top of it would just be refused, harmlessly,
     but there is no reason to make the extra request).
 
-    `max_seconds` is accepted for backward compatibility but no longer bounds
-    a wait: `block_until_wake` is poll-and-return now (see its own
-    docstring - MCP 2026-07-28 removed resumability, so this call never holds
-    the request open waiting for something to happen). A caller that wants to
-    keep watching just calls the action tool (or `wait_for_priority`) again;
+    **Nothing here bounds a wait, because nothing here waits.**
+    `block_until_wake` is poll-and-return (see its own docstring - MCP
+    2026-07-28 removed resumability, so this call never holds the request open
+    waiting for something to happen), so there is no deadline to accept and
+    this takes no `max_seconds`: a parameter that bounds nothing is a lie an
+    agent reads as a promise, and the MCP wire format shows a caller no
+    per-parameter description to correct it with. A caller that wants to keep
+    watching just calls the action tool (or `wait_for_priority`) again;
     `wake_reason` says `NOTHING_NEW_YET` rather than blocking to make that
     true.
 
@@ -1085,7 +1078,10 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
 
     `known_stack_ids` is the same idea for the stack: only objects that arrive
     *after* the run began count as "something new landed", or a run started
-    with a spell already resolving would stop immediately on it.
+    with a spell already resolving would stop immediately on it. A list rather
+    than a set, like every other value here: the whole dict is handed back to
+    the caller as `pass_until`'s `resume` token and has to survive a JSON
+    round trip through an MCP tool argument.
     """
     pending = state.get("pending_decision")
     return {
@@ -1094,8 +1090,32 @@ def start_autopass(state: dict[str, Any], until_step: str, whose_turn: str) -> d
         "started_turn": state.get("turn_number"),
         "started_step": state.get("step"),
         "started_pending_kind": pending.get("kind") if pending is not None else None,
-        "known_stack_ids": {obj.get("id") for obj in (state.get("stack") or [])},
+        "known_stack_ids": [obj.get("id") for obj in (state.get("stack") or [])],
     }
+
+
+def resume_autopass(
+    resume: dict[str, Any] | None, state: dict[str, Any], until_step: str, whose_turn: str
+) -> dict[str, Any]:
+    """The run `pass_until` is continuing, or a fresh one stamped from the
+    board when there is nothing to continue.
+
+    A `resume` token is a previous call's own run dict handed straight back
+    (`pass_until`'s answer carries one whenever `finished` is `false`), so
+    everything it holds - above all the starting-occurrence stamp
+    `start_autopass` documents - stays the stamp of where the run *began*,
+    not of wherever the seat happens to be standing when the caller gets
+    round to calling again. `step`/`whose_turn` are taken from the arguments
+    rather than the token, so a caller that changes its destination mid-run
+    gets the new one; every other field is the token's.
+    """
+    if not resume:
+        return start_autopass(state, until_step, whose_turn)
+    run = dict(resume)
+    run["step"] = until_step
+    run["whose_turn"] = whose_turn
+    run.setdefault("known_stack_ids", [])
+    return run
 
 
 def forget_starting_occurrence(run: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -1309,6 +1329,21 @@ def autopass_stop_reason(
     return None
 
 
+#: How many priorities one `pass_until` call will give up before handing the
+#: board back of its own accord.
+#:
+#: NOT a wait bound - nothing in that loop waits any more, and every iteration
+#: past the first is paid for by a real, completed `pass-priority` that moved
+#: the game. This is the safety net under that reasoning: if a pass were ever
+#: to come back `allowed: True` without actually releasing priority, the loop's
+#: "keep going while I still hold priority" condition would be true forever and
+#: nothing else in it would ever stop. A cap on *work done* is honest where a
+#: cap on *seconds waited* was not; hitting it is reported as its own stop
+#: reason with `finished: false`, the same shape every other early return
+#: takes.
+MAX_PASSES_PER_CALL = 100
+
+
 def pass_until(
     seat: Seat,
     *,
@@ -1317,46 +1352,77 @@ def pass_until(
     stop_on_stack: bool = True,
     stop_when_attacked: bool = True,
     stop_when_you_can_attack: bool = True,
-    max_seconds: float = DEFAULT_MAX_SECONDS,
-    poll_seconds: float = POLL_SECONDS,
+    resume: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Keep passing priority until a named point in the turn, or until
-    something worth this seat's attention happens.
+    """Pass every priority this seat is *currently* able to pass, up to a named
+    point in the turn - then return. Never sleeps, never waits for the
+    opponent, never holds the request open for a deadline.
 
-    One pass per poll tick, exactly like the UI's autopilot: check the stop
-    conditions, then at most one `pass-priority` call, then look again. Never
-    holds `store.locked` (it only reads state and posts ordinary actions), so
-    it cannot deadlock against the opponent's own moves - the same invariant
-    `block_until_wake` documents.
+    This used to run a deadline loop: `max_seconds` (60 by default, and an MCP
+    client could ask for more) with a `time.sleep` in every branch that had
+    nothing to do yet, so one tool call sat open for as long as the opponent
+    took to think. MCP protocol revision 2026-07-28 removed resumability
+    (SEP-2577) - a call that blocks like that loses the request outright if the
+    underlying stream breaks mid-wait - and this was the tool most likely to be
+    holding one open when it did. `block_until_wake` and `wait_for_priority`
+    were converted for that reason; this is the same conversion, and
+    `max_seconds`/`poll_seconds` are gone rather than kept as inert
+    parameters.
+
+    So: check the stop conditions, act, look again, and **return the moment
+    this seat would otherwise have to wait for somebody else** - the other
+    seat holding priority, or a combat declaration only they can answer. The
+    answer says where the run got to; the caller calls again.
+
+    Progress within one call is not waiting and is not capped by the clock:
+    every extra lap is paid for by a `pass-priority` that already completed
+    and moved the game (or by answering this seat's own frozen combat
+    declaration). A seat whose opponent answers promptly can therefore still
+    cross several steps in one call, exactly as before - what it can no longer
+    do is sit there while nothing happens. `MAX_PASSES_PER_CALL` bounds the
+    work rather than the wall clock; see its own comment.
+
+    `resume` is what makes a run that spans several calls one run rather than
+    a fresh one each time, and it is not optional bookkeeping: the
+    starting-occurrence exemption (`start_autopass`, and conditions 3/4/5 of
+    `autopass_stop_reason`) deliberately does not stop for the step the run
+    *began* in. Restarting the run on every call would re-stamp that exemption
+    against wherever the seat happens to be standing - so a run that came back
+    while sitting on its own `declare_attackers` pause would, on the very next
+    call, treat that pause as "the step I started in" and pass straight
+    through its own attack. That is the exact silent-no-attack defect
+    condition 4 exists to prevent. Every answer with `finished: false`
+    therefore carries a `resume` token; hand it back unchanged.
+
+    Never touches `store.locked` (it only reads state and posts ordinary
+    actions), so it cannot deadlock against the opponent's own moves - the
+    same invariant `block_until_wake` documents.
 
     A `declare_attackers`/`declare_blockers` pause (CR 508.1, CR 509.1)
     addressed to this seat is not always a stop - `stop_when_you_can_attack`/
     `stop_when_attacked` may say not to - but it always freezes the game
     until answered (the turn-based action that would move `state["step"]`
     past it never finished), so when `autopass_stop_reason` does not stop for
-    one, this loop answers it with "nobody" (`actions/attack`/
+    one, this call answers it with "nobody" (`actions/attack`/
     `actions/declare-blockers`, "if any" makes that always legal) before
-    looking again, exactly the way it answers "no priority to pass" by
-    waiting rather than by giving up.
+    looking again. That is progress this seat can make on its own, so it does
+    not end the call.
 
-    Always returns within `max_seconds`, never raises for a timeout and never
-    hangs: running out of budget is reported as its own stop reason with
-    "call again to keep going", the way `block_until_wake` reports it. The
-    answer carries `stopped_because` (which condition fired), `passes` (how
-    many priorities this call actually gave up), `finished` (`False` only for
-    the timeout), the state it stopped on, and this seat's
-    `available_actions` in it.
+    The answer carries `stopped_because` (which condition fired, or why it
+    handed the board back), `passes` (how many priorities this call actually
+    gave up), `finished` (`True` only when a real stop condition fired -
+    `False` means "call again, with `resume`"), the state it stopped on, and
+    this seat's `available_actions` in it.
 
     A pass refused mid-run stops the run and reports the refusal rather than
-    hammering the same refused call for the rest of the bound.
+    hammering the same refused call again.
     """
     before = seat.fetch_state()
-    run = start_autopass(before, until_step, whose_turn)
-    deadline = time.monotonic() + max(0.0, max_seconds)
+    run = resume_autopass(resume, before, until_step, whose_turn)
     passes = 0
 
     def answer(state: dict[str, Any], reason: str, finished: bool = True) -> dict[str, Any]:
-        return {
+        result = {
             "stopped_because": reason,
             "passes": passes,
             "finished": finished,
@@ -1364,12 +1430,18 @@ def pass_until(
             "state": state,
             "available_actions": available_actions(seat, state),
         }
+        if not finished:
+            # A plain copy: `run` is JSON-safe by construction (see
+            # `start_autopass`), and this is the token `resume_autopass`
+            # takes straight back on the next call.
+            result["resume"] = dict(run)
+        return result
 
-    def timed_out(state: dict[str, Any]) -> dict[str, Any]:
+    def handed_back(state: dict[str, Any], reason: str) -> dict[str, Any]:
         return answer(
             state,
-            f"timed out after {max_seconds}s with {passes} priorities passed - "
-            "call again to keep going",
+            f"{reason} - this call is not waiting for it: {passes} "
+            "priorities passed so far. Call again (with `resume`) to keep going.",
             finished=False,
         )
 
@@ -1386,7 +1458,7 @@ def pass_until(
         if reason is not None:
             return answer(state, reason)
 
-        run["known_stack_ids"] = {obj.get("id") for obj in (state.get("stack") or [])}
+        run["known_stack_ids"] = [obj.get("id") for obj in (state.get("stack") or [])]
         forget_starting_occurrence(run, state)
 
         pending = state.get("pending_decision")
@@ -1410,7 +1482,8 @@ def pass_until(
             # thin wrappers over the same paused-command tape `decide`
             # resumes) - used here rather than posting to `decide()` directly
             # with a hand-built answer, matching how a live client answers
-            # these two kinds.
+            # these two kinds. This is progress this seat can make with
+            # nobody's help, so the call carries on rather than handing back.
             if pending_kind == "declare_attackers":
                 path = f"/api/games/{seat.game_id()}/actions/attack"
                 body: dict[str, Any] = {"attackers": []}
@@ -1448,31 +1521,35 @@ def pass_until(
             # count it - a caller reading `passes` is asking how many
             # priorities this run gave up, not how many turn-based actions it
             # answered on this seat's behalf.
-            if time.monotonic() < deadline:
-                continue
-            return timed_out(seat.fetch_state())
-
-        if pending is not None and pending_kind in ("declare_attackers", "declare_blockers"):
-            # Addressed to the *other* seat (the branch above already
-            # handled this seat's own pause). `state["priority_holder"]`
-            # cannot be trusted here: CR 508.1/CR 509.1's turn-based action
-            # never finished, so `priority.reset` never ran either, and the
-            # value this state carries is simply whatever it was before the
-            # freeze - not "nobody has priority", which is what a frozen
-            # game actually is. Trusting it anyway (attempting a pass this
-            # seat does not really hold) is exactly the race that used to
-            # surface here: this seat's pass could land *after* the other
-            # seat's declaration resolves and genuinely regrants priority to
-            # them, and get refused for a reason this seat had no way to see
-            # coming ("alice does not have priority, bob does"). Waiting for
-            # the other seat to answer avoids attempting a pass this state
-            # can never honestly justify.
-            if time.monotonic() >= deadline:
-                return timed_out(state)
-            time.sleep(poll_seconds)
             continue
 
+        if pending is not None and pending_kind in ("declare_attackers", "declare_blockers"):
+            # Addressed to the *other* seat (the branch above already handled
+            # this seat's own pause). Nothing this seat can do moves the game
+            # until they answer: `state["priority_holder"]` cannot be trusted
+            # here either, because CR 508.1/CR 509.1's turn-based action never
+            # finished, so `priority.reset` never ran and the value this state
+            # carries is simply whatever it was before the freeze - not
+            # "nobody has priority", which is what a frozen game actually is.
+            # Attempting a pass on the strength of it is the race that used to
+            # surface here: it could land *after* their declaration resolves
+            # and genuinely regrants them priority, and be refused for a reason
+            # this seat had no way to see coming. So this is a hand-back, which
+            # is what the old code slept through.
+            return handed_back(
+                state,
+                f"the game is frozen on {pending.get('player')}'s own "
+                f"{pending_kind} (CR 508.1, CR 509.1) and only they can answer it",
+            )
+
         if state.get("priority_holder") == seat.player:
+            if passes >= MAX_PASSES_PER_CALL:
+                return handed_back(
+                    state,
+                    f"this one call has already passed {MAX_PASSES_PER_CALL} priorities "
+                    "without ever having to wait, which is more than any real stretch "
+                    "of a turn needs - handing the board back so you can look at it",
+                )
 
             def perform_pass() -> Any:
                 return seat.call_json(
@@ -1515,19 +1592,16 @@ def pass_until(
                     # the pass itself never committed (the paused command's
                     # mutated copy was discarded, same as any other pause),
                     # so nothing here actually released priority yet.
-                    if time.monotonic() < deadline:
-                        continue
-                    return timed_out(seat.fetch_state())
+                    continue
                 # Addressed to the *other* seat (the case the comment above
                 # explains): this seat cannot answer it and spinning on more
-                # passes would just cross the exact same wall every time -
-                # wait for the other seat the same way the final branch below
-                # waits for its own turn, rather than the tight, sleepless
-                # loop a bare `continue` here would be.
-                if time.monotonic() >= deadline:
-                    return timed_out(seat.fetch_state())
-                time.sleep(poll_seconds)
-                continue
+                # passes would just cross the exact same wall every time.
+                return handed_back(
+                    seat.fetch_state(),
+                    f"passing crossed {self_decision.get('player')}'s own "
+                    f"{self_decision.get('kind')} (CR 508.1, CR 509.1), which only "
+                    "they can answer",
+                )
             if self_decision is not None:
                 return answer(
                     seat.fetch_state(),
@@ -1542,10 +1616,9 @@ def pass_until(
                     f"a pass was refused, so the run stopped: {outcome.get('reason')}",
                 )
             passes += 1
-            if time.monotonic() < deadline:
-                continue
-            return timed_out(seat.fetch_state())
+            continue
 
-        if time.monotonic() >= deadline:
-            return timed_out(state)
-        time.sleep(poll_seconds)
+        return handed_back(
+            state,
+            "you do not hold priority right now, so there is nothing here to pass",
+        )

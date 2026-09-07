@@ -11,11 +11,17 @@ open for up to `max_seconds` (570s by default for `wait_for_priority`); it now
 checks once and returns immediately either way (`seatkit.NOTHING_NEW_YET`),
 and this file is what pins "immediately" - not merely "eventually, with a
 shorter bound".
+
+`pass_priority(until=...)` was the last holdout on both counts: it kept its own
+deadline loop (`seatkit.pass_until`, which slept to `max_seconds`) and it
+returned raw JSON rather than going through `mcp._tool_result`, so a run that
+stopped *on* a decision could not say so on the wire. Both are pinned here.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any
 
@@ -132,3 +138,86 @@ def test_an_action_tool_also_surfaces_its_own_raised_decision_as_input_required(
     )
     assert result.request_state is not None
     assert "choose_cards" in result.request_state
+
+
+def test_pass_priority_until_also_surfaces_a_decision_as_input_required(client, game, monkeypatch):
+    """The `until` branch of `pass_priority` is a second, longer-lived path
+    through the same tool, and it used to return `json.dumps(...)` directly
+    rather than going through `mcp._tool_result` - so the tool most likely to
+    be mid-run when a decision arrives was the only one that could not say so
+    on the wire.
+
+    It is not a path where no decision can arise: `seatkit.pass_until` stops
+    and returns the moment one is addressed to this seat, with the full state
+    under `"state"` - the exact key `_tool_result` reads. Here alice's own
+    auto-pass closes the priority round and walks her turn into her own
+    cleanup discard.
+
+    The same call also pins the other half of the fix: it returns at once
+    instead of sleeping to a deadline. There is no `max_seconds` on this tool
+    any more."""
+    seats, uids = wired(client, monkeypatch, game)
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard: a real choice
+    client.put(f"/api/games/{game}/step", json={"step": "end_step", "player": "alice"})
+
+    from magic_cards_model_api.store import store
+
+    real_game = store.get(game)
+    assert real_game.priority is not None
+    real_game.priority.holder_index = real_game.priority.players.index("bob")
+    real_game.priority.passes = 0
+    bobs_pass = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert bobs_pass.status_code == 200, bobs_pass.text
+
+    server = build_server(seats)
+    started = time.monotonic()
+    result = call_tool(server, "pass_priority", {"player_uid": uids["alice"], "until": "upkeep"})
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 3.0, f"pass_priority(until=...) blocked for {elapsed:.1f}s"
+    assert isinstance(result, InputRequiredResult), (
+        f"expected an InputRequiredResult, got {type(result)}: {result!r}"
+    )
+    assert result.request_state is not None
+    assert "choose_cards" in result.request_state
+    assert "stopped_because" in result.request_state, "it must still be a pass_until answer"
+
+
+def test_pass_priority_until_returns_promptly_when_it_must_wait(client, game, monkeypatch):
+    """The `until` branch used to hold one request open for its whole
+    `max_seconds` - measured at 6.0s for 6.0, and its MCP input schema exposed
+    the parameter as an unbounded number, so an agent could hold a single call
+    open for 570 seconds. bob has no priority here and nobody is moving: the
+    call has to come straight back saying so, with a `resume` token, not sit
+    there."""
+    seats, uids = wired(client, monkeypatch, game)
+    client.put(f"/api/games/{game}/step", json={"step": "precombat_main", "player": "alice"})
+
+    server = build_server(seats)
+    started = time.monotonic()
+    result = call_tool(server, "pass_priority", {"player_uid": uids["bob"], "until": "end_step"})
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 3.0, f"pass_priority(until=...) blocked for {elapsed:.1f}s"
+    answer = json.loads(result.content[0].text)
+    assert answer["finished"] is False
+    assert answer["resume"], "an unfinished run must say how to continue it"
+    assert "Call again" in answer["stopped_because"]
+
+
+def test_the_pass_priority_tool_no_longer_takes_a_max_seconds_at_all(client, game, monkeypatch):
+    """Read off the live signature and the live MCP input schema, not off
+    prose. An MCP client receives no `description` on any *parameter* - the
+    schema for `max_seconds` was `{"default": 60.0, "title": "Max Seconds",
+    "type": "number"}` and nothing else - so a parameter that bounds nothing
+    is a promise an agent cannot see corrected anywhere. Every tool here is
+    poll-and-return now, so none of them carries one."""
+    import inspect
+
+    seats, _ = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    for name, tool in server._tool_manager._tools.items():
+        parameters = inspect.signature(tool.fn).parameters
+        assert "max_seconds" not in parameters, (
+            f"{name} still takes max_seconds, which bounds nothing"
+        )

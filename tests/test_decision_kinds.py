@@ -1687,9 +1687,7 @@ def test_the_seat_cli_answers_pay_life(monkeypatch, capsys) -> None:
             pending = played["pending_decision"]
             assert pending is not None and pending["kind"] == "pay_life"
 
-            rc = seat_cli.run(
-                ["--uid", uids["alice"], "--game", game_id, "wait", "--max-seconds", "3"]
-            )
+            rc = seat_cli.run(["--uid", uids["alice"], "--game", game_id, "wait"])
             assert rc == 0
             assert "a decision is waiting for you" in capsys.readouterr().out
 

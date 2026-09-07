@@ -124,7 +124,6 @@ def test_hold_priority_returns_immediately_and_keeps_priority(client, game, monk
         alice,
         cast_bolt_action(alice, game, bolt_id, mountain_id),
         hold_priority=True,
-        max_seconds=30,
     )
     elapsed = time.monotonic() - started
     assert elapsed < 2, "hold_priority must never block"
@@ -149,7 +148,6 @@ def test_a_refused_action_returns_immediately_without_blocking(client, game, mon
             f"/api/games/{game}/actions/cast",
             {"player": "alice", "card_id": bolt_id, "targets": ["bob"], "mana_sources": []},
         ),
-        max_seconds=30,
     )
     elapsed = time.monotonic() - started
     assert elapsed < 2, "a refusal must not block"
@@ -189,7 +187,6 @@ def test_play_land_by_an_unresolvable_name_is_refused_not_a_silent_pass(client, 
             f"/api/games/{game}/actions/play-land",
             {"player": "alice", "card": "Not A Real Card"},
         ),
-        max_seconds=30,
     )
     elapsed = time.monotonic() - started
 
@@ -329,7 +326,6 @@ def test_available_actions_summary_never_leaks_the_opponents_hand_or_library(
     result = run_action(
         alice,
         cast_bolt_action(alice, game, bolt_id, mountain_id),
-        max_seconds=5,
         hold_priority=True,
     )
     dumped = str(result)

@@ -393,9 +393,7 @@ def test_the_seat_cli_flow(monkeypatch, capsys) -> None:
 
             # `wait` returns as soon as it sees the decision - it does not
             # need to poll for long, since one is already pending.
-            rc = seat_cli.run(
-                ["--uid", uids["alice"], "--game", game_id, "wait", "--max-seconds", "3"]
-            )
+            rc = seat_cli.run(["--uid", uids["alice"], "--game", game_id, "wait"])
             assert rc == 0
             printed = capsys.readouterr().out
             assert "a decision is waiting for you" in printed

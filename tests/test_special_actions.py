@@ -322,9 +322,7 @@ def test_the_seat_cli_keeps_priority_after_a_land_drop(monkeypatch, client, game
     uid = next(u for u, who in store._seats[game_id].items() if who == "alice")
     add_card(client, game_id, "Forest", "alice", "hand")
 
-    rc = seat_cli.run(
-        ["--uid", uid, "--game", game_id, "play-land", "Forest", "--max-seconds", "2"]
-    )
+    rc = seat_cli.run(["--uid", uid, "--game", game_id, "play-land", "Forest"])
 
     assert rc == 0
     after = state(client, game_id, uid)
