@@ -185,11 +185,30 @@ def shortfall_reason(payment: Any) -> str:
 
 def tapped_view(payment: Any) -> list[dict[str, str]]:
     """Which sources this payment has tapped so far, oldest first - read
-    before `rewind()` on a dry run, so a client can preview auto-pay."""
-    return [
-        {"card_id": str(source.id), "name": source.name}
-        for source in getattr(payment, "tapped_for_mana", [])
-    ]
+    before `rewind()` on a dry run, so a client can preview auto-pay.
+
+    `CostPayment.tapped_for_mana` holds ids, not `CardState`s: holding the
+    objects made every tapped permanent round-trip as a second copy of itself,
+    and untapping those decoded copies left the real battlefield sources tapped
+    forever. Older engines still hold the objects, so both shapes are read
+    here. An id whose object the game cannot resolve is dropped rather than
+    guessed at - the view is a preview, and a wrong name in it would be worse
+    than a shorter list.
+    """
+    game = getattr(payment, "game", None)
+    view: list[dict[str, str]] = []
+    for entry in getattr(payment, "tapped_for_mana", []):
+        source = entry
+        if isinstance(entry, UUID):
+            source = game.find_by_id(entry) if game is not None else None
+            if source is None:
+                # A payment opened with no `game` at all keeps the live objects
+                # in `CostPayment._tapped_sources` and has nothing to ask.
+                source = getattr(payment, "_tapped_sources", {}).get(entry)
+            if source is None:
+                continue
+        view.append({"card_id": str(source.id), "name": source.name})
+    return view
 
 
 # -- casting ---------------------------------------------------------------
