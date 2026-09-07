@@ -505,8 +505,8 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     with `tape` fully consumed (`DecisionScript.finish_replay` asserts
     that - a tape longer than the questions this run actually asked raises,
     the same way a caller feeding it a stale tape would be a bug), or a
-    `PAUSED` one the moment a question has no scripted answer, no unconsumed
-    tape entry and no provider.
+    `PAUSED` one the moment a question has no scripted answer and no
+    unconsumed tape entry.
     """
     handler = COMMAND_HANDLERS.get(command.kind)
     if handler is None:

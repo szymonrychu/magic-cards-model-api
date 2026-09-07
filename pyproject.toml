@@ -11,6 +11,9 @@ dependencies = [
     "mcp>=1.2",
     "prometheus-client>=0.21",
     "kubernetes>=36,<37",
+    "sqlalchemy>=2.0,<2.1",
+    "psycopg[binary]>=3.1,<4",
+    "alembic>=1.13,<2",
 ]
 
 [tool.uv.sources]

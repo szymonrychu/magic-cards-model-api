@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -13,14 +14,21 @@ def compose() -> dict:
     return yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 
 
-def test_three_services(compose):
-    assert set(compose["services"]) == {"game", "agent", "driver"}
+def test_five_services(compose):
+    """`postgres`/`migrate` (T9) joined the original three - see docker-
+    compose.yml's own module comment for why they are not yet wired into
+    `game`."""
+    assert set(compose["services"]) == {"game", "agent", "driver", "postgres", "migrate"}
 
 
-def test_every_build_context_is_the_parent_so_the_engine_is_in_scope(compose):
+def test_every_built_services_context_is_the_parent_so_the_engine_is_in_scope(compose):
     """magic-cards-model is a path dependency at ../magic-cards-model, so a
-    build context of `.` cannot see it."""
+    build context of `.` cannot see it. `postgres` is a stock image with no
+    `build` of its own, so only the services this repo actually builds need
+    this."""
     for name, service in compose["services"].items():
+        if "build" not in service:
+            continue
         assert service["build"]["context"] == "..", name
 
 
@@ -82,3 +90,89 @@ def test_env_example_lists_every_variable_compose_requires(compose):
 
 def test_the_real_env_file_is_gitignored():
     assert "\n.env\n" in "\n" + (ROOT / ".gitignore").read_text()
+
+
+def test_migrate_is_profile_gated_so_a_plain_up_never_starts_it(compose):
+    """The plan's binding requirement: migrations run "as a one-shot ... never
+    from app startup and never from an init container". `profiles` is what
+    keeps `docker compose up` (no `--profile`) from ever starting `migrate`
+    on its own - dropping this key is exactly the regression this pins."""
+    assert compose["services"]["migrate"].get("profiles") == ["migrate"]
+
+
+def test_no_service_depends_on_migrate(compose):
+    """Nothing may wait on `migrate` in its `depends_on` - that would turn
+    the one-shot into something `docker compose up` starts transitively,
+    the same failure mode `profiles` alone is not enough to rule out if a
+    later change adds a dependency edge instead of removing the gate."""
+    for name, service in compose["services"].items():
+        depends_on = service.get("depends_on") or {}
+        assert "migrate" not in depends_on, name
+
+
+def test_no_application_entrypoint_runs_alembic_upgrade_head():
+    """Migrations must never run from `game`'s own startup or from an init
+    container - only from the one-shot `migrate` service/`mise run
+    db:migrate`. `docker-compose.yml`'s `game`/`agent`/`driver` services have
+    no `command` override (they use the image's own `CMD`), so this checks
+    the one place a startup path could hide: the `Dockerfile`s' `CMD`/
+    `ENTRYPOINT`, plus any `command:` a service might someday set."""
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    for name, service in compose["services"].items():
+        command = service.get("command")
+        if command is None:
+            continue
+        joined = " ".join(command) if isinstance(command, list) else str(command)
+        assert "alembic" not in joined or name == "migrate", name
+
+    for dockerfile in ("Dockerfile", "Dockerfile.agent"):
+        text = (ROOT / dockerfile).read_text()
+        assert "alembic" not in text, dockerfile
+
+
+# -- no committed password literal ------------------------------------------
+#: GitGuardian failed T9's pull request on three hardcoded `mtg` postgres
+#: passwords, in `.env.example`, `.github/workflows/ci.yml` and
+#: `docker-compose.yml`. They were throwaway local values, but a security check
+#: that is always red is a security check nobody reads, and phase 2b creates six
+#: more repos that each get a compose file. The password now comes from
+#: `scripts/postgres-password.sh`, which generates one into the gitignored
+#: `.postgres-password` on first use. These pin that it stays that way.
+
+
+def _repo_file(name: str) -> str:
+    return (ROOT / name).read_text()
+
+
+def test_no_committed_file_carries_a_postgres_password_literal() -> None:
+    """`POSTGRES_PASSWORD` must never be assigned a literal in a tracked file.
+
+    Only two forms are allowed: empty (`.env.example`, documenting the key), or
+    a shell interpolation of the variable itself.
+    """
+    interpolation = re.compile(r"\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*")
+    assignment = re.compile(r"POSTGRES_PASSWORD\s*[=:]\s*(\S+)")
+    offenders = []
+    for name in (".env.example", "docker-compose.yml", ".github/workflows/ci.yml", "mise.toml"):
+        for line in _repo_file(name).splitlines():
+            # Blank every shell interpolation first, so a line like
+            # `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?...}` is not read as an
+            # assignment of the text inside its own default clause.
+            stripped = interpolation.sub("", line)
+            match = assignment.search(stripped)
+            # Once interpolations are blanked, an allowed line leaves nothing
+            # but quotes behind: `POSTGRES_PASSWORD=""` or `POSTGRES_PASSWORD=`.
+            if match and match.group(1).strip("\"'"):
+                offenders.append(f"{name}: {line.strip()}")
+    assert offenders == [], f"a postgres password literal is committed: {offenders}"
+
+
+def test_compose_refuses_to_interpolate_without_a_password() -> None:
+    """No `:-` default: compose must fail loudly rather than fall back."""
+    compose = _repo_file("docker-compose.yml")
+    assert "POSTGRES_PASSWORD:-" not in compose
+    assert "${POSTGRES_PASSWORD:?" in compose
+
+
+def test_the_generated_password_file_is_gitignored() -> None:
+    assert ".postgres-password" in _repo_file(".gitignore")
