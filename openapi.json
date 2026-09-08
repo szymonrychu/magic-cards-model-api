@@ -3112,6 +3112,84 @@
         "title": "DeclareBlockersRequest",
         "type": "object"
       },
+      "DeclarePlanIn": {
+        "description": "`POST /api/games/{game_id}/plan` - a seat's declaration, made before\nit acts, of how it reads this turn.\n\nDeliberately five fields and no more. Each one is something the post-game\nreview has to show and cannot reconstruct from the board: what the seat\nsaw (`board_read`), where it thought it stood in the matchup\n(`my_role`), what it meant to do (`plan`), and what it expected back\n(`prediction`, with its own reason and confidence). Anything longer and\nan agent fills it in with filler; anything shorter and the review is\nnarrative again rather than evidence.\n\n`uid` is the seat's own credential, carried in the body beside `player`\nrather than in the query string: a plan is hidden information about how\na seat intends to play, so the server checks that the caller *is* the\nseat it is declaring for before writing anything into its name.",
+        "properties": {
+          "board_read": {
+            "minLength": 1,
+            "title": "Board Read",
+            "type": "string"
+          },
+          "my_role": {
+            "minLength": 1,
+            "title": "My Role",
+            "type": "string"
+          },
+          "plan": {
+            "minLength": 1,
+            "title": "Plan",
+            "type": "string"
+          },
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "prediction": {
+            "$ref": "#/components/schemas/OpponentPrediction"
+          },
+          "uid": {
+            "minLength": 1,
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "uid",
+          "board_read",
+          "my_role",
+          "plan",
+          "prediction"
+        ],
+        "title": "DeclarePlanIn",
+        "type": "object"
+      },
+      "DeclarePlanResponse": {
+        "description": "`POST .../plan`'s answer. No state view: a declaration mutates no\n`Game`, so there is nothing about the board that this could have\nchanged.",
+        "properties": {
+          "declared": {
+            "title": "Declared",
+            "type": "boolean"
+          },
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "turn_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Number"
+          }
+        },
+        "required": [
+          "declared",
+          "log_seq",
+          "player"
+        ],
+        "title": "DeclarePlanResponse",
+        "type": "object"
+      },
       "DeclaredPairRequest": {
         "description": "One `(creature, defender)` pair for the `declare_attackers`/\n`declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the\nrequest-side twin of the engine's `machines.decisions.DeclaredPair`.\n\n`defender` is a card id (UUID string) or a player's username, the same\ntoken shape `CastRequest.targets`/`ActivateRequest.targets`/\n`DecideRequest.targets` already use for \"a card or a player\" - told apart\nthe same way (`decisions.declared_pairs_answer`). A blocker always blocks\na creature (CR 509.1a), so `defender` is a card id for every\n`declare_blockers` pair; an attacker's defender is overwhelmingly a\nplayer (CR 508.1b) but can also be a planeswalker or a battle's card id.",
         "properties": {
@@ -3287,6 +3365,97 @@
           "last_seq"
         ],
         "title": "GameLogResponse",
+        "type": "object"
+      },
+      "GameReviewResponse": {
+        "description": "`GET /api/games/{game_id}/review` - post-game only, and never open.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "declarations": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewDeclaration"
+            },
+            "title": "Declarations",
+            "type": "array"
+          },
+          "drawn": {
+            "default": false,
+            "title": "Drawn",
+            "type": "boolean"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "ended_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended Seq"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "is_over": {
+            "title": "Is Over",
+            "type": "boolean"
+          },
+          "players": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Players",
+            "type": "array"
+          },
+          "winner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner"
+          }
+        },
+        "required": [
+          "game_id",
+          "players",
+          "is_over"
+        ],
+        "title": "GameReviewResponse",
         "type": "object"
       },
       "GameSeatsResponse": {
@@ -5195,6 +5364,37 @@
           "prompt"
         ],
         "title": "OpeningHandOptionView",
+        "type": "object"
+      },
+      "OpponentPrediction": {
+        "description": "What a seat expects its opponent to do next, and why.\n\nThe prediction is the part of a declaration that makes it evidence\nrather than commentary: it is checkable against what the opponent then\nactually did, and `review.py` puts the two side by side without grading\neither. `because` is required for the same reason - a call with no read\nbehind it is a guess, and a guess that happens to land proves nothing.",
+        "properties": {
+          "because": {
+            "minLength": 1,
+            "title": "Because",
+            "type": "string"
+          },
+          "confidence": {
+            "default": "medium",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "expecting": {
+            "minLength": 1,
+            "title": "Expecting",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expecting",
+          "because"
+        ],
+        "title": "OpponentPrediction",
         "type": "object"
       },
       "PassPriorityRequest": {
@@ -7142,6 +7342,233 @@
           "combat"
         ],
         "title": "ResolveTopResponse",
+        "type": "object"
+      },
+      "ReviewDeclaration": {
+        "description": "One `plan_declared` row, paired with what happened next.\n\nNothing on this model grades the prediction - no score, no hit flag, no\nverdict. See `review.py` for why the raw pairing is the thing a sceptic\ncannot argue with.",
+        "properties": {
+          "board_read": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board Read"
+          },
+          "did": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewEntry"
+            },
+            "title": "Did",
+            "type": "array"
+          },
+          "my_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "My Role"
+          },
+          "opponent_did": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewEntry"
+            },
+            "title": "Opponent Did",
+            "type": "array"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "player": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player"
+          },
+          "prediction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpponentPrediction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn"
+          },
+          "turns_taken": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns Taken"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "ReviewDeclaration",
+        "type": "object"
+      },
+      "ReviewEntry": {
+        "description": "One ledger row as a declaration's pairing carries it - no `snapshot`,\nwhich lives once in `GameReviewResponse.entries` (see `review.py`).",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "player": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn"
+          }
+        },
+        "required": [
+          "seq",
+          "action"
+        ],
+        "title": "ReviewEntry",
         "type": "object"
       },
       "SeatDetail": {
@@ -10591,6 +11018,56 @@
         "summary": "Game Log"
       }
     },
+    "/api/games/{game_id}/plan": {
+      "post": {
+        "description": "Declare, before acting, how this seat reads the turn it is about to\ntake: what it sees, its own role in the matchup, what it intends to do,\nand what it expects the opponent to do and why (`schemas.DeclarePlanIn`).\n\n**This mutates no `Game`.** It calls `audit.record` and nothing else - no\n`store.replace`, no compare-and-swap, no version bump - because a\ndeclaration is a statement *about* the game rather than a move in it. A\nroute that quietly committed one would make every plan something the\nopponent's client has to notice, and would put a CAS conflict in the way\nof an agent that is only trying to think out loud.\n\n`audit.record` stamps the game's own turn and step from the live game\n(its own docstring), and that stamping is what makes the post-game\npairing in `review.py` possible: the declaration and the opponent's\nlater rows are ordered by the same `seq`, from the same ledger, with no\nsecond clock to reconcile. `turns_taken` is written into the detail\nbeside them because `turn_number` counts rounds of the table rather than\nplayer-turns - see `records.require_plan`.\n\nAuthorised on the seat's own uid, carried in the body: a plan is hidden\ninformation about how a seat means to play, so nobody may write one into\nanother seat's name. An unrecognised uid, or one that opens a different\nseat, is a 404 - the same answer every other seat-scoped route gives,\nand one that does not confirm which uids exist.\n\nNothing stops a human seat declaring a plan; the gate only *requires* one\nof an agent seat (`records.require_plan`).",
+        "operationId": "declare_plan_api_games__game_id__plan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclarePlanIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarePlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Plan"
+      }
+    },
     "/api/games/{game_id}/players/{username}": {
       "patch": {
         "operationId": "patch_player_api_games__game_id__players__username__patch",
@@ -11098,6 +11575,78 @@
           }
         },
         "summary": "Resolve Top"
+      }
+    },
+    "/api/games/{game_id}/review": {
+      "get": {
+        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for.",
+        "operationId": "game_review_api_games__game_id__review_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Game Review"
       }
     },
     "/api/games/{game_id}/seat": {

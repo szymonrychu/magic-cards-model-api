@@ -84,6 +84,14 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/lobby/games/{game_id}/ai-seat/stop"): (
         "the operator starts or stops an agent process. About a seat, not by one."
     ),
+    ("POST", "/api/games/{game_id}/plan"): (
+        "the declaration IS the reasoning, and four fields of it - what the "
+        "seat reads on the board, its role in the matchup, what it means to "
+        "do, and what it expects back and why. A fifth free-text 'why' beside "
+        "them would be the same sentence a fifth time. It also mutates no "
+        "`Game` at all: `records.require_reasoning` guards actions, and this "
+        "is a statement about one."
+    ),
     ("POST", "/api/games/{game_id}/seats"): (
         "mints a fresh seat credential for an already-registered player - the "
         "seat back door's replacement (2b's T8), an operator/harness action "
@@ -242,7 +250,30 @@ def _agent_game(client: TestClient) -> dict[str, Any]:
         },
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    info = response.json()
+    # bob is on the clock here, and `records.require_plan` refuses an agent
+    # seat's first mutating action of its own turn until it has declared a
+    # plan for that turn. This file is about the *reasoning* gate, so the
+    # declaration is made once, here, rather than restated in each test - a
+    # bare call still fails on `reasoning` first, which is what these tests
+    # then assert.
+    plan = client.post(
+        f"/api/games/{info['game_id']}/plan",
+        json={
+            "player": "bob",
+            "uid": info["seat_uids"]["bob"],
+            "board_read": "nothing on either board yet",
+            "my_role": "beatdown",
+            "plan": "develop and attack when I can",
+            "prediction": {
+                "expecting": "alice passes with no play",
+                "because": "she has no permanents",
+                "confidence": "low",
+            },
+        },
+    )
+    assert plan.status_code == 200, plan.text
+    return info
 
 
 def _missing_reasoning(response: Any) -> bool:
@@ -367,3 +398,85 @@ def test_the_pregame_declarations_refuse_an_agent_seat_with_no_reasoning(
         assert _missing_reasoning(bare_finish), bare_finish.text
     finally:
         client.delete(f"/api/lobby/games/{game_id}", params={"uid": info["seat_uids"]["alice"]})
+
+
+# ---------------------------------------------------------------------------
+# the pass-shaped exemption: a pass is not an argument
+# ---------------------------------------------------------------------------
+
+
+def _agent_game_with_active(client: TestClient, active: str) -> dict[str, Any]:
+    """`_agent_game`, with `active` on the clock - so a call made by `bob`
+    lands on somebody else's turn and never reaches the plan gate
+    (`records.require_plan`), which is a different refusal than the one
+    these tests are about."""
+    response = client.post(
+        "/api/games",
+        json={
+            "players": [
+                {"username": "bob", "is_agent": True},
+                {"username": "alice", "is_agent": False},
+            ],
+            "active_player": active,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_pass_priority_from_an_agent_seat_needs_no_reasoning(client: TestClient) -> None:
+    """`pass_priority` is exempt at the gate, not in the tool signature.
+
+    Measured on the live ledger, 75 of the 92 rows carrying reasoning were
+    `pass_priority`, averaging 80 characters, and one string appeared 38
+    times because `pass_until` threads a single reason onto every pass it
+    makes. Requiring a sentence for "I have nothing to do" buys a longer
+    non-answer, not a better one - so the field stays accepted and stops
+    being required.
+    """
+    info = _agent_game_with_active(client, "alice")
+    game_id = info["game_id"]
+    try:
+        bare = client.post(f"/api/games/{game_id}/actions/pass-priority", json={"player": "bob"})
+        assert bare.status_code == 200, bare.text
+        assert not _missing_reasoning(bare)
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["admin_key"]})
+        passes = [e for e in log.json()["log"] if e["action"] == "pass_priority"]
+        assert passes, "the pass must still be recorded, reasoning or not"
+        assert passes[-1]["reasoning"] is None
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_pass_priority_still_records_a_reasoning_when_one_is_given(client: TestClient) -> None:
+    """Exempt is not ignored: the field is still accepted and still stored,
+    so a seat with something worth saying about a pass can still say it."""
+    info = _agent_game_with_active(client, "alice")
+    game_id = info["game_id"]
+    try:
+        passed = client.post(
+            f"/api/games/{game_id}/actions/pass-priority",
+            json={"player": "bob", "reasoning": "holding up my counterspell"},
+        )
+        assert passed.status_code == 200, passed.text
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["admin_key"]})
+        passes = [e for e in log.json()["log"] if e["action"] == "pass_priority"]
+        assert passes[-1]["reasoning"] == "holding up my counterspell"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_every_other_action_still_owes_a_reason(client: TestClient) -> None:
+    """The exemption is pass-shaped and nothing else - a `play_land` from the
+    same seat in the same game is still refused without one."""
+    info = _agent_game_with_active(client, "alice")
+    game_id = info["game_id"]
+    try:
+        bare = client.post(
+            f"/api/games/{game_id}/actions/play-land", json={"player": "bob", "card": "Mountain"}
+        )
+        assert _missing_reasoning(bare), bare.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

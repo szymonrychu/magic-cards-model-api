@@ -45,9 +45,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import PendingDecision
 from magic_cards_model.machines.legal_actions import legal_actions as _legal_actions
 from magic_cards_model.models import Game
+
+from .audit import PLAN_ACTION
+from .repository import RECENT_RECORDS_WINDOW
+
+#: CR 103's pregame steps, which the engine models as two steps a game
+#: *rests* in before CR 103.8's first turn ever begins. No turn is under way
+#: in either, so there is no turn for a plan to be about - `require_plan`
+#: passes straight through them, and the mulligan/opening-hand routes stay
+#: gated on `reasoning` alone.
+_PREGAME_STEPS = frozenset({Step.MULLIGAN, Step.PREGAME_ACTIONS})
 
 
 class MissingReasoning(Exception):
@@ -67,17 +78,120 @@ class MissingReasoning(Exception):
         self.player = player
 
 
-def require_reasoning(game_id: str, player: str | None, reasoning: str | None) -> None:
+def require_reasoning(
+    game_id: str, player: str | None, reasoning: str | None, *, pass_shaped: bool = False
+) -> None:
     """Refuse a mutating call with no `player` named, or a human seat, is
     never refused here - `reasoning` is optional for either. Only a
     registered agent seat (`store.ai_players(game_id)`) is held to it, and a
-    blank or whitespace-only string counts as none given."""
-    if not player:
+    blank or whitespace-only string counts as none given.
+
+    `pass_shaped` exempts the one action whose reason is always the same
+    sentence. Measured on the live ledger: of 149 rows, 92 carried
+    reasoning, 75 of those 92 (82%) were `pass_priority`, they averaged 80
+    characters, and a single string appeared 38 times because
+    `seatkit.pass_until` threads one reason onto every pass a run makes. A
+    pass is "I have nothing to do", and requiring an agent to compose that
+    sentence again per priority buys a longer non-answer at roughly +28.6s
+    per game turn, not a better one.
+
+    **The exemption lives here, at the gate, and never in a tool or request
+    signature.** `PassPriorityRequest.reasoning` is still accepted, still
+    audited, and still worth filling in for the pass that actually means
+    something ("holding up my counterspell"); it simply stops being
+    compulsory. Moving the exemption into the schema would have taken the
+    field away from the seat that had something to say.
+    """
+    if not player or pass_shaped:
         return
     from .store import store
 
     if player in store.ai_players(game_id) and not (reasoning and reasoning.strip()):
         raise MissingReasoning(player)
+
+
+class MissingPlan(Exception):
+    """Raised by `require_plan` when a registered agent seat tries to act on
+    its own turn before declaring a plan for it. `app.py` maps this to the
+    same HTTP 422 shape `MissingReasoning` gets - `detail: [{"loc": [...],
+    "msg": ..., "type": "missing"}]` - naming `plan` as the field that is
+    missing, and the message says where to put it, because an agent's only
+    feedback is the response body."""
+
+    def __init__(self, player: str, turn_number: int | None) -> None:
+        turn = f"turn {turn_number}" if turn_number is not None else "this turn"
+        super().__init__(
+            f"{player} is an agent seat and has declared no plan for {turn} - "
+            f"POST /api/games/{{game_id}}/plan first, saying what you read on "
+            "the board, your role in this matchup, what you intend to do, and "
+            "what you expect the opponent to do and why"
+        )
+        self.player = player
+        self.turn_number = turn_number
+
+
+def require_plan(game_id: str, player: str | None, *, game: Game | None = None) -> None:
+    """Refuse an agent seat's action on its own turn until a `plan_declared`
+    record exists for that turn.
+
+    A prediction is only evidence if it demonstrably preceded the outcome,
+    and a facility nobody is obliged to use is a facility nobody uses - so
+    the declaration is a precondition of acting rather than an invitation.
+    Four things narrow it, each for its own reason:
+
+    - **Only an agent seat.** Same set `require_reasoning` reads,
+      `store.ai_players(game_id)`; a human seat is never held to it.
+    - **Only its own turn** (`turn.active_player == player`). Responding on
+      the opponent's turn - a flash spell, a pass - is not a turn to have a
+      plan for, and demanding one there would refuse instant-speed play
+      outright.
+    - **Never in the pregame** (`_PREGAME_STEPS`). CR 103's mulligan and
+      opening-hand windows happen before CR 103.8's first turn; there is no
+      turn under way for a plan to be about.
+    - **Never a concede.** CR 104.3a lets a player concede at any time; a
+      gate that can refuse a concession can trap a seat in a game. That one
+      is enforced at the call site - `app.py`'s `action_concede` simply does
+      not call this.
+
+    **The lookup is bounded, and this is the part that had to be right.**
+    This sits on the hot action path, so it reads at most
+    `RECENT_RECORDS_WINDOW` of the game's newest rows
+    (`store.recent_records`) and scans them newest-first, rather than
+    loading the whole ledger with `store.records()` - which would get slower
+    with every turn played. The window is safe because the answer, when it
+    is yes, is always inside the current player-turn's own rows, and those
+    are by construction the newest ones. It is deliberately not an
+    in-process cache either: the api may run more than one replica, and a
+    memo of "who has declared" would answer differently per pod.
+
+    The declaration is matched on `turns_taken`, not on the audit row's own
+    `turn` stamp: `TurnMachine.turn_number` counts *rounds of the table*, so
+    both seats' turns in one round share it, and an extra turn (CR 500.7)
+    does not move it at all. `turns_taken` goes up exactly once per turn
+    that begins, which is the identity a per-turn plan needs.
+    """
+    if not player:
+        return
+    from .store import store
+
+    if game is None:
+        game = store.get(game_id)
+    if game is None or game.turn is None:
+        return
+    turn = game.turn
+    if turn.step in _PREGAME_STEPS or turn.active_player != player:
+        return
+    if player not in store.ai_players(game_id):
+        return
+    marker = turn.turns_taken
+    for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
+        payload = row["payload"]
+        if payload.get("action") != PLAN_ACTION:
+            continue
+        detail = payload.get("detail") or {}
+        if detail.get("player") == player and detail.get("turns_taken") == marker:
+            return
+    raise MissingPlan(player, turn.turn_number)
 
 
 @dataclass(frozen=True)

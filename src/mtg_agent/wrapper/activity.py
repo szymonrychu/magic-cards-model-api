@@ -179,8 +179,17 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
     """`(kind, text)` for one transcript object.
 
     Kinds are `say`, `tool` and `tool-error`. `thinking` blocks are skipped
-    on purpose: they are the agent talking to itself, they are long, and the
-    text blocks say the same thing in a form meant to be read.
+    on purpose: they are the agent talking to itself, and the text blocks
+    say the same thing in a form meant to be read.
+
+    This used to add "and they are long", which is simply not true of what
+    reaches this function. Measured on a live pod and independently on a
+    second machine: 36 `thinking` blocks in the transcript, **zero**
+    characters of text between them - they arrive carrying a signature and
+    nothing else. So there is no thinking text here to harvest, skipped or
+    not; anything that wants the agent's reasoning has to ask the agent for
+    it (`POST /api/games/{id}/plan`, and the per-action `reasoning` every
+    mutating route already requires), not mine it out of a transcript.
     """
     kind = line.get("type")
     message = line.get("message")
