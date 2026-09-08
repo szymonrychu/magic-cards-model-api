@@ -12,11 +12,14 @@
 # Every build context is `..` because the engine is a path dependency at
 # ../magic-cards-model.
 #
-# `postgres`/`migrate` (T9) are not yet wired into `game` - the process-wide
-# `store` singleton (`store.py`) is still `InMemoryRepository`; switching it
-# over is a later task's job, not this one's. They exist here so
-# `PostgresRepository` has something to run against locally, the same way
-# `mise run test:pg` brings them up for the postgres-backed test suite.
+# `postgres`/`migrate` ARE wired into `game`: `store.py` reads `POSTGRES_*`/
+# `DATABASE_URL` and uses `PostgresRepository` when a database is configured
+# (and, with `REQUIRE_POSTGRES` set, refuses to start rather than silently
+# fall back to `InMemoryRepository`). `game`'s own `environment:` block below
+# does not set `POSTGRES_*` by default, so a plain `docker compose up`
+# without them still runs in-memory, as before - `postgres`/`migrate` exist
+# here so `PostgresRepository` has something to run against locally, the same
+# way `mise run test:pg` brings them up for the postgres-backed test suite.
 # `migrate` is a **one-shot**, never started by `docker compose up` on its
 # own (see its `profiles`) - alembic migrations run once, by hand or by CI,
 # never from an init container or from `game`'s own startup: alembic takes no

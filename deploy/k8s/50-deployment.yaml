@@ -141,6 +141,45 @@ spec:
             # full access log back.
             - name: ACCESS_LOG_QUIET
               value: "1"
+            # REQUIRE_POSTGRES=1: makes a misconfigured/unreachable database
+            # crash loudly at startup instead of silently falling back to
+            # InMemoryRepository (see store.py) - the whole point of wiring a
+            # real Postgres in is losing that silent fallback, not keeping it
+            # as an option.
+            - name: REQUIRE_POSTGRES
+              value: "1"
+            # The five components below are shaped identically to
+            # `25-migration-job.yaml`'s env block on purpose - same Secret,
+            # same keys - so a reviewer can see at a glance both read the
+            # exact same database the exact same way. See that file's
+            # comment for what CNPG's `mtg-database-app` Secret's keys are
+            # and why POSTGRES_* components rather than an assembled
+            # DATABASE_URL.
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: host
+            - name: POSTGRES_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: port
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: dbname
           volumeMounts:
             - name: scryfall-cache
               mountPath: /app/.scryfall-cache

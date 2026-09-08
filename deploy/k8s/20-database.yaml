@@ -1,0 +1,49 @@
+# A single-instance CloudNativePG Postgres for this namespace. The operator
+# itself is already installed cluster-wide (namespace `postgres-operator`) and
+# needs nothing extra from this file to serve a new namespace - this is just
+# the `Cluster` custom resource that asks it for a database.
+#
+# No `imageName`: ride the operator's default Postgres image rather than
+# pinning one here. No `monitoring`/`backups` blocks: both default off, which
+# is correct for a small single-instance hobby database with no stated backup
+# requirement.
+#
+# `enableSuperuserAccess` is left at its default (false) on purpose: the only
+# credential anything in this repo ever reads is the `mtg-database-app`
+# Secret CNPG generates for `spec.bootstrap.initdb.owner` below - nothing here
+# should ever reach for a superuser role.
+#
+# STORAGE CLASS: `rook-ceph`, not the cluster's default `rook-ceph-rwx`.
+# `rook-ceph` is RBD block storage (ReadWriteOnce) - the right shape for a
+# single-writer Postgres instance, and what every one of the other 16 CNPG
+# `Cluster`s in this cluster pins explicitly. `rook-ceph-rwx` is CephFS,
+# ReadWriteMany - correct for `mtg-agent-memory` (many seat Pods writing at
+# once) and wrong here (over-provisioned RWX for one instance that never
+# shares its volume).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mtg-database
+  namespace: mtg-engine
+spec:
+  instances: 1
+  storage:
+    size: 5Gi
+    storageClass: rook-ceph
+  # A separate WAL volume, per the operator's own convention (every other
+  # CNPG Cluster in this cluster does the same) - keeps WAL I/O off the data
+  # volume even though both land on the same StorageClass here.
+  walStorage:
+    size: 1Gi
+    storageClass: rook-ceph
+  bootstrap:
+    initdb:
+      database: mtg
+      owner: mtg
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
