@@ -137,6 +137,57 @@ def test_starting_a_game_does_not_navigate_when_told_not_to() -> None:
     assert result["href"] == "https://host/g99/", "must not have navigated anywhere"
 
 
+# -- the lobby-unreachable bug: `main()`'s boot decision, factored out ------
+#
+# Owner report: "it's not possible to open lobby while game is running -> I
+# get permanently redirected back to game". `main()` used to special-case
+# "exactly one saved game" and auto-`startGame` (navigate: true) into it on
+# *every* boot at the bare `/` root, not once - so as long as `mcm.games.v1`
+# held one entry (the common case: one game, never dropped from storage
+# short of the lobby's own End button), visiting `/` immediately bounced
+# back into the game and the lobby could never be seen. `bootTarget` is the
+# pure decision `main()` now defers to, the same reason `planHandCardClick`/
+# `planPermanentClick` are factored out above: exercised here with no DOM
+# and no network, rather than reimplemented in Python.
+
+
+def test_boot_target_for_the_lobby_root_is_always_the_lobby_regardless_of_saved_count() -> None:
+    """The bug, pinned directly: `bootTarget(null, saved)` - `null` is
+    `gameIdFromBaseURI`'s own answer for the bare lobby root - must say
+    "show the lobby" whether zero, one, or several games are saved. The
+    single-saved-game case is the one the old code special-cased into an
+    auto-navigate; it must now behave exactly like every other count."""
+    one = [{"gameId": "g1", "uid": "u1", "aiUid": "u2"}]
+    two = [
+        {"gameId": "g1", "uid": "u1", "aiUid": "u2"},
+        {"gameId": "g2", "uid": "u3", "aiUid": "u4"},
+    ]
+    assert run_app("m.bootTarget(null, [])") == {"kind": "lobby"}
+    assert run_app("m.bootTarget(null, saved)", saved=one) == {"kind": "lobby"}
+    assert run_app("m.bootTarget(null, saved)", saved=two) == {"kind": "lobby"}
+
+
+def test_boot_target_for_a_game_url_resolves_straight_into_it_with_its_saved_seat() -> None:
+    """A reload of a game tab must stay in that game - the URL names it, not
+    stored state (`document.baseURI`, resolved by `gameIdFromBaseURI`
+    upstream of this function). The saved seat for that id is attached when
+    there is one; an unrecognised id still resolves to the game, just with
+    no seat (a spectator) - it does not fall back to the lobby."""
+    saved = [{"gameId": "g1", "uid": "u1", "aiUid": "u2"}]
+    assert run_app("m.bootTarget('g1', saved)", saved=saved) == {
+        "kind": "game",
+        "gameId": "g1",
+        "uid": "u1",
+        "aiUid": "u2",
+    }
+    assert run_app("m.bootTarget('g9', saved)", saved=saved) == {
+        "kind": "game",
+        "gameId": "g9",
+        "uid": None,
+        "aiUid": None,
+    }
+
+
 def test_leaving_the_game_navigates_to_the_lobby_root() -> None:
     result = run_app(
         """(() => {

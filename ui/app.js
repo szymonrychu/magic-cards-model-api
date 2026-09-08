@@ -954,6 +954,39 @@ export async function startGame(created, { navigate = true } = {}) {
   await pollSeats();
 }
 
+/** What `main()`'s boot should show, given the game id embedded in the
+ * page's own URL (`gameIdFromBaseURI`'s result - `null` for the plain lobby
+ * root) and the list of games this browser has saved (`mcm.games.v1`). A
+ * URL naming a game always wins: `{kind: "game", gameId, uid, aiUid}`,
+ * `uid`/`aiUid` from this browser's saved entry for it or `null` for a
+ * spectator with no saved seat - a reload of a game tab must stay in that
+ * game, and the URL is what says so, not stored state.
+ *
+ * The bare lobby root always answers `{kind: "lobby"}`, regardless of how
+ * many games are saved. An earlier version special-cased exactly one saved
+ * game and auto-navigated into it instead - the owner's reported bug: that
+ * branch ran on *every* visit to `/`, not once, so as long as one game was
+ * saved (the ordinary case - nothing drops an entry from `mcm.games.v1`
+ * short of the lobby's own End button) the lobby could never be reached at
+ * all. The only navigation into a game now happens the moment it is
+ * created or reopened from the lobby (`ui/render/lobby.js`'s Start/Open,
+ * both routed through `startGame`'s default `navigate: true`) - that is the
+ * "once". Exported for `tests/test_ui_app.py` only, the same reason
+ * `planHandCardClick`/`planPermanentClick` above are: a pure decision,
+ * exercised without DOM or network rather than reimplemented in Python. */
+export function bootTarget(urlGameId, saved) {
+  if (urlGameId) {
+    const entry = (saved || []).find((g) => g.gameId === urlGameId);
+    return {
+      kind: "game",
+      gameId: urlGameId,
+      uid: entry ? entry.uid : null,
+      aiUid: entry ? entry.aiUid : null,
+    };
+  }
+  return { kind: "lobby" };
+}
+
 async function main() {
   await loadConfig();
   store.set({ symbols: await loadSymbols(api, apiBase()) });
@@ -1104,29 +1137,19 @@ async function main() {
   // only cross-tab state is `mcm.games.v1` below, and that is keyed by
   // `gameId`, so each tab only ever reads its own game's saved entry out of
   // it.
+  //
+  // The bare lobby root always shows the lobby now, no matter how many games
+  // are saved - `bootTarget`'s own docstring has the fixed bug this replaced
+  // (an auto-navigate into the sole saved game that fired on every visit to
+  // `/`, not once, making the lobby unreachable while exactly one game
+  // existed).
   const urlGameId = gameIdFromBaseURI(document.baseURI);
-  if (urlGameId) {
-    const entry = saved.find((g) => g.gameId === urlGameId);
+  const target = bootTarget(urlGameId, saved);
+  if (target.kind === "game") {
     await startGame(
-      { game_id: urlGameId, uid: entry ? entry.uid : null, aiUid: entry ? entry.aiUid : null },
+      { game_id: target.gameId, uid: target.uid, aiUid: target.aiUid },
       { navigate: false }
     );
-    startPolling();
-    return;
-  }
-  // The lobby is the entry point now that it lists every live game - so
-  // booting straight back into a game is no longer the default. The one
-  // exception: exactly one saved game is the same situation the old
-  // single-game `mcm.game` key always described, and jumping straight back
-  // into it (rather than making a player click through to their only game
-  // every time) is worth keeping - now a real navigation to that game's own
-  // `/<uuid>/` address (T7, originally `/g/<uuid>/` in T4) rather than an
-  // in-page section swap. Two or more saved games always land on the lobby
-  // table instead, since there is no longer one obvious game to resume into.
-  if (saved.length === 1) {
-    const only = saved[0];
-    await startGame({ game_id: only.gameId, uid: only.uid, aiUid: only.aiUid });
-    return;
   }
   startPolling();
 }
