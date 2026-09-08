@@ -42,14 +42,18 @@ metadata:
   labels:
     app: mtg-stack
 spec:
-  # MUST stay 1. K8sSeats.reconcile lists every Job labelled
-  # app.kubernetes.io/name=mtg-agent in this namespace and deletes any whose
-  # game_id is not among this process's own in-memory live games - it is not
-  # scoped to "Jobs this Pod owns". A second replica's in-memory game list
-  # would not match the first's, so each replica's reconcile loop would treat
-  # the other's live games as stray and delete their seat Jobs out from under
-  # them within one reconcile interval. Scaling past 1 needs reconcile made
-  # owner-scoped (or the live-game set made shared) first.
+  # MUST stay 1 (phase 2b T10 - reason changed, the constraint has not).
+  # K8sSeats.reconcile (src/magic_cards_model_api/k8s_seats.py) now compares
+  # each Job's game_id label against a live query on the shared repository,
+  # not against any one process's own state - two replicas would run that
+  # query identically and agree on what to delete, so reconcile is no longer
+  # what forbids a second replica. What still does: ai_pregame.py's per-game
+  # watcher thread (a 4Hz poll started per game) and ai_seat.registry, the
+  # AI seat subprocess/dispatch table - both process-local, in-memory, and
+  # not leader-elected. Two replicas would each run their own watcher for
+  # every game and could both act on the same pregame obligation at once.
+  # Scaling past 1 needs the pregame watcher and seat registry made shared
+  # or leader-elected first.
   replicas: 1
   selector:
     matchLabels:

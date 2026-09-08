@@ -238,6 +238,16 @@ class K8sSeats:
         self.reconcile_interval = reconcile_interval
         # uid -> {game_id, player, job, error, created_at, missing,
         # last_pod_phase, gone}
+        #
+        # A per-process CACHE for `status()`/`start()` bookkeeping only -
+        # never a source of truth for what is live (phase 2b T10).
+        # `created_at` is a `time.monotonic()` reading, which is meaningless
+        # across processes, and this dict only ever holds the uids *this*
+        # process happened to `start()`, not every seat actually running.
+        # `reconcile()`'s delete decision is deliberately independent of it:
+        # it compares each Job's `mtg/game-id` label against the repository's
+        # own live-game query, so every replica reconciles identically no
+        # matter which one created which seat.
         self._seats: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
@@ -496,7 +506,29 @@ class K8sSeats:
     stop = release
 
     # -- tracking ------------------------------------------------------------
-    def reconcile(self, live_game_ids: set[str]) -> dict[str, list[str]]:
+    def reconcile(self, live_game_ids: Callable[[], set[str]]) -> dict[str, list[str]]:
+        """Delete every seat Job whose game is no longer live, and flag any
+        seat this process is tracking whose Job has vanished.
+
+        `live_game_ids` is called here, not handed a pre-computed set: this
+        is what turns "refuse to delete anything if the live-set query
+        failed" into a property of `reconcile` itself, provable with a fake
+        query, rather than something that only holds because every current
+        caller happens to wrap the query in its own try/except. An empty
+        result and a failed query are not the same thing - a query that
+        raises is a database that could not answer, not a database that
+        answered "nothing is live"; treating the two the same deletes every
+        seat Job in the namespace in one pass. So a raise here is caught,
+        nothing is deleted, and this pass reports an empty `{"deleted": [],
+        "missing": []}` rather than acting on a set it never actually got.
+        """
+        try:
+            live_ids = live_game_ids()
+        except Exception as exc:  # noqa: BLE001 - any failure means "unknown", not "empty"
+            logger.warning(
+                "reconcile: live-game id query failed; refusing to delete any Job: %s", exc
+            )
+            return {"deleted": [], "missing": []}
         jobs = self.batch.list_namespaced_job(
             self.settings.namespace, label_selector=f"{LABEL_APP}={APP_LABEL_VALUE}"
         ).items
@@ -504,7 +536,7 @@ class K8sSeats:
         deleted: list[str] = []
         for job in jobs:
             game_id = (job.metadata.labels or {}).get(LABEL_GAME)
-            if game_id not in live_game_ids:
+            if game_id not in live_ids:
                 try:
                     self.batch.delete_namespaced_job(
                         job.metadata.name,
@@ -595,7 +627,7 @@ class K8sSeats:
         def loop() -> None:
             while not stop.wait(interval):
                 try:
-                    report = self.reconcile(live_games())
+                    report = self.reconcile(live_games)
                     if report["deleted"] or report["missing"]:
                         logger.info("reconcile: %s", report)
                 except Exception as exc:  # noqa: BLE001 - reconcile again next tick
@@ -648,9 +680,10 @@ def get() -> K8sSeats:
         seats = K8sSeats(settings, k8s_client.BatchV1Api(), k8s_client.CoreV1Api())
         from .store import store  # lazy: store imports nothing from here
 
-        seats.start_background(lambda: set(store.ids()))
+        live_game_ids = lambda: set(store.ids())  # noqa: E731 - shared by both calls below
+        seats.start_background(live_game_ids)
         try:
-            seats.reconcile(set(store.ids()))
+            seats.reconcile(live_game_ids)
         except Exception:  # noqa: BLE001 - background reconcile will retry
             logger.warning(
                 "initial reconcile failed; background reconcile will retry", exc_info=True

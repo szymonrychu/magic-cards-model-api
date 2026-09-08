@@ -346,7 +346,7 @@ def test_kubernetes_why_gone_carries_the_kubernetes_status_reason(
     kubernetes_mode.jobs.pop(job_name("g-k8s", "u-k8s"))  # the Job vanished behind our back
     with seats._lock:
         seats._seats["u-k8s"]["created_at"] -= 1000  # past the reconcile grace period
-    seats.reconcile(live_game_ids={"g-k8s"})
+    seats.reconcile(live_game_ids=lambda: {"g-k8s"})
     reason = fresh_registry.why_gone("u-k8s")
     assert "missing" in reason and job_name("g-k8s", "u-k8s") in reason
 
