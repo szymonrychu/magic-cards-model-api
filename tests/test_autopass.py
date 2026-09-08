@@ -1280,9 +1280,10 @@ def test_the_two_briefs_tell_a_player_when_not_to_auto_pass():
     CR 509.1's cost of switching the blocking stop off."""
     from pathlib import Path
 
+    from magic_cards_model_api import ai_seat
     from mtg_agent.driver import prompt as prompt_module
 
-    brief = (Path(__file__).resolve().parents[1] / "docs" / "ai_seat_brief.md").read_text()
+    brief = ai_seat.load_brief()
     driver_prompt = Path(prompt_module.__file__).read_text()
 
     for text, name in ((brief, "ai_seat_brief.md"), (driver_prompt, "prompt.py")):

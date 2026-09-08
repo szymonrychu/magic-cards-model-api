@@ -36,9 +36,9 @@ from . import (
     decks_api,
     engine_api,
     opening,
+    protocol,
     records,
     scryfall,
-    seatkit,
     serialize,
     symbology,
     visibility,
@@ -644,7 +644,7 @@ def health() -> dict[str, Any]:
     """
     return {
         "status": "ok",
-        "protocol_version": seatkit.PROTOCOL_VERSION,
+        "protocol_version": protocol.PROTOCOL_VERSION,
     }
 
 

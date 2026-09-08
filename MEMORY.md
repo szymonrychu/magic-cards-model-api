@@ -615,3 +615,53 @@ whoever works on the repo itself.
   narrowing this task accepted rather than an accident; nothing in `ui/`
   displayed it beyond the boolean "over" state. `ui/lobby_model.js`,
   `ui/render/lobby.js`, and their Node tests moved with it.
+
+- **2026-09-08 - 2b T11: `mcp.py --transport` defaults to `http`, which
+  silently broke the working docker-compose continuous-agent flow until
+  `deploy/mcp.base.json` was pinned to `--transport stdio` explicitly.**
+  That file spawns `mcp.py` as a subprocess via `command`/`args` (not a
+  `url`) - the wrapper's own MCP client talks to the child over its stdin/
+  stdout, which is exactly what the old, unconditional `server.run("stdio")`
+  gave it for free. Flipping the default to `http` without also fixing this
+  config would have made the compose stack spawn an http-serving process
+  that never speaks a word of MCP over the pipe the wrapper is reading -
+  caught by adding `tests/driver/test_compose.py::
+  test_the_base_mcp_pins_the_mtg_server_to_the_stdio_transport` before
+  making the change (confirmed red: the args list carried no `--transport`
+  at all), not discovered by running the stack. `deploy/seat-job.yaml`
+  needed no equivalent fix - its `mcp-config` initContainer already renders
+  an http-`type` client config pointing at `MCP_URL` (empty in production
+  today per the T9 note above), already anticipating exactly this shape.
+
+- **2026-09-08 - 2b T11: the api's own `/api/health` used to source its
+  `protocol_version` from an import of `seatkit.PROTOCOL_VERSION` - the
+  only import left pointing from the api toward the future
+  `magic-cards-mcp` package, backwards.** A new `protocol.py` is the api's
+  own canonical copy; `seatkit.py` keeps an independent literal (it cannot
+  import this package once the repos split) for its own `api_trouble`
+  staleness check, which was never the api-import's job to begin with - it
+  already compared the health response against its own local constant.
+  The two are now kept equal by hand, the same way `agent_settings.py`'s
+  cross-repo spellings already are; `tests/test_protocol_boundary.py` pins
+  both the severed import (`app` module has no `seatkit` name at all any
+  more) and the two constants' equality.
+
+- **2026-09-08 - 2b T11: `Seats.seat_for`'s new `resolve_by_uid=True` path
+  only fires for the http transport with no `--game` pinned, never as a
+  general improvement to the pinned/stdio path.** It would have been a
+  strictly more capable replacement for `game_id()`'s "the one live game"
+  auto-discovery (`GET /api/seats/{uid}` finds any uid's own game with no
+  guessing at all), but the plan scopes it to http mode specifically, and
+  the existing stdio auto-discovery semantics (`test_mcp_resilience.py`'s
+  restart/cache-drop behaviour) are left untouched rather than risking a
+  behavioural change nobody asked for in this task.
+
+- **2026-09-08 - 2b T11: porting the ~28 test files that read
+  `store.seat_uids` straight out of the api singleton is T12's job, not
+  T11's - checked against the plan rather than assumed.** T11 only had to
+  add the seat-lookup capability `mcp.py`'s http transport now uses
+  (`Seats._seat_for_any_game`, on top of T8's `GET /api/seats/{uid}`); T12
+  ("reorganise the suite by future owner, and prove the out-of-process
+  harness") is explicitly where those files move onto a `live_api` fixture
+  and the `store.seat_uids` back door is deleted from them. Left untouched
+  here on purpose.

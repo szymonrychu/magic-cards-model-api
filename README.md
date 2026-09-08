@@ -17,8 +17,8 @@ you click one seat and a headless `claude` subprocess plays the other,
 driving `seat_cli` the same way a human dispatched to that seat would. If
 `claude` is not on `PATH`, the UI falls back to showing the exact command and
 prompt to run by hand in another terminal - the game is fully playable either
-way. See `ai_seat.py` and `docs/ai_seat_brief.md` for the mechanism and the
-brief the agent is given.
+way. See `ai_seat.py` and `src/magic_cards_model_api/docs/ai_seat_brief.md` for
+the mechanism and the brief the agent is given.
 
 ### The play screen
 

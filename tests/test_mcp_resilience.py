@@ -150,8 +150,11 @@ def test_guarded_tool_survives_httpx_error_mid_call(monkeypatch) -> None:
 
 def test_main_does_not_exit_when_api_unreachable_at_boot(monkeypatch, capsys) -> None:
     """The old `check_protocol_version` raised `SystemExit` here; `main()`
-    must now start the server regardless and only warn."""
-    monkeypatch.setattr(sys, "argv", ["mcp", "--api", "http://127.0.0.1:1"])
+    must now start the server regardless and only warn. Pinned to
+    `--transport stdio` deliberately: that branch is what's under test here
+    (`FakeServer.run`), not the http transport's own boot path - see
+    `tests/test_mcp_transport_flag.py` for the (now default) http one."""
+    monkeypatch.setattr(sys, "argv", ["mcp", "--api", "http://127.0.0.1:1", "--transport", "stdio"])
     started: dict[str, Any] = {}
 
     class FakeServer:

@@ -70,13 +70,18 @@ reachability before each call and turns either problem into a clear, returned
 error rather than an exception - a stale-protocol mismatch or an unreachable
 API refuses that one call loudly instead of taking this process down with it.
 
-Run one server for the game (not per player):
+Run one server, not per player (`--transport {stdio,http}`, default `http`):
 
-    uv run python -m magic_cards_model_api.mcp [--game <id>]
-        [--api http://127.0.0.1:8000]
+    uv run python -m magic_cards_model_api.mcp [--game <id>] [--transport stdio|http]
+        [--api http://127.0.0.1:8000] [--host 127.0.0.1] [--port 8100]
 
-With no --game the single live game is picked automatically. Every tool
-returns the API's JSON answer verbatim, engine refusal strings included.
+`http` (the default) serves the MCP SDK's stateless streamable-HTTP ASGI app
+and, with no --game, resolves each call's game from its own seat uid (`GET
+/api/seats/{uid}`) - one process can answer for several live games. `stdio`
+is the historical per-game-subprocess shape (`deploy/mcp.base.json`'s
+docker-compose config uses this explicitly); with no --game there it falls
+back to "the one live game" instead. Every tool returns the API's JSON
+answer verbatim, engine refusal strings included.
 """
 
 from __future__ import annotations
@@ -1487,12 +1492,68 @@ def build_server(seats: Seats) -> MCPServer:
     return server
 
 
-def main() -> None:
+#: 2b T11: the default. A CLI-spawned per-game subprocess (`deploy/mcp.base.json`,
+#: today's docker-compose flow) needs `--transport stdio` explicitly; a
+#: caller that says nothing gets the network-facing shape this project is
+#: moving toward - one long-running server any game's agent can reach,
+#: rather than one process per game.
+DEFAULT_PORT = 8100
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--game", default=None, help="game id; default: the live game")
+    parser.add_argument(
+        "--game",
+        default=None,
+        help=(
+            "game id; default in stdio mode: the one live game. In http mode, "
+            "leaving this unset resolves each call's game from its own seat "
+            "uid instead (GET /api/seats/{uid}) - the server may be serving "
+            "several live games at once."
+        ),
+    )
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base url; default {DEFAULT_API}")
-    args = parser.parse_args()
-    seats = Seats(args.api, args.game)
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="http",
+        help=(
+            "stdio: a per-game subprocess, spoken over this process's own "
+            "stdin/stdout (the historical shape). http (default): serve the "
+            "MCP SDK's stateless streamable-HTTP ASGI app on --host/--port."
+        ),
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="http transport bind host")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"http transport bind port; default {DEFAULT_PORT}",
+    )
+    return parser
+
+
+def _serve_http(server: MCPServer, host: str, port: int) -> None:
+    """The SDK's stateless streamable-HTTP ASGI app, served over uvicorn.
+    `stateless_http=True`: no MCP session is pinned to one HTTP connection,
+    which is what lets this one process answer calls for any seat of any
+    live game rather than a single negotiated client. A thin, separately
+    testable seam - `main()` monkeypatches this in `tests/
+    test_mcp_transport_flag.py` rather than actually binding a socket in a
+    fast unit test; `tests/test_mcp_http_transport.py` proves the real thing
+    over a real socket."""
+    import uvicorn
+
+    uvicorn.run(server.streamable_http_app(stateless_http=True), host=host, port=port)
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    # http mode may be fronting several live games at once, so "the one live
+    # game" (stdio's auto-discovery) is only correct when `--game` pins one
+    # explicitly - see `Seats.seat_for`/`_seat_for_any_game`.
+    resolve_by_uid = args.transport == "http" and args.game is None
+    seats = Seats(args.api, args.game, resolve_by_uid=resolve_by_uid)
     # Best-effort heads-up only: NOT fatal. The real, authoritative check is
     # `_guarded` on every tool call below - this process is spawned once for
     # a whole session and must survive the API not being up yet (or not up
@@ -1500,7 +1561,11 @@ def main() -> None:
     trouble = seatkit.api_trouble(seats.http, seats.api)
     if trouble:
         print(f"mcp: starting anyway - {trouble}", file=sys.stderr)
-    build_server(seats).run("stdio")
+    server = build_server(seats)
+    if args.transport == "stdio":
+        server.run("stdio")
+    else:
+        _serve_http(server, args.host, args.port)
 
 
 if __name__ == "__main__":

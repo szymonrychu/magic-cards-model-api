@@ -127,10 +127,10 @@ import httpx
 
 DEFAULT_API = "http://127.0.0.1:8000"
 
-#: Bumped whenever an action tool's contract changes shape. `/api/health`
-#: reports this (see `app.py`); every tool call in `mcp.py` checks it against
-#: its own import of this constant (`api_trouble`, below) and refuses that one
-#: call - loudly, naming both versions - on a mismatch. Exists because the MCP
+#: Bumped whenever an action tool's contract changes shape. Every tool call in
+#: `mcp.py` checks it against its own import of this constant (`api_trouble`,
+#: below) and refuses that one call - loudly, naming both versions - on a
+#: mismatch against whatever `/api/health` reports. Exists because the MCP
 #: server is a long-running process spawned once at boot (`mcp.py`'s module
 #: docstring) - editing this file after that process is already up does not
 #: change what it is running, and without a check the first symptom used to
@@ -146,6 +146,18 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: killed the MCP process outright or left it silently trusting a version it
 #: had only confirmed once, forever. The check itself was right; only "fatal
 #: at boot, never again" was the defect. See `api_trouble`.
+#:
+#: 2b T11: this used to be the value `/api/health` answered with too - the
+#: api imported it straight out of this module, backwards (the api must not
+#: depend on the future `magic-cards-mcp` package). The api now owns its own
+#: copy (`magic_cards_model_api.protocol.PROTOCOL_VERSION`); this one stays,
+#: independently, for exactly the comparison above - it has to be a value
+#: baked into this build of the MCP process, not one read at the moment of
+#: the check, or the check would trivially always agree with itself. The two
+#: literals are kept equal by hand from here on - there is no import left to
+#: do it for free once the repos actually split - the same way
+#: `agent_settings.py`'s cross-repo spellings already are (MEMORY.md,
+#: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
 PROTOCOL_VERSION = "seatkit-4"
@@ -474,7 +486,7 @@ class Seats:
     the uid given out at dispatch.
     """
 
-    def __init__(self, api: str, game_id: str | None) -> None:
+    def __init__(self, api: str, game_id: str | None, *, resolve_by_uid: bool = False) -> None:
         self.api = api.rstrip("/")
         #: `--game` pins this process to one id for its whole life - never
         #: re-discovered. `None` means "whatever's live", re-checked below on
@@ -487,6 +499,15 @@ class Seats:
         self._pinned_game_id = game_id
         self._last_seen_game_id: str | None = None
         self._by_uid: dict[str, str] = {}
+        #: 2b T11: the http transport is one long-running process that may
+        #: serve several concurrently-live games at once - "the one live
+        #: game" (`game_id()` below) stops being a coherent idea for it, and
+        #: `--game` becomes optional. `True` makes `seat_for` resolve each
+        #: uid independently via `GET /api/seats/{uid}` (T8's seat-lookup
+        #: endpoint, `app.find_seat`) instead of assuming a single game -
+        #: `mcp.py`'s `main()` sets this only for the http transport, and
+        #: only when no `--game` pins one explicitly.
+        self._resolve_by_uid = resolve_by_uid
         # One fixed timeout for every real call this client makes - resolved
         # once for this whole process's life, not per `Seat` (`seat_for`
         # hands the same value to every `Seat` it mints, below).
@@ -522,6 +543,8 @@ class Seats:
 
     def seat_for(self, uid: str) -> Seat | None:
         """The seat this uid opens, or None when the uid is nobody's."""
+        if self._resolve_by_uid:
+            return self._seat_for_any_game(uid)
         game_id = self.game_id()
         player = self._by_uid.get(uid)
         if player is None:
@@ -531,6 +554,22 @@ class Seats:
             player = response.json()["player"]
             self._by_uid[uid.strip()] = player
         return Seat(player, uid.strip(), self.api, game_id, timeout=self.http.timeout)
+
+    def _seat_for_any_game(self, uid: str) -> Seat | None:
+        """`resolve_by_uid=True` path: one round trip to `GET
+        /api/seats/{uid}` finds this uid's game and player with no game id
+        assumed up front - what the http transport needs to serve several
+        live games from one process. No `_by_uid` caching here: unlike the
+        single/pinned-game path, there is no one "current live game" whose
+        restart would tell this process to drop a stale cache (see
+        `game_id`'s docstring) - every call simply asks fresh."""
+        response = self.http.get(f"/api/seats/{uid.strip()}")
+        if response.status_code != 200:
+            return None
+        body = response.json()
+        return Seat(
+            body["player"], uid.strip(), self.api, body["game_id"], timeout=self.http.timeout
+        )
 
 
 def _trim_images(state: dict[str, Any]) -> None:

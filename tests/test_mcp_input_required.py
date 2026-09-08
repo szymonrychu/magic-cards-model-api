@@ -334,9 +334,10 @@ def test_both_briefs_tell_the_seat_to_use_max_seconds_not_bash_sleep():
     right tool for it."""
     from pathlib import Path
 
+    from magic_cards_model_api import ai_seat
     from mtg_agent.driver import prompt as prompt_module
 
-    brief = (Path(__file__).resolve().parents[1] / "docs" / "ai_seat_brief.md").read_text()
+    brief = ai_seat.load_brief()
     driver_prompt = Path(prompt_module.__file__).read_text()
 
     for text, name in ((brief, "ai_seat_brief.md"), (driver_prompt, "prompt.py")):

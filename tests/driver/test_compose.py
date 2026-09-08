@@ -77,6 +77,19 @@ def test_the_base_mcp_points_the_mtg_server_at_the_game_container():
     assert servers["spellslinger"]["type"] == "http"
 
 
+def test_the_base_mcp_pins_the_mtg_server_to_the_stdio_transport():
+    """2b T11: `mcp.py --transport` now defaults to `http`, which serves an
+    ASGI app on a socket rather than speaking MCP over the spawned process's
+    own stdin/stdout. This config spawns `mcp.py` as a subprocess
+    (`command`/`args`, not a `url`) - the wrapper's MCP client talks to it
+    over stdio, so it must keep asking for that transport explicitly, or the
+    default flip silently breaks every continuous-agent compose session."""
+    doc = json.loads((ROOT / "deploy" / "mcp.base.json").read_text())
+    args = doc["mcpServers"]["mtg"]["args"]
+    assert "--transport" in args
+    assert args[args.index("--transport") + 1] == "stdio"
+
+
 def test_the_agent_carries_the_effort_setting(compose):
     env = " ".join(str(e) for e in compose["services"]["agent"]["environment"])
     assert "EFFORT" in env

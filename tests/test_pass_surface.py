@@ -35,13 +35,11 @@ import inspect
 from pathlib import Path
 from typing import Any
 
+from magic_cards_model_api import ai_seat, seat_cli
 from magic_cards_model_api import mcp as mcp_module
-from magic_cards_model_api import seat_cli
 from magic_cards_model_api.mcp import build_server
 from magic_cards_model_api.seatkit import Seats
 from mtg_agent.driver import prompt as prompt_module
-
-REPO = Path(__file__).resolve().parents[1]
 
 #: The two verbs a seat has, and the only two.
 PASS_VERBS = ("pass", "pass_until")
@@ -101,7 +99,7 @@ def agent_facing_texts() -> dict[str, str]:
         "mcp.py module docstring": mcp_module.__doc__ or "",
         "seat_cli.py module docstring": seat_cli.__doc__ or "",
         "src/mtg_agent/driver/prompt.py": Path(prompt_module.__file__).read_text(),
-        "docs/ai_seat_brief.md": (REPO / "docs" / "ai_seat_brief.md").read_text(),
+        "docs/ai_seat_brief.md": ai_seat.load_brief(),
     }
     for name, fn in tool_functions().items():
         texts[f"the {name} tool docstring"] = inspect.getdoc(fn) or ""

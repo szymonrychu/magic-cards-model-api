@@ -33,6 +33,7 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 cc-stop-hook = "mtg_agent.wrapper.stop_hook:main"
+mcp-seat = "magic_cards_model_api.seat_cli:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/magic_cards_model_api", "src/mtg_agent"]
