@@ -31,13 +31,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
 from . import ai_pregame, ai_seat, audit, lobby, scryfall, serialize
 from .agent_settings import AgentSettings
-from .ai_seat_api import _api_base
 from .decks import load_deck_into_game, parse_decklist
 from .store import new_seat_uids, store
 
@@ -179,7 +178,7 @@ class NewUiGame(BaseModel):
 
 
 @router.post("/games")
-def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any]:
+def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     """Boot a new game from two decklists, right now, from an HTTP body -
     the request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing
     its exact boot path (`decks.load_deck_into_game`): CR 103's registration,
@@ -280,7 +279,7 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     # `ai: true` never spawns a real `claude` process just because one
     # happens to be on this machine's PATH.
     mode = ai_seat.ai_seat_mode()
-    api_base = _api_base(request)
+    api_base = ai_seat.api_service_url()
     for player in req.players:
         if not player.ai:
             continue

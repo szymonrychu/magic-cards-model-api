@@ -100,6 +100,21 @@ def driver_url() -> str:
     return (os.environ.get("DRIVER_URL") or "http://driver:8090").strip()
 
 
+def api_service_url() -> str:
+    """Where this seat's `api_base` points, for the `subprocess` and
+    `wrapper` mechanisms - the lobby-side counterpart of
+    `K8sSettings.from_env`'s `API_SERVICE_URL` read (`k8s_seats.py`), same
+    env var and same default, so all three mechanisms agree on where the api
+    actually lives regardless of what host a caller's request arrived on.
+    Deliberately never derived from the incoming request: after the six-way
+    cut, `POST /api/ui/games` and `POST .../ai-seat/start` both arrive at the
+    lobby, not the api, so a request-derived URL would point every seat at
+    the lobby and every seat call would 404."""
+    return (
+        os.environ.get("API_SERVICE_URL") or "http://mtg-stack.mtg-engine.svc.cluster.local:8000"
+    ).strip()
+
+
 def _driver_client(base_url: str) -> httpx.Client:
     # Two very different calls share this client: the one-time dispatch
     # handoff (`POST /dispatch`, accepting the assignment - not the whole
