@@ -639,6 +639,26 @@ def snapshot(game: Game) -> dict[str, Any]:
 
 
 def state_view(game: Game, game_id: str) -> dict[str, Any]:
+    """T1: this dict's shape is formalised as `schemas.GameStateView` - see
+    that class and the "Response views" section it opens for the field-by-
+    field mapping, and `app.py`'s `response_model=` declarations for where it
+    is enforced. Nothing here changes to accommodate that: every route still
+    gets back the same plain dict `state_view`/`visibility.redact_view`
+    always built, and FastAPI validates/documents it against the model on
+    the way out.
+
+    None of this dict's own keys turned out to be dynamically keyed in a way
+    a single model cannot express - `hands`/`graveyards`/`libraries`/
+    `sideboards`/`play_permissions` are all `dict[str, list[...]]` keyed by
+    player username, which OpenAPI's `additionalProperties` schema states
+    exactly. What *does* resist a single fixed shape is `visibility
+    .redact_view`'s own doing, not this function's: it can pop `libraries`/
+    `sideboards` outright, shrink `pending_decision` to `{player, kind,
+    prompt}`, and replace a face-down card with a smaller stub - `schemas
+    .GameStateView`/`PendingDecisionView`/`CardView` model that by making
+    every field a redaction step can remove `| None = None` rather than by
+    reaching for `dict[str, Any]`.
+    """
     images = _images_for(game)
 
     def views(cards: list[StackObject]) -> list[dict[str, Any]]:
