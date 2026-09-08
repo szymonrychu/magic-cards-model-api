@@ -22,6 +22,9 @@ that very row the instant the game it describes is removed, silently
 defeating the feature. `records` is an independent, append-only ledger that
 outlives the game it describes; the two tables are linked only by the
 `game_id` values matching, never by a constraint the database enforces.
+The constraint is dropped by its own revision, `8f1c47a0b6d2` - never by
+editing the initial one, which `alembic upgrade head` would not re-run
+on any database already stamped with it. See `tests/test_migrations.py`.
 
 `ui_game_registered_at` is separate from `created_at` on purpose:
 `InMemoryRepository._ui_games` is a list appended to at whichever moment
@@ -156,6 +159,33 @@ def database_url_from_env(env: Mapping[str, str] | None = None) -> str:
     port = env.get("POSTGRES_PORT") or "5432"
     name = env["POSTGRES_DB"]
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
+
+
+def configured_database_url(env: Mapping[str, str] | None = None) -> str | None:
+    """The database URL this environment configures, or `None` if it
+    configures none.
+
+    `database_url_from_env`'s question is "give me the URL, and complain if
+    there is none" - right for `alembic/env.py`, which is only ever run
+    against a database on purpose. This is the other question, the one
+    `store.py` asks at import: "is a database configured at all?" A `None`
+    here is not an error; it is the docker-free default this api has always
+    had, and it must stay reachable with no environment set up whatsoever.
+
+    A *partial* set of components (`POSTGRES_HOST` alone, say) counts as
+    nothing configured rather than as an error. Guessing that a half-filled
+    environment meant postgres and then failing to connect would turn a
+    stray leftover variable in somebody's shell into a dead application;
+    anyone who genuinely means postgres sets all of them, and
+    `database_url_from_env` is still there to say exactly which one is
+    missing for a caller that requires one.
+    """
+    env = os.environ if env is None else env
+    if env.get("DATABASE_URL"):
+        return env["DATABASE_URL"]
+    if all(env.get(name) for name in _URL_COMPONENTS):
+        return database_url_from_env(env)
+    return None
 
 
 def make_engine(database_url: str) -> Engine:

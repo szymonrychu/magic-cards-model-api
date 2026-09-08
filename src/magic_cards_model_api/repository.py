@@ -153,6 +153,23 @@ class GameRepository(Protocol):
         that has already been checked to exist by its own 404."""
         ...
 
+    def record_automatic_pregame(self, game_id: str, player: str, kind: str) -> None:
+        """Remember that `kind` (`"mulligan"` or `"opening_hand"`) was taken
+        *for* `player` by `ai_pregame.py`'s backstop rather than by the seat.
+
+        On the protocol as of the runtime store selection: `store.py` now
+        picks its implementation from the environment, so `opening.py` calls
+        this on whichever one was picked and both have to offer it. Both
+        implementations keep it in process memory - the backstop that writes
+        it is itself a thread in this process, so there is nothing a second
+        replica could usefully read here anyway. See
+        `PostgresRepository.__init__`."""
+        ...
+
+    def automatic_pregame(self, game_id: str, player: str) -> set[str]:
+        """The pregame moves the backstop made for this seat, if any."""
+        ...
+
     def ids(self) -> list[str]:
         """Every game id currently held."""
         ...

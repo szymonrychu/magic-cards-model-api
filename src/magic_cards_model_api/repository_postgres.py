@@ -228,6 +228,18 @@ class PostgresRepository:
         # `GameRepository` protocol, only `locked()` itself is.
         self._locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
+        # game_id -> username -> the pregame moves `ai_pregame.py`'s backstop
+        # made *for* that seat. Process-local, like `_locks` above and like
+        # the backstop itself (`ai_pregame.watch` is a thread in this
+        # process, `AiSeatRegistry` a dict in it): a second replica has its
+        # own watcher and its own view of what it did, and one replica's
+        # backstop cannot make a declaration the other replica is the one to
+        # explain. Persisting this would be the wrong fix for that; the
+        # right one is the six-way cut, which moves the watcher out of the
+        # request path entirely. Kept here so `PostgresRepository` offers
+        # the same surface `InMemoryRepository` does - `opening.py` calls
+        # both of these on whichever store `store.py` selected.
+        self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
 
     # -- internal helpers ---------------------------------------------------
 
@@ -525,6 +537,7 @@ class PostgresRepository:
             result = conn.execute(sa_delete(games).where(games.c.id == game_id))
         with self._cache_lock:
             self._cache.pop(game_id, None)
+            self._automatic_pregame.pop(game_id, None)
         with self._locks_lock:
             self._locks.pop(game_id, None)
         return result.rowcount > 0
@@ -600,6 +613,19 @@ class PostgresRepository:
     def ai_players(self, game_id: str) -> set[str]:
         row = self._select_one(game_id, games.c.ai_players)
         return set(row[0] or []) if row is not None else set()
+
+    def record_automatic_pregame(self, game_id: str, player: str, kind: str) -> None:
+        """Remember that `kind` (`"mulligan"` or `"opening_hand"`) was taken
+        *for* `player` by `ai_pregame.py`'s backstop rather than by the seat -
+        `InMemoryRepository`'s own method, same behaviour, and process-local
+        for the reason `__init__` gives."""
+        with self._cache_lock:
+            self._automatic_pregame.setdefault(game_id, {}).setdefault(player, set()).add(kind)
+
+    def automatic_pregame(self, game_id: str, player: str) -> set[str]:
+        """The pregame moves the backstop made for this seat, if any."""
+        with self._cache_lock:
+            return set(self._automatic_pregame.get(game_id, {}).get(player, set()))
 
     def register_ui_game(self, game_id: str) -> None:
         if not _looks_like_id(game_id):
