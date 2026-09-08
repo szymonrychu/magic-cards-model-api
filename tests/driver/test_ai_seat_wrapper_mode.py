@@ -48,7 +48,7 @@ def test_wrapper_mode_posts_the_seat_to_the_driver(driver):
         "game_id": "g-1",
         "player": "bob",
         "api_base": "http://game:8000",
-        "agent": DEFAULT_AGENT.model_dump(),
+        "agent": DEFAULT_AGENT.to_wire(),
     }
 
 

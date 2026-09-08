@@ -20,7 +20,10 @@ dependencies = [
 magic-cards-model = { path = "../magic-cards-model", editable = true }
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.8", "pyyaml>=6"]
+# `jsonschema` was already an indirect dependency (via `mcp`); listed
+# explicitly because `tests/test_agent_settings_contract.py` imports it
+# directly to validate `contract/agent-settings.schema.json`.
+dev = ["pytest>=8.3", "ruff>=0.8", "pyyaml>=6", "jsonschema>=4"]
 
 [build-system]
 requires = ["hatchling"]

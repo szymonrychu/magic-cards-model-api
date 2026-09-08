@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/szymonrychu/magic-cards-model-api/contract/agent-settings.schema.json",
+  "title": "AgentSettings",
+  "description": "What an AI seat runs as, on the wire between the lobby (which chooses it, in the seat assignment) and the wrapper/driver (which read it). One spelling: camelCase. This is NOT the shape of AgentSettings.env() - the claude CLI reads MODEL/EFFORT/MAX_THINKING_TOKENS as environment variables, a separate wire this schema does not describe, and it is NOT the browser-facing shape decks_api.py accepts when a game is created, which stays snake_case for the UI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["model", "effort", "maxThinkingTokens"],
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Claude Code --model argument."
+    },
+    "effort": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "xhigh", "max"],
+      "description": "The Claude Code --effort argument."
+    },
+    "maxThinkingTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "MAX_THINKING_TOKENS, or null for no explicit budget."
+    }
+  }
+}

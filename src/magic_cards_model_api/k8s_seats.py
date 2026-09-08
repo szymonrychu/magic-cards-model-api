@@ -155,7 +155,7 @@ def build_job(
         "game_id": game_id,
         "player": player,
         "api_base": settings.api_url,
-        "agent": agent.model_dump(),
+        "agent": agent.to_wire(),
     }
     agent_env = {
         "HTTP_ADDR": ":8080",
@@ -345,6 +345,13 @@ def build_job(
 
 
 def _default_http(base: str) -> httpx.Client:
+    # `K8sSeats.http`'s only use is `_driver_status`: a direct `GET /status`
+    # to the driver sidecar's own pod IP, called from `status()` and from the
+    # background reconcile loop across every live seat in the namespace.
+    # This is a liveness probe, not a page load, and it must not let one
+    # unreachable driver stall the rest of that loop's tick - shorter than
+    # the other three clients on purpose, and short enough that a genuinely
+    # stuck driver is discovered on the next tick rather than the one after.
     return httpx.Client(base_url=base, timeout=10.0)
 
 

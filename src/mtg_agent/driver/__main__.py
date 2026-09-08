@@ -44,7 +44,7 @@ def main() -> None:
     # The game server re-reads `GET /status` for as long as a seat is
     # dispatched, which was one uvicorn access line per poll. See
     # access_log.py; a `/status` that starts failing still prints.
-    access_log.install()
+    access_log.install(access_log.DRIVER_QUIET_PATHS)
     settings = DriverSettings.from_env(os.environ)
     host, _, port = settings.http_addr.rpartition(":")
     app = build_app(settings)

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
 from .probe import ProbeUnavailableError
@@ -32,11 +32,27 @@ class ProbeIn(BaseModel):
 
 
 class SessionIn(BaseModel):
-    """A per-game agent settings push - see `POST /v1/session` below."""
+    """A per-game agent settings push - see `POST /v1/session` below.
+
+    One spelling on this wire, camelCase, matching
+    `contract/agent-settings.schema.json` and what `GET /v1/session`
+    (`Manager.snapshot`) already answers with - the driver is this route's
+    only caller (`mtg_agent/driver/app.py`'s `sync_agent_settings`), and it
+    posts `AgentSettings.to_wire()` verbatim.
+
+    `extra="forbid"`, deliberately: without it, a stray `max_thinking_tokens`
+    key (the spelling this route replaced) is not a validation error at all
+    - pydantic just ignores an unrecognised field and this falls back to
+    `None` - which is exactly the silent "live seat quietly gets the default
+    budget instead of the one it was dispatched with" failure this contract
+    exists to catch, so the wrong spelling must be a hard 422, not a quiet
+    no-op."""
+
+    model_config = ConfigDict(extra="forbid")
 
     model: str = ""
     effort: str = ""
-    max_thinking_tokens: int | None = None
+    max_thinking_tokens: int | None = Field(default=None, alias="maxThinkingTokens")
 
 
 def build_public_app(

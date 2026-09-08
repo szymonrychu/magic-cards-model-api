@@ -317,3 +317,30 @@ whoever works on the repo itself.
   can answer, so only the deciding seat has any use for it.
   `DecideRequest.generation` is optional, so every client that predates it
   keeps working - it is a guarantee a caller opts into.
+
+- **2026-09-08 - T13: `QUIET_PATHS` split by *future owner*, not by process.**
+  `WRAPPER_QUIET_PATHS` and `DRIVER_QUIET_PATHS` both keep `/healthz` -
+  legitimately duplicated, because the wrapper and the driver are two
+  entry points shipping in one repo (`magic-cards-claude-wrapper`), each
+  with its own probe on its own port (`k8s_seats.py`'s `agent`/`driver`
+  containers). A naive "no pattern may repeat" test is wrong for this file;
+  the real invariant is that api/lobby patterns never leak into
+  wrapper/driver tuples or back.
+
+- **2026-09-08 - T13: `AgentSettings`'s wire is camelCase on exactly one
+  hop - the seat assignment - and nowhere else.** `to_wire()`
+  (`model_dump(by_alias=True)`) is used only by the two dispatch-payload
+  write sites (`k8s_seats.build_job`, `ai_seat._dispatch_to_driver`) and
+  read by the driver's `_wanted_agent_settings` and the wrapper's
+  `SessionIn`. The browser-facing wire (`decks_api.py`'s create-game body,
+  `serialize.py`'s game state view, `ui/lobby_model.js`) stays snake_case
+  deliberately - out of this task's scope, and `AgentSettings.
+  model_config.populate_by_name=True` keeps that wire validating unchanged
+  even though the field now also carries a camelCase alias. `SessionIn`
+  additionally needed `extra="forbid"`: without it, posting the old
+  `max_thinking_tokens` key is not a validation error at all - pydantic
+  silently ignores the unrecognised key and the field falls back to `None`,
+  which is exactly the silent wrong-default failure this contract exists to
+  prevent. `contract/agent-settings.schema.json` is the committed shape;
+  `tests/test_agent_settings_contract.py` validates both the write end and
+  the read end against it.

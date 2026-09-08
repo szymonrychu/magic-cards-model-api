@@ -72,7 +72,30 @@ class ReleaseIn(BaseModel):
     reason: str = ""
 
 
+def _wanted_agent_settings(agent: dict) -> dict:
+    """`agent` (`DispatchIn.agent`) read as the one wire spelling -
+    camelCase, per `contract/agent-settings.schema.json` - and reshaped into
+    exactly what `sync_agent_settings` compares against `GET /v1/session`'s
+    answer and posts to `POST /v1/session`. Pulled out on its own so the wire
+    read can be proven correct directly, without a live wrapper to talk to
+    (see `tests/test_agent_settings_contract.py`)."""
+    return {
+        "model": agent.get("model") or "",
+        "effort": agent.get("effort") or "",
+        "maxThinkingTokens": agent.get("maxThinkingTokens"),
+    }
+
+
 def _default_client_factory(base_url: str) -> httpx.Client:
+    # This client only ever talks to the wrapper in this same pod (compose:
+    # the `agent` service; k8s: the sidecar container on 127.0.0.1) for two
+    # kinds of calls: pushing turn text to `POST /v1/messages`, which itself
+    # just enqueues the turn and returns - the agent's real thinking finishes
+    # later, delivered over the `/turn-done` webhook, never held open on this
+    # connection - and the per-game `GET`/`POST`/`DELETE /v1/session` calls
+    # ahead of turn 0. None of those is a long-poll; 30s is slack against
+    # ordinary jitter and a wrapper still booting, not a step that itself
+    # takes anywhere near that long.
     return httpx.Client(base_url=base_url, timeout=30.0)
 
 
@@ -181,20 +204,19 @@ def build_app(
         """Push this seat's per-game model/effort/max_thinking_tokens to the
         wrapper before turn 0, if they differ from what it already reports.
 
-        `agent` is `DispatchIn.agent` - `AgentSettings.model_dump()` from the
-        game server, so its keys are `model`/`effort`/`max_thinking_tokens`.
-        Never raises: a wrapper old enough to answer 404 to both routes (or
-        one simply unreachable) means "not supported, continue" - the seat
-        still gets a match, just not this session's chosen model/effort,
-        exactly as it did before this pass-through existed.
+        `agent` is `DispatchIn.agent` - `AgentSettings.to_wire()` from the
+        game server (see `contract/agent-settings.schema.json`), so its keys
+        are `model`/`effort`/`maxThinkingTokens` - one spelling, the same one
+        `GET /v1/session` already answers with and `POST /v1/session`
+        (`SessionIn`) now requires. Never raises: a wrapper old enough to
+        answer 404 to both routes (or one simply unreachable) means "not
+        supported, continue" - the seat still gets a match, just not this
+        session's chosen model/effort, exactly as it did before this
+        pass-through existed.
         """
         if not agent:
             return
-        wanted = {
-            "model": agent.get("model") or "",
-            "effort": agent.get("effort") or "",
-            "max_thinking_tokens": agent.get("max_thinking_tokens"),
-        }
+        wanted = _wanted_agent_settings(agent)
         try:
             with make_client(settings.wrapper_api) as client:
                 current_response = client.get("/v1/session", headers=wrapper_headers())
@@ -214,7 +236,7 @@ def build_app(
         if (
             live.get("model") == wanted["model"]
             and live.get("effort") == wanted["effort"]
-            and live.get("maxThinkingTokens") == wanted["max_thinking_tokens"]
+            and live.get("maxThinkingTokens") == wanted["maxThinkingTokens"]
         ):
             return
         try:
@@ -240,7 +262,7 @@ def build_app(
             "pushed agent settings to the wrapper: model=%s effort=%s max_thinking_tokens=%s",
             wanted["model"],
             wanted["effort"],
-            wanted["max_thinking_tokens"],
+            wanted["maxThinkingTokens"],
         )
 
     def retire(assignment: Assignment) -> bool:
