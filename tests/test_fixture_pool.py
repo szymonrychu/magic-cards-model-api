@@ -23,8 +23,8 @@ from conftest import add_card, find, state
 from magic_cards_model.models import Card
 
 from magic_cards_model_api import scryfall
+from magic_cards_model_api.api_decks import validate_decklist_text
 from magic_cards_model_api.decks import parse_decklist
-from magic_cards_model_api.decks_api import validate_decklist_text
 
 DECKS_DIR = Path(__file__).resolve().parents[1] / "decks"
 
@@ -87,7 +87,7 @@ def test_fixture_slug_follows_the_engines_own_rule():
 def test_pool_serves_a_whole_scryfall_printing(pool, cold_cache):
     """A pooled card must answer everything the network answer does: the
     engine `Card`, the image links `serialize.py` reads, and the Modern
-    legality `decks_api` reports as a warning."""
+    legality `api_decks` reports as a warning."""
     raw = scryfall.fetch_card("Otawara, Soaring City")
 
     assert raw["name"] == "Otawara, Soaring City"

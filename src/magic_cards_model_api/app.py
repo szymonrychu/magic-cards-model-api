@@ -28,6 +28,7 @@ from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 from . import (
     affordances,
     ai_seat_api,
+    api_decks,
     audit,
     commands,
     decisions,
@@ -102,6 +103,7 @@ from .store import new_seat_uids, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 app.include_router(decks_api.router)
+app.include_router(api_decks.router)
 app.include_router(ai_seat_api.router)
 app.include_router(symbology.router)
 

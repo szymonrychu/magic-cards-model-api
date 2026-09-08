@@ -1,24 +1,21 @@
-"""HTTP endpoints the browser UI uses to load decklists and boot a game.
+"""HTTP endpoints the browser UI uses to boot and manage a lobby-booted game.
 
-Two gaps this closes that `serve.py`/`decks.py` did not cover on their own:
+`serve.py` only boots games from `--deck`/`--match` command-line arguments,
+read once at process start. A UI needs to boot a game *at request time*, from
+a bundled `decks/*.txt` file or from text a human pasted or uploaded - so
+`POST /api/ui/games` calls the exact same engine path
+(`decks.load_deck_into_game`, CR 103's whole start-of-game sequence) that
+`serve.py`'s `_boot_from_spec` already uses, just from an HTTP body instead
+of argv.
 
-- `serve.py` only boots games from `--deck`/`--match` command-line arguments,
-  read once at process start. A UI needs to boot a game *at request time*,
-  from a bundled `decks/*.txt` file or from text a human pasted or uploaded -
-  so `POST /api/ui/games` calls the exact same engine path
-  (`decks.load_deck_into_game`, CR 103's whole start-of-game sequence) that
-  `serve.py`'s `_boot_from_spec` already uses, just from an HTTP body instead
-  of argv.
-- Nothing validates a decklist *before* committing to a game. `POST
-  /api/ui/decks/validate` runs the same two checks `serve.py`'s boot would
-  hit anyway - `parse_decklist` (syntax) and the engine's own
-  `Deck.check_legality` (CR 100.2a's four-copy limit and sixty-card minimum,
-  CR 100.4a's fifteen-card sideboard) - and reports every problem with the
-  card and the reason, instead of the caller finding out by way of a half
-  booted game. Per-card Modern legality (`scryfall.modern_status`, straight
-  off the Scryfall printing - not the engine's job) is reported as a
-  warning, not an error: this API only ever plays Modern-legal-or-not
-  informationally, same as `PutCard` already does for board setup.
+Deck resolution and legality themselves - `_resolve_all`,
+`validate_decklist_text`, `GET /api/decks*`, `POST /api/decks/validate` -
+moved to `api_decks.py` (2b's T5, map Finding 1): they need the engine and
+`scryfall.py`, dependencies the lobby side of the eventual cut must not
+carry. This module reaches that endpoint through `api_client.ApiClient`
+rather than importing its function - the seam the cut later swaps for
+`httpx` - so a decklist is still validated before either game is registered,
+just not by importing the api component's internals to do it.
 
 This module never touches game rules itself - every actual rule (construction
 limits, CR 103's start-of-game sequence) is enforced by the engine through
@@ -28,20 +25,25 @@ limits, CR 103's start-of-game sequence) is enforced by the engine through
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from magic_cards_model.models import Card, Deck, DeckIllegal
 from pydantic import BaseModel, Field
 
-from . import ai_pregame, ai_seat, audit, lobby, scryfall, serialize
+from . import ai_pregame, ai_seat, audit, lobby, serialize
 from .agent_settings import AgentSettings
 from .ai_seat_api import _api_base
-from .decks import load_deck_into_game, parse_decklist
+from .api_client import ApiClient, InProcessApiClient
+from .decks import load_deck_into_game
 from .store import new_seat_uids, store
 
 router = APIRouter(prefix="/api/ui", tags=["ui"])
+
+#: The lobby's one dependency on the api component, for now an in-process
+#: call (`api_client.py`'s own docstring). Module-level so a test can swap it
+#: the way `store.py`'s singleton is swapped, without every call site taking
+#: a client argument it has no other use for.
+api_client: ApiClient = InProcessApiClient()
 
 
 def max_live_games() -> int:
@@ -50,115 +52,6 @@ def max_live_games() -> int:
     against `store.live_ui_games()`; a finished game (`Game.is_over`, CR
     104.1) does not count against it, only End game frees up a live one."""
     return int(os.environ.get("MAX_LIVE_GAMES", "4") or 4)
-
-
-#: `decks/*.txt`, the same bundled decklists `serve.py --deck`/`--match` read
-#: from, sitting at the repo root next to `pyproject.toml` (three parents up
-#: from this file: `src/magic_cards_model_api/decks_api.py`).
-DECKS_DIR = Path(__file__).resolve().parents[2] / "decks"
-
-
-@router.get("/decks")
-def list_bundled_decks() -> dict[str, Any]:
-    """The decklist files already in the repo, for a picker in the UI."""
-    if not DECKS_DIR.is_dir():
-        return {"decks": []}
-    return {"decks": sorted(p.name for p in DECKS_DIR.glob("*.txt"))}
-
-
-@router.get("/decks/{name}")
-def bundled_deck_text(name: str) -> dict[str, Any]:
-    """One bundled decklist's raw text, so the UI can preview or edit it
-    before starting a game. `name` is resolved strictly inside `DECKS_DIR` -
-    no `..` escape - since this is a bare filename off a URL path."""
-    candidate = (DECKS_DIR / name).resolve()
-    if candidate.parent != DECKS_DIR.resolve() or not candidate.is_file():
-        raise KeyError(f"no bundled deck {name!r}")
-    return {"name": name, "text": candidate.read_text()}
-
-
-class ValidateRequest(BaseModel):
-    text: str = Field(min_length=1)
-
-
-def _resolve_all(names: list[str]) -> tuple[dict[str, Card], list[dict[str, Any]]]:
-    """Every distinct card name resolved to a real Scryfall printing.
-
-    Returns (resolved, errors) rather than raising on the first miss: a
-    decklist with three typos should say all three, not just the first, the
-    same "every problem, not just one" spirit `Deck.problems` already has.
-    """
-    resolved: dict[str, Card] = {}
-    errors: list[dict[str, Any]] = []
-    for name in names:
-        if name in resolved:
-            continue
-        try:
-            raw = scryfall.fetch_card(name)
-            resolved[name] = Card.model_validate(raw)
-        except Exception as exc:  # scryfall.ScryfallError, CardNotFound, ValidationError
-            errors.append({"card": name, "message": str(exc)})
-    return resolved, errors
-
-
-def validate_decklist_text(text: str) -> dict[str, Any]:
-    """The engine's own answer to "is this decklist legal", card-by-card.
-
-    Shared by `POST /decks/validate` and `POST /games` (the latter refuses to
-    boot a game from an invalid list rather than let `load_deck_into_game`
-    raise deep inside a request with no per-card detail).
-    """
-    try:
-        mainboard, sideboard = parse_decklist(text)
-    except ValueError as exc:
-        return {"valid": False, "errors": [{"card": None, "message": str(exc)}], "warnings": []}
-
-    names = [name for _, name in [*mainboard, *sideboard]]
-    resolved, errors = _resolve_all(names)
-    mainboard_size = sum(count for count, _ in mainboard)
-    sideboard_size = sum(count for count, _ in sideboard)
-
-    if errors:
-        return {
-            "valid": False,
-            "errors": errors,
-            "warnings": [],
-            "mainboard_size": mainboard_size,
-            "sideboard_size": sideboard_size,
-        }
-
-    deck = Deck(
-        name="validate",
-        mainboard={name: count for count, name in mainboard},
-        sideboard={name: count for count, name in sideboard},
-    )
-    warnings = [
-        {"card": name, "message": f"{name} is {status} in Modern"}
-        for name in resolved
-        if (status := scryfall.modern_status(scryfall.fetch_card(name))) != "legal"
-    ]
-    try:
-        deck.check_legality(lambda name: resolved[name])
-    except DeckIllegal as exc:
-        return {
-            "valid": False,
-            "errors": [{"card": None, "message": problem} for problem in exc.problems],
-            "warnings": warnings,
-            "mainboard_size": mainboard_size,
-            "sideboard_size": sideboard_size,
-        }
-    return {
-        "valid": True,
-        "errors": [],
-        "warnings": warnings,
-        "mainboard_size": mainboard_size,
-        "sideboard_size": sideboard_size,
-    }
-
-
-@router.post("/decks/validate")
-def validate_decklist(req: ValidateRequest) -> dict[str, Any]:
-    return validate_decklist_text(req.text)
 
 
 class NewUiPlayer(BaseModel):
@@ -178,7 +71,17 @@ class NewUiGame(BaseModel):
     seed: int | None = None
 
 
-@router.post("/games")
+class NewUiGameResponse(BaseModel):
+    game_id: str
+    seat_uids: dict[str, str]
+    admin_key: str | None = None
+    ai_players: list[str]
+    agents: dict[str, AgentSettings]
+    """Every AI seat's chosen (or defaulted) model, effort and thinking
+    budget - `AgentSettings.default` when the request left it unset."""
+
+
+@router.post("/games", response_model=NewUiGameResponse, response_model_exclude_unset=True)
 def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any]:
     """Boot a new game from two decklists, right now, from an HTTP body -
     the request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing
@@ -187,8 +90,8 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
 
     Refuses (400, via the `ValueError`/`DeckIllegal` handlers already
     registered in `app.py`) with the same per-card detail
-    `validate_decklist_text` reports, rather than booting a broken game -
-    both decks are validated before either is registered.
+    `api_client.validate_decklist` reports, rather than booting a broken
+    game - both decks are validated before either is registered.
 
     Games the lobby boots live side by side - starting one never ends
     another; `DELETE /api/ui/games/{id}` (End game) is the only reset. Refuses
@@ -197,7 +100,7 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     """
     problems: dict[str, Any] = {}
     for player in req.players:
-        result = validate_decklist_text(player.decklist_text)
+        result = api_client.validate_decklist(player.decklist_text)
         if not result["valid"]:
             problems[player.username] = result["errors"]
     if problems:
@@ -298,13 +201,27 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
         "seat_uids": seat_uids,
         "admin_key": store.admin_key(game_id),
         "ai_players": [player.username for player in req.players if player.ai],
-        # Every AI seat's chosen (or defaulted) model, effort and thinking
-        # budget - `AgentSettings.default` when the request left it unset.
         "agents": {name: settings.model_dump() for name, settings in agents.items()},
     }
 
 
-@router.get("/games")
+class LobbyGameSummary(BaseModel):
+    game_id: str
+    players: list[str]
+    turn_number: int | None = None
+    step: str
+    winner: str | None = None
+    drawn: bool
+    agents: dict[str, AgentSettings]
+    seats: dict[str, str]
+    created_at: str | None = None
+
+
+class LobbyGamesResponse(BaseModel):
+    games: list[LobbyGameSummary]
+
+
+@router.get("/games", response_model=LobbyGamesResponse, response_model_exclude_unset=True)
 def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
     """Every lobby-booted game (`store.ui_games()` - not filtered to
     `live_ui_games()`, so a finished-but-not-yet-ended game still shows up for
@@ -343,7 +260,23 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
     return {"games": games}
 
 
-@router.delete("/games/{game_id}")
+class EndGameResponse(BaseModel):
+    game_id: str
+    players: list[str]
+    seats_invalidated: int
+    watcher_stopped: bool
+    ai_seats_released: list[dict[str, Any]]
+    """Per-uid release detail from `ai_seat.registry.release` - shape varies
+    by mechanism (`subprocess`/`wrapper`/`kubernetes`), and `lobby.py` (out
+    of this task's file list) is what would need to change to make it a
+    named component; left as the same honest `dict[str, Any]` T1 allowed for
+    a genuinely dynamically-keyed field rather than forcing a wrong shape."""
+    deleted: bool
+
+
+@router.delete(
+    "/games/{game_id}", response_model=EndGameResponse, response_model_exclude_unset=True
+)
 def end_lobby_game(game_id: str, uid: str | None = None, key: str | None = None) -> dict[str, Any]:
     """End game: the only reset there is now. `uid` must be a seat uid of
     this game, or `key` this game's admin key - anything else is refused (404)

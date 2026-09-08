@@ -59,7 +59,8 @@ def test_the_api_is_not_shadowed_by_the_root_mount(client: TestClient) -> None:
     seat, every agent and the browser itself would lose the API at once."""
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/games").status_code == 200
-    assert client.get("/api/ui/decks").status_code == 200
+    assert client.get("/api/ui/games").status_code == 200
+    assert client.get("/api/decks").status_code == 200
     assert client.get("/api/card-names").status_code == 200
 
 
