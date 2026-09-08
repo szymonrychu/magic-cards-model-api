@@ -165,8 +165,11 @@ def build_server(seats: Seats) -> MCPServer:
         perform: Any,
         hold_priority: bool,
         release: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
-        result = run_action(seat, perform, hold_priority=hold_priority, release=release)
+        result = run_action(
+            seat, perform, hold_priority=hold_priority, release=release, reasoning=reasoning or None
+        )
         return _tool_result(seat, result)
 
     @server.tool()
@@ -251,6 +254,7 @@ def build_server(seats: Seats) -> MCPServer:
         keyword: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Cast a spell. Most casts are from your hand, and need nothing
                 else; `card` is the card's name or id. `targets` is comma-separated
@@ -308,7 +312,11 @@ def build_server(seats: Seats) -> MCPServer:
                 one. Set `hold_priority` to cast again, or to respond to your own
                 spell, without giving up the chance to act again first (CR 117.3c:
                 you already keep priority after casting - this only decides whether
-                the harness auto-passes it for you)."""
+                the harness auto-passes it for you).
+
+        `reasoning`: why you are casting this, in your own words - required
+        for an agent seat (a missing one is refused with a 422 naming the
+        field), optional for a human. Every action tool takes it the same way."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
@@ -329,13 +337,15 @@ def build_server(seats: Seats) -> MCPServer:
             body["x_value"] = x_value
         if keyword:
             body["keyword"] = keyword
+        if reasoning:
+            body["reasoning"] = reasoning
         if dry_run:
             return seat.call("POST", f"/api/games/{seat.game_id()}/actions/cast", body)
 
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cast", body)
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     def _special_action_tool(action: str) -> Any:
         """suspend/plot/foretell share `cast`'s exact shape, minus targeting
@@ -349,6 +359,7 @@ def build_server(seats: Seats) -> MCPServer:
             mana_sources: str = "",
             dry_run: bool = False,
             hold_priority: bool = False,
+            reasoning: str = "",
         ) -> str | InputRequiredResult:
             seat = resolve(player_uid)
             if seat is None:
@@ -362,13 +373,15 @@ def build_server(seats: Seats) -> MCPServer:
             sources = seat.sources_or_all(mana_sources, state)
             if sources:
                 body["mana_sources"] = sources
+            if reasoning:
+                body["reasoning"] = reasoning
             if dry_run:
                 return seat.call("POST", f"/api/games/{seat.game_id()}/actions/{action}", body)
 
             def perform() -> Any:
                 return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/{action}", body)
 
-            return act(seat, perform, hold_priority)
+            return act(seat, perform, hold_priority, reasoning=reasoning)
 
         return tool
 
@@ -380,6 +393,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
         its suspend cost, with N time counters on it. `card` is the card's
@@ -401,7 +415,7 @@ def build_server(seats: Seats) -> MCPServer:
         wait, no branch of this tool does. See `cast`'s docstring for the
         answer's shape."""
         return _special_action_tool("suspend")(
-            player_uid, card, mana_sources, dry_run, hold_priority
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning
         )
 
     @server.tool()
@@ -412,6 +426,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """CR 116.2k/702.170b: exile a card with plot from your hand, paying
         its plot cost. `card` is the card's name or id in your hand.
@@ -430,7 +445,9 @@ def build_server(seats: Seats) -> MCPServer:
         when you really do want to hand priority over - which still does not
         block or wait, no branch of this tool does. See `cast`'s docstring
         for the answer's shape."""
-        return _special_action_tool("plot")(player_uid, card, mana_sources, dry_run, hold_priority)
+        return _special_action_tool("plot")(
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -440,6 +457,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """CR 116.2h/702.143b: pay {2} and exile a card with foretell from
         your hand, face down (opponents see only that a face-down card is
@@ -460,7 +478,7 @@ def build_server(seats: Seats) -> MCPServer:
         block or wait, no branch of this tool does. See `cast`'s docstring
         for the answer's shape."""
         return _special_action_tool("foretell")(
-            player_uid, card, mana_sources, dry_run, hold_priority
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning
         )
 
     @server.tool()
@@ -472,6 +490,7 @@ def build_server(seats: Seats) -> MCPServer:
         mana_sources: str = "",
         dry_run: bool = False,
         hold_priority: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """CR 702.29a: discard a card with cycling from your hand, paying its
         cycling cost, to draw a card (or search your library for a card of the
@@ -515,13 +534,15 @@ def build_server(seats: Seats) -> MCPServer:
         sources = seat.sources_or_all(mana_sources, state)
         if sources:
             body["mana_sources"] = sources
+        if reasoning:
+            body["reasoning"] = reasoning
         if dry_run:
             return seat.call("POST", f"/api/games/{seat.game_id()}/actions/cycle", body)
 
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cycle", body)
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
@@ -529,6 +550,7 @@ def build_server(seats: Seats) -> MCPServer:
         player_uid: str,
         card: str,
         hold_priority: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Play a land from your hand (your one-per-turn allowance, unless an
         effect says otherwise). `card` is the card's name or id.
@@ -551,11 +573,13 @@ def build_server(seats: Seats) -> MCPServer:
             body["card_id"] = card.strip()
         else:
             body["card"] = card
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/play-land", body)
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
@@ -568,6 +592,7 @@ def build_server(seats: Seats) -> MCPServer:
         color: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Activate one ability of a permanent you control. Find the ability's
         number in your state view's `abilities` list for that card (indexing
@@ -613,13 +638,15 @@ def build_server(seats: Seats) -> MCPServer:
             body["mana_sources"] = sources
         if color:
             body["color"] = color
+        if reasoning:
+            body["reasoning"] = reasoning
         if dry_run:
             return seat.call("POST", f"/api/games/{seat.game_id()}/actions/activate", body)
 
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/activate", body)
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
@@ -627,6 +654,7 @@ def build_server(seats: Seats) -> MCPServer:
         player_uid: str,
         attackers: str,
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Declare attackers during your declare attackers step. `attackers`
         is a JSON list: [{"card": "<attacker id>", "defender": "<player
@@ -637,18 +665,20 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body = {
+        body: dict[str, Any] = {
             "player": seat.player,
             "attackers": [
                 {"card_id": pair["card"], "defender": pair["defender"]}
                 for pair in _parse_pairs(attackers)
             ],
         }
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/attack", body)
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
@@ -656,6 +686,7 @@ def build_server(seats: Seats) -> MCPServer:
         player_uid: str,
         blocks: str,
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Declare blockers during the declare blockers step. `blocks` is a
         JSON list: [{"blocker": "<your creature id>", "blocked": "<attacker
@@ -665,20 +696,22 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body = {
+        body: dict[str, Any] = {
             "player": seat.player,
             "blocks": [
                 {"blocker": pair["blocker"], "blocked": pair["blocked"]}
                 for pair in _parse_pairs(blocks)
             ],
         }
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             return seat.call_json(
                 "POST", f"/api/games/{seat.game_id()}/actions/declare-blockers", body
             )
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
@@ -695,6 +728,7 @@ def build_server(seats: Seats) -> MCPServer:
         top: bool | None = None,
         order: str = "",
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `my_state`'s
         `pending_decision` field says what is being asked, by `kind`.
@@ -945,6 +979,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["top"] = top
         if order:
             body["order"] = _parse_ids(order)
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/decide", body)
@@ -952,7 +988,7 @@ def build_server(seats: Seats) -> MCPServer:
                 return {"allowed": False, "reason": answer.get("reason"), **answer}
             return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
@@ -964,6 +1000,7 @@ def build_server(seats: Seats) -> MCPServer:
         stop_on_stack: bool = True,
         stop_when_attacked: bool = True,
         stop_when_you_can_attack: bool = True,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Pass priority - "I am done for now". If everyone passes with
         spells on the stack, the top of the stack resolves. If everyone
@@ -1120,22 +1157,26 @@ def build_server(seats: Seats) -> MCPServer:
                     stop_when_attacked=stop_when_attacked,
                     stop_when_you_can_attack=stop_when_you_can_attack,
                     resume=resumed,
+                    reasoning=reasoning or None,
                 ),
             )
-        body = {"player": seat.player}
+        body: dict[str, Any] = {"player": seat.player}
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             return seat.call_json(
                 "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
             )
 
-        return act(seat, perform, hold_priority=False, release=False)
+        return act(seat, perform, hold_priority=False, release=False, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
     def resolve_top(
         player_uid: str,
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Resolve the top object on the stack. Normally the engine does this
         for you when everyone passes; use this only if a pass left the stack
@@ -1145,19 +1186,22 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body = {"player": seat.player}
+        body: dict[str, Any] = {"player": seat.player}
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/resolve-top", body)
             return {"allowed": answer.get("reason") is None, **answer}
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
     def advance(
         player_uid: str,
         hold_priority: bool = False,
+        reasoning: str = "",
     ) -> str | InputRequiredResult:
         """Move to the next step or phase. Passing priority already rolls the
         game through every step where players get priority; this is only for
@@ -1168,7 +1212,9 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body = {"player": seat.player}
+        body: dict[str, Any] = {"player": seat.player}
+        if reasoning:
+            body["reasoning"] = reasoning
 
         def perform() -> Any:
             return {
@@ -1176,25 +1222,32 @@ def build_server(seats: Seats) -> MCPServer:
                 **seat.call_json("POST", f"/api/games/{seat.game_id()}/advance", body),
             }
 
-        return act(seat, perform, hold_priority)
+        return act(seat, perform, hold_priority, reasoning=reasoning)
 
     @server.tool()
     @_guarded(seats)
-    def set_step(player_uid: str, step: str) -> str:
+    def set_step(player_uid: str, step: str, reasoning: str = "") -> str:
         """Jump the turn marker to a named step ("precombat_main",
         "beginning_of_combat", "declare_attackers", "declare_blockers",
         "combat_damage", "end_step", ...). Forward moves are real step
-        changes; use advance() for ordinary flow. Board setup, not a priority
-        action - does not block."""
+        changes; use advance() for ordinary flow. Not a priority action -
+        does not block.
+
+        `reasoning`: why you are moving the marker there, in your own words -
+        required, and refused without it. This one moves the game's own turn
+        structure and can fire the suspend upkeep on the way in, so it is a
+        real move, not board setup."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
         body = {"step": step, "player": seat.player}
+        if reasoning:
+            body["reasoning"] = reasoning
         return seat.call("PUT", f"/api/games/{seat.game_id()}/step", body)
 
     @server.tool()
     @_guarded(seats)
-    def mulligan(player_uid: str, take: bool, bottom: str = "") -> str:
+    def mulligan(player_uid: str, take: bool, bottom: str = "", reasoning: str = "") -> str:
         """Declare whether you take a mulligan (CR 103.5), before the game starts.
 
         A game dealt from decklists rests in the mulligan step until every seat
@@ -1219,11 +1272,13 @@ def build_server(seats: Seats) -> MCPServer:
         body: dict[str, Any] = {"player": seat.player, "take": take}
         if ids:
             body["bottom"] = ids
+        if reasoning:
+            body["reasoning"] = reasoning
         return seat.call("POST", f"/api/games/{seat.game_id()}/pregame/mulligan", body)
 
     @server.tool()
     @_guarded(seats)
-    def opening_hand_action(player_uid: str, card: str = "") -> str:
+    def opening_hand_action(player_uid: str, card: str = "", reasoning: str = "") -> str:
         """Take a card's opening-hand action, or finish (CR 103.6).
 
         Some cards let you act with them from your opening hand - Leyline of
@@ -1245,8 +1300,14 @@ def build_server(seats: Seats) -> MCPServer:
             return NO_SUCH_SEAT
         base = f"/api/games/{seat.game_id()}/pregame/opening-hand"
         if not card.strip():
-            return seat.call("POST", f"{base}/finish", {"player": seat.player})
-        return seat.call("POST", f"{base}/action", {"player": seat.player, "card_id": card.strip()})
+            body: dict[str, Any] = {"player": seat.player}
+            if reasoning:
+                body["reasoning"] = reasoning
+            return seat.call("POST", f"{base}/finish", body)
+        body = {"player": seat.player, "card_id": card.strip()}
+        if reasoning:
+            body["reasoning"] = reasoning
+        return seat.call("POST", f"{base}/action", body)
 
     @server.tool()
     @_guarded(seats)

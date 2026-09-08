@@ -78,7 +78,7 @@ from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind,
 from magic_cards_model.models import Game
 from magic_cards_model.models.card_state import TargetRef
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import Engine
 
 from .agent_settings import AgentSettings
@@ -228,6 +228,18 @@ class PostgresRepository:
         # `GameRepository` protocol, only `locked()` itself is.
         self._locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
+        # game_id -> username -> the pregame moves `ai_pregame.py`'s backstop
+        # made *for* that seat. Process-local, like `_locks` above and like
+        # the backstop itself (`ai_pregame.watch` is a thread in this
+        # process, `AiSeatRegistry` a dict in it): a second replica has its
+        # own watcher and its own view of what it did, and one replica's
+        # backstop cannot make a declaration the other replica is the one to
+        # explain. Persisting this would be the wrong fix for that; the
+        # right one is the six-way cut, which moves the watcher out of the
+        # request path entirely. Kept here so `PostgresRepository` offers
+        # the same surface `InMemoryRepository` does - `opening.py` calls
+        # both of these on whichever store `store.py` selected.
+        self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
 
     # -- internal helpers ---------------------------------------------------
 
@@ -398,13 +410,41 @@ class PostgresRepository:
             return None
         return game
 
-    def replace(self, game_id: str, game: Game) -> None:
+    def _next_seq(self, conn: Any, game_id: str) -> int:
+        """The next `records.seq` for `game_id`, serialised against every
+        other writer of this game's records with a transaction-scoped
+        advisory lock (`pg_advisory_xact_lock`, released automatically at
+        commit/rollback - the same reasoning `create_if_under`'s `LOCK TABLE`
+        gives for never taking a session-scoped lock that could leak across a
+        pooled connection, just narrowed to one game's own rows rather than
+        the whole table).
+
+        T10 decouples `records.seq` from `games.version`: T9 had every row
+        come from a successful `replace()`, so `seq == new_version` held by
+        construction. Once a refused action that never touches `games` at
+        all (a `ValueError` caught before any command ran, an early
+        `_answer_declaration` refusal, an admin action) also needs a row -
+        the whole point of this task - a strict `seq == version` mapping is
+        no longer expressible: the same game can commit fewer `games` writes
+        than `records` rows. `seq` is now what `audit.py`'s old in-memory
+        log always called it, a plain per-game append order, computed here
+        from the table itself rather than borrowed from another column.
+        See `MEMORY.md` for the T9 note this supersedes.
+        """
+        conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:gid))"), {"gid": game_id})
+        current = conn.execute(
+            select(func.coalesce(func.max(records.c.seq), 0)).where(records.c.game_id == game_id)
+        ).scalar_one()
+        return int(current) + 1
+
+    def replace(self, game_id: str, game: Game, *, record: dict[str, Any] | None = None) -> int:
         expected_version = self._cached_version(game_id)
         new_version = expected_version + 1
         new_state = game.model_dump(mode="json")
         now = datetime.now(UTC)
         conflict: VersionConflict | None = None
         missing = False
+        seq = 0
         with self._engine.begin() as conn:
             result = conn.execute(
                 update(games)
@@ -426,13 +466,15 @@ class PostgresRepository:
                         game_id, expected_version, actual_version, current_game
                     )
             else:
+                # Same transaction as the `games` CAS above - T9's own
+                # guarantee, unchanged. `record` (T10) is the caller's full
+                # payload when it already has one ready, `{}` (a placeholder
+                # `fill_record` fills in later) when it does not yet - see
+                # this method's own docstring.
+                seq = self._next_seq(conn, game_id)
                 conn.execute(
                     insert(records).values(
-                        game_id=game_id,
-                        seq=new_version,
-                        # T10's to fill in - see db.py's module docstring.
-                        payload={},
-                        created_at=now,
+                        game_id=game_id, seq=seq, payload=record or {}, created_at=now
                     )
                 )
         if missing:
@@ -441,6 +483,52 @@ class PostgresRepository:
             raise conflict
         with self._cache_lock:
             self._cache[game_id] = (game, new_version)
+        return seq
+
+    def append_record(self, game_id: str, payload: dict[str, Any]) -> int:
+        # No existence check, deliberately: `records.game_id` carries no
+        # `ForeignKey` (`db.py`'s own docstring) and never raises for an
+        # unknown id - see the protocol's own docstring on this method for
+        # why (`audit.record`'s long-standing leniency, more than one
+        # existing caller depends on it).
+        now = datetime.now(UTC)
+        with self._engine.begin() as conn:
+            seq = self._next_seq(conn, game_id)
+            conn.execute(
+                insert(records).values(game_id=game_id, seq=seq, payload=payload, created_at=now)
+            )
+        return seq
+
+    def fill_record(self, game_id: str, seq: int, payload: dict[str, Any]) -> None:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                update(records)
+                .where(records.c.game_id == game_id, records.c.seq == seq)
+                .values(payload=payload)
+            )
+        if result.rowcount == 0:
+            raise KeyError(f"no records row {game_id}/{seq}")
+
+    def records(self, game_id: str) -> list[dict[str, Any]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(records.c.seq, records.c.payload, records.c.created_at)
+                .where(records.c.game_id == game_id)
+                .order_by(records.c.seq.asc())
+            ).all()
+        result = []
+        for row in rows:
+            stamp = row.created_at
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            result.append(
+                {
+                    "seq": row.seq,
+                    "payload": row.payload,
+                    "created_at": stamp.astimezone(UTC).isoformat(),
+                }
+            )
+        return result
 
     def delete(self, game_id: str) -> bool:
         if not _looks_like_id(game_id):
@@ -449,6 +537,7 @@ class PostgresRepository:
             result = conn.execute(sa_delete(games).where(games.c.id == game_id))
         with self._cache_lock:
             self._cache.pop(game_id, None)
+            self._automatic_pregame.pop(game_id, None)
         with self._locks_lock:
             self._locks.pop(game_id, None)
         return result.rowcount > 0
@@ -524,6 +613,19 @@ class PostgresRepository:
     def ai_players(self, game_id: str) -> set[str]:
         row = self._select_one(game_id, games.c.ai_players)
         return set(row[0] or []) if row is not None else set()
+
+    def record_automatic_pregame(self, game_id: str, player: str, kind: str) -> None:
+        """Remember that `kind` (`"mulligan"` or `"opening_hand"`) was taken
+        *for* `player` by `ai_pregame.py`'s backstop rather than by the seat -
+        `InMemoryRepository`'s own method, same behaviour, and process-local
+        for the reason `__init__` gives."""
+        with self._cache_lock:
+            self._automatic_pregame.setdefault(game_id, {}).setdefault(player, set()).add(kind)
+
+    def automatic_pregame(self, game_id: str, player: str) -> set[str]:
+        """The pregame moves the backstop made for this seat, if any."""
+        with self._cache_lock:
+            return set(self._automatic_pregame.get(game_id, {}).get(player, set()))
 
     def register_ui_game(self, game_id: str) -> None:
         if not _looks_like_id(game_id):

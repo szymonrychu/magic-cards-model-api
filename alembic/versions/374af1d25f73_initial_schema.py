@@ -67,6 +67,12 @@ def upgrade() -> None:
             "payload", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        # Kept exactly as it shipped, even though the current schema has no
+        # such constraint: a revision that has already run somewhere is
+        # history, and history cannot be edited in place. Dropping this line
+        # here would be a silent no-op on every database already stamped
+        # `374af1d25f73` - the constraint would live on there while the code
+        # assumed it was gone. The drop is its own later revision instead.
         sa.ForeignKeyConstraint(["game_id"], ["games.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("game_id", "seq", name="uq_records_game_id_seq"),

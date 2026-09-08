@@ -51,7 +51,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
 from magic_cards_model.machines.decisions import Answer, PendingDecision
@@ -88,7 +88,7 @@ class GameRepository(Protocol):
         """The game for this id, or `None` if there is none."""
         ...
 
-    def replace(self, game_id: str, game: Game) -> None:
+    def replace(self, game_id: str, game: Game, *, record: dict[str, Any] | None = None) -> int:
         """Replace `game_id`'s committed game outright with `game`. Raises
         `KeyError` for an unknown game.
 
@@ -101,12 +101,73 @@ class GameRepository(Protocol):
         the old one. Called from inside the same `with locked(game_id):`
         block a command ran under, so the whole read-run-commit sequence
         stays covered by one held lock.
+
+        **T10**: every successful `replace()` also appends one `records` row
+        for this commit - `record` is that row's payload (`{}` when the
+        caller has none ready yet). For `PostgresRepository` the row is
+        inserted in the very same transaction as the game update it commits
+        alongside, exactly as it was when T9 built this method; a caller that
+        does not yet have the full payload (`app.py`'s `_run_command`/
+        `_resume`, which only know the engine's outcome once `commands.
+        run_command` has already returned) fills it in afterward with
+        `fill_record`, addressed by the `seq` this call returns.
         """
         ...
 
     def delete(self, game_id: str) -> bool:
         """Remove this game and everything recorded beside it. Returns
         whether a game actually existed to remove."""
+        ...
+
+    def append_record(self, game_id: str, payload: dict[str, Any]) -> int:
+        """Append one `records` row for `game_id`, standalone - not paired
+        with a `replace()` call, because there is no game mutation to be
+        atomic with (a refusal caught before any command ever ran, an admin
+        action, a lobby reset, ...). Returns the row's own `seq`, this game's
+        next one in append order.
+
+        Never raises for an unknown `game_id` - this is `audit.record`'s own
+        write path, and `audit.record`'s docstring has always promised "a
+        game that is no longer in the store (or was never in it) still gets
+        its entry" (the old module-global `_logs` dict enforced nothing about
+        the id it was keyed by, and more than one caller - a test harness
+        probing a game id that was never created, `ai_seat.AiSeatRegistry`
+        dispatching before a game exists - relies on that leniency)."""
+        ...
+
+    def fill_record(self, game_id: str, seq: int, payload: dict[str, Any]) -> None:
+        """Replace the payload of the `records` row `replace()` already wrote
+        at `(game_id, seq)` - `seq` is what that `replace()` call returned.
+        This is how a caller that only learns an action's full detail (the
+        engine's outcome, `audit.record`'s turn/step/snapshot) *after*
+        `replace()` has already committed the game update still ends up with
+        one complete row rather than an empty placeholder plus an orphaned
+        second insert. Raises `KeyError` when no such row exists."""
+        ...
+
+    def records(self, game_id: str) -> list[dict[str, Any]]:
+        """Every `records` row for `game_id`, oldest (lowest `seq`) first, as
+        `{"seq": int, "payload": dict, "created_at": str}`. Empty for an
+        unknown game - this mirrors `audit.entries`'s old behaviour rather
+        than raising, since `GET /api/games/{id}/log` reads this for a game
+        that has already been checked to exist by its own 404."""
+        ...
+
+    def record_automatic_pregame(self, game_id: str, player: str, kind: str) -> None:
+        """Remember that `kind` (`"mulligan"` or `"opening_hand"`) was taken
+        *for* `player` by `ai_pregame.py`'s backstop rather than by the seat.
+
+        On the protocol as of the runtime store selection: `store.py` now
+        picks its implementation from the environment, so `opening.py` calls
+        this on whichever one was picked and both have to offer it. Both
+        implementations keep it in process memory - the backstop that writes
+        it is itself a thread in this process, so there is nothing a second
+        replica could usefully read here anyway. See
+        `PostgresRepository.__init__`."""
+        ...
+
+    def automatic_pregame(self, game_id: str, player: str) -> set[str]:
+        """The pregame moves the backstop made for this seat, if any."""
         ...
 
     def ids(self) -> list[str]:
@@ -289,6 +350,12 @@ class InMemoryRepository:
         # `POST /api/games` belongs to whoever booted it, and the browser
         # ending a lobby game must not touch somebody else's concurrent one.
         self._ui_games: list[str] = []
+        # game_id -> its records rows, oldest first: {"seq", "payload",
+        # "created_at"}. T10: what `audit.py` used to keep in its own
+        # module-global `_logs` dict now lives here instead, so this store
+        # satisfies exactly the same `GameRepository` surface postgres does -
+        # see `replace`/`append_record`/`fill_record`/`records`.
+        self._records: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def create(self, game: Game) -> str:
@@ -533,13 +600,20 @@ class InMemoryRepository:
         with self._lock:
             return self._games.get(game_id)
 
-    def replace(self, game_id: str, game: Game) -> None:
+    def replace(self, game_id: str, game: Game, *, record: dict[str, Any] | None = None) -> int:
         with self._lock:
             if game_id not in self._games:
                 raise KeyError(f"no game {game_id}")
             self._games[game_id] = game
+            return self._append_record_locked(game_id, record or {})
 
     def delete(self, game_id: str) -> bool:
+        # `self._records` is deliberately NOT popped here (T10, matching
+        # `db.py`'s dropped `ForeignKey` on the postgres side) - the audit
+        # trail outlives the game it describes, on purpose: a reset's own
+        # `game_reset` row is written just before this call
+        # (`lobby.reset_game`), and it must still be there to read
+        # afterward, or "the transcript ends with the reset" is a lie.
         with self._lock:
             self._seats.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
@@ -553,6 +627,36 @@ class InMemoryRepository:
             if game_id in self._ui_games:
                 self._ui_games.remove(game_id)
             return self._games.pop(game_id, None) is not None
+
+    def _append_record_locked(self, game_id: str, payload: dict[str, Any]) -> int:
+        """`append_record`'s own body, called with `self._lock` already
+        held - `replace()` needs this, since it must not release the lock
+        between mutating `self._games` and appending this commit's row."""
+        log = self._records.setdefault(game_id, [])
+        seq = len(log) + 1
+        log.append(
+            {"seq": seq, "payload": dict(payload), "created_at": datetime.now(UTC).isoformat()}
+        )
+        return seq
+
+    def append_record(self, game_id: str, payload: dict[str, Any]) -> int:
+        with self._lock:
+            return self._append_record_locked(game_id, payload)
+
+    def fill_record(self, game_id: str, seq: int, payload: dict[str, Any]) -> None:
+        with self._lock:
+            for entry in self._records.get(game_id, []):
+                if entry["seq"] == seq:
+                    entry["payload"] = dict(payload)
+                    return
+            raise KeyError(f"no records row {game_id}/{seq}")
+
+    def records(self, game_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return [
+                {**entry, "payload": dict(entry["payload"])}
+                for entry in self._records.get(game_id, [])
+            ]
 
     def ids(self) -> list[str]:
         with self._lock:
