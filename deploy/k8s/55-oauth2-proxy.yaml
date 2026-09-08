@@ -1,0 +1,209 @@
+# oauth2-proxy, in front of Keycloak, for the play UI host only.
+#
+# This is a first-class Deployment, NOT the estate's usual sidecar-injector
+# pattern: a server-side dry-run against this cluster proved that pattern's
+# admission-webhook-injected proxy container is rejected outright by this
+# namespace's `restricted` Pod Security Standard - it lacks
+# `allowPrivilegeEscalation: false` and `capabilities.drop: ["ALL"]`. Rather
+# than patch someone else's injected container, the proxy is just another
+# Deployment here, with those two fields set like every other container in
+# this namespace already sets them.
+#
+# It also could not be a sidecar sharing the `mtg-stack` Deployment's Pod: the
+# same Service and port (`mtg-stack:8000`) are what every in-cluster caller -
+# AI seat Jobs, the driver, the MCP server - reaches directly, never through
+# the ingress. A sidecar hijacking that port would 302 those callers to
+# Keycloak too. Routing is done entirely at the Ingress (see 70-ingress.yaml):
+# the internet reaches this Deployment's Service first, and only this
+# Deployment talks to `mtg-stack:8000` from there.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mtg-oauth2-proxy
+  namespace: mtg-engine
+  labels:
+    app: mtg-oauth2-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mtg-oauth2-proxy
+  # RECREATE, matching mtg-stack's own Deployment: oauth2-proxy holds no
+  # state worth draining, and Recreate avoids a moment with two proxy Pods
+  # briefly disagreeing about cookie/session config across a rollout.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mtg-oauth2-proxy
+    spec:
+      restartPolicy: Always
+
+      # Same restricted-PSS fields as mtg-stack's own Pod
+      # (50-deployment.yaml) - this namespace enforces
+      # pod-security.kubernetes.io/enforce=restricted and a Pod missing these
+      # is rejected at admission, not merely warned about.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: main
+          # quay.io/oauth2-proxy is public - unlike Harbor, no
+          # imagePullSecrets needed. v7.15.4 is the appVersion the estate's
+          # oauth2proxy-external chart (0.0.22) pins; kept in step with it
+          # deliberately rather than tracking oauth2-proxy's own latest.
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          # --api-route is the whole lobby-resiliency mechanism. Per
+          # oauth2-proxy's own docs: requests to a path matching --api-route
+          # must already carry a valid session cookie (or a bearer JWT, once
+          # --skip-jwt-bearer-tokens applies) - no redirect to login is ever
+          # done for them, they get a plain 401 instead. So a browser
+          # NAVIGATION to / or /g/<id>/ gets the normal 302 to Keycloak, while
+          # the play UI's ~1.2s XHR polls against /api/* get a clean 401 the
+          # JavaScript can detect and act on (e.g. bounce to login) - instead
+          # of a cross-origin 302 to Keycloak that `fetch` can only see as an
+          # opaque `TypeError: Failed to fetch`.
+          args:
+            - "--api-route=^/api/"
+
+          ports:
+            - name: http
+              containerPort: 4180
+
+          env:
+            # Everything from here through EMAIL_DOMAINS is exactly what the
+            # estate's oauth2proxy-external chart hardcodes for this pattern -
+            # kept identical rather than reinvented.
+            - name: OAUTH2_PROXY_PROVIDER
+              value: keycloak-oidc
+            - name: OAUTH2_PROXY_HTTP_ADDRESS
+              value: "0.0.0.0:4180"
+            - name: OAUTH2_PROXY_REVERSE_PROXY
+              value: "true"
+            - name: OAUTH2_PROXY_SKIP_PROVIDER_BUTTON
+              value: "true"
+            - name: OAUTH2_PROXY_SESSION_COOKIE_MINIMAL
+              value: "false"
+            # SET_XAUTHREQUEST + PASS_ACCESS_TOKEN are what let a future
+            # frontend turn its session cookie into a bearer token via
+            # /oauth2/auth plus the x-auth-request-access-token response
+            # header (the spellslinger-codex pattern) - nothing in this repo
+            # uses that yet, but the two flags cost nothing to carry now.
+            - name: OAUTH2_PROXY_SET_XAUTHREQUEST
+              value: "true"
+            - name: OAUTH2_PROXY_PASS_ACCESS_TOKEN
+              value: "true"
+            - name: OAUTH2_PROXY_EMAIL_DOMAINS
+              value: "*"
+            - name: OAUTH2_PROXY_UPSTREAMS
+              value: "http://mtg-stack.mtg-engine.svc.cluster.local:8000"
+            - name: OAUTH2_PROXY_OIDC_ISSUER_URL
+              value: "https://auth.szymonrichert.pl/realms/spellslinger"
+            - name: OAUTH2_PROXY_COOKIE_NAME
+              value: "oauth2-authorization-cookie"
+            # Forward-looking: once the API validates its own bearer tokens,
+            # a machine client presenting a JWT whose `aud` matches this
+            # client id passes straight through this proxy instead of being
+            # redirected to Keycloak - which is what keeps the workbench's
+            # "oauth2-proxy fronts frontends only" rule satisfiable on a
+            # single host that also serves the API.
+            - name: OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS
+              value: "true"
+            - name: OAUTH2_PROXY_CODE_CHALLENGE_METHOD
+              value: "S256"
+            - name: OAUTH2_PROXY_COOKIE_CSRF_PER_REQUEST
+              value: "true"
+            - name: OAUTH2_PROXY_COOKIE_CSRF_EXPIRE
+              value: "5m"
+
+            # The six credential/config keys below come from Secret
+            # `magic-trainer-webui-proxy`, never a literal - this is the estate's
+            # established schema (terraform `kubernetes_secret` in
+            # infrastructure/code/terraform/keycloak/spellslinger_clients.tf),
+            # consumed the same way by the `ai-external` release. The Secret
+            # itself is created by terraform in the infrastructure repo and
+            # is never committed here.
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: magic-trainer-webui-proxy
+                  key: proxy-client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: magic-trainer-webui-proxy
+                  key: proxy-client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: magic-trainer-webui-proxy
+                  key: proxy-cookie-secret
+            - name: OAUTH2_PROXY_COOKIE_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: magic-trainer-webui-proxy
+                  key: proxy-cookie-domain
+            - name: OAUTH2_PROXY_REDIRECT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: magic-trainer-webui-proxy
+                  key: proxy-redirect-url
+            - name: OAUTH2_PROXY_ALLOWED_GROUPS
+              valueFrom:
+                secretKeyRef:
+                  name: magic-trainer-webui-proxy
+                  key: proxy-allowed-groups
+
+          # tcpSocket, not httpGet: oauth2-proxy's own health endpoint isn't
+          # assumed reachable before OIDC discovery completes, and a plain
+          # TCP accept on 4180 is enough to know the process is up.
+          startupProbe:
+            tcpSocket:
+              port: http
+            # A deliberately generous 5-minute budget (10s * 30), matching
+            # the estate's chart: oauth2-proxy fetches OIDC discovery from
+            # Keycloak at boot and fails hard if Keycloak happens to be
+            # mid-rolling-restart when this Pod starts.
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: http
+          readinessProbe:
+            tcpSocket:
+              port: http
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+# type: ClusterIP, matching the estate chart's Service shape exactly - the
+# Ingress (70-ingress.yaml) is this Deployment's only front door.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mtg-oauth2-proxy
+  namespace: mtg-engine
+spec:
+  type: ClusterIP
+  selector:
+    app: mtg-oauth2-proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
