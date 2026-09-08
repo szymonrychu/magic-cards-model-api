@@ -317,3 +317,22 @@ whoever works on the repo itself.
   can answer, so only the deciding seat has any use for it.
   `DecideRequest.generation` is optional, so every client that predates it
   keeps working - it is a guarantee a caller opts into.
+
+- **2026-09-08 - T1: giving every route a named `response_model` needed a
+  custom `APIRoute` defaulting `response_model_exclude_unset=True`, not just
+  the models themselves.** `visibility.redact_view` and a face-down card's
+  stub both work by *omitting* keys from the plain dict `serialize.py`
+  builds (`libraries`/`sideboards` popped outright, a face-down card missing
+  `type_line`/`mana_cost`/...), and dozens of existing tests assert exactly
+  that absence (`"libraries" not in board`, `"decklist" not in
+  blocks[theirs]`). FastAPI's default response serialisation does not
+  preserve that: it fills every declared field's default back in, so a
+  `GameStateView`-shaped response started carrying `"paused": false`/`"you":
+  null`/`"type_line": null` keys the wire format never had, and 38 tests
+  broke on first pass. `_ExcludeUnsetRoute` in `app.py` (set as `app.router
+  .route_class`) fixes this app-wide rather than per-decorator: pydantic's
+  own "was this key in the validated input" tracking means a key genuinely
+  present with a `null` value (`state.controller` on an uncontrolled card)
+  still survives, and only a key truly absent from the source dict is left
+  out - reproducing the exact shape `serialize.py`/`visibility.py` already
+  built, field for field.
