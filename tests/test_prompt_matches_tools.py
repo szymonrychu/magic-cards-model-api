@@ -53,6 +53,11 @@ NON_TOOL_VOCABULARY = {
     "finished",
     "stopped_because",
     "winner",
+    # the log tail every state-bearing answer now carries, and its own two
+    # fields - all three are answer shape, none of them a tool or a parameter
+    "recent_log",
+    "omitted",
+    "seq",
     # the MCP 2026-07-28 result-shape name, not a tool or a parameter
     "input_required",
     # local Python names in this module, no MCP meaning

@@ -184,7 +184,14 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
   specifically want the immediate poll-and-return, right after your own
   action, when something has plausibly already changed.
-- `my_state(player_uid)` is the board as you are allowed to see it.
+- `my_state(player_uid)` is the board as you are allowed to see it, and it
+  answers the other half of the same question in the same breath: every
+  answer that carries the board also carries `recent_log`, the tail of what
+  both seats have actually done since - allowed and refused, in the game's
+  own words. That holds for `wait_for_priority`, `pass_until` and every
+  action tool too, so "what happened while I was not looking" and "what can
+  I do now" are one call between them. Never spend a second call asking for
+  what the first one already handed you.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
   `declare_attackers`, `declare_blockers`, `decide`, `pass`, `pass_until` act.
   Priority has exactly those two pass verbs and no more, because the rules give
@@ -201,8 +208,18 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   A game dealt from decklists *rests* there before turn 1 and nothing on the
   board can happen until every seat has declared, so these come first: declare
   your mulligan, then take or decline your opening-hand actions. Until you do,
-  the game sits still and your opponent is waiting on you.
-- `game_log` is the history; `report_problem` files an engine bug.
+  the game sits still and your opponent is waiting on you. Once you have
+  declared and they have not, there is nothing left for you to do there and
+  `wait_for_priority` treats it as such: pass `max_seconds` and it spends
+  that bound on the server. Do not sit calling it back to back through a
+  human's think time - that is dozens of turns of yours spent re-reading a
+  board that has not moved.
+- `game_log` is the whole history, with each entry's full board snapshot -
+  reach for it only when the `recent_log` you were already given says
+  `omitted` above zero, when you need further back than it goes, or when you
+  want one entry's snapshot. It takes `since` (a `seq` you already hold, so
+  you get only what is new) as well as `limit`. `report_problem` files an
+  engine bug.
 
 Each action tool performs the action, then checks once for your next moment
 to act (never blocks) - one call, one meaningful action.
@@ -370,11 +387,14 @@ every single turn tells them "I have nothing in hand" just as loudly. So:
 
 ## Investigate before you commit
 
-Thinking is cheaper than a lost game. Before a decision that matters, read
-`my_state`, read `game_log` for everything they have already shown, count their
-untapped mana and their cards in hand, and look up anything you are not certain
+Thinking is cheaper than a lost game, but a round trip is not - each one is a
+whole turn of yours. Before a decision that matters, read the answer you
+already have: the board, its `recent_log` tail of everything they have shown,
+and your own listed actions all arrive together. Count their untapped mana and
+their cards in hand off that, and look up any card or rule you are not certain
 of. Spend that effort on the decisions that turn the game, not on every land
-drop.
+drop - and spend extra calls only on what the answer in front of you does not
+already say.
 
 ## Keep a plan, in writing
 

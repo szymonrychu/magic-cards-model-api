@@ -414,7 +414,7 @@
       ]
     },
     {
-      "docstring_first_line": "The game's action log: everything both players did or tried,",
+      "docstring_first_line": "The game's action log **in full**: everything both players did or",
       "name": "game_log",
       "parameters": [
         {
@@ -428,6 +428,13 @@
           "default": 40,
           "has_default": true,
           "name": "limit",
+          "type": "int",
+          "type_error": null
+        },
+        {
+          "default": 0,
+          "has_default": true,
+          "name": "since",
           "type": "int",
           "type_error": null
         }

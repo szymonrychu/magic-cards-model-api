@@ -31,6 +31,19 @@ Every action tool below - `cast`, `play_land`, `suspend`, `plot`, `foretell`,
 `pass`, `pass_until` - is "one call, one meaningful action":
 it performs the action, checks once for this seat's next moment to act, and
 returns the outcome plus whatever state that check saw, all in one answer.
+
+That answer carries three things and not one, because a seat needs all three
+after every move and used to spend a round trip - and so a whole inference
+cycle, which is what a seat's turn latency is actually made of - on each:
+`state` (the board it left behind), `available_actions` (what is legal in it,
+the engine's own enumeration) and `recent_log` (the tail of what has actually
+happened, both seats, allowed and refused). `my_state` and `wait_for_priority`
+carry `recent_log` too. The pair this closes is the one the driver prompt used
+to spell out in as many words - "read `my_state`, read `game_log`" - and which
+a live seat pod was observed doing mid-game: two calls for one question.
+`game_log` remains for the whole history and for the full board snapshot each
+entry carries; `seatkit.RECENT_LOG_ENTRIES` bounds the tail, and its `omitted`
+count is what tells a seat the tail dropped something.
 This never blocks - MCP protocol revision 2026-07-28 removed resumability
 (SEP-2577), so a tool call that holds the request open waiting for something
 to happen loses it outright if the underlying stream breaks mid-wait -
@@ -233,6 +246,20 @@ def build_server(seats: Seats) -> MCPServer:
                   CR 514.3) and the step ends of its own accord (CR 500.3), so
                   the game will already have moved on by the time you look
                   again.
+                - the pregame is waiting on **you**: your own CR 103.5 mulligan
+                  declaration, or your own CR 103.6 opening-hand actions.
+
+                Waiting on somebody *else's* pregame declaration is expressly
+                not one of them. CR 103.5 has each player declare in turn order
+                and nothing happens until every player has ("Once each player
+                has made a declaration, all players who decided to take
+                mulligans do so at the same time"), so a seat that has already
+                declared has no move to make - `max_seconds` applies there like
+                anywhere else. It did not always: this used to report "another
+                seat owes a pregame declaration" as a wake, which returned
+                before the bound could bind, and a live seat pod spent 53
+                consecutive calls and one inference every 3.2 seconds
+                re-reading a board that had not changed.
 
         **`max_seconds`: use this instead of `Bash: sleep` between calls.**
                 Left at its default `0.0`, this checks once and returns at once,
@@ -260,6 +287,7 @@ def build_server(seats: Seats) -> MCPServer:
             return NO_SUCH_SEAT
         woken = seatkit.block_until_wake(seat, before=None, max_seconds=max_seconds)
         woken["state"]["wake_reason"] = woken["wake_reason"]
+        woken["state"]["recent_log"] = woken["recent_log"]
         return _tool_result(seat, woken["state"], ctx.protocol_version if ctx is not None else None)
 
     @server.tool()
@@ -290,11 +318,22 @@ def build_server(seats: Seats) -> MCPServer:
         each `cards` entry positionally, and is what you read a hidden-zone
         candidate by - your own library is stripped from this state.
         `default_cards`, when non-null, is what the engine takes if you
-        never answer."""
+        never answer.
+
+        `recent_log` is the other half of the same question, and the reason
+        you do not need a second call to ask it: the tail of what has
+        actually happened - both seats, allowed and refused, in the game's
+        own words - so "what happened since I last acted" and "what does the
+        board look like now" cost one round trip between them rather than
+        two. Its `omitted` counts what the tail dropped, and `game_log` is
+        still there for the whole history and for the full board snapshot
+        each entry carries."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        return json.dumps(seat.fetch_state(), indent=1, sort_keys=True)
+        state = seat.fetch_state()
+        state["recent_log"] = seat.recent_log()
+        return json.dumps(state, indent=1, sort_keys=True)
 
     @server.tool()
     @_guarded(seats)
@@ -1472,20 +1511,39 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
-    def game_log(player_uid: str, limit: int = 40) -> str:
-        """The game's action log: everything both players did or tried,
-        allowed and refused, newest last - your own view, though: entries
-        touching the opponent's hidden zones have their card names blanked
-        the same way my_state hides them. `limit` keeps only the last N
-        entries."""
+    def game_log(player_uid: str, limit: int = 40, since: int = 0) -> str:
+        """The game's action log **in full**: everything both players did or
+        tried, allowed and refused, newest last, each entry carrying the whole
+        board snapshot of its moment - your own view, though: entries touching
+        the opponent's hidden zones have their card names blanked the same way
+        my_state hides them.
+
+        **You usually do not need this.** Every answer that carries the board
+        - `my_state`, `wait_for_priority`, `pass_until`, and every action tool
+        - already carries a `recent_log` tail of the same history alongside
+        it, so asking "what happened" separately from "what can I do" spends a
+        whole extra call and a whole extra turn on something you were handed
+        for free. Reach for this one when that tail says `omitted` above zero,
+        when you want further back than it goes, or when you need an entry's
+        full snapshot.
+
+        `limit` keeps only the last N entries. `since` is a `seq` you already
+        have - typically the `last_seq` from a `recent_log` - and asks for
+        only what is newer than it; `last_seq` in the answer is where to
+        resume from next time."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
         path = f"/api/games/{seat.game_id()}/log"
-        answer = seat.http.get(path, params={"uid": seat.uid})
+        answer = seat.http.get(path, params={"uid": seat.uid, "since": since})
         try:
-            entries = answer.json().get("log", [])[-limit:]
-            return json.dumps(entries, indent=1, sort_keys=True)
+            payload = answer.json()
+            entries = payload.get("log", [])[-limit:]
+            return json.dumps(
+                {"entries": entries, "last_seq": payload.get("last_seq", since)},
+                indent=1,
+                sort_keys=True,
+            )
         except ValueError:
             return answer.text
 
