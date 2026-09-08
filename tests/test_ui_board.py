@@ -78,12 +78,23 @@ class El {
   get textContent() {
     return this.children.map((c) => (c.textContent === undefined ? "" : c.textContent)).join("");
   }
+  // A real element's `textContent` is writable and replaces everything under
+  // it with one text node - `dom.js`'s `setText` writes it, and a getter-only
+  // property here would throw instead of just being a fake with a gap.
+  set textContent(value) {
+    this.children = [{ nodeType: 3, textContent: String(value) }];
+  }
+  // `#id` (how `mountBoard` finds its boxes) and `.class` (how the zone
+  // ribbon finds the label spans inside a row it just built). Nothing else.
   querySelector(sel) {
-    if (!sel.startsWith("#")) return null;
-    const id = sel.slice(1);
+    const byId = sel.startsWith("#");
+    if (!byId && !sel.startsWith(".")) return null;
+    const name = sel.slice(1);
+    const hit = (node) =>
+      byId ? node.attrs && node.attrs.id === name : node.classList && node.classList.contains(name);
     const walk = (node) => {
       if (!node) return null;
-      if (node.attrs && node.attrs.id === id) return node;
+      if (hit(node)) return node;
       for (const c of node.children || []) {
         const found = walk(c);
         if (found) return found;
@@ -112,7 +123,7 @@ boxed("opp-hand");
 boxed("opp-lands");
 boxed("opp-battlefield");
 boxed("stack-row");
-boxed("exile-row", true);
+boxed("zone-ribbon");
 boxed("red-zone", true);
 boxed("my-battlefield");
 boxed("my-lands");

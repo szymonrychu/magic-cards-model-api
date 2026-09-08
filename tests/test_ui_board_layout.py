@@ -314,3 +314,161 @@ def test_a_missing_exile_key_is_tolerated() -> None:
     )
     assert out["exile"] == []
     assert [e["card"]["id"] for e in out["seats"]["alice"]["lands"]] == ["f"]
+
+
+# --------------------------------------------------------- the zone ribbon
+#
+# The vertical strip of graveyards and exiles between the battlefield and the
+# control ribbon. Its ordering is the same mirroring the battlefield rows use:
+# the far seat's zones far from you, your own nearest you.
+
+
+def exiled(id_, **over):
+    return {"id": id_, "name": id_, "zone": "exile", **over}
+
+
+def ribbon_state(exile=None, graveyards=None, battlefield=None, you="alice"):
+    return {
+        "you": you,
+        "players": [{"username": "alice"}, {"username": "bob"}],
+        "battlefield": battlefield or [],
+        "exile": exile or [],
+        "graveyards": graveyards or {},
+    }
+
+
+def ribbon(state):
+    return run_module("board_layout.js", "m.zoneRibbon(state)", state=state)
+
+
+def keys(rows):
+    return [row["key"] for row in rows]
+
+
+def cards_in(rows, key):
+    return [c["id"] for c in next(r for r in rows if r["key"] == key)["cards"]]
+
+
+def test_the_ribbon_runs_from_the_opponents_zones_down_to_your_own() -> None:
+    """The far seat's zones sit far from you and your own sit near you - the
+    same mirroring the battlefield rows already use, so the two halves read as
+    a reflection rather than as one uniform top-to-bottom list."""
+    rows = ribbon(ribbon_state())
+    assert keys(rows) == ["opp-graveyard", "opp-exile", "you-exile", "you-graveyard"]
+    assert [row["side"] for row in rows] == ["opp", "opp", "you", "you"]
+    assert [row["zone"] for row in rows] == ["graveyard", "exile", "exile", "graveyard"]
+
+
+def test_each_row_names_the_seat_whose_zone_it_is() -> None:
+    rows = ribbon(ribbon_state())
+    assert [row["seat"] for row in rows] == ["bob", "bob", "alice", "alice"]
+    assert [row["seatLabel"] for row in rows] == ["bob", "bob", "alice", "alice"]
+
+
+def test_the_ribbon_mirrors_for_the_other_seat() -> None:
+    """Read from bob's chair, the same board puts bob's zones nearest bob: the
+    four rows keep their order, the seats in them swap."""
+    state = ribbon_state(
+        graveyards={"alice": [exiled("a-gy")], "bob": [exiled("b-gy")]},
+        exile=[exiled("a-ex", controller="alice"), exiled("b-ex", controller="bob")],
+    )
+    mine = ribbon(state)
+    theirs = ribbon({**state, "you": "bob"})
+    assert keys(mine) == keys(theirs)
+    assert cards_in(mine, "you-graveyard") == ["a-gy"]
+    assert cards_in(mine, "opp-graveyard") == ["b-gy"]
+    assert cards_in(theirs, "you-graveyard") == ["b-gy"]
+    assert cards_in(theirs, "opp-graveyard") == ["a-gy"]
+    assert cards_in(mine, "you-exile") == ["a-ex"]
+    assert cards_in(theirs, "you-exile") == ["b-ex"]
+
+
+def test_exile_is_split_by_whose_card_it_is() -> None:
+    """Exile is one shared zone and the state view sends one list, so the two
+    exile rows are that list split by the player each card belongs to."""
+    state = ribbon_state(
+        exile=[
+            exiled("mine", controller="alice"),
+            exiled("theirs", controller="bob"),
+            exiled("mine-by-owner", owner="alice"),
+            exiled("theirs-by-owner", owner="bob"),
+        ]
+    )
+    rows = ribbon(state)
+    assert cards_in(rows, "you-exile") == ["mine", "mine-by-owner"]
+    assert cards_in(rows, "opp-exile") == ["theirs", "theirs-by-owner"]
+
+
+def test_an_exiled_cards_controller_wins_over_its_owner() -> None:
+    """`controller or owner` is the fallback `serialize.py` itself uses to
+    decide who could cast a card sitting in exile, so a card exiled under my
+    control is in my pile even when it is their card."""
+    state = ribbon_state(exile=[exiled("grief", controller="alice", owner="bob")])
+    rows = ribbon(state)
+    assert cards_in(rows, "you-exile") == ["grief"]
+    assert cards_in(rows, "opp-exile") == []
+
+
+def test_an_exiled_card_belonging_to_nobody_is_still_drawn() -> None:
+    """Nothing the state view sends should look like this, but a card it
+    cannot attribute must still appear somewhere rather than vanish out of a
+    public zone - it is drawn on the far side."""
+    rows = ribbon(ribbon_state(exile=[exiled("orphan")]))
+    assert cards_in(rows, "opp-exile") == ["orphan"]
+    assert cards_in(rows, "you-exile") == []
+
+
+def test_a_card_exiled_with_a_permanent_is_not_in_the_ribbon() -> None:
+    """It is drawn tucked under that permanent instead: the ribbon shows what
+    `boardLayout` left in exile, not the raw zone."""
+    state = ribbon_state(
+        battlefield=[card("scepter", "Artifact")],
+        exile=[
+            exiled(
+                "bolt",
+                controller="alice",
+                exile_pile={"marker": "imprinted", "linked_permanent_id": "scepter"},
+            )
+        ],
+    )
+    rows = ribbon(state)
+    assert cards_in(rows, "you-exile") == []
+    assert cards_in(rows, "opp-exile") == []
+
+
+def test_the_four_rows_are_there_even_with_every_zone_empty() -> None:
+    """The ribbon keeps its shape from turn one, so the battlefield does not
+    reflow the first time a card reaches a graveyard."""
+    rows = ribbon(ribbon_state())
+    assert keys(rows) == ["opp-graveyard", "opp-exile", "you-exile", "you-graveyard"]
+    assert all(row["cards"] == [] for row in rows)
+
+
+def test_a_missing_graveyards_key_is_tolerated() -> None:
+    rows = run_module(
+        "board_layout.js",
+        'm.zoneRibbon({ you: "alice", players: [{ username: "alice" }] })',
+    )
+    assert keys(rows) == ["opp-graveyard", "opp-exile", "you-exile", "you-graveyard"]
+    assert all(row["cards"] == [] for row in rows)
+
+
+def test_a_seat_with_no_opponent_yet_still_gets_the_far_rows() -> None:
+    rows = run_module(
+        "board_layout.js",
+        'm.zoneRibbon({ you: "alice", players: [{ username: "alice" }] })',
+    )
+    assert [row["seat"] for row in rows] == [None, None, "alice", "alice"]
+    assert [row["seatLabel"] for row in rows] == ["opponent", "opponent", "alice", "alice"]
+
+
+def test_the_ribbon_reuses_a_layout_it_is_handed() -> None:
+    """`render/board.js` has already computed `boardLayout(state)` to draw the
+    battlefield, and the ribbon takes that answer rather than recomputing it."""
+    state = ribbon_state(exile=[exiled("mine", controller="alice")])
+    rows = run_module(
+        "board_layout.js",
+        "m.zoneRibbon(state, m.boardLayout(state))",
+        state=state,
+    )
+    assert cards_in(rows, "you-exile") == ["mine"]

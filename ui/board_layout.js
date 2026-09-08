@@ -123,3 +123,57 @@ export function boardLayout(state) {
 export function seatRows(layout, username) {
   return layout.seats[username] || { lands: [], main: [] };
 }
+
+/** Whose card this is - the same `controller or owner` fallback `serialize.py`
+ * uses to decide who could ever cast a card sitting in a graveyard or exile.
+ * `null` when the state view attributes it to nobody. */
+function belongsTo(card) {
+  return (card && (card.controller || card.owner)) || null;
+}
+
+/** The zone ribbon between the battlefield and the control ribbon, top to
+ * bottom: the opponent's graveyard, the opponent's exile, your exile, your
+ * graveyard.
+ *
+ * That order is the battlefield's own mirroring applied to the zones - the
+ * far seat's cards far from you, your own nearest you - not a uniform list
+ * that happens to run graveyard, exile, exile, graveyard. Reversing either
+ * half would put a seat's zones on the other seat's side of the board.
+ *
+ * Returns four rows, always all four: `{key, side, zone, seat, seatLabel,
+ * cards}`. A zone with nothing in it still gets its row, so the board keeps
+ * its geometry from turn one instead of reflowing the first time a card is
+ * discarded; `render/board.js` collapses an empty row to its label.
+ *
+ * Exile is one shared zone and the state view sends it as a single list, so
+ * the two exile rows are that list split by whose card each one is.
+ * A card the view attributes to nobody is drawn on the far side rather than
+ * dropped: exile is a public zone and a card in it must be on screen
+ * somewhere. What is drawn is `layout.exile` - a card exiled *with* a
+ * permanent is already drawn tucked under it and is not in the ribbon at all.
+ *
+ * `layout` defaults to `boardLayout(state)`; `render/board.js` passes the one
+ * it already computed for the battlefield rather than paying for a second.
+ */
+export function zoneRibbon(state, layout) {
+  const you = (state && state.you) || null;
+  const players = (state && state.players) || [];
+  const opponent = players.map((p) => p.username).find((name) => name !== you) || null;
+  const exile = (layout || boardLayout(state)).exile;
+  const graveyards = (state && state.graveyards) || {};
+  const graveyard = (seat) => (seat === null ? [] : graveyards[seat] || []);
+  const row = (side, zone, seat, cards) => ({
+    key: `${side}-${zone}`,
+    side,
+    zone,
+    seat,
+    seatLabel: seat === null ? "opponent" : seat,
+    cards,
+  });
+  return [
+    row("opp", "graveyard", opponent, graveyard(opponent)),
+    row("opp", "exile", opponent, exile.filter((c) => belongsTo(c) !== you)),
+    row("you", "exile", you, exile.filter((c) => belongsTo(c) === you)),
+    row("you", "graveyard", you, graveyard(you)),
+  ];
+}

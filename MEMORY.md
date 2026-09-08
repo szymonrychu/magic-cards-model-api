@@ -904,3 +904,20 @@ whoever works on the repo itself.
   body, so there is no channel for content to travel down - and the UI's
   label comes from a fixed table keyed by the state word. Do not "simplify"
   the two parsers into one that carries text and filters it later.
+- **2026-09-08 - the graveyards and exiles are a third column, and the live
+  board is the only place they fit.** `#zone-ribbon` sits between the
+  battlefield and the control ribbon, four rows top to bottom: the opponent's
+  graveyard, the opponent's exile, your exile, your graveyard - the
+  battlefield's own mirroring applied to the zones, decided by
+  `board_layout.js`'s `zoneRibbon` and not by the CSS. Two things worth
+  knowing. Exile is one shared list on the wire, so the two exile rows are
+  that list split by `controller || owner` (the same fallback `serialize.py`
+  uses to decide who could cast a card sitting there), and a card it cannot
+  attribute is drawn on the far side rather than dropped. And the review page
+  deliberately did *not* get the ribbon: `serialize.snapshot` writes exile as
+  bare card names with no owner, so a review frame cannot honestly split it
+  per seat - it keeps the old horizontal `.exile-row` strip, which is also why
+  that CSS block is still here. Narrowing the board for the column exposed one
+  real bug: `.lands-row` was `flex: 0 1 auto` and shrank, slicing the bottom
+  off anything tucked under a land (a Utopia Sprawl under its Forest). It no
+  longer shrinks; `#mtg-board` scrolls instead.
