@@ -270,9 +270,14 @@ def _all_targetables(game: Game) -> list[Any]:
         for state in game.shared_zones.get(zone, []):
             if isinstance(state, CardState):
                 things.append(state)
+    # Only the graveyard is a real per-player zone (CR 400.1: "Each player has
+    # their own library, hand, and graveyard. The other zones are shared by all
+    # players"). The battlefield and exile are already walked once each, above,
+    # via `game.shared_zones` - asking a `Player` for either used to return an
+    # empty pile it minted on the spot as a side effect of the read, and now
+    # raises `SharedZoneError` instead.
     for player in game.players:
-        for zone in CANDIDATE_ZONES:
-            things.extend(player.cards_in(zone))
+        things.extend(player.cards_in(Zone.GRAVEYARD))
     things.extend(game.stack)
     return things
 
