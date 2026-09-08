@@ -465,6 +465,18 @@ def _run_command(
         return result, game, legal_before, seq
 
 
+def _paused_on(result: commands.RunResult) -> dict[str, str]:
+    """`audit.record`'s `paused_on` detail for a `PAUSED` `RunResult` - whose
+    decision it is waiting on, and what kind. `pending_decision` already
+    carries this in every paused HTTP response; this is the same two fields,
+    threaded into the persisted `records` row (and so the console line) so a
+    reader of the log - live or replayed - can see what a pause is actually
+    waiting on rather than just that it is waiting. See `audit._console_line`.
+    """
+    assert result.pending is not None
+    return {"player": result.pending.decision.player, "kind": result.pending.decision.kind.value}
+
+
 def _respond(
     game_id: str,
     action: str,
@@ -517,6 +529,7 @@ def _respond(
             allowed=None,
             reason=None,
             paused=True,
+            paused_on=_paused_on(result),
             reasoning=reasoning,
             legal_actions_before=legal_actions_before,
             **keys,
@@ -1312,6 +1325,7 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
             player=req.player,
             allowed=None,
             paused=True,
+            paused_on={"player": pending.player, "kind": pending.kind},
             reasoning=req.reasoning,
             legal_actions_before=legal_before,
         )
@@ -1607,6 +1621,7 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
             player=req.player,
             allowed=None,
             paused=True,
+            paused_on={"player": pending.player, "kind": pending.kind},
             reasoning=req.reasoning,
             legal_actions_before=legal_before,
         )
@@ -1702,6 +1717,7 @@ def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[s
             player=req.player,
             allowed=None,
             paused=True,
+            paused_on=_paused_on(result),
             reasoning=req.reasoning,
             legal_actions_before=legal_before,
         )
@@ -1741,6 +1757,7 @@ def resolve_top(
             player=req.player if req else None,
             allowed=None,
             paused=True,
+            paused_on=_paused_on(result),
             reasoning=reasoning,
             legal_actions_before=legal_before,
         )
@@ -1820,6 +1837,7 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
             player=req.player,
             allowed=None,
             paused=True,
+            paused_on=_paused_on(result),
             reasoning=req.reasoning,
             legal_actions_before=legal_before,
         )
@@ -2297,7 +2315,9 @@ def pregame_settle(
         result, _, _, seq_hint = _run_command(game_id, "pregame_settle", req)
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
-        seq = audit.record(game_id, "pregame_settle", allowed=None, paused=True)
+        seq = audit.record(
+            game_id, "pregame_settle", allowed=None, paused=True, paused_on=_paused_on(result)
+        )
         game = game_or_404(game_id)
         return {
             **visibility.redact_view(state_view(game, game_id), viewer),

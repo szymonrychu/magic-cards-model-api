@@ -423,3 +423,31 @@ whoever works on the repo itself.
   the file already committed on this branch matched the corrected shape;
   only the live (buggy) app disagreed with it, which is what the drift test
   caught.
+- **2026-09-08 - `allowed` is tri-state everywhere it is written, and every
+  consumer of it must branch on `is True`/`is False`/else, never truthiness.**
+  Two live bugs from treating it as a plain bool, both reproduced against a
+  running server before being fixed: `audit._console_line`'s `if
+  detail["allowed"]:` folded a paused command's `allowed: None` into the
+  refusal arm, printing `pass_priority -> refused: None` for a pause that
+  refused nothing (`detail.get("reason")` is `None` there too, since nothing
+  was refused) - fixed with a real third arm, and a `paused_on: {player,
+  kind}` detail (`app._paused_on`) threaded into every one of the seven
+  `PAUSED` `audit.record` call sites so the line says what it paused *on*.
+  Separately, `Seat.call_json` (`seatkit.py`) returned `response.json()`
+  regardless of HTTP status, so any non-2xx whose body carried no `allowed`
+  (FastAPI's own 422 validation shape among them - `records.
+  require_reasoning`'s refusal, which raises before `audit.record` ever
+  runs, so a 422 leaves no log row at all) was read by `run_action` as a
+  completed action, auto-pass included. Fixed generally, not just for 422:
+  `_normalise_non_2xx` treats every 4xx as a refusal (the request never ran
+  server-side) with `reason` pulled from whatever shape `detail` carries -
+  a plain string everywhere except the two pydantic-validation-shaped
+  handlers, whose `msg` is the sentence that actually matters - and leaves a
+  5xx as the same honest `unknown_outcome` an ambiguous transport timeout
+  already gets, since a server error may have half-landed. A body that
+  already carries its own `allowed` (`DecisionInProgressError`'s 409) is
+  trusted unchanged. `mcp.py`'s and `seat_cli.py`'s own `decide` handlers
+  build `{"allowed": True, **answer}` - both were transitively fixed by
+  this, since a dict literal's later `**answer` (now correctly carrying
+  `allowed: False` for a non-2xx) overrides the initial `True`; neither
+  needed editing.

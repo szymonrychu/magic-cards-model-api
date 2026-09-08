@@ -243,10 +243,24 @@ def _console_line(entry: dict[str, Any]) -> str:
         did = "changed the game" if detail.get("changed") else "CHANGED NOTHING"
         line += f" | resolved {detail['resolved']}: {did}"
     if "allowed" in detail:
-        if detail["allowed"]:
+        allowed = detail["allowed"]
+        if allowed is True:
             line += " -> allowed"
-        else:
+        elif allowed is False:
             line += f" -> refused: {detail.get('reason')}"
+        else:
+            # `allowed` is tri-state (True/False/None) - `None` means the
+            # command paused waiting on a decision, which is not a refusal
+            # and must never be folded into that arm (`detail.get("reason")`
+            # is `None` for a pause, since nothing was refused). `paused_on`
+            # is the pending decision's own `{player, kind}` - whose choice
+            # this is and what it is about - threaded in by every PAUSED
+            # caller precisely so this line can say what it paused *on*
+            # rather than just that it paused.
+            paused_on = detail.get("paused_on") or {}
+            who_decides = paused_on.get("player") or "?"
+            kind = paused_on.get("kind") or "?"
+            line += f" -> paused: waiting on {who_decides}'s {kind} decision"
 
     if detail.get("note"):
         # A free-form note for events that are not card actions - a seat being

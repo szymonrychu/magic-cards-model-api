@@ -229,6 +229,65 @@ UNKNOWN_OUTCOME = (
 )
 
 
+def _reason_from_detail(detail: Any) -> str:
+    """A human sentence out of whatever shape a non-2xx body's `detail`
+    carries. Every exception handler in `app.py` writes `detail` as a plain
+    string except the two shaped like a pydantic validation error
+    (`RequestValidationError`, and `records.MissingReasoning`'s own handler,
+    which mirrors that shape on purpose) - `detail: [{"loc", "msg", "type"},
+    ...]`. The `msg` in there is the actual sentence a human wrote (an agent
+    seat's own missing-`reasoning` explanation, say) - what a caller needs,
+    not the list wrapping it, which is what `str(detail)` alone would hand
+    back."""
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, list):
+        msgs = [
+            str(error["msg"]) for error in detail if isinstance(error, dict) and error.get("msg")
+        ]
+        if msgs:
+            return "; ".join(msgs)
+    return str(detail)
+
+
+def _normalise_non_2xx(status_code: int, parsed: Any, text: str) -> dict[str, Any]:
+    """A non-2xx response body, turned into the same tri-state-safe shape
+    every `call_json` caller already checks with `_refused`/`_paused`/
+    `_unknown_outcome` - never left in whatever raw shape the failing
+    handler happened to write, which is exactly what let a 422 read as a
+    completed action (see `call_json`'s own docstring).
+
+    A body that already carries its own `allowed`
+    (`commands.DecisionInProgressError`'s 409, `app.py`) is trusted and
+    returned unchanged - it is already the shape this function would
+    otherwise build. Every other 4xx is a request the server never acted on
+    at all (refused before any command ran, same as `records.
+    require_reasoning`'s 422), so it becomes an ordinary refusal, `reason`
+    pulled out of whatever `detail` shape the body carried.
+
+    A 5xx is the one status class kept out of that: unlike a 4xx, the
+    request may genuinely have started running server-side before the
+    server itself failed partway through, so this is not the same claim a
+    4xx refusal makes ("nothing happened") - it gets the same honest
+    `unknown_outcome` shape an ambiguous transport timeout already does, see
+    `UNKNOWN_OUTCOME`, rather than a refusal a caller would wrongly trust as
+    "still your move"."""
+    base = parsed if isinstance(parsed, dict) else {}
+    if "allowed" in base:
+        return base
+    reason = (
+        _reason_from_detail(base["detail"]) if "detail" in base else f"HTTP {status_code}: {text}"
+    )
+    if status_code >= 500:
+        return {
+            **base,
+            "allowed": False,
+            "reason": f"{UNKNOWN_OUTCOME} (HTTP {status_code}: {reason})",
+            "unknown_outcome": True,
+        }
+    return {**base, "allowed": False, "reason": reason}
+
+
 def api_trouble(http: httpx.Client, api: str) -> str | None:
     """`None` when `api` is reachable and running this process's own
     `PROTOCOL_VERSION`; otherwise the clear, actionable message a tool call
@@ -338,6 +397,15 @@ class Seat:
         A connection failure *before* anything was sent is not this kind of
         ambiguity (nothing to have landed) and is left to raise, same as
         before, for `_guarded`/`api_trouble` to report as "unreachable".
+
+        **Every non-2xx response is normalised too** (`_normalise_non_2xx`) -
+        this used to return `response.json()` regardless of status, so a 422
+        from `records.require_reasoning` (a well-formed request refused
+        before it ever reached the engine) came back as FastAPI's bare
+        validation shape, `{"detail": [...]}`: no `allowed`, no `paused`, no
+        `unknown_outcome`, which `_refused`/`_paused`/`_unknown_outcome` all
+        missed and `run_action` read as a completed action. See this
+        module's own defect writeup (2026-09-08) for the live reproduction.
         """
         try:
             response = self.http.request(method, path, json=body, params={"uid": self.uid})
@@ -348,9 +416,14 @@ class Seat:
                 "unknown_outcome": True,
             }
         try:
-            return response.json()
+            parsed = response.json()
         except ValueError:
+            parsed = None
+        if response.status_code >= 400:
+            return _normalise_non_2xx(response.status_code, parsed, response.text)
+        if parsed is None:
             return {"allowed": False, "reason": f"HTTP {response.status_code}: {response.text}"}
+        return parsed
 
     def fetch_state(self) -> dict[str, Any]:
         """This seat's filtered view of the game, right now (`my_state`'s
