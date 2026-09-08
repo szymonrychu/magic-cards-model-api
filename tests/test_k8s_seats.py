@@ -30,7 +30,9 @@ ENV = {
     "MCP_SERVICE_URL": "http://mtg-mcp.mtg-engine.svc.cluster.local:8080/mcp",
 }
 
-TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "deploy" / "seat-job.yaml"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+TEMPLATE_PATH = REPO_ROOT / "deploy" / "seat-job.yaml"
 
 #: A leftover placeholder can survive even if it isn't one of the nine
 #: (a typo, a stray token) - this pattern is deliberately broader than
@@ -241,6 +243,7 @@ def test_mcp_config_script_emits_stdio_mtg_entry_when_mcp_url_empty(tmp_path: Pa
             "--transport",
             "stdio",
         ],
+        "alwaysLoad": True,
     }
     assert rendered["mcpServers"]["spellslinger"] == {
         "type": "http",
@@ -251,9 +254,48 @@ def test_mcp_config_script_emits_stdio_mtg_entry_when_mcp_url_empty(tmp_path: Pa
 def test_mcp_config_script_emits_http_mtg_entry_when_mcp_url_set(tmp_path: Path) -> None:
     job = _build(ENV)  # ENV carries a non-empty MCP_SERVICE_URL
     rendered = _run_mcp_config_script(job, tmp_path)
-    assert rendered["mcpServers"]["mtg"] == {"type": "http", "url": ENV["MCP_SERVICE_URL"]}
+    assert rendered["mcpServers"]["mtg"] == {
+        "type": "http",
+        "url": ENV["MCP_SERVICE_URL"],
+        "alwaysLoad": True,
+    }
     assert "command" not in rendered["mcpServers"]["mtg"]
     assert rendered["mcpServers"]["spellslinger"]["type"] == "http"
+
+
+def test_mcp_config_script_marks_mtg_always_loaded_in_the_stdio_branch(tmp_path: Path) -> None:
+    """Claude Code defers MCP tools behind `ToolSearch` unless the server's
+    own entry says otherwise, and the `mtg` server's tools are the seat's
+    whole job - a seat that has to *search* for them spends its first
+    inferences hunting instead of playing (13 `ToolSearch` calls and ~51s in
+    one production pod before it gave up). `alwaysLoad` is the documented
+    per-server opt-out (code.claude.com/docs/en/mcp, "Exempt a server from
+    deferral": "set `alwaysLoad` to `true` in that server's configuration"),
+    a plain sibling of `command`/`url` on the server entry. Note it is NOT
+    the `anthropic/alwaysLoad` `_meta` key - that one is a *server*'s own
+    per-tool marker in `tools/list` and does nothing in a config file, which
+    is exactly the silently-wrong spelling this test pins against."""
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"]["alwaysLoad"] is True
+
+
+def test_mcp_config_script_marks_mtg_always_loaded_in_the_http_branch(tmp_path: Path) -> None:
+    """The same, for the branch a non-empty `MCP_URL` takes. The script has
+    two branches and only one of them is exercised by any given render, so
+    both are asserted - a flag added to one and forgotten in the other fails
+    silently in whichever deployment shape happens to take the other."""
+    job = _build(ENV)  # ENV carries a non-empty MCP_SERVICE_URL
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"]["alwaysLoad"] is True
+
+
+def test_compose_mcp_base_marks_mtg_always_loaded() -> None:
+    """`deploy/mcp.base.json` is the docker-compose path's own base config,
+    written by hand rather than by the initContainer script above - the same
+    deferral applies to it, so it carries the same flag."""
+    base = json.loads((REPO_ROOT / "deploy" / "mcp.base.json").read_text())
+    assert base["mcpServers"]["mtg"]["alwaysLoad"] is True
 
 
 def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
