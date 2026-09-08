@@ -1,11 +1,13 @@
-// The board itself: opponent info/hand/battlefield, the shared stack and
-// exile strip, the red zone (attackers, shown only while there are any),
-// your battlefield, your hand, and your own info row. One `mountBoard(root,
-// store, handlers)` subscribes to the store and keeps `#opp-info`/
-// `#opp-hand`/`#opp-lands`/`#opp-battlefield`/`#stack-row`/`#exile-row`/
-// `#red-zone`/`#my-battlefield`/`#my-lands`/`#my-hand`/`#you-info` patched
-// via `dom.js`'s keyed `patchChildren`, so a card kept alive across a poll
-// tick does not lose a hover preview or a mid-flight transition.
+// The board itself: opponent info/hand/battlefield, the shared stack, the red
+// zone (attackers, shown only while there are any), your battlefield, your
+// hand, and your own info row - plus the zone ribbon (`#zone-ribbon`), the
+// column of graveyards and exiles standing between the battlefield and the
+// control ribbon. One `mountBoard(root, store, handlers)` subscribes to the
+// store and keeps `#opp-info`/`#opp-hand`/`#opp-lands`/`#opp-battlefield`/
+// `#stack-row`/`#zone-ribbon`/`#red-zone`/`#my-battlefield`/`#my-lands`/
+// `#my-hand`/`#you-info` patched via `dom.js`'s keyed `patchChildren`, so a
+// card kept alive across a poll tick does not lose a hover preview or a
+// mid-flight transition.
 //
 // Which permanent belongs in which row, and which cards are drawn tucked
 // under another card, is decided by `ui/board_layout.js` - pure functions
@@ -19,7 +21,7 @@
 // is ever live for this seat.
 
 import { cardNode, updateCardNode, cardBackNode } from "../cards.js";
-import { boardLayout, seatRows } from "../board_layout.js";
+import { boardLayout, seatRows, zoneRibbon } from "../board_layout.js";
 import { h, patchChildren, clear, setText } from "../dom.js";
 import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { targetSlotIndex } from "../actions.js";
@@ -153,24 +155,66 @@ export function patchStacks(container, entries, size, decorate) {
   );
 }
 
-/** The shared exile zone, as its own strip - hidden while exile is empty.
+/** The zone ribbon: the opponent's graveyard, the opponent's exile, your
+ * exile and your graveyard, in that order - `board_layout.js`'s `zoneRibbon`
+ * decides the order and which zone holds which card, this only draws it.
+ *
+ * The ribbon is always drawn, all four rows, even with every zone empty: it
+ * is a column of its own between the battlefield and the control ribbon, and
+ * a board that reflowed the first time a card was discarded would be worse
+ * than four labelled empty rows. An empty row is marked `.empty` and
+ * `style.css` collapses it to its own label, so an empty zone costs a line
+ * and the rest of the room goes to whichever zone actually has cards in it.
+ *
  * Clicking a card here does what clicking it in the zones popover does: it
  * begins a cast when a CR 601.3 permission names it, and is an ordinary
- * targeting click otherwise. */
-function patchExile(container, cards, app, handlers) {
-  container.hidden = cards.length === 0;
+ * targeting click otherwise. That is the whole reason the graveyards are on
+ * the board at all rather than behind a button - a spell that targets a card
+ * in a graveyard needs something to point at. */
+function patchZoneRibbon(container, rows, app, handlers) {
   const state = app.state;
   const permissions = (state.play_permissions && state.play_permissions[state.you]) || [];
+  const decorate = (el, card) => {
+    updateCardNode(el, card, targetingOpts(app, card.id));
+    const permission = permissions.find((p) => p.card.id === card.id);
+    el.onclick = (event) =>
+      permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
+  };
   patchChildren(
     container,
-    cards,
-    (c) => c.id,
-    (card) => cardNode(card, "card-sm", {}),
-    (el, card) => {
-      updateCardNode(el, card, targetingOpts(app, card.id));
-      const permission = permissions.find((p) => p.card.id === card.id);
-      el.onclick = (event) =>
-        permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
+    rows,
+    (row) => row.key,
+    () =>
+      h(
+        "section",
+        { class: "zone-pile" },
+        h(
+          "div",
+          { class: "zone-pile-label" },
+          h("span", { class: "zone-seat" }),
+          h("span", { class: "zone-name" }),
+          h("span", { class: "zone-count" })
+        ),
+        h("div", { class: "zone-pile-cards" })
+      ),
+    (el, row) => {
+      // `data-side`/`data-zone` rather than classes per row: the CSS keys the
+      // seat colour off the side and the graveyard/exile treatment off the
+      // zone, and exile must stay visibly a different zone from the
+      // graveyard it is now sitting next to.
+      el.dataset.side = row.side;
+      el.dataset.zone = row.zone;
+      el.classList.toggle("empty", row.cards.length === 0);
+      setText(el.querySelector(".zone-seat"), row.seatLabel);
+      setText(el.querySelector(".zone-name"), row.zone);
+      setText(el.querySelector(".zone-count"), String(row.cards.length));
+      patchChildren(
+        el.querySelector(".zone-pile-cards"),
+        row.cards,
+        (c) => c.id,
+        (card) => cardNode(card, "card-sm", {}),
+        decorate
+      );
     }
   );
 }
@@ -236,8 +280,9 @@ function infoRow(el, app, player) {
  * `onHandCard`/`onPermanent` click the caller distinguishes by
  * `card.type_line`) but is accepted so callers can pass one handlers object
  * across every render module. `#permitted-row` (CR 601.3's dynamic play
- * permissions, under the hand) and `#exile-row` (the shared exile zone) are
- * optional - a page without either is simply not offered it, the same
+ * permissions, under the hand) and `#zone-ribbon` (the graveyards and exiles
+ * beside the board) are optional - a page without either is simply not
+ * offered it, the same
  * tolerance every other `$(...)` lookup here has none of only because their
  * ids are load-bearing elsewhere.
  */
@@ -249,7 +294,7 @@ export function mountBoard(root, store, handlers) {
     oppLands: $("#opp-lands"),
     oppBf: $("#opp-battlefield"),
     stack: $("#stack-row"),
-    exile: $("#exile-row"),
+    zoneRibbon: $("#zone-ribbon"),
     redZone: $("#red-zone"),
     myBf: $("#my-battlefield"),
     myLands: $("#my-lands"),
@@ -286,7 +331,7 @@ export function mountBoard(root, store, handlers) {
     patchStacks(els.oppBf, theirs.main, "card-md", live);
     patchStacks(els.myBf, mine.main, "card-md", live);
     patchStacks(els.myLands, mine.lands, "card-md", live);
-    if (els.exile) patchExile(els.exile, layout.exile, app, handlers);
+    if (els.zoneRibbon) patchZoneRibbon(els.zoneRibbon, zoneRibbon(state, layout), app, handlers);
     patchCards(els.myHand, state.hands[you] || [], app, "card-lg", handlers.onHandCard);
     if (els.permittedRow) {
       const permitted = (state.play_permissions && state.play_permissions[you]) || [];

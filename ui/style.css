@@ -146,12 +146,18 @@ h3 { font-size: 14px; }
    `#topbar`, `#banners` and `#side-panel` stay exactly where they are in
    `index.html` - the ribbon is made here, by placing all three into the same
    grid column, rather than by nesting them in a new wrapper element. `board`
-   spans all three of the rows they sit in. */
+   spans all three of the rows they sit in.
+
+   Three columns now: the battlefield, then the zone ribbon (the graveyards
+   and exiles - `#zone-ribbon`, which also spans all three rows), then the
+   control ribbon. The zones sit against the battlefield rather than against
+   the controls because they are part of the board a player reads, not part
+   of what the client asks them. */
 #game {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 192px 340px;
   grid-template-rows: auto auto minmax(0, 1fr);
-  grid-template-areas: "board top" "board banner" "board side";
+  grid-template-areas: "board zones top" "board zones banner" "board zones side";
   height: 100vh;
   gap: 8px;
   padding: 8px;
@@ -291,8 +297,12 @@ h3 { font-size: 14px; }
    opponent's hand at the top, directly above yours at the bottom. Content
    sized: a mana base is one row of cards, and it should not be taking room
    from the creatures. Slightly dimmer than the row above it, so the split
-   reads without a label. */
-.lands-row { flex: 0 1 auto; background: rgba(255, 255, 255, 0.008); }
+   reads without a label. It does not shrink either (`0 0 auto`): a land row
+   that shrinks cuts the bottom off whatever is tucked under a land - the
+   browser pass caught a Utopia Sprawl sliced in half under its Forest once
+   the zone ribbon narrowed the board. The room has to come from somewhere,
+   and `#mtg-board` already scrolls. */
+.lands-row { flex: 0 0 auto; background: rgba(255, 255, 255, 0.008); }
 .hand-row { background: rgba(107, 164, 255, 0.05); }
 .hand-row-opp { opacity: 0.75; }
 /* CR 601.3's dynamic play permissions - a card castable from somewhere other
@@ -329,16 +339,12 @@ h3 { font-size: 14px; }
 .stack-object.targetable { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .stack-object.chosen { outline: 3px solid var(--good); outline-offset: 2px; }
 
-/* Exile, as its own zone rather than a line in a modal shared with the
-   graveyards. It is a live zone in Modern - Grief and Ephemerate lines,
-   foretell, adventure, suspend's clock, an Isochron Scepter imprint - and a
-   player has to be able to see what is in it without opening anything. Its
-   own colour and its own label, next to the stack because both are shared
-   zones; shown only while there is something in it.
-
-   Small cards and a capped height: exile grows all game and must never take
-   the room the battlefield needs. A card exiled *with* a permanent is not
-   drawn here at all - it is drawn tucked under that permanent. */
+/* Exile as a horizontal strip. The live board no longer has one - its zones
+   are the `#zone-ribbon` column below - but a review frame still draws its
+   exile this way (`ui/render/review.js`'s `exileRow`), because a finished
+   game's board is read as one narrow column of turns and has no room for a
+   ribbon of its own. Its own colour and its own label, so exile never reads
+   as just another row of cards. */
 .exile-row {
   display: flex;
   gap: 4px;
@@ -358,6 +364,114 @@ h3 { font-size: 14px; }
   text-transform: uppercase;
   color: var(--warn);
   margin-right: 6px;
+}
+
+/* --------------------------------------------------- the zone ribbon ---- */
+
+/* The graveyards and the exiles, in their own column between the battlefield
+   and the control ribbon. Top to bottom: the opponent's graveyard, the
+   opponent's exile, your exile, your graveyard - each seat's zones nearest
+   that seat, the same mirroring the battlefield's land rows use. The order
+   is `ui/board_layout.js`'s `zoneRibbon`, not this file's; nothing here may
+   reorder it, and `flex-direction: column-reverse` on any of it would put a
+   seat's cards on the other seat's side of the board.
+
+   Four zones sharing one column, each scrolling inside itself: a graveyard
+   grows all game and must never push the other three off the screen, and the
+   column must never grow the page sideways. An empty zone collapses to its
+   own label line (`.empty`) and gives its room to whichever zone has cards,
+   but it keeps that line - the ribbon holds its shape from turn one rather
+   than reflowing the battlefield the first time a card is discarded. */
+#zone-ribbon {
+  grid-area: zones;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px;
+  overflow: hidden;
+}
+
+.zone-pile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* `auto`, not `0`: the four zones share the column in proportion to what is
+     actually in them, so a five-card graveyard is not scrolling inside a
+     quarter of the column while a two-card exile next to it holds empty room
+     open. Seen in the browser pass with exactly that board. */
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.017);
+}
+/* Exile is not a second graveyard and must not start reading like one now
+   that they are neighbours: it keeps the dashed amber border and the amber
+   label it had as its own strip, against the graveyard's plain grey. */
+.zone-pile[data-zone="exile"] {
+  border-style: dashed;
+  border-color: var(--warn);
+  background: rgba(232, 180, 76, 0.05);
+}
+.zone-pile[data-zone="exile"] .zone-name { color: var(--warn); }
+/* Whose zone it is, in the seat colours the info rows already use. An inset
+   bar rather than a thicker left border, so the exile rows above keep their
+   dashed outline intact. */
+.zone-pile[data-side="opp"] { box-shadow: inset 3px 0 0 0 var(--opp); }
+.zone-pile[data-side="you"] { box-shadow: inset 3px 0 0 0 var(--you); }
+.zone-pile[data-side="opp"] .zone-seat { color: var(--opp); }
+.zone-pile[data-side="you"] .zone-seat { color: var(--you); }
+.zone-pile.empty { flex: 0 0 auto; }
+.zone-pile.empty .zone-pile-cards { display: none; }
+
+.zone-pile-label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  flex: 0 0 auto;
+  padding-left: 5px;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.zone-pile-label .zone-seat {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  /* Never squeezed to nothing by the zone name beside it - in the browser
+     pass at the narrow column width, "bob" had been shrunk to zero and every
+     graveyard row read as an anonymous "GRAVEYARD". The label wraps to a
+     second line instead (`flex-wrap` above), and only a seat name longer than
+     the whole column gives up its tail. */
+  flex: 0 1 auto;
+  min-width: 2.5em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-pile-label .zone-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+.zone-pile-cards {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* The row of attackers, mirroring MTGO's "red zone" - shown only while
@@ -1055,16 +1169,29 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   .pairing-rule { height: 1px; margin: 12px 0; }
 }
 
+/* Three columns do not fit every window, and they give way in the order the
+   player needs them least. The zone ribbon goes first: it is a reference, and
+   a one-card-wide column still reads. The control ribbon never narrows - it
+   holds the priority and pass controls, which are the ones being clicked. */
+@media (max-width: 1400px) {
+  #game { grid-template-columns: minmax(0, 1fr) 112px 340px; }
+}
+
 @media (max-width: 1100px) {
   /* Too narrow for a ribbon beside the board, so it goes back to a stack -
      and the turn block goes back to being a bar, since it now has the whole
-     width again. */
+     width again. The zones lie down into a horizontal strip and stay directly
+     under the board, still opponent-first: each zone scrolls inside itself,
+     so the page never grows sideways. */
   #game {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
-    grid-template-areas: "top" "banner" "board" "side";
+    grid-template-rows: auto auto auto auto auto;
+    grid-template-areas: "top" "banner" "board" "zones" "side";
     height: auto;
   }
+  #zone-ribbon { flex-direction: row; overflow-x: auto; }
+  .zone-pile { flex: 1 1 0; min-width: 96px; max-height: 168px; }
+  .zone-pile.empty { flex: 0 1 auto; }
   #topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 14px; }
   .topbar-right { margin-left: auto; }
   .card-preview { right: 14px; }

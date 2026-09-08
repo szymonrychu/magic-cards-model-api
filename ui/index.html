@@ -163,12 +163,6 @@
     <div id="opp-battlefield" class="battlefield-row main-row"></div>
 
     <div id="stack-row" class="stack-row"></div>
-    <!-- Exile is its own zone and gets its own strip, shown only while
-         there is something in it. A card exiled *with* a permanent (an
-         Isochron Scepter imprint, a hideaway land's card) is not drawn here
-         - it is drawn tucked under that permanent, which is where it
-         physically sits. -->
-    <div id="exile-row" class="exile-row" hidden></div>
     <div id="red-zone" class="red-zone" hidden></div>
 
     <div id="my-battlefield" class="battlefield-row main-row"></div>
@@ -180,6 +174,18 @@
     <div id="permitted-row" class="hand-row permitted-row" hidden></div>
     <div id="you-info" class="info-row you"></div>
   </div>
+
+  <!-- The zone ribbon, between the battlefield and the control ribbon: the
+       opponent's graveyard, the opponent's exile, your exile, your graveyard,
+       top to bottom. That is the battlefield's own mirroring applied to the
+       zones - each seat's cards nearest that seat - not a uniform list.
+       `ui/board_layout.js`'s `zoneRibbon` decides the order and the split;
+       `render/board.js` fills this element and this element only.
+
+       A card exiled *with* a permanent (an Isochron Scepter imprint, a
+       hideaway land's card) is not drawn here - it is drawn tucked under that
+       permanent, which is where it physically sits. -->
+  <aside id="zone-ribbon"></aside>
 
   <!-- the one place anything is ever asked of the player - the bottom of
        the right-hand ribbon, under the turn block and the banners -->
