@@ -51,12 +51,25 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
+      # See the note on `image:` below - the quay.io reference is rewritten
+      # to Harbor's pull-through cache, which is authenticated.
+      imagePullSecrets:
+        - name: regcred
+
       containers:
         - name: main
-          # quay.io/oauth2-proxy is public - unlike Harbor, no
-          # imagePullSecrets needed. v7.15.4 is the appVersion the estate's
-          # oauth2proxy-external chart (0.0.22) pins; kept in step with it
-          # deliberately rather than tracking oauth2-proxy's own latest.
+          # quay.io/oauth2-proxy is a public repository, but this cluster
+          # rewrites quay.io to Harbor's pull-through cache
+          # (harbor.szymonrichert.pl/proxy-quay/...), and THAT needs
+          # credentials - so `imagePullSecrets: regcred` above is required
+          # even though the upstream image is public. Without it the pull
+          # fails with "no basic auth credentials" and the Pod sits in
+          # ImagePullBackOff while the mtg-stack-sso Ingress is already
+          # routing play-magic.szymonrichert.pl at this Service: the site
+          # 503s. That happened on this manifest's first apply.
+          # v7.15.4 is the appVersion the estate's oauth2proxy-external
+          # chart (0.0.22) pins; kept in step with it deliberately rather
+          # than tracking oauth2-proxy's own latest.
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
           imagePullPolicy: IfNotPresent
           securityContext:
