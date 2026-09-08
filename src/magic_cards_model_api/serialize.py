@@ -271,9 +271,17 @@ def _cast_option_view(
     granted_by: str | None = None,
 ) -> dict[str, Any]:
     """One `KeywordCastOption` (`machines/casting.py`, CR 601.3's "a rule or
-    effect allows that player to cast it") this graveyard or exile card
+    effect allows that player to cast it") this hand, graveyard or exile card
     carries right now, shaped so a seat can drive `POST .../actions/cast`
     with `keyword=` set to exactly this `keyword` value.
+
+    From the hand the option is never permission to *reach* the card - CR
+    402.3 already lets its holder cast it from there - it is CR 118.9's
+    alternative cost that replaces the printed mana cost, which `cost` and
+    `pays_mana_cost: false` say. `POST .../actions/cast` takes it either as
+    `keyword` or, identically, as `alternative_cost` (CR 118.9a allows one
+    per spell, and `Casting._announce_alternative` routes a keyword-sourced
+    option straight back into `use_keyword`).
 
     A real game already hit the gap this closes: Faithful Mending
     (`Flashback {1}{W}{U}`, CR 702.34a) was cast from a graveyard through this
@@ -306,11 +314,28 @@ def _cast_option_view(
     return entry
 
 
+#: The zones a card carries `cast_options` in. The hand is here for the
+#: keywords that replace a spell's mana cost from the zone it is already legal
+#: to cast from - evoke (CR 702.74a), dash (CR 702.109a), morph (CR 702.37a),
+#: megamorph (CR 702.37b), disguise (CR 702.168a), bestow (CR 702.103a) and
+#: warp's hand half (CR 702.185a). Every one of those is a bare CR 118.9
+#: alternative cost and needs no CR 601.3 permission to *reach* the card, which
+#: is exactly why none of them ever appeared on any surface a seat could read:
+#: `play_permissions` never sees them, and `_special_actions` covers only the
+#: CR 116.2 special actions (plot, foretell, suspend) and cycling. A real game
+#: lost an evoke to that gap - "I'm not able to evoke through webUI ... I tried
+#: to evoke Wistfulness".
+#:
+#: Nothing here names a keyword: which ones apply is `castable_from`'s answer,
+#: so a keyword the engine learns next shows up with no change to this file.
+_CAST_OPTION_ZONES = (Zone.HAND, Zone.GRAVEYARD, Zone.EXILE)
+
+
 def _cast_options_of(game: Game, state: CardState) -> list[dict[str, Any]]:
-    """Every `_cast_option_view` this graveyard or exile card has right now,
-    or `[]` for anything else (a card in any other zone is cast the ordinary
-    way, or - if in hand - is covered by `_special_actions` instead) and for
-    a card with no controller or owner recorded (nobody to be the `caster`
+    """Every `_cast_option_view` this hand, graveyard or exile card has right
+    now, or `[]` for a card anywhere else (a permanent on the battlefield or a
+    spell on the stack is not being cast from where it sits) and for a card
+    with no controller or owner recorded (nobody to be the `caster`
     `KeywordCastOption.why_not` asks about).
 
     Three sources, matching `Casting._use_keyword`'s own
@@ -321,21 +346,39 @@ def _cast_options_of(game: Game, state: CardState) -> list[dict[str, Any]]:
     - `castable_from(state.card, state.zone)` - the card's own printed
       keywords whose zone matches where it is sitting (CR 604.1's static
       abilities, e.g. CR 702.34a flashback, CR 702.187a mayhem, CR 702.170a
-      plot, CR 702.143a foretell, CR 702.35a madness) plus a printed CR 604.6
-      sentence opening an extra zone for one of them (CR 113.6f).
+      plot, CR 702.143a foretell, CR 702.35a madness from a graveyard or
+      exile; CR 702.74a evoke, CR 702.109a dash, CR 702.37a morph,
+      CR 702.37b megamorph, CR 702.168a disguise, CR 702.103a bestow and
+      CR 702.185a warp from the hand) plus a printed CR 604.6 sentence
+      opening an extra zone for one of them (CR 113.6f).
     - `marker_cast_options(state)` - the permission a CR 406.4 exile pile
       itself grants rather than the card's own text (CR 701.65a's airbend).
+      Empty for a hand card, which is in no pile of exile.
     - `granted_cast_options` - a keyword another permanent's static ability
       is granting this card right now (CR 610.5's "as you cast it", or CR
       611.3d's "while it sits in the zone", both kept alive on the object by
-      CR 400.7b/400.7g once it is on the stack).
+      CR 400.7b/400.7g once it is on the stack). Ashling, the Limitless
+      granting evoke to an Elemental in hand is exactly this, and it is why
+      the hand cannot be answered off the printed card alone.
 
     `caster` is this card's own controller-or-owner - the same fallback
     `_special_actions` uses - because every option here is a permission to
     a *player*, and the only player who could ever hold it for a card sitting
-    in a graveyard or exile is whoever's card it is.
+    in a hand, a graveyard or exile is whoever's card it is.
+
+    **`usable_now` answers the option's own conditions and nothing else.**
+    `KeywordCastOption.why_not` checks the zone, an exile marker's owner and
+    turn, `discarded_this_turn`, and a keyword's own "as a sorcery" clause -
+    never CR 117.1a's timing rule for the *card*, which is a question about
+    the spell rather than about the keyword paying for it (the engine's own
+    `legal_actions` documents the same gap and asks `why_cannot_cast_now`
+    separately). So a creature's evoke option reads `usable_now: true` during
+    an opponent's turn, exactly as a graveyard flashback option already does.
+    `GET .../legal-actions` is the surface that answers "could I take this
+    action right now", and it enumerates each of these as its own `cast`
+    entry carrying `keyword` and `alternative_cost`.
     """
-    if state.zone not in (Zone.GRAVEYARD, Zone.EXILE):
+    if state.zone not in _CAST_OPTION_ZONES:
         return []
     caster = state.controller or state.owner
     if caster is None:
@@ -477,7 +520,7 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         exile_pile = _exile_pile(state)
         if exile_pile is not None:
             view["exile_pile"] = exile_pile
-    if state.zone in (Zone.GRAVEYARD, Zone.EXILE):
+    if state.zone in _CAST_OPTION_ZONES:
         cast_options = _cast_options_of(game, state)
         if cast_options:
             # Own-view only: `visibility.redact_view` strips this back out of

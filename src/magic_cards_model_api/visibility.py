@@ -62,6 +62,15 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     400.2) - what is trimmed for a card that is not the viewer's own is just
     its `cast_options` affordance (`_redact_cast_options`), the same
     "own block only" treatment `_redact_player` already gives `decklist`.
+
+    A *hand* card now carries `cast_options` too (evoke and the rest of the
+    CR 118.9 keywords that are cast from hand - `serialize._cast_options_of`),
+    and it needs no `_redact_cast_options` pass of its own: `hands` below
+    replaces every list that is not the viewer's own with `[]`, card, field
+    and all. CR 402.3 - "a player can't look at the cards in another player's
+    hand" - is answered by dropping the card, which is strictly more than
+    dropping one of its keys, and a viewer with no uid at all matches no
+    player name and so reads every hand empty.
     """
     if viewer is ADMIN:
         return view
@@ -195,6 +204,10 @@ def _redact_facedown_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any
 def _redact_cast_options(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     """A graveyard/exile card's `cast_options` (`serialize._cast_options_of`),
     as `viewer` may see it.
+
+    Graveyard and exile only. A hand card carries the same field, and is
+    covered by `redact_view` emptying `hands` wholesale rather than by this
+    function - see that docstring.
 
     Graveyard and exile are public zones (CR 400.2) - the card underneath
     this field is never hidden, and this function does not touch any of the

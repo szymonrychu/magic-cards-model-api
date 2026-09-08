@@ -996,3 +996,46 @@ whoever works on the repo itself.
   `tests/test_battlefield_state.py` proves it rather than arguing it, by
   asserting every focused answer's strings are a subset of the unfocused
   one's.
+
+- **2026-09-09 - evoke was never missing from the API, only from the cheap
+  half of it, and the fix is the state view rather than the affordance.** The
+  owner's report ("I'm not able to evoke through webUI ... I tried to evoke
+  Wistfulness") looked like an unimplemented feature and was not one. Checked
+  live against the in-process client before touching anything: `GET
+  .../affordances/{card_id}` already listed Wistfulness's evoke under
+  `alternative_costs` (`AlternativeCostView`, source `keyword`, rule
+  CR 702.74a, cost `{G/U}{G/U}`), `GET .../legal-actions` already enumerated
+  a second `cast` action for it carrying `keyword: "Evoke"` and
+  `alternative_cost: "Evoke"`, and `POST .../actions/cast` already accepted
+  both spellings and paid `{G/U}{G/U}`. What was missing was any signal on
+  the *board poll*: `serialize._cast_options_of` opened with `if state.zone
+  not in (Zone.GRAVEYARD, Zone.EXILE): return []`, so a client rendering from
+  `GET /api/games/{id}` had nothing to badge a hand card with. Extending that
+  function to `Zone.HAND` was chosen over publishing `alternative_costs` on
+  every hand card for one reason: `affordances.alternative_costs` builds a
+  `Casting`, which needs `engine_api.dry_run_copy(game)` - a whole-game deep
+  copy - *per card*, and the affordance endpoint's own comment already says
+  that is "per-card work not worth doing for every card on the board on every
+  poll". `_cast_options_of` is pure (`castable_from` + `marker_cast_options` +
+  `granted_cast_options`, no copy, no `Casting`), so it is what belongs in the
+  1.2s poll; the affordance stays the rich on-demand answer, and the two agree
+  because both read the same engine functions. One consequence worth knowing:
+  `cast_options[i].usable_now` answers `KeywordCastOption.why_not` only, which
+  never asks CR 117.1a's timing - a creature's evoke option reads
+  `usable_now: true` on an opponent's turn, exactly as a graveyard flashback
+  option always has. `legal-actions` is the timing-correct surface.
+
+- **2026-09-09 - a hand card's `cast_options` needs no `_redact_cast_options`
+  pass, and adding one would be dead code.** `visibility.redact_view` replaces
+  every `hands` list that is not the viewer's own with `[]` - card, field and
+  all - so CR 402.3 is answered by dropping the whole card rather than one of
+  its keys, and a viewer with no uid matches no player name and reads every
+  hand empty. Pinned in `tests/test_hand_cast_options.py` by serialising bob's
+  and an anonymous viewer's entire response bodies to JSON and asserting the
+  string "Evoke" appears nowhere in either, which catches a leak through any
+  nested key rather than only through the one the assertion was written for.
+  Separately noted and deliberately not fixed: the harness endpoints
+  (`POST .../cards`, `.../tap`, `PATCH .../cards/{id}`, `PUT .../step`,
+  `POST .../state-based-actions`) return `state_view` with no redaction at
+  all, so they already hand back both hands by name - adding one field to a
+  view that already carries every card's identity changes nothing there.
