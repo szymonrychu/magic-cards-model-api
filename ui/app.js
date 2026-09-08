@@ -660,6 +660,9 @@ async function advanceStep() {
   await poll();
 }
 
+/** `pass` is one priority, given up, and the board comes back (CR 117.3d).
+ * `pass_until` is the same verb on a run: `tickRun` keeps making it until
+ * `priority.js`'s `stopReason` says to stop. */
 async function onVerb(verb) {
   const app = store.get();
   if (verb === "pass") {
@@ -670,29 +673,13 @@ async function onVerb(verb) {
   await tickRun();
 }
 
-async function castable() {
-  const app = store.get();
-  const hand = app.state.hands[you()] || [];
-  for (const card of hand) {
-    if (/land/i.test(card.type_line || "")) continue;
-    const res = await send("POST", gamePath("actions/cast"), {
-      player: you(),
-      card_id: card.id,
-      mana_sources: untappedSources(app.state),
-      dry_run: true,
-    });
-    if (res && res.allowed) return true;
-  }
-  return false;
-}
-
 async function tickRun() {
   const app = store.get();
   if (!app.run || !app.state) return;
   if (app.state.priority_holder !== you()) return;
   const run = P.forgetStartingStep(app.run, app.state);
   if (run !== app.run) store.set({ run });
-  const reason = P.stopReason(app.state, run, app.stops, run.verb === "until_castable" ? await castable() : false);
+  const reason = P.stopReason(app.state, run, app.stops);
   if (reason) {
     store.set({ run: null });
     toast(`stopped: ${reason}`);
@@ -903,6 +890,14 @@ async function main() {
       store.set((s) => {
         const list = s.stops[side].includes(step) ? s.stops[side].filter((x) => x !== step) : [...s.stops[side], step];
         const stops = { ...s.stops, [side]: list };
+        P.saveStops(localStorage, stops);
+        return { stops };
+      }),
+    // The stack tick is not a step and lives beside the two step lists, so it
+    // gets its own toggle rather than a fake `side`. Same persistence.
+    onToggleStackStop: () =>
+      store.set((s) => {
+        const stops = { ...s.stops, onStack: s.stops.onStack === false };
         P.saveStops(localStorage, stops);
         return { stops };
       }),

@@ -4,14 +4,12 @@
 
 The old picker ran to one named `(step, who)` destination under three
 toggles (`stopOnStack`, `stopWhenAttacked`, `stopWhenYouCanAttack`). The new
-model has five fixed verbs and a `stops` panel: a destination is now `stops`
+model has two verbs and a `stops` panel: a destination is now `stops`
 containing exactly that one step on the right side (`mine` for "you",
-`theirs` for "opponent", both for "any"); `settings.stopOnStack: true` (the
-old default, used by every test below that does not say otherwise) maps to
-the verb `until_castable` with `castable` always `false` - the one verb
-whose own per-tick logic reduces to "stop on a new stack object, then check
-the stops panel", exactly the old shape - and `settings.stopOnStack: false`
-maps to `pass_turn_regardless` per the port brief.
+`theirs` for "opponent", both for "any"), and it is run by the verb
+`pass_until`. `settings.stopOnStack` is the panel's own `onStack` tick, which
+sits beside the two step lists because it can fire in any step and is live
+alongside whatever steps are checked rather than instead of them.
 
 Several old reason strings do not survive: the new messages are terser and
 uniform across verbs (no card name, no prompt text, no winner's name), so
@@ -54,7 +52,7 @@ def base_state(**overrides: Any) -> dict:
 def call_stop_reason(
     state: dict,
     known_stack_ids: list[str] | None = None,
-    verb: str = "until_castable",
+    verb: str = "pass_until",
     stops: dict | None = None,
     castable: bool = False,
 ) -> Any:
@@ -64,8 +62,8 @@ def call_stop_reason(
     "declined as the occurrence the run started in" guard `priority.js`
     added later (ported in `tests/test_ui_autopilot_next_occurrence.py`)
     never accidentally suppresses a stop this file is testing. Its
-    `turn_number` mirrors `state`'s so the verbs that watch for a turn
-    change (`pass_turn_regardless` among them) see none by surprise."""
+    `turn_number` mirrors `state`'s so nothing sees a turn change by
+    surprise."""
     stops = stops if stops is not None else {"mine": [], "theirs": []}
     known_stack_ids = known_stack_ids or []
     start = base_state(
@@ -194,7 +192,7 @@ def test_halts_on_a_new_stack_object_when_the_safe_default_is_on() -> None:
 def test_does_not_halt_on_a_new_stack_object_when_the_setting_is_off() -> None:
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
     reason = call_stop_reason(
-        state, known_stack_ids=[], verb="pass_turn_regardless", stops=UPKEEP_STOPS
+        state, known_stack_ids=[], stops={**UPKEEP_STOPS, "onStack": False}
     )
     assert reason is None
 
@@ -206,12 +204,10 @@ def test_does_not_halt_on_a_stack_object_already_known() -> None:
 
 
 def test_the_safe_default_is_stop_and_ask() -> None:
-    """`until_castable` (the verb `settings.stopOnStack: true` maps to here)
-    checks a new stack object on every tick with no opt-out short of
-    choosing a different verb - the actual value this pins is that the
-    default mapping (`call_stop_reason`'s own default `verb="until_castable"`)
-    is the stack-checking one, exercised the same way any other call site
-    would."""
+    """The `onStack` tick starts on, so a `stops` object that never mentions
+    it (`UPKEEP_STOPS`, and every other one in this file) still checks the
+    stack on every tick - the old `settings.stopOnStack: true` default,
+    carried forward exactly."""
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
     reason = call_stop_reason(state, known_stack_ids=[], stops=UPKEEP_STOPS)
     assert reason is not None

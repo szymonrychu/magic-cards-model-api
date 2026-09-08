@@ -9,9 +9,12 @@ deciding it genuinely does not need one is a deliberate edit to a list
 somebody reviews.
 
 That shape exists because the gate was missed exactly once already:
-`set_step` mutates the turn marker and drives the suspend upkeep its own
-route runs, is exposed to every agent as an MCP tool, and shipped with no
-`reasoning` at all - one hand-written route audit away from never being noticed.
+`PUT .../step` mutates the turn marker and drives the suspend upkeep its own
+route runs, was exposed to every agent as an MCP tool at the time, and shipped
+with no `reasoning` at all - one hand-written route audit away from never being
+noticed. (That tool is gone now: no rule puts the turn marker anywhere, so it
+is not a seat verb. The route stays for the harness, and stays gated - a caller
+that names an agent seat still owes a reason.)
 """
 
 from __future__ import annotations

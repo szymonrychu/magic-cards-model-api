@@ -69,18 +69,32 @@ them, "No attack" passes. Defending (CR 509.1), you click your creature and
 then the attacker it blocks; the pair is listed, clicking it again removes it,
 and "Block" / "No blocks" ends the step.
 
-**Verbs and stops.** The priority box offers Pass, Pass turn, Pass turn (even
-with a stack), Pass until my next turn, and Pass until I can cast something;
-while one is running it collapses to a single Stop. Every verb halts when you
-are attacked, when a decision is waiting on you, and at any checked stop.
-Every verb *except* "Pass turn (even with a stack)" also halts when a new
-object reaches the stack - ignoring that is the whole point of that one, and
-why it says so in its own label. The stops panel is a grid of steps by
-whose turn it is. It starts at your precombat main, your declare attackers,
+**Verbs and stops.** The priority box offers exactly two verbs, Pass and Pass
+until, because priority has exactly two: CR 117.1 lists what the player with
+priority may do ("cast spells, activate abilities, and take special actions")
+and CR 117.3d has a player who chooses none of them pass. Resolving the top of
+the stack and ending a step are what CR 117.4 makes happen once everyone has
+passed in succession, not buttons. Pass gives up one priority; Pass until keeps
+passing until a stop fires, and while it runs the box collapses to a single
+Stop.
+
+A run always halts when you are attacked, when a decision is waiting on anyone,
+and when the game ends - none of those is a tick and none can be turned off.
+Everything else is the stops panel: a grid of steps by whose turn it is, plus
+one tick above it, **anything on the stack**. That tick is not a destination
+and does not replace the step ticks - it is an extra reason to stop on the way
+to one, which is the case it exists for ("pass until my precombat main, but
+hand the board back if my opponent casts something in my upkeep"). It starts
+ticked, because CR 117.4 resolves a spell the moment every player has passed in
+succession, so the pass you have not made yet is the whole of your chance to
+answer it. The step grid starts at your precombat main, your declare attackers,
 your postcombat main, the opponent's declare attackers and the opponent's end
 step, and whatever you check is saved in `localStorage` under `mcm.stops.v1`,
-so it survives a reload. Untap and cleanup give nobody priority, so there the
-box offers an Advance button instead of a pass. Conceding (CR 104.3a) is
+so it survives a reload - a panel saved before the stack tick existed reads
+back with it on. Untap and cleanup give nobody priority (CR 502.4, CR 514.3)
+and the game crosses them itself (CR 500.3); in the rare state where one is
+still showing, the box offers an Advance button instead of a pass, which is the
+one escape from a step no seat is allowed to move. Conceding (CR 104.3a) is
 offered for as long as the game is live, whoever holds priority, and always
 takes two clicks: the first arms the button, the second sends it, and any
 pass verb disarms it again. Once somebody has won or the game is drawn it
@@ -397,7 +411,7 @@ committed. There is no server-side retry.
 | `PATCH /api/games/{id}/cards/{cid}` | `{face_up?, damage?, summoning_sick?, counters?: {"+1/+1": 2}}` |
 | `PATCH /api/games/{id}/players/{name}` | `{life?, counters?: {"poison": 4}}` |
 | `PUT /api/games/{id}/players/{name}/mana-pool` | `{add?: {"R": 2}, set?: {...}, empty?: true}` |
-| `PUT /api/games/{id}/step` | `{step: "declare_attackers", player?, reasoning?}`; forward walks the turn machine, backward rewinds it raw. Not board setup: it moves the turn marker and drives the suspend upkeep below, so an agent seat owes `reasoning` here like anywhere else |
+| `PUT /api/games/{id}/step` | `{step: "declare_attackers", player?, reasoning?}`; forward walks the turn machine, backward rewinds it raw. **Not a seat verb**: no rule puts the turn marker anywhere, so this is the harness staging a board, and it has no MCP tool or `seat_cli` subcommand. It still moves the turn marker and drives the suspend upkeep below, so a caller that names an agent seat owes `reasoning` here like anywhere else |
 
 Zones: `library`, `hand`, `battlefield`, `graveyard`, `stack`, `exile`,
 `command`, `sideboard`. Shared zones (battlefield, stack, exile, command)
@@ -452,9 +466,9 @@ entry (snapshots included) still comes back unredacted for it.
 
 | | |
 |---|---|
-| `POST /api/games/{id}/resolve-top` | resolves the top of the stack |
+| `POST /api/games/{id}/resolve-top` | resolves the top of the stack. **Not a seat verb**: CR 117.4 resolves the top because every player passed in succession, so a seat reaches this through `actions/pass-priority`. Kept as the harness's own way to drive and observe one resolution at a time |
 | `POST /api/games/{id}/state-based-actions` | counter state-based actions, then the full check. Optional body `{player?, reasoning?}` - called with no body at all it is nobody's action and requires nothing |
-| `POST /api/games/{id}/advance` | one step, with turn-based actions; landing on `upkeep` also drives CR 702.62a's suspend upkeep trigger for every card the now-active player has suspended in exile, reported as `suspend_upkeep: [{card_id, card, time_counters, cast_permission_granted?}]` (`PUT .../step` does the same when it lands on `upkeep`) |
+| `POST /api/games/{id}/advance` | one step, with turn-based actions; landing on `upkeep` also drives CR 702.62a's suspend upkeep trigger for every card the now-active player has suspended in exile, reported as `suspend_upkeep: [{card_id, card, time_counters, cast_permission_granted?}]` (`PUT .../step` does the same when it lands on `upkeep`). **Not a seat verb**: CR 703.2 says turn-based actions "are not controlled by any player", and a step ends because everyone passed (CR 117.4) or because it grants nobody priority and its own actions finished (CR 500.3, which `pass-priority` settles for the caller). Kept for the harness, which steps into untap and cleanup deliberately to observe them, and for the play UI's Advance button - the human's one escape from a priorityless step the engine declined to cross |
 | `POST /api/games/{id}/decide?uid=` | `{player, card_ids: [...]}` - answers this game's pending decision; refused if `uid` is not that decision's own player |
 
 ### Decisions (CR 608.2d, mostly)
