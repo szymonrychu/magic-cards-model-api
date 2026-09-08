@@ -244,7 +244,7 @@ def test_oauth2_proxy_takes_every_credential_from_a_secret_ref() -> None:
     for name in secret_backed:
         entry = env[name]
         assert "value" not in entry, name
-        assert entry["valueFrom"]["secretKeyRef"]["name"] == "mtg-play-proxy", name
+        assert entry["valueFrom"]["secretKeyRef"]["name"] == "magic-trainer-webui-proxy", name
     # Regression guard: no env var whose name contains SECRET may ever carry
     # a literal `value` - that is a committed secret.
     for entry in main["env"]:

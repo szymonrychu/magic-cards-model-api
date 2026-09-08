@@ -128,7 +128,7 @@ spec:
               value: "5m"
 
             # The six credential/config keys below come from Secret
-            # `mtg-play-proxy`, never a literal - this is the estate's
+            # `magic-trainer-webui-proxy`, never a literal - this is the estate's
             # established schema (terraform `kubernetes_secret` in
             # infrastructure/code/terraform/keycloak/spellslinger_clients.tf),
             # consumed the same way by the `ai-external` release. The Secret
@@ -137,32 +137,32 @@ spec:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom:
                 secretKeyRef:
-                  name: mtg-play-proxy
+                  name: magic-trainer-webui-proxy
                   key: proxy-client-id
             - name: OAUTH2_PROXY_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: mtg-play-proxy
+                  name: magic-trainer-webui-proxy
                   key: proxy-client-secret
             - name: OAUTH2_PROXY_COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: mtg-play-proxy
+                  name: magic-trainer-webui-proxy
                   key: proxy-cookie-secret
             - name: OAUTH2_PROXY_COOKIE_DOMAIN
               valueFrom:
                 secretKeyRef:
-                  name: mtg-play-proxy
+                  name: magic-trainer-webui-proxy
                   key: proxy-cookie-domain
             - name: OAUTH2_PROXY_REDIRECT_URL
               valueFrom:
                 secretKeyRef:
-                  name: mtg-play-proxy
+                  name: magic-trainer-webui-proxy
                   key: proxy-redirect-url
             - name: OAUTH2_PROXY_ALLOWED_GROUPS
               valueFrom:
                 secretKeyRef:
-                  name: mtg-play-proxy
+                  name: magic-trainer-webui-proxy
                   key: proxy-allowed-groups
 
           # tcpSocket, not httpGet: oauth2-proxy's own health endpoint isn't

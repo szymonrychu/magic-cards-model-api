@@ -409,9 +409,9 @@ repo has no Helm and no helmfile - `mise run k8s:deploy` is a `sed` over
 OCI Helm release into a namespace otherwise managed by `kubectl apply` would
 be a split-brain deploy story.
 
-### The one prerequisite: Secret `mtg-play-proxy`
+### The one prerequisite: Secret `magic-trainer-webui-proxy`
 
-`55-oauth2-proxy.yaml` hard-references one Secret, `mtg-play-proxy` in
+`55-oauth2-proxy.yaml` hard-references one Secret, `magic-trainer-webui-proxy` in
 namespace `mtg-engine`, with six keys: `proxy-client-id`,
 `proxy-client-secret`, `proxy-cookie-secret`, `proxy-cookie-domain`,
 `proxy-redirect-url`, `proxy-allowed-groups`. It is created by terraform in
@@ -420,7 +420,7 @@ same pattern as the Claude and GitHub Secrets above. The `mtg-oauth2-proxy`
 Pod will not start without it: every one of those six keys is a
 `secretKeyRef`, so a missing Secret means every credential env var is unset
 and oauth2-proxy fails at boot. If the Pod sits in `CreateContainerConfigError`
-or similar, check `kubectl -n mtg-engine get secret mtg-play-proxy` first.
+or similar, check `kubectl -n mtg-engine get secret magic-trainer-webui-proxy` first.
 
 ### `--api-route=^/api/`, and why
 
@@ -462,7 +462,7 @@ curl -sI localhost:4180/api/health  # expect 401, NOT a 302 - proves --api-route
 
 The first `curl` carrying the right issuer and the right `redirect_uri`
 proves in one shot that OIDC discovery reached Keycloak, that the client id
-resolved, and that the `mtg-play-proxy` Secret mounted. The second proves
+resolved, and that the `magic-trainer-webui-proxy` Secret mounted. The second proves
 `--api-route` is doing what it should. If either fails, nothing has changed
 for any user yet - fix it before step 2.
 
@@ -525,7 +525,7 @@ kubectl apply -f deploy/k8s/40-rbac.yaml
 # 4b. the oauth2-proxy credential Secret - created by terraform in the
 #     infrastructure repo, NOT by a command in this repo. mtg-oauth2-proxy
 #     will not start without it. See Login: oauth2-proxy and Keycloak.
-kubectl -n mtg-engine get secret mtg-play-proxy
+kubectl -n mtg-engine get secret magic-trainer-webui-proxy
 
 # 5. everything else, with the image tag substituted - deploy/k8s/*.yaml now
 #    includes 55-oauth2-proxy.yaml, so this also stands up the proxy
