@@ -2,15 +2,18 @@
 `tests/test_ui_ribbon.py`), which had no tests of its own before this whole-
 branch review.
 
-Two smoke tests: the AI panel's fallback rendering (`ai_seat.py`'s
+Smoke tests: the AI panel's fallback rendering (`ai_seat.py`'s
 `mechanism: "fallback"` - the shape it actually reports once a spawned
 runner's own process fails to start, `status["state"] == "error"` alongside
 it, per that module's own `_start` - never `state: "not_started"`, which
 `renderAiPanel`'s own early-return guard reads as the plainer "not started"
 pill instead) shows the "Run it by hand" button and, on a click, opens the
-modal with the fallback command's full prompt text; and the AI-stall banner
+modal with the fallback command's full prompt text; the AI-stall banner
 offering a "Pass priority for <player>" button once the AI seat has reported
-an error.
+an error; and the AI-loading banner (`renderAiLoadingBanner`, wired to the
+pure `aiSeatLoadingNotice` in `ui/store.js` - see `test_ui_ai_loading.py` for
+that function's own exhaustive per-state coverage) showing and clearing
+itself as a Kubernetes seat's status moves from `pending` to `thinking`.
 """
 
 from __future__ import annotations
@@ -108,6 +111,7 @@ function boxed(id, hidden) {
   return el;
 }
 boxed("ai-panel");
+boxed("ai-loading-banner", true);
 boxed("ai-stall-banner", true);
 boxed("modal", true);
 
@@ -231,3 +235,88 @@ def test_the_stall_banner_offers_a_pass_priority_button_for_the_ai_seat() -> Non
     assert calls["found"] is True
     assert calls["visible"] is True
     assert calls["calls"] == ["claude"]
+
+
+def test_the_loading_banner_shows_while_booting_and_clears_once_ready() -> None:
+    """A kubernetes seat's own status moves `pending` (image pull,
+    initContainers, the agent CLI's own boot) -> `thinking` (the driver's
+    first dispatch) as its pod comes up. `renderAiLoadingBanner` shows a
+    message while it is still `pending` and clears the banner - `hidden`
+    again, no leftover text - the moment it is not."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          const banner = document.querySelector("#ai-loading-banner");
+          const beforeStart = { hidden: banner.hidden };
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "kubernetes",
+              state: "pending", pod: null,
+            },
+          });
+          const whilePending = { hidden: banner.hidden, text: banner.textContent };
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "kubernetes",
+              state: "thinking", pod: "Running",
+            },
+          });
+          const onceReady = { hidden: banner.hidden, text: banner.textContent };
+          return { beforeStart, whilePending, onceReady };
+        })()
+        """,
+    )
+    assert result["beforeStart"]["hidden"] is True
+    assert result["whilePending"]["hidden"] is False
+    assert "starting the agent" in result["whilePending"]["text"]
+    assert result["onceReady"]["hidden"] is True
+    assert result["onceReady"]["text"] == ""
+
+
+def test_the_loading_banner_marks_a_genuine_failure_distinctly() -> None:
+    """The driver-grace backstop firing (`k8s_seats.py`) reports
+    `state: "error"` - the banner must say so, not keep claiming the agent
+    is still starting up."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "kubernetes",
+              state: "error", reason: "driver unreachable",
+            },
+          });
+          const banner = document.querySelector("#ai-loading-banner");
+          return {
+            hidden: banner.hidden,
+            bad: banner.classList.contains("bad"),
+            text: banner.textContent,
+          };
+        })()
+        """,
+    )
+    assert result["hidden"] is False
+    assert result["bad"] is True
+    assert "driver unreachable" in result["text"]

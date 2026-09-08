@@ -117,8 +117,13 @@
        priority order - so there is exactly one place asking the player
        anything, not one banner per case. Only the AI seat's own silence -
        which is not a question the game itself is asking - gets a banner of
-       its own. -->
+       its own: `#ai-loading-banner` while it is still booting (the pod's
+       image pull, initContainers, and the agent CLI's own boot - never
+       blocking, since CR 103.5/103.6 gate a human's own mulligan and
+       opening-hand actions on nothing but themselves), and
+       `#ai-stall-banner` once it has started and gone quiet mid-game. -->
   <div id="banners">
+    <div id="ai-loading-banner" hidden></div>
     <div id="ai-stall-banner" hidden></div>
   </div>
 
