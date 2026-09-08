@@ -24,6 +24,7 @@ from magic_cards_model.machines.decisions import PendingDecision as PendingDecis
 from magic_cards_model.machines.legal_actions import legal_actions as compute_legal_actions
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
+from starlette.convertors import Convertor, register_url_convertor
 from starlette.responses import Response
 
 from . import (
@@ -2430,6 +2431,34 @@ def pregame_settle(
 # /api route, /docs, and the /play redirects below are already on the router by
 # the time it is added, and a route that is already registered always wins.
 
+
+class _GameIdConvertor(Convertor[str]):
+    """A game id is a bare `uuid4().hex` - exactly 32 lowercase hex
+    characters (`repository.py`, `repository_postgres.py` both mint it that
+    way; nothing on this api's HTTP surface lets a caller supply another
+    shape). T7 puts a bare `/<uuid>/` at the root, alongside every static
+    asset that root also serves (`app.js`, `style.css`, `config.js`,
+    `render/ribbon.js`, `favicon.ico`, ...) - a plain `/{game_id}` path
+    parameter would swallow every one of them, since each is itself a single
+    unclaimed path segment. Registering this as its own path convertor
+    (rather than checking the shape inside the handler) resolves that
+    ambiguity at routing time: the game routes below simply never match an
+    asset name, because no asset name matches this regex, so a request for
+    `/app.js` falls through to the static mount exactly as before. A
+    malformed id - wrong length, uppercase, non-hex - falls through the same
+    way and 404s there, rather than being treated as a game."""
+
+    regex = "[0-9a-f]{32}"
+
+    def convert(self, value: str) -> str:
+        return value
+
+    def to_string(self, value: str) -> str:
+        return value
+
+
+register_url_convertor("game_id", _GameIdConvertor())
+
 _ui_dir = Path(__file__).resolve().parents[2] / "ui"
 _frontend = frontend_dir()
 
@@ -2449,31 +2478,85 @@ if _ui_dir.is_dir():
     def play_moved(rest: str = "") -> RedirectResponse:
         return RedirectResponse(url=f"/{rest}", status_code=307)
 
-    # T4 - `/g/<uuid>/` addressing (map ordering risk 5). A game gets its own
-    # bookmarkable, shareable URL, served from the same `ui/index.html` the
-    # lobby root serves - `document.baseURI` is how the play modules tell
-    # which game they are looking at, not `store`, so this only has to
-    # decide which file answers each request. No trailing slash redirects to
-    # one (`/g/<id>` -> `/g/<id>/`) for the same reason `/play` did above: a
-    # relative `app.js` resolved against a base with no trailing slash drops
-    # the last segment - the game id itself - and asks for `/g/app.js`
-    # instead.
-    @app.get("/g/{game_id}", include_in_schema=False)
-    def game_path_no_slash(game_id: str) -> RedirectResponse:
-        return RedirectResponse(url=f"/g/{game_id}/", status_code=307)
+    def _safe_ui_rest(rest: str) -> str:
+        """`rest` if it resolves inside `_ui_dir` without walking out of it
+        (`../../pyproject.toml`), `""` otherwise - regardless of whether a
+        real file exists at that path (an unmatched-but-safe subpath is a
+        normal "fall back to the page" case, handled where this is used, not
+        an escape). Shared by the canonical bare route below and the `/g/`
+        compatibility redirect, so a traversal attempt is recognised the
+        same way in both, and so a `%2e%2e` escape decoded into a literal
+        `..` by the ASGI layer never gets carried into a `Location` header -
+        that would just hand the same escape back to the browser's own
+        dot-segment resolution one hop later instead of refusing it."""
+        if not rest:
+            return ""
+        candidate = (_ui_dir / rest).resolve()
+        if candidate.is_relative_to(_ui_dir.resolve()):
+            return rest
+        return ""
 
-    @app.get("/g/{game_id}/{rest:path}", include_in_schema=False)
-    def game_path(game_id: str, rest: str = "") -> Response:
-        # `rest` is attacker-controlled - resolve it inside `_ui_dir` and
-        # refuse anything that walks out of it (`../../pyproject.toml`)
-        # rather than serving whatever it points at. An escape, like any
-        # other path this route doesn't recognise as a real asset, falls
-        # back to the page itself instead of 404ing.
-        if rest:
-            candidate = (_ui_dir / rest).resolve()
-            if candidate.is_relative_to(_ui_dir.resolve()) and candidate.is_file():
+    # T7 - the owner's own ask: a game gets a bare, bookmarkable
+    # `/<uuid>/` address at the root, not `/g/<uuid>/` - "when I start a game
+    # I want to be redirected to https://<base url>/<game uuid>". This is now
+    # canonical; `/g/<uuid>/` (T4) becomes a redirect to it below, kept
+    # working because it is live and already linked/bookmarked. Canonical
+    # was chosen as the bare form, not `/g/`, because it is the literal shape
+    # asked for, and because a shorter permanent address is the one worth
+    # bookmarking - `/g/` only existed as an implementation detail of how T4
+    # first carved the address space up.
+    #
+    # `document.baseURI` is still how the play modules tell which game they
+    # are looking at (not `store`), so this only has to decide which file
+    # answers each request - same as `/g/<uuid>/` always did. No trailing
+    # slash redirects to one (`/<id>` -> `/<id>/`) for the same reason
+    # `/play` did above: a relative `app.js` resolved against a base with no
+    # trailing slash drops the last segment - the game id itself - and asks
+    # for `/app.js` instead, which the static mount happily answers with the
+    # wrong content instead of erroring.
+    #
+    # `{game_id:game_id}` (the `_GameIdConvertor` registered above) is what
+    # keeps this from swallowing every asset the static mount below also
+    # serves - see that class's own docstring for why a shape check alone,
+    # done inside the handler, would not be enough: the route itself must
+    # never match `app.js` in the first place.
+    @app.get("/{game_id:game_id}", include_in_schema=False)
+    def bare_game_path_no_slash(game_id: str) -> RedirectResponse:
+        return RedirectResponse(url=f"/{game_id}/", status_code=307)
+
+    @app.get("/{game_id:game_id}/{rest:path}", include_in_schema=False)
+    def bare_game_path(game_id: str, rest: str = "") -> Response:
+        safe_rest = _safe_ui_rest(rest)
+        if safe_rest:
+            candidate = (_ui_dir / safe_rest).resolve()
+            if candidate.is_file():
                 return FileResponse(candidate)
         return FileResponse(_ui_dir / "index.html")
+
+    # `/g/<uuid>/` - T4's original address - is kept working, but only as a
+    # redirect to the now-canonical bare form above: it is live, tested, and
+    # may already be linked or bookmarked, but two addresses for the same
+    # game is exactly the ambiguity the owner's two-tabs use case cannot
+    # afford (a saved seat keyed by whichever address a tab happens to be
+    # on). `game_id` here stays a plain string, not `{game_id:game_id}`: it
+    # only has to redirect somewhere, never to serve a file itself, so an
+    # id that turns out not to be a real 32-hex game id simply redirects to
+    # a bare path that 404s the same way `/g/<bad-id>/` would have 404ed by
+    # falling through the static mount before this route existed at all.
+    @app.get("/g/{game_id}", include_in_schema=False)
+    def game_path_no_slash(game_id: str) -> RedirectResponse:
+        # One hop straight to the real canonical address, not to
+        # `/g/<id>/` first - that slashed form is itself only a redirect
+        # now, and bouncing through it would just add a pointless second
+        # round trip for every bookmark still shaped `/g/<id>` with no
+        # trailing slash.
+        return RedirectResponse(url=f"/{game_id}/", status_code=307)
+
+    @app.get("/g/{game_id}/{rest:path}", include_in_schema=False)
+    def game_path(game_id: str, rest: str = "") -> RedirectResponse:
+        safe_rest = _safe_ui_rest(rest)
+        target = f"/{game_id}/{safe_rest}" if safe_rest else f"/{game_id}/"
+        return RedirectResponse(url=target, status_code=307)
 
     app.mount("/", StaticFiles(directory=_ui_dir, html=True), name="play-ui")
 elif _frontend is not None:

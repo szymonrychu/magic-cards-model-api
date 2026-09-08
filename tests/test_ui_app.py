@@ -76,13 +76,14 @@ def test_app_js_still_exports_start_game_for_the_routes_test() -> None:
     assert run_app("typeof m.startGame") == "function"
 
 
-def test_starting_a_game_navigates_to_its_own_g_path_by_default() -> None:
-    """T4: the old in-page `#lobby`/`#game` hidden toggle becomes a real
-    navigation to `/g/<uuid>/` - what the lobby's Start/Open buttons trigger
-    via `handlers.startGame`, and what a browser reload of that URL then
-    lands back on (`document.baseURI` resolves the game from there, not from
-    `store`). `localStorage` is still written first, so the entry is there
-    for the reloaded page to find."""
+def test_starting_a_game_navigates_to_its_own_bare_uuid_path_by_default() -> None:
+    """T7: the old in-page `#lobby`/`#game` hidden toggle became a real
+    navigation to `/g/<uuid>/` in T4; T7 makes the bare `/<uuid>/` form the
+    navigation target instead - the owner's own literal ask - what the
+    lobby's Start/Open buttons trigger via `handlers.startGame`, and what a
+    browser reload of that URL then lands back on (`document.baseURI`
+    resolves the game from there, not from `store`). `localStorage` is still
+    written first, so the entry is there for the reloaded page to find."""
     result = run_app(
         """(async () => {
           globalThis.window = { location: { href: "https://host/" } };
@@ -96,18 +97,18 @@ def test_starting_a_game_navigates_to_its_own_g_path_by_default() -> None:
           return { href: window.location.href, saves };
         })()"""
     )
-    assert result["href"] == "/g/g99/"
+    assert result["href"] == "/g99/"
     assert len(result["saves"]) == 1, "the game must still be saved before navigating away"
 
 
 def test_starting_a_game_does_not_navigate_when_told_not_to() -> None:
     """The one caller that must NOT navigate: booting straight into the game
-    screen on a page load that is already at `/g/<uuid>/` (the id came from
+    screen on a page load that is already at `/<uuid>/` (the id came from
     `document.baseURI`, not from a Start/Open click) - navigating again would
     loop."""
     result = run_app(
         """(async () => {
-          globalThis.window = { location: { href: "https://host/g/g99/" } };
+          globalThis.window = { location: { href: "https://host/g99/" } };
           globalThis.document = {
             querySelector: (sel) => {
               if (sel === "#lobby") return { hidden: false };
@@ -133,13 +134,13 @@ def test_starting_a_game_does_not_navigate_when_told_not_to() -> None:
           return { href: window.location.href };
         })()"""
     )
-    assert result["href"] == "https://host/g/g99/", "must not have navigated anywhere"
+    assert result["href"] == "https://host/g99/", "must not have navigated anywhere"
 
 
 def test_leaving_the_game_navigates_to_the_lobby_root() -> None:
     result = run_app(
         """(() => {
-          globalThis.window = { location: { href: "https://host/g/g99/" } };
+          globalThis.window = { location: { href: "https://host/g99/" } };
           m.store.set({ gameId: "g99", uid: "u1", state: { you: "alice" } });
           m.leaveGame();
           return { href: window.location.href };

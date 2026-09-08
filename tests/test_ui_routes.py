@@ -53,29 +53,118 @@ def test_following_the_redirect_lands_on_the_lobby(client: TestClient) -> None:
     assert 'id="lobby"' in response.text
 
 
-def test_a_game_is_served_at_its_own_g_path(client: TestClient, game: str) -> None:
-    """Task T4: the address a real deployment's nginx would otherwise need a
-    `sub_filter` rewrite to fake. Same `index.html`, real path."""
-    response = client.get(f"/g/{game}/")
+def test_a_game_is_served_at_its_own_bare_uuid_path(client: TestClient, game: str) -> None:
+    """T7: the owner's own ask - `https://<base>/<game uuid>` - is now the
+    canonical address, served the same `index.html` `/g/<uuid>/` always was."""
+    response = client.get(f"/{game}/")
     assert response.status_code == 200, response.text
     assert 'id="lobby"' in response.text
     assert 'id="game"' in response.text
     assert response.text == client.get("/").text
 
 
-def test_a_bare_g_path_redirects_to_the_trailing_slash(client: TestClient, game: str) -> None:
+def test_a_bare_uuid_with_no_slash_redirects_to_the_trailing_slash(
+    client: TestClient, game: str
+) -> None:
     """`document.baseURI` resolution depends on the trailing slash - without
     it, a relative `app.js` would drop the game id segment entirely and
-    request `/g/app.js` instead of `/g/<id>/app.js`."""
+    request `/app.js` instead of `/<id>/app.js`."""
+    response = client.get(f"/{game}", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == f"/{game}/"
+
+
+def test_assets_under_the_bare_uuid_path_resolve_to_the_real_files(
+    client: TestClient, game: str
+) -> None:
+    """The relative `href`/`src` values `index.html` ships resolve, once
+    served from `/<id>/`, to real requests under that same prefix - and
+    those must answer with the real file, not another copy of the page."""
+    assert client.get(f"/{game}/app.js").status_code == 200
+    assert "startGame" in client.get(f"/{game}/app.js").text
+    assert client.get(f"/{game}/style.css").status_code == 200
+    assert client.get(f"/{game}/api.js").status_code == 200
+    assert client.get(f"/{game}/render/lobby.js").status_code == 200
+
+
+def test_an_unmatched_subpath_under_the_bare_uuid_still_falls_back_to_the_page(
+    client: TestClient, game: str
+) -> None:
+    response = client.get(f"/{game}/no-such-asset")
+    assert response.status_code == 200
+    assert 'id="lobby"' in response.text
+
+
+def test_a_bare_uuid_path_does_not_escape_the_ui_directory(client: TestClient, game: str) -> None:
+    """`rest` is attacker-controlled - `../../pyproject.toml` must not read a
+    file outside `ui/`. Percent-encoded (`%2e%2e`) so the request actually
+    reaches this route's own handler instead of being dot-segment-normalised
+    away by the test client before it is sent - a plain `../../../` in the
+    literal URL never even reaches this route (it resolves client-side to
+    `/pyproject.toml`, a 404 through the ordinary root mount, which proves
+    nothing about this route's own traversal guard). Falls back to the page
+    like any other unmatched subpath, rather than 404ing or serving the
+    escaped file."""
+    response = client.get(f"/{game}/%2e%2e/%2e%2e/%2e%2e/pyproject.toml")
+    assert response.status_code == 200
+    assert 'id="lobby"' in response.text
+    assert "requires-python" not in response.text
+
+
+def test_a_malformed_game_id_is_not_treated_as_a_game(client: TestClient) -> None:
+    """The disambiguation rule, tested directly: a game id is exactly 32
+    lowercase hex characters (`uuid4().hex` - `repository.py`), not "any
+    single path segment". Anything shy of that must fall through to the
+    ordinary static mount (and 404 there) rather than being swallowed by the
+    game route - the actual hazard a bare `/<something>/` creates at the
+    root, now resolved at routing time by a dedicated path convertor rather
+    than by accident."""
+    too_short = "a" * 31
+    too_long = "a" * 33
+    uppercase = "A" * 32
+    non_hex = "g" * 32  # "g" is not a hex digit
+    for candidate in (too_short, too_long, uppercase, non_hex):
+        response = client.get(f"/{candidate}/")
+        assert response.status_code == 404, (candidate, response.status_code)
+
+
+def test_root_static_assets_are_not_swallowed_by_the_game_route(client: TestClient) -> None:
+    """The other half of the same guarantee: every asset the lobby root
+    serves must keep answering as itself, never as a fallback to
+    `index.html` because some route upstream mistook its name for a game
+    id."""
+    assert client.get("/config.js").status_code == 200
+    assert client.get("/render/ribbon.js").status_code == 200
+
+
+def test_the_g_path_redirects_to_the_bare_canonical_form(client: TestClient, game: str) -> None:
+    """T7: `/g/<uuid>/` is kept working, but only as a redirect - the bare
+    path is canonical now (it is the literal shape the owner asked to be
+    redirected to on Start), and the owner's own two-tabs use case only
+    works cleanly off one canonical address per game."""
+    response = client.get(f"/g/{game}/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == f"/{game}/"
+
+
+def test_a_bare_g_path_redirects_to_the_bare_canonical_form_in_one_hop(
+    client: TestClient, game: str
+) -> None:
+    """`/g/<uuid>` (no trailing slash) used to redirect to `/g/<uuid>/` and
+    stop there. Now that `/g/<uuid>/` is itself only a redirect, this jumps
+    straight to the real canonical address instead of bouncing through the
+    now-vestigial slashed `/g/` form first."""
     response = client.get(f"/g/{game}", follow_redirects=False)
     assert response.status_code == 307
-    assert response.headers["location"] == f"/g/{game}/"
+    assert response.headers["location"] == f"/{game}/"
 
 
-def test_assets_under_the_g_path_resolve_to_the_real_files(client: TestClient, game: str) -> None:
-    """The relative `href`/`src` values `index.html` ships resolve, once
-    served from `/g/<id>/`, to real requests under that same prefix - and
-    those must answer with the real file, not another copy of the page."""
+def test_assets_under_the_g_path_still_resolve_once_the_redirect_is_followed(
+    client: TestClient, game: str
+) -> None:
+    """A bookmarked `/g/<id>/app.js` (T4-era) must keep landing on the real
+    file, not on the page - `TestClient` follows redirects by default, so
+    this is the end-to-end guarantee bookmarks and existing links get."""
     assert client.get(f"/g/{game}/app.js").status_code == 200
     assert "startGame" in client.get(f"/g/{game}/app.js").text
     assert client.get(f"/g/{game}/style.css").status_code == 200
@@ -83,7 +172,7 @@ def test_assets_under_the_g_path_resolve_to_the_real_files(client: TestClient, g
     assert client.get(f"/g/{game}/render/lobby.js").status_code == 200
 
 
-def test_an_unmatched_subpath_under_g_still_falls_back_to_the_page(
+def test_an_unmatched_subpath_under_the_g_path_still_falls_back_to_the_page(
     client: TestClient, game: str
 ) -> None:
     response = client.get(f"/g/{game}/no-such-asset")
@@ -92,19 +181,18 @@ def test_an_unmatched_subpath_under_g_still_falls_back_to_the_page(
 
 
 def test_a_g_path_does_not_escape_the_ui_directory(client: TestClient, game: str) -> None:
-    """`rest` is attacker-controlled - `../../pyproject.toml` must not read a
-    file outside `ui/`. Percent-encoded (`%2e%2e`) so the request actually
-    reaches this route's own handler instead of being dot-segment-normalised
-    away by the test client before it is sent - a plain `../../../` in the
-    literal URL never even reaches `/g/...` (it resolves client-side to
-    `/pyproject.toml`, a 404 through the ordinary root mount, which proves
-    nothing about this route's own traversal guard). Falls back to the page
-    like any other unmatched subpath, rather than 404ing or serving the
-    escaped file."""
-    response = client.get(f"/g/{game}/%2e%2e/%2e%2e/%2e%2e/pyproject.toml")
-    assert response.status_code == 200
-    assert 'id="lobby"' in response.text
-    assert "requires-python" not in response.text
+    """The same traversal guard, exercised through the compatibility
+    redirect: a `%2e%2e` escape must never survive into the `Location`
+    header (which would just re-pose the same attack one hop later against
+    the browser's own dot-segment resolution) - it collapses to the game's
+    own root instead, exactly like an unmatched subpath does."""
+    response = client.get(f"/g/{game}/%2e%2e/%2e%2e/%2e%2e/pyproject.toml", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == f"/{game}/"
+    followed = client.get(f"/g/{game}/%2e%2e/%2e%2e/%2e%2e/pyproject.toml")
+    assert followed.status_code == 200
+    assert 'id="lobby"' in followed.text
+    assert "requires-python" not in followed.text
 
 
 def test_the_api_is_not_shadowed_by_the_root_mount(client: TestClient) -> None:

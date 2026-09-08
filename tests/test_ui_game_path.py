@@ -62,7 +62,12 @@ def test_the_router_answers_that_path_and_404s_the_slashed_one(
 def test_the_game_id_resolves_from_a_g_uuid_base_uri() -> None:
     """The play modules read the game id from `document.baseURI`, not from
     `store` - a fresh page load at `/g/<uuid>/` (a bookmark, a shared link, a
-    refresh) has to work with nothing in the store at all."""
+    refresh) has to work with nothing in the store at all. `/g/<uuid>/` is a
+    redirect-only compatibility form now (T7), so this branch only matters
+    for the rare caller that reads `document.baseURI` before the browser has
+    followed one - kept rather than dropped, since it costs nothing and a
+    stale bookmark should not need two hops just to resolve its id
+    client-side."""
     resolved = run_app(
         """({
           fromGamePath: m.gameIdFromBaseURI("https://host/g/abc-123/"),
@@ -77,6 +82,34 @@ def test_the_game_id_resolves_from_a_g_uuid_base_uri() -> None:
     assert resolved["deeperSubpath"] == "abc-123"
     assert resolved["lobbyRoot"] is None
     assert resolved["unrelatedPath"] is None
+
+
+def test_the_game_id_resolves_from_a_bare_uuid_base_uri() -> None:
+    """T7: the canonical form. `https://<base>/<game uuid>` - the owner's own
+    ask - is a bare 32-lowercase-hex path segment, the same shape
+    `uuid4().hex` mints (`repository.py`). It must resolve exactly like the
+    `/g/<uuid>/` form above, and a path that merely looks like a single
+    segment (`/docs`, `/style.css`, a short or uppercase string) must keep
+    resolving to `None` - the same disambiguation the server's own route
+    convertor enforces, done again here because this function has to make
+    the same call independently, client-side, before any request is sent."""
+    hex32 = "0123456789abcdef0123456789abcdef"
+    resolved = run_app(
+        f"""({{
+          fromBarePath: m.gameIdFromBaseURI("https://host/{hex32}/"),
+          noTrailingSlash: m.gameIdFromBaseURI("https://host/{hex32}"),
+          deeperSubpath: m.gameIdFromBaseURI("https://host/{hex32}/whatever"),
+          tooShort: m.gameIdFromBaseURI("https://host/abc123/"),
+          notHex: m.gameIdFromBaseURI("https://host/{"g" * 32}/"),
+          uppercase: m.gameIdFromBaseURI("https://host/{"A" * 32}/"),
+        }})"""
+    )
+    assert resolved["fromBarePath"] == hex32
+    assert resolved["noTrailingSlash"] == hex32
+    assert resolved["deeperSubpath"] == hex32
+    assert resolved["tooShort"] is None
+    assert resolved["notHex"] is None
+    assert resolved["uppercase"] is None
 
 
 def test_api_calls_stay_absolute_when_the_page_is_served_under_g() -> None:
@@ -119,6 +152,28 @@ def test_relative_assets_in_the_shipped_index_html_resolve_under_the_g_path() ->
     assert resolved["css"] == "/g/abc-123/style.css"
     assert resolved["script"] == "/g/abc-123/app.js"
     assert resolved["lobbyJs"] == "/g/abc-123/render/lobby.js"
+
+
+def test_relative_assets_in_the_shipped_index_html_resolve_under_the_bare_uuid_path() -> None:
+    """T7: the same guarantee, for the now-canonical bare `/<uuid>/` form.
+    Browser relative-URL resolution against `document.baseURI` needs no help
+    from `app.js` here either - this just proves it holds for the new
+    address too, not only the compatibility `/g/<uuid>/` one above."""
+    css_href = re.search(r'<link rel="stylesheet" href="([^"]+)"', INDEX_HTML).group(1)
+    script_src = re.search(r'<script type="module" src="([^"]+)"', INDEX_HTML).group(1)
+    hex32 = "0123456789abcdef0123456789abcdef"
+    resolved = run_app(
+        f"""({{
+          css: new URL(cssHref, "https://host/{hex32}/").pathname,
+          script: new URL(scriptSrc, "https://host/{hex32}/").pathname,
+          lobbyJs: new URL("render/lobby.js", "https://host/{hex32}/").pathname,
+        }})""",
+        cssHref=css_href,
+        scriptSrc=script_src,
+    )
+    assert resolved["css"] == f"/{hex32}/style.css"
+    assert resolved["script"] == f"/{hex32}/app.js"
+    assert resolved["lobbyJs"] == f"/{hex32}/render/lobby.js"
 
 
 def test_the_lobby_root_still_resolves_the_same_assets_to_the_root() -> None:
