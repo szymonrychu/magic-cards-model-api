@@ -160,7 +160,20 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-5"
+PROTOCOL_VERSION = "seatkit-6"
+#: `seatkit-6` added the `declare_plan` tool/method (`POST .../plan`,
+#: `schemas.DeclarePlanIn`). This one is not an optional-degrade case the way
+#: earlier bumps mostly were (an older client missing a nicety, still able to
+#: play): the backend gate this pays for, `records.require_plan`, already
+#: refuses an agent seat's first mutating action of its own turn until a
+#: `plan_declared` record exists for that turn - and it shipped *before* any
+#: client could call the route that satisfies it. An MCP process built before
+#: this bump has no `declare_plan` tool at all, so an agent seat driven by it
+#: is refused, 422, on the very first action of every one of its own turns,
+#: forever - not a degraded seat, a seat that cannot play. That is exactly
+#: the silent-misbehaviour case this version check exists to turn into a
+#: loud, named refusal instead of a mystery.
+#:
 #: `seatkit-5` put a `recent_log` on every answer that already carried a
 #: state view (`my_state`, `wait_for_priority`, every action tool through
 #: `run_action`, `pass_until`) and gave the `game_log` tool the `since`
@@ -544,6 +557,47 @@ class Seat:
             "last_seq": payload.get("last_seq", since),
             "omitted": len(entries) - len(kept),
         }
+
+    def declare_plan(
+        self,
+        *,
+        board_read: str,
+        my_role: str,
+        plan: str,
+        expecting: str,
+        because: str,
+        confidence: str = "medium",
+    ) -> dict[str, Any]:
+        """`POST .../plan` (`schemas.DeclarePlanIn`) - a thin passthrough,
+        no rule of the engine's own re-implemented here. This mutates no
+        `Game` and holds no priority to release, so it goes through
+        `call_json` directly rather than `run_action`: there is no wake
+        condition to check afterward, and none of `run_action`'s auto-pass
+        machinery applies to a call that never touched the board.
+
+        `uid` travels in the request body, not only as the query parameter
+        every other call already carries: the route checks it there
+        (`app.declare_plan`), because a plan is hidden information about how
+        this seat means to play, and the server must confirm the caller
+        actually *is* the seat it is declaring for before writing anything
+        into that seat's name.
+
+        Returns `call_json`'s normalised shape either way - `declared: True`
+        with the ledger's own `log_seq` on success, or `{"allowed": False,
+        "reason": ...}` on a refusal (a blank field, or a uid that does not
+        open this seat) - the same shape every action tool's own outcome
+        already is, so a caller checks a refusal the one way it already
+        knows rather than learning a second one for this call alone.
+        """
+        body = {
+            "player": self.player,
+            "uid": self.uid,
+            "board_read": board_read,
+            "my_role": my_role,
+            "plan": plan,
+            "prediction": {"expecting": expecting, "because": because, "confidence": confidence},
+        }
+        return self.call_json("POST", f"/api/games/{self.game_id()}/plan", body)
 
     def sources_or_all(self, given: str, state: dict[str, Any] | None = None) -> list[str]:
         """Which mana sources to offer: the ones named, else all untapped ones.

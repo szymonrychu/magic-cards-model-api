@@ -120,8 +120,8 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         "",
         "## Your plan file for this game",
         "",
-        f"`{plan_path(memory_root, assignment)}` - yours to write and rewrite while "
-        "you play. Keep it short; you will finish it after the game.",
+        f"`{plan_path(memory_root, assignment)}` - yours to write once, near the start "
+        "of the game. Keep it short; you will finish it after the game.",
         "",
     ]
     return "\n".join(lines)
@@ -158,7 +158,9 @@ who is playing through a web UI against the same game server you act on.
    about this deck. You are expected to arrive at the first action already
    knowing what this deck is trying to do.
 3. Write your opening plan into the plan file named in the briefing (see
-   "Keep a plan, in writing" below).
+   "Your plan file" below) - once, near the start. You do not update this
+   file turn to turn any more; see "Declare your plan before you act" for
+   what replaced that.
 4. Only then call `wait_for_priority`.
 
 ## How you act
@@ -214,6 +216,12 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   that bound on the server. Do not sit calling it back to back through a
   human's think time - that is dozens of turns of yours spent re-reading a
   board that has not moved.
+- `declare_plan` is not an action - it never touches the board and there is
+  no wake check after it - and it comes before one: call it once at the top
+  of every one of your own turns, before your first real action of that
+  turn. Skip it and that first action is refused (422, naming `plan`) until
+  you call it. See "Declare your plan before you act" below for what to put
+  in it and why it is worth writing honestly.
 - `game_log` is the whole history, with each entry's full board snapshot -
   reach for it only when the `recent_log` you were already given says
   `omitted` above zero, when you need further back than it goes, or when you
@@ -396,19 +404,42 @@ of. Spend that effort on the decisions that turn the game, not on every land
 drop - and spend extra calls only on what the answer in front of you does not
 already say.
 
-## Keep a plan, in writing
+## Your plan file
 
-The briefing names a plan file for this game. Keep a handful of lines there and
-update it as the game moves:
+The briefing names a plan file for this game. Write it once, early - your read
+on their archetype and your confidence in it, your role and how you intend to
+win, what you are holding and what you are holding it for, the next two or
+three turns as you currently intend to play them - and leave it. You do not
+rewrite it turn to turn: that per-turn upkeep is `declare_plan` now (below), a
+real tool call rather than a hand-edited file, and cheaper for it. After the
+game you will be asked to finish this same file.
 
-- your read on their archetype and your confidence in it,
-- your role and how you intend to win,
-- what you are holding, and what you are holding it for,
-- the next two or three turns as you currently intend to play them.
+## Declare your plan before you act
 
-Rewrite lines rather than appending; this is a working plan, not a diary. A few
-seconds per turn, and only when something changed - never an essay per
-priority. After the game you will be asked to finish this same file.
+Call `declare_plan` once at the top of every one of your own turns, before your
+first real action of it:
+
+  declare_plan(player_uid=..., board_read="...", my_role="...", plan="...",
+    expecting="...", because="...", confidence="medium")
+
+- `board_read`: what you actually see on the board right now, in your own
+  words.
+- `my_role`: your role in this matchup - beatdown or control, what your deck
+  is trying to do, what losing looks like.
+- `plan`: what you intend to do this turn, and why that follows from the two
+  above.
+- `expecting` / `because` / `confidence` (`"low"`/`"medium"`/`"high"`): what
+  you expect your opponent to do in response, and the read that supports it.
+
+This is written to an append-only ledger before your opponent's next move -
+you cannot go back and edit it afterward to fit whatever they actually did.
+After the game, a human reads it next to what your opponent actually did. You
+are not scored on it, and there is no grade: nothing here marks you right or
+wrong. The only thing that makes it worth reading at all is that it is
+honest. A prediction vague enough to never be wrong ("they'll do something
+with their mana") proves nothing either way - state the concrete call you
+actually expect and let it be checked. An honest wrong read is worth far more
+than a hedge.
 
 ## Rules of engagement, each learned the hard way
 
@@ -449,8 +480,8 @@ def reflection_turn(assignment: Assignment, memory_root: Path, outcome: str) -> 
 
 Write up what you learned, so the next game on this deck starts from it.
 
-1. `{deck_dir / "games" / f"{assignment.game_id}.md"}` - the plan file you kept
-   while playing. Finish it: the result,
+1. `{deck_dir / "games" / f"{assignment.game_id}.md"}` - the plan file you wrote
+   at the start of the game. Finish it: the result,
    what your opponent turned out to be playing and how early you knew, the two
    or three decisions that actually decided it, and what you would do
    differently.

@@ -1498,6 +1498,58 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
+    def declare_plan(
+        player_uid: str,
+        board_read: str,
+        my_role: str,
+        plan: str,
+        expecting: str,
+        because: str,
+        confidence: str = "medium",
+    ) -> str:
+        """Declare, before you act, how you read the turn you are about to
+        take (`POST .../plan`). Call this once at the top of every one of
+        your own turns, before your first real action of it: an agent seat's
+        first mutating action of its own turn is refused - 422, naming
+        `plan` - until this has been called for that turn.
+
+        `board_read`: what you actually see on the board right now, in your
+        own words. `my_role`: your role in this matchup - beatdown or
+        control, what your deck is trying to do, what losing looks like.
+        `plan`: what you intend to do this turn, and why that follows from
+        the two above. `expecting`/`because`/`confidence`
+        (`"low"`/`"medium"`/`"high"`, default `"medium"`): what you expect
+        your opponent to do in response, and the read that supports it - the
+        part that makes this evidence rather than commentary.
+
+        This is written to an append-only ledger before your opponent's next
+        move, and cannot be edited afterward to fit whatever they actually
+        did. After the game, a human reads it next to what your opponent
+        actually did - you are not scored, there is no grade, and nothing
+        here is graded against you. The only thing that makes it worth
+        reading is that it is honest: state the concrete call you actually
+        expect, not one vague enough to never be wrong. A prediction that
+        cannot be wrong proves nothing either way; an honest wrong read is
+        worth far more than a hedge.
+
+        Mutates no `Game` and never blocks. Every field is required and
+        stripped of surrounding whitespace - blank is refused the same as
+        missing."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        result = seat.declare_plan(
+            board_read=board_read,
+            my_role=my_role,
+            plan=plan,
+            expecting=expecting,
+            because=because,
+            confidence=confidence,
+        )
+        return json.dumps(result, indent=1, sort_keys=True)
+
+    @server.tool()
+    @_guarded(seats)
     def report_problem(player_uid: str, text: str) -> str:
         """Report a problem with the engine straight into the game log: write
         what you did, what the rules say should have happened, and what

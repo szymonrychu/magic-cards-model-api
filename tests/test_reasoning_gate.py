@@ -105,6 +105,10 @@ EXEMPT_TOOLS: dict[str, str] = {
     "my_state": "the board as this seat may see it; reads only.",
     "game_log": "this game's log, seat-filtered; reads only.",
     "report_problem": ("`text` is the reasoning - see the matching note on `POST .../report`."),
+    "declare_plan": (
+        "the declaration IS the reasoning, and mutates no `Game` at all - see the "
+        "matching note on `POST /api/games/{game_id}/plan` in EXEMPT_ROUTES."
+    ),
 }
 
 #: Helpers a route may delegate its gate to rather than calling it inline.

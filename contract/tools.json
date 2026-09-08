@@ -366,6 +366,61 @@
       ]
     },
     {
+      "docstring_first_line": "Declare, before you act, how you read the turn you are about to",
+      "name": "declare_plan",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "board_read",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "my_role",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "plan",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "expecting",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "because",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "medium",
+          "has_default": true,
+          "name": "confidence",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "CR 116.2h/702.143b: pay {2} and exile a card with foretell from",
       "name": "foretell",
       "parameters": [
