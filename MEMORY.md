@@ -875,3 +875,49 @@ whoever works on the repo itself.
   /api/lobby/games` and the server will never name it again), the row renders
   as "ended" with Show thinking and Forget, and Forget is what actually drops
   it.
+
+- **2026-09-08 - the AI pill's activity limit is 300s, and 45s was measured
+  wrong before it shipped.** The pill now says what the agent is doing
+  (`activity.state_for` in the wrapper -> the driver's `agentActivity` ->
+  the seat status -> `aiSeatActivityLabel` in `ui/store.js`), and retires an
+  observation it can no longer stand behind. The first cut set that limit to
+  `AI_STALL_SECONDS` (45s) on the reasoning that the pill should not
+  contradict the stall banner. Replaying 7 real seat transcripts (65 minutes
+  of play, from `~/.claude/projects/-Users-szymonri-Documents-magic-cards-
+  model-api-players-*`) through the shipped code showed that was wrong twice
+  over: `wait_for_priority` legitimately blocks with **nothing** written to
+  the transcript for a median 28s and a p90 of 110s, so a 45s limit retired
+  a live, correct "waiting for priority" mid-wait and blanked 49% of a 5s
+  poll's samples back to the flat "thinking" the feature exists to remove -
+  and the pill does not contradict the banner anyway, it explains it. At
+  300s the only thing that goes stale in that data is one genuinely
+  abandoned 30-minute silence; every real in-play gap is under 2 minutes.
+  The wider lesson: this label's tuning constants are measurable off real
+  transcripts, and guessing them from the shape of the UI got it backwards.
+
+- **2026-09-08 - the activity label leaks nothing by construction, not by
+  filtering.** The opposing human reads that pill mid-game, so a card name or
+  a line of the agent's prose in it would reopen exactly what `visibility.py`
+  had to be changed to close. `activity.observations` is a second, separate
+  parser beside `activity.events` for this reason alone: it yields
+  `(kind, tool name)` and never touches a tool's input or a text block's
+  body, so there is no channel for content to travel down - and the UI's
+  label comes from a fixed table keyed by the state word. Do not "simplify"
+  the two parsers into one that carries text and filters it later.
+- **2026-09-08 - the graveyards and exiles are a third column, and the live
+  board is the only place they fit.** `#zone-ribbon` sits between the
+  battlefield and the control ribbon, four rows top to bottom: the opponent's
+  graveyard, the opponent's exile, your exile, your graveyard - the
+  battlefield's own mirroring applied to the zones, decided by
+  `board_layout.js`'s `zoneRibbon` and not by the CSS. Two things worth
+  knowing. Exile is one shared list on the wire, so the two exile rows are
+  that list split by `controller || owner` (the same fallback `serialize.py`
+  uses to decide who could cast a card sitting there), and a card it cannot
+  attribute is drawn on the far side rather than dropped. And the review page
+  deliberately did *not* get the ribbon: `serialize.snapshot` writes exile as
+  bare card names with no owner, so a review frame cannot honestly split it
+  per seat - it keeps the old horizontal `.exile-row` strip, which is also why
+  that CSS block is still here. Narrowing the board for the column exposed one
+  real bug: `.lands-row` was `flex: 0 1 auto` and shrank, slicing the bottom
+  off anything tucked under a land (a Utopia Sprawl under its Forest). It no
+  longer shrinks; `#mtg-board` scrolls instead.

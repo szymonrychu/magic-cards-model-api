@@ -22,10 +22,18 @@
 // `GET /api/cards/{name}`) before `board_layout.js` and `cards.js` can draw
 // it with the same renderers the live board uses.
 //
-// Two things the snapshot simply does not record, and so this cannot invent:
-// which permanent an Aura or Equipment is attached to, and which card was
-// exiled with which permanent. A review board therefore never tucks a card
-// under another one, where the live board does.
+// Both of the live board's "this card lives under that card" relationships
+// - `attached_to` on a battlefield card, `exile_pile.linked_permanent_id`
+// on an exiled one (`ui/board_layout.js`'s own module docstring) - ride
+// along on the snapshot's strings too, as a trailing `(attached:N)`: `N` is
+// the *index* the host occupies in this same snapshot's own `battlefield`
+// array, which is exactly the identity `frameState` below already invents
+// for it (`bf-${index}`) since the snapshot carries no card ids of its own.
+// `parsePermanent` and the exile line's own parse (`frameState`) turn that
+// index straight into `{kind: "card", id: "bf-N"}` /
+// `{linked_permanent_id: "bf-N"}` - the live board's exact shape - so
+// `board_layout.js` needs no changes at all to tuck a review frame's Aura or
+// imprinted card the same way it tucks a live one.
 
 //: `audit.py`'s own literals, mirrored here because a browser module cannot
 //: import Python. `log.js` mirrors `PROBLEM_ACTION` the same way.
@@ -53,11 +61,27 @@ export const ROUTINE_ACTIONS = ["advance", "pass_priority"];
 // `serialize.battlefield_line`'s optional suffixes, in the order that
 // function appends them - stripped off the end in reverse, so whatever is
 // left is the card's own name however many brackets or colons it contains.
+// `ATTACHED_RE` is last here because it is appended last (and so comes off
+// first) - both the battlefield and the exile line share it, since
+// `serialize.snapshot`'s `battlefield_line`/`exile_line` both append it the
+// same way, over an otherwise different set of suffixes.
 const COUNTERS_RE = /\s\(([^()]*=[^()]*)\)$/;
 const DAMAGE_RE = /\sdmg:(\d+)$/;
 const PT_RE = /\s\[([^\]/]*)\/([^\]]*)\]$/;
 const SICK_RE = /\s\(sick\)$/;
 const TAPPED_RE = /\s\(tapped\)$/;
+const ATTACHED_RE = /\s\(attached:(\d+)\)$/;
+
+/** The `(attached:N)` suffix stripped off the end of `rest`, if present -
+ * `{ rest, hostIndex }`, `hostIndex` the battlefield index `N` names, or
+ * `null` for a line with no such suffix. Shared by `parsePermanent` (the
+ * battlefield) and `frameState`'s exile parse - `serialize.snapshot`
+ * appends the identical suffix to both. */
+function stripAttached(rest) {
+  const match = rest.match(ATTACHED_RE);
+  if (!match) return { rest, hostIndex: null };
+  return { rest: rest.slice(0, match.index), hostIndex: Number(match[1]) };
+}
 
 /** One `serialize.battlefield_line` string, back as a card object of the
  * shape `cards.js` draws and `board_layout.js` sorts.
@@ -74,6 +98,12 @@ export function parsePermanent(line, id) {
   let damage = 0;
   let power = null;
   let toughness = null;
+
+  // Stripped first: it is the last suffix `battlefield_line` appends, so it
+  // is the outermost one to come off.
+  const attached = stripAttached(rest);
+  rest = attached.rest;
+  const attachedTo = attached.hostIndex === null ? null : { kind: "card", id: `bf-${attached.hostIndex}` };
 
   const countersMatch = rest.match(COUNTERS_RE);
   if (countersMatch) {
@@ -117,6 +147,11 @@ export function parsePermanent(line, id) {
     damage,
     counters,
     type_line: "",
+    // The live board's own field name and shape (`serialize._card_view`'s
+    // `attached_to`) - `null` rather than absent, matching every other
+    // optional field `parsePermanent` already returns this way, and exactly
+    // what `board_layout.rootParentId` reads (`current.attached_to`).
+    attached_to: attachedTo,
   };
 }
 
@@ -124,6 +159,21 @@ export function parsePermanent(line, id) {
  * stack object's own card. */
 function namedCard(name, id, zone) {
   return { id, name, controller: null, zone, tapped: false, counters: {}, type_line: "" };
+}
+
+/** One `serialize.snapshot` exile line back as a card object - a bare name,
+ * or a name plus the `(attached:N)` suffix `serialize.exile_line` appends
+ * for a card CR 406.4's `ExileAnnotation.linked_permanent_id` (imprint,
+ * hideaway) links to a permanent. The link becomes `exile_pile.
+ * linked_permanent_id`, the live board's own field (`serialize._exile_pile`)
+ * and shape (a `bf-${index}` id, here the same battlefield index
+ * `attached_to` uses) - so `board_layout.js` reads it with no changes of
+ * its own. */
+function parseExileCard(line, id) {
+  const { rest, hostIndex } = stripAttached(String(line == null ? "" : line));
+  const card = namedCard(rest.trim(), id, "exile");
+  if (hostIndex !== null) card.exile_pile = { linked_permanent_id: `bf-${hostIndex}` };
+  return card;
 }
 
 /** The printing joined in by name: the type line `board_layout.isLandRow`
@@ -171,8 +221,8 @@ export function frameState(snapshot, catalogue) {
       withPrinting(namedCard(name, `gy-${seat}-${index}`, "graveyard"), catalogue)
     );
   }
-  const exile = (snapshot.exile || []).map((name, index) =>
-    withPrinting(namedCard(name, `ex-${index}`, "exile"), catalogue)
+  const exile = (snapshot.exile || []).map((line, index) =>
+    withPrinting(parseExileCard(line, `ex-${index}`), catalogue)
   );
   const stack = (snapshot.stack || []).map((obj, index) => ({
     id: `st-${index}`,
@@ -205,7 +255,7 @@ export function cardNamesIn(review) {
     for (const line of snapshot.battlefield || []) names.add(parsePermanent(line, "x").name);
     for (const cards of Object.values(snapshot.hands || {})) for (const n of cards) names.add(n);
     for (const cards of Object.values(snapshot.graveyards || {})) for (const n of cards) names.add(n);
-    for (const n of snapshot.exile || []) names.add(n);
+    for (const line of snapshot.exile || []) names.add(parseExileCard(line, "x").name);
     for (const obj of snapshot.stack || []) if (obj && obj.name) names.add(obj.name);
   }
   names.delete("");

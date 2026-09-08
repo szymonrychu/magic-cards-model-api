@@ -97,6 +97,14 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "seat back door's replacement (2b's T8), an operator/harness action "
         "about a seat, not a move inside the game."
     ),
+    ("POST", "/api/games/{game_id}/reflection"): (
+        "the write-up IS the reasoning, the same shape `POST .../plan` "
+        "already gets this exemption for. It also mutates no `Game`: this "
+        "is a statement made after play, not a move inside it, and it is "
+        "refused outright before the game is even over - there is no "
+        "in-progress agent turn here for `records.require_reasoning` to "
+        "gate."
+    ),
 }
 
 #: MCP tools that read and never mutate, each with the reason.

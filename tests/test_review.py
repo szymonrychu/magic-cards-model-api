@@ -326,3 +326,101 @@ def test_an_ended_lobby_games_review_still_reads(client: TestClient) -> None:
 
 def test_a_review_of_a_game_that_never_existed_is_a_404(client: TestClient) -> None:
     assert _review(client, "no-such-game", key="anything").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# the reflection: written after the result, and only then
+# ---------------------------------------------------------------------------
+
+
+def _reflect(client: TestClient, info: dict[str, Any], player: str = "bob", **overrides: Any):
+    body = {
+        "player": player,
+        "uid": info["seat_uids"][player],
+        "text": "the Bolt on turn one was the whole game - next time it comes down first",
+        **overrides,
+    }
+    return client.post(f"/api/games/{info['game_id']}/reflection", json=body)
+
+
+def test_a_reflection_is_refused_while_the_game_is_still_live(client: TestClient) -> None:
+    """Written after the result is known, and the route enforces it - the
+    same post-game gate `game_review` enforces on reading."""
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        response = _reflect(client, info)
+        assert response.status_code == 409, response.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_reflection_requires_the_seats_own_uid(client: TestClient) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        wrong_seat = _reflect(client, info, player="bob", uid=info["seat_uids"]["alice"])
+        assert wrong_seat.status_code == 404, wrong_seat.text
+        stranger = _reflect(client, info, player="bob", uid="not-a-uid")
+        assert stranger.status_code == 404, stranger.text
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_finished_games_reflection_is_recorded_and_reaches_the_review(
+    client: TestClient,
+) -> None:
+    """The whole point: `POST .../reflection` writes a `game_reflection` row
+    (`audit.REFLECTION_ACTION`), which `GET .../review` hands back inside
+    `entries` exactly like every other row - the same shape
+    `ui/review_model.js`'s `reflectionOf` already scans the ledger for."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        filed = _reflect(client, info)
+        assert filed.status_code == 200, filed.text
+        body = filed.json()
+        assert body["recorded"] is True
+        assert body["player"] == "bob"
+        assert isinstance(body["log_seq"], int)
+
+        review_body = _review(client, game_id, key=info["admin_key"]).json()
+        reflections = [e for e in review_body["entries"] if e["action"] == audit.REFLECTION_ACTION]
+        assert len(reflections) == 1
+        entry = reflections[0]
+        assert entry["detail"]["player"] == "bob"
+        assert entry["detail"]["text"] == (
+            "the Bolt on turn one was the whole game - next time it comes down first"
+        )
+        # Never mistaken for something recorded live: a separate action kind
+        # from `plan_declared`, and not paired into any declaration's window.
+        assert entry["action"] != audit.PLAN_ACTION
+        assert all(entry["seq"] != d["seq"] for d in review_body["declarations"])
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_reflection_can_be_filed_after_the_game_is_ended(client: TestClient) -> None:
+    """The driver posts a game's reflection after `turn_done` confirms a
+    winner - which can land after the lobby has already ended (soft-deleted)
+    that game, so this is authorised the same way `game_review` is: against
+    `store.archived`, not the live game."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    ended = client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+    assert ended.status_code == 200, ended.text
+
+    filed = _reflect(client, info)
+    assert filed.status_code == 200, filed.text
+
+    review_body = _review(client, game_id, key=info["admin_key"]).json()
+    actions = [e["action"] for e in review_body["entries"]]
+    assert audit.REFLECTION_ACTION in actions
+
+
+def test_a_reflection_for_a_game_that_never_existed_is_a_404(client: TestClient) -> None:
+    response = client.post(
+        "/api/games/no-such-game/reflection",
+        json={"player": "bob", "uid": "whatever", "text": "notes"},
+    )
+    assert response.status_code == 404

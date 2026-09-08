@@ -305,27 +305,58 @@ def test_each_seats_lands_sit_in_the_row_nearest_that_seat(client: TestClient) -
 def test_the_ribbon_and_the_board_share_one_row_of_the_game_grid(
     client: TestClient,
 ) -> None:
-    """Everything that is not the battlefield - the turn block, the banners,
-    the prompt/priority/stops/log panel - is one right-hand column, and the
-    board takes the whole of the other one. `#topbar` and `#banners` are still
-    separate elements in `index.html`; only the grid puts them in the ribbon,
-    so this is what says the three are actually in the same column."""
+    """Everything that is not the battlefield or the zones - the turn block,
+    the banners, the prompt/priority/stops/log panel - is one right-hand
+    column, and the board takes the whole of the far side. `#topbar` and
+    `#banners` are still separate elements in `index.html`; only the grid puts
+    them in the ribbon, so this is what says the three are actually in the
+    same column - with the zone ribbon in its own column between the two."""
     css = client.get("/style.css").text
     game = css.split("#game {", 1)[1].split("}", 1)[0]
     areas = [line.strip() for line in game.splitlines() if "grid-template-areas" in line]
-    assert areas == ['grid-template-areas: "board top" "board banner" "board side";'], areas
+    assert areas == [
+        'grid-template-areas: "board zones top" "board zones banner" "board zones side";'
+    ], areas
 
 
-def test_exile_is_its_own_zone_on_the_board(client: TestClient) -> None:
-    """Not a line in the zones modal shared with the graveyards: its own
-    strip, its own border colour, and its own label."""
+def test_the_zone_ribbon_is_a_column_between_the_board_and_the_controls(
+    client: TestClient,
+) -> None:
+    """Three columns, in that order: the battlefield, the graveyards and
+    exiles, the controls. The zones are part of the board a player reads, so
+    they sit against the board rather than against the buttons."""
     page = client.get("/").text
-    assert 'id="exile-row"' in page
+    assert 'id="zone-ribbon"' in page
     css = client.get("/style.css").text
-    row = css.split(".exile-row {", 1)[1].split("}", 1)[0]
-    assert "border: 1px dashed var(--warn)" in row, row
-    label = css.split(".exile-row::before {", 1)[1].split("}", 1)[0]
-    assert 'content: "exile"' in label, label
+    game = css.split("#game {", 1)[1].split("}", 1)[0]
+    columns = [line.strip() for line in game.splitlines() if "grid-template-columns" in line]
+    assert columns == ["grid-template-columns: minmax(0, 1fr) 192px 340px;"], columns
+
+
+def test_exile_stays_visually_distinct_from_the_graveyard_in_the_ribbon(
+    client: TestClient,
+) -> None:
+    """The two zones are neighbours in the ribbon now, and exile must not
+    start reading as a second graveyard: it keeps the dashed amber border it
+    had as its own strip, which the graveyard piles do not have."""
+    css = client.get("/style.css").text
+    pile = css.split(".zone-pile {", 1)[1].split("}", 1)[0]
+    assert "border: 1px solid var(--line)" in pile, pile
+    exile = css.split('.zone-pile[data-zone="exile"] {', 1)[1].split("}", 1)[0]
+    assert "border-style: dashed" in exile, exile
+    assert "border-color: var(--warn)" in exile, exile
+
+
+def test_an_empty_zone_gives_its_room_to_the_zones_that_have_cards(
+    client: TestClient,
+) -> None:
+    """A ribbon row with nothing in it collapses to its own label rather than
+    holding a quarter of the column open, and it never disappears: the board
+    must not reflow the first time a card reaches a graveyard."""
+    css = client.get("/style.css").text
+    empty = css.split(".zone-pile.empty {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 auto" in empty, empty
+    assert ".zone-pile.empty .zone-pile-cards { display: none; }" in css
 
 
 def test_the_scry_split_row_keeps_room_for_the_card_name(client: TestClient) -> None:

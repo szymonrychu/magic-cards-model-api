@@ -6985,6 +6985,57 @@
         "title": "Rarity",
         "type": "string"
       },
+      "ReflectionIn": {
+        "description": "`POST /api/games/{game_id}/reflection` - a seat's own post-game\nwrite-up, filed once the result is already known.\n\nDeliberately the only shape this ever takes: one seat, one block of\nfree text. Unlike `DeclarePlanIn`'s five structured fields, there is\nnothing here a post-game review has to show and cannot reconstruct from\nthe board - the whole point of a reflection is that it is the agent's\nown words, in its own shape, written after the game rather than during\nit. Splitting it into board-read/plan/prediction fields the way a\ndeclaration is split would dress up a narrative as evidence it never\nwas; `review.py`'s reflection section already says in words that\nnothing here is evidence of anything the review pairs above it.\n\n`uid` mirrors `DeclarePlanIn.uid`: the seat's own credential, carried in\nthe body, so nobody may write a reflection into another seat's name.",
+        "properties": {
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "uid": {
+            "minLength": 1,
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "uid",
+          "text"
+        ],
+        "title": "ReflectionIn",
+        "type": "object"
+      },
+      "ReflectionResponse": {
+        "description": "`POST .../reflection`'s answer. No state view, for the same reason\n`DeclarePlanResponse` has none: a reflection mutates no `Game`.",
+        "properties": {
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "player"
+        ],
+        "title": "ReflectionResponse",
+        "type": "object"
+      },
       "RelatedCard": {
         "description": "A card this one is closely related to - a token, meld part, or combo piece.",
         "properties": {
@@ -11484,6 +11535,56 @@
           }
         },
         "summary": "Pregame Settle"
+      }
+    },
+    "/api/games/{game_id}/reflection": {
+      "post": {
+        "description": "File this seat's own post-game write-up (`mtg_agent.driver.app`'s\n`turn_done` posts the driver's reflection turn here, the moment it\ncompletes).\n\n**This mutates no `Game`, exactly like `declare_plan`.** It calls\n`audit.record` under `audit.REFLECTION_ACTION` and nothing else - no\n`store.replace`, no version bump - a reflection is a statement made\n*after* play, not a move in it.\n\n**Post-game only, unlike `declare_plan`.** A reflection is written once\nthe result is already known (CR 104.1's game-ending conditions), so this\nrefuses with 409 before that - the same gate `game_review` enforces on\nreading it, mirrored here on writing it, since a reflection filed for a\ngame still in progress could only be about a result nobody has yet.\n\nAuthorised the same way `game_review` reads are: against `store.archived`\nrather than the live game, so this still works in the ordinary case where\nthe driver posts a game's reflection after the lobby has already ended\n(and so soft-deleted) that game. `uid` must open `player`'s own seat -\nthe same hidden-information rule `declare_plan` enforces, even though a\nreflection carries nothing hidden by the time it is legal to write one:\nthe rule is about who may speak in a seat's name, not about what is said.",
+        "operationId": "declare_reflection_api_games__game_id__reflection_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReflectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Reflection"
       }
     },
     "/api/games/{game_id}/report": {

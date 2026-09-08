@@ -8,6 +8,7 @@ pre-action enumeration. Docker-free (`InMemoryRepository`) - the postgres
 
 from __future__ import annotations
 
+from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 from test_flow import cast_and_resolve_bears, seats_for
 
@@ -549,3 +550,97 @@ def test_the_admin_key_still_reads_every_seats_enumeration(
     admin_log = log_of(client, game, uid=admin_key)
     entry = entries_for(admin_log, "declare_blockers")[-1]
     assert entry["legal_actions_before"] is not None
+
+
+# ---------------------------------------------------------------------------
+# whose action a row was: `detail["player"]`, for every action kind
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_top_records_the_resolving_seats_uid_as_the_player(
+    client: TestClient, game: str
+) -> None:
+    """`resolve-top` wrote `detail["player"]: null` whenever the caller sent
+    no body - which is how every real caller reaches it today
+    (`scripts/generate_payload_fixtures.py`'s own calls carry a `uid` and no
+    body at all) - even though `uid` already named a real seat. A review
+    frame for one of these rows could not say whose action it was. The
+    resolved `uid` viewer is now the fallback `req.player` never named."""
+    uids = seats_for(game)
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    board = state(client, game)
+    forest = find(board["battlefield"], "Forest")
+    mountain = find(board["battlefield"], "Mountain")
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Grizzly Bears",
+            "mana_sources": [{"card_id": mountain["id"]}, {"card_id": forest["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.json()
+
+    resolved = client.post(f"/api/games/{game}/resolve-top", params={"uid": uids["alice"]})
+    assert resolved.json()["resolved"] == "Grizzly Bears", resolved.json()
+
+    log = log_of(client, game, uid=uids["alice"])
+    entry = entries_for(log, "resolve_top")[-1]
+    assert entry["detail"]["player"] == "alice"
+
+
+def test_resolve_top_with_no_uid_at_all_still_names_no_one(client: TestClient, game: str) -> None:
+    """The fallback only fires for a `uid` that actually resolves to a seat -
+    an anonymous or admin-key call still writes `player: null`, the same as
+    before, rather than guessing."""
+    cast_and_resolve_bears(client, game)
+    log = log_of(client, game)
+    entry = entries_for(log, "resolve_top")[-1]
+    assert entry["detail"]["player"] is None
+
+
+def test_attack_records_the_declaring_seat_as_the_player(client: TestClient, game: str) -> None:
+    """`AttackRequest` carries no `player` field at all (only
+    `DeclareBlockersRequest` does) - so every `attack` row was missing
+    `detail["player"]`, and a review frame for one could not say whose
+    declaration it was. `_answer_declaration` now fills it in from the
+    engine's own resolved deciding seat, the identity it already checks
+    `uid` against."""
+    bears = cast_and_resolve_bears(client, game)
+    client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    uids = seats_for(game)
+    attack = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert attack.json()["allowed"] is True, attack.json()
+
+    log = log_of(client, game, uid=uids["alice"])
+    entry = entries_for(log, "attack")[-1]
+    assert entry["detail"]["player"] == "alice"
+
+
+def test_a_refused_attack_still_names_the_deciding_seat(client: TestClient, game: str) -> None:
+    """A refusal is still evidence of whose declaration it was refused for -
+    the same fallback applies once a pending `declare_attackers` decision
+    exists, refusal or not."""
+    bears = cast_and_resolve_bears(client, game)
+    client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    uids = seats_for(game)
+    refused = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["bob"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert refused.json()["allowed"] is False, refused.json()
+
+    log = log_of(client, game, uid=uids["alice"])
+    entry = entries_for(log, "attack")[-1]
+    assert entry["detail"]["player"] == "alice"

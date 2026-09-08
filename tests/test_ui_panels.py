@@ -320,3 +320,93 @@ def test_the_loading_banner_marks_a_genuine_failure_distinctly() -> None:
     assert result["hidden"] is False
     assert result["bad"] is True
     assert "driver unreachable" in result["text"]
+
+
+def test_the_ai_pill_says_what_the_agent_is_actually_doing() -> None:
+    """The pill is wired to `aiSeatActivityLabel` (`ui/store.js` - see
+    `test_ui_ai_activity.py` for that function's own per-state coverage), so
+    a seat whose driver reported an observed activity reads as that activity
+    rather than the flat "thinking" it used to show for a whole match."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          const panel = document.querySelector("#ai-panel");
+          const seen = [];
+          const show = (activity) => {
+            store.set({
+              aiStatus: {
+                uid: "ai-uid", player: "claude", mechanism: "kubernetes",
+                state: "thinking", pod: "Running", activity,
+              },
+            });
+            seen.push(panel.textContent);
+          };
+          show({ state: "waiting", seconds: 0.4, seq: 1 });
+          show({ state: "reading_cards", seconds: 0.2, seq: 2 });
+          show({ state: "thinking", seconds: 0.1, seq: 3 });
+          show({ state: "acting", seconds: 0.1, seq: 4 });
+          // Nothing new observed for a while: the last real activity stands.
+          show({ state: "acting", seconds: 20, seq: 4 });
+          return { seen, className: panel.firstChild.className };
+        })()
+        """,
+    )
+    assert result["seen"] == [
+        "AI (claude): waiting for priority",
+        "AI (claude): reading cards",
+        "AI (claude): thinking",
+        "AI (claude): making its play",
+        "AI (claude): making its play",
+    ]
+    assert "state-thinking" in result["className"], (
+        "the pill's styling stays keyed to the seat's own state, not to the activity"
+    )
+
+
+def test_the_ai_pill_falls_back_to_the_seat_state_when_nothing_was_observed() -> None:
+    """A `subprocess` seat, a driver too old to report activity, an
+    unreachable wrapper: the pill reads exactly as it always did."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore({
+            state: baseState(),
+            aiStatus: null,
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+          });
+          const panel = document.querySelector("#ai-panel");
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "subprocess", state: "thinking",
+            },
+          });
+          const plain = panel.textContent;
+          store.set({
+            aiStatus: {
+              uid: "ai-uid", player: "claude", mechanism: "kubernetes", state: "unreachable",
+              activity: { state: "reading_cards", seconds: 1 },
+            },
+          });
+          return { plain, unreachable: panel.textContent };
+        })()
+        """,
+    )
+    assert result["plain"] == "AI (claude): thinking"
+    assert result["unreachable"] == "AI (claude): unreachablewhy"

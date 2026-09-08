@@ -59,6 +59,16 @@ PLAN_ACTION = "plan_declared"
 #: the final snapshot's life totals.
 GAME_OVER_ACTION = "game_over"
 
+#: A seat's own post-game write-up (`POST /api/games/{id}/reflection`),
+#: filed once the result is already known - `mtg_agent.driver.app`'s
+#: `turn_done` posts the driver's reflection turn here the moment it
+#: completes. Named `"game_reflection"` to match `ui/review_model.js`'s
+#: `REFLECTION_ACTIONS`, the shape the post-game review's `reflectionOf`
+#: already scans the ledger for - it is matched there ahead of this action
+#: ever being written, so the review section appears the day this constant
+#: starts reaching the ledger rather than needing the page changed again.
+REFLECTION_ACTION = "game_reflection"
+
 #: The actions that get a banner at WARNING rather than one compact line.
 LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION)
 

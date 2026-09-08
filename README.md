@@ -205,10 +205,21 @@ Three containers, three different things worth watching:
       WARNING agent tool failed: Exit code 1 it is not your priority
 
   That comes from tailing the JSONL transcript claude writes as it goes
-  (`wrapper/activity.py`), not from scraping the terminal. Every line is
-  collapsed to one line and truncated with a `[+N chars]` marker; `thinking`
-  blocks and successful tool *results* are left out on purpose, and anything
-  shaped like an API key or bearer token is redacted.
+  (`wrapper/activity.py`), not from scraping the terminal. Each event is
+  emitted whole, with its whitespace collapsed so one event stays one
+  physical line; `thinking` blocks (which arrive carrying a signature and no
+  text at all) and successful tool *results* are left out on purpose, and
+  anything shaped like an API key or bearer token is redacted.
+
+  The same tail also publishes one coarse word for what the agent is doing
+  right now - `waiting`, `reading_board`, `reading_cards`, `reading_rules`,
+  `deciding`, `acting`, `thinking` or `working` - on `GET /v1/session` as
+  `activity: {state, seconds, seq}`. The driver carries it on its own
+  `GET /status` as `agentActivity`, the game server puts it on the seat
+  status, and the play UI's AI pill reads "AI (claude): reading cards"
+  instead of a flat "thinking" for the whole match. Only the word crosses:
+  no tool argument, no card name and none of the agent's prose is on that
+  wire, because the human at the other seat is reading that pill mid-game.
 
 Nothing here needs `LOG_LEVEL=debug`; that is for the wrapper's own internals.
 
