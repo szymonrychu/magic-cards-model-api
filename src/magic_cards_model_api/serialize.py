@@ -653,7 +653,11 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # immediately, and this is what a state read shows for it until
     # `POST .../decide` resumes it.
     paused = store.paused_command(game_id)
-    pending = PendingDecision.from_engine(paused[2].decision) if paused is not None else None
+    pending = (
+        PendingDecision.from_engine(paused[2].decision, store.pause_generation(game_id))
+        if paused is not None
+        else None
+    )
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
     decklists = store.decklists(game_id)
     agent_settings = store.agent_settings(game_id)

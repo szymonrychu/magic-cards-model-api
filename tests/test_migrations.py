@@ -46,6 +46,10 @@ INITIAL_REVISION = "374af1d25f73"
 #: postgres's default name for a single-column foreign key: `<table>_<col>_fkey`.
 RECORDS_FK = "records_game_id_fkey"
 
+#: The revision that was head before `games.pause_generation` was added -
+#: the state a database migrated before that column existed is stamped at.
+PAUSE_GENERATION_PREDECESSOR = "8f1c47a0b6d2"
+
 
 @contextmanager
 def _scratch_database() -> Iterator[str]:
@@ -209,6 +213,45 @@ def test_an_orphaned_record_row_is_insertable_after_the_upgrade() -> None:
                     text("SELECT count(*) FROM records WHERE game_id = 'no-such-game'")
                 ).scalar_one()
             assert count == 1
+        finally:
+            engine.dispose()
+
+
+def test_upgrade_head_adds_pause_generation_to_an_already_migrated_database() -> None:
+    """`games.pause_generation` arrives on a database that predates it, with
+    a real value for every row that already exists rather than a NULL.
+
+    Same reasoning as the foreign key above: a column added by editing an
+    already-shipped revision is a no-op on every database stamped with that
+    id, and `pause_generation` is read on every state view - a missing
+    column there is a 500 on the next read, not a subtle drift.
+    """
+    with _scratch_database() as url:
+        _alembic_to(url, PAUSE_GENERATION_PREDECESSOR)
+        engine = create_engine(url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO games (id, state, version, created_at, admin_key) "
+                        "VALUES ('old', '{}'::jsonb, 0, now(), 'k')"
+                    )
+                )
+            before = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "pause_generation" not in before
+        finally:
+            engine.dispose()
+
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            columns = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "pause_generation" in columns
+            with engine.connect() as conn:
+                value = conn.execute(
+                    text("SELECT pause_generation FROM games WHERE id = 'old'")
+                ).scalar_one()
+            assert value == 0, "a row that predates the column must start at generation 0"
         finally:
             engine.dispose()
 

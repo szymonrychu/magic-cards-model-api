@@ -395,9 +395,23 @@ class PendingDecision:
     #: *silence* would cost before it decides to stay silent.
     default_cards: tuple[str, ...] | None = None
 
+    #: Which standing question this is, from `repository.GameRepository
+    #: .pause_generation` - monotonic per game, bumped only when the pause
+    #: slot's question is replaced. A seat echoes it back as `DecideRequest
+    #: .generation` to say which question it believes it is answering, and
+    #: an answer carrying a superseded one is refused rather than applied to
+    #: whatever is standing now. Not an engine field: `from_engine` takes it
+    #: from the caller, which is `0` where there is no store to ask.
+    generation: int = 0
+
     @classmethod
-    def from_engine(cls, decision: Decision) -> PendingDecision:
+    def from_engine(cls, decision: Decision, generation: int = 0) -> PendingDecision:
+        """This question, shaped for a view. `generation` is the store's own
+        `pause_generation` for the game the question belongs to - it is not
+        an engine fact and the engine knows nothing about it, so callers pass
+        it in; `0` is what a caller with no store to ask means."""
         return cls(
+            generation=generation,
             player=decision.player,
             kind=decision.kind.value,
             prompt=decision.prompt,
@@ -431,6 +445,7 @@ class PendingDecision:
 
     def to_view(self) -> dict[str, Any]:
         return {
+            "generation": self.generation,
             "player": self.player,
             "kind": self.kind,
             "prompt": self.prompt,

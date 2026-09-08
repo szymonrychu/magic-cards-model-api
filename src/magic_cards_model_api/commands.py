@@ -560,6 +560,167 @@ def run_command_to_completion(game: Game, command: Command) -> RunResult:
     return result
 
 
+#: The command kinds whose pause means a spell or ability is part-way through
+#: *resolving* - CR 608.2g and CR 117.3b, quoted by
+#: `DecisionInProgressError`. `pass_priority` reaches a resolution through
+#: CR 117.4's "all players pass in succession"; `resolve_top` is the same
+#: resolution driven directly.
+RESOLVING_KINDS = frozenset({"pass_priority", "resolve_top"})
+
+#: The command kinds whose pause means a player is part-way through
+#: *announcing* an action - CR 601.2's steps 601.2a-i for a cast, and the
+#: same shape for every other announcement this api drives (an activation,
+#: a special action). CR 601.2i is the citation: the announcing player gets
+#: priority only "once the steps described in 601.2a-h are completed".
+ANNOUNCING_KINDS = frozenset(
+    {"cast", "activate_ability", "crew", "cycle", "suspend", "plot", "foretell", "play_land"}
+)
+
+#: The command kinds whose pause means a turn-based action has not been
+#: dealt with yet - CR 117.3a: "The active player receives priority at the
+#: beginning of most steps and phases, after any turn-based actions ... have
+#: been dealt with". `advance` pausing on CR 508.1's or CR 509.1's
+#: declaration, or on CR 514.1's cleanup discard, is exactly this.
+TURN_BASED_KINDS = frozenset({"advance"})
+
+
+def pause_is_live(
+    committed_game: Game,
+    command: Command,
+    tape: Sequence[Answer],
+    expected_pending: PendingDecision,
+) -> bool:
+    """Whether a stored pause still describes `committed_game`.
+
+    Staleness is **tested, never assumed**: `command` is replayed from the
+    committed snapshot with the stored `tape` - the very same replay
+    `resume_command`'s divergence guard runs - and the pause is live only if
+    that replay lands on the identical `PendingDecision` again. A replay that
+    completes instead, pauses somewhere else, or refuses outright (the
+    engine raising an ordinary `ValueError` because the action is no longer
+    legal at all) means the committed state has moved past the point that
+    ever asked this question, and the slot is holding a question nobody can
+    answer any more.
+
+    That distinction is the whole reason `app.py` cannot simply adopt "the
+    first pause wins": a genuinely stale pause left standing would wedge the
+    game forever, with a `pending_decision` a live seat can never resolve.
+    It also cannot simply adopt "the newest command wins", which is the
+    defect this exists to close - see `DecisionInProgressError`.
+
+    Cheap in the case that matters: this only runs while something *is*
+    stored, and a replay from a committed snapshot mutates nothing (see
+    `run_command`).
+    """
+    try:
+        guard = run_command(committed_game, command, tape)
+    except Exception:  # noqa: BLE001 - any engine refusal means "no longer live"
+        # `DecisionPending` is a `BaseException` and is caught by name inside
+        # `run_command`, so it never reaches here; an ordinary `ValueError`
+        # (or a pydantic `ValidationError`, which is one) does, and means the
+        # stored command is not even legal to attempt any more.
+        return False
+    return guard.status is RunStatus.PAUSED and guard.pending == expected_pending
+
+
+class DecisionInProgressError(RuntimeError):
+    """A command was attempted while this game is part-way through another
+    one, waiting on a decision only one seat can answer.
+
+    **The defect this closes.** `app.py`'s `_run_command` used to run every
+    fresh command against the committed snapshot with no tape and then store
+    `(command, tape, pending)` unconditionally, so any of the fourteen
+    mutating routes could overwrite a live pause that already carried
+    answers. In the game that produced this class, an opponent's autopass
+    landed 227 ms after a seat answered a fetchland's search: the pass
+    re-paused on the search it had already been given an answer for and
+    wrote `(pass_priority, (), choose_cards)` over
+    `(pass_priority, (choose_cards=SteamVents,), pay_life)`. The seat's next
+    answer was then read against the rewound slot, dispatched on its kind,
+    and completed the resolution as a decline. Nothing was corrupt, nothing
+    diverged, and no guard could see it - a deleted tape leaves no trace.
+
+    **And it was never a legal action in the first place**, which is why
+    this is a rules refusal in the engine's own words rather than a
+    transport-level lock. Nobody receives priority part-way through a
+    command:
+
+    - mid-resolution, CR 608.2g - "No other spells can normally be cast and
+      no other abilities can normally be activated during resolution" - and
+      CR 117.3b - "The active player receives priority after a spell or
+      ability (other than a mana ability) resolves";
+    - mid-announcement, CR 601.2i - the caster gets priority only "once the
+      steps described in 601.2a-h are completed";
+    - before a turn-based action has been dealt with, CR 117.3a - "The
+      active player receives priority at the beginning of most steps and
+      phases, after any turn-based actions ... have been dealt with";
+    - and generally, CR 117.1 - "which player can take actions at any given
+      time is determined by a system of priority. The player with priority
+      may cast spells, activate abilities, and take special actions."
+
+    `status_code = 409`: the same "your request is well formed, the game is
+    not in a state that accepts it" this api already means by 409
+    (`CommandDivergenceError`, `VersionConflict`, `PregameOverruled`).
+
+    Two things are deliberately NOT this error, and `app.py` handles both
+    before raising it: re-posting the *identical* command that is already
+    paused, which gets the standing question handed straight back
+    (idempotent retry - a polling client must never be pushed into
+    escalating), and conceding, which CR 104.3a permits "at any time".
+    """
+
+    status_code = 409
+
+    def __init__(
+        self, paused_command: Command, pending: PendingDecision, attempted: Command
+    ) -> None:
+        self.paused_command = paused_command
+        self.pending = pending
+        self.attempted = attempted
+        decision = pending.decision
+        message = (
+            f"{attempted.kind} cannot be taken right now: this game is part-way "
+            f"through {paused_command.kind} and is waiting on {decision.player}'s "
+            f"{decision.kind.value} choice ({decision.prompt}). "
+            f"{self._citation(paused_command.kind)} Answer that decision first "
+            "(POST .../decide, or its actions/attack and "
+            "actions/declare-blockers aliases); nothing else can happen until "
+            "it is answered."
+        )
+        super().__init__(message)
+        logger.info(message)
+
+    @staticmethod
+    def _citation(paused_kind: str) -> str:
+        """The rule that makes this refusal a rules refusal rather than a
+        lock, chosen by what the game is part-way through."""
+        if paused_kind in RESOLVING_KINDS:
+            return (
+                "CR 608.2g: no other spells can normally be cast and no other "
+                "abilities can normally be activated during resolution, and "
+                "CR 117.3b gives the active player priority only after a spell "
+                "or ability resolves - so no player has priority right now."
+            )
+        if paused_kind in ANNOUNCING_KINDS:
+            return (
+                "CR 601.2i: priority comes back only once the announcement's "
+                "own steps (CR 601.2a-h) are completed, so no player has "
+                "priority right now."
+            )
+        if paused_kind in TURN_BASED_KINDS:
+            return (
+                "CR 117.3a: the active player receives priority at the "
+                "beginning of a step or phase only after any turn-based "
+                "actions have been dealt with, so no player has priority "
+                "right now."
+            )
+        return (
+            "CR 117.1: which player can take actions is determined by a system "
+            "of priority, and no player has priority part-way through another "
+            "player's command."
+        )
+
+
 class CommandDivergenceError(RuntimeError):
     """The replay-divergence guard tripped: re-running `command` from the
     committed snapshot with the tape as it stood *before* a new answer was
