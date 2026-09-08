@@ -9,8 +9,8 @@
 // real in the URL space by 2b's T8). `apiBase` defaults to `/api`,
 // `lobbyBase` to `/api/lobby` - both origin-absolute rather than resolved
 // against `document.baseURI`: the API lives at exactly one place regardless
-// of which page path (`/`, `/g/<uuid>/`) served this script, so a leading
-// `/` stays correct once `/g/<uuid>/` addressing exists (T4) and asset
+// of which page path (`/`, `/<uuid>/`, `/g/<uuid>/`) served this script, so a
+// leading `/` stays correct once `/<uuid>/` addressing exists (T4, T7) and asset
 // requests start resolving relative to that path instead.
 //
 // M5's static frontend container mounts a ConfigMap-generated `/config.json`
