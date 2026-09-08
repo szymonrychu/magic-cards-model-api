@@ -1,0 +1,145 @@
+{
+  "active_player": "alice",
+  "allowed": null,
+  "battlefield": [
+    {
+      "abilities": [],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/6/9/6904ea20-e504-47da-95a0-08739fdde260.jpg?1783908173",
+      "card_name": "Delver of Secrets // Insectile Aberration",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000004",
+      "image": "https://cards.scryfall.io/normal/front/6/9/6904ea20-e504-47da-95a0-08739fdde260.jpg?1783908173",
+      "keywords": [],
+      "mana_cost": null,
+      "name": "Delver of Secrets",
+      "oracle_text": null,
+      "owner": "alice",
+      "power": 1,
+      "printed_type_line": "Creature \u2014 Human Wizard // Creature \u2014 Human Insect",
+      "small_image": "https://cards.scryfall.io/small/front/6/9/6904ea20-e504-47da-95a0-08739fdde260.jpg?1783908173",
+      "summoning_sick": true,
+      "tapped": false,
+      "target_refs": [],
+      "targets": [],
+      "toughness": 1,
+      "type_line": "Creature \u2014 Human Wizard",
+      "zone": "battlefield"
+    },
+    {
+      "abilities": [],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/6/9/6904ea20-e504-47da-95a0-08739fdde260.jpg?1783908173",
+      "card_name": "Delver of Secrets // Insectile Aberration",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000005",
+      "image": "https://cards.scryfall.io/normal/front/6/9/6904ea20-e504-47da-95a0-08739fdde260.jpg?1783908173",
+      "keywords": [],
+      "mana_cost": null,
+      "name": "Delver of Secrets",
+      "oracle_text": null,
+      "owner": "alice",
+      "power": 1,
+      "printed_type_line": "Creature \u2014 Human Wizard // Creature \u2014 Human Insect",
+      "small_image": "https://cards.scryfall.io/small/front/6/9/6904ea20-e504-47da-95a0-08739fdde260.jpg?1783908173",
+      "summoning_sick": true,
+      "tapped": false,
+      "target_refs": [],
+      "targets": [],
+      "toughness": 1,
+      "type_line": "Creature \u2014 Human Wizard",
+      "zone": "battlefield"
+    }
+  ],
+  "combat": {
+    "attacks": []
+  },
+  "command": [],
+  "conceded": [],
+  "drawn": false,
+  "exile": [],
+  "exile_pile": [],
+  "game_id": "00000000000000000000000000000001",
+  "graveyards": {
+    "alice": [],
+    "bob": []
+  },
+  "hands": {
+    "alice": [],
+    "bob": []
+  },
+  "log_seq": 5,
+  "losers": [],
+  "paused": true,
+  "pending_decision": {
+    "affirmative_is_legal": true,
+    "amount": 0,
+    "card_labels": [
+      "Delver of Secrets - At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
+      "Delver of Secrets - At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature."
+    ],
+    "cards": [
+      "00000000-0000-0000-0000-000000000002",
+      "00000000-0000-0000-0000-000000000003"
+    ],
+    "default_cards": null,
+    "exact": true,
+    "generation": 1,
+    "kept_label": "",
+    "kind": "order_triggers",
+    "moved_label": "",
+    "options": [],
+    "player": "alice",
+    "prompt": "order your triggered abilities on the stack, bottom of the stack first: 1. Delver of Secrets, 2. Delver of Secrets",
+    "source": null,
+    "target_maximum": null,
+    "target_minimum": 0,
+    "targets": []
+  },
+  "phase": "beginning",
+  "play_permissions": {
+    "alice": [],
+    "bob": []
+  },
+  "players": [
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 0,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "alice"
+    },
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 0,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "bob"
+    }
+  ],
+  "pregame": null,
+  "priority_holder": "alice",
+  "stack": [],
+  "step": "untap",
+  "turn_number": 1,
+  "winner": null,
+  "you": "alice"
+}

@@ -1,0 +1,354 @@
+{
+  "active_player": "alice",
+  "battlefield": [],
+  "combat": {
+    "attacks": []
+  },
+  "command": [],
+  "conceded": [],
+  "drawn": false,
+  "exile": [],
+  "exile_pile": [],
+  "game_id": "00000000000000000000000000000001",
+  "graveyards": {
+    "alice": [],
+    "bob": []
+  },
+  "hands": {
+    "alice": [
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000002",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000003",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000004",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000005",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000006",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000007",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "cast": {
+          "mana_cost": "",
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          }
+        },
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000008",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "hand"
+      }
+    ],
+    "bob": []
+  },
+  "losers": [],
+  "pending_decision": null,
+  "phase": null,
+  "play_permissions": {
+    "alice": [],
+    "bob": []
+  },
+  "players": [
+    {
+      "counters": {},
+      "decklist": "60 Forest",
+      "graveyard_count": 0,
+      "hand_count": 7,
+      "library_count": 53,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "alice"
+    },
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 7,
+      "library_count": 53,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "bob"
+    }
+  ],
+  "pregame": {
+    "awaiting_mulligan": [
+      "alice",
+      "bob"
+    ],
+    "can_mulligan": {
+      "alice": true,
+      "bob": true
+    },
+    "cards_to_bottom": {
+      "alice": 0,
+      "bob": 0
+    },
+    "hand_kept": {
+      "alice": false,
+      "bob": false
+    },
+    "mulligans_taken": {
+      "alice": 0,
+      "bob": 0
+    },
+    "opening_hand_actor": null,
+    "opening_hand_notices": [],
+    "opening_hand_options": {
+      "alice": [],
+      "bob": []
+    },
+    "step": "mulligan"
+  },
+  "priority_holder": null,
+  "stack": [],
+  "step": "mulligan",
+  "turn_number": 0,
+  "winner": null,
+  "you": "alice"
+}

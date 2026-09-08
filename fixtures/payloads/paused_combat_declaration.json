@@ -1,0 +1,198 @@
+{
+  "active_player": "alice",
+  "allowed": null,
+  "battlefield": [
+    {
+      "abilities": [
+        {
+          "cost": "{T}",
+          "index": 0,
+          "is_mana_ability": true,
+          "mana": true,
+          "mana_options": null,
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          },
+          "text": "{T}: Add {G}."
+        }
+      ],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+      "card_name": "Forest",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000002",
+      "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+      "keywords": [],
+      "mana_cost": "",
+      "name": "Forest",
+      "oracle_text": "({T}: Add {G}.)",
+      "owner": "alice",
+      "power": null,
+      "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+      "summoning_sick": false,
+      "tapped": true,
+      "target_refs": [],
+      "targets": [],
+      "toughness": null,
+      "type_line": "Basic Land \u2014 Forest",
+      "zone": "battlefield"
+    },
+    {
+      "abilities": [
+        {
+          "cost": "{T}",
+          "index": 0,
+          "is_mana_ability": true,
+          "mana": true,
+          "mana_options": null,
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          },
+          "text": "{T}: Add {R}."
+        }
+      ],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/2/a/2a844b96-6616-4c39-8f4f-5d14a3b2bd55.jpg?1785981666",
+      "card_name": "Mountain",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000003",
+      "image": "https://cards.scryfall.io/normal/front/2/a/2a844b96-6616-4c39-8f4f-5d14a3b2bd55.jpg?1785981666",
+      "keywords": [],
+      "mana_cost": "",
+      "name": "Mountain",
+      "oracle_text": "({T}: Add {R}.)",
+      "owner": "alice",
+      "power": null,
+      "small_image": "https://cards.scryfall.io/small/front/2/a/2a844b96-6616-4c39-8f4f-5d14a3b2bd55.jpg?1785981666",
+      "summoning_sick": false,
+      "tapped": true,
+      "target_refs": [],
+      "targets": [],
+      "toughness": null,
+      "type_line": "Basic Land \u2014 Mountain",
+      "zone": "battlefield"
+    },
+    {
+      "abilities": [],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/4/0/409f9b88-f03e-40b6-9883-68c14c37c0de.jpg?1783943001",
+      "card_name": "Grizzly Bears",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000004",
+      "image": "https://cards.scryfall.io/normal/front/4/0/409f9b88-f03e-40b6-9883-68c14c37c0de.jpg?1783943001",
+      "keywords": [],
+      "mana_cost": "{1}{G}",
+      "name": "Grizzly Bears",
+      "oracle_text": "",
+      "owner": "alice",
+      "power": 2,
+      "small_image": "https://cards.scryfall.io/small/front/4/0/409f9b88-f03e-40b6-9883-68c14c37c0de.jpg?1783943001",
+      "summoning_sick": false,
+      "tapped": false,
+      "target_refs": [],
+      "targets": [],
+      "toughness": 2,
+      "type_line": "Creature \u2014 Bear",
+      "zone": "battlefield"
+    }
+  ],
+  "combat": {
+    "attacks": []
+  },
+  "command": [],
+  "conceded": [],
+  "drawn": false,
+  "exile": [],
+  "exile_pile": [],
+  "game_id": "00000000000000000000000000000001",
+  "graveyards": {
+    "alice": [],
+    "bob": []
+  },
+  "hands": {
+    "alice": [],
+    "bob": []
+  },
+  "log_seq": 9,
+  "losers": [],
+  "paused": true,
+  "pending_decision": {
+    "affirmative_is_legal": true,
+    "amount": 0,
+    "card_labels": [],
+    "cards": [],
+    "default_cards": null,
+    "exact": true,
+    "generation": 1,
+    "kept_label": "",
+    "kind": "declare_attackers",
+    "moved_label": "",
+    "options": [],
+    "player": "alice",
+    "prompt": "declare attackers",
+    "source": null,
+    "target_maximum": null,
+    "target_minimum": 0,
+    "targets": []
+  },
+  "phase": "combat",
+  "play_permissions": {
+    "alice": [],
+    "bob": []
+  },
+  "players": [
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 0,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "alice"
+    },
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 0,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "bob"
+    }
+  ],
+  "pregame": null,
+  "priority_holder": "alice",
+  "stack": [],
+  "step": "beginning_of_combat",
+  "turn_number": 1,
+  "winner": null,
+  "you": "alice"
+}
