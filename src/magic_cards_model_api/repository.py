@@ -133,8 +133,18 @@ class GameRepository(Protocol):
     today's implementation; a postgres-backed one (T9) is another.
     """
 
-    def create(self, game: Game) -> str:
-        """Store `game` under a fresh id and return it."""
+    def create(self, game: Game, *, owner_user_id: str | None = None) -> str:
+        """Store `game` under a fresh id and return it.
+
+        `owner_user_id` is the OIDC subject (JWT `sub`) of whoever created
+        this game, when the request that created it carried a valid bearer
+        token - `None` (the default) for every caller that did not, which is
+        every caller today. A game with no owner is unrestricted, exactly as
+        every game was before this parameter existed: `game_access.py`'s
+        ownership gate only ever narrows access for a game that *has* an
+        owner, so an ownerless game stays reachable by uid/admin key alone,
+        the pre-existing model. See `game_access.py`'s module docstring for
+        the full authorization design and the migration story."""
         ...
 
     def reserve_slot(self, cap: int) -> str | None:
@@ -303,6 +313,20 @@ class GameRepository(Protocol):
         one."""
         ...
 
+    def owner_user_id(self, game_id: str) -> str | None:
+        """The OIDC subject that owns this game - `None` for an unknown game
+        and, just as importantly, for a known one nobody ever attributed an
+        owner to. `game_access.py`'s ownership gate treats the two
+        identically: no owner means no restriction beyond the pre-existing
+        uid/admin-key model. Set once, at `create()`, never afterward -
+        `attach()` only turns a `reserve_slot()` reservation into a live ui
+        game, it never touches ownership, which the caller already named at
+        `create()` time. There is no `register_owner`, on purpose, so
+        ownership can never be reassigned out from under a game after the
+        fact.
+        """
+        ...
+
     def created_at(self, game_id: str) -> str | None:
         """When this game was created, UTC ISO 8601 - `None` for an unknown
         game."""
@@ -442,6 +466,11 @@ class InMemoryRepository:
         self._games: dict[str, Game] = {}
         self._seats: dict[str, dict[str, str]] = {}  # game_id -> uid -> username
         self._admin_keys: dict[str, str] = {}  # game_id -> admin key
+        # game_id -> the OIDC subject that created it, only when the creating
+        # request carried a valid bearer token - absent (never `None`, just
+        # missing) for every ownerless game, matching every other optional
+        # per-game fact this store keeps beside `_games`. See `create()`.
+        self._owner_user_id: dict[str, str] = {}
         self._created_at: dict[str, str] = {}  # game_id -> UTC ISO 8601 creation time
         # game_id -> its mutation lock. Process-local by nature, and not part
         # of `GameRepository` - only `locked()` itself is.
@@ -485,11 +514,13 @@ class InMemoryRepository:
         # its own.
         self._reservations = _ReservationLedger()
 
-    def create(self, game: Game) -> str:
+    def create(self, game: Game, *, owner_user_id: str | None = None) -> str:
         game_id = uuid4().hex
         with self._lock:
             self._games[game_id] = game
             self._admin_keys[game_id] = uuid4().hex
+            if owner_user_id is not None:
+                self._owner_user_id[game_id] = owner_user_id
             self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
         return game_id
@@ -704,6 +735,10 @@ class InMemoryRepository:
         with self._lock:
             return bool(key) and self._admin_keys.get(game_id) == key
 
+    def owner_user_id(self, game_id: str) -> str | None:
+        with self._lock:
+            return self._owner_user_id.get(game_id)
+
     def register_seats(self, game_id: str, uids: dict[str, str]) -> None:
         """Record `uids` (uid -> username) as this game's seat credentials."""
         with self._lock:
@@ -740,6 +775,7 @@ class InMemoryRepository:
         with self._lock:
             self._seats.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
+            self._owner_user_id.pop(game_id, None)
             self._created_at.pop(game_id, None)
             self._locks.pop(game_id, None)
             self._paused_commands.pop(game_id, None)

@@ -256,6 +256,42 @@ def test_upgrade_head_adds_pause_generation_to_an_already_migrated_database() ->
             engine.dispose()
 
 
+def test_upgrade_head_adds_owner_user_id_to_an_already_migrated_database() -> None:
+    """`games.owner_user_id` (OIDC-based user separation) arrives on a
+    database that predates it, `NULL` for every row that already exists -
+    `game_access.py`'s ownership gate treats `NULL` as "no owner, no
+    restriction", the same as this column never existing, so backfilling
+    anything other than `NULL` here would be the actual regression."""
+    with _scratch_database() as url:
+        _alembic_to(url, "c4e91b7d2a58")  # the predecessor of this revision
+        engine = create_engine(url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO games (id, state, version, created_at, admin_key) "
+                        "VALUES ('old', '{}'::jsonb, 0, now(), 'k')"
+                    )
+                )
+            before = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "owner_user_id" not in before
+        finally:
+            engine.dispose()
+
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            columns = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "owner_user_id" in columns
+            with engine.connect() as conn:
+                value = conn.execute(
+                    text("SELECT owner_user_id FROM games WHERE id = 'old'")
+                ).scalar_one()
+            assert value is None, "a row that predates the column must start ownerless"
+        finally:
+            engine.dispose()
+
+
 def test_the_migrated_schema_matches_the_tables_the_code_defines() -> None:
     """The final schema `alembic upgrade head` produces is the schema
     `db.py`'s `metadata` describes - the definitions `repository_postgres`
