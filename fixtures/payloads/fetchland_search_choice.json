@@ -1,0 +1,185 @@
+{
+  "active_player": "alice",
+  "allowed": null,
+  "battlefield": [],
+  "combat": {
+    "attacks": []
+  },
+  "command": [],
+  "conceded": [],
+  "drawn": false,
+  "exile": [],
+  "exile_pile": [],
+  "game_id": "00000000000000000000000000000001",
+  "graveyards": {
+    "alice": [
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/4/e/4e11ea8a-f895-438d-a3b7-f070238e4161.jpg?1783911232",
+        "card_name": "Wooded Foothills",
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000005",
+        "image": "https://cards.scryfall.io/normal/front/4/e/4e11ea8a-f895-438d-a3b7-f070238e4161.jpg?1783911232",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Wooded Foothills",
+        "oracle_text": "{T}, Pay 1 life, Sacrifice this land: Search your library for a Mountain or Forest card, put it onto the battlefield, then shuffle.",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/4/e/4e11ea8a-f895-438d-a3b7-f070238e4161.jpg?1783911232",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Land",
+        "zone": "graveyard"
+      }
+    ],
+    "bob": []
+  },
+  "hands": {
+    "alice": [],
+    "bob": []
+  },
+  "log_seq": 6,
+  "losers": [],
+  "paused": true,
+  "pending_decision": {
+    "affirmative_is_legal": true,
+    "amount": 1,
+    "card_details": [
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/6/3/63e4dc07-c742-41bd-8301-861637908fd1.jpg?1784036820",
+        "card_name": "Breeding Pool",
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000002",
+        "image": "https://cards.scryfall.io/normal/front/6/3/63e4dc07-c742-41bd-8301-861637908fd1.jpg?1784036820",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Breeding Pool",
+        "oracle_text": "({T}: Add {G} or {U}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/6/3/63e4dc07-c742-41bd-8301-861637908fd1.jpg?1784036820",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Land \u2014 Forest Island",
+        "zone": "library"
+      },
+      {
+        "abilities": [],
+        "art_crop": "https://cards.scryfall.io/art_crop/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "card_name": "Forest",
+        "controller": "alice",
+        "counters": {},
+        "damage": 0,
+        "face_up": true,
+        "id": "00000000-0000-0000-0000-000000000003",
+        "image": "https://cards.scryfall.io/normal/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "keywords": [],
+        "mana_cost": "",
+        "name": "Forest",
+        "oracle_text": "({T}: Add {G}.)",
+        "owner": "alice",
+        "power": null,
+        "small_image": "https://cards.scryfall.io/small/front/d/c/dce15387-4114-4b3e-91aa-5b42b45c44ac.jpg?1785981675",
+        "summoning_sick": false,
+        "tapped": false,
+        "target_refs": [],
+        "targets": [],
+        "toughness": null,
+        "type_line": "Basic Land \u2014 Forest",
+        "zone": "library"
+      }
+    ],
+    "card_labels": [
+      "Breeding Pool",
+      "Forest"
+    ],
+    "cards": [
+      "00000000-0000-0000-0000-000000000002",
+      "00000000-0000-0000-0000-000000000003"
+    ],
+    "default_cards": [
+      "00000000-0000-0000-0000-000000000002"
+    ],
+    "exact": false,
+    "generation": 1,
+    "kept_label": "",
+    "kind": "choose_cards",
+    "moved_label": "",
+    "options": [],
+    "player": "alice",
+    "prompt": "choose up to 1 card(s) to find while searching your library",
+    "source": "Wooded Foothills",
+    "target_maximum": null,
+    "target_minimum": 0,
+    "targets": []
+  },
+  "phase": "precombat_main",
+  "play_permissions": {
+    "alice": [],
+    "bob": []
+  },
+  "players": [
+    {
+      "counters": {},
+      "graveyard_count": 1,
+      "hand_count": 0,
+      "library_count": 2,
+      "life": 19,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "alice"
+    },
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 0,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "bob"
+    }
+  ],
+  "pregame": null,
+  "priority_holder": "alice",
+  "resolved": null,
+  "stack": [
+    {
+      "controller": "alice",
+      "id": "00000000-0000-0000-0000-000000000004",
+      "kind": "ability",
+      "name": "Wooded Foothills",
+      "target_refs": [],
+      "targets": [],
+      "text": "{T}, Pay 1 life, Sacrifice this land: Search your library for a Mountain or Forest card, put it onto the battlefield, then shuffle.",
+      "zone": "stack"
+    }
+  ],
+  "step": "precombat_main",
+  "turn_number": 1,
+  "winner": null,
+  "you": "alice",
+  "zone": null
+}

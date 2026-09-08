@@ -1,0 +1,238 @@
+{
+  "active_player": "alice",
+  "battlefield": [
+    {
+      "abilities": [
+        {
+          "cost": "{T}",
+          "index": 0,
+          "is_mana_ability": true,
+          "mana": true,
+          "mana_options": null,
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          },
+          "text": "{T}: Add {C}."
+        }
+      ],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "card_name": "Wastes",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000002",
+      "image": "https://cards.scryfall.io/normal/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "keywords": [],
+      "mana_cost": "",
+      "name": "Wastes",
+      "oracle_text": "{T}: Add {C}.",
+      "owner": "alice",
+      "power": null,
+      "small_image": "https://cards.scryfall.io/small/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "summoning_sick": false,
+      "tapped": true,
+      "target_refs": [],
+      "targets": [],
+      "toughness": null,
+      "type_line": "Basic Land",
+      "zone": "battlefield"
+    },
+    {
+      "abilities": [
+        {
+          "cost": "{T}",
+          "index": 0,
+          "is_mana_ability": true,
+          "mana": true,
+          "mana_options": null,
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          },
+          "text": "{T}: Add {C}."
+        }
+      ],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "card_name": "Wastes",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000003",
+      "image": "https://cards.scryfall.io/normal/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "keywords": [],
+      "mana_cost": "",
+      "name": "Wastes",
+      "oracle_text": "{T}: Add {C}.",
+      "owner": "alice",
+      "power": null,
+      "small_image": "https://cards.scryfall.io/small/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "summoning_sick": false,
+      "tapped": true,
+      "target_refs": [],
+      "targets": [],
+      "toughness": null,
+      "type_line": "Basic Land",
+      "zone": "battlefield"
+    },
+    {
+      "abilities": [
+        {
+          "cost": "{T}",
+          "index": 0,
+          "is_mana_ability": true,
+          "mana": true,
+          "mana_options": null,
+          "needs_x": false,
+          "targeting": {
+            "division": null,
+            "maximum": 0,
+            "minimum": 0,
+            "requirements": [],
+            "targets_anything": false,
+            "understood": true
+          },
+          "text": "{T}: Add {C}."
+        }
+      ],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "card_name": "Wastes",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000004",
+      "image": "https://cards.scryfall.io/normal/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "keywords": [],
+      "mana_cost": "",
+      "name": "Wastes",
+      "oracle_text": "{T}: Add {C}.",
+      "owner": "alice",
+      "power": null,
+      "small_image": "https://cards.scryfall.io/small/front/b/a/baf8f4f2-9f25-4cd2-8d78-1041e134aeac.jpg?1783906001",
+      "summoning_sick": false,
+      "tapped": true,
+      "target_refs": [],
+      "targets": [],
+      "toughness": null,
+      "type_line": "Basic Land",
+      "zone": "battlefield"
+    }
+  ],
+  "combat": {
+    "attacks": []
+  },
+  "command": [],
+  "conceded": [],
+  "drawn": false,
+  "exile": [],
+  "exile_pile": [],
+  "game_id": "00000000000000000000000000000001",
+  "graveyards": {
+    "alice": [],
+    "bob": []
+  },
+  "hands": {
+    "alice": [],
+    "bob": []
+  },
+  "losers": [],
+  "pending_decision": null,
+  "phase": "precombat_main",
+  "play_permissions": {
+    "alice": [],
+    "bob": []
+  },
+  "players": [
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 1,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "alice"
+    },
+    {
+      "counters": {},
+      "graveyard_count": 0,
+      "hand_count": 0,
+      "library_count": 0,
+      "life": 20,
+      "mana_pool": {
+        "floating": {},
+        "snow": {}
+      },
+      "maximum_hand_size": 7,
+      "sideboard_count": 0,
+      "username": "bob"
+    }
+  ],
+  "pregame": null,
+  "priority_holder": "alice",
+  "stack": [
+    {
+      "abilities": [],
+      "art_crop": "https://cards.scryfall.io/art_crop/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+      "card_name": "Kozilek's Command",
+      "controller": "alice",
+      "counters": {},
+      "damage": 0,
+      "face_up": true,
+      "id": "00000000-0000-0000-0000-000000000005",
+      "image": "https://cards.scryfall.io/normal/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+      "keywords": [
+        "Scry"
+      ],
+      "kind": "spell",
+      "mana_cost": "{X}{C}{C}",
+      "name": "Kozilek's Command",
+      "oracle_text": "Choose two \u2014\n\u2022 Target player creates X 0/1 colorless Eldrazi Spawn creature tokens with \"Sacrifice this token: Add {C}.\"\n\u2022 Target player scries X, then draws a card.\n\u2022 Exile target creature with mana value X or less.\n\u2022 Exile up to X target cards from graveyards.",
+      "owner": "alice",
+      "power": null,
+      "small_image": "https://cards.scryfall.io/small/front/9/2/92585587-cfdc-406a-9114-4f6dd8802c37.jpg?1784634156",
+      "summoning_sick": false,
+      "tapped": false,
+      "target_refs": [
+        {
+          "id": "alice",
+          "kind": "player",
+          "name": "alice"
+        },
+        {
+          "id": "alice",
+          "kind": "player",
+          "name": "alice"
+        }
+      ],
+      "targets": [
+        "alice",
+        "alice"
+      ],
+      "toughness": null,
+      "type_line": "Kindred Instant \u2014 Eldrazi",
+      "zone": "stack"
+    }
+  ],
+  "step": "precombat_main",
+  "turn_number": 1,
+  "winner": null,
+  "you": "alice"
+}

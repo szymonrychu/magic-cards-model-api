@@ -494,6 +494,7 @@ whoever works on the repo itself.
   an `HttpApiClient` (not built by this task) taking over post-cut. The
   `ApiClient` protocol is what makes that swap cost one constructor call at
   the call site and nothing else.
+
 - **2026-09-08 - T4: `TestClient`'s `httpx` transport normalises `../`
   dot-segments in a request path before sending it - a `%2e%2e` traversal
   test is the only one that actually reaches the route's own guard.**
@@ -511,3 +512,35 @@ whoever works on the repo itself.
   confirmed live against a running server (`resp.request.url` still showed
   `/g/<id>/%2e%2e/...`, status 200, body was `index.html`'s 6005 bytes, not
   `pyproject.toml`'s 1593).
+
+- **2026-09-08 - T2: `game_id` and every `CardState`/ability `id` are the
+  only real per-run nondeterminism in a captured API payload, and neither is
+  seedable through the HTTP boundary.** `fixtures/payloads/<case>.json`
+  (`scripts/generate_payload_fixtures.py`) has to be byte-identical across
+  runs (M11: `magic-cards-frontend` pins this corpus by sha), but `game_id`
+  is a bare `uuid4().hex` (`repository.py`) and every object id is minted
+  off a random per-game `game_uid` (`ids.py`'s `uuid5(game_uid,
+  objects_created)`) - the deterministic-replay allocator only makes ids
+  reproducible *given* a fixed `game_uid`, and nothing in this api's HTTP
+  surface lets a caller supply one (unlike shuffles, which the `seed` field
+  on `/api/ui/games` does control). `canonicalize()` is the seed substitute:
+  it walks a captured payload and replaces every id-shaped string (a dashed
+  UUID or a bare 32-hex-digit one) with a placeholder numbered by first
+  appearance, so two runs that mint different random ids still write the
+  same file. Verified nothing else in `serialize.py` needs it - no
+  timestamps anywhere, and every zone this api reports is a plain list, not
+  a `set`.
+- **2026-09-08 - T2: two of the seven fixture cases reuse the existing
+  hybrid tests' own synthetic decklists rather than a real tournament
+  list.** `split_card_labels` and `mulligan_prompt` boot through `POST
+  /api/ui/games`, which needs decklist text - `test_card_split_labels.py`'s
+  `DEVOURER_DECK` (`56 Swamp\n4 Devourer of Destiny`) and
+  `test_mulligans.py`'s `PLAIN_DECK` (`60 Forest`), both real Scryfall
+  printings, same seeds. Devourer of Destiny is not a card any real Modern
+  list runs, so "a real tournament decklist with pilot and date" and "the
+  exact board the split-card-labels bug needs" cannot both be satisfied at
+  once here - and this repo's own `CLAUDE.md` scopes the real-tournament-
+  decklist rule to `magic-cards-model`'s card-rules tests, not to
+  `magic-cards-model-api`'s ordinary test practice. Reused the tests' own
+  boards rather than inventing a new one, matching the plan's own words for
+  this task ("exactly what the six hybrid UI tests need today").

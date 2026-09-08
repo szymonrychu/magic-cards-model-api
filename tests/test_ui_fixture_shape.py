@@ -1,130 +1,111 @@
-"""Pins `PendingDecision.to_view()`'s real wire shape against the
-hand-written decision fixtures `tests/test_ui_decisions.py` (and, by the same
-shape, `tests/test_ui_ribbon.py`) feed to `ui/decisions.js` under Node.
+"""2b's T2: `fixtures/payloads/<case>.json` is a generated, committed corpus -
+this is the generator's own drift test, and the guard for the shape of bug
+that made it necessary in the first place.
 
-The whole-branch review found those fixtures drifting from what
-`PendingDecision.from_engine` can actually produce: `target_minimum: None`
-and `moved_label`/`kept_label: None`, none of which the engine ever emits -
-`target_minimum` is `int = 0` and the two labels default to `""` (see
-`magic_cards_model.machines.decisions.Decision`, and
-`magic_cards_model_api.decisions.PendingDecision`'s own field defaults). A
-fixture with the wrong shape can pass a `decisions.js` test for the wrong
-reason - the code path a real `None` would hit (`pending.target_minimum ||
-0`) happens to fall back to the same value a real `0` does, so the bug was
-silent - and this is the regression guard: a real `choose_targets` decision,
-booted through the whole API stack, must carry exactly the fixture's key set
-and an `int` `target_minimum`.
+Before this task, `tests/test_ui_decisions.py`'s `MAY` fixture and its kin
+were hand-written `PendingDecision` dicts, and two of their fields drifted
+silently from what the engine actually emits: `target_minimum: None` and
+`moved_label`/`kept_label: None`, none of which `PendingDecision.to_view()`
+ever produces (`target_minimum` is an `int`, the labels default to `""` - see
+`magic_cards_model.machines.decisions.Decision` and
+`magic_cards_model_api.decisions.PendingDecision`). Nothing caught it because
+`ui/app.js`'s own `pending.target_minimum || 0` reads a real `0` and a wrong
+`None` identically - a fixture with the wrong shape passed a `decisions.js`
+test for the wrong reason.
+
+`scripts/generate_payload_fixtures.py` is the fix: every fixture in
+`fixtures/payloads/` is captured from a real board played through the real
+HTTP API, never typed by hand. This file is what keeps the committed corpus
+honest - `mise run fixtures:payloads` regenerating it is always the fix for a
+red test below, the same "one command fixes it" shape
+`test_openapi_drift.py`/`test_tools_export_drift.py` already use for their
+own committed artifacts.
 """
 
 from __future__ import annotations
 
-import threading
-import time
-from typing import Any
+import json
+from pathlib import Path
 
-from conftest import add_card, find, state
-from fastapi.testclient import TestClient
-from test_ui_decisions import MAY
-
-from magic_cards_model_api.main import app
-from magic_cards_model_api.store import store
-
-# -- copied from tests/test_decision_target_minimum.py, which does not export
-# -- these as a shared fixture (see that module's own docstring for why its
-# -- copy is a copy rather than an import) --------------------------------
+from scripts.generate_payload_fixtures import CASES, build_all, case_path, render_all
 
 
-def seats_for(client: TestClient, game_id: str) -> dict[str, str]:
-    return {name: uid for uid, name in store.seat_uids(game_id).items()}
+def test_every_case_file_is_committed() -> None:
+    missing = [name for name in CASES if not case_path(name).is_file()]
+    assert not missing, (
+        f"fixtures/payloads/ is missing {missing} - run `mise run fixtures:payloads` "
+        "and commit the result"
+    )
 
 
-def stock_devourer_board(
-    client: TestClient, game_id: str, *, uid: str | None = None
-) -> dict[str, Any]:
-    """alice: a Sol Ring and five Mountains, enough to cast Devourer of
-    Destiny ({5}{C}{C}); bob: a Grizzly Bears to be the offered target."""
-    add_card(client, game_id, "Sol Ring", "alice", "battlefield")
-    for _ in range(5):
-        add_card(client, game_id, "Mountain", "alice", "battlefield")
-    add_card(client, game_id, "Devourer of Destiny", "alice", "hand")
-    add_card(client, game_id, "Grizzly Bears", "bob", "battlefield")
-    board = state(client, game_id, uid=uid)
-    return {
-        "sol_ring": find(board["battlefield"], "Sol Ring"),
-        "mountains": [c for c in board["battlefield"] if c["name"] == "Mountain"],
-        "devourer": board["hands"]["alice"][0],
-        "bears": find(board["battlefield"], "Grizzly Bears"),
-    }
+def test_the_committed_corpus_matches_a_fresh_regeneration() -> None:
+    """The drift test proper. Red means a committed payload no longer
+    matches what the API actually emits for that case - regenerate with
+    `mise run fixtures:payloads` and commit the result; that is always the
+    whole fix."""
+    committed = {name: case_path(name).read_text() for name in CASES}
+    fresh = render_all(build_all())
+    assert fresh == committed, (
+        "fixtures/payloads/ is stale: at least one committed case no longer "
+        "matches what the live API emits. Fix: run `mise run fixtures:payloads` "
+        "and commit the regenerated files."
+    )
 
 
-def cast_devourer_in_background(
-    game_id: str, board: dict[str, Any], player: str = "alice"
-) -> threading.Thread:
-    """The cast call blocks inside `Game.ask` once the cast trigger is put on
-    the stack, so it is run on a background thread. `daemon=True` since this
-    file's own test never answers the decision, only reads the pending view."""
-    sources = [board["sol_ring"]["id"]] + [m["id"] for m in board["mountains"]]
+def test_regenerating_reproduces_the_committed_corpus_byte_for_byte(tmp_path: Path) -> None:
+    """Proves the drift test works in the OTHER direction too - and proves
+    the generator is actually deterministic, not merely stable against
+    itself in-process: given a deliberately stale file on disk, regenerating
+    it (exactly what `mise run fixtures:payloads` does) reproduces the
+    committed file back, byte for byte."""
+    name = next(iter(CASES))
+    stale = tmp_path / f"{name}.json"
+    stale.write_text(json.dumps({"stale": "fixture"}, indent=2) + "\n")
+    assert stale.read_text() != case_path(name).read_text()
 
-    def call() -> None:
-        stepping_client = TestClient(app)
-        stepping_client.post(
-            f"/api/games/{game_id}/actions/cast",
-            json={
-                "player": player,
-                "card_id": board["devourer"]["id"],
-                "mana_sources": sources,
-            },
+    regenerated = render_all(build_all())[name]
+    stale.write_text(regenerated)
+
+    assert stale.read_text() == case_path(name).read_text()
+
+
+def test_every_case_file_is_valid_json_on_disk() -> None:
+    for name in CASES:
+        json.loads(case_path(name).read_text())
+
+
+def test_generating_the_corpus_twice_is_byte_identical() -> None:
+    """The property that lets `mise run fixtures:payloads` run repeatedly
+    with a clean `git status` - each case's ids are random per run
+    (`game_id`, every `CardState`/ability id), so this is really a test of
+    `canonicalize()`, not of the engine holding still."""
+    first = render_all(build_all())
+    second = render_all(build_all())
+    assert first == second
+
+
+def test_a_hand_corrupted_fixture_is_caught() -> None:
+    """The regression this whole task exists to make impossible, reproduced
+    directly: hand-editing a committed fixture the way the reported bug
+    hand-wrote one - flipping a real value to `None` the engine would never
+    emit - must turn the drift test red. Written to a *copy*, never the real
+    committed file, and always restored: this proves the guard exists
+    without leaving a corrupted fixture behind for a real run to trip over."""
+    name = "split_card_labels"
+    path = case_path(name)
+    original = path.read_text()
+    payload = json.loads(original)
+    assert payload["pending_decision"]["target_minimum"] == 0, payload["pending_decision"]
+    payload["pending_decision"]["target_minimum"] = None
+    try:
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        committed = {n: case_path(n).read_text() for n in CASES}
+        fresh = render_all(build_all())
+        assert fresh != committed, (
+            "corrupting a committed fixture by hand did not turn the drift "
+            "test red - it is not actually guarding anything"
         )
-
-    thread = threading.Thread(target=call, daemon=True)
-    thread.start()
-    return thread
-
-
-def wait_for_pending(client: TestClient, game_id: str, uid: str, tries: int = 300) -> dict:
-    for _ in range(tries):
-        view = state(client, game_id, uid=uid)
-        if view.get("pending_decision") is not None:
-            return view
-        time.sleep(0.01)
-    raise AssertionError("no pending decision showed up in time")
-
-
-def boot_a_choose_targets_decision(client: TestClient, game_id: str) -> str:
-    """Casts Devourer of Destiny in the background so its cast trigger's
-    mandatory single-target `choose_targets` decision is pending, and
-    returns alice's own seat uid."""
-    uids = seats_for(client, game_id)
-    board = stock_devourer_board(client, game_id)
-    cast_devourer_in_background(game_id, board)
-    wait_for_pending(client, game_id, uids["alice"])
-    return uids["alice"]
-
-
-# -- the regression guard ---------------------------------------------------
-
-
-def test_a_real_choose_targets_decision_matches_the_fixtures_key_set(
-    client: TestClient, game: str
-) -> None:
-    uid = boot_a_choose_targets_decision(client, game)
-    pending = client.get(f"/api/games/{game}", params={"uid": uid}).json()["pending_decision"]
-    assert pending["kind"] == "choose_targets"
-
-    # The deciding player's own view, for a target drawn from the shared
-    # battlefield (never a hidden zone), carries no `card_details` -
-    # `visibility.redact_pending_decision` only ever adds that key from
-    # `cards`, and a `choose_targets` decision never populates `cards` at
-    # all - so the real wire shape is exactly `PendingDecision.to_view()`'s
-    # own key set, which is what `test_ui_decisions.py`'s `MAY` fixture (the
-    # base every other fixture in that file spreads from) is built to match.
-    assert set(pending.keys()) == set(MAY.keys())
-
-    # The regression itself: a hand-written `None` here used to slip past
-    # every `decisions.js` test because `pending.target_minimum || 0` reads
-    # `None` and `0` identically - the engine never emits anything but an
-    # `int`.
-    assert isinstance(pending["target_minimum"], int)
-    assert pending["target_minimum"] == 1
-    assert isinstance(pending["moved_label"], str)
-    assert isinstance(pending["kept_label"], str)
+        assert fresh[name] != committed[name]
+    finally:
+        path.write_text(original)
+    assert path.read_text() == original
