@@ -25,6 +25,7 @@ import { mountBoard } from "./render/board.js";
 import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
+import { mountReview } from "./render/review.js";
 import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./render/panels.js";
 import { loadSavedGames, saveGames, upsertSavedGame } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
@@ -990,7 +991,19 @@ export function bootTarget(urlGameId, saved) {
 async function main() {
   await loadConfig();
   store.set({ symbols: await loadSymbols(api, apiBase()) });
-  lobbyApi = mountLobby(document, store, { startGame });
+  // The post-game review, mounted before the lobby because the lobby's
+  // "Show thinking" button (only ever on a finished game - see
+  // `render/lobby.js`'s `reviewable`) opens it. Coming back from it refreshes
+  // the table, the same way leaving a game does.
+  const reviewApi = mountReview(document, {
+    onBack: () => {
+      if (lobbyApi) lobbyApi.refresh().catch((e) => console.error(e));
+    },
+  });
+  lobbyApi = mountLobby(document, store, {
+    startGame,
+    showReview: (target) => reviewApi.open(target).catch((e) => console.error(e)),
+  });
   mountBoard(document, store, {
     onHandCard,
     onPermanent,

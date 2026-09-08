@@ -120,8 +120,15 @@ function patchCards(container, cards, app, size, onClick) {
  *
  * `data-under` on the wrapper is how many cards are in the pile, so the
  * wrapper can reserve the height those offsets need; `data-tuck` on each
- * card is its depth in the pile, and `0` is the permanent itself, on top. */
-function patchStacks(container, entries, app, size, onClick) {
+ * card is its depth in the pile, and `0` is the permanent itself, on top.
+ *
+ * `decorate(el, card)` is everything about a card that is not its position
+ * in the pile - here, the live board's targeting/combat classes and its
+ * click. Exported with that seam because `render/review.js` draws the same
+ * rows from a finished game's snapshots and needs the identical geometry
+ * (the CSS is keyed on `.perm-stack[data-under]`/`.card[data-tuck]`) with
+ * none of the interaction. */
+export function patchStacks(container, entries, size, decorate) {
   patchChildren(
     container,
     entries,
@@ -139,7 +146,7 @@ function patchStacks(container, entries, app, size, onClick) {
         (child, item) => {
           child.classList.toggle("tucked", item.tuck > 0);
           child.dataset.tuck = String(item.tuck);
-          updatePermanentNode(child, item.card, app, onClick);
+          decorate(child, item.card);
         }
       );
     }
@@ -274,10 +281,11 @@ export function mountBoard(root, store, handlers) {
     const layout = boardLayout(state);
     const mine = seatRows(layout, you);
     const theirs = seatRows(layout, opp.username);
-    patchStacks(els.oppLands, theirs.lands, app, "card-md", handlers.onPermanent);
-    patchStacks(els.oppBf, theirs.main, app, "card-md", handlers.onPermanent);
-    patchStacks(els.myBf, mine.main, app, "card-md", handlers.onPermanent);
-    patchStacks(els.myLands, mine.lands, app, "card-md", handlers.onPermanent);
+    const live = (el, card) => updatePermanentNode(el, card, app, handlers.onPermanent);
+    patchStacks(els.oppLands, theirs.lands, "card-md", live);
+    patchStacks(els.oppBf, theirs.main, "card-md", live);
+    patchStacks(els.myBf, mine.main, "card-md", live);
+    patchStacks(els.myLands, mine.lands, "card-md", live);
     if (els.exile) patchExile(els.exile, layout.exile, app, handlers);
     patchCards(els.myHand, state.hands[you] || [], app, "card-lg", handlers.onHandCard);
     if (els.permittedRow) {

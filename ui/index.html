@@ -98,6 +98,18 @@
   </table>
 </section>
 
+<!-- ================================ REVIEW =============================== -->
+<!-- The post-game review (`ui/render/review.js`): what the agent said it
+     expected, and what actually happened next, turn by turn. Reachable only
+     from a finished game's "Show thinking" button in the lobby table above,
+     and refused by `GET /api/games/{id}/review` itself (409) for a game
+     still being played - a live game's plans and per-action reasoning are
+     hidden information about how a seat intends to play. -->
+<section id="review" hidden>
+  <div id="review-head"></div>
+  <div id="review-body"></div>
+</section>
+
 <!-- ================================= GAME ================================ -->
 <section id="game" hidden>
 

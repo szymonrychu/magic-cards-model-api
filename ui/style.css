@@ -859,6 +859,202 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 /* A popover item's secondary line - a cost, e.g. "Cycle {2}". */
 .popover .option .hint { display: block; font-size: 10px; margin: 0; }
 
+/* ------------------------------------------------------------ review ---- */
+
+/* The post-game review (`ui/render/review.js`). One column of turns, read
+   top to bottom; inside each turn the one element that carries the whole
+   argument - what the agent said would happen, and what happened - is two
+   columns side by side, left to right in the order they were written. The
+   left column is deliberately the quieter one and the right the louder: the
+   claim is cheap, the outcome is the evidence. */
+
+#review { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
+.review-head-inner { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.review-head-inner h1 { margin: 6px 0 0; }
+.review-head-inner button { align-self: flex-start; }
+.review-result { color: var(--good); font-size: 15px; font-weight: 600; }
+.review-counts { color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.review-lede { color: var(--ink-dim); font-size: 13px; max-width: 72ch; margin: 4px 0 0; }
+.review-loading { color: var(--ink-dim); padding: 20px 0; }
+.review-error {
+  border: 1px solid var(--warn);
+  background: rgba(232, 180, 76, 0.07);
+  border-radius: 8px;
+  padding: 14px 16px;
+  color: var(--warn);
+  max-width: 72ch;
+}
+
+.rev-turn {
+  border-top: 1px solid var(--line);
+  padding: 22px 0 6px;
+}
+.rev-turn-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 17px;
+  text-transform: capitalize;
+}
+.rev-turn-seq { color: var(--ink-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* The pairing. Two columns and a rule between them, and it stays two columns
+   until the window genuinely cannot hold them - a stacked prediction and
+   outcome is a list of two paragraphs, which is exactly the reading this
+   page exists to prevent. */
+.pairing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1.15fr);
+  gap: 0 18px;
+  align-items: stretch;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+.pairing-rule { background: var(--line-bright); }
+.pairing-before, .pairing-after { min-width: 0; }
+.pairing-label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 8px;
+}
+.pairing-label .tag {
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.8px;
+}
+.pairing-after .pairing-label .tag { background: var(--good); }
+.seq { font-variant-numeric: tabular-nums; color: var(--accent); }
+.pairing-after .seq { color: var(--good); }
+.expecting-label { font-size: 11px; color: var(--ink-faint); }
+.expecting {
+  margin: 4px 0 8px;
+  padding-left: 12px;
+  border-left: 3px solid var(--accent);
+  font-size: 15px;
+  line-height: 1.4;
+}
+.because { color: var(--ink-dim); font-size: 13px; }
+.confidence { color: var(--ink-faint); font-size: 11px; margin-top: 6px; text-transform: uppercase; }
+
+.outcome-list { margin: 0; padding-left: 20px; font-size: 13px; }
+.outcome { margin: 2px 0; }
+.outcome .seq { margin-right: 6px; font-size: 11px; }
+/* The turn marker walking forward, kept in place and in order but dropped to
+   a whisper, so the opponent's actual plays are what the eye lands on. */
+.outcome.routine { color: var(--ink-faint); font-size: 12px; }
+.outcome.refused .what { color: var(--bad); }
+.outcome-empty { color: var(--ink-dim); font-size: 13px; font-style: italic; }
+.pairing-note { color: var(--ink-faint); font-size: 11px; margin-top: 8px; }
+
+.declaration-context {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 12px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.context-line { display: flex; gap: 8px; }
+.context-label {
+  flex: 0 0 150px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding-top: 2px;
+}
+.no-declaration { color: var(--ink-faint); font-size: 12px; font-style: italic; margin: 8px 0 12px; }
+
+.frames { display: flex; flex-direction: column; gap: 2px; }
+/* A folded run of turn-marker rows: one quiet line that opens into them. */
+.frame-run { padding: 2px 0 2px 10px; border-left: 2px dotted var(--line); }
+.frame-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.frame-run-head .what { flex: 1; }
+.frame-run-body { padding-left: 10px; }
+.frame { border-left: 2px solid transparent; padding: 3px 0 3px 10px; }
+.frame.routine { opacity: 0.55; }
+.frame.refused { border-left-color: var(--bad); }
+.frame:not(.routine) { border-left-color: var(--line-bright); }
+.frame-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.frame-head .when { color: var(--ink-faint); font-size: 11px; }
+.frame-head .who { color: var(--ink); font-weight: 600; }
+.frame-head .what { color: var(--ink); }
+.frame-toggle { margin-left: auto; font-size: 11px; padding: 1px 8px; }
+.frame-refusal { font-size: 12px; color: var(--ink-dim); padding: 2px 0; }
+.frame-why { font-size: 13px; color: var(--ink); padding: 2px 0 4px; max-width: 84ch; }
+.frame-why .quiet { color: var(--ink-faint); }
+.refusal { color: var(--bad); }
+
+/* A frame's board: the same rows the live board uses (`.battlefield-row`,
+   `.hand-row`, `.perm-stack`, `.card`), at `card-sm`, so a reader sees the
+   table as it stood rather than a second, different rendering of it. */
+.review-board {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  margin: 6px 0 10px;
+  max-width: 900px;
+}
+.review-board .battlefield-row, .review-board .hand-row { min-height: 30px; }
+.review-board .info-row { padding: 3px 8px; }
+.review-middle { display: flex; flex-direction: column; gap: 3px; }
+.review-combat { font-size: 12px; color: var(--warn); padding: 2px 6px; }
+.review-board.empty { color: var(--ink-faint); font-size: 12px; }
+
+/* Written after the result was known, and set apart for exactly that reason:
+   everything above it is evidence recorded live, and this is not. */
+.reflection {
+  margin-top: 34px;
+  border: 1px dashed var(--line-bright);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  padding: 16px 18px;
+}
+.reflection h2 { font-size: 15px; }
+.reflection-label { color: var(--warn); font-size: 12px; max-width: 72ch; }
+.reflection-text {
+  margin: 10px 0 4px;
+  padding-left: 12px;
+  border-left: 3px solid var(--line-bright);
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+}
+.reflection-who { color: var(--ink-faint); font-size: 12px; }
+
+@media (max-width: 900px) {
+  .pairing { grid-template-columns: 1fr; }
+  .pairing-rule { height: 1px; margin: 12px 0; }
+}
+
 @media (max-width: 1100px) {
   /* Too narrow for a ribbon beside the board, so it goes back to a stack -
      and the turn block goes back to being a bar, since it now has the whole
