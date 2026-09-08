@@ -318,21 +318,38 @@ whoever works on the repo itself.
   `DecideRequest.generation` is optional, so every client that predates it
   keeps working - it is a guarantee a caller opts into.
 
-- **2026-09-08 - T1: giving every route a named `response_model` needed a
-  custom `APIRoute` defaulting `response_model_exclude_unset=True`, not just
-  the models themselves.** `visibility.redact_view` and a face-down card's
-  stub both work by *omitting* keys from the plain dict `serialize.py`
-  builds (`libraries`/`sideboards` popped outright, a face-down card missing
+- **2026-09-08 - T1: giving every route a named `response_model` needed
+  `response_model_exclude_unset=True` on every route, not just the models
+  themselves - and a custom `APIRoute` defaulting it app-wide does NOT work.**
+  `visibility.redact_view` and a face-down card's stub both work by
+  *omitting* keys from the plain dict `serialize.py` builds
+  (`libraries`/`sideboards` popped outright, a face-down card missing
   `type_line`/`mana_cost`/...), and dozens of existing tests assert exactly
   that absence (`"libraries" not in board`, `"decklist" not in
   blocks[theirs]`). FastAPI's default response serialisation does not
   preserve that: it fills every declared field's default back in, so a
   `GameStateView`-shaped response started carrying `"paused": false`/`"you":
   null`/`"type_line": null` keys the wire format never had, and 38 tests
-  broke on first pass. `_ExcludeUnsetRoute` in `app.py` (set as `app.router
-  .route_class`) fixes this app-wide rather than per-decorator: pydantic's
-  own "was this key in the validated input" tracking means a key genuinely
+  broke on first pass. pydantic's own "was this key in the validated input"
+  tracking (`response_model_exclude_unset=True`) fixes it: a key genuinely
   present with a `null` value (`state.controller` on an uncontrolled card)
   still survives, and only a key truly absent from the source dict is left
   out - reproducing the exact shape `serialize.py`/`visibility.py` already
   built, field for field.
+
+  A first attempt set this app-wide via a custom `_ExcludeUnsetRoute(APIRoute)`
+  (`app.router.route_class = _ExcludeUnsetRoute`, `__init__` doing
+  `kwargs.setdefault("response_model_exclude_unset", True)`) rather than
+  repeating the kwarg on every decorator - and it silently did nothing.
+  `APIRouter.get`/`.post`/etc. each declare `response_model_exclude_unset:
+  bool = False` as their own named parameter and forward it to
+  `add_api_route` **explicitly**, so by the time the route class is
+  constructed the key is already in `kwargs` (value `False`, not absent) -
+  `setdefault` never fires. Every route silently kept `exclude_unset=False`;
+  `openapi.json` was correct throughout (nothing about the *schema* depends
+  on this flag), so `mise run test`, not the drift test, is what caught it.
+  Confirmed by reading a live route's own `.response_model_exclude_unset`
+  attribute (`False`) with the custom class installed. Fixed by dropping the
+  class and passing `response_model_exclude_unset=True` explicitly on all
+  ~40 route decorators instead - repetitive, but the only form FastAPI
+  actually honours here.
