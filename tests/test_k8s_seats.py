@@ -149,7 +149,7 @@ def test_the_nine_substituted_values_appear_where_expected() -> None:
         "game_id": "g1",
         "player": "bot",
         "api_base": "http://mtg-stack.mtg-engine.svc.cluster.local:8000",
-        "agent": {"model": "opus", "effort": "max", "max_thinking_tokens": 4096},
+        "agent": {"model": "opus", "effort": "max", "maxThinkingTokens": 4096},
     }
 
     mcp_container = next(c for c in pod["initContainers"] if c["name"] == "mcp-config")
