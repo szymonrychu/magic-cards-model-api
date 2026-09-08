@@ -38,7 +38,11 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mtg} -d ${POSTGRES_DB:-mtg}"]
+      # -h 127.0.0.1 forces TCP. Without it pg_isready uses the unix socket,
+      # which the image's initdb bootstrap server also answers on - so the
+      # check passes while the real postmaster is not yet listening on 5432,
+      # and the first TCP client gets "the database system is starting up".
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-mtg} -d ${POSTGRES_DB:-mtg}"]
       interval: 2s
       timeout: 3s
       retries: 30
