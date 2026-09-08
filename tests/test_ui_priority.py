@@ -276,6 +276,64 @@ def test_pass_until_runs_through_your_own_declare_attackers_step_when_unticked()
     assert reason is None
 
 
+def test_own_unticked_attack_declaration_is_flagged_for_auto_answer() -> None:
+    """`stopReason` not stopping is not the same as the game progressing:
+    the pause is a `pending_decision`, and passing priority cannot answer a
+    `declare_attackers` question (CR 508.1 is a turn-based action, not a
+    priority action). `ownUnansweredAttackDeclaration` is the pure check
+    `app.js`'s `tickRun` uses to know when it must submit "no attackers"
+    itself to unfreeze the game - true exactly when `stopReason` would have
+    fallen through this exact pause rather than stopped for it."""
+    pending = {"player": "alice", "kind": "declare_attackers", "prompt": "Declare attackers"}
+    state = board(step="beginning_of_combat", pending_decision=pending)
+    unticked = {"mine": [], "theirs": []}
+    ticked = {"mine": ["declare_attackers"], "theirs": []}
+    assert (
+        run_module(
+            "priority.js",
+            "m.ownUnansweredAttackDeclaration(state, stops)",
+            state=state,
+            stops=unticked,
+        )
+        is True
+    )
+    assert (
+        run_module(
+            "priority.js",
+            "m.ownUnansweredAttackDeclaration(state, stops)",
+            state=state,
+            stops=ticked,
+        )
+        is False
+    )
+
+
+def test_own_unticked_attack_declaration_ignores_everything_else() -> None:
+    """False whenever the pause is not exactly this seat's own unanswered
+    `declare_attackers`: no pending decision at all, a different kind
+    (`declare_blockers`), or the same kind addressed to someone else."""
+    stops = {"mine": [], "theirs": []}
+    no_pending = board(step="beginning_of_combat", pending_decision=None)
+    wrong_kind = board(
+        step="beginning_of_combat",
+        pending_decision={"player": "alice", "kind": "declare_blockers", "prompt": "x"},
+    )
+    someone_elses = board(
+        step="beginning_of_combat",
+        pending_decision={"player": "bob", "kind": "declare_attackers", "prompt": "x"},
+    )
+    for state in (no_pending, wrong_kind, someone_elses):
+        assert (
+            run_module(
+                "priority.js",
+                "m.ownUnansweredAttackDeclaration(state, stops)",
+                state=state,
+                stops=stops,
+            )
+            is False
+        )
+
+
 def test_a_pending_declare_blockers_decision_still_stops_unconditionally() -> None:
     """Unlike `declare_attackers`, being attacked was never a tick and stays
     that way - the owner has not asked for it to become one. This drives the

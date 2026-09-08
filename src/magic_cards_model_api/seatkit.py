@@ -120,6 +120,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -643,30 +644,72 @@ def compute_wake_reason(
 NOTHING_NEW_YET = "nothing new yet - call again to check"
 
 
-def block_until_wake(seat: Seat, before: dict[str, Any] | None) -> dict[str, Any]:
-    """Check this seat's own state once, right now, and return immediately -
-    never blocks, never sleeps.
+#: Ceiling for `max_seconds` on `block_until_wake`/`pass_until` - the bound
+#: that makes bringing a server-side wait back at all safe. MCP 2026-07-28
+#: removing resumability (SEP-2577) is why the old *unbounded* wait (up to
+#: 570 seconds) was removed outright rather than merely shortened: a call
+#: that blocks holding the request open loses it outright if the underlying
+#: stream breaks mid-wait, and that risk scales with how long it sits open.
+#: This keeps the bound small - comfortably under both this seat's own
+#: game-API client timeout (`CLIENT_TIMEOUT_SECONDS`, 30s) and any
+#: transport-level read timeout a real MCP client enforces on a single tool
+#: call - so the call still always returns, on its own schedule, rather than
+#: risking the connection outliving it. A caller-requested `max_seconds`
+#: above this is silently capped, never honoured past it.
+MAX_WAIT_SECONDS = 25.0
 
-    This used to poll in a loop for up to a caller-given `max_seconds`,
-    holding one HTTP request open the whole time it waited. MCP protocol
-    revision 2026-07-28 removed resumability (SEP-2577): a tool call that
-    blocks like that loses the request outright if the underlying stream
-    breaks mid-wait, with no way for either side to recover it - a risk that
-    scales with exactly how long the call sits open, and `wait_for_priority`
-    (`mcp.py`) used to default to holding one for up to 570 seconds. So this
-    is poll-and-return instead: one state fetch, one wake-condition check,
-    one answer, always. A caller that wants to keep waiting calls again -
-    `NOTHING_NEW_YET` says so explicitly, the same way the old "timed out"
-    wake reason did, except every call gets it immediately rather than only
-    after riding out a deadline.
+#: How often a bounded wait re-checks the wake condition. Short enough that a
+#: wake condition is noticed promptly once it actually holds; long enough not
+#: to hammer the game API with a read every few milliseconds.
+WAIT_POLL_SECONDS = 1.0
 
-    Never touches `store.locked` - see the module docstring's "why this
-    cannot deadlock", which held before this change and holds more trivially
-    now: a single read cannot deadlock against anything.
+
+def block_until_wake(
+    seat: Seat, before: dict[str, Any] | None, max_seconds: float = 0.0
+) -> dict[str, Any]:
+    """Check this seat's own state, right now - and, if nothing has changed
+    yet, keep checking for up to `max_seconds` (capped at `MAX_WAIT_SECONDS`)
+    before giving up and returning `NOTHING_NEW_YET` anyway. Left at its
+    default `0.0`, this is exactly the single check-and-return it has always
+    been: never blocks, never sleeps.
+
+    This used to poll in an *unbounded* loop for up to a caller-given
+    `max_seconds` (60 by default, and an MCP client could ask for more),
+    holding one HTTP request open the whole time it waited - up to 570
+    seconds for `wait_for_priority` (`mcp.py`). MCP protocol revision
+    2026-07-28 removed resumability (SEP-2577): a tool call that blocks like
+    that loses the request outright if the underlying stream breaks
+    mid-wait, with no way for either side to recover it, so that wait was
+    removed outright rather than shortened - the module docstring's "No
+    transport-level block left to outlast" section covers the history.
+
+    That removal traded one problem for another: an agent seat with nothing
+    to do had no way to wait at all, and started busy-polling with an
+    escalating `Bash sleep` between calls instead - the exact log noise a
+    predecessor's `pass` re-issued every 1200ms forever was supposed to be
+    the last of. `max_seconds` is the bounded version of the wait that was
+    removed: it still always returns on its own, and it is capped small
+    enough that the SEP-2577 hazard stays negligible (a stream breaking
+    during a wait of at most `MAX_WAIT_SECONDS` is the same order of risk as
+    it breaking during any other single request) while giving a seat
+    something to actually sit on instead of a Bash sleep-and-retry loop it
+    has to invent for itself. A caller that needs longer than the bound just
+    calls again - `NOTHING_NEW_YET` after the bound elapses says so exactly
+    the way it always has, just later than an immediate check would.
+
+    Never touches `store.locked` even while waiting - see the module
+    docstring's "why this cannot deadlock": every iteration is an ordinary
+    read, and `time.sleep` between them holds nothing.
     """
-    state = seat.fetch_state()
-    reason = compute_wake_reason(state, before, seat.player)
-    return {"state": state, "wake_reason": reason or NOTHING_NEW_YET}
+    max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
+    deadline = time.monotonic() + max_seconds
+    while True:
+        state = seat.fetch_state()
+        reason = compute_wake_reason(state, before, seat.player)
+        remaining = deadline - time.monotonic()
+        if reason is not None or remaining <= 0:
+            return {"state": state, "wake_reason": reason or NOTHING_NEW_YET}
+        time.sleep(min(WAIT_POLL_SECONDS, remaining))
 
 
 def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
@@ -1458,10 +1501,69 @@ def pass_until(
     stop_when_you_can_attack: bool = True,
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
+    max_seconds: float = 0.0,
+) -> dict[str, Any]:
+    """`_pass_until_once` (below), optionally ridden out across a bounded wait
+    rather than handed straight back the first time it would otherwise have
+    to wait for the opponent.
+
+    Left at its default `max_seconds=0.0`, this is exactly one call to
+    `_pass_until_once` and nothing else - the poll-and-return behaviour that
+    function's own docstring describes, unchanged for every existing caller.
+    A positive `max_seconds` (capped at `MAX_WAIT_SECONDS`, the same ceiling
+    `block_until_wake` uses and for the same SEP-2577 reasoning - see its own
+    comment) retries a hand-back that is genuinely just *waiting on the
+    opponent* - `_pass_until_once` marks it `retryable` when that is what it
+    is - sleeping `WAIT_POLL_SECONDS` between attempts, until either the run
+    makes it past that wait (possibly all the way to `finished: true`) or the
+    bound runs out. `MAX_PASSES_PER_CALL`'s own hand-back is deliberately
+    never retried this way: that cap exists so the caller gets to *look at
+    the board*, and retrying it automatically would spend the whole bound
+    re-hitting the same cap instead.
+
+    The owner's problem this exists for: `wait_for_priority`'s own bounded
+    wait (`block_until_wake`) covers the space between a seat's own actions,
+    but a `pass_until` run handed back specifically because it is waiting on
+    the opponent used to have nothing to sit on either, so a seat with
+    nothing else to do reached for `Bash sleep` and a second call instead -
+    the exact log noise the owner reported. This is that same bounded wait,
+    on this tool too.
+    """
+    max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
+    deadline = time.monotonic() + max_seconds
+    kwargs: dict[str, Any] = {
+        "until_step": until_step,
+        "whose_turn": whose_turn,
+        "stop_on_stack": stop_on_stack,
+        "stop_when_attacked": stop_when_attacked,
+        "stop_when_you_can_attack": stop_when_you_can_attack,
+        "reasoning": reasoning,
+    }
+    result = _pass_until_once(seat, resume=resume, **kwargs)
+    while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
+        time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        result = _pass_until_once(seat, resume=result.get("resume"), **kwargs)
+    result.pop("retryable", None)
+    return result
+
+
+def _pass_until_once(
+    seat: Seat,
+    *,
+    until_step: str,
+    whose_turn: str = "mine",
+    stop_on_stack: bool = True,
+    stop_when_attacked: bool = True,
+    stop_when_you_can_attack: bool = True,
+    resume: dict[str, Any] | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
-    opponent, never holds the request open for a deadline.
+    opponent, never holds the request open for a deadline - `pass_until`
+    (above) is the public entry point, and the only thing that ever calls
+    this directly; its own bounded wait is what a caller who wants to wait
+    at all should reach for, not a loop around this function by hand.
 
     This used to run a deadline loop: `max_seconds` (60 by default, and an MCP
     client could ask for more) with a `time.sleep` in every branch that had
@@ -1547,13 +1649,23 @@ def pass_until(
             result["resume"] = dict(run)
         return result
 
-    def handed_back(state: dict[str, Any], reason: str) -> dict[str, Any]:
-        return answer(
+    def handed_back(
+        state: dict[str, Any], reason: str, *, retryable: bool = True
+    ) -> dict[str, Any]:
+        result = answer(
             state,
             f"{reason} - this call is not waiting for it: {passes} "
             "priorities passed so far. Call again (with `resume`) to keep going.",
             finished=False,
         )
+        # Read by `pass_until`'s own bounded-wait wrapper: `retryable` says
+        # whether this hand-back is worth automatically retrying inside that
+        # wait. Waiting on the opponent is (the default); the
+        # `MAX_PASSES_PER_CALL` cap below is not - retrying it would just
+        # spend the whole wait re-hitting the same cap instead of letting
+        # the caller look, which is the entire point of that cap.
+        result["retryable"] = retryable
+        return result
 
     while True:
         state = seat.fetch_state()
@@ -1669,6 +1781,7 @@ def pass_until(
                     f"this one call has already passed {MAX_PASSES_PER_CALL} priorities "
                     "without ever having to wait, which is more than any real stretch "
                     "of a turn needs - handing the board back so you can look at it",
+                    retryable=False,
                 )
 
             def perform_pass() -> Any:

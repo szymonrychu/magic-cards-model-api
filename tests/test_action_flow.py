@@ -308,6 +308,196 @@ def test_no_deadlock_block_until_wake_never_holds_the_game_lock(client, game, mo
     assert result["wake_reason"] == NOTHING_NEW_YET
 
 
+# -- the bounded wait (`max_seconds`) -----------------------------------------
+#
+# The owner's report: an agent seat busy-polling with `Bash sleep 2` (then 3,
+# 5, 15, 20, 25, 30 - a hand-rolled escalating backoff) between calls, because
+# poll-and-return removed the only wait the tools ever offered. This brings a
+# *bounded* one back: `max_seconds`, capped well under both `Seat`'s own
+# `CLIENT_TIMEOUT_SECONDS` (30s) and any transport-level read timeout a real
+# MCP client enforces on one tool call, so the call still always returns on
+# its own rather than risking the connection outliving it - the exact hazard
+# MCP 2026-07-28 dropping resumability (SEP-2577) made the old *unbounded*
+# wait wrong. `WAIT_POLL_SECONDS` is monkeypatched small in these tests so
+# they run fast without changing the mechanism under test.
+
+
+def test_default_max_seconds_is_still_the_single_check(client, game, monkeypatch):
+    """`max_seconds` left at its default (0.0) must behave exactly like
+    before this feature existed - a single check, returned at once - so
+    every existing caller (nothing passes `max_seconds` yet) is unaffected."""
+    seats, uids = wired_seats(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    started = time.monotonic()
+    result = block_until_wake(bob, before=None)
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0, f"took {elapsed:.2f}s - the default must not wait at all"
+    assert result["wake_reason"] == NOTHING_NEW_YET
+
+
+def test_a_wake_condition_appearing_mid_wait_is_noticed_within_max_seconds(
+    client, game, monkeypatch
+):
+    """The whole point of bringing a wait back: unlike a single-shot check,
+    this notices a wake condition that shows up *while the call is still
+    open*, rather than only on the next separate call - promptly, not only
+    once the whole bound has elapsed."""
+    import threading
+
+    from magic_cards_model_api import seatkit as seatkit_module
+
+    monkeypatch.setattr(seatkit_module, "WAIT_POLL_SECONDS", 0.05)
+    seats, uids = wired_seats(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])  # bob has no priority yet
+
+    def hand_bob_priority() -> None:
+        time.sleep(0.2)
+        client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+
+    threading.Thread(target=hand_bob_priority, daemon=True).start()
+
+    started = time.monotonic()
+    result = block_until_wake(bob, before=None, max_seconds=2.0)
+    elapsed = time.monotonic() - started
+
+    assert result["wake_reason"] != NOTHING_NEW_YET, result
+    assert "you have priority" in result["wake_reason"]
+    assert result["state"]["priority_holder"] == "bob"
+    assert 0.15 < elapsed < 1.0, (
+        f"took {elapsed:.2f}s - should notice promptly once the wake fires, "
+        "not ride out the whole max_seconds bound"
+    )
+
+
+def test_nothing_new_returns_only_once_max_seconds_has_actually_elapsed(client, game, monkeypatch):
+    """The other half: when nothing ever changes, the call still returns on
+    its own once the bound is up (never past it) - not before, or the bound
+    would be a lie, and not indefinitely, which is the whole hazard this
+    feature exists to avoid reintroducing."""
+    from magic_cards_model_api import seatkit as seatkit_module
+
+    monkeypatch.setattr(seatkit_module, "WAIT_POLL_SECONDS", 0.05)
+    seats, uids = wired_seats(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+
+    started = time.monotonic()
+    result = block_until_wake(bob, before=None, max_seconds=0.3)
+    elapsed = time.monotonic() - started
+
+    assert result["wake_reason"] == NOTHING_NEW_YET
+    assert elapsed >= 0.3, f"returned early at {elapsed:.2f}s despite nothing changing"
+    assert elapsed < 1.5, f"overshot the bound badly: {elapsed:.2f}s for max_seconds=0.3"
+
+
+def test_a_caller_requested_max_seconds_past_the_ceiling_is_capped(client, game, monkeypatch):
+    """`max_seconds` is a caller's request, not a caller's command - the
+    ceiling (`MAX_WAIT_SECONDS`) is what actually keeps this safe to bring
+    back at all, so a caller asking for more than it must not get more than
+    it, ever."""
+    from magic_cards_model_api import seatkit as seatkit_module
+
+    monkeypatch.setattr(seatkit_module, "MAX_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(seatkit_module, "WAIT_POLL_SECONDS", 0.05)
+    seats, uids = wired_seats(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+
+    started = time.monotonic()
+    result = block_until_wake(bob, before=None, max_seconds=999.0)
+    elapsed = time.monotonic() - started
+
+    assert result["wake_reason"] == NOTHING_NEW_YET
+    assert elapsed < 1.5, f"a caller-requested 999s was not capped: took {elapsed:.2f}s"
+
+
+def test_the_mcp_tool_threads_max_seconds_to_block_until_wake(client, game, monkeypatch):
+    """`mcp.wait_for_priority`'s own `max_seconds` parameter has to actually
+    reach `seatkit.block_until_wake` - spied here rather than timed again,
+    since the wait mechanics themselves are already pinned above; what is
+    new here is only that this transport passes the value through at all."""
+    from magic_cards_model_api import seatkit as seatkit_module
+
+    seen: list[float] = []
+    real = seatkit_module.block_until_wake
+
+    def spy(seat: Any, before: Any = None, max_seconds: float = 0.0) -> Any:
+        seen.append(max_seconds)
+        return real(seat, before, max_seconds=0.0)  # never actually wait in this test
+
+    monkeypatch.setattr(seatkit_module, "block_until_wake", spy)
+    seats, uids = wired_seats(monkeypatch, game)
+    server = build_server(seats)
+
+    call_mcp_tool(server, "wait_for_priority", {"player_uid": uids["alice"], "max_seconds": 7.5})
+    assert seen == [7.5]
+
+
+def test_seat_cli_wait_threads_max_seconds_to_block_until_wake(client, game, monkeypatch, capsys):
+    """The same wiring, on the `seat_cli` transport - `wait --max-seconds`.
+    `seat_cli.py` imports `block_until_wake` as a bare name (`from .seatkit
+    import ... block_until_wake`), so the spy has to replace that name in
+    `seat_cli`'s own module namespace - patching `seatkit.block_until_wake`
+    itself would not be seen by `seat_cli`'s already-bound reference."""
+    real = seat_cli.block_until_wake
+    seen: list[float] = []
+
+    def spy(seat: Any, before: Any = None, max_seconds: float = 0.0) -> Any:
+        seen.append(max_seconds)
+        return real(seat, before, max_seconds=0.0)
+
+    monkeypatch.setattr(seat_cli, "block_until_wake", spy)
+    seats, uids = wired_seats(monkeypatch, game)
+
+    seat_cli.run(["--uid", uids["alice"], "--game", game, "wait", "--max-seconds", "7.5"])
+    capsys.readouterr()
+    assert seen == [7.5]
+
+
+def test_the_mcp_tool_threads_max_seconds_to_pass_until(client, game, monkeypatch):
+    """`mcp.pass_until`'s own `max_seconds` parameter has to actually reach
+    `seatkit.pass_until` - the same spy shape as the `wait_for_priority`
+    test above."""
+    from magic_cards_model_api import seatkit as seatkit_module
+
+    seen: list[float] = []
+    real = seatkit_module.pass_until
+
+    def spy(seat: Any, *, max_seconds: float = 0.0, **kwargs: Any) -> Any:
+        seen.append(max_seconds)
+        return real(seat, max_seconds=0.0, **kwargs)  # never actually wait in this test
+
+    monkeypatch.setattr(seatkit_module, "pass_until", spy)
+    seats, uids = wired_seats(monkeypatch, game)
+    server = build_server(seats)
+
+    call_mcp_tool(
+        server,
+        "pass_until",
+        {"player_uid": uids["bob"], "step": "end_step", "max_seconds": 7.5},
+    )
+    assert seen == [7.5]
+
+
+def test_seat_cli_pass_until_threads_max_seconds_to_pass_until(client, game, monkeypatch, capsys):
+    """The same wiring, on the `seat_cli` transport - `pass-until
+    --max-seconds`. Same reason as the `wait` test above for patching
+    `seat_cli.pass_until` rather than `seatkit.pass_until`."""
+    real = seat_cli.pass_until
+    seen: list[float] = []
+
+    def spy(seat: Any, *, max_seconds: float = 0.0, **kwargs: Any) -> Any:
+        seen.append(max_seconds)
+        return real(seat, max_seconds=0.0, **kwargs)
+
+    monkeypatch.setattr(seat_cli, "pass_until", spy)
+    seats, uids = wired_seats(monkeypatch, game)
+
+    seat_cli.run(
+        ["--uid", uids["bob"], "--game", game, "pass-until", "end_step", "--max-seconds", "7.5"]
+    )
+    capsys.readouterr()
+    assert seen == [7.5]
+
+
 # -- the available-actions summary --------------------------------------------
 
 

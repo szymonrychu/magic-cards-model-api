@@ -586,6 +586,13 @@
           "name": "reasoning",
           "type": "str",
           "type_error": null
+        },
+        {
+          "default": 0.0,
+          "has_default": true,
+          "name": "max_seconds",
+          "type": "float",
+          "type_error": null
         }
       ]
     },
@@ -740,7 +747,7 @@
       ]
     },
     {
-      "docstring_first_line": "Check once whether it is your moment to act, then hand you the",
+      "docstring_first_line": "Check whether it is your moment to act, then hand you the board.",
       "name": "wait_for_priority",
       "parameters": [
         {
@@ -748,6 +755,13 @@
           "has_default": false,
           "name": "player_uid",
           "type": "str",
+          "type_error": null
+        },
+        {
+          "default": 0.0,
+          "has_default": true,
+          "name": "max_seconds",
+          "type": "float",
           "type_error": null
         }
       ]

@@ -28,8 +28,9 @@ stack or stepping the turn on, and you never need one.
 
 **`--hold` is how you take two actions in one phase.** A `cast` releases
 priority by default and checks once for your next moment to act - it does not
-wait for one (`wake_reason` may say "nothing new yet"; run the same command,
-or `wait`, again to check once more). If you mean to act again before the
+wait for one (`wake_reason` may say "nothing new yet"; run `wait
+--max-seconds 20`, which waits out that bound on the server for you rather
+than you sleeping and calling again by hand). If you mean to act again before the
 phase moves on - cast two spells, hold up an instant - pass `--hold`, or the
 phase can end between your two actions:
 
@@ -151,20 +152,23 @@ Naming the step you are standing in means its NEXT occurrence, never this one -
 what "until my upkeep" means when you say it out loud. `untap` and `cleanup`
 are not offered: nobody receives priority in either (CR 502.4, CR 514.3).
 
-This does not block either, so a long run takes several commands. Read
-`finished` in the JSON it prints:
+This can take several commands for a long run, but it does not spend your own
+turn budget waiting for one: pass `--max-seconds 20` the same way you would to
+`wait`, and it waits out that bound on the server instead of you sleeping and
+calling again by hand. Read `finished` in the JSON it prints:
 
 - `finished: true` - a real stop, and `stopped_because` names it: the
   destination is reached, something new landed on the stack, a decision is
   addressed to you, it is your own declare-attackers step, you are being
   attacked in your own declare-blockers step, a pass was refused, the game
   ended.
-- `finished: false` - it got as far as it could on its own and handed the
-  board back, because your opponent holds priority or the game is frozen on a
-  question only they can answer. **Sleep, then run it again with the answer's
-  `resume` object handed back verbatim:**
+- `finished: false` - it got as far as it could within `--max-seconds` and
+  handed the board back, because your opponent holds priority or the game is
+  frozen on a question only they can answer. **Run it again with
+  `--max-seconds` again, and the answer's `resume` object handed back
+  verbatim:**
 
-      sleep 2 && ... pass-until upkeep --resume '<the resume object>'
+      ... pass-until upkeep --max-seconds 20 --resume '<the resume object>'
 
   Dropping `--resume` does not merely lose your place: the next command
   re-stamps the "do not stop in the step this run started in" exemption onto
@@ -257,21 +261,23 @@ per priority.
 - If `pass` is refused with "you do not have priority", call `wait` again.
   That is the whole remedy - the other seat is still deciding, and nothing you
   can run moves the game for them.
-- `wait` (and every other command) checks once and returns at once -
-  poll-and-return, never a real wait. There is no `--max-seconds` on any of
-  them any more, because there is no wait for one to bound. **A `wake_reason`
-  of "nothing new yet" means sleep, then check again:**
+- `wait` and `pass-until` take `--max-seconds` (0 by default, capped at 25):
+  pass it and the command checks now, and - if nothing has changed yet -
+  keeps checking on the server for up to that bound before giving up and
+  telling you so. It always returns on its own within the bound, never holds
+  the connection open past it. **Use it instead of a bare `wait`/`pass-until`
+  plus `sleep`:**
 
-      sleep 2 && <seat_cli ...> wait
+      <seat_cli ...> wait --max-seconds 20
 
-  Two seconds is the right order of magnitude when a human is thinking on the
-  other side. Pace yourself like that every time the answer is "nothing new
-  yet" - a bare `wait` loop with no sleep in it issues back-to-back calls for
-  the whole time your opponent is deciding, which does not make them decide
-  any sooner and burns your own budget on the same answer. The old
-  `--max-seconds 30` used to do this throttling by accident, by making a
-  fruitless check cost 30 seconds inside the call; nothing does it for you
-  now.
+  is the one command that used to take two - a `sleep`, then a separate
+  `wait` call - and it is the pattern to reach for every time the answer would
+  otherwise be "nothing new yet" - a bare `wait` loop with no wait at all in
+  it issues back-to-back calls for the whole time your opponent is deciding,
+  which does not make them decide any sooner and burns your own turn budget
+  on the same answer. Leave `--max-seconds` at 0 only when you specifically
+  want the immediate poll-and-return - right after your own action, when
+  something has plausibly already changed.
 - A pending decision FREEZES the game. Answering it is the only legal move,
   and a command may return early specifically to hand you one. An unanswered
   decision times out to a default and wastes the card.

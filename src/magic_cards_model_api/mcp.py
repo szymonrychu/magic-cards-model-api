@@ -210,9 +210,10 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
-    def wait_for_priority(player_uid: str, ctx: Context | None = None) -> str | InputRequiredResult:
-        """Check once whether it is your moment to act, then hand you the
-                board - never blocks.
+    def wait_for_priority(
+        player_uid: str, max_seconds: float = 0.0, ctx: Context | None = None
+    ) -> str | InputRequiredResult:
+        """Check whether it is your moment to act, then hand you the board.
 
                 The check looks for exactly one of these, right now:
                 - a decision is waiting for you (CR 608.2d - use decide() to answer;
@@ -228,22 +229,31 @@ def build_server(seats: Seats) -> MCPServer:
                   the game will already have moved on by the time you look
                   again.
 
-        This used to poll for up to a caller-given `max_seconds` (570s by
-                default), holding one request open the whole time; that parameter is
-                gone rather than kept and documented as inert. MCP protocol revision
-                2026-07-28 removed resumability (SEP-2577), so a call that blocks like
-                that loses the request outright if the underlying stream breaks
-                mid-wait - poll-and-return instead: one check, one answer, always.
-                When nothing is new, the state's own `wake_reason` says so
-                plainly (`nothing new yet - call again to check`) rather than making
-                you wait to hear it. Every other action tool already checks the same
-                way right after it runs, so you normally do not need this
-                separately - it exists for "I have done nothing yet, is it my turn".
+        **`max_seconds`: use this instead of `Bash: sleep` between calls.**
+                Left at its default `0.0`, this checks once and returns at once,
+                exactly as it always has. Passed a positive value (capped at
+                `seatkit.MAX_WAIT_SECONDS`), and if none of the above holds yet, it
+                keeps checking on the server for up to that long before giving up -
+                still always returns on its own, still never holds the connection
+                open past the bound (MCP 2026-07-28 removed resumability, SEP-2577
+                - the reason the *unbounded* version of this wait was removed
+                outright rather than merely shortened; this is the bounded
+                replacement, not that wait brought back). Ask for a wait here
+                rather than sleeping in `Bash` and calling again: that is a whole
+                extra tool call and turn spent on exactly what this one parameter
+                already does for you.
+
+                When nothing is new (whether you asked for `max_seconds` or not),
+                the state's own `wake_reason` says so plainly (`nothing new yet -
+                call again to check`). Every other action tool already checks the
+                same way right after it runs, so you normally do not need this
+                separately - it exists for "I have done nothing yet, is it my
+                turn", and for the wait itself when the answer is "not yet".
         """
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        woken = seatkit.block_until_wake(seat, before=None)
+        woken = seatkit.block_until_wake(seat, before=None, max_seconds=max_seconds)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         return _tool_result(seat, woken["state"], ctx.protocol_version if ctx is not None else None)
 
@@ -1208,6 +1218,7 @@ def build_server(seats: Seats) -> MCPServer:
         stop_when_attacked: bool = True,
         stop_when_you_can_attack: bool = True,
         reasoning: str = "",
+        max_seconds: float = 0.0,
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Keep passing priority - one `pass` after another, automatically -
@@ -1233,11 +1244,21 @@ def build_server(seats: Seats) -> MCPServer:
         passes a whole turn round to your next one, which is what "until my
         upkeep" means when you say it out loud.
 
-        **It does not block.** It passes every priority you currently hold -
-        one after another, with no waiting between them, each paid for by a
-        pass that already went through - and returns the moment it would
-        otherwise have to wait for your opponent. It never sleeps and never
-        sits on a deadline.
+        It passes every priority you currently hold - one after another, with
+        no waiting between them, each paid for by a pass that already went
+        through - and would otherwise return the moment it has to wait for
+        your opponent. **`max_seconds` is where that wait can actually happen
+        now, bounded**: left at its default `0.0`, this returns immediately
+        the moment it would have to wait, exactly as it always has. Passed a
+        positive value (capped at `seatkit.MAX_WAIT_SECONDS`), a hand-back
+        that is genuinely just waiting on the opponent is retried on the
+        server for up to that long before giving up - so a stretch that used
+        to need a `Bash sleep` plus a second call with `resume` can often
+        finish, or get further, in one call. It still always returns on its
+        own, never past the bound (the same SEP-2577 reasoning
+        `wait_for_priority`'s own `max_seconds` explains - MCP 2026-07-28
+        removed resumability, so nothing here holds a connection open
+        indefinitely).
 
         `finished` says which kind of answer you got:
 
@@ -1247,14 +1268,15 @@ def build_server(seats: Seats) -> MCPServer:
           landed on the stack; it is your own declare-attackers step; you are
           being attacked and it is your declare-blockers step; a pass was
           refused; the game ended.
-        - `finished: false` - the run got as far as it could on its own and
-          handed the board back, because your opponent holds priority or the
-          game is frozen on a question only they can answer. The answer carries
-          a `resume` token; **pass it back verbatim as `resume` on your next
-          call**, and the run continues as one run. Without it the next call
-          starts a fresh run stamped where you are standing right now, which
-          would make it skip the very combat step it is supposed to stop you at
-          (the exemption for "the step the run began in" - see below).
+        - `finished: false` - the run got as far as it could (within
+          `max_seconds`, if you gave one) and handed the board back, because
+          your opponent holds priority or the game is frozen on a question
+          only they can answer. The answer carries a `resume` token; **pass it
+          back verbatim as `resume` on your next call, with `max_seconds`
+          again**, and the run continues as one run. Without `resume` the next
+          call starts a fresh run stamped where you are standing right now,
+          which would make it skip the very combat step it is supposed to stop
+          you at (the exemption for "the step the run began in" - see below).
 
         `passes` counts the priorities it actually gave up, in this call.
 
@@ -1361,6 +1383,7 @@ def build_server(seats: Seats) -> MCPServer:
                 stop_when_you_can_attack=stop_when_you_can_attack,
                 resume=resumed,
                 reasoning=reasoning or None,
+                max_seconds=max_seconds,
             ),
             ctx.protocol_version if ctx is not None else None,
         )

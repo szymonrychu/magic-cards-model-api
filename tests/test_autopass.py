@@ -872,6 +872,137 @@ def test_a_run_returns_promptly_even_though_the_opponent_never_acts(client, game
     assert result["state"]["priority_holder"] == "bob"
 
 
+# -- the bounded wait (`max_seconds`) -----------------------------------------
+#
+# The owner's report: an agent seat busy-polling with `Bash sleep` between
+# `pass_until` calls, because a run that hands the board back for the
+# opponent had nothing to sit on but a hand-rolled sleep-then-call-again loop.
+# `max_seconds` (capped at `seatkit.MAX_WAIT_SECONDS`) lets one call ride out
+# that wait itself instead - `WAIT_POLL_SECONDS` is monkeypatched small here
+# so the tests run fast without changing the mechanism under test.
+
+
+def test_max_seconds_left_at_zero_still_hands_back_immediately(client, game, monkeypatch):
+    """The default (`max_seconds=0.0`) must behave exactly like the existing,
+    unbounded-wait-free `pass_until` always has - `test_a_run_with_nothing_
+    to_pass_hands_the_board_straight_back` above, restated to pin that adding
+    the parameter did not change what every existing caller (nothing passes
+    it yet) gets."""
+    seats, uids = wired(monkeypatch, game)
+    bob = seats.seat_for(uids["bob"])
+    set_step(client, game, "precombat_main")
+
+    started = time.monotonic()
+    result = pass_until(bob, until_step="end_step", whose_turn="mine")
+    elapsed = time.monotonic() - started
+
+    assert elapsed < MAX_CALL_SECONDS
+    assert result["finished"] is False
+    assert "you do not hold priority" in result["stopped_because"]
+
+
+def test_max_seconds_lets_one_call_ride_out_the_opponents_turn(client, game, monkeypatch):
+    """The owner's ask, proven with a real opponent on a real thread: without
+    `max_seconds`, a run that must wait for bob hands the board back and
+    needs a separate call once he acts (`test_a_run_returns_promptly_even_
+    though_the_opponent_never_acts` above, with no `Opponent` thread, is the
+    same shape for the no-progress case). With `max_seconds` and a real
+    `Opponent` actually passing on the other side, one call rides out the
+    wait itself and reaches the destination without a second call."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    with Opponent(game, "bob"):
+        started = time.monotonic()
+        result = pass_until(
+            alice,
+            until_step="postcombat_main",
+            whose_turn="mine",
+            stop_when_you_can_attack=False,
+            max_seconds=5.0,
+        )
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, f"took {elapsed:.1f}s - should finish well inside the 5.0s bound"
+    assert result["finished"] is True, (
+        f"one bounded call, with the opponent really acting, should reach the "
+        f"destination without a second call: {result}"
+    )
+    assert "reached" in result["stopped_because"], result["stopped_because"]
+
+
+def test_max_seconds_still_hands_back_once_the_bound_runs_out(client, game, monkeypatch):
+    """The other half: bounded, not indefinite. No `Opponent` thread here -
+    bob never acts - so the call must give up once `max_seconds` elapses and
+    hand back exactly as it always has, just later."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    started = time.monotonic()
+    result = pass_until(
+        alice,
+        until_step="postcombat_main",
+        whose_turn="mine",
+        stop_when_you_can_attack=False,
+        max_seconds=0.4,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result["finished"] is False
+    assert elapsed >= 0.4, f"gave up early at {elapsed:.2f}s"
+    assert elapsed < 2.0, f"overshot the bound badly: {elapsed:.2f}s for max_seconds=0.4"
+    assert "resume" in result
+
+
+def test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait(monkeypatch):
+    """`MAX_PASSES_PER_CALL` hands the board back so the caller can look at
+    it - a work cap, not a wait - and marks its own answer `retryable:
+    False` (`handed_back`'s own comment) for exactly this reason: `max_seconds`
+    must not swallow that and spin the same call over and over on its own.
+
+    `_pass_until_once` (the one-shot logic `pass_until` wraps) is stubbed
+    here rather than driven through a real game: what is under test is the
+    wrapper's own retry decision, not any particular reason a hand-back can
+    have, and a fake makes "exactly one non-retryable answer, nothing else"
+    deterministic instead of hoping a live opponent never resolves it, which
+    is exactly the class of test the no-mocks rule (engine-only) does not
+    reach - this is the API's own harness code, not a card-rules test."""
+    calls: list[Any] = []
+
+    def fake_once(seat: Any, *, resume: Any = None, **kwargs: Any) -> dict[str, Any]:
+        calls.append(resume)
+        return {
+            "stopped_because": "capped",
+            "passes": 1,
+            "finished": False,
+            "until": {"step": "postcombat_main", "whose_turn": "mine"},
+            "state": {},
+            "available_actions": {},
+            "resume": {"step": "postcombat_main"},
+            "retryable": False,
+        }
+
+    monkeypatch.setattr(seatkit, "_pass_until_once", fake_once)
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.01)
+
+    started = time.monotonic()
+    result = pass_until(object(), until_step="postcombat_main", max_seconds=2.0)
+    elapsed = time.monotonic() - started
+
+    assert result["finished"] is False
+    assert len(calls) == 1, "a non-retryable hand-back must not be retried"
+    assert elapsed < 0.5, f"took {elapsed:.2f}s - must return at once, not ride out max_seconds"
+    assert "retryable" not in result, (
+        "the internal retry marker must not leak into the public answer"
+    )
+
+
 def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, game, monkeypatch):
     """What the `resume` token is for, and why `pass_until` cannot simply
     re-stamp itself on every call.

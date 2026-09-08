@@ -268,6 +268,191 @@ def test_declare_no_blockers_sends_an_empty_block_declaration() -> None:
     assert result["combatDraft"] == {}, "a declared block (even 'none') clears the draft"
 
 
+# -- tickRun() / unticking your own declare_attackers must not just fail to --
+# -- stop, it must actually unfreeze the game -------------------------------
+#
+# `stopReason` not stopping for an unticked `declare_attackers` pause is not
+# the same as the game progressing: the pause is a `pending_decision`
+# (CR 508.1 is a turn-based action, not a priority move), so passing
+# priority cannot answer it and nothing else clears it on its own.
+# `tickRun` is exported test-only, alongside `store`/`declareNoAttackers`
+# above, and driven here the same way: a real, awaited call against the
+# stubbed `fetch`.
+
+
+def test_ticking_run_declares_no_attackers_when_the_tick_is_off() -> None:
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            run: { verb: "pass_until", startedTurn: 1, startedStep: "upkeep",
+                   startedActive: "alice", knownStackIds: [], passes: 0, stillAtStart: false },
+            stops: { mine: [], theirs: [], onStack: true },
+            state: {
+              you: "alice", step: "beginning_of_combat", turn_number: 1,
+              active_player: "alice", priority_holder: "bob", battlefield: [],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: {
+                player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+              },
+            },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls, run: m.store.get().run };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    # `declareNoAttackers` calls `poll()` when it is done, which naturally
+    # continues the run (`poll()`'s own `tickRun()` call) into whatever the
+    # stub's canned post-declaration state offers next - a real `pass-priority`
+    # is expected here, not asserted against; what this test pins is that the
+    # *first* thing that happens is the attack declaration, with the right
+    # body, exactly once.
+    attacks = [p for p in posts if p["path"] == "/api/games/g1/actions/attack?uid=u1"]
+    assert len(attacks) == 1, result["calls"]
+    assert posts[0] is attacks[0], "declaring no attackers must be the first thing tickRun does"
+    assert attacks[0]["body"] == {"attackers": []}
+    assert result["run"] is not None, (
+        "declaring no attackers is not itself a stop - the run stays armed"
+    )
+
+
+def test_ticking_run_does_not_declare_no_attackers_when_the_tick_is_on() -> None:
+    """The pair to the test above: ticked, the pause is an ordinary checked
+    stop (`stopReason`'s own job) and `tickRun` must not race ahead and
+    answer it on the seat's behalf."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            run: { verb: "pass_until", startedTurn: 1, startedStep: "upkeep",
+                   startedActive: "alice", knownStackIds: [], passes: 0, stillAtStart: false },
+            stops: { mine: ["declare_attackers"], theirs: [], onStack: true },
+            state: {
+              you: "alice", step: "beginning_of_combat", turn_number: 1,
+              active_player: "alice", priority_holder: "bob", battlefield: [],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: {
+                player: "alice", kind: "declare_attackers", prompt: "Declare attackers",
+              },
+            },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls, run: m.store.get().run };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    assert posts == [], result["calls"]
+
+
+def test_ticking_run_never_passes_while_a_decision_belongs_to_someone_else() -> None:
+    """The other half of the owner's overrule: `stopReason` no longer halts
+    the run for a decision addressed to bob, but that must never be read as
+    "so pass on the strength of whatever `priority_holder` says" - a pause
+    rolls the committed game back to before the attempt, so `priority_holder`
+    can still read as alice's own even while the pause is on bob's decision
+    (set that way here, deliberately, to prove the guard does not depend on
+    it). Passing anyway would not merely fail: it crosses the same unanswered
+    question, pauses too, and `app.py`'s `_run_command` stores that second
+    pause over the first - clobbering the stored pause and discarding the
+    question bob was about to answer. `tickRun` must not attempt it."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            run: { verb: "pass_until", startedTurn: 1, startedStep: "upkeep",
+                   startedActive: "alice", knownStackIds: [], passes: 0, stillAtStart: false },
+            stops: { mine: [], theirs: [], onStack: true },
+            state: {
+              you: "alice", step: "draw", turn_number: 2,
+              active_player: "bob", priority_holder: "alice", battlefield: [],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: { player: "bob", kind: "may", prompt: "Pay 2 life?" },
+            },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls, run: m.store.get().run };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    assert posts == [], result["calls"]
+    assert result["run"] is not None, "not this run's decision to end its own run over"
+
+
+def test_ticking_run_never_ends_over_a_pass_that_paused_instead_of_completing() -> None:
+    """The owner's report, verbatim: "pass_until is also interrupted on
+    opponent's attack step" - and the exact way it happened, found by
+    driving the real, shipped `ui/priority.js` and `ui/app.js` against a
+    live server (see the session's own manual verification): this seat's
+    priority round runs on the opponent's turn too, so a `pass-priority`
+    this seat sends can itself be the one that crosses into the OPPONENT's
+    own `declare_attackers`/`declare_blockers` turn-based action (CR 508.1,
+    CR 509.1) - not a `pending_decision` `stopReason` ever saw beforehand,
+    since it did not exist until this very pass triggered it. The server
+    answers `{allowed: null, paused: true, paused_on: {...}}`: the pass
+    never completed, the committed game rolled back to before the attempt
+    (`commands.py`), and the old code's `if (!out.ok) store.set({run:
+    null})` cleared the run over it regardless of whose decision it was -
+    ending the run on exactly "the opponent's attack step", matching the
+    owner's report. A paused pass must never end the run, own decision or
+    the opponent's: the very next tick sees the fresh pause through the
+    normal checks (`ownUnansweredAttackDeclaration` for this seat's own
+    combat, or the "someone else's decision" guard for anyone else's)."""
+    result = run_app(
+        """
+        globalThis.__calls = [];
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        globalThis.fetch = (path, opts) => {
+          const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
+          globalThis.__calls.push({ method: opts ? opts.method : "GET", path, body });
+          if (opts && opts.method === "POST" && path.includes("pass-priority")) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                allowed: null, paused: true,
+                paused_on: { player: "bob", kind: "declare_attackers" },
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            run: { verb: "pass_until", startedTurn: 1, startedStep: "upkeep",
+                   startedActive: "alice", knownStackIds: [], passes: 0, stillAtStart: false },
+            stops: { mine: [], theirs: [], onStack: true },
+            state: {
+              you: "alice", step: "draw", turn_number: 2,
+              active_player: "bob", priority_holder: "alice", battlefield: [],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+              pending_decision: null,
+            },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls, run: m.store.get().run };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    assert len(posts) == 1, result["calls"]
+    assert posts[0]["path"] == "/api/games/g1/actions/pass-priority"
+    assert result["run"] is not None, "a paused pass must not end the run"
+    assert result["run"]["passes"] == 0, "a pass that never completed must not be recorded as one"
+
+
 # -- fire() / keep priority after casting -------------------------------------
 #
 # The owner's newest default: casting a spell auto-passes priority to the

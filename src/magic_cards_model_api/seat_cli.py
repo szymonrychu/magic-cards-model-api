@@ -121,11 +121,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("state", help="the game as you may see it, right now")
 
-    sub.add_parser(
+    wait_cmd = sub.add_parser(
         "wait",
         help=(
-            "check once whether it is your moment to act, and return - this "
-            "never waits, so run it again to keep checking"
+            "check whether it is your moment to act, and return - checks once "
+            "and returns at once by default; pass --max-seconds to wait, "
+            "bounded, instead of sleeping and calling again by hand"
+        ),
+    )
+    wait_cmd.add_argument(
+        "--max-seconds",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "if nothing has changed yet, keep checking on the server for up "
+            "to this many seconds (capped at seatkit.MAX_WAIT_SECONDS) before "
+            "giving up and printing 'nothing new yet' anyway - the command "
+            "still always returns on its own, never past the bound. Use this "
+            "instead of `sleep N && ... wait`: it is the one call that used "
+            "to take two. Left at 0 (the default), this is the plain "
+            "check-and-return it has always been"
         ),
     )
 
@@ -133,14 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
         """The one flag every action shares: keep priority instead of
         releasing it.
 
-        There is no companion `--max-seconds` any more, and this function is
-        no longer called `blocking`, because nothing here blocks: an action
-        performs, releases priority unless `--hold`, then checks once for
-        this seat's next moment to act and prints what it saw
-        (`seatkit.run_action`, poll-and-return). The old flag bounded a wait
-        that no longer exists, and its help text ("bound on the block that
-        follows the action") was the last place still telling a seat
-        otherwise.
+        `--max-seconds` is not this flag's business - it lives only on `wait`
+        and `pass-until`, the two commands that can genuinely have nothing to
+        do but wait for the opponent. An action performs, releases priority
+        unless `--hold`, then checks once for this seat's next moment to act
+        and prints what it saw (`seatkit.run_action`, poll-and-return) - that
+        one check is instant either way.
         """
         command.add_argument(
             "--hold",
@@ -500,6 +514,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     until.add_argument(
+        "--max-seconds",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "if this call would otherwise have to hand the board back waiting "
+            "for the opponent, keep trying for up to this many seconds "
+            "(capped at seatkit.MAX_WAIT_SECONDS) before giving up - use this "
+            "instead of `sleep N && ... pass-until ... --resume ...`. Left at "
+            "0 (the default), this returns the moment it would have to wait, "
+            "exactly as it always has"
+        ),
+    )
+    until.add_argument(
         "--no-stop-when-you-can-attack",
         action="store_true",
         help=(
@@ -643,7 +671,7 @@ def run(argv: list[str] | None = None) -> int:
         print(json.dumps(current, indent=1, sort_keys=True))
         note(current)
     elif args.command == "wait":
-        woken = block_until_wake(seat, before=None)
+        woken = block_until_wake(seat, before=None, max_seconds=args.max_seconds)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         print(json.dumps(woken["state"], indent=1, sort_keys=True))
         note(woken["state"])
@@ -769,6 +797,7 @@ def run(argv: list[str] | None = None) -> int:
             stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
             resume=json.loads(args.resume) if args.resume else None,
             reasoning=args.reasoning,
+            max_seconds=args.max_seconds,
         )
         print(json.dumps(result, indent=1, sort_keys=True))
         note(result.get("state"))
