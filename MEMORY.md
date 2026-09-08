@@ -451,10 +451,7 @@ whoever works on the repo itself.
   this, since a dict literal's later `**answer` (now correctly carrying
   `allowed: False` for a non-2xx) overrides the initial `True`; neither
   needed editing.
-<<<<<<< HEAD
 
-=======
->>>>>>> 2b-t8-route-namespaces
 - **2026-09-08 - T7: a seat's `api_base` was two request-derived call sites,
   not one.** The plan named `ai_seat_api.py:29`'s `_api_base(request)`, but
   `decks_api.start_game_from_decklists` imported and called the same helper
@@ -516,7 +513,6 @@ whoever works on the repo itself.
   `/g/<id>/%2e%2e/...`, status 200, body was `index.html`'s 6005 bytes, not
   `pyproject.toml`'s 1593).
 
-<<<<<<< HEAD
 - **2026-09-08 - T2: `game_id` and every `CardState`/ability `id` are the
   only real per-run nondeterminism in a captured API payload, and neither is
   seedable through the HTTP boundary.** `fixtures/payloads/<case>.json`
@@ -548,7 +544,6 @@ whoever works on the repo itself.
   `magic-cards-model-api`'s ordinary test practice. Reused the tests' own
   boards rather than inventing a new one, matching the plan's own words for
   this task ("exactly what the six hybrid UI tests need today").
-=======
 - **2026-09-08 - MEMORY.md itself carried an unresolved git conflict marker
   (`<<<<<<< HEAD` / `=======` / `>>>>>>> 2b-t4-game-addressing` around the T7/
   T5/T4 entries) from a prior merge that landed both sides' work but never
@@ -620,4 +615,3 @@ whoever works on the repo itself.
   narrowing this task accepted rather than an accident; nothing in `ui/`
   displayed it beyond the boolean "over" state. `ui/lobby_model.js`,
   `ui/render/lobby.js`, and their Node tests moved with it.
->>>>>>> 2b-t8-route-namespaces
