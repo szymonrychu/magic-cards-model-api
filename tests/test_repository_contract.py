@@ -8,17 +8,20 @@ here talks to `repo` through `GameRepository`'s public surface only - never a
 private attribute - so it is exactly as valid against a database as against
 a dict.
 
-`create_if_under`'s atomicity gets its own section: two documented races
-(`repository.py`'s `create_if_under` docstring) that a naive postgres
-implementation could easily reopen by doing the cap check and the insert as
-separate statements. The concurrency tests below pin both from outside,
-using only `GameRepository` calls - so they hold regardless of what a given
+`reserve_slot`/`attach`/`release`'s atomicity gets its own section (M8): two
+documented races (`repository.py`'s `reserve_slot` docstring, the same two
+`create_if_under`'s docstring used to describe before it was deleted) that a
+naive postgres implementation could easily reopen by doing the cap check
+and the reservation as separate statements, or by leaking a slot when a
+create fails. The concurrency tests below pin both from outside, using only
+`GameRepository` calls - so they hold regardless of what a given
 implementation uses internally to enforce them.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 from conftest import require_postgres_database_url
@@ -365,53 +368,150 @@ def test_live_ui_games_excludes_a_finished_game(repo: GameRepository) -> None:
 
 
 # ---------------------------------------------------------------------------
-# create_if_under - the atomic MAX_LIVE_GAMES cap check
+# reserve_slot / attach / release - the atomic MAX_LIVE_GAMES cap check (M8)
+#
+# `create_if_under` used to do the count-check and the create as one locked
+# step. The reservation splits that in two: `reserve_slot` claims a slot -
+# counting live ui games *and* every other outstanding reservation - before
+# the caller does any (possibly slow, possibly failing) work to create the
+# game; `attach` turns a successful creation into a real live game; `release`
+# gives the slot back on failure. Every test below drives the full sequence
+# through `GameRepository`'s public surface only, exactly like the rest of
+# this contract suite.
 # ---------------------------------------------------------------------------
 
 
-def test_create_if_under_succeeds_below_the_cap(repo: GameRepository) -> None:
-    game_id = repo.create_if_under(_real_game(), cap=1)
+def _reserve_and_attach(repo: GameRepository, cap: int) -> str | None:
+    """`reserve_slot` then `create`+`attach` - the happy path a real caller
+    (`start_game_from_decklists`) drives, collapsed to one call for tests
+    that only care about the resulting game id, the same shape
+    `create_if_under` used to hand back directly."""
+    token = repo.reserve_slot(cap)
+    if token is None:
+        return None
+    game_id = repo.create(_real_game())
+    repo.attach(token, game_id)
+    return game_id
+
+
+def test_reserve_slot_succeeds_below_the_cap(repo: GameRepository) -> None:
+    token = repo.reserve_slot(1)
+
+    assert token is not None
+
+
+def test_reserve_and_attach_creates_a_gettable_game(repo: GameRepository) -> None:
+    game_id = _reserve_and_attach(repo, cap=1)
 
     assert game_id is not None
     assert repo.get(game_id) is not None
 
 
-def test_create_if_under_refuses_once_the_cap_is_reached(repo: GameRepository) -> None:
-    first = repo.create_if_under(_real_game(), cap=1)
+def test_reserve_slot_refuses_once_the_cap_is_reached(repo: GameRepository) -> None:
+    first = _reserve_and_attach(repo, cap=1)
     assert first is not None
 
-    second = repo.create_if_under(_real_game(), cap=1)
+    second = repo.reserve_slot(1)
 
     assert second is None
     assert len(repo.live_ui_games()) == 1
 
 
-def test_create_if_under_ignores_a_finished_game_against_the_cap(repo: GameRepository) -> None:
-    first_id = repo.create_if_under(_real_game(), cap=1)
+def test_a_reservation_counts_against_the_cap_before_it_is_attached(
+    repo: GameRepository,
+) -> None:
+    """Reserve-then-create's whole point: the slot is spoken for the moment
+    `reserve_slot` returns a token, not once `attach` runs - a second caller
+    racing the gap between them must still be refused, closing the same
+    window `create_if_under`'s docstring used to describe as one lock around
+    "both the count and the create"."""
+    token = repo.reserve_slot(1)
+    assert token is not None
+
+    second = repo.reserve_slot(1)
+
+    assert second is None
+
+
+def test_reserve_slot_ignores_a_finished_game_against_the_cap(repo: GameRepository) -> None:
+    first_id = _reserve_and_attach(repo, cap=1)
     game = repo.get(first_id)
     assert game is not None
     game.winner = "you"  # ended - no longer counts against the cap
 
-    second = repo.create_if_under(_real_game(), cap=1)
+    second = repo.reserve_slot(1)
 
     assert second is not None
 
 
-def test_create_if_under_with_ui_game_false_does_not_register_it(repo: GameRepository) -> None:
-    game_id = repo.create_if_under(_real_game(), cap=5, ui_game=False)
+def test_attach_registers_the_game_as_a_live_ui_game(repo: GameRepository) -> None:
+    token = repo.reserve_slot(5)
+    assert token is not None
+    game_id = repo.create(_real_game())
 
-    assert game_id is not None
-    assert game_id not in repo.ui_games()
+    repo.attach(token, game_id)
+
+    assert game_id in repo.ui_games()
+    assert game_id in repo.live_ui_games()
 
 
-def test_create_if_under_a_successful_call_is_fully_visible_on_return(
-    repo: GameRepository,
-) -> None:
-    """Pins that a successful `create_if_under` leaves no partially-visible
-    state: by the time it returns, the game is gettable, has an admin key,
-    is lockable, and (with the default `ui_game=True`) already counts in
-    `ui_games`/`live_ui_games` - never some of these without the others."""
-    game_id = repo.create_if_under(_real_game(), cap=5)
+def test_attach_raises_key_error_for_an_unknown_token(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    with pytest.raises(KeyError):
+        repo.attach("not-a-real-token", game_id)
+
+
+def test_attach_raises_key_error_for_an_already_attached_token(repo: GameRepository) -> None:
+    token = repo.reserve_slot(5)
+    assert token is not None
+    game_id = repo.create(_real_game())
+    repo.attach(token, game_id)
+
+    with pytest.raises(KeyError):
+        repo.attach(token, repo.create(_real_game()))
+
+
+def test_release_frees_the_slot_for_a_later_reservation(repo: GameRepository) -> None:
+    """The failure-path race M8 exists to close: a caller reserves, game
+    creation then fails or raises before `attach`, and `release` - called
+    from that caller's `finally` - must give the slot back rather than
+    leaking it forever."""
+    token = repo.reserve_slot(1)
+    assert token is not None
+
+    repo.release(token)
+
+    second = repo.reserve_slot(1)
+    assert second is not None
+
+
+def test_release_is_a_no_op_for_an_unknown_token(repo: GameRepository) -> None:
+    """`start_game_from_decklists` calls `release` unconditionally from a
+    `finally`, including on the success path after `attach` already
+    resolved the same token - `release` must never raise there."""
+    repo.release("never-reserved")  # must not raise
+
+
+def test_release_after_attach_does_not_unattach_the_game(repo: GameRepository) -> None:
+    token = repo.reserve_slot(1)
+    assert token is not None
+    game_id = repo.create(_real_game())
+    repo.attach(token, game_id)
+
+    repo.release(token)  # must not raise, must not un-attach
+
+    assert game_id in repo.live_ui_games()
+
+
+def test_reserve_and_attach_is_fully_visible_on_return(repo: GameRepository) -> None:
+    """Pins that a successful reserve-then-attach leaves no partially-visible
+    state: by the time `attach` returns, the game is gettable, has an admin
+    key, is lockable, and already counts in `ui_games`/`live_ui_games` -
+    never some of these without the others. The same guarantee
+    `create_if_under`'s own "fully visible on return" test pinned when the
+    count-check and the create were one call."""
+    game_id = _reserve_and_attach(repo, cap=5)
     assert game_id is not None
 
     assert repo.get(game_id) is not None
@@ -422,7 +522,41 @@ def test_create_if_under_a_successful_call_is_fully_visible_on_return(
         assert locked_game is not None
 
 
-def test_create_if_under_is_atomic_under_concurrent_callers(repo: GameRepository) -> None:
+def test_a_reservation_older_than_the_ttl_stops_counting_against_the_cap(
+    repo: GameRepository,
+) -> None:
+    """A stale reservation - a process that reserved a slot and then died,
+    or a caller bug that never reaches its `finally` - must not hold a slot
+    hostage forever. `RESERVATION_TTL_SECONDS` is the explicit answer this
+    task's brief asks for: a reservation older than the TTL is swept the
+    next time `reserve_slot` runs and no longer counts. See
+    `repository.py`'s module docstring for why this, and not a durable
+    cross-restart record, is the right shape while the lobby is still
+    single-process (`replicas: 1`, the 2b plan's M9) - a process restart
+    wipes every reservation outright anyway."""
+    repo.RESERVATION_TTL_SECONDS = 0.05
+    token = repo.reserve_slot(1)
+    assert token is not None
+
+    time.sleep(0.1)
+
+    second = repo.reserve_slot(1)
+    assert second is not None
+
+
+def test_attaching_an_expired_reservation_raises_key_error(repo: GameRepository) -> None:
+    repo.RESERVATION_TTL_SECONDS = 0.05
+    token = repo.reserve_slot(1)
+    assert token is not None
+    game_id = repo.create(_real_game())
+
+    time.sleep(0.1)
+
+    with pytest.raises(KeyError):
+        repo.attach(token, game_id)
+
+
+def test_reserve_slot_is_atomic_under_concurrent_callers(repo: GameRepository) -> None:
     """N threads racing a cap of `cap`: exactly `cap` must win, never more
     (the `MAX_LIVE_GAMES` overshoot this method exists to close) and never
     fewer (a correct implementation does not under-admit either)."""
@@ -434,9 +568,9 @@ def test_create_if_under_is_atomic_under_concurrent_callers(repo: GameRepository
 
     def attempt() -> None:
         ready.wait(timeout=5)
-        game_id = repo.create_if_under(_real_game(), cap=cap)
+        token = repo.reserve_slot(cap)
         with lock:
-            results.append(game_id)
+            results.append(token)
 
     threads = [threading.Thread(target=attempt) for _ in range(attempts)]
     for t in threads:
@@ -446,54 +580,70 @@ def test_create_if_under_is_atomic_under_concurrent_callers(repo: GameRepository
 
     succeeded = [r for r in results if r is not None]
     assert len(succeeded) == cap
-    assert len(set(succeeded)) == cap  # every winner got a distinct id
-    assert len(repo.live_ui_games()) == cap
+    assert len(set(succeeded)) == cap  # every winner got a distinct token
 
 
-def test_create_if_under_admits_are_each_fully_visible_under_concurrency(
-    repo: GameRepository,
-) -> None:
-    """The second documented race: admin-key mint, lock install and the
-    `ui_games` append happening as one step, not three. Every thread whose
-    `create_if_under` call returns a successful id checks - from inside that
-    same thread, immediately on return - that the id is already fully live
-    (gettable, has an admin key, lockable, counted). A caller that squeezed
-    in a `create_if_under` between two other threads' racing calls must never
-    observe a game that exists but is only half set up."""
+def test_a_failed_create_leaves_no_leaked_slot_under_concurrency(repo: GameRepository) -> None:
+    """The failure-path race, under concurrency, in two waves so releasing a
+    slot mid-wave (which legitimately lets a *concurrent* racer reuse it
+    right away - not a leak) cannot be mistaken for one.
+
+    Wave 1: exactly `cap` threads race `reserve_slot` - by
+    `test_reserve_slot_is_atomic_under_concurrent_callers`, all `cap` win.
+    Every *odd* winner then simulates a failed create (`release` instead of
+    `attach` - exactly `start_game_from_decklists`'s `finally`), concurrently
+    with the even winners' `attach`. Once every thread has finished, exactly
+    the attached half must be live - nothing leaked, nothing double-counted.
+
+    Wave 2, only after wave 1 fully joins: `cap` more threads race
+    `reserve_slot` again. Exactly as many must win as wave 1 released - the
+    freed slots came back, and not one more than that (no over-admission
+    past the still-live half)."""
     cap = 4
-    attempts = 10
-    failures: list[str] = []
-    failures_lock = threading.Lock()
-    ready = threading.Barrier(attempts)
+    tokens: list[str | None] = []
+    lock = threading.Lock()
+    ready = threading.Barrier(cap)
 
-    def attempt() -> None:
+    def wave_one(index: int) -> None:
         ready.wait(timeout=5)
-        game_id = repo.create_if_under(_real_game(), cap=cap)
-        if game_id is None:
-            return
-        problems = []
-        if repo.get(game_id) is None:
-            problems.append("not gettable")
-        if repo.admin_key(game_id) is None:
-            problems.append("no admin key")
-        if game_id not in repo.ui_games():
-            problems.append("not in ui_games")
-        try:
-            with repo.locked(game_id):
-                pass
-        except KeyError:
-            problems.append("not lockable")
-        if problems:
-            with failures_lock:
-                failures.append(f"{game_id}: {', '.join(problems)}")
+        token = repo.reserve_slot(cap)
+        with lock:
+            tokens.append(token)
+        assert token is not None  # exactly `cap` threads for `cap` slots
+        if index % 2 == 0:
+            game_id = repo.create(_real_game())
+            repo.attach(token, game_id)
+        else:
+            repo.release(token)  # simulated failed create
 
-    threads = [threading.Thread(target=attempt) for _ in range(attempts)]
+    threads = [threading.Thread(target=wave_one, args=(i,)) for i in range(cap)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=5)
 
-    assert failures == []
+    attached = sum(1 for i in range(cap) if i % 2 == 0)
+    released = cap - attached
+    assert len(repo.live_ui_games()) == attached
+
+    second_tokens: list[str | None] = []
+    second_lock = threading.Lock()
+    second_ready = threading.Barrier(cap)
+
+    def wave_two() -> None:
+        second_ready.wait(timeout=5)
+        token = repo.reserve_slot(cap)
+        with second_lock:
+            second_tokens.append(token)
+
+    second_threads = [threading.Thread(target=wave_two) for _ in range(cap)]
+    for t in second_threads:
+        t.start()
+    for t in second_threads:
+        t.join(timeout=5)
+
+    succeeded_again = [t for t in second_tokens if t is not None]
+    assert len(succeeded_again) == released  # exactly the freed slots came back
 
 
 # ---------------------------------------------------------------------------

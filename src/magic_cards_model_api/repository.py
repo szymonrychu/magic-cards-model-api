@@ -4,13 +4,22 @@ and `InMemoryRepository`, the in-memory implementation that seam replaces
 
 `GameRepository` is a `typing.Protocol` - structural, not a base class to
 inherit from. It covers the surface every one of this store's 12 in-repo
-callers and 20+ test files actually uses: game lifecycle (`create`,
-`create_if_under`, `get`, `delete`, `ids`), the mutation boundary (`locked`),
-seat credentials (`register_seats`, `seat_uids`, `player_for_uid`,
-`admin_key`, `is_admin`), `created_at`, decklists, and the three lobby-owned
-collections (`register_agent_settings`/`agent_settings`,
-`register_ai_players`/`ai_players`, `register_ui_game`/`ui_games`/
-`live_ui_games`).
+callers and 20+ test files actually uses: game lifecycle (`create`, `get`,
+`delete`, `ids`), the mutation boundary (`locked`), seat credentials
+(`register_seats`, `seat_uids`, `player_for_uid`, `admin_key`, `is_admin`),
+`created_at`, decklists, and the three lobby-owned collections
+(`register_agent_settings`/`agent_settings`, `register_ai_players`/
+`ai_players`, `register_ui_game`/`ui_games`/`live_ui_games`).
+
+**`reserve_slot`/`attach`/`release` (M8) replace the deleted
+`create_if_under`.** The `MAX_LIVE_GAMES` cap used to be enforced by welding
+the count-check to the create under one lock (`create_if_under`'s own
+docstring recorded the two races that closed). It is now a reservation the
+lobby-owned caller drives itself: `reserve_slot` claims a slot before doing
+any work, `attach` turns a successful `create` into a real live game, and
+`release` gives the slot back when creation failed. See `reserve_slot`'s own
+docstring and `DEFAULT_RESERVATION_TTL_SECONDS` above for the full shape,
+including how a stale reservation from a process that died is handled.
 
 One thing on `InMemoryRepository` deliberately stays OFF the protocol:
 `_locks` and its `locked()` internals are process-local by nature - a
@@ -48,6 +57,7 @@ now an alias for it so every existing import keeps working.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
@@ -59,6 +69,59 @@ from magic_cards_model.models import Game
 
 from .agent_settings import AgentSettings
 from .commands import Command
+
+#: How long a reservation (`GameRepository.reserve_slot`) counts against the
+#: cap before it is swept as abandoned - the "stale reservation from a
+#: process that died" case M8 asks every implementation to answer
+#: explicitly. A process that dies mid-request never calls `attach` or
+#: `release` again, and nothing about this deployment's shape
+#: (`replicas: 1` through the whole of 2b, per the plan's M9) makes a
+#: reservation durable across *that* process's own restart either - a
+#: restart wipes the repository outright, reservations included. What the
+#: TTL actually guards against is narrower: a reservation that outlives its
+#: request *without* the process dying (a caller bug that never reaches its
+#: `finally`), which would otherwise hold a slot hostage for the life of the
+#: process. Both implementations read this from an instance attribute of the
+#: same name (`RESERVATION_TTL_SECONDS`), so a test can shrink it per
+#: instance without needing a constructor argument the contract suite's
+#: zero-argument factories don't have room for.
+DEFAULT_RESERVATION_TTL_SECONDS = 30.0
+
+
+class _ReservationLedger:
+    """token -> the `time.monotonic()` it was reserved at. Shared plumbing
+    for `InMemoryRepository` and `PostgresRepository`'s `reserve_slot`/
+    `attach`/`release` - not itself thread-safe: every method here must be
+    called with the owning repository's own lock already held, exactly like
+    `InMemoryRepository`'s other `..._locked` helpers (`_live_ui_count_locked`,
+    `_append_record_locked`). That lock is what makes a whole reserve-or-
+    refuse decision atomic; this class only tracks which tokens are still
+    outstanding.
+    """
+
+    def __init__(self) -> None:
+        self._pending: dict[str, float] = {}
+
+    def _expire(self, now: float, ttl_seconds: float) -> None:
+        expired = [token for token, at in self._pending.items() if now - at > ttl_seconds]
+        for token in expired:
+            del self._pending[token]
+
+    def reserve(self, *, live_count: int, cap: int, ttl_seconds: float) -> str | None:
+        now = time.monotonic()
+        self._expire(now, ttl_seconds)
+        if live_count + len(self._pending) >= cap:
+            return None
+        token = uuid4().hex
+        self._pending[token] = now
+        return token
+
+    def resolve(self, token: str, *, ttl_seconds: float) -> bool:
+        """Remove `token` if it is still a live (unexpired) reservation and
+        report whether it was. `attach` raises on `False`; `release` treats
+        `False` as the no-op it already wants to be."""
+        self._expire(time.monotonic(), ttl_seconds)
+        return self._pending.pop(token, None) is not None
 
 
 @runtime_checkable
@@ -74,13 +137,45 @@ class GameRepository(Protocol):
         """Store `game` under a fresh id and return it."""
         ...
 
-    def create_if_under(self, game: Game, cap: int, *, ui_game: bool = True) -> str | None:
-        """`create()`, but atomically: refuses (creates nothing, returns
-        `None`) once `cap` lobby games are already live. The cap check, the
-        insert, and - when `ui_game` is true - the `_ui_games` registration
-        all happen as one indivisible step, so no concurrent caller can ever
-        observe a game that exists but does not yet count against the cap,
-        and no two concurrent callers can both slip in under a cap of one.
+    def reserve_slot(self, cap: int) -> str | None:
+        """Claim one of `cap` lobby slots, atomically, and return a token -
+        or `None` once `cap` slots are already spoken for. "Spoken for"
+        counts both `live_ui_games()` and every other reservation this call
+        has not yet resolved (`attach` or `release`), so the slot is claimed
+        the instant this returns, before the caller has done any of the
+        possibly slow, possibly failing work of actually creating the game.
+
+        This is M8's reserve-then-create, replacing `create_if_under`
+        (deleted): the two documented races that method's own docstring used
+        to close - two concurrent callers both reading room under the cap,
+        and a successful create only partially visible on return - are now
+        closed by `reserve_slot` claiming the slot up front and `attach`
+        making the eventual game fully visible in the same locked step it
+        resolves the reservation. See `RESERVATION_TTL_SECONDS` for what
+        happens to a reservation nobody ever resolves.
+        """
+        ...
+
+    def attach(self, token: str, game_id: str) -> None:
+        """Resolve a successful `reserve_slot` reservation into a real live
+        game: `game_id` starts counting against the cap as an ordinary ui
+        game (`register_ui_game`'s own effect), and `token` stops counting
+        as an outstanding reservation - both in the same atomic step, so no
+        concurrent `reserve_slot` can ever observe the gap between them.
+        Raises `KeyError` for a token that is unknown, already resolved
+        (attached or released), or expired past `RESERVATION_TTL_SECONDS`.
+        """
+        ...
+
+    def release(self, token: str) -> None:
+        """Give back a reservation that will never be attached - the
+        `finally` `start_game_from_decklists` calls this from when creating
+        the game failed or raised, so a slot is never leaked. Deliberately a
+        no-op, never raising, for a token that is unknown, already released,
+        or already attached: a caller that calls this unconditionally from a
+        `finally` - including on the success path, after `attach` already
+        ran - must never have that call blow up the response it is trying to
+        return.
         """
         ...
 
@@ -337,6 +432,12 @@ class InMemoryRepository:
     inside it any more.
     """
 
+    #: See `DEFAULT_RESERVATION_TTL_SECONDS`'s docstring - an instance
+    #: attribute (not a plain default parameter) so a test can shrink it per
+    #: instance without the zero-argument contract-suite factory needing a
+    #: constructor argument for it.
+    RESERVATION_TTL_SECONDS: float = DEFAULT_RESERVATION_TTL_SECONDS
+
     def __init__(self) -> None:
         self._games: dict[str, Game] = {}
         self._seats: dict[str, dict[str, str]] = {}  # game_id -> uid -> username
@@ -378,49 +479,46 @@ class InMemoryRepository:
         # see `replace`/`append_record`/`fill_record`/`records`.
         self._records: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
+        # M8: pending reservations against `MAX_LIVE_GAMES`, keyed by token.
+        # Protected by `self._lock`, exactly like everything else here - see
+        # `_ReservationLedger`'s own docstring for why it takes no lock of
+        # its own.
+        self._reservations = _ReservationLedger()
 
     def create(self, game: Game) -> str:
-        game_id, _created = self._create_locked(game)
-        return game_id
-
-    def create_if_under(self, game: Game, cap: int, *, ui_game: bool = True) -> str | None:
-        """`create()`, but refuses (creates nothing, returns `None`) once
-        `cap` lobby games are already live.
-
-        `start_game_from_decklists` used to call `live_ui_games()` and
-        `create()` as two separately-locked steps, with nothing serialising
-        one against the other: two concurrent requests could both read the
-        live count just under `cap`, and both go on to create, letting the
-        live table grow past the limit `MAX_LIVE_GAMES` exists to enforce.
-        This method takes `self._lock` once around both the count and the
-        create, closing that window - the two are now one atomic decision.
-
-        `ui_game` (default `True`, matching every caller so far) registers
-        the new game into `_ui_games` in that *same* locked section, rather
-        than the caller making a separate `register_ui_game` call afterwards.
-        That used to leave a second window open: a game could exist in
-        `_games` but not yet in `_ui_games` between this call returning and
-        the caller's own `register_ui_game`, so a concurrent `create_if_under`
-        undercounted the live table during that gap and could still let the
-        cap be crossed.
-        """
-        game_id, created = self._create_locked(game, cap=cap, ui_game=ui_game)
-        return game_id if created else None
-
-    def _create_locked(
-        self, game: Game, *, cap: int | None = None, ui_game: bool = False
-    ) -> tuple[str, bool]:
         game_id = uuid4().hex
         with self._lock:
-            if cap is not None and self._live_ui_count_locked() >= cap:
-                return "", False
             self._games[game_id] = game
             self._admin_keys[game_id] = uuid4().hex
             self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
-            if ui_game and game_id not in self._ui_games:
-                self._ui_games.append(game_id)
-        return game_id, True
+        return game_id
+
+    def reserve_slot(self, cap: int) -> str | None:
+        with self._lock:
+            live = self._live_ui_count_locked()
+            return self._reservations.reserve(
+                live_count=live, cap=cap, ttl_seconds=self.RESERVATION_TTL_SECONDS
+            )
+
+    def attach(self, token: str, game_id: str) -> None:
+        with self._lock:
+            if not self._reservations.resolve(token, ttl_seconds=self.RESERVATION_TTL_SECONDS):
+                raise KeyError(f"no such reservation {token}")
+            self._register_ui_game_locked(game_id)
+
+    def release(self, token: str) -> None:
+        with self._lock:
+            self._reservations.resolve(token, ttl_seconds=self.RESERVATION_TTL_SECONDS)
+
+    def _register_ui_game_locked(self, game_id: str) -> None:
+        """`register_ui_game`'s own body, called with `self._lock` already
+        held - `attach` needs this, since the reservation's resolution and
+        the `_ui_games` registration must happen as one atomic step (a
+        concurrent `reserve_slot` must never observe the gap between
+        them)."""
+        if game_id not in self._ui_games:
+            self._ui_games.append(game_id)
 
     def _live_ui_count_locked(self) -> int:
         """`len(live_ui_games())`, computed without re-taking `self._lock` -
@@ -443,8 +541,7 @@ class InMemoryRepository:
         `POST /api/ui/games` - never inferred.
         """
         with self._lock:
-            if game_id not in self._ui_games:
-                self._ui_games.append(game_id)
+            self._register_ui_game_locked(game_id)
 
     def ui_games(self) -> list[str]:
         """The lobby-booted games still in the store, oldest first."""

@@ -615,3 +615,36 @@ whoever works on the repo itself.
   narrowing this task accepted rather than an accident; nothing in `ui/`
   displayed it beyond the boolean "over" state. `ui/lobby_model.js`,
   `ui/render/lobby.js`, and their Node tests moved with it.
+
+- **2026-09-08 - 2b T6: the reservation ledger behind `reserve_slot`/
+  `attach`/`release` (M8) is process-local in *both* implementations,
+  `PostgresRepository` included - not yet T17's durable, cross-replica
+  `lobby_games` row.** The plan's own text (`docs/2b-plan.md:794`, "the
+  reservation from T6 becomes the single atomic INSERT described in M8" at
+  T17) says this stays a precursor shape until the lobby has its own
+  database; there is no `lobby_games` table pre-cut for a real cross-process
+  reservation to live in. Reusing the precedent `_locks`/`_automatic_pregame`
+  already set on `PostgresRepository` (process-local, correct only because
+  `replicas: 1` holds for this whole phase per M9) kept the two
+  implementations symmetric and let `reserve_slot`'s cap decision become a
+  plain `threading.Lock` instead of `create_if_under`'s `LOCK TABLE ... SHARE
+  ROW EXCLUSIVE` - a real DB-level lock was only ever needed to serialise
+  concurrent *processes*, which this phase does not have.
+- **2026-09-08 - 2b T6: a stale reservation (the fourth concurrency case the
+  task asked to be answered explicitly) is closed two ways, not one.** A
+  process that dies mid-request can never call `attach`/`release` again, but
+  since the ledger is process-local (see above), that process's own restart
+  wipes every reservation it held anyway - nothing survives to leak. What
+  does need an explicit answer is a reservation that outlives its request
+  *without* the process dying (a caller bug that never reaches its
+  `finally`): `RESERVATION_TTL_SECONDS` (default 30s, an instance attribute
+  so a test can shrink it without the contract suite's zero-argument
+  factories needing a constructor parameter) sweeps it on the next
+  `reserve_slot`/`attach`/`release` call, no timer thread needed.
+- **2026-09-08 - 2b T6: "calls the api client to create the game" (M8's own
+  wording) resolved to `store.create()` directly, not a new method on
+  `api_client.ApiClient`.** The task's file list omits `api_client.py`, and
+  M8 itself says "the api half keeps a plain `create`" - `ApiClient` (T5) is
+  scoped to deck validation and the batch game-summary read; giving it a
+  create-game method is stage B's (the actual HTTP extraction) job, not
+  T6's, while the lobby and api are still one process.
