@@ -451,3 +451,20 @@ whoever works on the repo itself.
   this, since a dict literal's later `**answer` (now correctly carrying
   `allowed: False` for a non-2xx) overrides the initial `True`; neither
   needed editing.
+- **2026-09-08 - T4: `TestClient`'s `httpx` transport normalises `../`
+  dot-segments in a request path before sending it - a `%2e%2e` traversal
+  test is the only one that actually reaches the route's own guard.**
+  Writing the escape test for `GET /g/{game_id}/{rest:path}`'s new
+  path-traversal check (`app.py`, resolves `rest` inside `ui/` and refuses
+  anything that walks out via `Path.is_relative_to`), a literal
+  `client.get(f"/g/{game}/../../../pyproject.toml")` never reached the
+  handler at all: the client itself collapsed the path to `/pyproject.toml`
+  before sending (confirmed via `resp.request.url`), which 404s through the
+  ordinary root `StaticFiles` mount and proves nothing about the route's own
+  defense. Percent-encoding the dots (`%2e%2e`) survives client-side
+  normalisation (that only recognises the literal `..` segment) and is
+  decoded back to `..` in the ASGI scope's path by the time Starlette's
+  `:path` converter sees it, so the request genuinely lands in the handler -
+  confirmed live against a running server (`resp.request.url` still showed
+  `/g/<id>/%2e%2e/...`, status 200, body was `index.html`'s 6005 bytes, not
+  `pyproject.toml`'s 1593).
