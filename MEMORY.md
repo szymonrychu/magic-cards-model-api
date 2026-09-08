@@ -62,6 +62,39 @@ whoever works on the repo itself.
   this (out of scope for T9) - this entry exists so the assumption is written
   down before something depends on it silently.
 
+- **2026-09-08 - `pass_until` died on its second pass because `poll()`
+  published a board it had read before the seat's own action.** The owner's
+  live report ("my pass_until doesn't work") looked like a `pass_until` bug
+  and was not one: every human action in the reported game
+  (`045634da21ab4cca88d9c3268745f064`) was followed 1.5-2.2s later by a
+  duplicate the engine refused - passes with "you does not have priority,
+  claude does", an `attack`, and five `declare-blockers` in one combat.
+  `poll()` reads the board, then reads the log, then calls `tickRun()`;
+  anything this seat does in that window lands on a server whose answer to
+  the already-issued board read predates it. `poll()` wrote that board in as
+  current (so the screen showed the pre-action board, which is what had the
+  owner clicking again) and handed it to `tickRun()`, which read
+  `priority_holder` as still the human's and passed a second time. Reproduced
+  against a live local server by holding the `/log` read open and clicking
+  "Pass until" inside it. It is not a rare race in a late game: one poll
+  cycle grows past `POLL_MS` (a bigger board, a longer log), so a poll is in
+  flight at every instant - which is why the same game's early turns ran the
+  feature perfectly (seq 20-132) and everything after seq 144 failed. Fix: a
+  `mutations` counter in the store, bumped by `send()` before every mutating
+  request; a poll whose reads span one of them discards them. NOT a server
+  bug - the state endpoint was probed under concurrent load on both
+  repositories and never returned a board older than a committed pass.
+
+- **2026-09-08 - a refused pass is two different things, and ending a run on
+  both is how it dies silently.** `tickRun`'s old last line was `if (!out.ok)
+  store.set({run: null})`, which treated "this seat does not hold priority
+  any more" (a lost race - the opponent moved between the read and the pass,
+  and the next tick is fine) exactly like "this move is not available" (a
+  real refusal), and treated a rejected `fetch` as a refusal at all. Narrowed:
+  a refused pass now ends the run only when a fresh board read still says
+  this seat holds priority. The board is asked rather than the refusal text
+  pattern-matched - engine wording is not a client contract.
+
 - **2026-09-08 - `test_a_spell_cast_in_a_window_the_run_passed_through_hands_
   priority_back` was flaky in its own right, and not for the reason it
   looked.** Its opponent thread makes two independent calls, the cast and

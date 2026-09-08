@@ -1032,3 +1032,282 @@ def test_a_vehicle_with_an_ability_also_menus_rather_than_auto_activating() -> N
     assert plan["kind"] == "menu"
     assert plan["vehicle"] is True
     assert len(plan["abilities"]) == 1
+
+
+# -- a poll read that predates this seat's own action must never drive a tick --
+#
+# The `pass_until` bug the owner reported from a live game, reproduced against
+# a real server before it was written down here (see MEMORY.md): every "Pass
+# until" click passed exactly once, and ~1.5-2.2s later the browser sent a
+# second `pass-priority` that the engine refused with "you does not have
+# priority, claude does" - which the old last line of `tickRun` turned into
+# `store.set({run: null})`, so the run was dead before it had gone anywhere.
+#
+# The second pass is not a second click. `poll()` reads the board and the log
+# in sequence and only then calls `tickRun()`; anything this seat does in
+# between - the "Pass until" click itself, a blocker declaration, a cast -
+# lands on a server whose answer to the already-issued board read was written
+# BEFORE it. `poll()` then wrote that board into the store as current and ran
+# `tickRun()` on it, which still read `priority_holder: alice` and passed
+# again. In the late game one poll cycle ran longer than `POLL_MS`, so a poll
+# was in flight at every instant and every click landed in that window.
+
+
+def _stale_poll_body() -> str:
+    """A `fetch` stub whose `/log` read is held open until the test releases
+    it - the window a real poll spends between reading the board and acting
+    on it. The board read answers "alice still holds priority", because that
+    is what it was when it was answered; the pass endpoint answers like the
+    engine does, allowing the first pass and refusing any later one."""
+    return """
+      globalThis.__calls = [];
+      globalThis.__toast = { textContent: "", hidden: true };
+      globalThis.document = {
+        querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+      };
+      globalThis.__passes = 0;
+      let releaseLog;
+      globalThis.__releaseLog = () => releaseLog();
+      const logRead = new Promise((resolve) => { releaseLog = resolve; });
+      const board = (holder) => ({
+        you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+        active_player: "bob", priority_holder: holder, battlefield: [],
+        hands: { alice: [] }, stack: [], combat: { attacks: [] },
+        winner: null, drawn: false, pregame: null,
+      });
+      globalThis.__board = board;
+      globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
+        globalThis.__calls.push({ method, path });
+        if (method === "POST" && path.includes("pass-priority")) {
+          globalThis.__passes += 1;
+          const first = globalThis.__passes === 1;
+          return Promise.resolve({ ok: true, json: async () => (first
+            ? { allowed: true, outcome: "passed" }
+            : { allowed: false, reason: "alice does not have priority, bob does" }) });
+        }
+        if (method === "POST") {
+          return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+        }
+        if (path.includes("/log")) {
+          return logRead.then(() => ({ ok: true, json: async () => ({ log: [], last_seq: 1 }) }));
+        }
+        return Promise.resolve({ ok: true, json: async () => board("alice") });
+      };
+    """
+
+
+def _armed_run() -> str:
+    return (
+        '{ verb: "pass_until", startedTurn: 4, startedStep: "upkeep", '
+        'startedActive: "bob", knownStackIds: [], passes: 0, stillAtStart: false }'
+    )
+
+
+def test_a_board_read_taken_before_this_seats_own_pass_never_drives_a_second_pass() -> None:
+    result = run_app(
+        _stale_poll_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null,
+            stops: { mine: ["postcombat_main"], theirs: [], onStack: true },
+            state: globalThis.__board("alice"),
+            log: { entries: [], lastSeq: 0 },
+          });
+          // A poll starts. Its board read is answered at once; its log read
+          // is held open, so `tickRun()` will not run on that board yet.
+          const inFlight = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          // ... and the human clicks "Pass until" inside that window.
+          m.store.set({ run: """
+        + _armed_run()
+        + """ });
+          await m.tickRun();
+          globalThis.__releaseLog();
+          await inFlight;
+          return { calls: globalThis.__calls, run: m.store.get().run, passes: globalThis.__passes };
+        })()
+        """
+    )
+    passes = [c for c in result["calls"] if c["method"] == "POST" and "pass-priority" in c["path"]]
+    assert len(passes) == 1, (
+        "the poll acted on a board it read before this seat's own pass, and passed again: "
+        f"{result['calls']}"
+    )
+    assert result["run"] is not None, "a run must not die on a pass it should never have sent"
+
+
+def test_a_board_read_that_predates_this_seats_own_action_is_not_written_as_current() -> None:
+    """The same defect's other half, and the one the human sees directly: the
+    stale board is what `poll()` puts on the screen, so the play UI shows the
+    move as not having happened. That is what had the owner clicking "No
+    blocks" five times into a single combat (`#239`-`#240` and the three
+    refusals after them in the reported game)."""
+    result = run_app(
+        _stale_poll_body()
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: globalThis.__board("alice"),
+            log: { entries: [], lastSeq: 0 },
+          });
+          const inFlight = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          // Any action of this seat's own, not only a pass: this one is the
+          // declaration, and it moves the board the poll already read.
+          await m.declareNoBlockers();
+          m.store.set({ state: globalThis.__board("bob") });
+          globalThis.__releaseLog();
+          await inFlight;
+          return { priority: m.store.get().state.priority_holder };
+        })()
+        """
+    )
+    assert result["priority"] == "bob", (
+        "the poll overwrote a board known to have moved on with the one it read first"
+    )
+
+
+# -- which refused passes end a run, and which are only a lost race ----------
+#
+# A refusal is two different things wearing one word. "This seat does not hold
+# priority any more" means the board moved between the read this tick acted on
+# and the pass it sent - a lost race, and the very next tick will do the right
+# thing. "This move is not available" means the run cannot proceed. Collapsing
+# them, which `if (!out.ok) store.set({run: null})` did, is how a run dies
+# silently. The board itself is asked which one happened, rather than the
+# refusal text being pattern-matched: engine wording is not a client contract.
+
+
+def _refusal_body(after_refusal_holder: str) -> str:
+    return """
+      globalThis.__calls = [];
+      globalThis.__toast = { textContent: "", hidden: true };
+      globalThis.document = {
+        querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+      };
+      const board = (holder) => ({
+        you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+        active_player: "bob", priority_holder: holder, battlefield: [],
+        hands: { alice: [] }, stack: [], combat: { attacks: [] },
+        winner: null, drawn: false, pregame: null,
+      });
+      globalThis.__board = board;
+      globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
+        globalThis.__calls.push({ method, path });
+        if (method === "POST" && path.includes("pass-priority")) {
+          return Promise.resolve({ ok: true, json: async () => ({
+            allowed: false, reason: "alice does not have priority, bob does" }) });
+        }
+        if (method === "POST") {
+          return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+        }
+        if (path.includes("/log")) {
+          return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 0 }) });
+        }
+        return Promise.resolve({ ok: true, json: async () => board(HOLDER) });
+      };
+    """.replace("HOLDER", json.dumps(after_refusal_holder))
+
+
+def test_a_refused_pass_on_a_board_that_has_since_moved_on_leaves_the_run_armed() -> None:
+    result = run_app(
+        _refusal_body("bob")
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            stops: { mine: ["postcombat_main"], theirs: [], onStack: true },
+            state: globalThis.__board("alice"),
+            run: """
+        + _armed_run()
+        + """,
+            log: { entries: [], lastSeq: 0 },
+          });
+          await m.tickRun();
+          return { calls: globalThis.__calls, run: m.store.get().run,
+                   toast: globalThis.__toast.textContent };
+        })()
+        """
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    assert len(posts) == 1, result["calls"]
+    assert result["run"] is not None, (
+        "the board says another seat holds priority now - a lost race, not a stop"
+    )
+
+
+def test_a_refused_pass_the_board_still_says_was_this_seats_to_make_ends_the_run() -> None:
+    """The other side of the same rule, so narrowing it does not become
+    "never stop": if a fresh read still says this seat holds priority and the
+    engine still refuses the pass, the disagreement is real and the run has
+    nowhere to go. It ends, and says so."""
+    result = run_app(
+        _refusal_body("alice")
+        + """
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            stops: { mine: ["postcombat_main"], theirs: [], onStack: true },
+            state: globalThis.__board("alice"),
+            run: """
+        + _armed_run()
+        + """,
+            log: { entries: [], lastSeq: 0 },
+          });
+          await m.tickRun();
+          return { run: m.store.get().run, toast: globalThis.__toast.textContent };
+        })()
+        """
+    )
+    assert result["run"] is None
+    assert "alice does not have priority" in result["toast"]
+
+
+def test_a_pass_that_never_reached_the_server_leaves_the_run_armed() -> None:
+    """A rejected `fetch` is not a refusal at all - nothing was decided, and
+    `send()` has already told the player the connection is down. The old code
+    read `send`'s `null` as `ok: false` and ended the run over a dropped
+    packet."""
+    result = run_app(
+        """
+        globalThis.__calls = [];
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        globalThis.fetch = (path, opts) => {
+          const method = opts ? opts.method : "GET";
+          globalThis.__calls.push({ method, path });
+          if (method === "POST") return Promise.reject(new Error("network is down"));
+          return Promise.resolve({ ok: true, json: async () => ({
+            you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+            active_player: "bob", priority_holder: "alice", battlefield: [],
+            hands: { alice: [] }, stack: [], combat: { attacks: [] },
+            winner: null, drawn: false, pregame: null,
+          }) });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            stops: { mine: ["postcombat_main"], theirs: [], onStack: true },
+            state: {
+              you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+              active_player: "bob", priority_holder: "alice", battlefield: [],
+              stack: [], combat: { attacks: [] }, winner: null, drawn: false,
+            },
+            run: """
+        + _armed_run()
+        + """,
+            log: { entries: [], lastSeq: 0 },
+          });
+          await m.tickRun();
+          return { run: m.store.get().run };
+        })()
+        """
+    )
+    assert result["run"] is not None, "a dropped request is not a refusal"
