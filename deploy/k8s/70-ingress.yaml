@@ -6,8 +6,12 @@
 #
 # *.szymonrichert.pl resolves to the LAN IP at home and to the public IP from
 # outside, so this host works from both with NO extra DNS record. That also
-# means this is genuinely reachable from the internet - hence the basic auth
-# below, and hence the fact that only port 8000 is routed.
+# means this is genuinely reachable from the internet.
+#
+# PHASE 2B CUTOVER: this host used to carry basic auth directly. It now routes
+# to oauth2-proxy (55-oauth2-proxy.yaml) instead, in front of Keycloak - see
+# the mtg-stack-sso Ingress below. `pl.szymonrichert.pl`, further down, keeps
+# the basic auth this Secret protects as the cutover's escape hatch.
 ---
 # The basic-auth credentials, in the htpasswd format nginx-ingress expects
 # (Secret key `auth`, one `user:hash` line).
@@ -22,6 +26,10 @@
 #
 # The hash is bcrypt, generated with `htpasswd -nbB play magic` and verified
 # with `htpasswd -vb` before being committed.
+#
+# STILL USED (phase 2b): no longer on the production host, but kept alive on
+# the pl.szymonrichert.pl escape hatch below until the Keycloak cutover is
+# confirmed working.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -31,6 +39,72 @@ type: Opaque
 stringData:
   auth: "play:$2y$05$BrvggN09btljyXYK9nww9e1YqFO/JIPRfeP.e6kRoEThvfhwcytBq"
 ---
+# mtg-stack-sso: the new front door on play-magic.szymonrichert.pl.
+#
+# No auth-type/auth-secret/auth-realm annotation here, and NO auth-url/
+# auth-signin either - oauth2-proxy sits in the request path as a plain
+# in-path reverse proxy (its own Deployment + Service, 55-oauth2-proxy.yaml),
+# so the edge needs no auth annotation of any kind. auth-url/auth-signin are
+# forbidden by this workbench's binding convention: they turn a bearer-token
+# request into a cookie-login redirect, which breaks every machine client
+# that would otherwise present a JWT straight through.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mtg-stack-sso
+  namespace: mtg-engine
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    kubernetes.io/tls-acme: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    # The upstream response carries a large Keycloak JWT in its headers
+    # (x-auth-request-access-token and friends, OAUTH2_PROXY_SET_XAUTHREQUEST)
+    # and nginx's default proxy buffer is too small for it - the request would
+    # otherwise fail with a truncated/garbled header. Copied from the
+    # spellslinger frontend ingress, which learned this the hard way.
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: play-magic.szymonrichert.pl
+      http:
+        paths:
+          # PORT 80 on the PROXY, not port 8000 on mtg-stack directly - every
+          # request to this host must pass through oauth2-proxy first. The
+          # proxy's own OAUTH2_PROXY_UPSTREAMS is what forwards an
+          # authenticated request on to mtg-stack:8000 in-cluster.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mtg-oauth2-proxy
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - play-magic.szymonrichert.pl
+      # REUSES the existing play-magic-tls Secret deliberately: it already
+      # carries a valid SAN for this host, so this cutover has ZERO TLS gap on
+      # the production host - no window where the host serves a self-signed
+      # or mismatched cert. cert-manager will later renew this Secret down to
+      # the single remaining SAN once pl.szymonrichert.pl's own Ingress
+      # (below) stops naming it.
+      secretName: play-magic-tls
+---
+# mtg-stack: the escape hatch, on pl.szymonrichert.pl - keeps the pre-cutover
+# object name, but now scoped to one host instead of two.
+#
+# This is the lockout insurance for the Keycloak cutover. If the SSO path
+# fails for any reason - wrong client, missing group membership, Keycloak
+# down, a bad OIDC issuer URL - pl.szymonrichert.pl with the same play:magic
+# basic auth as before still works exactly as it does today, no Keycloak
+# involved at all. It is expected to be DELETED once SSO is confirmed
+# working; until then it is a public-password door into the same
+# unauthenticated API as play-magic.szymonrichert.pl and must not outlive the
+# cutover.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -65,23 +139,6 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: play-magic.szymonrichert.pl
-      http:
-        paths:
-          # PORT 8000 ONLY. The Service also carries 8080 (agent) and 8090
-          # (driver), and neither is routed here on purpose: as 60-service.yaml
-          # says, NEITHER HAS ANY AUTHENTICATION OF ITS OWN. The agent port
-          # exposes full turn transcripts and an /v1/interrupt that anyone
-          # could call; the driver port exposes match control. Basic auth in
-          # front of them would be the only thing between the internet and
-          # that, and this password is public. Use port-forward for those two.
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: mtg-stack
-                port:
-                  number: 8000
     - host: pl.szymonrichert.pl
       http:
         paths:
@@ -101,8 +158,11 @@ spec:
                   number: 8000
   tls:
     - hosts:
-        - play-magic.szymonrichert.pl
         - pl.szymonrichert.pl
-      # Its own certificate and its own Secret; cert-manager creates this from
-      # the letsencrypt-prod ClusterIssuer on first apply.
-      secretName: play-magic-tls
+      # A NEW Secret, distinct from play-magic-tls - cert-manager must issue
+      # it via DNS-01. For a couple of minutes after the flip this host
+      # serves the controller's default certificate and a browser shows a
+      # name-mismatch warning: deliberately placed on this insurance host
+      # rather than the production one, which reuses its existing cert (see
+      # mtg-stack-sso above) and has zero TLS gap.
+      secretName: pl-magic-tls
