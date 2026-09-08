@@ -570,6 +570,52 @@ def snapshot(game: Game) -> dict[str, Any]:
     exile, life, and pools. Cards are one readable string each, so a whole
     game's log stays digestible.
     """
+    battlefield_states = [
+        state
+        for state in game.shared_zones.get(Zone.BATTLEFIELD, [])
+        if isinstance(state, CardState)
+    ]
+    # Every permanent's index in this same list, doubling as this snapshot's
+    # own object identity: a snapshot carries no card ids at all (unlike
+    # `_card_view`'s `attached_to`, which names the engine's own uuid), and
+    # `ui/review_model.js`'s `frameState` already builds a `bf-${index}` id
+    # for each battlefield line straight off its position in the array. The
+    # Python side and the JS side walk the exact same list in the exact same
+    # order, so an index is an identity both already agree on for free -
+    # nothing new has to ride along to make it one.
+    battlefield_index = {state.id: index for index, state in enumerate(battlefield_states)}
+
+    def host_index(state: CardState) -> int | None:
+        """The battlefield index `state.attachment` (an Aura's enchanted
+        object or player, CR 303.4b, or an Equipment's equipped creature, CR
+        301.5a) points at, or `None` when there is none, it names a player
+        rather than a card, or it names a card no longer on the battlefield -
+        the same "not there any more" case `game.resolve_target` already
+        answers for CR 400.7's zone changes.
+        """
+        if state.attachment is None:
+            return None
+        try:
+            thing = game.resolve_target(state.attachment)
+        except Exception:
+            return None
+        if not isinstance(thing, CardState):
+            return None
+        return battlefield_index.get(thing.id)
+
+    def exile_host_index(state: CardState) -> int | None:
+        """The battlefield index CR 406.4's `ExileAnnotation.
+        linked_permanent_id` (imprint, hideaway) points at, or `None` for a
+        card with no annotation, no link, or a link whose permanent has
+        since left the battlefield - the field is never cleared when that
+        happens (`ExileAnnotation.linked_permanent_id`'s own docstring), so
+        this has to be a lookup that can find nothing rather than a promise
+        that always resolves, exactly like `_exile_pile`'s live version.
+        """
+        annotation = state.exile_annotation
+        if annotation is None or annotation.linked_permanent_id is None:
+            return None
+        return battlefield_index.get(annotation.linked_permanent_id)
 
     def battlefield_line(state: CardState) -> str:
         bits = [f"{state.controller}: {state.name}"]
@@ -590,7 +636,19 @@ def snapshot(game: Game) -> dict[str, Any]:
         if state.counters.root:
             counters = ",".join(f"{kind}={amount}" for kind, amount in state.counters.root.items())
             bits.append(f"({counters})")
+        # Last, so `ui/review_model.js`'s `parsePermanent` - which strips
+        # every suffix off the end, in the reverse of the order they are
+        # appended here - takes this one off first. `N` is `host_index`
+        # above: an Aura or Equipment tucked under the permanent that sits
+        # at this snapshot's own battlefield index `N`.
+        index = host_index(state)
+        if index is not None:
+            bits.append(f"(attached:{index})")
         return " ".join(bits)
+
+    def exile_line(state: CardState) -> str:
+        index = exile_host_index(state)
+        return state.name if index is None else f"{state.name} (attached:{index})"
 
     def stack_object(obj: StackObject) -> dict[str, Any]:
         if isinstance(obj, CardState):
@@ -622,11 +680,7 @@ def snapshot(game: Game) -> dict[str, Any]:
             line += f" (blocked by {', '.join(blockers)})"
         combat_lines.append(line)
 
-    battlefield = [
-        battlefield_line(state)
-        for state in game.shared_zones.get(Zone.BATTLEFIELD, [])
-        if isinstance(state, CardState)
-    ]
+    battlefield = [battlefield_line(state) for state in battlefield_states]
     return {
         "life": {player.username: player.life for player in game.players},
         "pools": {
@@ -644,7 +698,7 @@ def snapshot(game: Game) -> dict[str, Any]:
             player.username: [state.name for state in player.graveyard] for player in game.players
         },
         "exile": [
-            state.name
+            exile_line(state)
             for state in game.shared_zones.get(Zone.EXILE, [])
             if isinstance(state, CardState)
         ],

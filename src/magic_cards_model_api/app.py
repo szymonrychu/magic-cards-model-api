@@ -100,6 +100,8 @@ from .schemas import (
     PregameSettleResponse,
     PutCard,
     PutCardResponse,
+    ReflectionIn,
+    ReflectionResponse,
     ReportProblemRequest,
     ReportProblemResponse,
     ResolveTopResponse,
@@ -1693,6 +1695,15 @@ def _answer_declaration(
         return refuse(f"no pending {expected_kind.value} decision - call POST .../advance first")
     command, tape, pending = paused
     engine_decision = pending.decision
+    # `AttackRequest` carries no `player` field at all - only
+    # `DeclareBlockersRequest` does, and passes it into `audit_keys` itself
+    # (see `action_declare_blockers`) - so `attack`'s rows were missing
+    # `detail["player"]` outright, and a review frame for one could not say
+    # whose declaration it was. `setdefault` fills it in from the engine's
+    # own resolved deciding seat - the identity `uid` is about to be checked
+    # against, below - without overriding whatever a caller (declare_
+    # blockers) already supplied.
+    audit_keys.setdefault("player", engine_decision.player)
     if engine_decision.kind is not expected_kind:
         return refuse(
             f"the pending decision is {engine_decision.kind.value!r}, not "
@@ -2007,11 +2018,20 @@ def resolve_top(
     result, _, legal_before, seq_hint = _run_command(game_id, "resolve_top", req or ActorRequest())
     viewer = visibility.resolve_viewer(game_id, uid)
     reasoning = req.reasoning if req else None
+    # `req.player` alone left every real caller's row unattributed: nothing
+    # resolving the stack's top ever sends a body naming one (`scripts.
+    # generate_payload_fixtures`'s own calls carry `uid` and no body at
+    # all), even though `uid` already named a real seat. `viewer` is the
+    # same resolved identity `redact_view` below is about to key on - a
+    # `str` only for a `uid` that actually opens a seat, never for the
+    # admin key (`visibility.ADMIN`) or no `uid` at all - so this never
+    # attributes a row to someone the caller did not actually identify.
+    player = (req.player if req else None) or (viewer if isinstance(viewer, str) else None)
     if result.status is commands.RunStatus.PAUSED:
         seq = audit.record(
             game_id,
             "resolve_top",
-            player=req.player if req else None,
+            player=player,
             allowed=None,
             paused=True,
             paused_on=_paused_on(result),
@@ -2031,7 +2051,7 @@ def resolve_top(
     seq = audit.record(
         game_id,
         "resolve_top",
-        player=req.player if req else None,
+        player=player,
         reasoning=reasoning,
         legal_actions_before=legal_before,
         _fill_seq=seq_hint,
@@ -2196,6 +2216,58 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         "player": req.player,
         "turn_number": turn.turn_number if turn is not None else None,
     }
+
+
+@app.post(
+    "/api/games/{game_id}/reflection",
+    response_model=ReflectionResponse,
+    response_model_exclude_unset=True,
+)
+def declare_reflection(game_id: str, req: ReflectionIn) -> dict[str, Any]:
+    """File this seat's own post-game write-up (`mtg_agent.driver.app`'s
+    `turn_done` posts the driver's reflection turn here, the moment it
+    completes).
+
+    **This mutates no `Game`, exactly like `declare_plan`.** It calls
+    `audit.record` under `audit.REFLECTION_ACTION` and nothing else - no
+    `store.replace`, no version bump - a reflection is a statement made
+    *after* play, not a move in it.
+
+    **Post-game only, unlike `declare_plan`.** A reflection is written once
+    the result is already known (CR 104.1's game-ending conditions), so this
+    refuses with 409 before that - the same gate `game_review` enforces on
+    reading it, mirrored here on writing it, since a reflection filed for a
+    game still in progress could only be about a result nobody has yet.
+
+    Authorised the same way `game_review` reads are: against `store.archived`
+    rather than the live game, so this still works in the ordinary case where
+    the driver posts a game's reflection after the lobby has already ended
+    (and so soft-deleted) that game. `uid` must open `player`'s own seat -
+    the same hidden-information rule `declare_plan` enforces, even though a
+    reflection carries nothing hidden by the time it is legal to write one:
+    the rule is about who may speak in a seat's name, not about what is said.
+    """
+    archived = store.archived(game_id)
+    if archived is None:
+        raise KeyError(f"no game {game_id}")
+    if archived.seat_uids.get(req.uid) != req.player:
+        raise KeyError("that uid is not that seat in this game")
+    if not (archived.game.is_over or archived.deleted_at):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this game is still in progress - a reflection is written "
+                "after the result is known, so it cannot be filed for a "
+                "game that has not ended"
+            ),
+        )
+    seq = audit.record(
+        game_id,
+        audit.REFLECTION_ACTION,
+        player=req.player,
+        text=req.text,
+    )
+    return {"recorded": True, "log_seq": seq, "player": req.player}
 
 
 @app.post(

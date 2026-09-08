@@ -51,6 +51,7 @@ def build_world(tmp_path) -> SimpleNamespace:
     session_settings = {"model": "", "effort": "", "maxThinkingTokens": None}
     session_posts: list[dict] = []
     submitted: list[dict] = []
+    reflection_posts: list[dict] = []
 
     game = FastAPI()
 
@@ -66,6 +67,17 @@ def build_world(tmp_path) -> SimpleNamespace:
             ],
             "winner": state["winner"],
         }
+
+    @game.post("/api/games/{game_id}/reflection")
+    def post_reflection(game_id: str, body: dict):
+        # Mirrors the real `POST /api/games/{id}/reflection`'s only failure
+        # mode a driver test cares about - an unreachable game server -
+        # rather than reimplementing its uid/player/post-game gates, which
+        # `test_review.py`'s own real-app tests already cover.
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        reflection_posts.append({"game_id": game_id, **body})
+        return {"recorded": True, "log_seq": len(reflection_posts), "player": body.get("player")}
 
     @game.get("/api/lobby/games/{game_id}/seats")
     def get_seats(game_id: str, uid: str | None = None):
@@ -147,6 +159,7 @@ def build_world(tmp_path) -> SimpleNamespace:
         settings=settings,
         submitted=submitted,
         wrapper_posts=submitted,
+        reflection_posts=reflection_posts,
         session_settings=session_settings,
         session_posts=session_posts,
         state=state,

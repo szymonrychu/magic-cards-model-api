@@ -25,11 +25,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from ui_node import requires_node, run_module
+from ui_node import UI, requires_node, run_module
 
 pytestmark = requires_node
 
 MODULE = "review_model.js"
+
+#: The absolute path of `board_layout.js`, for the couple of tests below that
+#: prove `frameState`'s `attached_to`/`exile_pile` are the *live* board's own
+#: shape - so `boardLayout` tucks a review frame's Aura or imprinted card
+#: under its host with no change to that module at all. `call()` only ever
+#: imports `MODULE` as `m`; these load the second module themselves, inside
+#: the evaluated expression, which is why they pass this path in as a const.
+BOARD_LAYOUT = str(UI / "board_layout.js")
 
 
 def call(expression: str, **bindings: Any) -> Any:
@@ -163,6 +171,30 @@ def test_a_plain_permanent_line_carries_none_of_the_optional_state() -> None:
     assert card["power"] is None
     assert card["damage"] == 0
     assert card["counters"] == {}
+    assert card["attached_to"] is None
+
+
+def test_an_attached_permanent_line_carries_its_hosts_index() -> None:
+    """`serialize.snapshot`'s `(attached:N)` suffix - `N` the host's own
+    index within this same snapshot's battlefield array, which is exactly
+    the id `frameState` builds for it (`bf-${index}`) - so this is the whole
+    of what lets `board_layout.rootParentId` tuck the card under its host
+    the same way it already does for a live board's `attached_to`."""
+    card = call('m.parsePermanent("alice: Utopia Sprawl (attached:1)", "bf-2")')
+    assert card["name"] == "Utopia Sprawl"
+    assert card["attached_to"] == {"kind": "card", "id": "bf-1"}
+
+
+def test_an_attached_permanent_with_counters_and_damage_still_parses_clean() -> None:
+    """The attach marker is the last thing `battlefield_line` appends, so it
+    has to come off first - a parse that stripped in the wrong order would
+    eat part of the counters block instead."""
+    line = "alice: Grizzly Bears (tapped) [4/5] dmg:2 (+1/+1=2) (attached:0)"
+    card = call('m.parsePermanent(line, "bf-1")', line=line)
+    assert card["name"] == "Grizzly Bears"
+    assert card["counters"] == {"+1/+1": 2}
+    assert card["damage"] == 2
+    assert card["attached_to"] == {"kind": "card", "id": "bf-0"}
 
 
 def test_a_frame_state_is_shaped_the_way_board_layout_reads_it() -> None:
@@ -207,6 +239,81 @@ def test_an_entry_with_no_snapshot_yields_no_frame_state() -> None:
     `snapshot: null` (`audit.record`), and the page must skip its board
     rather than throw."""
     assert call("m.frameState(null, {})") is None
+
+
+def _board_layout_of(snap: dict[str, Any]) -> dict[str, Any]:
+    """`boardLayout(frameState(snap, {}))`, under Node with `board_layout.js`
+    loaded alongside `review_model.js` - see `BOARD_LAYOUT`'s own docstring
+    for why this loads it itself rather than going through `call()`."""
+    expression = (
+        "(async () => {"
+        "  const bl = await import(pathToFileURL(BOARD_LAYOUT).href);"
+        "  const state = m.frameState(snap, {});"
+        "  return bl.boardLayout(state);"
+        "})()"
+    )
+    return run_module(MODULE, expression, snap=snap, BOARD_LAYOUT=BOARD_LAYOUT)
+
+
+def test_a_frame_state_tucks_an_attached_permanent_under_its_host() -> None:
+    """`frameState`'s `attached_to` (built from `parsePermanent`'s
+    `(attached:N)`) is `board_layout.js`'s own live-board shape - `{kind:
+    "card", id}` - so `boardLayout` tucks a review frame's Aura under its
+    host exactly the way it tucks a live one, with no changes to that
+    module at all."""
+    # No catalogue is loaded here, so `board_layout.isLandRow` (which reads
+    # `type_line`) has nothing to classify "Forest" as a land by - it lands
+    # in `main`, same as any other untyped card. That is a fact about this
+    # test's own setup, not about the tucking under test.
+    snap = snapshot(battlefield=["alice: Forest", "alice: Utopia Sprawl (attached:0)"])
+    layout = _board_layout_of(snap)
+    forest_entry = next(
+        e for e in layout["seats"]["alice"]["main"] if e["card"]["name"] == "Forest"
+    )
+    assert [c["name"] for c in forest_entry["under"]] == ["Utopia Sprawl"]
+
+
+def test_an_exiled_cards_line_parses_into_a_named_card() -> None:
+    state = call("m.frameState(snap, {})", snap=snapshot(exile=["Lightning Bolt"]))
+    assert [c["name"] for c in state["exile"]] == ["Lightning Bolt"]
+    assert "exile_pile" not in state["exile"][0] or state["exile"][0].get("exile_pile") is None
+
+
+def test_an_exiled_card_linked_to_a_permanent_names_its_battlefield_id() -> None:
+    """`serialize.snapshot`'s exile-line suffix reaches `exile_pile.
+    linked_permanent_id` in the same `bf-${index}` shape `attached_to`
+    uses, so `board_layout.js` draws the imprinted card under the artifact
+    that holds it with no changes of its own."""
+    snap = snapshot(battlefield=["alice: Sol Ring"], exile=["Lightning Bolt (attached:0)"])
+    state = call("m.frameState(snap, {})", snap=snap)
+    exiled = state["exile"][0]
+    assert exiled["name"] == "Lightning Bolt"
+    assert exiled["exile_pile"] == {"linked_permanent_id": "bf-0"}
+
+    layout = _board_layout_of(snap)
+    ring_entry = next(
+        e for e in layout["seats"]["alice"]["main"] if e["card"]["name"] == "Sol Ring"
+    )
+    assert [c["name"] for c in ring_entry["under"]] == ["Lightning Bolt"]
+    assert layout["exile"] == []
+
+
+def test_the_names_a_review_needs_printings_for_ignore_the_attach_suffix() -> None:
+    """`cardNamesIn` looks up printings by name - an unparsed `(attached:N)`
+    suffix reaching Scryfall as part of the name would simply miss."""
+    rows = [
+        entry(
+            1,
+            "cast",
+            detail={"player": "bob", "card": "Sol Ring"},
+            snapshot=snapshot(
+                battlefield=["alice: Sol Ring"], exile=["Lightning Bolt (attached:0)"]
+            ),
+        )
+    ]
+    names = call("m.cardNamesIn(rev)", rev=review(rows, []))
+    assert "Lightning Bolt" in names
+    assert not any("attached" in name for name in names)
 
 
 # ------------------------------------------------------- turns and pairing --
