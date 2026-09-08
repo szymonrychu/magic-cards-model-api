@@ -112,6 +112,12 @@ def main() -> None:
     # nothing it does can hold up a turn or a shutdown.
     watcher = ActivityWatcher(settings.home_dir, settings.agent_log_level, metrics=metrics)
     watcher.start()
+    # The watcher is also the only thing that knows what the agent is doing
+    # right now, so `GET /v1/session` publishes its coarse word for the
+    # driver to carry to the game server and, from there, to the AI pill in
+    # the play UI. Set after `start()`, and read lazily on every snapshot,
+    # so nothing here depends on the watcher having seen anything yet.
+    manager.activity_source = watcher.activity_snapshot
 
     def stop(_signum, _frame) -> None:
         request_exit("signal")

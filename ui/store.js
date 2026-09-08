@@ -127,3 +127,94 @@ export function aiSeatLoadingNotice(aiUid, aiStatus) {
   }
   return { failed: false, message: "starting the agent" };
 }
+
+// --------------------------------------------------------- AI activity ----
+//
+// The AI pill used to read "AI (claude): thinking" for a whole match,
+// whatever the agent was doing, because the seat status was all the browser
+// could see and all it said was "a turn is in flight". The agent container's
+// transcript watcher (`mtg_agent/wrapper/activity.py`) now publishes one
+// coarse word for what it is actually doing, the driver carries it on its
+// `/status`, and it arrives here as `aiStatus.activity` -
+// `{state, seconds, seq}`.
+//
+// Two things this must never do, both of them requirements rather than
+// taste. It must not invent: no timer here promotes silence into a state, so
+// a quiet agent keeps whatever it was last *observed* doing. And it must not
+// leak: the human opponent reads this pill mid-game, so the words come from
+// the fixed table below keyed by the state alone - no card name, no tool
+// argument and no line of the agent's prose is on this wire in the first
+// place (see `observations` in that module), and none is rendered if it ever
+// were.
+
+/** Every phrase this pill can show, keyed by the state the wrapper observed.
+ * Grouped hard on purpose: several `mtg` read tools are one "reading the
+ * board", and every play is one "making its play" - a dozen labels flickering
+ * past on a 5s poll would say less than these eight. */
+export const AI_ACTIVITY_LABELS = {
+  waiting: "waiting for priority",
+  reading_board: "reading the board",
+  reading_cards: "reading cards",
+  reading_rules: "checking the rules",
+  deciding: "deciding",
+  acting: "making its play",
+  thinking: "thinking",
+  working: "working",
+};
+
+/** The seat states that mean "the agent has the game right now": `thinking`
+ * (`k8s_seats.py`, and a `subprocess` runner) and `dispatched` (the `wrapper`
+ * mechanism, which never rewrites that word while the seat is healthy - see
+ * `ai_seat.py`'s `_live_driver_status`). Every other state - `error`,
+ * `unreachable`, `gone`, `stopped`, `idle`, `pending`, `starting` - already
+ * says something truer than any activity could, and keeps its own word. */
+const AI_ACTIVITY_PLAYING_STATES = new Set(["thinking", "dispatched"]);
+
+/** How old an observation may be before the pill stops reporting it.
+ *
+ * Not a way of inferring a state - it never produces one - only of retiring
+ * a claim this page can no longer stand behind. Silence below the limit
+ * changes nothing: the last thing the agent was *observed* doing is still
+ * the honest answer, and no timer here gets to invent a different one.
+ *
+ * Five minutes, and deliberately nowhere near `AI_STALL_SECONDS`. Measured
+ * over 65 minutes of real seat transcripts: `wait_for_priority` - the agent
+ * parked, correctly, waiting for its moment - holds for a median of 28s and
+ * a p90 of 110s with nothing else written to the transcript meanwhile. A
+ * limit anywhere near the 45s stall banner retires that live, correct label
+ * mid-wait and replaces it with exactly the flat "thinking" this whole
+ * feature exists to remove: on that data a 45s limit blanked 49% of polls,
+ * almost all of them a legitimate wait. The stall banner is what tells the
+ * human a seat has gone quiet; the pill's job is to say what it was doing
+ * when it went quiet, which is more useful beside that banner, not less. */
+export const AI_ACTIVITY_STALE_SECONDS = 300;
+
+/**
+ * The words the AI pill should show for what the agent is doing right now,
+ * or `null` when this page cannot honestly say - which is the caller's
+ * signal to fall back to the plain seat-state word the pill has always
+ * shown (`renderAiPanel`, `ui/render/panels.js`).
+ *
+ * A pure function of the game state and the seat's last-polled status - no
+ * DOM, no fetch, no clock of its own (the age is measured in the agent's own
+ * container, where the transcript's timestamps and the clock are the same
+ * host's, so no browser skew can reach it) - so `tests/test_ui_ai_activity.py`
+ * can run the real shipped function under Node across every state.
+ */
+export function aiSeatActivityLabel(state, aiStatus) {
+  if (!aiStatus) return null;
+  if (state && (state.winner || state.drawn)) return null;
+  if (aiStatus.mechanism === "fallback") return null;
+  if (!AI_ACTIVITY_PLAYING_STATES.has(aiStatus.state)) return null;
+  const activity = aiStatus.activity;
+  if (!activity || typeof activity !== "object") return null;
+  const label = Object.prototype.hasOwnProperty.call(AI_ACTIVITY_LABELS, activity.state)
+    ? AI_ACTIVITY_LABELS[activity.state]
+    : null;
+  if (!label) return null;
+  // A missing or unparsable age is not evidence of staleness - only a number
+  // past the limit is.
+  const age = Number(activity.seconds);
+  if (Number.isFinite(age) && age >= AI_ACTIVITY_STALE_SECONDS) return null;
+  return label;
+}

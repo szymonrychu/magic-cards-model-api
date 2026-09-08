@@ -44,6 +44,11 @@ def build_world(tmp_path) -> SimpleNamespace:
         #: test can assert the driver treats its 404 as "not supported,
         #: continue" rather than failing the dispatch.
         "session_supported": True,
+        #: The coarse "what is the agent doing right now" word the real
+        #: wrapper publishes on `GET /v1/session` from its transcript
+        #: watcher (`mtg_agent/wrapper/activity.py`). `None` is a wrapper
+        #: that has observed nothing yet.
+        "activity": None,
     }
     #: The fake wrapper's own idea of its current model/effort/max_thinking_
     #: tokens - what `GET /v1/session` answers and `POST /v1/session` updates.
@@ -121,9 +126,11 @@ def build_world(tmp_path) -> SimpleNamespace:
 
     @wrapper.get("/v1/session")
     def get_session():
+        if state["agent"] == "down":
+            raise httpx.ConnectError("connection refused")
         if not state["session_supported"]:
             raise HTTPException(status_code=404, detail="not found")
-        return dict(session_settings)
+        return dict(session_settings) | {"activity": state["activity"]}
 
     @wrapper.post("/v1/session", status_code=202)
     def post_session(body: dict):
