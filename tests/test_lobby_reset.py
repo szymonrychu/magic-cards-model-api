@@ -1,14 +1,14 @@
 """End game is the only reset there is - `lobby.py`.
 
 Games the lobby boots live side by side: starting a second one from the lobby
-never touches the first (that used to be the bug - `POST /api/ui/games` reset
+never touches the first (that used to be the bug - `POST /api/lobby/games` reset
 the previous lobby game out from under a human still playing it, its seat uids
 dying, its `ai_pregame.py` watcher stopped, its AI seat released - so a
 transcript spanned two games with nothing to say where one ended, and in
 wrapper mode the driver still held the old assignment and refused to dispatch
 the new game's seat at all).
 
-Now the only way any of that happens is `DELETE /api/ui/games/{id}` (End
+Now the only way any of that happens is `DELETE /api/lobby/games/{id}` (End
 game), triggered by a human, not by starting another game.
 
 Every game here is a real game booted through the real endpoint the browser
@@ -39,7 +39,7 @@ LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
 def boot(client: TestClient, *, seed: int, ai: bool = True) -> dict[str, Any]:
     """One game from the lobby, exactly as the browser boots it."""
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK, "ai": False},
@@ -55,7 +55,7 @@ def boot(client: TestClient, *, seed: int, ai: bool = True) -> dict[str, Any]:
 def end(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
     """End a lobby game exactly as the browser's End game button does."""
     response = client.delete(
-        f"/api/ui/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["alice"]}
+        f"/api/lobby/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["alice"]}
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -221,7 +221,7 @@ def test_the_subprocess_seat_is_terminated_and_forgotten_when_ended(
     booted = boot(client, seed=1, ai=True)
     ai_uid = booted["seat_uids"]["bob"]
     started = client.post(
-        f"/api/ui/games/{booted['game_id']}/ai-seat/start", json={"uid": ai_uid}
+        f"/api/lobby/games/{booted['game_id']}/ai-seat/start", json={"uid": ai_uid}
     ).json()
     assert started["mechanism"] == "subprocess"
     runner = ai_seat.registry._runners[ai_uid]
@@ -266,7 +266,7 @@ def test_a_rejected_decklist_does_not_touch_the_running_game(client: TestClient)
     first = boot(client, seed=1)
     try:
         refused = client.post(
-            "/api/ui/games",
+            "/api/lobby/games",
             json={
                 "players": [
                     {"username": "alice", "decklist_text": "4 Mountain", "ai": False},

@@ -4,6 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 from test_game_agent_settings import create
 
+from magic_cards_model_api import decks_api
+
 
 def test_a_second_game_does_not_end_the_first(client: TestClient) -> None:
     first = create(client)
@@ -14,10 +16,10 @@ def test_a_second_game_does_not_end_the_first(client: TestClient) -> None:
         assert "reset" not in second
     finally:
         client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
         )
         client.delete(
-            f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
         )
 
 
@@ -26,7 +28,7 @@ def test_lobby_lists_live_games_with_only_your_uids(client: TestClient) -> None:
     second = create(client)
     try:
         my_uid = first["seat_uids"]["you"]
-        listing = client.get("/api/ui/games", params={"uids": my_uid}).json()["games"]
+        listing = client.get("/api/lobby/games", params={"uids": my_uid}).json()["games"]
         by_id = {g["game_id"]: g for g in listing}
         assert set(by_id) == {first["game_id"], second["game_id"]}
         assert by_id[first["game_id"]]["seats"] == {"you": my_uid}
@@ -34,22 +36,22 @@ def test_lobby_lists_live_games_with_only_your_uids(client: TestClient) -> None:
         assert by_id[first["game_id"]]["agents"]["bot"]["model"] == "sonnet"
     finally:
         client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
         )
         client.delete(
-            f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
         )
 
 
 def test_end_game_deletes_it(client: TestClient) -> None:
     created = create(client)
     response = client.delete(
-        f"/api/ui/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
+        f"/api/lobby/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
     )
     assert response.status_code == 200
     assert response.json()["deleted"] is True
     assert client.get(f"/api/games/{created['game_id']}").status_code == 404
-    assert client.get("/api/ui/games").json()["games"] == []
+    assert client.get("/api/lobby/games").json()["games"] == []
 
 
 def test_end_game_needs_a_seat_of_that_game(client: TestClient) -> None:
@@ -57,15 +59,15 @@ def test_end_game_needs_a_seat_of_that_game(client: TestClient) -> None:
     second = create(client)
     try:
         response = client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": second["seat_uids"]["you"]}
         )
         assert response.status_code == 404
     finally:
         client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
         )
         client.delete(
-            f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
         )
 
 
@@ -73,7 +75,7 @@ def test_created_at_is_stamped_and_the_listing_is_oldest_first(client: TestClien
     first = create(client)
     second = create(client)
     try:
-        listing = client.get("/api/ui/games").json()["games"]
+        listing = client.get("/api/lobby/games").json()["games"]
         by_id = {g["game_id"]: g for g in listing}
         assert by_id[first["game_id"]]["created_at"] is not None
         assert by_id[second["game_id"]]["created_at"] is not None
@@ -83,10 +85,10 @@ def test_created_at_is_stamped_and_the_listing_is_oldest_first(client: TestClien
         assert ids_in_order.index(first["game_id"]) < ids_in_order.index(second["game_id"])
     finally:
         client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
         )
         client.delete(
-            f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
         )
 
 
@@ -110,19 +112,74 @@ def test_a_conceded_game_does_not_count_against_the_cap(
         # second boot succeeds instead of refusing with 409.
         second = create(client)
         try:
-            listing = client.get("/api/ui/games").json()["games"]
+            listing = client.get("/api/lobby/games").json()["games"]
             by_id = {g["game_id"]: g for g in listing}
             assert set(by_id) == {first["game_id"], second["game_id"]}
-            # Still listed - finished, not ended - and with its winner
-            # reported, so End game can clear it from the lobby.
-            assert by_id[first["game_id"]]["winner"] == "bot"
+            # Still listed - finished, not ended - and reported as over, so
+            # End game can clear it from the lobby.
+            assert by_id[first["game_id"]]["is_over"] is True
         finally:
             client.delete(
-                f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+                f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
             )
     finally:
         client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+        )
+
+
+def test_the_lobby_list_calls_the_bulk_summary_once_not_once_per_game(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 (2b's T8, map's hot N+1): `list_lobby_games` used to build a full
+    `serialize.state_view` per game just to read `turn_number`/`step`/
+    `winner`/`drawn` back out of it - N calls for N games, on the browser's
+    1.2s poll. `api_client.game_summaries` is the one bulk call that replaced
+    it; this spies on the seam T5 built for exactly this kind of swap and
+    proves the lobby calls it exactly once, with every id, rather than once
+    per game."""
+    first = create(client)
+    second = create(client)
+    try:
+        calls: list[list[str]] = []
+        real = decks_api.api_client.game_summaries
+
+        def spy(game_ids: list[str]) -> dict[str, dict]:
+            calls.append(list(game_ids))
+            return real(game_ids)
+
+        monkeypatch.setattr(decks_api.api_client, "game_summaries", spy)
+
+        listing = client.get("/api/lobby/games").json()["games"]
+        assert {g["game_id"] for g in listing} >= {first["game_id"], second["game_id"]}
+        assert len(calls) == 1, calls
+        assert set(calls[0]) >= {first["game_id"], second["game_id"]}
+    finally:
+        client.delete(
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+        )
+        client.delete(
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+        )
+
+
+def test_the_lobby_list_reports_turn_and_phase_from_the_bulk_summary(client: TestClient) -> None:
+    created = create(client)
+    try:
+        listing = client.get("/api/lobby/games").json()["games"]
+        row = next(g for g in listing if g["game_id"] == created["game_id"])
+        # A lobby-booted game rests in CR 103.5's mulligan step (turn 0) with
+        # no phase yet (CR 500.1 makes a phase part of a turn, and no turn has
+        # begun) - the same values `GET /api/games/{id}` itself reports right
+        # after boot (`test_decks_api.py`'s own
+        # `test_start_game_boots_a_real_game`), now sourced from the bulk
+        # summary instead.
+        assert row["turn_number"] == 0
+        assert row["phase"] is None
+        assert row["is_over"] is False
+    finally:
+        client.delete(
+            f"/api/lobby/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
         )
 
 
@@ -133,7 +190,7 @@ def test_live_game_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
     try:
         bot = {"username": "bot", "decklist_text": create.__globals__["DECK_B"], "ai": True}
         response = client.post(
-            "/api/ui/games",
+            "/api/lobby/games",
             json={
                 "players": [
                     {"username": "you", "decklist_text": create.__globals__["DECK_A"]},
@@ -145,8 +202,31 @@ def test_live_game_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
         assert "2" in response.json()["detail"]
     finally:
         client.delete(
-            f"/api/ui/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
         )
         client.delete(
-            f"/api/ui/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
         )
+
+
+def test_the_old_ui_prefixed_lobby_game_routes_are_gone(client: TestClient) -> None:
+    """2b's T8 moved `decks_api.py`'s lobby-owned game routes off `/api/ui`
+    onto `/api/lobby` - proves the move happened rather than the routes
+    being merely duplicated at the new path, the same T5 precedent
+    (`test_decks_api.test_the_old_ui_prefixed_deck_routes_are_gone`): 404 for
+    a GET, since the catch-all static mount at `/` finds no matching file
+    there; 405 for a POST/DELETE, since that mount only serves GET/HEAD."""
+    assert client.get("/api/ui/games").status_code == 404
+    assert (
+        client.post(
+            "/api/ui/games",
+            json={
+                "players": [
+                    {"username": "a", "decklist_text": create.__globals__["DECK_A"]},
+                    {"username": "b", "decklist_text": create.__globals__["DECK_B"]},
+                ]
+            },
+        ).status_code
+        == 405
+    )
+    assert client.delete("/api/ui/games/no-such-game").status_code == 405

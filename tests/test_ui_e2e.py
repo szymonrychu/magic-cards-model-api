@@ -1,5 +1,5 @@
 """One end-to-end game driven through the UI's own endpoints: boot from
-decklists (`POST /api/ui/games`, what the lobby's "Start game" button calls),
+decklists (`POST /api/lobby/games`, what the lobby's "Start game" button calls),
 then play a real turn using exactly the seat-facing calls `ui/app.js` itself
 makes - `cast`, `pass-priority`, `resolve-top`, `decide` - never a bespoke
 test-only shortcut. This is the "drives a real game through the UI's own
@@ -31,13 +31,13 @@ LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
 
 @pytest.fixture()
 def booted_game(client: TestClient) -> dict:
-    """A game booted through the UI's own `POST /api/ui/games`, deleted
+    """A game booted through the UI's own `POST /api/lobby/games`, deleted
     afterward - the store (`store.py`) is one module-level singleton shared
     by the whole pytest process, and a game left behind changes which game
     `GET /api/games` reports as "the live one" for tests elsewhere
     (`test_mcp_resilience.py`) that rely on there being exactly one."""
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK, "ai": False},
@@ -123,7 +123,7 @@ def test_full_turn_through_the_ui_endpoints(client: TestClient, booted_game: dic
     # that wants the real subprocess branch opts in with its own
     # `claude_available`/`command_for` stand-in, the way `ai_seat.py`'s own
     # tests do. Here we only need this call to not blow up the game boot flow.
-    ai_start = client.post(f"/api/ui/games/{game_id}/ai-seat/start", json={"uid": bob_uid})
+    ai_start = client.post(f"/api/lobby/games/{game_id}/ai-seat/start", json={"uid": bob_uid})
     assert ai_start.status_code == 200
     assert ai_start.json()["mechanism"] in ("subprocess", "fallback")
 

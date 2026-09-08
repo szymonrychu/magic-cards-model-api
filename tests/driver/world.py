@@ -61,10 +61,29 @@ def build_world(tmp_path) -> SimpleNamespace:
         return {
             "id": game_id,
             "players": [
-                {"username": "bob", "decklist": state["decklist"]},
+                {"username": "bob"},
                 {"username": "alice"},
             ],
             "winner": state["winner"],
+        }
+
+    @game.get("/api/lobby/games/{game_id}/seats")
+    def get_seats(game_id: str, uid: str | None = None):
+        # 2b's T8 moved `decklist` off `GET /api/games/{id}` onto this
+        # lobby-owned route, redacted the same way `visibility._redact_player`
+        # used to redact it on the state view: present only for the entry
+        # whose own uid the caller presents.
+        if state["game"] == "down":
+            raise httpx.ConnectError("connection refused")
+        return {
+            "seats": [
+                {
+                    "player": "bob",
+                    "uid": "secret-uid",
+                    "decklist": state["decklist"] if uid == "secret-uid" else None,
+                },
+                {"player": "alice", "uid": "other-uid", "decklist": None},
+            ]
         }
 
     wrapper = FastAPI()

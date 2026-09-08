@@ -74,15 +74,20 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "there is no agent seat whose reasoning could be required."
     ),
     ("POST", "/api/decks/validate"): "reads a decklist and answers; mutates nothing.",
-    ("POST", "/api/ui/games"): "the lobby boots a game. Same reason as `POST /api/games`.",
-    ("DELETE", "/api/ui/games/{game_id}"): (
+    ("POST", "/api/lobby/games"): "the lobby boots a game. Same reason as `POST /api/games`.",
+    ("DELETE", "/api/lobby/games/{game_id}"): (
         "the lobby ends a game. Same reason as `DELETE /api/games/{game_id}`."
     ),
-    ("POST", "/api/ui/games/{game_id}/ai-seat/start"): (
+    ("POST", "/api/lobby/games/{game_id}/ai-seat/start"): (
         "the operator starts or stops an agent process. About a seat, not by one."
     ),
-    ("POST", "/api/ui/games/{game_id}/ai-seat/stop"): (
+    ("POST", "/api/lobby/games/{game_id}/ai-seat/stop"): (
         "the operator starts or stops an agent process. About a seat, not by one."
+    ),
+    ("POST", "/api/games/{game_id}/seats"): (
+        "mints a fresh seat credential for an already-registered player - the "
+        "seat back door's replacement (2b's T8), an operator/harness action "
+        "about a seat, not a move inside the game."
     ),
 }
 
@@ -321,7 +326,7 @@ def test_the_pregame_declarations_refuse_an_agent_seat_with_no_reasoning(
     routes - it calls `opening.py` directly and never travels through them.
     """
     boot = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "bob", "decklist_text": _DECK_A, "ai": True},
@@ -361,4 +366,4 @@ def test_the_pregame_declarations_refuse_an_agent_seat_with_no_reasoning(
         )
         assert _missing_reasoning(bare_finish), bare_finish.text
     finally:
-        client.delete(f"/api/ui/games/{game_id}", params={"uid": info["seat_uids"]["alice"]})
+        client.delete(f"/api/lobby/games/{game_id}", params={"uid": info["seat_uids"]["alice"]})

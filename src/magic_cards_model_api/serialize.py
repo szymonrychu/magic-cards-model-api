@@ -22,7 +22,6 @@ from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Z
 
 from . import scryfall
 from .affordances import cast_hints
-from .agent_settings import AgentSettings
 from .decisions import PendingDecision
 from .engine_api import list_abilities
 from .opening import pregame_view
@@ -505,28 +504,25 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
     return views
 
 
-def _player_view(
-    player: Player, decklist: str | None = None, agent: AgentSettings | None = None
-) -> dict[str, Any]:
+def _player_view(player: Player) -> dict[str, Any]:
     """One seat's own block.
 
-    `decklist` is the raw decklist text this seat was booted from
-    (`store.register_decklists`), and it is the one field here that is not
-    public: CR 100.2a's constructed play is "a way of playing in which each
-    player creates their own deck ahead of time", so a seat knows its own list
-    and nothing entitles it to the opponent's - CR 401.1/401.2 make that deck
-    a library nobody may look at once the game begins. `visibility.redact_view`
-    is what enforces it; this function reports the full truth, exactly as it
-    already does for `hands`. `None` for a game built board-first, which has no
-    decklist to report.
-
-    `agent` is that seat's `AgentSettings` (`store.register_agent_settings`) -
-    present only for an AI seat, absent for a human one, same as `_ai_players`.
-    Not secret the way `decklist` is: which model, effort and thinking budget
-    play a bot seat is not hidden information under any CR rule, so it is
-    reported on the player block itself rather than filtered per-viewer.
+    No `decklist` or `agent` field any more (2b's T8, map's S6): both used to
+    be read here from lobby-owned state (`store.decklists`/
+    `store.agent_settings`) on *every* state read, including the browser's
+    1.2s poll - the api component reading lobby-owned data on the hottest
+    path in the app is exactly the reverse seam the six-way cut cannot carry
+    across. Both moved to the lobby's own `GET /api/lobby/games/{id}/seats`
+    (also the S7 fix, folding in what used to be a separate AI-seat-status
+    poll) - `decklist` redacted there the same way `visibility._redact_player`
+    redacted it here (present only for the caller's own `uid`), since it is
+    still genuinely needed (`mtg_agent.driver.app`'s `seat_decklist`, for
+    matchup-guide selection) and still hidden information under CR 401.2.
+    `visibility.py` itself is untouched; its `decklist`-specific redaction is
+    simply never triggered any more, since the key no longer exists here to
+    redact.
     """
-    view = {
+    return {
         "username": player.username,
         "life": player.life,
         "counters": dict(player.counters.root),
@@ -540,11 +536,6 @@ def _player_view(
         "sideboard_count": len(player.sideboard),
         "maximum_hand_size": player.maximum_hand_size,
     }
-    if decklist is not None:
-        view["decklist"] = decklist
-    if agent is not None:
-        view["agent"] = agent.model_dump()
-    return view
 
 
 def snapshot(game: Game) -> dict[str, Any]:
@@ -638,6 +629,29 @@ def snapshot(game: Game) -> dict[str, Any]:
     }
 
 
+def game_summary(game: Game, game_id: str) -> dict[str, Any]:
+    """S2 (2b's T8): exactly the scalars a lobby's game list needs to show
+    something for each game - never the full `state_view`, which is what the
+    N+1 this replaces was paying for. Every field here is a bare read off
+    `game.turn`/`game.players`/`game.is_over`, none of it Scryfall-image or
+    per-card work, so this is cheap enough to call once per game, in a loop,
+    with nothing worth batching further at this layer - the batching that
+    matters is one HTTP round trip for every id, not one call per game
+    inside this function.
+    """
+    turn = game.turn
+    step = turn.step if turn is not None else Step.UNTAP
+    phase = PHASE_OF.get(step)
+    return {
+        "game_id": game_id,
+        "is_over": game.is_over,
+        "turn_number": turn.turn_number if turn is not None else None,
+        "active_player": turn.players[turn.active_index] if turn is not None else None,
+        "phase": phase.value if phase is not None else None,
+        "seat_count": len(game.players),
+    }
+
+
 def state_view(game: Game, game_id: str) -> dict[str, Any]:
     """T1: this dict's shape is formalised as `schemas.GameStateView` - see
     that class and the "Response views" section it opens for the field-by-
@@ -679,8 +693,6 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         else None
     )
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
-    decklists = store.decklists(game_id)
-    agent_settings = store.agent_settings(game_id)
     # CR 500.1 makes a phase part of a turn, and the engine's two pregame steps
     # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) run before CR 103.8's first
     # turn - so they are in no phase and are deliberately absent from
@@ -698,12 +710,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "pregame": pregame_view(game),
         "active_player": turn.players[turn.active_index] if turn is not None else None,
         "priority_holder": game.priority.holder if game.priority is not None else None,
-        "players": [
-            _player_view(
-                player, decklists.get(player.username), agent_settings.get(player.username)
-            )
-            for player in game.players
-        ],
+        "players": [_player_view(player) for player in game.players],
         "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "stack": _stack_view(game, images),
         "exile": exile_views,

@@ -69,9 +69,8 @@ GAMES = [
         "game_id": "g1",
         "players": ["you", "bot"],
         "turn_number": 3,
-        "step": "precombat_main",
-        "winner": None,
-        "drawn": None,
+        "phase": "precombat_main",
+        "is_over": False,
         "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
         "seats": {"you": "u1"},
     }
@@ -86,7 +85,7 @@ def test_lobby_rows_join_server_games_with_saved_seats() -> None:
             "gameId": "g1",
             "opponent": "bot",
             "turn": 3,
-            "step": "precombat_main",
+            "phase": "precombat_main",
             "over": False,
             "model": "opus",
             "effort": "max",
@@ -124,9 +123,8 @@ GAMES_MIXED = [
         "game_id": "g1",
         "players": ["you", "bot"],
         "turn_number": 3,
-        "step": "precombat_main",
-        "winner": None,
-        "drawn": None,
+        "phase": "precombat_main",
+        "is_over": False,
         "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
         # Both of this browser's own uids can land in `seats` here - the
         # human seat "you" (u1) and the AI seat "bot" (u2), since
@@ -144,9 +142,8 @@ GAMES_MIXED = [
         "game_id": "g2",
         "players": ["stranger1", "stranger2"],
         "turn_number": 1,
-        "step": "upkeep",
-        "winner": None,
-        "drawn": None,
+        "phase": "beginning",
+        "is_over": False,
         "agents": {},
         "seats": {},
     },
@@ -209,9 +206,9 @@ def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
 
 def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
     """`mountLobby` reads `mcm.games.v1`, joins it against
-    `GET /api/ui/games?uids=...` through `lobbyViewModel`, and renders one
+    `GET /api/lobby/games?uids=...` through `lobbyViewModel`, and renders one
     `<tr>` per row into `#games-tbody`. Clicking a row's End button calls
-    `DELETE /api/ui/games/{id}?uid=<my seat uid>` and drops the row from both
+    `DELETE /api/lobby/games/{id}?uid=<my seat uid>` and drops the row from both
     the table and `mcm.games.v1` - proven here by the saved list actually
     being empty afterward, not just the DELETE call having fired."""
     result = run_module(
@@ -267,10 +264,10 @@ def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
         games=GAMES,
         saved=SAVED,
     )
-    assert "GET /api/ui/games?uids=u1%2Cu2" in result["fetchCalls"]
+    assert "GET /api/lobby/games?uids=u1%2Cu2" in result["fetchCalls"]
     assert result["rowText"][0] == "bot"
     assert result["rowText"][3] == "playing"
-    assert "DELETE /api/ui/games/g1?uid=u1" in result["fetchCalls"]
+    assert "DELETE /api/lobby/games/g1?uid=u1" in result["fetchCalls"]
     assert result["rowCountAfter"] == 0
     assert result["savedAfter"] == []
 

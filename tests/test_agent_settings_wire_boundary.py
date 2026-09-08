@@ -2,13 +2,17 @@
 carries a camelCase alias (T13) for exactly one hop - the seat-assignment wire
 (`to_wire()`) - and must never leak that alias into a FastAPI `response_model`,
 because `response_model_by_alias=True` is FastAPI's default and T1 started
-declaring response models on routes that embed `AgentSettings`
-(`PlayerView.agent`, via `GameStateView`).
+declaring response models on routes that embed `AgentSettings`.
+
+2b's T8 moved that embedding off `GameStateView`/`PlayerView.agent` (the
+game-state view carries no `agent` field for any player any more, S6) onto
+the lobby's own `GET /api/lobby/games/{id}/seats` (`decks_api.SeatDetail`) -
+this test's browser-wire half moved with it.
 
 One test, two assertions, so neither wire can regress without the other
-catching it: the browser-facing `GET /api/games/{id}` response must stay
-snake_case (`test_game_agent_settings.py` already pins this at the JSON-body
-level; this test additionally proves it via a real HTTP round trip), and the
+catching it: the lobby-facing seats response must stay snake_case
+(`test_game_agent_settings.py` already pins this at the JSON-body level; this
+test additionally proves it via a real HTTP round trip), and the
 seat-assignment `to_wire()` output must stay camelCase
 (`test_agent_settings_contract.py` pins that against the committed schema;
 this test is the one place that checks both ends together).
@@ -23,11 +27,11 @@ from test_decks_api import LEGAL_DECK_B as DECK_B
 from magic_cards_model_api.agent_settings import AgentSettings
 
 
-def test_the_browser_wire_stays_snake_case_and_the_seat_assignment_wire_stays_camel_case(
+def test_the_lobby_seats_wire_stays_snake_case_and_the_seat_assignment_wire_stays_camel_case(
     client: TestClient,
 ) -> None:
     created = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "you", "decklist_text": DECK_A},
@@ -36,13 +40,12 @@ def test_the_browser_wire_stays_snake_case_and_the_seat_assignment_wire_stays_ca
         },
     ).json()
 
-    # The browser wire: GET /api/games/{id} is response_model=GameStateView,
-    # which embeds AgentSettings at PlayerView.agent. FastAPI's default
-    # response_model_by_alias=True must not turn this into "maxThinkingTokens".
-    state = client.get(
-        f"/api/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
-    ).json()
-    bot = next(p for p in state["players"] if p["username"] == "bot")
+    # The lobby wire: GET /api/lobby/games/{id}/seats is
+    # response_model=GameSeatsResponse, which embeds AgentSettings at
+    # SeatDetail.agent. FastAPI's default response_model_by_alias=True must
+    # not turn this into "maxThinkingTokens".
+    seats = client.get(f"/api/lobby/games/{created['game_id']}/seats").json()["seats"]
+    bot = next(s for s in seats if s["player"] == "bot")
     assert "max_thinking_tokens" in bot["agent"]
     assert "maxThinkingTokens" not in bot["agent"]
 

@@ -10,7 +10,7 @@ def create(client: TestClient, agent: dict | None = None, ai: bool = True) -> di
     if agent is not None:
         bot["agent"] = agent
     return client.post(
-        "/api/ui/games", json={"players": [{"username": "you", "decklist_text": DECK_A}, bot]}
+        "/api/lobby/games", json={"players": [{"username": "you", "decklist_text": DECK_A}, bot]}
     ).json()
 
 
@@ -19,13 +19,22 @@ def test_agent_settings_default_and_show_on_the_player(client: TestClient) -> No
     assert created["agents"] == {
         "bot": {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
     }
+    # 2b's T8: the game-state view no longer carries `agent` on any player
+    # block at all - it moved to the lobby's own `GET
+    # /api/lobby/games/{id}/seats` (S6).
     state = client.get(
         f"/api/games/{created['game_id']}", params={"uid": created["seat_uids"]["you"]}
     ).json()
     bot = next(p for p in state["players"] if p["username"] == "bot")
-    assert bot["agent"] == {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
+    assert "agent" not in bot
     you = next(p for p in state["players"] if p["username"] == "you")
     assert "agent" not in you
+
+    seats = client.get(f"/api/lobby/games/{created['game_id']}/seats").json()["seats"]
+    bot_seat = next(s for s in seats if s["player"] == "bot")
+    assert bot_seat["agent"] == {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
+    you_seat = next(s for s in seats if s["player"] == "you")
+    assert you_seat.get("agent") is None
 
 
 def test_agent_settings_are_stored_as_given(client: TestClient) -> None:
@@ -39,7 +48,7 @@ def test_agent_settings_are_stored_as_given(client: TestClient) -> None:
 
 def test_agent_on_a_human_seat_is_refused(client: TestClient) -> None:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {

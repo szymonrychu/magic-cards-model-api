@@ -50,7 +50,7 @@ def require_postgres_database_url(env_var: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _no_real_claude_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`POST /api/ui/games` now starts each `ai: true` seat itself, right
+    """`POST /api/lobby/games` now starts each `ai: true` seat itself, right
     after booting the game - which, in `subprocess` mode, means a game
     created in a test would otherwise spawn a *real* `claude` process the
     moment this dev machine happens to have one on PATH (it does).
@@ -134,7 +134,7 @@ def client():
         yield test_client
     # `store` is a module-level singleton shared by the whole pytest process,
     # not reset between tests just because `TestClient`'s context manager
-    # exited. Since `POST /api/ui/games` no longer resets a previous lobby
+    # exited. Since `POST /api/lobby/games` no longer resets a previous lobby
     # game on its own (`lobby.py` - End game is the only reset now), a test
     # that boots one and forgets to end or delete it would otherwise leak a
     # live slot into every test that runs after it: `MAX_LIVE_GAMES`

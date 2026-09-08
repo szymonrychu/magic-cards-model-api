@@ -80,7 +80,7 @@ def boot(
     opponent seat - the flag `ai_pregame.py`'s backstop keys off.
     """
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {

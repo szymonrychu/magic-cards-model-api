@@ -341,22 +341,35 @@ def build_app(
             log.info("game %s reached the agent on retry, turn %s", assignment.game_id, turn_id)
             return
 
-    def seat_decklist(state: dict, player: str) -> str:
-        """This seat's own decklist text, out of its `players` block.
+    def seat_decklist(game_id: str, uid: str, player: str) -> str:
+        """This seat's own decklist text.
 
-        `state` is `GET /api/games/{id}` read with *this seat's* uid, and the
-        game server puts `decklist` on the viewer's own player block only - a
-        seat knows the deck it registered and never the opponent's (see
-        `visibility._redact_player`). So the loop below can only ever find its
-        own list, and an opponent's entry simply has no `decklist` key.
+        2b's T8 moved `decklist` off the game server's state view entirely -
+        it was lobby-owned data (`store.decklists`) the api component read on
+        every state poll, the hot reverse seam the six-way cut cannot carry -
+        onto the lobby's own `GET /api/lobby/games/{id}/seats?uid=...`, which
+        redacts every entry but the caller's own `uid` the same way
+        `visibility._redact_player` used to redact this same field here.
+        Pre-cut, that route lives on the same origin `settings.game_api`
+        already points at.
 
-        Empty for a game the server was not booted from decklists (`POST
-        /api/games` builds a board directly), which is the honest answer: there
-        is no list to identify, and `GuideLibrary.identify` scores an empty
-        list at 0 rather than guessing a guide.
+        Best-effort: a failure reaching the lobby route (or a game with no
+        decklists at all, `POST /api/games` builds a board directly) answers
+        empty rather than aborting the dispatch - the honest "no list to
+        identify" answer `GuideLibrary.identify` already scores at 0 rather
+        than guessing a guide, and matchup-guide selection is not worth
+        making the actual seat assignment newly fragile over.
         """
-        for seat in state.get("players") or []:
-            if seat.get("username") == player:
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.get(f"/api/lobby/games/{game_id}/seats", params={"uid": uid})
+                if response.status_code >= 400:
+                    return ""
+                seats = response.json().get("seats") or []
+        except httpx.HTTPError:
+            return ""
+        for seat in seats:
+            if seat.get("player") == player:
                 return seat.get("decklist") or ""
         return ""
 
@@ -398,7 +411,7 @@ def build_app(
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"game server: {exc}") from exc
 
-        decklist = parse_decklist(seat_decklist(state, body.player))
+        decklist = parse_decklist(seat_decklist(body.game_id, body.uid, body.player))
         guide, score = library.identify(decklist)
         assignment = Assignment(
             game_id=body.game_id,

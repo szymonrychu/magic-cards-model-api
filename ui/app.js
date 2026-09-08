@@ -30,6 +30,12 @@ import { loadSavedGames, saveGames, upsertSavedGame } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
 const POLL_MS = 1200;
+//: S7 (2b's T8): the AI seat's liveness now comes from the lobby's
+//: aggregate `/seats` route (one call for every seat's agent settings and
+//: liveness together) rather than a second per-tick `/ai-seat/status` call
+//: inside `poll()` itself - and it needs it far less often than the board
+//: does, so it runs on its own, slower interval.
+const SEAT_POLL_MS = 5000;
 
 function currentStorage() {
   return typeof localStorage !== "undefined" ? localStorage : null;
@@ -227,21 +233,38 @@ async function poll() {
       log: { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq },
     }));
     refreshDecisionTargets();
-    if (app.aiUid) {
-      try {
-        store.set({
-          aiStatus: await api("GET", `${lobbyBase()}/ui/games/${app.gameId}/ai-seat/status?uid=${app.aiUid}`),
-        });
-      } catch {
-        /* transient - the next poll tries again */
-      }
-    }
     await tickRun();
   } catch (err) {
     store.set({ connection: `error: ${err.message}` });
   } finally {
     store.set({ polling: false });
   }
+}
+
+/** S7 (2b's T8): the play UI's own half of the fix. One `GET
+ * ${lobbyBase()}/games/{id}/seats` answers every seat's agent settings and
+ * liveness together - `app.aiStatus` reads out the one entry matching
+ * `app.aiUid`, the same shape `GET .../ai-seat/status` used to hand back
+ * directly. A missing or unreachable game (a stale poll after leaving it)
+ * or no AI seat at all is a silent no-op - the next tick tries again. */
+async function pollSeats() {
+  const app = store.get();
+  if (!app.gameId || !app.aiUid) return;
+  try {
+    const { seats } = await api("GET", `${lobbyBase()}/games/${app.gameId}/seats`);
+    const mine = (seats || []).find((seat) => seat.uid === app.aiUid);
+    if (mine) store.set({ aiStatus: mine.ai_seat });
+  } catch {
+    /* transient - the next poll tries again */
+  }
+}
+
+/** Starts both poll loops - the board's fast one and the AI seat's slower
+ * one - rather than each of `main()`'s two boot paths repeating the pair of
+ * `setInterval` calls. */
+function startPolling() {
+  setInterval(poll, POLL_MS);
+  setInterval(pollSeats, SEAT_POLL_MS);
 }
 
 // ------------------------------------------------------- decision targets --
@@ -906,11 +929,12 @@ export async function startGame(created, { navigate = true } = {}) {
   document.querySelector("#lobby").hidden = true;
   document.querySelector("#game").hidden = false;
   await poll();
+  await pollSeats();
 }
 
 async function main() {
   await loadConfig();
-  store.set({ symbols: await loadSymbols(api, lobbyBase()) });
+  store.set({ symbols: await loadSymbols(api, apiBase()) });
   lobbyApi = mountLobby(document, store, { startGame });
   mountBoard(document, store, {
     onHandCard,
@@ -1058,7 +1082,7 @@ async function main() {
       { game_id: urlGameId, uid: entry ? entry.uid : null, aiUid: entry ? entry.aiUid : null },
       { navigate: false }
     );
-    setInterval(poll, POLL_MS);
+    startPolling();
     return;
   }
   // The lobby is the entry point now that it lists every live game - so
@@ -1075,7 +1099,7 @@ async function main() {
     await startGame({ game_id: only.gameId, uid: only.uid, aiUid: only.aiUid });
     return;
   }
-  setInterval(poll, POLL_MS);
+  startPolling();
 }
 
 // A no-op under Node (`tests/test_ui_app.py`'s fake-DOM smoke test), a real

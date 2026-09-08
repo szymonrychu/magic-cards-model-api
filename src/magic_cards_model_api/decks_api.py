@@ -1,9 +1,15 @@
 """HTTP endpoints the browser UI uses to boot and manage a lobby-booted game.
 
+Mounted under `/api/lobby` (2b's T8, map's namespace split): every route in
+this module is lobby-owned, and moved off the api-owned `/api` prefix so the
+URL space itself already matches where each side of the eventual six-way cut
+lives - the same reasoning `api_decks.py`'s docstring gives for the opposite
+move (T5).
+
 `serve.py` only boots games from `--deck`/`--match` command-line arguments,
 read once at process start. A UI needs to boot a game *at request time*, from
 a bundled `decks/*.txt` file or from text a human pasted or uploaded - so
-`POST /api/ui/games` calls the exact same engine path
+`POST /api/lobby/games` calls the exact same engine path
 (`decks.load_deck_into_game`, CR 103's whole start-of-game sequence) that
 `serve.py`'s `_boot_from_spec` already uses, just from an HTTP body instead
 of argv.
@@ -30,13 +36,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import ai_pregame, ai_seat, audit, lobby, serialize
+from . import ai_pregame, ai_seat, audit, lobby
 from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
 from .store import new_seat_uids, store
 
-router = APIRouter(prefix="/api/ui", tags=["ui"])
+router = APIRouter(prefix="/api/lobby", tags=["lobby"])
 
 #: The lobby's one dependency on the api component, for now an in-process
 #: call (`api_client.py`'s own docstring). Module-level so a test can swap it
@@ -93,7 +99,7 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     game - both decks are validated before either is registered.
 
     Games the lobby boots live side by side - starting one never ends
-    another; `DELETE /api/ui/games/{id}` (End game) is the only reset. Refuses
+    another; `DELETE /api/lobby/games/{id}` (End game) is the only reset. Refuses
     (409) once `MAX_LIVE_GAMES` lobby games are already live, so the table
     does not grow without bound; ending one from the lobby frees a slot.
     """
@@ -208,9 +214,8 @@ class LobbyGameSummary(BaseModel):
     game_id: str
     players: list[str]
     turn_number: int | None = None
-    step: str
-    winner: str | None = None
-    drawn: bool
+    phase: str | None = None
+    is_over: bool
     agents: dict[str, AgentSettings]
     seats: dict[str, str]
     created_at: str | None = None
@@ -230,23 +235,33 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
     every game it has ever seen - each game's `seats` in the response is
     filtered down to only the uids from that list which are actually seats of
     that game, so a browser never learns a uid that is not already its own.
+
+    2b's T8 (map's S2): this used to build a full `serialize.state_view` per
+    game just to pull `turn_number`/`step`/`winner`/`drawn` back out of it -
+    the hot N+1 the browser's 1.2s poll paid for on every tick, times however
+    many games are live. `api_client.game_summaries` answers every game's
+    scalars in one call instead, through the same seam T5 built for deck
+    validation - `players` and `agents` stay locally sourced (`store.get`,
+    `store.agent_settings`), since neither ever needed the full board view
+    either.
     """
     mine = {u for u in (uids or "").split(",") if u}
+    game_ids = store.ui_games()
+    summaries = api_client.game_summaries(game_ids)
     games = []
-    for game_id in store.ui_games():
+    for game_id in game_ids:
         game = store.get(game_id)
-        if game is None:
+        summary = summaries.get(game_id)
+        if game is None or summary is None:
             continue
         seats = {name: uid for uid, name in store.seat_uids(game_id).items() if uid in mine}
-        view = serialize.state_view(game, game_id)
         games.append(
             {
                 "game_id": game_id,
                 "players": [p.username for p in game.players],
-                "turn_number": view["turn_number"],
-                "step": view["step"],
-                "winner": view["winner"],
-                "drawn": view["drawn"],
+                "turn_number": summary["turn_number"],
+                "phase": summary["phase"],
+                "is_over": summary["is_over"],
                 "agents": {
                     name: settings.model_dump()
                     for name, settings in store.agent_settings(game_id).items()
@@ -257,6 +272,80 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
         )
     games.sort(key=lambda entry: entry["created_at"] or "")
     return {"games": games}
+
+
+class SeatDetail(BaseModel):
+    player: str
+    uid: str
+    agent: AgentSettings | None = None
+    """This seat's `AgentSettings`, if it is an AI seat - `None` for a human
+    one, same as `NewUiGameResponse.agents`."""
+    ai_seat: dict[str, Any] | None = None
+    """`ai_seat.registry.status(uid)` verbatim, or the same `not_started`
+    fallback `GET .../ai-seat/status` used to hand back for an unstarted
+    uid - `None` only means this seat's liveness was never tracked at all,
+    which in practice never happens once a uid exists."""
+    decklist: str | None = None
+    """This seat's own decklist text (`store.decklists`) - present only on
+    the entry matching the caller's own `uid` query parameter, the same
+    "own block only" rule `visibility._redact_player` enforced when this
+    field still lived on the game server's state view. Never present with
+    no `uid`, or one that opens no seat of this game."""
+
+
+class GameSeatsResponse(BaseModel):
+    seats: list[SeatDetail]
+
+
+@router.get(
+    "/games/{game_id}/seats", response_model=GameSeatsResponse, response_model_exclude_unset=True
+)
+def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
+    """2b's T8 (map's S6/S7): per-seat agent settings and liveness, in one
+    answer. Replaces three things at once - `serialize._player_view` reading
+    lobby-owned `agent_settings` *and* `decklists` on every state poll (S6),
+    and the play UI's own separate 1.2s `/ai-seat/status` poll (S7) - with a
+    single lobby-owned route the play UI now polls every 5s instead.
+
+    `decklist` moved here rather than being dropped outright: it is still
+    genuinely needed (`mtg_agent.driver.app`'s `seat_decklist`, matchup-guide
+    selection - see `tests/driver/test_app.py`'s
+    `test_the_real_game_server_carries_the_field_seat_decklist_reads`), and
+    it is still hidden information (CR 401.2) - so it is redacted the same
+    way `visibility._redact_player` redacted it on the old route: present
+    only for the seat whose own `uid` the caller presents, absent for every
+    other entry and for a caller with no `uid` or an unrecognised one.
+    """
+    if store.get(game_id) is None:
+        raise KeyError(f"no game {game_id}")
+    agents = store.agent_settings(game_id)
+    decklists = store.decklists(game_id)
+    seats = []
+    for seat_uid, player in store.seat_uids(game_id).items():
+        status = ai_seat.registry.status(seat_uid)
+        seats.append(
+            {
+                "player": player,
+                "uid": seat_uid,
+                # `.model_dump()`, not the bare `AgentSettings` instance: T1's
+                # own lesson (`MEMORY.md`) - `response_model_exclude_unset=
+                # True` tracks each *response* instance's own
+                # `model_fields_set`, and a model FastAPI can serialize
+                # as-is without reconstructing it keeps whatever that
+                # instance's constructor happened to set explicitly
+                # (`AgentSettings.default()` only ever names `model=`).
+                # Handing over a plain dict with every key present forces
+                # FastAPI to validate a fresh instance from it, marking all
+                # three fields set - the same fix `_player_view` used to get
+                # by construction when this field lived there.
+                "agent": agents[player].model_dump() if player in agents else None,
+                "ai_seat": status
+                if status is not None
+                else {"uid": seat_uid, "mechanism": None, "state": "not_started"},
+                "decklist": decklists.get(player) if uid is not None and uid == seat_uid else None,
+            }
+        )
+    return {"seats": seats}
 
 
 class EndGameResponse(BaseModel):

@@ -112,7 +112,7 @@ def test_status_and_stop_are_harmless_for_a_wrapper_seat(driver):
 #
 # The freeze: the agent's claude hit `API Error: 401` mid-game and stopped.
 # `AiSeatRegistry.status` returned the dict built at dispatch time, so
-# `GET /api/ui/games/{id}/ai-seat/status` said `state: "dispatched"` for the
+# `GET /api/lobby/games/{id}/ai-seat/status` said `state: "dispatched"` for the
 # rest of the game no matter what became of the agent, and the play UI had
 # nothing to show the human but a seat that was, as far as it knew, fine.
 
@@ -261,7 +261,7 @@ def test_a_seat_that_could_not_start_says_why(monkeypatch):
     assert "driver" in registry.why_gone("u")
 
 
-# ---- creation itself dispatches the seat (POST /api/ui/games, wrapper mode) -
+# ---- creation itself dispatches the seat (POST /api/lobby/games, wrapper mode) -
 #
 # The subprocess-mode counterpart lives in `test_ai_seat_settings.py`; this is
 # the same assertion - `start_game_from_decklists` starting each `ai: true`
@@ -277,7 +277,7 @@ LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
 
 def test_creation_alone_dispatches_the_ai_seat_in_wrapper_mode(client, driver) -> None:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK},

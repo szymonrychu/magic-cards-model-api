@@ -83,7 +83,7 @@ def test_the_postgres_factory_is_still_parameterised_into_the_contract_suite() -
 
 def _real_game() -> Game:
     """A real engine `Game`, from a real (if minimal) legal decklist pair -
-    exactly what `load_deck_into_game` builds for `POST /api/ui/games`, no
+    exactly what `load_deck_into_game` builds for `POST /api/lobby/games`, no
     hand-built model. Repository tests only need *a* game, so any two players
     with a legal deck each will do."""
     match = load_deck_into_game([("you", LEGAL_DECK), ("bot", LEGAL_DECK_B)])

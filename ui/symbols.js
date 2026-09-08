@@ -1,4 +1,4 @@
-// Mana symbols, built as nodes. Scryfall's symbology (`/api/ui/symbology`) is
+// Mana symbols, built as nodes. Scryfall's symbology (`/api/symbology`) is
 // keyed by the exact `{R}` / `{2/U}` / `{T}` token that already appears
 // verbatim in a card's mana cost and in an activated ability's printed cost,
 // so nothing here needs a symbol table of its own - and hybrid, Phyrexian
@@ -11,7 +11,7 @@ import { h } from "./dom.js";
 
 export async function loadSymbols(api, base = "/api") {
   try {
-    const { symbols } = await api("GET", `${base}/ui/symbology`);
+    const { symbols } = await api("GET", `${base}/symbology`);
     return symbols || {};
   } catch {
     return {};

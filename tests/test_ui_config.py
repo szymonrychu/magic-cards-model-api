@@ -1,12 +1,13 @@
 """`ui/config.js` under Node: the resolved API/lobby origins `app.js`'s
-`gamePath()` and every `/api/ui/...` call build on top of (T4, M5).
+`gamePath()` and every `/api/lobby/...` call build on top of (T4, M5, 2b's
+T8's namespace split).
 
 The two facts worth pinning: with no `/config.json` reachable (this repo's
 own case today - it serves API and UI from one origin, so it ships no such
-file) the defaults are `/api` for both, exactly the paths every other Node
-test already hardcodes; and when one *is* reachable (M5's ConfigMap-mounted
-file, in the eventual split frontend container), its `apiBase`/`lobbyBase`
-override those defaults.
+file) the defaults are `/api` for `apiBase` and `/api/lobby` for `lobbyBase`,
+exactly the paths every other Node test already hardcodes; and when one *is*
+reachable (M5's ConfigMap-mounted file, in the eventual split frontend
+container), its `apiBase`/`lobbyBase` override those defaults.
 """
 
 from __future__ import annotations
@@ -46,10 +47,10 @@ def run_config(expression: str, **bindings: Any) -> Any:
 
 def test_both_bases_default_to_slash_api_with_no_config_json_fetched() -> None:
     """The default before `loadConfig` ever runs - what every other Node
-    test's hardcoded `/api/...`/`/api/ui/...` strings depend on staying
+    test's hardcoded `/api/...`/`/api/lobby/...` strings depend on staying
     true."""
     result = run_config("({ apiBase: m.apiBase(), lobbyBase: m.lobbyBase() })")
-    assert result == {"apiBase": "/api", "lobbyBase": "/api"}
+    assert result == {"apiBase": "/api", "lobbyBase": "/api/lobby"}
 
 
 def test_a_404_config_json_leaves_the_defaults_standing() -> None:
@@ -59,9 +60,9 @@ def test_a_404_config_json_leaves_the_defaults_standing() -> None:
           return { config, apiBase: m.apiBase(), lobbyBase: m.lobbyBase() };
         })()"""
     )
-    assert result["config"] == {"apiBase": "/api", "lobbyBase": "/api"}
+    assert result["config"] == {"apiBase": "/api", "lobbyBase": "/api/lobby"}
     assert result["apiBase"] == "/api"
-    assert result["lobbyBase"] == "/api"
+    assert result["lobbyBase"] == "/api/lobby"
 
 
 def test_a_rejected_fetch_also_leaves_the_defaults_standing() -> None:
@@ -72,9 +73,9 @@ def test_a_rejected_fetch_also_leaves_the_defaults_standing() -> None:
         })()"""
     )
     assert result == {
-        "config": {"apiBase": "/api", "lobbyBase": "/api"},
+        "config": {"apiBase": "/api", "lobbyBase": "/api/lobby"},
         "apiBase": "/api",
-        "lobbyBase": "/api",
+        "lobbyBase": "/api/lobby",
     }, result
 
 
