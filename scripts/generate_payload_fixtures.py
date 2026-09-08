@@ -190,7 +190,7 @@ def _case_split_card_labels(client: TestClient) -> dict[str, Any]:
     the instant it crosses the question (T7b's pause-and-resume), so a
     synchronous call is enough here."""
     created = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": DEVOURER_DECK, "ai": False},
@@ -386,7 +386,7 @@ def _case_mulligan_prompt(client: TestClient) -> dict[str, Any]:
     (CR 500.1 makes a phase part of a turn, and this step is before CR
     103.8's first turn)."""
     created = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": PLAIN_DECK, "ai": False},
