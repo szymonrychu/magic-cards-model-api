@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import threading
 import time
 import types
@@ -187,6 +188,72 @@ def test_init_containers_present_in_order_with_security_context() -> None:
     assert names == ["guides", "mcp-config"]
     for container in init_containers:
         assert container["securityContext"]["allowPrivilegeEscalation"] is False
+
+
+# ---- mcp-config initContainer: the T9 fix ----------------------------------
+#
+# Assertions on the rendered *value* alone (the string ended up in the right
+# place) would not have caught the production bug this fixes - a rendered
+# `MCP_URL=""` produced valid-looking YAML whose `mcp.json` was still wrong
+# for a live agent. So `_run_mcp_config_script` actually executes the
+# initContainer's own `/bin/sh -euc <script>` command with its own rendered
+# env, exactly the way the real initContainer does, and reads back the JSON
+# it wrote - the only way to prove the *emitted file*, not the template text,
+# is correct.
+
+
+def _run_mcp_config_script(job: dict, tmp_path: Path) -> dict:
+    pod = job["spec"]["template"]["spec"]
+    container = next(c for c in pod["initContainers"] if c["name"] == "mcp-config")
+    command = container["command"]
+    assert command[:2] == ["/bin/sh", "-euc"]
+    script = command[2]
+    env = {e["name"]: e.get("value") or "" for e in container["env"]}
+    out = tmp_path / "mcp.json"
+    env["MCP_JSON_OUT"] = str(out)
+    subprocess.run(["/bin/sh", "-euc", script], env=env, check=True)
+    return json.loads(out.read_text())
+
+
+def test_mcp_config_env_carries_api_url_and_game_id_when_mcp_url_empty() -> None:
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    mcp_container = next(
+        c for c in job["spec"]["template"]["spec"]["initContainers"] if c["name"] == "mcp-config"
+    )
+    mcp_env = {e["name"]: e.get("value") for e in mcp_container["env"]}
+    assert mcp_env["MCP_URL"] == ""
+    assert mcp_env["API_URL"] == ENV["API_SERVICE_URL"]
+    assert mcp_env["GAME_ID"] == "g1"
+
+
+def test_mcp_config_script_emits_stdio_mtg_entry_when_mcp_url_empty(tmp_path: Path) -> None:
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"] == {
+        "command": "/app/.venv/bin/python",
+        "args": [
+            "-m",
+            "magic_cards_model_api.mcp",
+            "--api",
+            ENV["API_SERVICE_URL"],
+            "--game",
+            "g1",
+            "--transport",
+            "stdio",
+        ],
+    }
+    assert rendered["mcpServers"]["spellslinger"] == {
+        "type": "http",
+        "url": ("http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp"),
+    }
+
+
+def test_mcp_config_script_emits_http_mtg_entry_when_mcp_url_set(tmp_path: Path) -> None:
+    job = _build(ENV)  # ENV carries a non-empty MCP_SERVICE_URL
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"] == {"type": "http", "url": ENV["MCP_SERVICE_URL"]}
+    assert "command" not in rendered["mcpServers"]["mtg"]
+    assert rendered["mcpServers"]["spellslinger"]["type"] == "http"
 
 
 def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:

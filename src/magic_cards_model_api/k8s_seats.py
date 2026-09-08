@@ -68,7 +68,11 @@ class K8sSettings:
     #: The mcp service's own URL (M2: a stateless streamable-HTTP service,
     #: not an in-process stdio subprocess). Empty until a later stage's chart
     #: sets `MCP_SERVICE_URL` - the mcp service does not exist as its own
-    #: deployment until the phase-2b cut.
+    #: deployment until the phase-2b cut. Empty is not a gap: the
+    #: `mcp-config` initContainer (`deploy/seat-job.yaml`) falls back to a
+    #: stdio `mtg` server run in-container from the agent image, the same
+    #: shape `docker compose` already uses, so every seat gets a working
+    #: `mtg` MCP server either way.
     mcp_url: str = ""
     #: Where `build_job` reads the seat Job template from - see that
     #: function and `deploy/seat-job.yaml`'s own header comment.

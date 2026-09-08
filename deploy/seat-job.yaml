@@ -21,15 +21,24 @@
 # deploy-time configuration (images, secrets, the memory PVC name, the
 # guides repo, the job deadline/ttl, the spellslinger URL) that used to be
 # read from `K8sSettings`/env and is now baked into this committed file, the
-# same way `deploy/k8s/*.yaml` already bakes its own. Two known gaps this
-# leaves, both accepted for this task (see T9's report):
+# same way `deploy/k8s/*.yaml` already bakes its own. One known gap this
+# leaves, accepted for this task (see T9's report):
 #   - image tags: still the literal `__TAG__` idiom `mise run k8s:deploy`
 #     substitutes for the other `deploy/k8s/*.yaml` manifests, but nothing
 #     in that pipeline touches this file yet - T20 is where the raw-manifest
 #     tag-pinning problem is actually fixed.
-#   - MCP_URL has no real value yet (the mcp service does not exist as a
-#     separate deployment until the stage-B/C cut); `K8sSettings.mcp_url`
-#     defaults to "" until a later stage's chart sets `MCP_SERVICE_URL`.
+#
+# The `mcp-config` initContainer picks the seat's `mtg` MCP server by whether
+# `MCP_URL` is set. Empty (today's reality - the mcp service does not exist
+# as its own deployment until the stage-B/C cut, so `K8sSettings.mcp_url`
+# defaults to "") renders a stdio entry that runs the agent image's own
+# `magic_cards_model_api.mcp` module in-container, pinned to this seat's
+# `--api`/`--game` - the same working shape `docker compose` already uses
+# (`deploy/mcp.base.json`), so an agent always has a real `mtg` MCP server
+# rather than none at all. Non-empty (once a later stage's chart sets
+# `MCP_SERVICE_URL`) renders the http entry against that URL instead - the
+# eventual M2 http service takes over by setting one env var, no template
+# change needed.
 #
 # `ownerReferences` is gone on purpose (T9/T10): with durable games, an api
 # restart must not garbage-collect the seat Jobs of games that survived it.
@@ -132,10 +141,20 @@ spec:
         command:
         - /bin/sh
         - -euc
-        - 'printf ''{"mcpServers": {"mtg": {"type": "http", "url": "%s"}, "spellslinger": {"type": "http", "url": "http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp"}}}'' "$MCP_URL" > /etc/mtg/mcp.json'
+        - 'out="${MCP_JSON_OUT:-/etc/mtg/mcp.json}"
+
+          if [ -n "$MCP_URL" ]; then mtg="{\"type\": \"http\", \"url\": \"$MCP_URL\"}"; else mtg="{\"command\": \"/app/.venv/bin/python\", \"args\": [\"-m\", \"magic_cards_model_api.mcp\", \"--api\", \"$API_URL\", \"--game\", \"$GAME_ID\", \"--transport\", \"stdio\"]}"; fi
+
+          printf "%s" "{\"mcpServers\": {\"mtg\": $mtg, \"spellslinger\": {\"type\": \"http\", \"url\": \"http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp\"}}}" > "$out"
+
+          '
         env:
         - name: MCP_URL
           value: __MCP_URL__
+        - name: API_URL
+          value: __API_URL__
+        - name: GAME_ID
+          value: __GAME_ID__
         volumeMounts:
         - name: mcp
           mountPath: /etc/mtg
