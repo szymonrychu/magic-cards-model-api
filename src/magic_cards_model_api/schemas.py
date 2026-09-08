@@ -181,6 +181,41 @@ class DeclarePlanResponse(BaseModel):
     """The turn this plan is for, as the ledger stamped it."""
 
 
+class ReflectionIn(BaseModel):
+    """`POST /api/games/{game_id}/reflection` - a seat's own post-game
+    write-up, filed once the result is already known.
+
+    Deliberately the only shape this ever takes: one seat, one block of
+    free text. Unlike `DeclarePlanIn`'s five structured fields, there is
+    nothing here a post-game review has to show and cannot reconstruct from
+    the board - the whole point of a reflection is that it is the agent's
+    own words, in its own shape, written after the game rather than during
+    it. Splitting it into board-read/plan/prediction fields the way a
+    declaration is split would dress up a narrative as evidence it never
+    was; `review.py`'s reflection section already says in words that
+    nothing here is evidence of anything the review pairs above it.
+
+    `uid` mirrors `DeclarePlanIn.uid`: the seat's own credential, carried in
+    the body, so nobody may write a reflection into another seat's name.
+    """
+
+    player: Stated
+    uid: Stated
+    """This seat's own uid - `player` must be the seat it opens."""
+    text: Stated
+    """The write-up itself, in the seat's own words."""
+
+
+class ReflectionResponse(BaseModel):
+    """`POST .../reflection`'s answer. No state view, for the same reason
+    `DeclarePlanResponse` has none: a reflection mutates no `Game`."""
+
+    recorded: bool
+    log_seq: int
+    """The `records` row this reflection became."""
+    player: str
+
+
 class ReportProblemRequest(BaseModel):
     player: str
     text: str = Field(min_length=1)

@@ -207,6 +207,53 @@ def test_the_completed_reflection_turn_stops_the_agent(world):
     assert state["deleted"] == 1
 
 
+def test_the_completed_reflection_turn_posts_it_to_the_game_server(world):
+    """`prompt.reflection_turn` only ever told the agent to write markdown
+    into its own memory directory - this is what makes the write-up reach
+    anywhere the game server (and so the post-game review) can see it:
+    `finalText`, the agent's own account of the reflection turn, posted to
+    `POST /api/games/{id}/reflection` before the agent is retired."""
+    client = world.client
+    state = world.state
+    play_out_the_match(client, state)
+    assert world.reflection_posts == [
+        {
+            "game_id": "g-1",
+            "player": "bob",
+            "uid": "secret-uid",
+            "text": "wrote",
+        }
+    ]
+
+
+def test_a_reflection_turn_that_said_nothing_still_posts_a_placeholder(world):
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "   "})
+    assert world.reflection_posts[0]["text"]
+    assert "without saying anything" in world.reflection_posts[0]["text"]
+
+
+def test_an_unreachable_game_server_does_not_block_retirement(world):
+    """`post_reflection` is best-effort, exactly like `sync_agent_settings`:
+    a game server this driver cannot reach when the reflection turn
+    completes must not wedge the agent mid-retirement."""
+    client = world.client
+    state = world.state
+    dispatch(client)
+    state["winner"] = "bob"
+    client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
+    state["game"] = "down"
+    body = client.post(
+        "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
+    ).json()
+    assert body["retired"] is True
+    assert world.reflection_posts == []
+
+
 def test_retiring_clears_the_assignment_so_the_next_dispatch_starts_clean(world):
     client = world.client
     state = world.state
