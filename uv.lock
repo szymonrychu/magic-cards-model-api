@@ -741,6 +741,7 @@ dependencies = [
     { name = "mcp" },
     { name = "prometheus-client" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
@@ -748,7 +749,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -762,6 +762,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.2" },
     { name = "prometheus-client", specifier = ">=0.21" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1,<4" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "sqlalchemy", specifier = ">=2.0,<2.1" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
@@ -769,7 +770,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.3" },
-    { name = "pyyaml", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.8" },
 ]
 

@@ -317,3 +317,23 @@ whoever works on the repo itself.
   can answer, so only the deciding seat has any use for it.
   `DecideRequest.generation` is optional, so every client that predates it
   keeps working - it is a guarantee a caller opts into.
+
+- **2026-09-08 - `k8s_seats.build_job` is a renderer now, and everything
+  that isn't one of the nine `SEAT_JOB_PLACEHOLDERS` (phase 2b T9, plan M10)
+  is baked into the committed `deploy/seat-job.yaml`, not read from env.**
+  That includes image tags (still the literal `__TAG__` token
+  `deploy/k8s/*.yaml` already uses, but nothing renders it for this file
+  yet - `mise run k8s:deploy` doesn't touch `deploy/seat-job.yaml`, so every
+  seat Job will pull whatever tag is checked in until phase 2b's T20 fixes
+  raw-manifest tag pinning for real), the memory PVC name, the guides repo,
+  both secret names, `activeDeadlineSeconds`/`ttlSecondsAfterFinished`, and
+  the spellslinger URL. `K8sSettings.mcp_url` (env `MCP_SERVICE_URL`)
+  defaults to `""` because the mcp service does not exist as its own
+  deployment yet - `deploy/k8s/50-deployment.yaml` does not set it, so
+  `MCP_URL` on the rendered Job's `mcp-config` initContainer is empty in
+  production today. `ownerReferences` and the downward-API
+  `POD_NAME`/`POD_UID`/`POD_NAMESPACE` env that fed it are gone entirely
+  (T10 needs this: a durable-games lobby restart must not garbage-collect
+  the seat Jobs of games that survived it) - `metadata.namespace` is the one
+  exception kept in code rather than baked static, because a body/URL
+  namespace mismatch is a hard Kubernetes API rejection, not a soft drift.

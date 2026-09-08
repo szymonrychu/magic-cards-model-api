@@ -8,14 +8,20 @@ is over, so the Job completes on its own.
 
 A Job rather than a bare Pod: the docs say a bare Pod is not rescheduled,
 `activeDeadlineSeconds` bounds a runaway match, and `ttlSecondsAfterFinished`
-cleans up. `ownerReferences` name this API's own Pod, so an API restart -
-which loses every in-memory game anyway - garbage-collects its Jobs. That
-owner reference is only safe when the owner Pod lives in the same namespace
-as the Job: a cross-namespace `ownerReferences` entry makes the garbage
-collector delete the Job within seconds of creation. `build_job` therefore
-emits it only when `owner_pod_namespace` (from the downward API's
-`POD_NAMESPACE`, i.e. `metadata.namespace`; Task 10 sets it) equals the Job's
-own `namespace`, and logs a warning instead when they differ.
+cleans up. There is deliberately no `ownerReferences` here (phase 2b T9/T10):
+with durable games, an api restart must not garbage-collect the seat Jobs of
+games that survived it, so `activeDeadlineSeconds`/`ttlSecondsAfterFinished`
+are the whole backstop now, not a second line behind an owner-Pod GC.
+
+`build_job` is a **renderer**, not a constructor: the Job body it returns is
+read from a complete manifest at `settings.job_template_path` (env
+`SEAT_JOB_TEMPLATE_PATH`, default `deploy/seat-job.yaml`) with nine
+placeholders substituted (`render_seat_job_template`, and see that file's own
+header comment for the full list and rationale) - `metadata.name`,
+`metadata.namespace`, the three labels and the annotations are set in code
+afterward. This api no longer hardcodes the wrapper's 14 env names, the
+driver's 10, or either one's console-script/module path: the template is the
+one place that shape lives, owned by whoever deploys it.
 
 The `memory` volume mounts the `AGENT_MEMORY_PVC` claim (default
 `mtg-agent-memory`) into every concurrent seat's Pod at once, which requires
@@ -35,9 +41,11 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 from kubernetes import watch as k8s_watch
@@ -56,20 +64,15 @@ APP_LABEL_VALUE = "mtg-agent"
 @dataclass(frozen=True)
 class K8sSettings:
     namespace: str = "mtg-engine"
-    agent_image: str = ""
-    api_image: str = ""
     api_url: str = "http://mtg-stack.mtg-engine.svc.cluster.local:8000"
-    spellslinger_url: str = ""
-    owner_pod_name: str = ""
-    owner_pod_uid: str = ""
-    owner_pod_namespace: str = ""
-    deadline_seconds: int = 14400
-    ttl_seconds: int = 600
-    memory_claim: str = "mtg-agent-memory"
-    guides_repo: str = "https://github.com/szymonrychu/mtg-decks.git"
-    agent_secret: str = "mtg-agent"
-    git_secret: str = "mtg-decks-git"
-    image_pull_secret: str = "regcred"
+    #: The mcp service's own URL (M2: a stateless streamable-HTTP service,
+    #: not an in-process stdio subprocess). Empty until a later stage's chart
+    #: sets `MCP_SERVICE_URL` - the mcp service does not exist as its own
+    #: deployment until the phase-2b cut.
+    mcp_url: str = ""
+    #: Where `build_job` reads the seat Job template from - see that
+    #: function and `deploy/seat-job.yaml`'s own header comment.
+    job_template_path: str = "deploy/seat-job.yaml"
     #: How long a `Running` pod gets before an unreachable driver is treated
     #: as the driver container having died rather than "not up yet" -
     #: `restartPolicy: Never` means a dead driver container never comes back
@@ -84,20 +87,9 @@ class K8sSettings:
 
         return cls(
             namespace=value("AGENT_NAMESPACE", "mtg-engine"),
-            agent_image=value("AGENT_IMAGE", ""),
-            api_image=value("API_IMAGE", ""),
             api_url=value("API_SERVICE_URL", "http://mtg-stack.mtg-engine.svc.cluster.local:8000"),
-            spellslinger_url=value("SPELLSLINGER_MCP_URL", ""),
-            owner_pod_name=value("POD_NAME", ""),
-            owner_pod_uid=value("POD_UID", ""),
-            owner_pod_namespace=value("POD_NAMESPACE", ""),
-            deadline_seconds=int(value("AGENT_JOB_DEADLINE_SECONDS", "14400")),
-            ttl_seconds=int(value("AGENT_JOB_TTL_SECONDS", "600")),
-            memory_claim=value("AGENT_MEMORY_PVC", "mtg-agent-memory"),
-            guides_repo=value("GUIDES_REPO", "https://github.com/szymonrychu/mtg-decks.git"),
-            agent_secret=value("AGENT_SECRET", "mtg-agent"),
-            git_secret=value("GUIDES_GIT_SECRET", "mtg-decks-git"),
-            image_pull_secret=value("IMAGE_PULL_SECRET", "regcred"),
+            mcp_url=value("MCP_SERVICE_URL", ""),
+            job_template_path=value("SEAT_JOB_TEMPLATE_PATH", "deploy/seat-job.yaml"),
             driver_grace_seconds=int(value("AGENT_DRIVER_GRACE_SECONDS", "60")),
         )
 
@@ -106,242 +98,110 @@ def job_name(game_id: str, uid: str) -> str:
     return f"mtg-seat-{game_id[:8]}-{uid[:8]}"
 
 
-def mcp_config(settings: K8sSettings, game_id: str) -> dict[str, Any]:
-    servers: dict[str, Any] = {
-        "mtg": {
-            "command": "python",
-            "args": [
-                "-m",
-                "magic_cards_model_api.mcp",
-                "--game",
-                game_id,
-                "--api",
-                settings.api_url,
-            ],
-        }
+#: The closed placeholder set a seat Job template may use (M10 of
+#: docs/2b-plan.md's phase-2b plan) - every one of these, and nothing else,
+#: gets substituted by `render_seat_job_template`. Each appears in the
+#: template as the WHOLE value of some mapping entry, never embedded inside
+#: a larger string, so substitution never has to reason about escaping.
+SEAT_JOB_PLACEHOLDERS = (
+    "__GAME_ID__",
+    "__SEAT_UID__",
+    "__PLAYER__",
+    "__API_URL__",
+    "__MCP_URL__",
+    "__ASSIGNMENT_JSON__",
+    "__MODEL__",
+    "__EFFORT__",
+    "__MAX_THINKING_TOKENS__",
+)
+
+
+def _seat_job_values(
+    *, game_id: str, uid: str, player: str, api_url: str, mcp_url: str, agent: AgentSettings
+) -> dict[str, str]:
+    assignment = {
+        "uid": uid,
+        "game_id": game_id,
+        "player": player,
+        "api_base": api_url,
+        "agent": agent.model_dump(),
     }
-    if settings.spellslinger_url:
-        servers["spellslinger"] = {"type": "http", "url": settings.spellslinger_url}
-    return {"mcpServers": servers}
-
-
-def _env(pairs: Mapping[str, str]) -> list[dict[str, str]]:
-    return [{"name": k, "value": v} for k, v in pairs.items()]
-
-
-def container_security() -> dict[str, Any]:
-    """A fresh per-container securityContext dict.
-
-    Not a shared module-level constant: the Kubernetes client's
-    `ApiClient.sanitize_for_serialization` branches on `isinstance(obj, dict)`
-    and falls into its model-attribute branch for anything else (a
-    `types.MappingProxyType`, say), raising `AttributeError` rather than
-    serializing it. Every `securityContext` site gets its own plain dict.
-    """
     return {
-        "allowPrivilegeEscalation": False,
-        "capabilities": {"drop": ["ALL"]},
-        "runAsNonRoot": True,
+        "__GAME_ID__": game_id,
+        "__SEAT_UID__": uid,
+        "__PLAYER__": player,
+        "__API_URL__": api_url,
+        "__MCP_URL__": mcp_url,
+        "__ASSIGNMENT_JSON__": json.dumps(assignment),
+        "__MODEL__": agent.model,
+        "__EFFORT__": agent.effort,
+        "__MAX_THINKING_TOKENS__": (
+            "" if agent.max_thinking_tokens is None else str(agent.max_thinking_tokens)
+        ),
     }
+
+
+def render_seat_job_template(template: Any, values: Mapping[str, str]) -> Any:
+    """Substitute `values` (a `SEAT_JOB_PLACEHOLDERS` -> string mapping) into
+    a parsed Job template, recursively.
+
+    Operates on already-parsed YAML (dicts/lists/scalars), not on raw text:
+    every placeholder is the WHOLE value of some string leaf, so a leaf
+    equal to one of `values`' keys is replaced outright, and nothing else is
+    touched. This is what makes the substitution immune to YAML/JSON
+    quoting - there is no text to escape, only a Python value to swap in.
+    """
+    if isinstance(template, dict):
+        return {k: render_seat_job_template(v, values) for k, v in template.items()}
+    if isinstance(template, list):
+        return [render_seat_job_template(v, values) for v in template]
+    if isinstance(template, str) and template in values:
+        return values[template]
+    return template
+
+
+def _load_seat_job_template(path: str) -> Any:
+    return yaml.safe_load(Path(path).read_text())
 
 
 def build_job(
     settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings
 ) -> dict[str, Any]:
+    """Render one seat's Job body from `settings.job_template_path`.
+
+    A renderer, not a constructor (phase 2b T9): the shape of the Job -
+    every env name, the wrapper's console-script path, the driver's module
+    path, the mcp-config initContainer - lives in the template file, not
+    here. This function only supplies the nine per-seat values
+    (`SEAT_JOB_PLACEHOLDERS`) the template can't know in advance, then sets
+    the identity fields that are this api's own to set: `metadata.name`,
+    `metadata.namespace` (kept in code, not baked into the template, so it
+    can never drift from the namespace `K8sSeats` actually creates the Job
+    in - a body/URL namespace mismatch is a hard Kubernetes API rejection,
+    not a soft one), the three labels, and the annotations.
+    """
     name = job_name(game_id, uid)
     labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_SEAT: uid}
-    assignment = {
-        "uid": uid,
-        "game_id": game_id,
-        "player": player,
-        "api_base": settings.api_url,
-        "agent": agent.model_dump(),
-    }
-    agent_env = {
-        "HTTP_ADDR": ":8080",
-        "INTERNAL_ADDR": "127.0.0.1:8099",
-        "WORKSPACE": "/workspace",
-        "HOME_DIR": "/agent-home",
-        "HOOK_COMMAND": "/app/.venv/bin/cc-stop-hook",
-        "CCW_INTERNAL_URL": "http://127.0.0.1:8099/internal/turn-complete",
-        "CCW_RESULT_JSON": "/workspace/result.json",
-        "BASE_MCP_PATH": "/etc/mtg/mcp.json",
-        "TURN_TIMEOUT_SECONDS": "1800",
-        "BOOT_TIMEOUT_SECONDS": "120",
-        "LOG_LEVEL": "info",
-        "AGENT_LOG_LEVEL": "tools",
-        "ACCESS_LOG_QUIET": "1",
-        **agent.env(),
-    }
-    driver_env = {
-        "GAME_API": settings.api_url,
-        "WRAPPER_API": "http://127.0.0.1:8080",
-        "DRIVER_SELF_URL": "http://127.0.0.1:8090",
-        "GUIDES_ROOT": "/guides",
-        "MEMORY_ROOT": "/workspace/memory",
-        "DRIVER_WORKSPACE": "/driver-workspace",
-        "HTTP_ADDR": ":8090",
-        "ACCESS_LOG_QUIET": "1",
-        "DRIVER_EXIT_AFTER_MATCH": "1",
-        "DRIVER_ASSIGNMENT_JSON": json.dumps(assignment),
-    }
-    metadata: dict[str, Any] = {
-        "name": name,
-        "namespace": settings.namespace,
-        "labels": labels,
-        "annotations": {"mtg/player": player, "mtg/model": agent.model, "mtg/effort": agent.effort},
-    }
-    if settings.owner_pod_name and settings.owner_pod_uid:
-        if settings.owner_pod_namespace == settings.namespace:
-            metadata["ownerReferences"] = [
-                {
-                    "apiVersion": "v1",
-                    "kind": "Pod",
-                    "name": settings.owner_pod_name,
-                    "uid": settings.owner_pod_uid,
-                }
-            ]
-        else:
-            logger.warning(
-                "owner pod %s is in namespace %r but Job %s is in namespace %r; "
-                "omitting ownerReferences to avoid cross-namespace garbage collection",
-                settings.owner_pod_name,
-                settings.owner_pod_namespace,
-                name,
-                settings.namespace,
-            )
-    guides_host_and_path = settings.guides_repo.removeprefix("https://")
-    guides_script = (
-        'test -n "${GH_PAT}" || { echo "GH_PAT is empty" >&2; exit 1; }\n'
-        "git config --global --add safe.directory /guides\n"
-        "find /guides -mindepth 1 -delete\n"
-        f'git clone --depth 1 "https://x-access-token:${{GH_PAT}}@{guides_host_and_path}" /guides\n'
-        f"git -C /guides remote set-url origin {settings.guides_repo}\n"
-        '! grep -rq "x-access-token" /guides/.git/config\n'
+    values = _seat_job_values(
+        game_id=game_id,
+        uid=uid,
+        player=player,
+        api_url=settings.api_url,
+        mcp_url=settings.mcp_url,
+        agent=agent,
     )
-    mcp_json = json.dumps(mcp_config(settings, game_id))
-    pod_spec: dict[str, Any] = {
-        "restartPolicy": "Never",
-        "automountServiceAccountToken": False,
-        "imagePullSecrets": [{"name": settings.image_pull_secret}],
-        "securityContext": {
-            "runAsNonRoot": True,
-            "runAsUser": 1000,
-            "runAsGroup": 1000,
-            "fsGroup": 1000,
-            "seccompProfile": {"type": "RuntimeDefault"},
-        },
-        "volumes": [
-            {"name": "guides", "emptyDir": {}},
-            {"name": "memory", "persistentVolumeClaim": {"claimName": settings.memory_claim}},
-            {"name": "driver-workspace", "emptyDir": {}},
-            {"name": "mcp", "emptyDir": {}},
-        ],
-        "initContainers": [
-            {
-                "name": "guides",
-                "image": settings.agent_image,
-                "imagePullPolicy": "IfNotPresent",
-                "command": ["/bin/sh", "-euc", guides_script],
-                "env": [
-                    {
-                        "name": "GH_PAT",
-                        "valueFrom": {
-                            "secretKeyRef": {"name": settings.git_secret, "key": "GH_PAT"}
-                        },
-                    },
-                    {"name": "GIT_TERMINAL_PROMPT", "value": "0"},
-                    {"name": "HOME", "value": "/agent-home"},
-                ],
-                "volumeMounts": [{"name": "guides", "mountPath": "/guides"}],
-                "securityContext": container_security(),
-                "resources": {
-                    "requests": {"cpu": "50m", "memory": "64Mi"},
-                    "limits": {"cpu": "500m", "memory": "256Mi"},
-                },
-            },
-            {
-                "name": "mcp-config",
-                "image": settings.agent_image,
-                "imagePullPolicy": "IfNotPresent",
-                "command": ["/bin/sh", "-euc", "printf '%s' \"$MCP_JSON\" > /etc/mtg/mcp.json"],
-                "env": [{"name": "MCP_JSON", "value": mcp_json}],
-                "volumeMounts": [{"name": "mcp", "mountPath": "/etc/mtg"}],
-                "securityContext": container_security(),
-                "resources": {
-                    "requests": {"cpu": "10m", "memory": "16Mi"},
-                    "limits": {"cpu": "100m", "memory": "64Mi"},
-                },
-            },
-        ],
-        "containers": [
-            {
-                "name": "agent",
-                "image": settings.agent_image,
-                "imagePullPolicy": "IfNotPresent",
-                "ports": [{"name": "agent", "containerPort": 8080}],
-                "env": _env(agent_env),
-                "envFrom": [{"secretRef": {"name": settings.agent_secret}}],
-                "volumeMounts": [
-                    {"name": "guides", "mountPath": "/guides", "readOnly": True},
-                    {"name": "memory", "mountPath": "/workspace/memory"},
-                    {"name": "mcp", "mountPath": "/etc/mtg", "readOnly": True},
-                ],
-                "startupProbe": {
-                    "httpGet": {"path": "/healthz", "port": 8080},
-                    "periodSeconds": 10,
-                    "timeoutSeconds": 3,
-                    "failureThreshold": 36,
-                },
-                "readinessProbe": {
-                    "httpGet": {"path": "/readyz", "port": 8080},
-                    "periodSeconds": 10,
-                    "timeoutSeconds": 5,
-                    "failureThreshold": 3,
-                },
-                "securityContext": container_security(),
-                "resources": {
-                    "requests": {"cpu": "250m", "memory": "1Gi"},
-                    "limits": {"cpu": "2", "memory": "3Gi"},
-                },
-            },
-            {
-                "name": "driver",
-                "image": settings.api_image,
-                "imagePullPolicy": "IfNotPresent",
-                "command": ["python", "-m", "mtg_agent.driver"],
-                "ports": [{"name": "driver", "containerPort": 8090}],
-                "env": _env(driver_env),
-                "volumeMounts": [
-                    {"name": "guides", "mountPath": "/guides", "readOnly": True},
-                    {"name": "memory", "mountPath": "/workspace/memory"},
-                    {"name": "driver-workspace", "mountPath": "/driver-workspace"},
-                ],
-                "readinessProbe": {
-                    "httpGet": {"path": "/healthz", "port": 8090},
-                    "periodSeconds": 10,
-                    "timeoutSeconds": 3,
-                    "failureThreshold": 3,
-                },
-                "securityContext": container_security(),
-                "resources": {
-                    "requests": {"cpu": "50m", "memory": "128Mi"},
-                    "limits": {"cpu": "500m", "memory": "512Mi"},
-                },
-            },
-        ],
+    template = _load_seat_job_template(settings.job_template_path)
+    job = render_seat_job_template(template, values)
+    job["metadata"]["name"] = name
+    job["metadata"]["namespace"] = settings.namespace
+    job["metadata"]["labels"] = labels
+    job["metadata"]["annotations"] = {
+        "mtg/player": player,
+        "mtg/model": agent.model,
+        "mtg/effort": agent.effort,
     }
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": metadata,
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": settings.deadline_seconds,
-            "ttlSecondsAfterFinished": settings.ttl_seconds,
-            "template": {"metadata": {"labels": labels}, "spec": pod_spec},
-        },
-    }
+    job["spec"]["template"]["metadata"]["labels"] = labels
+    return job
 
 
 def _default_http(base: str) -> httpx.Client:

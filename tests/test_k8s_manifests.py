@@ -27,9 +27,11 @@ def test_api_runs_alone_with_a_service_account_and_job_env() -> None:
     env = {e["name"]: e for e in pod["containers"][0]["env"]}
     assert env["AI_SEAT_MODE"]["value"] == "kubernetes"
     assert env["AGENT_IMAGE"]["value"].endswith(":t1") and env["API_IMAGE"]["value"].endswith(":t1")
-    assert env["POD_NAME"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.name"
-    assert env["POD_UID"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.uid"
-    assert env["POD_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+    # No downward-API POD_NAME/POD_UID/POD_NAMESPACE any more (phase 2b T9):
+    # `ownerReferences` is gone, and with it the only thing that plumbing
+    # was for - a durable-games lobby restart must not garbage-collect the
+    # seat Jobs of games that survived it.
+    assert "POD_NAME" not in env and "POD_UID" not in env and "POD_NAMESPACE" not in env
     assert env["AGENT_NAMESPACE"]["value"] == "mtg-engine"
     assert env["API_SERVICE_URL"]["value"]
     assert env["SPELLSLINGER_MCP_URL"]["value"]
