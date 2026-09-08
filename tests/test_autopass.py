@@ -1372,11 +1372,26 @@ def test_a_spell_cast_in_a_window_the_run_passed_through_hands_priority_back(
         "the run was aimed at precombat_main and must have stopped short of it"
     )
     assert [obj["name"] for obj in result["state"]["stack"]] == ["Lightning Bolt"]
-    assert result["state"]["priority_holder"] == "alice", (
+    # Read from the settled board, not from the snapshot the stop happened to
+    # carry, and it is a race rather than a nicety: bob's thread makes TWO
+    # independent calls - the cast, then his own pass - and the run's last
+    # poll can land between them. The stop is right either way (the bolt is on
+    # the stack the instant the cast returns, and CR 117.4 makes alice's
+    # unmade pass her whole chance to answer it), but `result["state"]` is
+    # then the board as it stood while bob still held his own priority, and
+    # this assertion read `priority_holder: "bob"` and failed - intermittently,
+    # on CI, for a run in which nothing was actually wrong. `thread.join`
+    # above has already returned, so both of bob's calls have landed and the
+    # board below is settled: the property this defends - the run hands the
+    # seat a board it can act on - is asserted without depending on which of
+    # bob's two calls the poll fell between, and the response cast below
+    # proves it for real.
+    settled = state(client, game)
+    assert settled["priority_holder"] == "alice", (
         "a stop that does not hand priority back is not a chance to respond"
     )
 
-    alices_bolt = state(client, game)["hands"]["alice"][0]["id"]
+    alices_bolt = settled["hands"]["alice"][0]["id"]
     responded = client.post(
         f"/api/games/{game}/actions/cast",
         json={

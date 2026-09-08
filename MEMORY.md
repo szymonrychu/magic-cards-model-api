@@ -62,6 +62,20 @@ whoever works on the repo itself.
   this (out of scope for T9) - this entry exists so the assumption is written
   down before something depends on it silently.
 
+- **2026-09-08 - `test_a_spell_cast_in_a_window_the_run_passed_through_hands_
+  priority_back` was flaky in its own right, and not for the reason it
+  looked.** Its opponent thread makes two independent calls, the cast and
+  bob's own pass; the seat under test can poll between them, and
+  `autopass_stop_reason`'s stack stop fires on the cast alone (correctly -
+  CR 117.4 makes the unmade pass the whole chance to respond). The stop's
+  snapshot then reads `priority_holder: "bob"` and the final assertion
+  failed. Demonstrated deterministically by inserting a 0.5s sleep between
+  bob's two calls, which reproduces CI's `assert 'bob' == 'alice'` every
+  time. The assertion now reads the settled board (both of bob's calls have
+  landed by then - `thread.join` has returned) instead of the stop's
+  snapshot. A test-level race in the test's own harness, and nothing to do
+  with the browser-side `pass_until` defect the same session was chasing.
+
 - **2026-09-08 - T10 supersedes the T9 note above: `records.seq` is no
   longer `== games.version`, by design.** Once a refused action that never
   touches `games` at all (a `ValueError` caught before any command ran, an
