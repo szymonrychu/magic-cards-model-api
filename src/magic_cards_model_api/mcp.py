@@ -500,6 +500,15 @@ def build_server(seats: Seats) -> MCPServer:
         always 0. `mana_sources` is comma-separated source ids; leave it
         empty to offer all your untapped mana sources.
 
+        This is ONLY for a card whose state view names an actual cycling
+        ability. A card that discards itself as an activated ability's cost
+        without being cycling - Waker of Waves' plain `{1}{U}, Discard this
+        card: ...`, Boseiju's or Otawara's Channel - is CR 113.6j's more
+        general shape, not this one, and belongs to `activate` instead. If
+        this tool refuses with "has no cycling ability number N", that is the
+        engine telling you the ability you want is not cycling at all - check
+        `activate` before assuming the action does not exist.
+
         Unlike a mana ability, cycling uses the stack (it cannot add mana, so
         CR 605.1a's definition never catches it) and can be responded to - it
         does not resolve as part of this call.
@@ -594,9 +603,29 @@ def build_server(seats: Seats) -> MCPServer:
         hold_priority: bool = False,
         reasoning: str = "",
     ) -> str | InputRequiredResult:
-        """Activate one ability of a permanent you control. Find the ability's
-        number in your state view's `abilities` list for that card (indexing
-        starts at 0; intrinsic mana abilities come after printed ones).
+        """Activate one ability of a card you control - a permanent's ability
+        on the battlefield, OR an ability that functions somewhere else
+        entirely because its own cost or effect says so (CR 113.6j, CR
+        113.6m): Waker of Waves' `{1}{U}, Discard this card: ...` or Boseiju,
+        Who Endures' Channel, both of which only ever work from a hand, not
+        the battlefield - the same shape as cycling (CR 702.29a), just
+        printed as ordinary card text instead of the rule's own fixed
+        wording. This is the one tool for both: do not reach for `cycle`
+        unless the state view actually names a cycling ability, and do not
+        assume an ability with no `{T}` in its cost must be on a permanent.
+
+        Find the ability's number in your state view's `abilities` list for
+        that card (indexing starts at 0). For a permanent on the
+        battlefield, intrinsic mana abilities come after printed ones. For a
+        card anywhere else - hand, graveyard, exile - the list holds only
+        the abilities that actually function from there, renumbered from
+        zero; a card can print an ordinary battlefield ability first and an
+        off-zone one second (Boseiju's own `{T}: Add {G}` before its
+        Channel), and the number that ability carries in a hand view is not
+        the number it carries once the card is on the battlefield. Always
+        read the number from the same state view you are acting on, never
+        carry one over from a different zone.
+
         `targets` and `mana_sources` are comma-separated ids as with casting.
         `color` is a single letter (W, U, B, R, G or C) and is required when
         the ability offers a choice of color to add - an "any color" source
