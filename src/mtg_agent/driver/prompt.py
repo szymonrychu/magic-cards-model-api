@@ -166,22 +166,24 @@ who is playing through a web UI against the same game server you act on.
 Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
 `{assignment.uid}`.
 
-- `wait_for_priority(player_uid)` checks once and hands you the board - it
-  never blocks, and it takes no timeout, because there is no wait for one to
-  bound. A decision addressed to you comes back as its own distinct kind of
-  result (`input_required`) rather than buried in ordinary text - answer it
-  with `decide` before doing anything else.
+- `wait_for_priority(player_uid, max_seconds=20)` checks now, and - if
+  nothing has changed yet - keeps checking on the server, for up to
+  `max_seconds`, before giving up and telling you so. It always returns on
+  its own within that bound (capped server-side well under any transport
+  timeout), never holds the request open past it, and it is where the wait
+  belongs now: pass `max_seconds`, do not reach for `Bash: sleep` and a
+  bare call - that is a whole extra tool call and turn spent doing what
+  this one parameter already does for you, and it is the pattern that used
+  to show up as `Bash sleep 2` after `Bash sleep 2` in the log. A decision
+  addressed to you comes back as its own distinct kind of result
+  (`input_required`) rather than buried in ordinary text, on any call,
+  bounded wait or not - answer it with `decide` before doing anything else.
 
-  **When `wake_reason` says "nothing new yet", sleep before you check again:**
-
-      Bash: sleep 2
-
-  Then call `wait_for_priority` again. Every tool here returns at once, so
-  nothing can strand your turn - but that is exactly why the pacing has to
-  come from you. Back-to-back calls do not make your opponent decide any
-  faster; they just spend your own turn budget on the same answer over and
-  over while a human thinks. Two seconds is the right order of magnitude for
-  a human opponent. Nothing anywhere throttles this for you.
+  If `wake_reason` still says "nothing new yet" after the bound, that is
+  not a failure - your opponent is still deciding - call it again, with
+  `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
+  specifically want the immediate poll-and-return, right after your own
+  action, when something has plausibly already changed.
 - `my_state(player_uid)` is the board as you are allowed to see it.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
   `declare_attackers`, `declare_blockers`, `decide`, `pass`, `pass_until` act.
@@ -296,19 +298,22 @@ Naming the step you are standing in means its NEXT occurrence, never this one -
 `step="upkeep"` asked during your upkeep is a whole turn of passing, which is
 what "until my upkeep" means when you say it out loud.
 
-This does not block either, so a long run takes several calls. Read `finished`:
+This can take several calls for a long run, but it does not block your turn
+budget doing it: pass `max_seconds` the same way you would to
+`wait_for_priority`, and it waits out its own bound on the server rather than
+you spending a `Bash: sleep` and a whole separate call on the same thing.
+Read `finished`:
 
 - `finished: true` - a real stop, and `stopped_because` names it: the
   destination, something new on the stack, a decision addressed to you (that
   answer arrives as `input_required`), your own declare-attackers step, being
   attacked in your own declare-blockers step, a refused pass, the game ending.
-- `finished: false` - it got as far as it could and handed the board back
-  because your opponent holds priority or the game is frozen on a question only
-  they can answer. **Sleep, then call again passing the answer's `resume`
-  object back verbatim as `resume`:**
+- `finished: false` - it got as far as it could within `max_seconds` and
+  handed the board back because your opponent holds priority or the game is
+  frozen on a question only they can answer. **Call again with `max_seconds`
+  again, passing the answer's `resume` object back verbatim as `resume`:**
 
-      Bash: sleep 2
-      pass_until(player_uid=..., step="upkeep", resume=<the resume object>)
+      pass_until(player_uid=..., step="upkeep", max_seconds=20, resume=<the resume object>)
 
   Dropping `resume` does not merely lose your place: the next call re-stamps
   the "do not stop in the step this run started in" exemption onto wherever

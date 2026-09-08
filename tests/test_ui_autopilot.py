@@ -116,20 +116,27 @@ def test_halts_on_a_pending_decision_for_this_seat() -> None:
     assert reason == "a decision is pending"
 
 
-def test_also_halts_on_a_decision_addressed_to_the_opponent() -> None:
-    """This used to read `reason is None` - "only your own pending decision
-    stops the run" - which was the live-lock bug: a paused command rolls the
-    committed game back to before the attempt, so `priority_holder` can
-    still read as this seat's even while the pause is on a DIFFERENT
-    player's decision (a bob `pass-priority` that ends a step and pauses on
-    alice's `declare_attackers`, say). Nothing can make progress until
-    whoever the decision actually belongs to answers it, no matter whose
-    priority the board still nominally shows - so this halts on any pending
-    decision now, not only this seat's own, with a distinct reason string so
-    a caller (or a human reading the toast) can tell the two apart."""
+def test_does_not_halt_on_a_decision_addressed_to_the_opponent() -> None:
+    """The owner's second overrule: this file used to assert the opposite
+    (`reason == "waiting on another seat's decision"`), on the reasoning
+    that a paused command rolls the committed game back to before the
+    attempt, so `priority_holder` can still read as this seat's even while
+    the pause is on a DIFFERENT player's decision - true, but the owner's
+    point is that "cannot make progress right now" is not the same thing as
+    "this run is over". A decision addressed to bob is not alice's business
+    to end her own run over; ending it is what made her have to re-issue
+    `pass_until` by hand every time the opponent so much as had a decision
+    to answer. `stopReason` no longer stops for this at all - it is not this
+    run's stop to make. The actual live-lock the earlier version of this
+    test guarded against (repeatedly attempting a pass against the same
+    frozen pause, which clobbers the stored pause slot and discards the
+    question bob was about to answer - `app.py`'s `_run_command`) is guarded
+    a different way now: `tests/test_ui_app.py`'s `tickRun` tests pin that
+    the run does not attempt a pass while any pending decision belongs to
+    someone else, independently of whether `stopReason` halts it."""
     state = base_state(pending_decision={"player": "bob", "kind": "may", "prompt": "Pay 2 life?"})
     reason = call_stop_reason(state, stops=UPKEEP_STOPS)
-    assert reason == "waiting on another seat's decision"
+    assert reason is None
 
 
 # -- stop condition: the game ends -------------------------------------------
@@ -191,9 +198,7 @@ def test_halts_on_a_new_stack_object_when_the_safe_default_is_on() -> None:
 
 def test_does_not_halt_on_a_new_stack_object_when_the_setting_is_off() -> None:
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
-    reason = call_stop_reason(
-        state, known_stack_ids=[], stops={**UPKEEP_STOPS, "onStack": False}
-    )
+    reason = call_stop_reason(state, known_stack_ids=[], stops={**UPKEEP_STOPS, "onStack": False})
     assert reason is None
 
 
@@ -268,6 +273,26 @@ def test_interpret_pass_outcome_is_not_ok_on_a_pause() -> None:
     )
     assert result["ok"] is False
     assert result["outcome"] is None
+
+
+def test_interpret_pass_outcome_flags_a_pause_distinctly_from_a_refusal() -> None:
+    """Both a pause and a genuine refusal are `ok: false`, but they are not
+    the same thing and a caller has to be able to tell them apart: a
+    refusal is a real problem worth ending the run over, but a pause is a
+    pass that crossed a turn-based action (this seat's own, or the
+    opponent's - CR 508.1/509.1 do not use the stack) mid-flight and never
+    completed - nothing to end the run over, since the very next tick sees
+    the same board fresh. `paused` is that distinguishing flag."""
+    paused = run_module(
+        "priority.js",
+        'm.interpretPassOutcome({"allowed": null, "paused": true, '
+        '"paused_on": {"player": "bob", "kind": "declare_attackers"}})',
+    )
+    refused = run_module(
+        "priority.js", 'm.interpretPassOutcome({"allowed": false, "reason": "nope"})'
+    )
+    assert paused["paused"] is True
+    assert refused["paused"] is False
 
 
 # -- reaching a *named* destination: "auto-pass until <step>" (feature 3) -----

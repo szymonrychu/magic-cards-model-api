@@ -762,23 +762,12 @@ function renderStopsBox(el, app, handlers) {
   const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));
   for (const step of steps) {
     const label = step.replace(/_/g, " ");
-    // `declare_attackers` on `mine` is a checked stop like any other now
-    // (`priority.js`'s header), but unticking it has a consequence nothing
-    // else on the panel warns about: declaring attackers doesn't use the
-    // stack (CR 508.1), so a run that passes through it silently declares no
-    // attackers for that combat - the step just goes by. A short line here,
-    // not a confirmation dialog: the owner's call was a tick, not a gate.
-    const mineHint =
-      step === "declare_attackers"
-        ? h("span", { class: "stop-hint" }, " - unticked, you attack with nothing that turn")
-        : null;
     grid.appendChild(
       h(
         "label",
         {},
         h("input", { type: "checkbox", checked: app.stops.mine.includes(step), onChange: () => handlers.onToggleStop("mine", step) }),
-        ` ${label}`,
-        mineHint
+        ` ${label}`
       )
     );
     grid.appendChild(

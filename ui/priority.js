@@ -236,6 +236,22 @@ function sameOccurrence(state, run) {
   );
 }
 
+// `stopReason` not stopping at your own unticked `declare_attackers` pause
+// is not the same as the game being free to move: the pause is a
+// `pending_decision` (CR 508.1 is a turn-based action, not a priority move),
+// so passing priority cannot answer it, and it never clears on its own.
+// This is the pure predicate `app.js`'s `tickRun` checks to know when it has
+// to submit an empty attack declaration itself to unfreeze the game - true
+// exactly when the pause is addressed to you, it is your own attack step,
+// and the tick is off (the same condition `stopReason`'s own
+// `isOwnAttackDeclaration` branch falls through on, restated here rather
+// than threaded out of `stopReason` as a side value).
+export function ownUnansweredAttackDeclaration(state, stops) {
+  const pending = state.pending_decision;
+  if (!pending || pending.kind !== "declare_attackers" || pending.player !== state.you) return false;
+  return !stops.mine.includes("declare_attackers");
+}
+
 export function stopReason(state, run, stops) {
   if (state.winner || state.drawn) return "the game is over";
   if (state.pending_decision) {
@@ -256,19 +272,33 @@ export function stopReason(state, run, stops) {
       if (stops.mine.includes("declare_attackers") && !sameOccurrence(state, run)) {
         return "stop at your declare attackers";
       }
+    } else if (pending.player === state.you) {
+      // Addressed to you - unconditionally this run's business to stop for,
+      // no tick, no exception. Being attacked (a `declare_blockers` pause
+      // addressed to you) falls through to here too: it was never a tick
+      // and stays that way.
+      return "a decision is pending";
     } else {
-      // A pause rolls the committed game back to before the paused command
-      // ran, so `priority_holder` still reads as whoever it was before the
-      // pause - it is not necessarily the deciding player. A command that is
-      // paused cannot make progress no matter who calls `pass-priority`
-      // against it, own decision or not, so this stops (or never starts
-      // ticking) on *either* - see `interpretPassOutcome`'s and
-      // `passButtonsFor`'s own notes for the rest of this fix. Being
-      // attacked (a `declare_blockers` pause addressed to you) falls through
-      // to here too: it was never a tick and stays that way.
-      return pending.player === state.you
-        ? "a decision is pending"
-        : "waiting on another seat's decision";
+      // Addressed to someone else. A pause rolls the committed game back to
+      // before the paused command ran, so `priority_holder` still reads as
+      // whoever it was before the pause - a paused command cannot make
+      // progress no matter who calls `pass-priority` against it. That used
+      // to make this an unconditional stop too, on the reasoning that
+      // nothing here can actually move the board. The owner overruled it:
+      // "cannot make progress right now" is not "this run is over" - a
+      // decision addressed to the opponent is not this seat's business to
+      // end its own run over, so this is not a stop at all. `null`, not a
+      // reason string: the run stays alive and idle instead, and resumes on
+      // its own the moment the decision clears (`interpretPassOutcome`'s and
+      // `passButtonsFor`'s own notes cover the rest of this half of the
+      // fix). The clobber danger the old unconditional stop also guarded
+      // against - passing on the strength of a stale `priority_holder`
+      // reproduces the identical pause and discards the question the other
+      // seat was about to answer (`app.py`'s `_run_command`) - is guarded a
+      // different way now: `app.js`'s `tickRun` does not attempt a pass
+      // while any pending decision belongs to someone else, independently
+      // of whether this function halts the run for it.
+      return null;
     }
   }
   if (attackedNow(state) && !sameOccurrence(state, run)) return "you are being attacked";
@@ -303,7 +333,9 @@ export function stopReason(state, run, stops) {
 }
 
 export function interpretPassOutcome(res) {
-  if (!res || res.allowed === false) return { ok: false, reason: (res && res.reason) || "pass refused" };
+  if (!res || res.allowed === false) {
+    return { ok: false, reason: (res && res.reason) || "pass refused", paused: false };
+  }
   if (res.paused) {
     // `allowed: null, paused: true`: the command paused on some decision -
     // possibly not even the caller's own - and the committed game rolled
@@ -313,9 +345,23 @@ export function interpretPassOutcome(res) {
     // and a caller that treated it as one (the old code did) would replay
     // the identical no-op pass forever - the tick-forever bug this and
     // `stopReason`'s own pending-decision check fix together.
-    return { ok: false, reason: "paused on a pending decision", outcome: null, settledThrough: null };
+    //
+    // `paused: true` here is what lets `tickRun` tell this apart from a
+    // genuine refusal: a pass crossing into a turn-based action mid-flight
+    // (this seat's own declare_attackers/declare_blockers, CR 508.1/509.1,
+    // or - just as easily, since this seat's priority round runs on the
+    // opponent's turn too - the OPPONENT's) is not a problem worth ending
+    // the run over, only a reason to look at the board fresh next tick. A
+    // refusal is.
+    return { ok: false, reason: "paused on a pending decision", outcome: null, settledThrough: null, paused: true };
   }
-  return { ok: true, reason: null, outcome: res.outcome || null, settledThrough: res.settled_through || null };
+  return {
+    ok: true,
+    reason: null,
+    outcome: res.outcome || null,
+    settledThrough: res.settled_through || null,
+    paused: false,
+  };
 }
 
 // The two verbs, or just `pass` while your own decision is pending, or

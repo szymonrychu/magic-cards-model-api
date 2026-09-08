@@ -800,14 +800,12 @@ def test_the_stops_box_offers_the_stack_tick_and_wires_it_up() -> None:
     assert off["checked"] is False, "`onStack: false` must render the tick unticked"
 
 
-def test_the_mine_declare_attackers_tick_carries_a_consequence_hint() -> None:
-    """`priority.js`'s own header explains why: unticking `declare_attackers`
-    on `mine` runs the pass straight through the pause, which silently
-    declares no attackers for that combat - there is nothing else on the
-    stack or in `state.step` to warn a player who unticks it. This is the
-    short helper text next to the tick the owner asked for instead of a
-    confirmation dialog. `theirs` gets no such note - it is not your own
-    attack, so unticking it costs nothing."""
+def test_the_mine_declare_attackers_tick_carries_no_helper_text() -> None:
+    """The owner asked for the hint (`test_the_mine_declare_attackers_tick_
+    carries_a_consequence_hint`, the test this replaces) and then asked for
+    it gone: it broke the stops grid's layout. Removed outright, not
+    replaced with a tooltip or an asterisk - `declare_attackers` on `mine`
+    renders exactly like every other step tick, bare label included."""
     result = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -822,7 +820,8 @@ def test_the_mine_declare_attackers_tick_carries_a_consequence_hint() -> None:
         """,
     )
     assert "declare attackers" in result
-    assert "attack with nothing" in result, result
+    assert "attack with nothing" not in result, result
+    assert "*" not in result, "no asterisk decoration either"
 
 
 def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_up() -> None:

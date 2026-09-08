@@ -224,9 +224,7 @@ def test_the_setting_defaults_on() -> None:
     equivalent setting to default in the new model at all - being attacked
     is unconditional, with no `stops` entry or verb able to turn it off -
     which is the stronger version of "the safe default is on"."""
-    reason = call_stop_reason(
-        under_attack(2), stops={"mine": [], "theirs": [], "onStack": False}
-    )
+    reason = call_stop_reason(under_attack(2), stops={"mine": [], "theirs": [], "onStack": False})
     assert reason == "you are being attacked"
 
 
@@ -368,17 +366,26 @@ def test_a_decision_for_this_seat_still_stops_the_run() -> None:
     assert result["stopped"]["reason"] == "a decision is pending", result
 
 
-def test_a_decision_for_the_other_seat_also_stops_the_run() -> None:
-    """This used to read `result["stopped"]["turn"] == 3` under "the
-    condition is addressed-to-you, not any decision at all" - a decision
-    pending for the OTHER seat was not a stop, and the run ticked straight
-    through it to the destination three turns later. That was the live-lock
-    bug: a pass that ends a step and pauses the engine on someone else's
-    decision rolls the committed game back to before the attempt, so
-    nothing this run does can ever actually reach turn 3 - `priority_holder`
-    may still read as this seat's, but re-issuing the identical pass
-    reproduces the identical pause forever. `stopReason` now halts on any
-    pending decision, this seat's or not, right where it first appears."""
+def test_a_decision_for_the_other_seat_does_not_stop_the_run() -> None:
+    """The owner's second overrule, on top of the first one this test's own
+    history already tells: an earlier version halted here
+    (`result["stopped"]["reason"] == "waiting on another seat's decision"`,
+    at turn 2's draw step) on the reasoning that a paused command rolls the
+    committed game back to before the attempt, so nothing this run does can
+    make real progress while frozen on someone else's decision - true, but
+    the owner's point is that "cannot make progress right now" is not "this
+    run is over": a decision addressed to bob is not alice's business to end
+    her own run over, and ending it is what made her have to re-issue
+    `pass_until` by hand every time bob so much as had a decision to answer.
+    `stopReason` does not halt for it at all any more, so the run runs
+    straight through and reaches its actual destination three turns later -
+    the live-lock the earlier version guarded against (repeatedly attempting
+    a pass against the same frozen pause, clobbering the stored pause slot
+    and discarding the question bob was about to answer, `app.py`'s
+    `_run_command`) is guarded a different way now: `tests/test_ui_app.py`'s
+    `tickRun` tests pin that the run does not attempt a pass while any
+    pending decision belongs to someone else, independently of whether
+    `stopReason` halts it."""
     timeline = [
         board("draw", 2, "bob", pending_decision={"player": "bob", "prompt": "scry 1"}),
     ] + turn_cycle(3, "alice")
@@ -386,9 +393,9 @@ def test_a_decision_for_the_other_seat_also_stops_the_run() -> None:
 
     result = run_until_stop(board("end_step", 1), "pass_until", stops, timeline)
 
-    assert result["stopped"]["reason"] == "waiting on another seat's decision", result
-    assert result["stopped"]["turn"] == 2, result
-    assert result["stopped"]["step"] == "draw", result
+    assert result["stopped"]["reason"] == "stop at your precombat main", result
+    assert result["stopped"]["turn"] == 3, result
+    assert result["stopped"]["step"] == "precombat_main", result
 
 
 def test_something_landing_on_the_stack_still_stops_the_run() -> None:

@@ -290,37 +290,48 @@ def test_pass_until_returns_promptly_when_it_must_wait(client, game, monkeypatch
     assert "Call again" in answer["stopped_because"]
 
 
-def test_no_tool_takes_a_max_seconds_at_all(client, game, monkeypatch):
+def test_max_seconds_lives_only_on_the_two_tools_that_can_genuinely_wait(client, game, monkeypatch):
     """Read off the live signature and the live MCP input schema, not off
-    prose. An MCP client receives no `description` on any *parameter* - the
-    schema for `max_seconds` was `{"default": 60.0, "title": "Max Seconds",
-    "type": "number"}` and nothing else - so a parameter that bounds nothing
-    is a promise an agent cannot see corrected anywhere. Every tool here is
-    poll-and-return now, so none of them carries one."""
+    prose. This used to assert NO tool carried `max_seconds` at all - true
+    when it bounded nothing (the old, since-removed unbounded deadline loop:
+    `{"default": 60.0, "title": "Max Seconds", "type": "number"}` and no
+    per-parameter description an agent could see corrected anywhere). The
+    owner's report brought a *bounded* version back
+    (`seatkit.MAX_WAIT_SECONDS`), deliberately, on exactly the two tools that
+    can genuinely have nothing to do but wait for the opponent -
+    `wait_for_priority` and `pass_until` - documented in their own
+    docstrings this time. Every other action tool stays poll-and-return with
+    no wait of its own: one check, one answer, always, the moment it acts."""
     import inspect
 
     seats, _ = wired(client, monkeypatch, game)
     server = build_server(seats)
+    can_wait = {"wait_for_priority", "pass_until"}
     for name, tool in server._tool_manager._tools.items():
         parameters = inspect.signature(tool.fn).parameters
-        assert "max_seconds" not in parameters, (
-            f"{name} still takes max_seconds, which bounds nothing"
-        )
+        if name in can_wait:
+            assert "max_seconds" in parameters, f"{name} should take max_seconds, and does not"
+        else:
+            assert "max_seconds" not in parameters, (
+                f"{name} takes max_seconds, but only wait_for_priority and "
+                "pass_until can genuinely wait on anything"
+            )
 
 
-def test_both_briefs_tell_the_seat_to_pace_its_own_polling():
-    """Poll-and-return moved the pacing onto the caller, and nothing replaced
-    the throttle it removed.
-
-    The old instruction bounded each wait at 30s, which self-throttled by
-    accident: a fruitless check cost 30 seconds of wall clock *inside* the
-    call. With that gone, a brief that says "there is no way to strand your
-    turn by calling it in a loop, since each call returns at once" is arguing
-    for exactly the defect a predecessor on this repo shipped - a pass
-    re-issued every 1200ms forever. Both briefs must now name a real wait the
-    tooling actually supports (`Bash: sleep`, which is the one tool both the
-    one-shot `claude --print --allowedTools Bash` seat and the continuous
-    PTY-wrapped agent have), and say why back-to-back calls are wrong."""
+def test_both_briefs_tell_the_seat_to_use_max_seconds_not_bash_sleep():
+    """The owner's report: an agent seat busy-polling with `Bash sleep 2`
+    (then 3, 5, 15, 20, 25, 30 - an escalating hand-rolled backoff) instead
+    of using the bounded wait the tools now support. That pattern was the
+    brief's own instruction, not the agent improvising - `prompt.py` and
+    `ai_seat_brief.md` both used to say, in so many words, "sleep, then
+    check again". They now have to say the opposite: pass `max_seconds` (the
+    seat_cli spelling is `--max-seconds`) to `wait_for_priority`/`pass_until`
+    and let the tool call wait it out on the server, rather than spending a
+    separate `Bash: sleep` and a whole extra turn on the same thing. This
+    replaces `test_both_briefs_tell_the_seat_to_pace_its_own_polling`, which
+    pinned the now-retired instruction - not deleting the coverage, since
+    both files still have to teach a seat how to wait; just teaching the
+    right tool for it."""
     from pathlib import Path
 
     from mtg_agent.driver import prompt as prompt_module
@@ -330,15 +341,21 @@ def test_both_briefs_tell_the_seat_to_pace_its_own_polling():
 
     for text, name in ((brief, "ai_seat_brief.md"), (driver_prompt, "prompt.py")):
         flat = " ".join(text.split())
-        assert "sleep 2" in flat, f"{name} never tells the seat to wait between checks"
-        assert "nothing new yet" in flat, f"{name} never says which answer means 'check again'"
-        assert "Back-to-back" in flat or "back-to-back" in flat, (
-            f"{name} never says why an unthrottled poll loop is wrong"
+        assert "max_seconds" in flat or "max-seconds" in flat, (
+            f"{name} never tells the seat about the bounded wait"
         )
+        assert "nothing new yet" in flat, f"{name} never says which answer means 'check again'"
         assert "resume" in flat, (
             f"{name} never tells the seat to hand back the resume token an "
             "unfinished pass_until run carries"
         )
-        assert "no way to strand your turn by calling it in a loop" not in flat, (
-            f"{name} still argues for an unthrottled poll loop"
+        # The retired instruction itself - a bare "sleep, then check again"
+        # as an isolated next step, with the wait tool nowhere in it - must
+        # be gone. `sleep` can still appear describing the old pattern as
+        # the thing NOT to do any more.
+        assert "Bash: sleep 2\n\n" not in text, (
+            f"{name} still hands the seat a bare sleep-then-call-again instruction"
+        )
+        assert "sleep 2 && " not in text, (
+            f"{name} still hands the seat a bare sleep-then-call-again instruction"
         )

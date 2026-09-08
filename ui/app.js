@@ -686,9 +686,36 @@ async function onVerb(verb) {
   await tickRun();
 }
 
-async function tickRun() {
+// Exported for `tests/test_ui_app.py` only - same reason `store`/
+// `declareNoAttackers` above are: a real, awaited drive of the
+// unticked-declare_attackers auto-answer against a stubbed `fetch`.
+export async function tickRun() {
   const app = store.get();
   if (!app.run || !app.state) return;
+  // Not stopping here is not the same as the game being free to move: the
+  // pause is a `pending_decision` (CR 508.1 is a turn-based action, not a
+  // priority move), so passing priority cannot answer it and nothing else
+  // clears it. Checked - and acted on - before the `priority_holder` guard
+  // below, because that value is stale for the whole freeze (`commands.py`
+  // rolls the committed game back to before the paused attempt), not just
+  // for this one case. `declareNoAttackers` submits `{attackers: []}` and
+  // itself calls `poll()`, which is what picks the run back up (its own
+  // nested `tickRun` call): this is not a stop, so the run stays armed.
+  if (P.ownUnansweredAttackDeclaration(app.state, app.stops)) {
+    await declareNoAttackers();
+    return;
+  }
+  // A decision addressed to someone else freezes the game exactly the same
+  // way (`priority_holder` is stale for the whole freeze, not just for the
+  // declare_attackers case above) - `stopReason` no longer ends the run for
+  // this (the owner's fix), but that must never be read as "so pass on the
+  // strength of whatever priority_holder says": the pass would cross the
+  // same unanswered question, pause too, and `app.py`'s `_run_command`
+  // stores that second pause over the first, clobbering it and discarding
+  // the question the other seat was about to answer. Checked ahead of the
+  // `priority_holder` guard below for the same reason the declare_attackers
+  // check is: this is not a stop, just a reason to stay idle this tick.
+  if (app.state.pending_decision && app.state.pending_decision.player !== you()) return;
   if (app.state.priority_holder !== you()) return;
   const run = P.forgetStartingStep(app.run, app.state);
   if (run !== app.run) store.set({ run });
@@ -699,6 +726,20 @@ async function tickRun() {
     return;
   }
   const out = await passOnce();
+  if (out.paused) {
+    // This very pass is what crossed a turn-based action mid-flight (CR
+    // 508.1/509.1 - own or the opponent's, since this seat's priority
+    // round runs on the opponent's turn too) rather than completing: the
+    // committed game rolled back to before the attempt (`commands.py`), so
+    // nothing here actually happened. Not a completed pass (do not
+    // record it) and not a reason to end the run either - the next tick
+    // sees the fresh pause through the normal checks
+    // (`ownUnansweredAttackDeclaration` for this seat's own combat, or the
+    // "someone else's decision" guard above for anyone else's). Ending the
+    // run here was the owner's report: "pass_until is also interrupted on
+    // opponent's attack step".
+    return;
+  }
   store.set((s) => ({ run: s.run ? P.recordPass(run, s.state) : null }));
   if (!out.ok) store.set({ run: null });
 }
