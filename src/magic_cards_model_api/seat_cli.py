@@ -218,16 +218,27 @@ def build_parser() -> argparse.ArgumentParser:
     activate = sub.add_parser(
         "activate",
         help=(
-            "activate a permanent's ability. A mana ability does not use the "
+            "activate an ability of a card you control - a permanent's ability "
+            "on the battlefield, or one that functions elsewhere because its "
+            "own cost or effect says so (CR 113.6j/113.6m: Waker of Waves, "
+            "Boseiju's or Otawara's Channel - a different card_id than cycling, "
+            "not a special case of it). A mana ability does not use the "
             "stack (CR 605.3b) and so keeps priority with or without --hold: "
             "releasing could end the step (CR 500.2) and empty the mana you "
             "just made (CR 500.5). Any other ability goes on the stack and "
             "releases unless --hold"
         ),
     )
-    activate.add_argument("card_id", help="the permanent's id")
+    activate.add_argument("card_id", help="the card's id")
     activate.add_argument(
-        "index", type=int, help="ability index, from the state view's abilities list"
+        "index",
+        type=int,
+        help=(
+            "ability index, from that card's own entry in the state view's "
+            "abilities list - a card in hand or a graveyard is numbered off "
+            "only the abilities that function from there, which need not "
+            "match its numbering once it is on the battlefield"
+        ),
     )
     activate.add_argument("--target", default="", help="comma-separated ids")
     activate.add_argument("--sources", default="", help="comma-separated mana source ids")

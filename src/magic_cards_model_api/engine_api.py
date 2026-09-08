@@ -741,6 +741,70 @@ def _controller_of(game: Game, state: CardState) -> str:
 # -- activating ------------------------------------------------------------
 
 
+def _activate_off_zone_ability(game: Game, card: CardState, req: ActivateRequest) -> Outcome:
+    """The off-battlefield half of `activate_ability`, for a card anywhere
+    other than the battlefield: `machines.keywords.off_zone_activation`, the
+    CR 113.6j/CR 113.6m (a printed ability, arbitrary card text) and CR
+    702.29a (cycling, the rule's own fixed text) shapes unified into one
+    index space - the same one `machines.legal_actions._off_zone_actions`
+    already reports through `Action.ability_index`
+    (`ActionKind.ACTIVATE_OFF_ZONE`), so a caller never has to guess which of
+    the two the engine actually reads.
+
+    Puts the ability on the stack rather than resolving it immediately, the
+    same as the battlefield path above and `cycle_card` below - resolved
+    through the ordinary `resolve-top`/`pass-priority` flow.
+    """
+    from magic_cards_model.machines.keywords import off_zone_activation
+
+    def resolve_states(ids: list[UUID] | None) -> list[CardState] | None:
+        return [find_card(game, card_id) for card_id in ids] if ids else None
+
+    try:
+        targets = (
+            [target_thing(game, token) for token in req.targets]
+            if req.targets is not None
+            else None
+        )
+        activation = off_zone_activation(
+            game,
+            card,
+            req.player,
+            req.ability_index,
+            targets=targets,
+            sacrificing=resolve_states([req.sacrificing] if req.sacrificing else None),
+            discarding=resolve_states([req.discarding] if req.discarding else None),
+        )
+    except ValueError as exc:
+        return refused(exc)
+
+    refusal = activation.why_not()
+    if refusal is not None:
+        return refused(refusal)
+
+    payment = None
+    try:
+        payment = activation.begin_paying()
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            tapped = tapped_view(payment)
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
+        payment.pay()
+    except ValueError as exc:
+        if payment is not None:
+            payment.rewind()
+        return refused(exc)
+
+    on_stack = activation.activate()
+    game.retain_priority(req.player)
+    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+
+
 def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
     """Activate an ability: engine refusal, then payment, then the stack.
 
@@ -749,6 +813,19 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
     `why_cannot_activate`/`begin_activating`/`activate_ability`) already
     synthesises one from the land's basic land type(s), so there is nothing
     special-cased here for it: it is just another ability at index 0.
+
+    A card anywhere other than the battlefield is routed to
+    `_activate_off_zone_ability` instead - CR 113.6's own default is that an
+    ability functions only on the battlefield, so `Game.why_cannot_activate`
+    refuses every other zone outright, unconditionally, even for an ability
+    whose own printed text reads a different zone (CR 113.6j, CR 113.6m).
+    Before this branch existed, a Waker of Waves or a Boseiju Channel the
+    engine's own enumeration (`machines.legal_actions.legal_actions`,
+    `ActionKind.ACTIVATE_OFF_ZONE`) reported as legal and affordable had no
+    way to actually be taken through this endpoint - it was refused "in hand,
+    not on the battlefield" regardless. That is why the reported seat reached
+    for `cycle` instead: a different CR 702.29a ability with its own,
+    narrower endpoint, the only one that worked.
     """
     permanent = find_card(game, req.card_id)
 
@@ -756,6 +833,9 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
         color = Color(req.color.strip().upper()) if req.color else None
     except ValueError:
         return refused(f"unknown mana color {req.color!r}: use W, U, B, R, G or C")
+
+    if permanent.zone is not Zone.BATTLEFIELD:
+        return _activate_off_zone_ability(game, permanent, req)
 
     refusal = game.why_cannot_activate(permanent, req.ability_index, req.player)
     if refusal is not None:
@@ -1063,14 +1143,44 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
     non-mana, so `Game.activated_abilities` never reaches the intrinsic
     fallback, but which still carries a basic land type. Nothing in the pool
     is shaped like that today.
+
+    A card anywhere other than the battlefield reads a different pool
+    entirely: `machines.keywords.off_zone_abilities`, the same one
+    `activate_ability`'s `_activate_off_zone_ability` branch and
+    `machines.legal_actions._off_zone_actions` already index into. `Game.
+    activated_abilities` is not itself zone-restricted - it reads whatever
+    the card's printed or computed text says, on the battlefield or off -
+    so reading it unconditionally here reported an off-zone ability's index
+    in that ordinary, unfiltered battlefield list rather than the off-zone
+    pool's own, renumbered-from-zero one. Boseiju, Who Endures prints
+    `{T}: Add {G}` first and Channel second: a Boseiju on the battlefield
+    correctly offers both at indices 0 and 1, but a Boseiju in *hand* has
+    only Channel to offer at all, and the off-zone pool numbers it 0, not 1
+    - the number this function used to report for a hand Boseiju before the
+    off-zone endpoint existed to call it, and would have gone on quietly
+    misleading a caller now that it does.
     """
+    from .affordances import ability_hints
+
+    if state.zone is not Zone.BATTLEFIELD:
+        from magic_cards_model.machines.keywords import off_zone_abilities
+
+        return [
+            {
+                "index": entry.index,
+                "text": entry.ability.text,
+                "mana": False,
+                **ability_hints(entry.ability, ()),
+            }
+            for entry in off_zone_abilities(state.card)
+        ]
+
     from magic_cards_model.machines import parse_mana_abilities
 
     try:
         abilities = game.activated_abilities(state)
     except Exception:
         return []
-    from .affordances import ability_hints
 
     listed = []
     for index, ability in enumerate(abilities):

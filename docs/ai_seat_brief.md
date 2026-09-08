@@ -263,6 +263,21 @@ in your hand allow each, under `special_actions`, and marked cards waiting in
 exile appear under `exile_pile`. To cast one of those later, use `cast` with
 its `keyword` argument.
 
+**Not every card that discards itself as a cost is cycling.** Waker of
+Waves' own ability - mana plus discarding this card, to look at your library
+and split what you find - and Boseiju's or Otawara's Channel read the same
+way at a glance as cycling - "pay a cost, discard this card, get an effect" -
+but they are not cycling (CR 702.29a's own fixed "Discard this card: Draw a
+card."); they are an ordinary activated ability whose cost happens to discard
+the card it is printed on (CR 113.6j), so it can only ever be activated from
+your hand, same as cycling, but through `activate`, not `cycle`. Check your
+`state` view's `abilities` list for the card: if the ability is there with a
+real cost and effect, use `activate` with that card's `id` and the ability's
+own `index`. Reach for `cycle` only when the card's own cycling ability shows
+up in your state view under a cycling-specific entry - if `cycle` refuses
+with "has no cycling ability number N", that is the engine telling you the
+ability is not cycling at all, not that the action does not exist.
+
 ## Free casts you have been granted
 
 Your `state` view has a `play_permissions` list: everything you may
