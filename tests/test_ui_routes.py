@@ -252,25 +252,80 @@ def test_a_crowded_board_row_scrolls_instead_of_painting_over_its_neighbour(
     click meant for one: Kozilek's Command was uncastable, with nothing in
     the console to say why.
 
-    Layout is not something Node or the API can assert, so this pins the two
-    declarations that hold it together in the file the browser is served."""
+    Layout is not something Node or the API can assert, so this pins the
+    declarations that hold it together in the file the browser is served.
+
+    The board is a flex column now, not a grid with an explicit track list:
+    the two land rows and the exile strip joined it, and a hand-maintained
+    list of tracks that has to stay in step with the row order is exactly
+    what the original bug came out of. The guarantee is unchanged, and is
+    now stated by the rows themselves - the growing row has a one-card floor,
+    and every row scrolls inside itself rather than painting over the next."""
     css = client.get("/style.css").text
-    # The declaration itself, not the substring. The `#mtg-board` block's own
-    # comment names `minmax(160px, 1fr)` as well, so a bare `in css` stayed
-    # green with the fix reverted. Scoped to that block and read off the
-    # `grid-template-rows:` line, the way the row assertion below is scoped
-    # to the rule it is about.
+    # The declarations themselves, not a substring: each block's own comment
+    # names its numbers too, so a bare `in css` stays green with the fix
+    # reverted. Scoped to the rule each one is about.
     board = css.split("#mtg-board {", 1)[1].split("}", 1)[0]
-    tracks = [
-        line.strip()
-        for line in board.splitlines()
-        if line.strip().startswith("grid-template-rows:")
-    ]
-    assert tracks == [
-        "grid-template-rows: auto auto minmax(160px, 1fr) auto minmax(160px, 1fr) auto auto;"
-    ], tracks
+    assert "display: flex;" in board and "flex-direction: column;" in board, board
+    main = css.split(".main-row {", 1)[1].split("}", 1)[0]
+    assert "flex: 1 1 0" in main, "the non-land row is the one that takes the slack"
+    assert "min-height: 162px" in main, "and it must never collapse under one card"
     rows = css.split(".hand-row, .battlefield-row, .stack-row {", 1)[1].split("}", 1)[0]
     assert "overflow-y: auto" in rows, "a row with more cards than fit must scroll itself"
+
+
+def test_each_seats_lands_sit_in_the_row_nearest_that_seat(client: TestClient) -> None:
+    """The order the rows are written in *is* the layout - `#mtg-board` is a
+    flex column, so nothing else decides which row is nearest which player.
+    `board.js` fills the rows and cannot see their order, so this is the only
+    place the mirroring can be asserted.
+
+    The convention itself is play practice, not a rule: the battlefield is a
+    shared zone and the Comprehensive Rules prescribe no arrangement for it.
+    """
+    page = client.get("/").text
+    rows = (
+        "opp-hand",
+        "opp-lands",
+        "opp-battlefield",
+        "stack-row",
+        "my-battlefield",
+        "my-lands",
+        "my-hand",
+    )
+    positions = [page.find(f'id="{row}"') for row in rows]
+    assert -1 not in positions, dict(zip(rows, positions, strict=True))
+    assert positions == sorted(positions), (
+        "the opponent's lands must sit directly under their hand and yours "
+        "directly above your own, mirrored around the shared zones: "
+        f"{dict(zip(rows, positions, strict=True))}"
+    )
+
+
+def test_the_ribbon_and_the_board_share_one_row_of_the_game_grid(
+    client: TestClient,
+) -> None:
+    """Everything that is not the battlefield - the turn block, the banners,
+    the prompt/priority/stops/log panel - is one right-hand column, and the
+    board takes the whole of the other one. `#topbar` and `#banners` are still
+    separate elements in `index.html`; only the grid puts them in the ribbon,
+    so this is what says the three are actually in the same column."""
+    css = client.get("/style.css").text
+    game = css.split("#game {", 1)[1].split("}", 1)[0]
+    areas = [line.strip() for line in game.splitlines() if "grid-template-areas" in line]
+    assert areas == ['grid-template-areas: "board top" "board banner" "board side";'], areas
+
+
+def test_exile_is_its_own_zone_on_the_board(client: TestClient) -> None:
+    """Not a line in the zones modal shared with the graveyards: its own
+    strip, its own border colour, and its own label."""
+    page = client.get("/").text
+    assert 'id="exile-row"' in page
+    css = client.get("/style.css").text
+    row = css.split(".exile-row {", 1)[1].split("}", 1)[0]
+    assert "border: 1px dashed var(--warn)" in row, row
+    label = css.split(".exile-row::before {", 1)[1].split("}", 1)[0]
+    assert 'content: "exile"' in label, label
 
 
 def test_the_scry_split_row_keeps_room_for_the_card_name(client: TestClient) -> None:

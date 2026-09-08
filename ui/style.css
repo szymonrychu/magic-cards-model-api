@@ -138,30 +138,42 @@ h3 { font-size: 14px; }
 
 /* -------------------------------------------------------------- game ---- */
 
+/* Everything that is not the battlefield is one right-hand ribbon, and the
+   battlefield gets the whole rest of the window: the board is the thing the
+   player is actually looking at, and it was previously giving up a full-width
+   band at the top of the screen to a turn counter and five buttons.
+
+   `#topbar`, `#banners` and `#side-panel` stay exactly where they are in
+   `index.html` - the ribbon is made here, by placing all three into the same
+   grid column, rather than by nesting them in a new wrapper element. `board`
+   spans all three of the rows they sit in. */
 #game {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  grid-template-rows: auto auto 1fr;
-  grid-template-areas: "top top" "banner banner" "board side";
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas: "board top" "board banner" "board side";
   height: 100vh;
   gap: 8px;
   padding: 8px;
 }
 
+/* The ribbon's top block. A column rather than a bar now that it is 340px
+   wide instead of the full window: turn line, phase track, then the seat's
+   own controls. */
 #topbar {
   grid-area: top;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: 9px;
-  padding: 7px 12px;
+  padding: 8px 10px;
 }
-#turn-info { font-size: 13px; white-space: nowrap; }
+#turn-info { font-size: 13px; }
 #turn-info .prio { color: var(--accent); font-weight: 600; }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.topbar-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* The turn structure as a track, so "which step am I in" is a glance, not a
    line of text to read. CR 500.1's phases and steps, in order. */
@@ -200,25 +212,25 @@ h3 { font-size: 14px; }
 
 /* --------------------------------------------------------- the board ---- */
 
+/* A flex column, not a grid. Four of these rows (`#exile-row`, `#red-zone`,
+   `#casting-strip`, `#permitted-row`) are `hidden` most of the time, and a
+   `display: none` element is not a flex item at all: it consumes neither
+   height nor a gap, and nothing below it lands on a differently-sized track
+   when it appears. The grid this replaced had to keep an explicit track list
+   in sync with the row order by hand, and every row added here - the two land
+   rows and the exile strip - was a chance to get that wrong.
+
+   Which rows grow is now stated by the rows themselves. `.main-row` (each
+   seat's non-lands) takes the slack; `.lands-row` and everything else is
+   content-sized. Every battlefield row keeps a one-card floor and scrolls
+   inside itself, because the cards do not clip: a row that collapsed painted
+   over the row beneath and swallowed its clicks. In the browser pass that put
+   a Forest on top of the casting strip's mode chips and a real click landed
+   on the Forest, so Kozilek's Command could not be cast at all. */
 #mtg-board {
   grid-area: board;
-  display: grid;
-  /* 7 explicit tracks for the always-present rows. `#red-zone`,
-     `#casting-strip`, and `#permitted-row` are all `hidden` by default, and
-     a `display: none` grid item consumes no track at all - so keeping the
-     count at 7 (rather than 10) is what keeps `my-battlefield` on the
-     flexible 5th track in the common case. When one of the three becomes
-     visible, the grid's default `grid-auto-rows: auto` gives it an implicit
-     row of its own, which is exactly the thin, content-sized row each wants.
-
-     The two battlefield tracks are `minmax(160px, 1fr)`, not a bare `1fr`.
-     A bare `1fr` collapsed to each row's 44px `min-height` as soon as the
-     board ran out of vertical room, and the cards - which do not clip -
-     simply painted over whatever was underneath. In the browser pass that
-     put a Forest on top of the casting strip's mode chips, and a real click
-     landed on the Forest: Kozilek's Command could not be cast at all,
-     because its modes were not reachable. 160px is one `card-md` tall. */
-  grid-template-rows: auto auto minmax(160px, 1fr) auto minmax(160px, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 5px;
   min-height: 0;
   background: var(--bg-sunken);
@@ -270,6 +282,17 @@ h3 { font-size: 14px; }
   overflow-y: auto;
 }
 .battlefield-row { background: rgba(255, 255, 255, 0.017); align-content: flex-start; }
+/* Each seat's non-lands take whatever vertical room is going: that is the row
+   with the creatures in it, and the one a crowded board grows in. `min-height`
+   is one `card-md` plus the row's own padding, so it never collapses under
+   its cards (see `#mtg-board`). */
+.main-row { flex: 1 1 0; min-height: 162px; }
+/* Lands sit in the row nearest their own controller - directly under the
+   opponent's hand at the top, directly above yours at the bottom. Content
+   sized: a mana base is one row of cards, and it should not be taking room
+   from the creatures. Slightly dimmer than the row above it, so the split
+   reads without a label. */
+.lands-row { flex: 0 1 auto; background: rgba(255, 255, 255, 0.008); }
 .hand-row { background: rgba(107, 164, 255, 0.05); }
 .hand-row-opp { opacity: 0.75; }
 /* CR 601.3's dynamic play permissions - a card castable from somewhere other
@@ -306,6 +329,37 @@ h3 { font-size: 14px; }
 .stack-object.targetable { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .stack-object.chosen { outline: 3px solid var(--good); outline-offset: 2px; }
 
+/* Exile, as its own zone rather than a line in a modal shared with the
+   graveyards. It is a live zone in Modern - Grief and Ephemerate lines,
+   foretell, adventure, suspend's clock, an Isochron Scepter imprint - and a
+   player has to be able to see what is in it without opening anything. Its
+   own colour and its own label, next to the stack because both are shared
+   zones; shown only while there is something in it.
+
+   Small cards and a capped height: exile grows all game and must never take
+   the room the battlefield needs. A card exiled *with* a permanent is not
+   drawn here at all - it is drawn tucked under that permanent. */
+.exile-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 4px 7px;
+  max-height: 124px;
+  overflow-y: auto;
+  border: 1px dashed var(--warn);
+  border-radius: 7px;
+  background: rgba(232, 180, 76, 0.05);
+}
+.exile-row::before {
+  content: "exile";
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--warn);
+  margin-right: 6px;
+}
+
 /* The row of attackers, mirroring MTGO's "red zone" - shown only while
    there is at least one attacker to show (CR 508's declare attackers step
    onward). */
@@ -335,6 +389,60 @@ h3 { font-size: 14px; }
   background: var(--bg-raised);
   border: 1px solid var(--accent);
 }
+
+/* ------------------------------------------------ permanents and piles ---- */
+
+/* A permanent and the cards physically underneath it: an Aura or an Equipment
+   attached to it, and a card exiled *with* it (an Isochron Scepter imprint, a
+   hideaway land's card). Both relationships come from the engine through the
+   state view - `attached_to` and `exile_pile.linked_permanent_id` - and are
+   sorted into piles by `ui/board_layout.js`. Neither is ever guessed here.
+
+   Each tucked card is offset down and to the right and drawn behind, the way
+   you slide an Aura under the creature it enchants: the permanent stays whole
+   and every card in the pile keeps a visible, clickable edge. `--pile` is how
+   many are underneath (the wrapper reserves exactly that much room, so a pile
+   never overhangs the row below); `--depth` is one card's place in it, with
+   `0` for the permanent itself.
+
+   Offsets are `top`/`left`, not `transform`, so `.card.tapped`'s rotation and
+   `.card:hover`'s lift still work on a tucked card. A pile deeper than the
+   enumeration below keeps the last offset rather than disappearing under the
+   permanent - eight Auras on one creature is not a board state to design for,
+   but it must still draw. */
+.perm-stack {
+  position: relative;
+  flex: 0 0 auto;
+  --pile: 8;
+  padding-right: calc(var(--pile) * 9px);
+  padding-bottom: calc(var(--pile) * 20px);
+}
+.perm-stack[data-under="0"] { --pile: 0; }
+.perm-stack[data-under="1"] { --pile: 1; }
+.perm-stack[data-under="2"] { --pile: 2; }
+.perm-stack[data-under="3"] { --pile: 3; }
+.perm-stack[data-under="4"] { --pile: 4; }
+.perm-stack[data-under="5"] { --pile: 5; }
+.perm-stack[data-under="6"] { --pile: 6; }
+.perm-stack[data-under="7"] { --pile: 7; }
+.perm-stack > .card { position: relative; z-index: 2; }
+.perm-stack > .card.tucked {
+  position: absolute;
+  --depth: 8;
+  top: calc(var(--depth) * 20px);
+  left: calc(var(--depth) * 9px);
+  z-index: 1;
+}
+.perm-stack > .card[data-tuck="1"] { --depth: 1; }
+.perm-stack > .card[data-tuck="2"] { --depth: 2; }
+.perm-stack > .card[data-tuck="3"] { --depth: 3; }
+.perm-stack > .card[data-tuck="4"] { --depth: 4; }
+.perm-stack > .card[data-tuck="5"] { --depth: 5; }
+.perm-stack > .card[data-tuck="6"] { --depth: 6; }
+.perm-stack > .card[data-tuck="7"] { --depth: 7; }
+/* Hovering a tucked card brings the whole of it out from under the permanent,
+   which is how you read one without moving anything. */
+.perm-stack > .card.tucked:hover { z-index: 4; }
 
 /* --------------------------------------------------------- the cards ---- */
 
@@ -752,7 +860,17 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .popover .option .hint { display: block; font-size: 10px; margin: 0; }
 
 @media (max-width: 1100px) {
-  #game { grid-template-columns: 1fr; grid-template-areas: "top" "banner" "board" "side"; height: auto; }
+  /* Too narrow for a ribbon beside the board, so it goes back to a stack -
+     and the turn block goes back to being a bar, since it now has the whole
+     width again. */
+  #game {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
+    grid-template-areas: "top" "banner" "board" "side";
+    height: auto;
+  }
+  #topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 14px; }
+  .topbar-right { margin-left: auto; }
   .card-preview { right: 14px; }
   .deck-pickers { grid-template-columns: 1fr; }
 }
