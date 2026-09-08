@@ -623,6 +623,94 @@ def test_needs_explicit_fire_covers_pinned_division_and_up_to_slots() -> None:
     ]
 
 
+def test_needs_explicit_fire_waits_for_an_unchosen_available_alternative_cost() -> None:
+    """The owner's report ("I'm not able to evoke through webUI ... I tried to
+    evoke Wistfulness"): a non-targeting cast with no unbounded slot and no
+    pinned mana used to be treated as decision-free and fired the instant its
+    affordance landed, so the evoke chip `ribbon.js`'s `renderAltCosts` draws
+    was never clickable - the cast had already gone out at full price.
+
+    A CR 118.9 alternative cost the affordance published as an option is a
+    real, unmade choice, exactly like an unbounded target slot already is -
+    it must hold the fire until the player picks it or the announcement is
+    marked done some other way. Nothing here names a keyword: the branch is
+    on `alternative_costs[i].available`, published by the engine, never on
+    what the option is called."""
+    no_targets_no_alt = {
+        "pinned": [],
+        "affordance": {"alternative_costs": []},
+        "slots": [],
+        "altCost": None,
+    }
+    available_alt = {
+        "pinned": [],
+        "affordance": {
+            "alternative_costs": [
+                {"index": 0, "keyword": "Evoke", "available": True, "unavailable": None}
+            ]
+        },
+        "slots": [],
+        "altCost": None,
+    }
+    only_unavailable_alt = {
+        "pinned": [],
+        "affordance": {
+            "alternative_costs": [
+                {
+                    "index": 0,
+                    "keyword": "Evoke",
+                    "available": False,
+                    "unavailable": "not enough mana",
+                }
+            ]
+        },
+        "slots": [],
+        "altCost": None,
+    }
+    chosen_alt = {
+        "pinned": [],
+        "affordance": {
+            "alternative_costs": [
+                {"index": 0, "keyword": "Evoke", "available": True, "unavailable": None}
+            ]
+        },
+        "slots": [],
+        "altCost": 0,
+    }
+    targets_and_available_alt = {
+        "pinned": [],
+        "affordance": {
+            "alternative_costs": [
+                {"index": 0, "keyword": "Evoke", "available": True, "unavailable": None}
+            ]
+        },
+        "slots": [{"count": 1, "minimum": 1, "targets": ["a"]}],
+        "altCost": None,
+    }
+    result = run_module(
+        "actions.js",
+        """[
+          m.needsExplicitFire(no_targets_no_alt),
+          m.needsExplicitFire(available_alt),
+          m.needsExplicitFire(only_unavailable_alt),
+          m.needsExplicitFire(chosen_alt),
+          m.needsExplicitFire(targets_and_available_alt),
+        ]""",
+        no_targets_no_alt=no_targets_no_alt,
+        available_alt=available_alt,
+        only_unavailable_alt=only_unavailable_alt,
+        chosen_alt=chosen_alt,
+        targets_and_available_alt=targets_and_available_alt,
+    )
+    assert result == [
+        False,  # no targets, no alternative cost - auto-fires, unchanged
+        True,  # an available alternative cost, unchosen - waits
+        False,  # the only alternative cost is unavailable - auto-fires
+        False,  # the available alternative cost was already chosen - fires
+        True,  # an exact filled target slot AND an available alternative cost - waits
+    ]
+
+
 # -- crew (CR 702.122a): the Vehicle's own action kind ----------------------
 
 SMUGGLERS_COPTER = {
