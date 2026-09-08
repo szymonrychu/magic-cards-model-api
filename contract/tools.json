@@ -1,0 +1,756 @@
+{
+  "tools": [
+    {
+      "docstring_first_line": "Activate one ability of a card you control - a permanent's ability",
+      "name": "activate",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card_id",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "ability_index",
+          "type": "int",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "targets",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "color",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Cast a spell. Most casts are from your hand, and need nothing",
+      "name": "cast",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "targets",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "modes",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "x_value",
+          "type": "int | None",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "keyword",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "CR 702.29a: discard a card with cycling from your hand, paying its",
+      "name": "cycle",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": 0,
+          "has_default": true,
+          "name": "ability_index",
+          "type": "int",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Answer your pending decision (CR 608.2d) - `my_state`'s",
+      "name": "decide",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "card_ids",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "targets",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "accept",
+          "type": "bool | None",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "moved",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "top_order",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "energy_amount",
+          "type": "int | None",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "life_amount",
+          "type": "int | None",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "choice",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "top",
+          "type": "bool | None",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "order",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Declare attackers during your declare attackers step. `attackers`",
+      "name": "declare_attackers",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "attackers",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Declare blockers during the declare blockers step. `blocks` is a",
+      "name": "declare_blockers",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "blocks",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "CR 116.2h/702.143b: pay {2} and exile a card with foretell from",
+      "name": "foretell",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "The game's action log: everything both players did or tried,",
+      "name": "game_log",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": 40,
+          "has_default": true,
+          "name": "limit",
+          "type": "int",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Declare whether you take a mulligan (CR 103.5), before the game starts.",
+      "name": "mulligan",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "take",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "bottom",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "The game as you may see it: your hand, both sides of the public",
+      "name": "my_state",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Take a card's opening-hand action, or finish (CR 103.6).",
+      "name": "opening_hand_action",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Pass priority once - \"I am done for now\". The whole of what a player",
+      "name": "pass",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Keep passing priority - one `pass` after another, automatically -",
+      "name": "pass_until",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "step",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "mine",
+          "has_default": true,
+          "name": "whose_turn",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "resume",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "stop_on_stack",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "stop_when_attacked",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "stop_when_you_can_attack",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Play a land from your hand (your one-per-turn allowance, unless an",
+      "name": "play_land",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "CR 116.2k/702.170b: exile a card with plot from your hand, paying",
+      "name": "plot",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Report a problem with the engine straight into the game log: write",
+      "name": "report_problem",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "text",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "CR 116.2f/702.62a: exile a card with suspend from your hand, paying",
+      "name": "suspend",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Check once whether it is your moment to act, then hand you the",
+      "name": "wait_for_priority",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    }
+  ]
+}
