@@ -730,6 +730,10 @@ class ExilePileView(BaseModel):
     marker: str
     owner: str | None = None
     turn_exiled: int | None = None
+    linked_permanent_id: str | None = None
+    """The permanent this card was exiled *with* - imprint, hideaway. Absent
+    for every marker that links nothing, and a lookup that may find nothing
+    even when present: nothing unlinks the two when the permanent leaves."""
 
 
 class SpecialActionEntry(BaseModel):
@@ -816,6 +820,7 @@ class CardView(BaseModel):
     special_actions: SpecialActionsView | None = None
     exile_pile: ExilePileView | None = None
     cast_options: list[CastOptionView] | None = None
+    attached_to: TargetRefView | None = None
     printed_type_line: str | None = None
     printed_power: int | None = None
     printed_toughness: int | None = None

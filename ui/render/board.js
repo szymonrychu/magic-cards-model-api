@@ -1,11 +1,16 @@
-// The board itself: opponent info/hand/battlefield, the shared stack, the
-// red zone (attackers, shown only while there are any), your battlefield,
-// your hand, and your own info row. One `mountBoard(root, store, handlers)`
-// subscribes to the store and keeps `#opp-info`/`#opp-hand`/
-// `#opp-battlefield`/`#stack-row`/`#red-zone`/`#my-battlefield`/`#my-hand`/
-// `#you-info` patched via `dom.js`'s keyed `patchChildren`, so a card kept
-// alive across a poll tick does not lose a hover preview or a mid-flight
-// transition.
+// The board itself: opponent info/hand/battlefield, the shared stack and
+// exile strip, the red zone (attackers, shown only while there are any),
+// your battlefield, your hand, and your own info row. One `mountBoard(root,
+// store, handlers)` subscribes to the store and keeps `#opp-info`/
+// `#opp-hand`/`#opp-lands`/`#opp-battlefield`/`#stack-row`/`#exile-row`/
+// `#red-zone`/`#my-battlefield`/`#my-lands`/`#my-hand`/`#you-info` patched
+// via `dom.js`'s keyed `patchChildren`, so a card kept alive across a poll
+// tick does not lose a hover preview or a mid-flight transition.
+//
+// Which permanent belongs in which row, and which cards are drawn tucked
+// under another card, is decided by `ui/board_layout.js` - pure functions
+// over the state view, tested directly. This file draws that answer and
+// makes no layout decisions of its own.
 //
 // Per-card options are derived from the one in-flight `action` (`actions.js`)
 // or, when a `choose_targets` decision (CR 601.2c-style targeting, but for a
@@ -14,6 +19,7 @@
 // is ever live for this seat.
 
 import { cardNode, updateCardNode, cardBackNode } from "../cards.js";
+import { boardLayout, seatRows } from "../board_layout.js";
 import { h, patchChildren, clear, setText } from "../dom.js";
 import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { targetSlotIndex } from "../actions.js";
@@ -70,32 +76,94 @@ function permanentOpts(app, card) {
   return opts;
 }
 
+/** Bring one already-built `.card` element up to date as a permanent: the
+ * classes `cards.js` owns, the two this file owns, the held-count badge, and
+ * the click. Shared by every row here, so a card drawn tucked under another
+ * one behaves exactly like a card standing on its own. */
+function updatePermanentNode(el, card, app, onClick) {
+  const opts = permanentOpts(app, card);
+  updateCardNode(el, card, opts);
+  // `cards.js`'s `updateCardNode` toggles the classes it knows about from
+  // its own `toggles()` table; `lifted` (the card mid-drag into a cast)
+  // is board-only state, so it is toggled here instead of asking
+  // `cards.js` to carry a class it has no other use for.
+  el.classList.toggle("lifted", opts.lifted);
+  if (opts.heldCount > 1) {
+    let badge = el.querySelector(".held-count");
+    if (!badge) {
+      badge = h("span", { class: "held-count" });
+      el.appendChild(badge);
+    }
+    setText(badge, `x${opts.heldCount}`);
+  } else {
+    const badge = el.querySelector(".held-count");
+    if (badge) badge.remove();
+  }
+  el.onclick = (event) => onClick(card, event);
+}
+
 function patchCards(container, cards, app, size, onClick) {
   patchChildren(
     container,
     cards,
     (c) => c.id,
     (card) => cardNode(card, size, {}),
-    (el, card) => {
-      const opts = permanentOpts(app, card);
-      updateCardNode(el, card, opts);
-      // `cards.js`'s `updateCardNode` toggles the classes it knows about from
-      // its own `toggles()` table; `lifted` (the card mid-drag into a cast)
-      // is board-only state, so it is toggled here instead of asking
-      // `cards.js` to carry a class it has no other use for.
-      el.classList.toggle("lifted", opts.lifted);
-      if (opts.heldCount > 1) {
-        let badge = el.querySelector(".held-count");
-        if (!badge) {
-          badge = h("span", { class: "held-count" });
-          el.appendChild(badge);
+    (el, card) => updatePermanentNode(el, card, app, onClick)
+  );
+}
+
+/** One battlefield row, from `board_layout.js`'s entries: each top-level
+ * permanent in a `.perm-stack` wrapper, with whatever is attached to it (an
+ * Aura, an Equipment) and whatever was exiled with it (an imprint, a
+ * hideaway card) drawn underneath it, offset down and to the right the way
+ * those cards are physically slid under it on a table.
+ *
+ * `data-under` on the wrapper is how many cards are in the pile, so the
+ * wrapper can reserve the height those offsets need; `data-tuck` on each
+ * card is its depth in the pile, and `0` is the permanent itself, on top. */
+function patchStacks(container, entries, app, size, onClick) {
+  patchChildren(
+    container,
+    entries,
+    (entry) => entry.card.id,
+    () => h("div", { class: "perm-stack" }),
+    (el, entry) => {
+      el.dataset.under = String(entry.under.length);
+      const pile = entry.under.map((card, index) => ({ card, tuck: index + 1 }));
+      pile.push({ card: entry.card, tuck: 0 });
+      patchChildren(
+        el,
+        pile,
+        (item) => item.card.id,
+        (item) => cardNode(item.card, size, {}),
+        (child, item) => {
+          child.classList.toggle("tucked", item.tuck > 0);
+          child.dataset.tuck = String(item.tuck);
+          updatePermanentNode(child, item.card, app, onClick);
         }
-        setText(badge, `x${opts.heldCount}`);
-      } else {
-        const badge = el.querySelector(".held-count");
-        if (badge) badge.remove();
-      }
-      el.onclick = (event) => onClick(card, event);
+      );
+    }
+  );
+}
+
+/** The shared exile zone, as its own strip - hidden while exile is empty.
+ * Clicking a card here does what clicking it in the zones popover does: it
+ * begins a cast when a CR 601.3 permission names it, and is an ordinary
+ * targeting click otherwise. */
+function patchExile(container, cards, app, handlers) {
+  container.hidden = cards.length === 0;
+  const state = app.state;
+  const permissions = (state.play_permissions && state.play_permissions[state.you]) || [];
+  patchChildren(
+    container,
+    cards,
+    (c) => c.id,
+    (card) => cardNode(card, "card-sm", {}),
+    (el, card) => {
+      updateCardNode(el, card, targetingOpts(app, card.id));
+      const permission = permissions.find((p) => p.card.id === card.id);
+      el.onclick = (event) =>
+        permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
     }
   );
 }
@@ -161,19 +229,23 @@ function infoRow(el, app, player) {
  * `onHandCard`/`onPermanent` click the caller distinguishes by
  * `card.type_line`) but is accepted so callers can pass one handlers object
  * across every render module. `#permitted-row` (CR 601.3's dynamic play
- * permissions, under the hand) is optional - a page without it is simply not
- * offered one, the same tolerance every other `$(...)` lookup here has none
- * of only because their ids are load-bearing elsewhere.
+ * permissions, under the hand) and `#exile-row` (the shared exile zone) are
+ * optional - a page without either is simply not offered it, the same
+ * tolerance every other `$(...)` lookup here has none of only because their
+ * ids are load-bearing elsewhere.
  */
 export function mountBoard(root, store, handlers) {
   const $ = (sel) => root.querySelector(sel);
   const els = {
     oppInfo: $("#opp-info"),
     oppHand: $("#opp-hand"),
+    oppLands: $("#opp-lands"),
     oppBf: $("#opp-battlefield"),
     stack: $("#stack-row"),
+    exile: $("#exile-row"),
     redZone: $("#red-zone"),
     myBf: $("#my-battlefield"),
+    myLands: $("#my-lands"),
     myHand: $("#my-hand"),
     permittedRow: $("#permitted-row"),
     youInfo: $("#you-info"),
@@ -195,8 +267,18 @@ export function mountBoard(root, store, handlers) {
       () => cardBackNode(),
       () => {}
     );
-    patchCards(els.oppBf, state.battlefield.filter((c) => c.controller !== you), app, "card-md", handlers.onPermanent);
-    patchCards(els.myBf, state.battlefield.filter((c) => c.controller === you), app, "card-md", handlers.onPermanent);
+    // Lands nearest their own controller, everything else in the row further
+    // from them - so `#opp-lands` sits directly under the opponent's hand at
+    // the top and `#my-lands` directly above your own hand at the bottom,
+    // the two halves mirrored around the shared zones in between.
+    const layout = boardLayout(state);
+    const mine = seatRows(layout, you);
+    const theirs = seatRows(layout, opp.username);
+    patchStacks(els.oppLands, theirs.lands, app, "card-md", handlers.onPermanent);
+    patchStacks(els.oppBf, theirs.main, app, "card-md", handlers.onPermanent);
+    patchStacks(els.myBf, mine.main, app, "card-md", handlers.onPermanent);
+    patchStacks(els.myLands, mine.lands, app, "card-md", handlers.onPermanent);
+    if (els.exile) patchExile(els.exile, layout.exile, app, handlers);
     patchCards(els.myHand, state.hands[you] || [], app, "card-lg", handlers.onHandCard);
     if (els.permittedRow) {
       const permitted = (state.play_permissions && state.play_permissions[you]) || [];

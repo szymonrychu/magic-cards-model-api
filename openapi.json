@@ -1820,6 +1820,16 @@
             ],
             "title": "Art Crop"
           },
+          "attached_to": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetRefView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "card_name": {
             "anyOf": [
               {
@@ -3233,6 +3243,17 @@
       "ExilePileView": {
         "description": "CR 406.4's pile marker (`serialize._exile_pile`) - which special\naction put this card in exile, whose it is, and the turn it landed.",
         "properties": {
+          "linked_permanent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Permanent Id"
+          },
           "marker": {
             "title": "Marker",
             "type": "string"
@@ -7754,6 +7775,16 @@
               }
             ],
             "title": "Art Crop"
+          },
+          "attached_to": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetRefView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "card_name": {
             "anyOf": [

@@ -242,11 +242,25 @@ def _exile_pile(state: CardState) -> dict[str, Any] | None:
     annotation = state.exile_annotation
     if annotation is None:
         return None
-    return {
+    pile = {
         "marker": annotation.marker.value,
         "owner": annotation.owner,
         "turn_exiled": annotation.turn_exiled,
     }
+    # The permanent this card was exiled *with*, when there is one -
+    # `ExileAnnotation.linked_permanent_id`, which imprint and hideaway both
+    # set. This is the whole of what makes "that card is under that
+    # permanent" answerable by a client: the card is in exile like any other,
+    # and only this id says which permanent it physically sits beneath.
+    # Absent, rather than null, for every marker that links nothing - the
+    # same shape the rest of this view uses for a field that does not apply.
+    #
+    # Nothing clears it when the linked permanent leaves the battlefield (see
+    # `ExileAnnotation.linked_permanent_id`'s own docstring), so a reader has
+    # to treat it as a lookup that can find nothing rather than a promise.
+    if annotation.linked_permanent_id is not None:
+        pile["linked_permanent_id"] = str(annotation.linked_permanent_id)
+    return pile
 
 
 def _cast_option_view(
@@ -472,6 +486,15 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
             # hidden hand - see `visibility._redact_cast_options`.
             view["cast_options"] = cast_options
     if state.zone is Zone.BATTLEFIELD:
+        # What this Equipment or Aura is attached to (`CardState.attachment`),
+        # in the same `{kind, id, name}` shape every other reference on this
+        # wire uses - a card, or a player, since an Aura's enchant ability can
+        # name one. Absent when it is attached to nothing, which is how every
+        # Equipment enters and how every other permanent stays. Battlefield
+        # only: the engine clears the field on the way out of the zone, so
+        # anywhere else the key would only ever be absent anyway.
+        if state.attachment is not None:
+            view["attached_to"] = _target_refs(game, [state.attachment])[0]
         printed_type_line = state.card.type_line
         printed_power, printed_toughness = state.power, state.toughness
         if printed_type_line != type_line:
