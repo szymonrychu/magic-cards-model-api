@@ -76,6 +76,78 @@ def test_app_js_still_exports_start_game_for_the_routes_test() -> None:
     assert run_app("typeof m.startGame") == "function"
 
 
+def test_starting_a_game_navigates_to_its_own_g_path_by_default() -> None:
+    """T4: the old in-page `#lobby`/`#game` hidden toggle becomes a real
+    navigation to `/g/<uuid>/` - what the lobby's Start/Open buttons trigger
+    via `handlers.startGame`, and what a browser reload of that URL then
+    lands back on (`document.baseURI` resolves the game from there, not from
+    `store`). `localStorage` is still written first, so the entry is there
+    for the reloaded page to find."""
+    result = run_app(
+        """(async () => {
+          globalThis.window = { location: { href: "https://host/" } };
+          const saves = [];
+          globalThis.localStorage = {
+            getItem: () => null,
+            setItem: (k, v) => saves.push([k, v]),
+            removeItem() {},
+          };
+          await m.startGame({ game_id: "g99", uid: "u1", aiUid: "u2" });
+          return { href: window.location.href, saves };
+        })()"""
+    )
+    assert result["href"] == "/g/g99/"
+    assert len(result["saves"]) == 1, "the game must still be saved before navigating away"
+
+
+def test_starting_a_game_does_not_navigate_when_told_not_to() -> None:
+    """The one caller that must NOT navigate: booting straight into the game
+    screen on a page load that is already at `/g/<uuid>/` (the id came from
+    `document.baseURI`, not from a Start/Open click) - navigating again would
+    loop."""
+    result = run_app(
+        """(async () => {
+          globalThis.window = { location: { href: "https://host/g/g99/" } };
+          globalThis.document = {
+            querySelector: (sel) => {
+              if (sel === "#lobby") return { hidden: false };
+              if (sel === "#game") return { hidden: true };
+              return null;
+            },
+          };
+          globalThis.fetch = (path) => {
+            if (path.includes("/log")) {
+              return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 0 }) });
+            }
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                you: "alice", pending_decision: null, step: "precombat_main",
+                active_player: "alice", priority_holder: "alice", battlefield: [],
+                hands: { alice: [] }, stack: [], combat: { attacks: [] },
+                winner: null, drawn: false, pregame: null,
+              }),
+            });
+          };
+          await m.startGame({ game_id: "g99", uid: "u1", aiUid: "u2" }, { navigate: false });
+          return { href: window.location.href };
+        })()"""
+    )
+    assert result["href"] == "https://host/g/g99/", "must not have navigated anywhere"
+
+
+def test_leaving_the_game_navigates_to_the_lobby_root() -> None:
+    result = run_app(
+        """(() => {
+          globalThis.window = { location: { href: "https://host/g/g99/" } };
+          m.store.set({ gameId: "g99", uid: "u1", state: { you: "alice" } });
+          m.leaveGame();
+          return { href: window.location.href };
+        })()"""
+    )
+    assert result["href"] == "/"
+
+
 def test_send_catches_a_rejected_fetch_and_toasts_instead_of_throwing() -> None:
     """`send` is the one place every action path in `app.js` goes through
     instead of calling `api()` directly - a transport failure (a rejected

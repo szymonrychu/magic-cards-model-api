@@ -40,6 +40,7 @@ import {
   saveGames,
   dropSavedGame,
 } from "../lobby_model.js";
+import { apiBase, lobbyBase } from "../config.js";
 
 function $(root, sel) {
   return root.querySelector(sel);
@@ -53,7 +54,7 @@ function escapeHtml(s) {
 }
 
 async function loadBundledDecks(root) {
-  const { decks } = await api("GET", "/api/decks");
+  const { decks } = await api("GET", `${apiBase()}/decks`);
   for (const selId of ["#you-bundled", "#ai-bundled"]) {
     const sel = $(root, selId);
     if (!sel) continue;
@@ -71,7 +72,7 @@ function wireDeckPicker(root, prefix) {
   if (bundled) {
     bundled.addEventListener("change", async (e) => {
       if (!e.target.value) return;
-      const { text } = await api("GET", `/api/decks/${encodeURIComponent(e.target.value)}`);
+      const { text } = await api("GET", `${apiBase()}/decks/${encodeURIComponent(e.target.value)}`);
       $(root, `#${prefix}-text`).value = text;
     });
   }
@@ -100,7 +101,7 @@ async function validateAndReport(root, prefix) {
     return null;
   }
   try {
-    const result = await api("POST", "/api/decks/validate", { text });
+    const result = await api("POST", `${apiBase()}/decks/validate`, { text });
     renderValidation(out, result);
     return result;
   } catch (err) {
@@ -169,7 +170,7 @@ async function startGame(root, handlers) {
   if (seedRaw) body.seed = parseInt(seedRaw, 10);
   let created;
   try {
-    created = await api("POST", "/api/ui/games", body);
+    created = await api("POST", `${lobbyBase()}/ui/games`, body);
   } catch (e) {
     if (err) err.textContent = e.message;
     return;
@@ -181,7 +182,7 @@ async function startGame(root, handlers) {
   // 103.5/103.6 default moves until its agent picks up), and the game
   // screen's own poll loop reads this seat's status independently once it is
   // up - so nothing here needs to await this call or render its result.
-  api("POST", `/api/ui/games/${created.game_id}/ai-seat/start`, { uid: aiUid }).catch((e) => {
+  api("POST", `${lobbyBase()}/ui/games/${created.game_id}/ai-seat/start`, { uid: aiUid }).catch((e) => {
     console.error(`could not start the AI seat: ${e.message}`);
   });
   handlers.startGame({ game_id: created.game_id, uid, aiUid });
@@ -285,7 +286,7 @@ function renderGamesTable(root, handlers, rows) {
  * way back to it short of the browser having saved them somewhere else. */
 async function endGame(root, handlers, row) {
   try {
-    await api("DELETE", `/api/ui/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
+    await api("DELETE", `${lobbyBase()}/ui/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
   } catch (e) {
     console.error(`could not end game vs ${row.opponent || row.gameId}: ${e.message}`);
     const err = $(root, "#start-error");
@@ -315,7 +316,7 @@ async function refreshGames(root, handlers) {
   }
   let games;
   try {
-    ({ games } = await api("GET", `/api/ui/games?uids=${encodeURIComponent(uids.join(","))}`));
+    ({ games } = await api("GET", `${lobbyBase()}/ui/games?uids=${encodeURIComponent(uids.join(","))}`));
   } catch (e) {
     console.error(`could not load the game list: ${e.message}`);
     return;
