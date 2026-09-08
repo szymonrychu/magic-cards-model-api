@@ -224,9 +224,7 @@ def test_the_setting_defaults_on() -> None:
     equivalent setting to default in the new model at all - being attacked
     is unconditional, with no `stops` entry or verb able to turn it off -
     which is the stronger version of "the safe default is on"."""
-    reason = call_stop_reason(
-        under_attack(2), stops={"mine": [], "theirs": [], "onStack": False}
-    )
+    reason = call_stop_reason(under_attack(2), stops={"mine": [], "theirs": [], "onStack": False})
     assert reason == "you are being attacked"
 
 
