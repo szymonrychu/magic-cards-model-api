@@ -1,17 +1,37 @@
-// Priority automation. MTGO's yield tiers as verbs, plus a stops panel; no
-// key bindings, those vary by client version. Every verb still stops when
-// you are attacked, when a decision is pending, when a new object appears on
-// the stack (except `pass_turn_regardless`), and at a checked stop.
+// Priority automation: two verbs, and a persisted stops panel that says when
+// the second one hands the board back. No key bindings, those vary by client
+// version.
 //
-// This is the port of the old `ui/app.js` autopilot
-// (`autopilotStopReason`/`startAutopilot`/`interpretPassOutcome`,
-// app.js:1331-1360 and app.js:1486-1645): a named-destination-plus-three-
-// toggles picker replaced by five fixed verbs plus a persisted stops panel.
-// The picker's `autopilotTarget` (a step to run to) becomes a `stops` object
-// containing exactly that one step; the three settings
-// (`stopOnStack`/`stopWhenAttacked`/`stopWhenYouCanAttack`) become,
-// respectively, the choice of verb, an unconditional rule, and membership of
-// `declare_attackers` in `stops.mine`.
+// Two verbs because the rules give priority exactly two things to do with it.
+// CR 117.1: "The player with priority may cast spells, activate abilities, and
+// take special actions." CR 117.3d: "If a player has priority and chooses not
+// to take any actions, that player passes." That is `pass`. `pass_until` is
+// the same verb run automatically until a stop fires - not a different move,
+// just the one move repeated. Everything that *follows* a pass is the game's
+// own doing rather than a button: CR 117.4 resolves the top of the stack, or
+// ends the step, once all players have passed in succession.
+//
+// This replaces five verbs (`pass`, `pass_turn`, `pass_turn_regardless`,
+// `until_my_turn`, `until_castable`) that were five spellings of the same
+// pass with different stop conditions baked into each. The stop conditions
+// are the stops panel's job, so they moved there: "even with a stack" is the
+// `onStack` tick unticked, and the three turn-scoped destinations are step
+// ticks like any other.
+//
+// A stop is one of three kinds, and only the first is a tick:
+//
+//   1. a *checked stop* - a step on `stops.mine`/`stops.theirs`, or the
+//      `stops.onStack` tick;
+//   2. an *unconditional rule* - being attacked, a pending decision, the game
+//      being over. There is no tick for these and there never was;
+//   3. the `pass` verb's own "one priority, then stop".
+//
+// The `onStack` tick is deliberately NOT a destination. The owner's case for
+// it is "I'm passing until my pre-combat-main, but opponent casts a spell in
+// my upkeep - I need to have a way to respond to it", which wants both at
+// once: a destination to run to AND a reason to stop short of it. So it sits
+// beside the two step lists rather than inside either, and both are live on
+// the same run.
 
 export const STEPS = [
   "untap", "upkeep", "draw", "precombat_main", "beginning_of_combat",
@@ -29,25 +49,33 @@ export const PHASE_OF = {
   cleanup: "ending",
 };
 
-export const VERBS = ["pass", "pass_turn", "pass_turn_regardless", "until_my_turn", "until_castable"];
+export const VERBS = ["pass", "pass_until"];
 
 export const VERB_LABELS = {
   pass: "Pass",
-  pass_turn: "Pass turn",
-  pass_turn_regardless: "Pass turn (even with a stack)",
-  until_my_turn: "Pass until my next turn",
-  until_castable: "Pass until I can cast something",
+  pass_until: "Pass until",
 };
 
+// `onStack` sits alongside the two step lists, not inside them: it is a stop
+// that can fire in any step, and it is on by default because CR 117.4 only
+// resolves the top of the stack once every player has passed in succession -
+// so the pass this run has not made yet is the whole of the chance to respond
+// to whatever just landed. Unticking it is the deliberate "I am answering
+// nothing in this stretch".
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
   theirs: ["declare_attackers", "end_step"],
+  onStack: true,
 };
 
 const STOPS_KEY = "mcm.stops.v1";
 
 export function loadStops(storage) {
-  const defaults = { mine: [...DEFAULT_STOPS.mine], theirs: [...DEFAULT_STOPS.theirs] };
+  const defaults = {
+    mine: [...DEFAULT_STOPS.mine],
+    theirs: [...DEFAULT_STOPS.theirs],
+    onStack: DEFAULT_STOPS.onStack,
+  };
   try {
     const raw = storage.getItem(STOPS_KEY);
     if (!raw) return defaults;
@@ -56,7 +84,12 @@ export function loadStops(storage) {
     // the wrong shape is exactly as unusable as invalid JSON, so it gets the
     // same fallback rather than silently becoming empty stops.
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaults;
-    return { mine: parsed.mine || [], theirs: parsed.theirs || [] };
+    // The storage key is unchanged, so a player's own step ticks survive the
+    // arrival of `onStack` - and a payload written before it existed carries
+    // no `onStack` at all. Absent means ON, which is both the default and the
+    // safe reading: the alternative silently takes the chance to respond away
+    // from everyone who had already ticked a step.
+    return { mine: parsed.mine || [], theirs: parsed.theirs || [], onStack: parsed.onStack !== false };
   } catch {
     return defaults;
   }
@@ -164,7 +197,7 @@ function sameOccurrence(state, run) {
   );
 }
 
-export function stopReason(state, run, stops, castable) {
+export function stopReason(state, run, stops) {
   if (state.winner || state.drawn) return "the game is over";
   if (state.pending_decision) {
     // A pause rolls the committed game back to before the paused command
@@ -179,30 +212,27 @@ export function stopReason(state, run, stops, castable) {
       : "waiting on another seat's decision";
   }
   if (attackedNow(state) && !sameOccurrence(state, run)) return "you are being attacked";
-  const stackIds = (state.stack || []).map((o) => o.id);
-  const newObject = stackIds.some((id) => !run.knownStackIds.includes(id));
   const mine = state.active_player === state.you;
   const side = mine ? stops.mine : stops.theirs;
-  const turnChanged = state.turn_number !== run.startedTurn;
   switch (run.verb) {
     case "pass":
+      // One priority, given up, and then the board comes back. It still falls
+      // through to the checked stops below, so a stop on the other side can
+      // halt it before it has passed anything at all.
       if (run.passes >= 1) return "passed once";
       break;
-    case "pass_turn":
-      if (newObject) return "something new is on the stack";
-      if (turnChanged) return "the turn ended";
+    case "pass_until": {
+      // `!== false`, not a bare truthiness check: a `stops` object from
+      // before this tick existed (see `loadStops`) has no `onStack` key, and
+      // absent has to read as on.
+      if (stops.onStack !== false) {
+        const stackIds = (state.stack || []).map((o) => o.id);
+        if (stackIds.some((id) => !run.knownStackIds.includes(id))) {
+          return "something new is on the stack";
+        }
+      }
       break;
-    case "pass_turn_regardless":
-      if (turnChanged) return "the turn ended";
-      break;
-    case "until_my_turn":
-      if (newObject) return "something new is on the stack";
-      if (mine && turnChanged) return "it is your turn";
-      break;
-    case "until_castable":
-      if (newObject) return "something new is on the stack";
-      if (castable) return "you can cast something";
-      break;
+    }
     default:
       return `unknown verb ${run.verb}`;
   }
@@ -228,6 +258,10 @@ export function interpretPassOutcome(res) {
   return { ok: true, reason: null, outcome: res.outcome || null, settledThrough: res.settled_through || null };
 }
 
+// The two verbs, or just `pass` while your own decision is pending, or
+// nothing at all. `pass_until` is deliberately not offered alongside your own
+// pending decision: a run cannot make progress past a question only you can
+// answer, so starting one there would spend a tick doing nothing.
 export function passButtonsFor(state) {
   if (state.priority_holder !== state.you) return [];
   if (state.pending_decision) {
@@ -243,14 +277,26 @@ export function passButtonsFor(state) {
   return [...VERBS];
 }
 
+// The one button here that is not a priority verb, and it is kept
+// deliberately.
+//
 // CR 502.4: "No player receives priority during the untap step"; CR 514.3:
-// "Normally, no player receives priority during the cleanup step" - both
-// verified with `knowledge_search(type="rules")` in the session that wrote
-// this. `passButtonsFor` correctly offers nothing in either (there is no
-// pass to make), which used to leave the active player with no way past
-// either at all: `POST .../advance` (`engine_api.advance`) is that way,
-// offered only to the player whose turn it is, in the one step it does
-// something in.
+// "Normally, no player receives priority during the cleanup step". CR 500.3
+// ends both of its own accord ("A step in which no players receive priority
+// ends when all specified actions that take place during that step are
+// completed"), and the server settles them for every caller
+// (`engine_api.settle_priorityless_steps`, run inside the `pass-priority`
+// command itself), so a live game should never rest in one. Should. If the
+// engine ever declines that advance, the page is left in a step where
+// `priority_holder` is null and `passButtonsFor` correctly offers nothing -
+// a frozen board with no legal move on it for anybody.
+//
+// `POST .../advance` is the human's escape from exactly that, and it is why
+// this survived the collapse to two verbs while `advance` went from the
+// agent's toolset: an agent seat that finds itself there can file a report
+// and a person can look, whereas a human staring at a dead page has no other
+// button to press. Offered only to the player whose turn it is, in the one
+// step it does something in.
 export function advanceOffered(state) {
   return state.active_player === state.you && (state.step === "untap" || state.step === "cleanup");
 }

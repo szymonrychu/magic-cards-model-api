@@ -119,7 +119,14 @@ def test_turn_zero_orders_reading_before_acting(tmp_path, guide):
 
 def test_turn_zero_names_the_mcp_tools_not_seat_cli(tmp_path, guide):
     text = turn_zero(assignment(guide), tmp_path / "current-game.md")
-    for tool in ("wait_for_priority", "my_state", "cast", "play_land", "decide", "pass_priority"):
+    for tool in (
+        "wait_for_priority",
+        "my_state",
+        "cast",
+        "play_land",
+        "decide",
+        "pass_until",
+    ):
         assert tool in text
     assert "seat_cli" not in text
 

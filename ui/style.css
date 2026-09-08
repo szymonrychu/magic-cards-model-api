@@ -736,6 +736,9 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .stops-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; font-size: 12px; }
 .stops-grid > div:nth-child(-n+2) { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-faint); }
 .stops-grid label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+/* The stack tick is not one of the grid's two columns: it can fire in any
+   step and on either turn, so it sits above the grid on its own line. */
+.stops-anything { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; margin-bottom: 6px; }
 
 .pregame-step { display: flex; flex-direction: column; gap: 6px; }
 .pregame-bottom { display: flex; flex-direction: column; gap: 3px; }

@@ -14,8 +14,17 @@ Every command is a fresh process. Always pass BOTH your uid and your game id
 
 Subcommands: state, wait, mulligan, opening-hand-action, opening-hand-done,
 cast, play-land, suspend, plot, foretell, cycle, activate, attackers,
-blockers, decide, pass, resolve, advance, set-step, log, report. Run
+blockers, decide, pass, pass-until, log, report. Run
 `<subcommand> --help` when unsure of arguments.
+
+Priority has exactly two verbs, `pass` and `pass-until`, because the rules give
+it exactly two: CR 117.1 says the player with priority "may cast spells,
+activate abilities, and take special actions", and CR 117.3d says a player who
+chooses none of those passes. What follows a pass is the game's own doing, not
+yours - CR 117.4 resolves the top of the stack, or ends the step, once all
+players have passed in succession, and CR 703.2 says turn-based actions "are
+not controlled by any player" - so there is no subcommand for resolving the
+stack or stepping the turn on, and you never need one.
 
 **`--hold` is how you take two actions in one phase.** A `cast` releases
 priority by default and checks once for your next moment to act - it does not
@@ -121,14 +130,15 @@ board as one card can punish.
 
 ## Passing a whole stretch at once, and when not to
 
-`pass --until <step>` keeps passing every priority you currently hold until a
-named point in the turn, instead of handing you back one priority at a time:
+`pass` gives up one priority. `pass-until <step>` is the same verb run to a
+destination: it keeps passing every priority you currently hold until a named
+point in the turn, instead of handing you back one priority at a time:
 
-    ... pass --until upkeep                        # round to your next upkeep
-    ... pass --until precombat_main --until-whose-turn opponent
+    ... pass-until upkeep                          # round to your next upkeep
+    ... pass-until precombat_main --whose-turn opponent
 
 Naming the step you are standing in means its NEXT occurrence, never this one -
-`--until upkeep` asked during your upkeep is a whole turn of passing, which is
+`pass-until upkeep` asked during your upkeep is a whole turn of passing, which is
 what "until my upkeep" means when you say it out loud. `untap` and `cleanup`
 are not offered: nobody receives priority in either (CR 502.4, CR 514.3).
 
@@ -141,11 +151,11 @@ This does not block either, so a long run takes several commands. Read
   attacked in your own declare-blockers step, a pass was refused, the game
   ended.
 - `finished: false` - it got as far as it could on its own and handed the
-  board back, because your opponent holds priority or owes a declaration only
-  they can make. **Sleep, then run it again with the answer's `resume` object
-  handed back verbatim:**
+  board back, because your opponent holds priority or the game is frozen on a
+  question only they can answer. **Sleep, then run it again with the answer's
+  `resume` object handed back verbatim:**
 
-      sleep 2 && ... pass --until upkeep --resume '<the resume object>'
+      sleep 2 && ... pass-until upkeep --resume '<the resume object>'
 
   Dropping `--resume` does not merely lose your place: the next command
   re-stamps the "do not stop in the step this run started in" exemption onto
@@ -159,10 +169,19 @@ looked at combat.
 
 Three of those stops can be switched off, and each defends you against
 something you cannot see going wrong, so leave them on unless you have a reason
-you could say out loud:
+you could say out loud. None of them is a destination and none of them replaces
+the step you named - they are extra reasons to stop on the way there, and they
+combine with it:
 
 - `--no-stop-on-stack` runs through the opponent's spells and every trigger.
-  You will not get to respond to any of it.
+  You will not get to respond to any of it. This is the stop that gives you
+  your answer to a spell cast in a window you were passing through - their
+  instant in your upkeep while you were running to your own precombat main -
+  and CR 117.4 resolves that spell the moment all players have passed in
+  succession, so the pass you have not yet made is the whole of your chance.
+  Left on, the run hands the board back with their spell still on the stack and
+  priority still yours. In the tool form of this seat the same switch is called
+  `stop_on_stack`.
 - `--no-stop-when-attacked` runs through your own declare-blockers step. You
   will block nothing and take the whole attack. Declaring blockers is a
   turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
@@ -174,7 +193,7 @@ you could say out loud:
   skipping it is silent: the engine treats a player who never declares as
   declaring nobody, which is always legal, so the turn produces no attack and
   nothing says why. Expect this one to stop you every turn on a run aimed past
-  combat - `--until postcombat_main`, `--until end_step` - and expect that,
+  combat - `pass-until postcombat_main`, `pass-until end_step` - and expect that,
   because it is asking you before your attack goes by. Switching it off is the
   deliberate "I am not attacking this turn", never a way to make the command
   quieter.
@@ -217,14 +236,15 @@ per priority.
   game is worthless. Do not stop because the game is long, because you think
   you are losing, or because you are unsure - read the state and take the
   best legal action.
-- You should never need `advance`. No player receives priority in the untap
-  step (CR 502.4) or in an ordinary cleanup step (CR 514.3), and a step nobody
-  receives priority in ends on its own (CR 500.3) - the server runs the game
-  past those for you, so `state` always shows a step somebody can act in. In a
-  main phase use play-land / cast / activate, then `pass`. Using `advance` in
-  a main phase skips your own turn.
+- There is no command that steps the turn on, and you never need one. No
+  player receives priority in the untap step (CR 502.4) or in an ordinary
+  cleanup step (CR 514.3), and a step nobody receives priority in ends on its
+  own (CR 500.3) - the server runs the game past those for you, so `state`
+  always shows a step somebody can act in. In a main phase use play-land /
+  cast / activate, then `pass`.
 - If `pass` is refused with "you do not have priority", call `wait` again.
-  NEVER `advance` to escape that - it strands the stack.
+  That is the whole remedy - the other seat is still deciding, and nothing you
+  can run moves the game for them.
 - `wait` (and every other command) checks once and returns at once -
   poll-and-return, never a real wait. There is no `--max-seconds` on any of
   them any more, because there is no wait for one to bound. **A `wake_reason`

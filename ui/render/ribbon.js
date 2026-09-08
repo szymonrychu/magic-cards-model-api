@@ -3,8 +3,9 @@
 // asked right now, in priority order: game over, pregame, a live decision,
 // the in-flight action's one-line summary, the combat prompt, or the click
 // hint), `#casting-strip` (the in-flight action's own controls, staged above
-// the hand), `#priority-box` (the pass-priority verbs), and `#stops-box`
-// (the autopilot stop conditions). Plus the one floating `#popover` every
+// the hand), `#priority-box` (the two pass verbs, plus the untap/cleanup
+// escape hatch `priority.js`'s `advanceOffered` explains), and `#stops-box`
+// (the step ticks and the `anything on the stack` tick beside them). Plus the one floating `#popover` every
 // inline "pick one of these" menu shares.
 //
 // Every button here fires a request the API already documents; nothing in
@@ -684,10 +685,11 @@ function renderPriorityBox(el, app, handlers) {
     const verbs = passButtonsFor(app.state);
     el.appendChild(h("div", { class: "chip-row" }, ...verbs.map((v) => h("button", { onClick: () => handlers.onVerb(v) }, VERB_LABELS[v]))));
     // CR 502.4/514.3: nobody receives priority during untap or (most)
-    // cleanup steps, so `passButtonsFor` offers nothing there at all - the
-    // active player's own way past either is `POST .../advance`
-    // (`engine_api.advance`), not a pass. `advanceOffered` is the one place
-    // that decides when to show it.
+    // cleanup steps, so `passButtonsFor` offers nothing there at all. The
+    // server crosses both for every caller (CR 500.3), so this should be
+    // unreachable - it is the escape hatch for when it is not, and
+    // `advanceOffered` (with its own note on why it survived the collapse to
+    // two priority verbs) is the one place that decides when to show it.
     if (advanceOffered(app.state)) {
       el.appendChild(
         h("button", { class: "primary", onClick: handlers.onAdvance }, `Advance (${app.state.step.replace(/_/g, " ")})`)
@@ -721,6 +723,25 @@ function renderPriorityBox(el, app, handlers) {
 function renderStopsBox(el, app, handlers) {
   clear(el);
   const steps = STEPS.filter((s) => s !== "untap" && s !== "cleanup");
+  // The stack tick, above the step grid because it is not one of its columns:
+  // it can fire in any step and on either player's turn, and it is live
+  // alongside whatever steps are checked rather than instead of them (see
+  // `priority.js`'s header). CR 117.4 resolves the top of the stack only once
+  // every player has passed in succession, so the pass the run has not made
+  // yet is the whole of the chance to answer what just landed - which is why
+  // it starts ticked.
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.onStack !== false,
+        onChange: () => handlers.onToggleStackStop(),
+      }),
+      " anything on the stack"
+    )
+  );
   const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));
   for (const step of steps) {
     const label = step.replace(/_/g, " ");

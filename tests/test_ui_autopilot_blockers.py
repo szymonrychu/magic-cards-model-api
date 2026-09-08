@@ -114,7 +114,7 @@ def under_attack(turn: int, **overrides: Any) -> dict[str, Any]:
 
 def call_stop_reason(
     state: dict[str, Any],
-    verb: str = "until_castable",
+    verb: str = "pass_until",
     stops: dict[str, list[str]] | None = None,
     castable: bool = False,
 ) -> Any:
@@ -178,7 +178,7 @@ def test_a_run_stops_when_this_seat_is_being_attacked() -> None:
     ] + turn_cycle(3, "alice")
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"] is not None, "the run passed through its own declare blockers"
     assert result["stopped"]["step"] == "declare_blockers", result
@@ -225,7 +225,7 @@ def test_the_setting_defaults_on() -> None:
     is unconditional, with no `stops` entry or verb able to turn it off -
     which is the stronger version of "the safe default is on"."""
     reason = call_stop_reason(
-        under_attack(2), verb="pass_turn_regardless", stops={"mine": [], "theirs": []}
+        under_attack(2), stops={"mine": [], "theirs": [], "onStack": False}
     )
     assert reason == "you are being attacked"
 
@@ -250,7 +250,7 @@ def test_the_attacking_player_is_not_stopped_in_the_same_step() -> None:
     # See `tests/test_ui_autopilot_attackers.py` for its own coverage.
     stops = stops_for("postcombat_main", "you", can_attack_stop=False)
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["step"] == "postcombat_main", result
     assert "declare_blockers@3" in result["passed_through"], result
@@ -267,7 +267,7 @@ def test_no_attackers_means_no_stop() -> None:
     ] + turn_cycle(3, "alice")
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["step"] == "precombat_main", result
     assert result["stopped"]["turn"] == 3, result
@@ -286,7 +286,7 @@ def test_it_does_not_fire_in_other_steps_of_a_combat_you_are_defending() -> None
     ] + turn_cycle(3, "alice")
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 3, result
     assert result["stopped"]["step"] == "precombat_main", result
@@ -294,15 +294,11 @@ def test_it_does_not_fire_in_other_steps_of_a_combat_you_are_defending() -> None
 
 def test_there_is_no_setting_left_to_untick_being_attacked_still_stops() -> None:
     """There is nothing left to untick: being attacked has no `stops` entry
-    or verb able to disable it in the new model, so this now pins the
-    stronger claim the old toggle's absence implies - even with every other
-    stop stripped out (empty `stops`, the stack ignored via
-    `pass_turn_regardless`), the attacked check still fires. There is no
-    configuration of the new model that runs a defending player through an
-    attack unnoticed. (Confined to bob's own turn 2, since
-    `pass_turn_regardless` also stops on a turn change in its own right -
-    see `tests/test_ui_priority.py` - and this test is about the attacked
-    rule, not that one.)"""
+    able to disable it in the new model, so this now pins the stronger claim
+    the old toggle's absence implies - even with every other stop stripped out
+    (empty step lists, the `onStack` tick off), the attacked check still
+    fires. There is no configuration of the new model that runs a defending
+    player through an attack unnoticed."""
     start = board("upkeep", 2, "bob")
     timeline = [
         board("declare_attackers", 2, "bob", combat={"attacks": TWO_ATTACKS}),
@@ -310,7 +306,9 @@ def test_there_is_no_setting_left_to_untick_being_attacked_still_stops() -> None
         board("combat_damage", 2, "bob", combat={"attacks": TWO_ATTACKS}),
     ]
 
-    result = run_until_stop(start, "pass_turn_regardless", {"mine": [], "theirs": []}, timeline)
+    result = run_until_stop(
+        start, "pass_until", {"mine": [], "theirs": [], "onStack": False}, timeline
+    )
 
     assert result["stopped"]["step"] == "declare_blockers", result
     assert result["stopped"]["turn"] == 2, result
@@ -334,11 +332,11 @@ def test_the_checkbox_is_rendered_next_to_the_stop_on_stack_one() -> None:
     check any more - `ui/priority.js` renders nothing, that is a later
     panel's job - so what makes the two "read together" now is that
     `stopReason` checks the attacked rule before the stack, unconditionally:
-    it wins even under a verb (`pass_turn_regardless`) chosen specifically to
-    ignore the stack, with a stack object present at the very same tick."""
+    it wins even with the `onStack` tick switched off specifically to ignore
+    the stack, with a stack object present at the very same tick."""
     reason = call_stop_reason(
         under_attack(2, stack=[{"id": "spell-1", "name": "Lightning Bolt"}]),
-        verb="pass_turn_regardless",
+        stops={"mine": [], "theirs": [], "onStack": False},
     )
     assert reason == "you are being attacked"
 
@@ -350,7 +348,7 @@ def test_the_game_ending_still_stops_the_run() -> None:
     stops = stops_for("precombat_main", "you")
     result = run_until_stop(
         board("precombat_main", 1),
-        "until_castable",
+        "pass_until",
         stops,
         [board("precombat_main", 1, winner="bob")],
     )
@@ -365,7 +363,7 @@ def test_a_decision_for_this_seat_still_stops_the_run() -> None:
     )
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(board("precombat_main", 1), "until_castable", stops, [asking])
+    result = run_until_stop(board("precombat_main", 1), "pass_until", stops, [asking])
 
     assert result["stopped"]["reason"] == "a decision is pending", result
 
@@ -386,7 +384,7 @@ def test_a_decision_for_the_other_seat_also_stops_the_run() -> None:
     ] + turn_cycle(3, "alice")
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(board("end_step", 1), "until_castable", stops, timeline)
+    result = run_until_stop(board("end_step", 1), "pass_until", stops, timeline)
 
     assert result["stopped"]["reason"] == "waiting on another seat's decision", result
     assert result["stopped"]["turn"] == 2, result
@@ -399,7 +397,7 @@ def test_something_landing_on_the_stack_still_stops_the_run() -> None:
     ]
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(board("precombat_main", 1), "until_castable", stops, timeline)
+    result = run_until_stop(board("precombat_main", 1), "pass_until", stops, timeline)
 
     assert result["stopped"]["step"] == "beginning_of_combat", result
     assert result["stopped"]["reason"] == "something new is on the stack", result
@@ -409,9 +407,9 @@ def test_unticking_stop_on_stack_still_lets_the_run_continue() -> None:
     timeline = [
         board("beginning_of_combat", 1, stack=[{"id": "spell-1", "name": "Lightning Bolt"}]),
     ] + turn_cycle(3, "alice")
-    stops = stops_for("precombat_main", "you")
+    stops = stops_for("precombat_main", "you", on_stack=False)
 
-    result = run_until_stop(board("precombat_main", 1), "pass_turn_regardless", stops, timeline)
+    result = run_until_stop(board("precombat_main", 1), "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 3, result
 
@@ -423,7 +421,7 @@ def test_reaching_the_destination_still_stops_the_run() -> None:
     # destination check rather than that one.
     stops = stops_for("end_step", "you", can_attack_stop=False)
 
-    result = run_until_stop(board("upkeep", 1), "until_castable", stops, timeline)
+    result = run_until_stop(board("upkeep", 1), "pass_until", stops, timeline)
 
     # The old exact string was "reached your end step"; the new stops panel
     # says "stop at your X" uniformly - a wording choice, not a rule change.
@@ -443,7 +441,7 @@ def test_the_next_occurrence_guard_still_holds() -> None:
     )
     stops = stops_for("precombat_main", "you", can_attack_stop=False)
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 3, result
     assert result["stopped"]["step"] == "precombat_main", result
@@ -463,7 +461,7 @@ def test_being_attacked_beats_the_destination_when_both_are_true() -> None:
     timeline = [under_attack(2)]
     stops = {"mine": [], "theirs": ["declare_blockers"]}
 
-    result = run_until_stop(board("end_step", 1), "until_castable", stops, timeline)
+    result = run_until_stop(board("end_step", 1), "pass_until", stops, timeline)
 
     assert result["stopped"] is not None
     assert result["stopped"]["reason"] == "you are being attacked"

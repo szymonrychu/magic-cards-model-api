@@ -183,8 +183,17 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   a human opponent. Nothing anywhere throttles this for you.
 - `my_state(player_uid)` is the board as you are allowed to see it.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
-  `declare_attackers`, `declare_blockers`, `decide`, `pass_priority`,
-  `resolve_top`, `advance`, `set_step` act.
+  `declare_attackers`, `declare_blockers`, `decide`, `pass`, `pass_until` act.
+  Priority has exactly those two pass verbs and no more, because the rules give
+  it exactly two: CR 117.1 says the player with priority "may cast spells,
+  activate abilities, and take special actions", and CR 117.3d says a player
+  who chooses none of those passes. Everything that *follows* a pass is the
+  game's own doing, not yours - CR 117.4 resolves the top of the stack, or ends
+  the step, once all players have passed in succession, and CR 703.2 says
+  turn-based actions "are not controlled by any player". So there is no tool
+  for resolving the stack or stepping the turn on, and you never need one: the
+  game rolls itself through every step nobody receives priority in (CR 500.3's
+  untap and cleanup).
 - `mulligan` and `opening_hand_action` are the pregame (CR 103.5, CR 103.6).
   A game dealt from decklists *rests* there before turn 1 and nothing on the
   board can happen until every seat has declared, so these come first: declare
@@ -266,15 +275,15 @@ board as one card can punish.
 
 ## Passing a whole stretch at once, and when not to
 
-`pass_priority` takes an optional `until`: a step name, and it keeps passing
-every priority you currently hold until it gets there, instead of handing you
-back one priority at a time.
+`pass` gives up one priority. `pass_until` is the same verb run to a
+destination: a step name, and it keeps passing every priority you currently
+hold until it gets there, instead of handing you back one priority at a time.
 
-  pass_priority(player_uid=..., until="upkeep")
-  pass_priority(player_uid=..., until="precombat_main", until_whose_turn="opponent")
+  pass_until(player_uid=..., step="upkeep")
+  pass_until(player_uid=..., step="precombat_main", whose_turn="opponent")
 
 Naming the step you are standing in means its NEXT occurrence, never this one -
-`until="upkeep"` asked during your upkeep is a whole turn of passing, which is
+`step="upkeep"` asked during your upkeep is a whole turn of passing, which is
 what "until my upkeep" means when you say it out loud.
 
 This does not block either, so a long run takes several calls. Read `finished`:
@@ -284,12 +293,12 @@ This does not block either, so a long run takes several calls. Read `finished`:
   answer arrives as `input_required`), your own declare-attackers step, being
   attacked in your own declare-blockers step, a refused pass, the game ending.
 - `finished: false` - it got as far as it could and handed the board back
-  because your opponent holds priority or owes a declaration only they can
-  make. **Sleep, then call again passing the answer's `resume` object back
-  verbatim as `resume`:**
+  because your opponent holds priority or the game is frozen on a question only
+  they can answer. **Sleep, then call again passing the answer's `resume`
+  object back verbatim as `resume`:**
 
       Bash: sleep 2
-      pass_priority(player_uid=..., until="upkeep", resume=<the resume object>)
+      pass_until(player_uid=..., step="upkeep", resume=<the resume object>)
 
   Dropping `resume` does not merely lose your place: the next call re-stamps
   the "do not stop in the step this run started in" exemption onto wherever
@@ -303,10 +312,18 @@ looked at combat.
 
 Three of those stops are yours to switch off, and each defends you against
 something you cannot see going wrong, so leave them on unless you have a reason
-you could say out loud:
+you could say out loud. None of them is a destination and none of them replaces
+`step` - they are extra reasons to stop on the way there, and they combine with
+it:
 
 - `stop_on_stack=False` runs through the opponent's spells and every trigger.
-  You will not get to respond to any of it.
+  You will not get to respond to any of it. This is the stop that gives you
+  your answer to a spell cast in a window you were passing through - their
+  instant in your upkeep while you were running to your own precombat main -
+  and CR 117.4 resolves that spell the moment all players have passed in
+  succession, so the pass you have not yet made is the whole of your chance.
+  Left on, the run hands the board back with their spell still on the stack and
+  priority still yours.
 - `stop_when_attacked=False` runs through your own declare-blockers step. You
   will block nothing and take the whole attack. Declaring blockers is a
   turn-based action that "doesn't use the stack" (CR 509.1), so the stack stop
@@ -318,7 +335,7 @@ you could say out loud:
   skipping it is silent: the engine treats a player who never declares as
   declaring nobody, which is always legal, so the turn produces no attack and
   nothing says why. Expect this one to stop you every turn on a run aimed past
-  combat - `until="postcombat_main"`, `until="end_step"` - and expect that,
+  combat - `step="postcombat_main"`, `step="end_step"` - and expect that,
   because it is asking you before your attack goes by. Switching it off is the
   deliberate "I am not attacking this turn", never a way to make the call
   quieter.
@@ -364,11 +381,14 @@ priority. After the game you will be asked to finish this same file.
   report. Stopping for any other reason is not allowed. A partially played
   game is worthless. Do not stop because the game is long, because you think
   you are losing, or because you are unsure.
-- `advance` is ONLY for the untap and cleanup steps of your own turn. In a
-  main phase use `play_land` / `cast` / `activate`, then `pass_priority`.
-- If `pass_priority` is refused with "you do not have priority", call
-  `wait_for_priority` again. NEVER `advance` to escape that - it strands the
-  stack.
+- In a main phase use `play_land` / `cast` / `activate`, then `pass`. There is
+  nothing else to reach for: no step needs stepping on by hand, and the untap
+  and cleanup steps (CR 502.4, CR 514.3) grant nobody priority and end on
+  their own (CR 500.3).
+- If `pass` is refused with "you do not have priority", call
+  `wait_for_priority` again. That is the whole remedy - a refused pass means
+  the other seat is still deciding, and nothing you can call moves the game
+  for them.
 - A pending decision FREEZES the game. Answering it is the only legal move,
   and an unanswered decision times out to a default and wastes the card.
 - Use the whole board: attack, block, activate abilities, let triggers

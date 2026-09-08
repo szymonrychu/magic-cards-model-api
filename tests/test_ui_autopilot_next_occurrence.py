@@ -99,7 +99,7 @@ def test_naming_the_step_you_are_standing_in_means_the_next_one() -> None:
     # about which occurrence of the target the run stops at.
     stops = stops_for("precombat_main", "you", can_attack_stop=False)
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"] is not None, "the run never stopped at all"
     assert result["stopped"]["turn"] == 3, result
@@ -124,7 +124,7 @@ def test_a_step_you_are_not_standing_in_still_stops_at_its_first_occurrence() ->
     )
     stops = stops_for("end_step", "you", can_attack_stop=False)
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 1, result
     assert result["stopped"]["step"] == "end_step", result
@@ -139,7 +139,7 @@ def test_the_same_step_in_the_opponents_turn_is_not_the_one_you_are_in() -> None
     timeline = [board("end_step", 1)] + turn_cycle(2, "bob")
     stops = stops_for("end_step", "opponent")
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 2, result
     assert result["stopped"]["active"] == "bob", result
@@ -160,7 +160,7 @@ def test_any_still_means_whichever_comes_first() -> None:
     # means rather than that one.
     stops = stops_for("upkeep", "any", can_attack_stop=False)
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 2, result
     assert result["stopped"]["active"] == "bob", result
@@ -178,7 +178,7 @@ def test_an_opponents_step_you_are_standing_in_also_means_the_next_one() -> None
     # than that one.
     stops = stops_for("end_step", "opponent", can_attack_stop=False)
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["turn"] == 4, result
     assert result["stopped"]["active"] == "bob", result
@@ -197,7 +197,7 @@ def test_something_landing_on_the_stack_still_stops_the_run_first() -> None:
     ] + turn_cycle(3, "alice")
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"]["step"] == "beginning_of_combat", result
     # No card name in the new message - a wording choice, not a rule change.
@@ -216,7 +216,7 @@ def test_a_decision_for_this_seat_still_stops_the_run_first() -> None:
     )
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(start, "until_castable", stops, [asking])
+    result = run_until_stop(start, "pass_until", stops, [asking])
 
     assert result["stopped"] is not None
     assert result["stopped"]["reason"] == "a decision is pending"
@@ -227,7 +227,7 @@ def test_the_game_ending_still_stops_the_run_first() -> None:
     over = board("precombat_main", 1, winner="bob")
     stops = stops_for("precombat_main", "you")
 
-    result = run_until_stop(start, "until_castable", stops, [over])
+    result = run_until_stop(start, "pass_until", stops, [over])
 
     assert result["stopped"]["reason"] == "the game is over"
 
@@ -245,7 +245,7 @@ def test_the_stop_button_ends_the_run_whatever_the_stamp_says() -> None:
     runs against the same module instance, one built and immediately
     discarded, must not affect the other."""
     discarded_run = run_module(
-        "priority.js", "m.startRun('until_castable', start)", start=board("precombat_main", 1)
+        "priority.js", "m.startRun('pass_until', start)", start=board("precombat_main", 1)
     )
     assert discarded_run is not None, "starting a run had no visible effect to discard"
 
@@ -253,7 +253,7 @@ def test_the_stop_button_ends_the_run_whatever_the_stamp_says() -> None:
     # fresh `stillAtStart` and is not short-circuited by anything left over.
     fresh_reason = run_module(
         "priority.js",
-        "m.stopReason(state, m.startRun('until_castable', state), stops, false)",
+        "m.stopReason(state, m.startRun('pass_until', state), stops, false)",
         state=board("precombat_main", 3),
         stops=stops_for("precombat_main", "you"),
     )
@@ -276,7 +276,7 @@ def test_a_second_occurrence_inside_one_turn_is_a_real_stopping_point() -> None:
     ]
     stops = stops_for("declare_attackers", "you")
 
-    result = run_until_stop(start, "until_castable", stops, timeline)
+    result = run_until_stop(start, "pass_until", stops, timeline)
 
     assert result["stopped"] is not None, "the extra phase's step was skipped too"
     assert result["stopped"]["step"] == "declare_attackers"

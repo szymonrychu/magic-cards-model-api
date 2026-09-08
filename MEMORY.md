@@ -247,6 +247,45 @@ whoever works on the repo itself.
   implementations differ in aliasing, which is the kind of difference a
   future caller could trip over.
 
+- **2026-09-08 - a seat has two priority verbs, and the routes behind the
+  retired ones stay.** CR 117.1 lists what the player with priority may do
+  ("cast spells, activate abilities, and take special actions") and CR 117.3d
+  has a player who chooses none of them pass; CR 117.4 makes resolving the
+  stack's top and ending a step consequences of everyone passing, and CR 703.2
+  says turn-based actions "are not controlled by any player". So `resolve_top`,
+  `advance` and `set_step` were never player actions, and they are gone from
+  `mcp.py`, `seat_cli`, `prompt.py`, `docs/ai_seat_brief.md` and the play UI's
+  verb chips. **Their HTTP routes are deliberately kept**: roughly a hundred
+  test call sites drive and observe boards through them (including CR 500.3's
+  untap and cleanup, which `tests/test_priorityless_steps.py` reaches only via
+  `POST .../advance`), and `tests/test_advance_refusals.py` pins the engine's
+  own refusal text on one of them. Retiring a *verb* and deleting a *route* are
+  different decisions; only the first was the over-grown surface.
+
+  Two things kept deliberately against the tidier surface: the play UI's
+  Advance button (`priority.js`'s `advanceOffered`) is the human's only escape
+  from a priorityless step `settle_priorityless_steps` declined to cross, and
+  `wait_for_priority` stayed because it observes rather than acts.
+
+- **2026-09-08 - "stop when anything hits the stack" is a modifier, not a
+  destination.** It combines with the step ticks rather than replacing one:
+  the case it exists for is "pass until my precombat main, AND hand the board
+  back if the opponent casts something in my upkeep", which needs both live on
+  the same run. In the UI it is `stops.onStack`, beside `stops.mine`/
+  `stops.theirs` rather than inside either; over MCP/CLI it is the
+  already-existing `stop_on_stack`. `mcm.stops.v1` is unchanged as a storage
+  key and a payload written before the tick existed reads back with it ON -
+  absent has to mean on, or the redesign silently takes the chance to respond
+  away from everyone who had already ticked a step.
+
+- **2026-09-08 - `seatkit.pass_until` hands the board back for ANY outstanding
+  decision, not only a combat one.** A pause rolls the committed game back
+  (`commands.py`), so `priority_holder` still reads as whoever held it before
+  the freeze - it is stale, not "nobody". A pass posted on the strength of it
+  cannot complete (it crosses the same unanswered question), pauses too, and
+  `app.py`'s `_run_command` stores that second pause over the first, discarding
+  the question the other seat was about to answer. Pinned by
+  `test_a_run_never_passes_at_a_game_frozen_on_another_seats_decision`.
 - **2026-09-08 - the pause slot is one seat's half-finished command, and the
   guard is keyed on command equality everywhere except
   `pregame/settle?use_defaults=true`.** `app.py::_pause_slot_guard` refuses

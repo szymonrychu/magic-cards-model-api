@@ -913,13 +913,13 @@ def set_mana_pool(game_id: str, username: str, req: ManaPoolUpdate) -> dict[str,
 
 @app.put("/api/games/{game_id}/step")
 def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str, Any]:
-    """Jump the turn marker to a named step.
+    """Jump the turn marker to a named step. The harness's own way to stage a
+    board, and deliberately NOT a seat verb: no rule puts the turn marker
+    anywhere, so there is no MCP tool and no `seat_cli` subcommand for this.
 
-    Gated like every other mutating seat action (T10): this looks like board
-    setup and is not one. It moves the game's own turn marker, runs the
-    suspend upkeep below when it lands on `upkeep`, and every agent seat has
-    it as an MCP tool - so an agent doing it owes the same stated reason it
-    owes for an attack.
+    Gated all the same (T10): it moves the game's own turn marker and runs the
+    suspend upkeep below when it lands on `upkeep`, so a caller that names an
+    agent seat owes the same stated reason it owes for an attack.
     """
     records.require_reasoning(game_id, req.player, req.reasoning)
     with store.locked(game_id) as game:

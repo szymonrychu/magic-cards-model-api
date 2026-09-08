@@ -166,12 +166,14 @@ def test_both_transports_report_the_same_unknown_outcome(monkeypatch, client, ga
     mcp_seat = mcp_seats.seat_for(alice_uid)
     assert mcp_seat is not None
     monkeypatch.setattr(
-        mcp_seat.http, "request", _selective_timeout(mcp_seat.http.request, "/advance")
+        mcp_seat.http,
+        "request",
+        _selective_timeout(mcp_seat.http.request, "/actions/pass-priority"),
     )
     monkeypatch.setattr(mcp_seats, "seat_for", lambda uid: mcp_seat)
     server = mcp_module.build_server(mcp_seats)
 
-    tool_result = asyncio.run(server.call_tool("advance", {"player_uid": alice_uid}))
+    tool_result = asyncio.run(server.call_tool("pass", {"player_uid": alice_uid}))
     tool_text = tool_result.content[0].text
     assert "UNKNOWN" in tool_text
     assert "do not" in tool_text.lower() or "do NOT" in tool_text
@@ -187,7 +189,9 @@ def test_both_transports_report_the_same_unknown_outcome(monkeypatch, client, ga
         cli_seat = cli_seats.seat_for(alice_uid_2)
         assert cli_seat is not None
         monkeypatch.setattr(
-            cli_seat.http, "request", _selective_timeout(cli_seat.http.request, "/advance")
+            cli_seat.http,
+            "request",
+            _selective_timeout(cli_seat.http.request, "/actions/pass-priority"),
         )
         monkeypatch.setattr(seat_cli_module, "Seats", lambda api, game: cli_seats)
         monkeypatch.setattr(cli_seats, "seat_for", lambda uid: cli_seat)
@@ -195,7 +199,7 @@ def test_both_transports_report_the_same_unknown_outcome(monkeypatch, client, ga
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             seat_cli_module.run(
-                ["--uid", alice_uid_2, "--api", "http://testserver", "--game", game2, "advance"]
+                ["--uid", alice_uid_2, "--api", "http://testserver", "--game", game2, "pass"]
             )
         cli_text = buf.getvalue()
         assert "UNKNOWN" in cli_text

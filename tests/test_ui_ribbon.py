@@ -168,7 +168,8 @@ const HANDLERS = {
   onTogglePitch: NOOP, onToggleConvoke: NOOP, onToggleDelve: NOOP, onFocusSlot: NOOP,
   onUnfill: NOOP, onSetShare: NOOP, onDone: NOOP, onCast: NOOP, onCancel: NOOP,
   onHoldPriority: NOOP, onDecisionDraft: NOOP, onDecide: NOOP, onVerb: NOOP,
-  onStopRun: NOOP, onToggleStop: NOOP, onAttackConfirm: NOOP, onAttackNone: NOOP,
+  onStopRun: NOOP, onToggleStop: NOOP, onToggleStackStop: NOOP,
+  onAttackConfirm: NOOP, onAttackNone: NOOP,
   onBlockConfirm: NOOP, onBlockNone: NOOP, onConcede: NOOP, onPregame: NOOP,
   nameOf: (id) => id,
 };
@@ -739,3 +740,60 @@ def test_once_the_x_input_agrees_with_the_store_the_strip_repaints_normally() ->
     )
     assert result[0] is True, "a repaint with nothing uncommitted must go through, as a fresh node"
     assert "no combination of sources can pay this" in result[1]
+
+
+def test_the_stops_box_offers_the_stack_tick_and_wires_it_up() -> None:
+    """The tick the owner asked for, rendered and wired.
+
+    It sits above the step grid rather than in one of its two columns,
+    because it is not a step: it can fire in any step and on either player's
+    turn, and it is live *alongside* whatever steps are checked (the owner's
+    own case - "passing until my pre-combat-main" AND "stop if something
+    happens"). It starts ticked: CR 117.4 resolves the top of the stack only
+    once every player has passed in succession, so the pass a run has not yet
+    made is the whole of the chance to answer what just landed.
+
+    `h()` drops a `false` attribute entirely rather than writing it (see
+    `ui/dom.js`), so "ticked" is the presence of the `checked` attribute on
+    this fake DOM, not its value - which is why both legs are here: an
+    assertion that only ever saw the on case would pass on markup that can
+    never render the tick off.
+    """
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (stops) => {
+            const store = makeStore(baseApp(baseState(), { stops }));
+            const toggled = [];
+            m.mountRibbon(document, store, {
+              ...HANDLERS,
+              onToggleStackStop: () => toggled.push(1),
+            });
+            store.set({});
+            const box = document.querySelector("#stops-box");
+            const tick = findByText(box, "label", "anything on the stack");
+            const checkbox = tick && tick.children.find((c) => c.tagName === "input");
+            if (checkbox && checkbox.listeners && checkbox.listeners.change) {
+              checkbox.listeners.change({ target: checkbox });
+            }
+            return {
+              offered: Boolean(tick),
+              checked: checkbox ? "checked" in checkbox.attrs : null,
+              toggles: toggled.length,
+            };
+          };
+          return {
+            absent: look({ mine: [], theirs: [] }),
+            off: look({ mine: [], theirs: [], onStack: false }),
+          };
+        })()
+        """,
+    )
+    absent, off = result["absent"], result["off"]
+    assert absent["offered"] is True, "the stops panel never renders the stack tick"
+    assert absent["checked"] is True, "a stops object with no `onStack` must read as ticked"
+    assert absent["toggles"] == 1, "clicking the tick reaches no handler"
+    assert off["offered"] is True
+    assert off["checked"] is False, "`onStack: false` must render the tick unticked"
