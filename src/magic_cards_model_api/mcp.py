@@ -88,8 +88,9 @@ import sys
 from typing import Any
 
 import httpx
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp_types import InputRequiredResult
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
 from .seatkit import (
@@ -138,11 +139,14 @@ def build_server(seats: Seats) -> MCPServer:
     def resolve(player_uid: str) -> Seat | None:
         return seats.seat_for(player_uid)
 
-    def _tool_result(seat: Seat, payload: dict[str, Any]) -> str | InputRequiredResult:
+    def _tool_result(
+        seat: Seat, payload: dict[str, Any], protocol_version: str | None
+    ) -> str | InputRequiredResult:
         """Shape one tool's JSON answer, surfacing a decision pending for
         this very seat as an MCP 2026-07-28 `input_required` result
         (`InputRequiredResult`, `result_type: "input_required"` on the wire)
-        instead of plain text.
+        instead of plain text - but only when the connected client actually
+        negotiated a revision that knows that shape.
 
         `payload` is either a whole state view (`wait_for_priority`) or a
         `run_action` result carrying one under `"state"` (every action tool,
@@ -158,16 +162,35 @@ def build_server(seats: Seats) -> MCPServer:
         Only a decision addressed to *this* seat gets the treatment: one
         pending for the opponent is not this call's business to interrupt
         for, and comes back as ordinary text the same as "nothing new yet".
-        An MCP client that understands the 2026-07-28 surface can branch on
-        `resultType` without parsing prose; one that does not still gets a
-        answer either way - `InputRequiredResult` is a distinct wire shape,
-        never a crash for an older client, since `MCPServer` dispatches
-        `CallToolResult`/`InputRequiredResult` by declared return type per
-        tool (`Tool.from_function`'s own registration check)."""
+
+        **`protocol_version` decides whether that treatment is even legal to
+        offer.** `InputRequiredResult`'s wire shape carries no `content`
+        field, which is fine against MCP 2026-07-28's own result surface
+        (`MODERN_PROTOCOL_VERSIONS`) but fails validation on every earlier
+        revision, whose `CallToolResult` requires one - `MCPServer` does NOT
+        dispatch a result shape by a tool's declared return type (there is no
+        such mechanism; the framework's own version gate,
+        `_uses_input_required`, guards only its built-in elicitation path,
+        which this server does not use). A hand-rolled `InputRequiredResult`
+        like this one gets no version guard from the framework at all, so
+        this function is where that guard has to live - the real runner
+        validates whatever comes back here against the negotiated version's
+        own result surface (`mcp_types.methods.serialize_server_result`)
+        before it ever reaches the wire, and raises "Handler returned an
+        invalid result" if it does not fit. `protocol_version=None` (no real
+        request in flight - a test calling a tool directly, say) reads as
+        modern rather than legacy: every real request carries a negotiated
+        version by construction, so `None` only ever happens off that path,
+        and defaulting it to the safer-for-old-clients-but-wrong reading
+        would make the common, exercised case silently regress instead of
+        the one that structurally cannot occur in production. The pending
+        decision itself is never dropped either way - a legacy client still
+        gets it, as ordinary text, just without the distinct wire shape."""
         state = payload.get("state") if "state" in payload else payload
         pending = state.get("pending_decision") if isinstance(state, dict) else None
         text = json.dumps(payload, indent=1, sort_keys=True)
-        if isinstance(pending, dict) and pending.get("player") == seat.player:
+        modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
+        if isinstance(pending, dict) and pending.get("player") == seat.player and modern:
             return InputRequiredResult(request_state=text)
         return text
 
@@ -177,15 +200,17 @@ def build_server(seats: Seats) -> MCPServer:
         hold_priority: bool,
         release: bool = True,
         reasoning: str = "",
+        *,
+        protocol_version: str | None,
     ) -> str | InputRequiredResult:
         result = run_action(
             seat, perform, hold_priority=hold_priority, release=release, reasoning=reasoning or None
         )
-        return _tool_result(seat, result)
+        return _tool_result(seat, result, protocol_version)
 
     @server.tool()
     @_guarded(seats)
-    def wait_for_priority(player_uid: str) -> str | InputRequiredResult:
+    def wait_for_priority(player_uid: str, ctx: Context | None = None) -> str | InputRequiredResult:
         """Check once whether it is your moment to act, then hand you the
                 board - never blocks.
 
@@ -220,7 +245,7 @@ def build_server(seats: Seats) -> MCPServer:
             return NO_SUCH_SEAT
         woken = seatkit.block_until_wake(seat, before=None)
         woken["state"]["wake_reason"] = woken["wake_reason"]
-        return _tool_result(seat, woken["state"])
+        return _tool_result(seat, woken["state"], ctx.protocol_version if ctx is not None else None)
 
     @server.tool()
     @_guarded(seats)
@@ -269,6 +294,7 @@ def build_server(seats: Seats) -> MCPServer:
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Cast a spell. Most casts are from your hand, and need nothing
                 else; `card` is the card's name or id. `targets` is comma-separated
@@ -327,7 +353,11 @@ def build_server(seats: Seats) -> MCPServer:
                 one. Set `hold_priority` to cast again, or to respond to your own
                 spell, without giving up the chance to act again first (CR 117.3c:
                 you already keep priority after casting - this only decides whether
-                the harness auto-passes it for you).
+                the harness auto-passes it for you). Releasing is the default for the
+                same reason it is the human player's default too: their stops panel
+                has a "keep priority after casting" tick, off by default, that is the
+                same override as `hold_priority=true` here - a human and an agent seat
+                stop in the same place from the same setting.
 
         `reasoning`: why you are casting this, in your own words - required
         for an agent seat (a missing one is refused with a 422 naming the
@@ -360,7 +390,13 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cast", body)
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     def _special_action_tool(action: str) -> Any:
         """suspend/plot/foretell share `cast`'s exact shape, minus targeting
@@ -375,6 +411,7 @@ def build_server(seats: Seats) -> MCPServer:
             dry_run: bool = False,
             hold_priority: bool = False,
             reasoning: str = "",
+            ctx: Context | None = None,
         ) -> str | InputRequiredResult:
             seat = resolve(player_uid)
             if seat is None:
@@ -396,7 +433,13 @@ def build_server(seats: Seats) -> MCPServer:
             def perform() -> Any:
                 return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/{action}", body)
 
-            return act(seat, perform, hold_priority, reasoning=reasoning)
+            return act(
+                seat,
+                perform,
+                hold_priority,
+                reasoning=reasoning,
+                protocol_version=ctx.protocol_version if ctx is not None else None,
+            )
 
         return tool
 
@@ -409,6 +452,7 @@ def build_server(seats: Seats) -> MCPServer:
         dry_run: bool = False,
         hold_priority: bool = True,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """CR 116.2f/702.62a: exile a card with suspend from your hand, paying
         its suspend cost, with N time counters on it. `card` is the card's
@@ -430,7 +474,7 @@ def build_server(seats: Seats) -> MCPServer:
         wait, no branch of this tool does. See `cast`'s docstring for the
         answer's shape."""
         return _special_action_tool("suspend")(
-            player_uid, card, mana_sources, dry_run, hold_priority, reasoning
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning, ctx
         )
 
     @server.tool()
@@ -442,6 +486,7 @@ def build_server(seats: Seats) -> MCPServer:
         dry_run: bool = False,
         hold_priority: bool = True,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """CR 116.2k/702.170b: exile a card with plot from your hand, paying
         its plot cost. `card` is the card's name or id in your hand.
@@ -461,7 +506,7 @@ def build_server(seats: Seats) -> MCPServer:
         block or wait, no branch of this tool does. See `cast`'s docstring
         for the answer's shape."""
         return _special_action_tool("plot")(
-            player_uid, card, mana_sources, dry_run, hold_priority, reasoning
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning, ctx
         )
 
     @server.tool()
@@ -473,6 +518,7 @@ def build_server(seats: Seats) -> MCPServer:
         dry_run: bool = False,
         hold_priority: bool = True,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """CR 116.2h/702.143b: pay {2} and exile a card with foretell from
         your hand, face down (opponents see only that a face-down card is
@@ -493,7 +539,7 @@ def build_server(seats: Seats) -> MCPServer:
         block or wait, no branch of this tool does. See `cast`'s docstring
         for the answer's shape."""
         return _special_action_tool("foretell")(
-            player_uid, card, mana_sources, dry_run, hold_priority, reasoning
+            player_uid, card, mana_sources, dry_run, hold_priority, reasoning, ctx
         )
 
     @server.tool()
@@ -506,6 +552,7 @@ def build_server(seats: Seats) -> MCPServer:
         dry_run: bool = False,
         hold_priority: bool = True,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """CR 702.29a: discard a card with cycling from your hand, paying its
         cycling cost, to draw a card (or search your library for a card of the
@@ -566,7 +613,13 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/cycle", body)
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -575,6 +628,7 @@ def build_server(seats: Seats) -> MCPServer:
         card: str,
         hold_priority: bool = True,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Play a land from your hand (your one-per-turn allowance, unless an
         effect says otherwise). `card` is the card's name or id.
@@ -603,7 +657,13 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/play-land", body)
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -617,6 +677,7 @@ def build_server(seats: Seats) -> MCPServer:
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Activate one ability of a card you control - a permanent's ability
         on the battlefield, OR an ability that functions somewhere else
@@ -690,7 +751,13 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/activate", body)
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -699,6 +766,7 @@ def build_server(seats: Seats) -> MCPServer:
         attackers: str,
         hold_priority: bool = False,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Declare attackers during your declare attackers step. `attackers`
         is a JSON list: [{"card": "<attacker id>", "defender": "<player
@@ -722,7 +790,13 @@ def build_server(seats: Seats) -> MCPServer:
         def perform() -> Any:
             return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/attack", body)
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -731,6 +805,7 @@ def build_server(seats: Seats) -> MCPServer:
         blocks: str,
         hold_priority: bool = False,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Declare blockers during the declare blockers step. `blocks` is a
         JSON list: [{"blocker": "<your creature id>", "blocked": "<attacker
@@ -755,7 +830,13 @@ def build_server(seats: Seats) -> MCPServer:
                 "POST", f"/api/games/{seat.game_id()}/actions/declare-blockers", body
             )
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -773,6 +854,7 @@ def build_server(seats: Seats) -> MCPServer:
         order: str = "",
         hold_priority: bool = False,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `my_state`'s
         `pending_decision` field says what is being asked, by `kind`.
@@ -1032,13 +1114,31 @@ def build_server(seats: Seats) -> MCPServer:
                 return {"allowed": False, "reason": answer.get("reason"), **answer}
             return {"allowed": True, **answer} if isinstance(answer, dict) else answer
 
-        return act(seat, perform, hold_priority, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool(name="pass")
     @_guarded(seats)
-    def pass_once(player_uid: str, reasoning: str = "") -> str | InputRequiredResult:
+    def pass_once(
+        player_uid: str, reasoning: str = "", ctx: Context | None = None
+    ) -> str | InputRequiredResult:
         """Pass priority once - "I am done for now". The whole of what a player
         does with priority besides acting.
+
+        **Use `pass_until` instead whenever you have nothing to do until some
+        later point in the turn - a step name, and it crosses the whole
+        stretch in one call.** Calling this one again and again through every
+        window in between is the wrong move: each call is a full round trip
+        and a whole agent turn, so walking a turn that way is slow, expensive,
+        and exactly the log noise a repeated single pass produces. Reach for
+        this tool only when you genuinely hold priority once - in response to
+        something, with your next action already decided for the very next
+        window - not as a substitute for `pass_until`.
 
         CR 117.1 lists what the player with priority may do: "cast spells,
         activate abilities, and take special actions". CR 117.3d is the rest of
@@ -1088,7 +1188,14 @@ def build_server(seats: Seats) -> MCPServer:
                 "POST", f"/api/games/{seat.game_id()}/actions/pass-priority", body
             )
 
-        return act(seat, perform, hold_priority=False, release=False, reasoning=reasoning)
+        return act(
+            seat,
+            perform,
+            hold_priority=False,
+            release=False,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
 
     @server.tool()
     @_guarded(seats)
@@ -1101,6 +1208,7 @@ def build_server(seats: Seats) -> MCPServer:
         stop_when_attacked: bool = True,
         stop_when_you_can_attack: bool = True,
         reasoning: str = "",
+        ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Keep passing priority - one `pass` after another, automatically -
         until something worth looking at happens. The same verb, run to a
@@ -1254,6 +1362,7 @@ def build_server(seats: Seats) -> MCPServer:
                 resume=resumed,
                 reasoning=reasoning or None,
             ),
+            ctx.protocol_version if ctx is not None else None,
         )
 
     @server.tool()

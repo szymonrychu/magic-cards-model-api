@@ -268,6 +268,98 @@ def test_declare_no_blockers_sends_an_empty_block_declaration() -> None:
     assert result["combatDraft"] == {}, "a declared block (even 'none') clears the draft"
 
 
+# -- fire() / keep priority after casting -------------------------------------
+#
+# The owner's newest default: casting a spell auto-passes priority to the
+# opponent unless the stops panel's "keep priority after casting" tick
+# overrides it (`stops.keepPriorityAfterCasting`) - the persistent twin of
+# the per-cast "hold priority" checkbox that already existed (`action.
+# holdPriority`, reset for every new cast). `fire` is exported test-only,
+# alongside `store`/`tryTarget`/`declareNoAttackers` above, and driven here
+# the same way: a real, awaited call against the same stubbed `fetch`.
+
+
+def test_casting_auto_passes_priority_by_default() -> None:
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            state: { you: "alice", battlefield: [] },
+            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: false },
+            action: A.begin("cast", { id: "c1" }, {}),
+          });
+          await m.fire();
+          return { calls: globalThis.__calls };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    paths = [c["path"] for c in posts]
+    assert any("actions/cast" in p for p in paths), paths
+    assert any("actions/pass-priority" in p for p in paths), (
+        "casting must auto-pass priority by default - " + str(paths)
+    )
+
+
+def test_the_keep_priority_after_casting_tick_suppresses_the_auto_pass() -> None:
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            state: { you: "alice", battlefield: [] },
+            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
+            action: A.begin("cast", { id: "c1" }, {}),
+          });
+          await m.fire();
+          return { calls: globalThis.__calls };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    paths = [c["path"] for c in posts]
+    assert any("actions/cast" in p for p in paths), paths
+    assert not any("actions/pass-priority" in p for p in paths), (
+        "the tick must suppress the auto-pass - " + str(paths)
+    )
+
+
+def test_the_per_cast_hold_priority_checkbox_still_overrides_the_tick_off() -> None:
+    """The persistent tick sets the default; the existing per-cast checkbox
+    (`action.holdPriority`) is still a live override for one specific cast,
+    exactly as it already was before this tick existed - either one holding
+    is enough to suppress the auto-pass."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          let action = A.begin("cast", { id: "c1" }, {});
+          action = { ...action, holdPriority: true };
+          m.store.set({
+            gameId: "g1", uid: "u1",
+            state: { you: "alice", battlefield: [] },
+            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: false },
+            action,
+          });
+          await m.fire();
+          return { calls: globalThis.__calls };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST"]
+    paths = [c["path"] for c in posts]
+    assert not any("actions/pass-priority" in p for p in paths), paths
+
+
 # -- fixtures ----------------------------------------------------------------
 
 MOUNTAIN = {

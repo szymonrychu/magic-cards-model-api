@@ -130,6 +130,15 @@ board as one card can punish.
 
 ## Passing a whole stretch at once, and when not to
 
+**`pass-until` is the default way to cross a stretch of windows you cannot act
+in - reaching for repeated single `pass` commands instead is the wrong move.**
+Each `pass` is a full round trip and a whole agent turn; walking a turn by
+running it over and over where nothing changed is slow, expensive, and the
+exact log noise that gets noticed. `pass` is for the moment you genuinely hold
+priority once - in response to something, with your next action already
+decided for the very next window - not for a stretch where you have nothing
+to do until some later point.
+
 `pass` gives up one priority. `pass-until <step>` is the same verb run to a
 destination: it keeps passing every priority you currently hold until a named
 point in the turn, instead of handing you back one priority at a time:
@@ -241,7 +250,10 @@ per priority.
   cleanup step (CR 514.3), and a step nobody receives priority in ends on its
   own (CR 500.3) - the server runs the game past those for you, so `state`
   always shows a step somebody can act in. In a main phase use play-land /
-  cast / activate, then `pass`.
+  cast / activate, then `pass` for that one priority - the moment there is
+  nothing left to do until some later point in the turn, reach for
+  `pass-until` to get there in one command rather than `pass` again and again
+  through every window in between.
 - If `pass` is refused with "you do not have priority", call `wait` again.
   That is the whole remedy - the other seat is still deciding, and nothing you
   can run moves the game for them.

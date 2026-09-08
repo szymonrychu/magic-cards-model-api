@@ -44,6 +44,27 @@ def call_tool(server: Any, name: str, arguments: dict[str, Any]) -> Any:
     return asyncio.run(server.call_tool(name, arguments))
 
 
+def context_for(server: Any, protocol_version: str) -> Any:
+    """A `Context` stamped with a negotiated protocol revision, the same
+    shape `ServerRunner._make_context` builds per inbound message
+    (`mcp/server/runner.py`) - `ServerRequestContext` is a plain
+    `@dataclass`, so a placeholder `session` is enough; nothing here reads
+    it. Lets a test drive `server.call_tool` as though a client had actually
+    negotiated an older revision, without standing up a real transport."""
+    from mcp.server.context import ServerRequestContext
+    from mcp.server.mcpserver import Context
+
+    request_context = ServerRequestContext(
+        session=object(),
+        lifespan_context={},
+        protocol_version=protocol_version,
+        method="tools/call",
+    )
+    return Context(
+        mcp_server=server, subscriptions=server._subscriptions, request_context=request_context
+    )
+
+
 def test_wait_for_priority_returns_immediately_with_nothing_pending(client, game, monkeypatch):
     """No wake condition holds yet (alice already has priority and nothing
     has changed since she last looked - there is no `before` at all here, so
@@ -89,6 +110,71 @@ def test_wait_for_priority_returns_input_required_for_a_pending_decision(client,
     )
     assert result.request_state is not None
     assert "choose_cards" in result.request_state
+
+
+def test_a_pending_decision_still_validates_on_a_pre_2026_client(client, game, monkeypatch):
+    """The owner's live bug: `mcp._tool_result` built an `InputRequiredResult`
+    whenever the pending decision belonged to this seat, with no regard for
+    which protocol revision the connected client actually negotiated.
+    `InputRequiredResult`'s wire shape carries no `content` field - fine
+    against MCP 2026-07-28's own result surface, but `CallToolResult`'s
+    (`content` required) is all any earlier revision knows, so a client that
+    negotiated one of those got `Handler returned an invalid result` at
+    exactly the moment it most needed an answer.
+
+    Reproduced the way the real runner validates a handler's result before it
+    ever reaches the wire - `mcp_types.methods.serialize_server_result`,
+    the same check `ServerRunner._serialize` (`mcp/server/runner.py`) makes -
+    rather than trusting the tool's own return type. A client negotiated onto
+    `2025-06-18` is simulated by handing `server.call_tool` a `Context`
+    stamped with that revision (`context_for`), the same one
+    `ServerRunner._make_context` builds per inbound message in production."""
+    from mcp_types.methods import serialize_server_result
+
+    seats, uids = wired(client, monkeypatch, game)
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard: a real choice
+    client.put(f"/api/games/{game}/step", json={"step": "end_step", "player": "alice"})
+    paused = advance_into_cleanup(game)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+
+    server = build_server(seats)
+    legacy = context_for(server, "2025-06-18")
+    result = asyncio.run(
+        server.call_tool("wait_for_priority", {"player_uid": uids["alice"]}, context=legacy)
+    )
+    # A pending decision is still real news on a legacy connection - it must
+    # not silently vanish into an empty answer, only lose its distinct wire
+    # shape.
+    assert not isinstance(result, InputRequiredResult), (
+        "a pre-2026-07-28 client cannot receive an InputRequiredResult at all"
+    )
+    dumped = result.model_dump(by_alias=True, mode="json", exclude_none=True)
+    text = "".join(block.get("text", "") for block in dumped.get("content", []))
+    assert "choose_cards" in text, "the pending decision must still reach a legacy client, as text"
+    # The check that actually failed for the owner: this must not raise.
+    serialize_server_result("tools/call", "2025-06-18", dumped)
+
+
+def test_a_pending_decision_still_shapes_as_input_required_on_a_2026_client(
+    client, game, monkeypatch
+):
+    """The other half: a client that DID negotiate 2026-07-28 must keep
+    getting the distinct `input_required` wire shape - the fix must not
+    downgrade everyone to plain text to play it safe."""
+    seats, uids = wired(client, monkeypatch, game)
+    stuff_hand(client, game, "alice", 8)
+    client.put(f"/api/games/{game}/step", json={"step": "end_step", "player": "alice"})
+    paused = advance_into_cleanup(game)
+    assert paused is not None
+
+    server = build_server(seats)
+    modern = context_for(server, "2026-07-28")
+    result = asyncio.run(
+        server.call_tool("wait_for_priority", {"player_uid": uids["alice"]}, context=modern)
+    )
+    assert isinstance(result, InputRequiredResult), (
+        f"expected an InputRequiredResult, got {type(result)}: {result!r}"
+    )
 
 
 def test_wait_for_priority_does_not_shape_someone_elses_decision_as_input_required(

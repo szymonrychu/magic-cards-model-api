@@ -298,7 +298,10 @@ async function previewAndMaybeFire() {
 // ribbon's Cast button and this loop agree): pinned mana, a division, or an
 // "up to"/unbounded slot waits for the player's Cast or Done.
 
-async function fire() {
+// Exported for `tests/test_ui_app.py` only - same reason `store` is (its own
+// comment above): a real, awaited drive of the auto-pass-after-casting
+// default against a stubbed `fetch`, rather than a Python restatement of it.
+export async function fire() {
   const app = store.get();
   const action = app.action;
   const body = A.bodyFor(action, you(), untappedSources(app.state));
@@ -311,7 +314,17 @@ async function fire() {
   }
   store.set({ action: null, preview: null });
   const onStack = !(res.mana_ability || action.kind === "special");
-  if (onStack && !action.holdPriority) await passOnce();
+  // CR 117.3c already gives you priority back after casting or activating;
+  // the harness spends it for you with one auto-pass by default (the
+  // MCP/agent side's own `hold_priority` default, `mcp.py`'s module
+  // docstring). `action.holdPriority` is this one cast's own override, reset
+  // every time a new cast begins; `stops.keepPriorityAfterCasting` is the
+  // standing one from the stops panel, checked every time in its place
+  // rather than only at the moment casting began - either is enough to keep
+  // priority.
+  if (onStack && !action.holdPriority && !store.get().stops.keepPriorityAfterCasting) {
+    await passOnce();
+  }
   await poll();
 }
 
@@ -898,6 +911,14 @@ async function main() {
     onToggleStackStop: () =>
       store.set((s) => {
         const stops = { ...s.stops, onStack: s.stops.onStack === false };
+        P.saveStops(localStorage, stops);
+        return { stops };
+      }),
+    // Same shape, beside it: not a step either, and `fire()` reads it fresh
+    // on every cast rather than only at the moment casting began.
+    onToggleKeepPriorityAfterCasting: () =>
+      store.set((s) => {
+        const stops = { ...s.stops, keepPriorityAfterCasting: !s.stops.keepPriorityAfterCasting };
         P.saveStops(localStorage, stops);
         return { stops };
       }),
