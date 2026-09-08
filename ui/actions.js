@@ -261,21 +261,41 @@ function isUnboundedSlot(s) {
   return s.count === null || s.minimum < (s.count || 0);
 }
 
+// Whether this cast has a CR 118.9 alternative cost the player has not yet
+// chosen, and could: `action.affordance.alternative_costs` is what
+// `render/ribbon.js`'s `renderAltCosts` draws its chips from, one `{index,
+// available, ...}` entry per option the engine offers - never a hard-coded
+// keyword name, since which keywords are alternative costs is the engine's
+// to answer. An option the seat cannot currently pay (`available: false`)
+// is not worth stopping for; once `action.altCost` names the chosen index
+// (`chooseAltCost`), the choice has been made and this reads false again.
+function hasChoosableAltCost(action) {
+  if (action.altCost !== null && action.altCost !== undefined) return false;
+  const alts = (action.affordance && action.affordance.alternative_costs) || [];
+  return alts.some((alt) => alt.available);
+}
+
 /**
  * Whether firing this action needs an explicit confirmation rather than
  * happening automatically the moment it is legal: pinned mana was chosen by
- * hand, the cost divides across targets (CR 601.2d), or any target slot is
- * "up to"/unbounded. That last one holds whether or not the slot is
- * currently filled to its cap - a spell offering "up to three targets" that
- * already has three chosen is still one the player might have meant to stop
- * short on, so it is never auto-fired just because `readyToFire` agrees the
- * announcement would already be legal.
+ * hand, the cost divides across targets (CR 601.2d), any target slot is
+ * "up to"/unbounded, or an available alternative cost has not yet been
+ * chosen. The "up to" case holds whether or not the slot is currently
+ * filled to its cap - a spell offering "up to three targets" that already
+ * has three chosen is still one the player might have meant to stop short
+ * on, so it is never auto-fired just because `readyToFire` agrees the
+ * announcement would already be legal. A non-targeting cast with a real,
+ * payable alternative cost is the same shape of unmade decision: the player
+ * never asked for anything, so firing it at full price the instant it
+ * becomes legal is exactly as wrong as firing an unbounded target slot
+ * empty.
  */
 export function needsExplicitFire(action) {
   return Boolean(
     action.pinned.length > 0 ||
       (action.affordance && action.affordance.division) ||
-      action.slots.some(isUnboundedSlot)
+      action.slots.some(isUnboundedSlot) ||
+      hasChoosableAltCost(action)
   );
 }
 

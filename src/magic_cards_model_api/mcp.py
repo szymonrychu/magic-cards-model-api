@@ -523,8 +523,15 @@ def build_server(seats: Seats) -> MCPServer:
                 A card sitting in your graveyard or exile is castable too, but only
                 under a *named* permission (CR 601.3: "a player can begin to cast a
                 spell only if a rule or effect allows that player to cast it"), and
-                `keyword` is how you name it. Read your `battlefield_state`'s graveyard/exile
-                card - `cast_options` names every keyword that card currently offers,
+                `keyword` is how you name it. A card in your **hand** takes the same
+                `keyword` for a different reason: CR 118.9's alternative cost, paid
+                instead of the printed mana cost - evoking Wistfulness for
+                {G/U}{G/U} rather than {3}{G/U}{G/U} is `keyword="Evoke"`, and
+                nothing else about the call changes (the option's own `cost` says
+                what you would pay, and it is not always mana - Grief's evoke cost
+                exiles a black card from your hand).
+                Read your `battlefield_state`'s card in whichever zone it is -
+                `cast_options` names every keyword that card currently offers,
                 alongside the cost it would pay - rather than guessing; the keywords
                 this engine knows are:
 
@@ -539,6 +546,13 @@ def build_server(seats: Seats) -> MCPServer:
                   this turn (CR 702.35a/b).
                 - `"Airbend"` - an EXILE card an airbend effect exiled, for {2}
                   (CR 701.65a).
+                - `"Evoke"` (CR 702.74a), `"Dash"` (CR 702.109a), `"Morph"`
+                  (CR 702.37a), `"Megamorph"` (CR 702.37b), `"Disguise"`
+                  (CR 702.168a), `"Bestow"` (CR 702.103a), `"Warp"` (CR 702.185a) -
+                  a HAND card, cast for that keyword's cost rather than its printed
+                  mana cost. You do not need one of these to cast from hand; it is
+                  offered when the cheaper cost is what you want, and the card's own
+                  `cast_options` entry says whether it is available right now.
                 - a printed sentence opening one of the above from an extra zone
                   (CR 604.6/CR 113.6f), or a keyword another permanent's static
                   ability is granting the spell right now (CR 610.5, CR 611.3d) -
@@ -889,6 +903,9 @@ def build_server(seats: Seats) -> MCPServer:
         ability_index: int,
         targets: str = "",
         mana_sources: str = "",
+        sacrificing: str = "",
+        discarding: str = "",
+        exiling: str = "",
         color: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
@@ -924,6 +941,21 @@ def build_server(seats: Seats) -> MCPServer:
         such as Birds of Paradise or Mox Diamond, or a dual/shockland; it is
         ignored by abilities that do not need one.
 
+        `sacrificing`, `discarding` and `exiling` are comma-separated card ids
+        for an activation cost's own object-naming piece (CR 118.3) - the
+        engine decides what a given ability's cost actually requires, this is
+        only how you answer it. Goblin Bombardment's "Sacrifice a creature:
+        This enchantment deals 1 damage to any target" is the plain case:
+        `activate(..., sacrificing="<creature id>", targets="<any target>")`.
+        Usually one id each; a cost that names more than one object
+        ("Sacrifice two creatures") takes as many as it asks for. Leaving one
+        out when the cost needs it is refused with the engine's own count -
+        "sacrifice needs N card(s) chosen, 0 given" - never a crash and never
+        a silent no-op. `exiling` only works for an ability on the
+        battlefield: an ability that functions off the battlefield (Waker of
+        Waves, Boseiju's Channel) has no exile-as-cost path yet and refuses it
+        by name.
+
         Mana abilities resolve immediately and never touch the stack
         (CR 605.3b); every other ability goes on the stack and needs priority
         to be released before it resolves. This tool follows that split rather
@@ -957,6 +989,12 @@ def build_server(seats: Seats) -> MCPServer:
         sources = seat.sources_or_all(mana_sources, state)
         if sources:
             body["mana_sources"] = sources
+        if sacrificing:
+            body["sacrificing"] = _parse_ids(sacrificing)
+        if discarding:
+            body["discarding"] = _parse_ids(discarding)
+        if exiling:
+            body["exiling"] = _parse_ids(exiling)
         if color:
             body["color"] = color
         if reasoning:

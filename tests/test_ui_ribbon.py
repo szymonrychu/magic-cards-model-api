@@ -414,6 +414,7 @@ def test_mounting_a_kozilek_command_action_renders_strip_with_two_slots() -> Non
           store.set({});
           return {
             prompt: document.querySelector("#prompt-box").textContent,
+            promptHidden: document.querySelector("#prompt-box").hidden,
             strip: document.querySelector("#casting-strip").textContent,
             stripHidden: document.querySelector("#casting-strip").hidden,
           };
@@ -422,9 +423,15 @@ def test_mounting_a_kozilek_command_action_renders_strip_with_two_slots() -> Non
         koz=KOZILEK,
         aff=KOZ_AFF,
     )
-    assert "Kozilek's Command" in result["prompt"]
-    assert "Cancel" in result["prompt"]
+    # `#casting-strip` is a panel in the ribbon now, directly under
+    # `#prompt-box` rather than down at the board - so the prompt box naming
+    # the in-flight action, and offering its own Cancel, printed the same two
+    # things twice in a row, an inch apart. It stands down entirely while an
+    # announcement is in flight: the strip below is the one place asking.
+    assert result["promptHidden"] is True
+    assert result["prompt"] == ""
     assert result["stripHidden"] is False
+    assert "Cancel" in result["strip"]
     strip = result["strip"]
     assert "Kozilek's Command" in strip
     # Both printed modes are offered as chips, chosen or not (CR 700.2).

@@ -244,17 +244,26 @@ class CastRequest(BaseModel):
     order. Only for a card whose affordance carries `division`."""
     mana_sources: list[UUID | ManaSource] | None = None
     keyword: str | None = None
-    """The keyword permission this cast is announced under (CR 601.2b) -
-    required for a cast whose card is not in `player`'s hand, since CR 601.3
-    ("a player can begin to cast a spell only if a rule or effect allows
-    that player to cast it") makes casting from anywhere else illegal unless
-    *some* named permission says otherwise, and this is how that permission
-    is named. Every one of these is read straight off the engine's own
+    """The keyword this cast is announced under (CR 601.2b).
+
+    Two different jobs, one field. For a card that is **not** in `player`'s
+    hand it is the CR 601.3 permission ("a player can begin to cast a spell
+    only if a rule or effect allows that player to cast it") that makes
+    casting from that zone legal at all. For a card that **is** in hand,
+    CR 402.3 already permits the cast and the keyword instead names the
+    CR 118.9 alternative cost paid rather than the printed mana cost - evoke
+    (CR 702.74a), dash (CR 702.109a), morph (CR 702.37a), megamorph
+    (CR 702.37b), disguise (CR 702.168a), bestow (CR 702.103a) or warp's hand
+    half (CR 702.185a). `alternative_cost` below takes exactly the same
+    announcement by index or name; only one may be applied (CR 118.9a).
+
+    Every one of these is read straight off the engine's own
     `machines/casting.py::keyword_cast_options`/`marker_cast_options`/
-    `granted_cast_options` - see `serialize.py`'s `cast_options` field on a
-    graveyard/exile card view (and `available_actions`'s `cast`-kind entries,
-    each naming its own `keyword`) for which keyword a given card actually
-    offers right now, rather than guessing from this list:
+    `granted_cast_options` - see `serialize.py`'s `cast_options` field, now on
+    a hand card view as well as a graveyard/exile one (and
+    `available_actions`'s `cast`-kind entries, each naming its own `keyword`)
+    for which keyword a given card actually offers right now, rather than
+    guessing from this list:
 
     - `"Flashback"` - a card in the GRAVEYARD with flashback (CR 702.34a).
     - `"Mayhem"` - a card in the GRAVEYARD with mayhem, discarded this turn
@@ -266,6 +275,10 @@ class CastRequest(BaseModel):
       (CR 702.35a/b).
     - `"Airbend"` - a card in EXILE via an airbend effect, for {2}
       (CR 701.65a).
+    - `"Evoke"`, `"Dash"`, `"Morph"`, `"Megamorph"`, `"Disguise"`,
+      `"Bestow"`, `"Warp"` - a card in HAND, cast for that keyword's cost
+      rather than its printed mana cost (CR 702.74a, 702.109a, 702.37a,
+      702.37b, 702.168a, 702.103a, 702.185a).
     - a printed CR 604.6/CR 113.6f sentence ("You may cast this card from
       your graveyard using its X ability") opening one of the above keywords
       in a zone it does not otherwise reach - `keyword` is still that
@@ -395,8 +408,30 @@ class ActivateRequest(BaseModel):
     ability_index: int = 0
     targets: list[str] | None = None
     mana_sources: list[UUID | ManaSource] | None = None
-    sacrificing: UUID | None = None
-    discarding: UUID | None = None
+    sacrificing: list[UUID] | None = None
+    """The objects an activation cost's own `[Sacrifice|Discard|Exile] a
+    ...` piece needs named (CR 118.3) - Goblin Bombardment's own "Sacrifice
+    a creature", read the same general way `CastRequest.choosing` already
+    reads Fireblast's Mountains: the engine (`Game.activation_cost`,
+    `machines.cost.ComponentKind`) decides how many a given ability's cost
+    actually asks for and whether each object named qualifies, this field
+    only carries the seat's answer. A list, not a single id, because a cost
+    can name a quantity greater than one ("Sacrifice two creatures") - the
+    engine consumes as many as the cost needs and refuses with its own count
+    if too few were named ("sacrifice needs N card(s) chosen, M given")."""
+    discarding: list[UUID] | None = None
+    """Same shape as `sacrificing`, for an activation cost's own `Discard
+    ...` piece - Waker of Waves' `{1}{U}, Discard this card: ...` is the one
+    already reachable through `off_zone_activation`; a battlefield ability
+    with an independent discard cost reaches it here."""
+    exiling: list[UUID] | None = None
+    """Same shape again, for an activation cost's own `Exile ...` piece -
+    Back from the Brink's "Exile a creature card from your graveyard and pay
+    its mana cost" is the engine's own example (`Game.activation_cost`'s
+    docstring). Only a *battlefield* activation reaches this: the
+    off-battlefield path (`machines.keywords.off_zone_activation`) has no
+    exile-as-cost shape yet, and naming this for one is refused rather than
+    silently dropped (`engine_api._activate_off_zone_ability`)."""
     color: str | None = None
     """Color letter ("W", "U", "B", "R", "G", "C") chosen for a mana ability
     that offers one - an "any color" source or a dual land. Ignored by any
@@ -878,10 +913,20 @@ class SpecialActionsView(BaseModel):
 
 
 class CastOptionView(BaseModel):
-    """One CR 601.2b keyword permission a graveyard/exile card carries right
-    now (`serialize._cast_option_view`) - flashback, mayhem, plot, foretell,
-    madness, airbend, a printed CR 604.6 zone permission, or a keyword
-    granted by another permanent's static ability."""
+    """One CR 601.2b keyword a hand, graveyard or exile card can be cast with
+    right now (`serialize._cast_option_view`).
+
+    From a graveyard or exile it is a CR 601.3 permission to cast the card
+    from where it sits at all - flashback, mayhem, plot, foretell, madness,
+    airbend, a printed CR 604.6 zone permission, or a keyword granted by
+    another permanent's static ability. From the hand it is a bare CR 118.9
+    alternative cost that replaces the printed mana cost, which is evoke,
+    dash, morph, megamorph, disguise, bestow and warp's hand half.
+
+    `usable_now` is the option's own answer (`KeywordCastOption.why_not`:
+    zone, marker owner and turn, "discarded this turn", a keyword's own "as a
+    sorcery" clause) and never CR 117.1a's timing rule for the card itself -
+    `GET .../legal-actions` is what answers "could I do this right now"."""
 
     keyword: str
     rule: str

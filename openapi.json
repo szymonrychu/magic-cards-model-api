@@ -440,8 +440,11 @@
           "discarding": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -453,6 +456,21 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "exiling": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exiling"
           },
           "mana_sources": {
             "anyOf": [
@@ -494,8 +512,11 @@
           "sacrificing": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -2176,7 +2197,7 @@
         "type": "object"
       },
       "CastOptionView": {
-        "description": "One CR 601.2b keyword permission a graveyard/exile card carries right\nnow (`serialize._cast_option_view`) - flashback, mayhem, plot, foretell,\nmadness, airbend, a printed CR 604.6 zone permission, or a keyword\ngranted by another permanent's static ability.",
+        "description": "One CR 601.2b keyword a hand, graveyard or exile card can be cast with\nright now (`serialize._cast_option_view`).\n\nFrom a graveyard or exile it is a CR 601.3 permission to cast the card\nfrom where it sits at all - flashback, mayhem, plot, foretell, madness,\nairbend, a printed CR 604.6 zone permission, or a keyword granted by\nanother permanent's static ability. From the hand it is a bare CR 118.9\nalternative cost that replaces the printed mana cost, which is evoke,\ndash, morph, megamorph, disguise, bestow and warp's hand half.\n\n`usable_now` is the option's own answer (`KeywordCastOption.why_not`:\nzone, marker owner and turn, \"discarded this turn\", a keyword's own \"as a\nsorcery\" clause) and never CR 117.1a's timing rule for the card itself -\n`GET .../legal-actions` is what answers \"could I do this right now\".",
         "properties": {
           "cost": {
             "anyOf": [

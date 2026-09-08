@@ -160,7 +160,38 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-7"
+PROTOCOL_VERSION = "seatkit-9"
+#: `seatkit-9` merges two independent shape changes that landed on the same
+#: base and were combined here: (1) `battlefield_state`'s per-card
+#: `cast_options` now covers `Zone.HAND`, not only graveyard/exile, so a
+#: hand card with a CR 118.9 keyword cost (evoke, dash, morph, megamorph,
+#: disguise, bestow, warp's hand half) is badged on the poll instead of only
+#: discoverable through the affordance endpoint. This is an additive
+#: response field, the same shape of change `seatkit-5`'s `recent_log`
+#: addition was, and that precedent - not an omission - is why it is bumped
+#: alongside (2) rather than left to ride along unversioned: an MCP process
+#: built before this sees the same silent gap `seatkit-5`'s docstring
+#: describes, a hand that reads as carrying no alternative-cost options
+#: rather than a hand that is missing a field it does not know to ask for.
+#: (2) `activate`'s `sacrificing`/`discarding`/`exiling` parameters, below -
+#: see that entry for what it closes. Two request/response shapes changed
+#: between the same two points in history; one version bump covers both.
+#:
+#: `seatkit-8` added `sacrificing`/`discarding`/`exiling` to the `activate`
+#: tool/CLI command, closing the gap a live game found: an activated ability
+#: whose own cost names an object (Goblin Bombardment's "Sacrifice a
+#: creature: ...") had no way to be paid at all, because
+#: `ActivateRequest.sacrificing`/`.discarding` already existed on the request
+#: schema (`engine_api.activate_ability` already threaded them into
+#: `Game.begin_activating`) but neither seat surface exposed a way to set
+#: them - every attempt failed with the engine's own honest, unreachable
+#: refusal, "sacrifice needs 1 card(s) chosen, 0 given". A request-shape
+#: change to a widely-used tool, per this constant's own rule: an old MCP
+#: process built before this addition has no `sacrificing` parameter to
+#: forward even if a newer prompt asked it to use one, so the version bump
+#: is what turns that silent gap back into the PROTOCOL MISMATCH sentence
+#: rather than a call that quietly omits the field again.
+#:
 #: `seatkit-7` replaced the `my_state` tool with `battlefield_state`, which
 #: answers the same whole board when called with nothing but a uid and takes
 #: two options to narrow it: `sections` (a comma-separated list of the state

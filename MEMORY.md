@@ -996,3 +996,140 @@ whoever works on the repo itself.
   `tests/test_battlefield_state.py` proves it rather than arguing it, by
   asserting every focused answer's strings are a subset of the unfocused
   one's.
+
+- **2026-09-09 - evoke was never missing from the API, only from the cheap
+  half of it, and the fix is the state view rather than the affordance.** The
+  owner's report ("I'm not able to evoke through webUI ... I tried to evoke
+  Wistfulness") looked like an unimplemented feature and was not one. Checked
+  live against the in-process client before touching anything: `GET
+  .../affordances/{card_id}` already listed Wistfulness's evoke under
+  `alternative_costs` (`AlternativeCostView`, source `keyword`, rule
+  CR 702.74a, cost `{G/U}{G/U}`), `GET .../legal-actions` already enumerated
+  a second `cast` action for it carrying `keyword: "Evoke"` and
+  `alternative_cost: "Evoke"`, and `POST .../actions/cast` already accepted
+  both spellings and paid `{G/U}{G/U}`. What was missing was any signal on
+  the *board poll*: `serialize._cast_options_of` opened with `if state.zone
+  not in (Zone.GRAVEYARD, Zone.EXILE): return []`, so a client rendering from
+  `GET /api/games/{id}` had nothing to badge a hand card with. Extending that
+  function to `Zone.HAND` was chosen over publishing `alternative_costs` on
+  every hand card for one reason: `affordances.alternative_costs` builds a
+  `Casting`, which needs `engine_api.dry_run_copy(game)` - a whole-game deep
+  copy - *per card*, and the affordance endpoint's own comment already says
+  that is "per-card work not worth doing for every card on the board on every
+  poll". `_cast_options_of` is pure (`castable_from` + `marker_cast_options` +
+  `granted_cast_options`, no copy, no `Casting`), so it is what belongs in the
+  1.2s poll; the affordance stays the rich on-demand answer, and the two agree
+  because both read the same engine functions. One consequence worth knowing:
+  `cast_options[i].usable_now` answers `KeywordCastOption.why_not` only, which
+  never asks CR 117.1a's timing - a creature's evoke option reads
+  `usable_now: true` on an opponent's turn, exactly as a graveyard flashback
+  option always has. `legal-actions` is the timing-correct surface.
+
+- **2026-09-09 - a hand card's `cast_options` needs no `_redact_cast_options`
+  pass, and adding one would be dead code.** `visibility.redact_view` replaces
+  every `hands` list that is not the viewer's own with `[]` - card, field and
+  all - so CR 402.3 is answered by dropping the whole card rather than one of
+  its keys, and a viewer with no uid matches no player name and reads every
+  hand empty. Pinned in `tests/test_hand_cast_options.py` by serialising bob's
+  and an anonymous viewer's entire response bodies to JSON and asserting the
+  string "Evoke" appears nowhere in either, which catches a leak through any
+  nested key rather than only through the one the assertion was written for.
+  Separately noted and deliberately not fixed: the harness endpoints
+  (`POST .../cards`, `.../tap`, `PATCH .../cards/{id}`, `PUT .../step`,
+  `POST .../state-based-actions`) return `state_view` with no redaction at
+  all, so they already hand back both hands by name - adding one field to a
+  view that already carries every card's identity changes nothing there.
+
+- **2026-09-09 - interacting with the board does not change the board's
+  geometry, and that is now enforced in two places.** The reported symptom
+  was "the webUI is getting ugly with clicks": choices rendered under the
+  cards, and the casting-method dropdown grew the page a vertical scrollbar.
+  Both were one property being violated. (1) `#casting-strip` was a row of
+  `#mtg-board`, between `#my-lands` and `#my-hand`, so beginning a cast
+  inserted a block into the board's own flex column and every card above it
+  moved; it is a panel in `#side-panel` now, directly under `#prompt-box`.
+  (2) `.popover` was `position: absolute` at the anchor's *document*
+  coordinates with no bound - and every card in the hand row sits at the
+  bottom of the window, so its menu was placed below the bottom of the
+  window and the document stretched to contain it. It is `position: fixed`
+  with `ui/menus.js`'s `anchoredPosition` clamping it into the viewport and
+  capping `max-height`. Measured on a real 26-permanent board at 1440x900,
+  1000x800, 1440x520, 1440x260 and 1440x150: `documentElement.scrollHeight`
+  is identical before and after opening any menu, and no board row's
+  `getBoundingClientRect` moves by a pixel.
+- **2026-09-09 - the two surfaces are split by scope, not by convenience.**
+  A choice *about a card* (which way to cast it, which ability, which colour
+  a land taps for, which player an attacker is aimed at) is an anchored menu
+  over that card. The in-flight announcement reads card-scoped but
+  cannot be one: it stays open while the player clicks *other* cards to fill
+  its target slots, and an anchored menu closes on the first click-away - so
+  it is the ribbon panel. Turn-scoped questions (a pending decision, CR
+  103.5/103.6's pregame, the combat prompt) stay in `#prompt-box`.
+  `ui/menus.js`'s `surfaceForChoice`/`choiceForPlan` are that rule as pure
+  functions, tested directly.
+- **2026-09-09 - two ugliness fixes that only a browser pass could find.**
+  With the strip moved next to `#prompt-box`, the prompt box's own in-flight
+  summary printed the same title and the same Cancel an inch above the panel
+  saying it again - `#prompt-box` now hides entirely while an announcement is
+  in flight (`tests/test_ui_ribbon.py`'s Kozilek scenario asserts it). And
+  the ability menu on Walking Ballista read "Remove a +1/+1 counter from this
+  creature: It deals 1 damage to any target." with "Remove a +1/+1 counter
+  from this creature" repeated in dim type below it: a printed activated
+  ability is "cost: effect", so `abilityMenuItems` drops the cost sublabel
+  when the text already opens with it.
+- **2026-09-09 - `#prompt-box`'s and `#priority-box`'s border colours are
+  dead rules, and have been.** `#side-panel > div` (`style.css`) is an id
+  plus a type selector, so it outranks the bare `#prompt-box { border-color:
+  var(--warn) }` and `#priority-box { border-color: var(--accent) }` below
+  it: measured with `getComputedStyle` on a live board, both render `--line`
+  like every other panel. Found while giving the relocated `#casting-strip`
+  its accent border back (written `#side-panel > #casting-strip` so it
+  actually wins). Not fixed for the other two on purpose - reviving them is a
+  visible restyling of panels that change was not about - but somebody
+  should decide whether those two colours were meant to be there.
+- **2026-09-09 - Goblin Bombardment's gap ("sacrifice needs 1 card(s) chosen,
+  0 given", unreachable) was two front ends missing a field the engine layer
+  already carried, not an engine gap.** `schemas.ActivateRequest` already had
+  `sacrificing`/`discarding` and `engine_api.activate_ability` already
+  threaded them into `Game.begin_activating` - the field simply had no way in
+  from `seat_cli.py` (no `--sacrificing` flag) or `mcp.py` (no `sacrificing`
+  parameter), so a real seat could never set it. Fixed by widening the shape
+  rather than special-casing sacrifice: `sacrificing`/`discarding` are now
+  `list[UUID] | None` (a cost can ask for more than one object - "Sacrifice
+  two creatures" - and the engine already consumes a pool of however many
+  were named, `Game._choice_cost`), and `exiling: list[UUID] | None` was
+  added alongside them for Back from the Brink's own shape
+  (`Game.activation_cost`'s docstring names it). `exiling` only reaches a
+  *battlefield* activation: `machines.keywords.off_zone_activation` takes no
+  `exiling=` kwarg at all, so `engine_api._activate_off_zone_ability` refuses
+  it by name up front rather than letting it hit a bare `TypeError` on an
+  unexpected keyword. `PROTOCOL_VERSION` bumped to `seatkit-8` (a new
+  parameter on an existing, widely-used tool is a request-shape change per
+  that constant's own rule) - `protocol.py`, `seatkit.py`, `contract/
+  tools.json` (`mise run tools:export`), `openapi.json` (`mise run
+  openapi:dump`) and `src/mtg_agent/driver/prompt.py` all needed the matching
+  update, and `tests/test_openapi_drift.py`/`tests/test_prompt_matches_tools.
+  py` are what catch a repeat of any one being forgotten. The play UI
+  (`ui/actions.js`'s `bodyFor`) has the identical hole - never builds
+  `sacrificing`/`discarding`/`exiling` into an `activate` request body at all
+  - left unfixed on purpose: two other unmerged branches are already reworking
+  the choice-presentation layer, and a third touching the same file would
+  tangle the merge.
+- **2026-09-09 - merging the hand-cast-options/UI-rework stack with the
+  activate-sacrifice-cost stack: `PROTOCOL_VERSION` goes to `seatkit-9`, not
+  a straight take of either side's `seatkit-8`.** The hand-cast-options
+  branch (`3eadbd9`) never touched `protocol.py`/`seatkit.py` at all - its
+  own commit message reasoned `contract/tools.json` stayed byte-identical so
+  no bump was needed. That reasoning does not hold up against this file's
+  own precedent: `seatkit-5`'s `recent_log` was the same shape of change
+  (an additive field on an existing state view) and *was* bumped, on exactly
+  the "a stale MCP process reads this as nothing having happened" logic that
+  applies here too - a stale process reads a hand as carrying no
+  alternative-cost options rather than a hand missing a field it cannot ask
+  for. So the merged tree bumps to `seatkit-9`, one above the higher side's
+  `seatkit-8`, with a changelog entry (`seatkit.py`) naming both shape
+  changes it now covers. `protocol.py`, `seatkit.py`, `contract/tools.json`
+  (`mise run tools:export`) and `openapi.json` (`mise run openapi:dump`) all
+  needed the matching regeneration; `src/mtg_agent/driver/prompt.py` needed
+  no wording change since its evoke/cast-option and sacrifice/discard/exile
+  prose already independently describe the two features correctly.
