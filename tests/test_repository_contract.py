@@ -277,6 +277,44 @@ def test_admin_key_is_none_for_an_unknown_game(repo: GameRepository) -> None:
 
 
 # ---------------------------------------------------------------------------
+# owner_user_id - OIDC-based user separation
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_no_owner_leaves_it_none(repo: GameRepository) -> None:
+    """Backward compatibility: a caller that never names an owner (every
+    caller today, since nothing issues bearer tokens yet) gets a game exactly
+    as ownerless as before this feature existed."""
+    game_id = repo.create(_real_game())
+
+    assert repo.owner_user_id(game_id) is None
+
+
+def test_create_records_the_given_owner(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game(), owner_user_id="oidc-sub-alice")
+
+    assert repo.owner_user_id(game_id) == "oidc-sub-alice"
+
+
+def test_create_if_under_records_the_given_owner(repo: GameRepository) -> None:
+    game_id = repo.create_if_under(_real_game(), cap=5, owner_user_id="oidc-sub-bob")
+    assert game_id is not None
+
+    assert repo.owner_user_id(game_id) == "oidc-sub-bob"
+
+
+def test_create_if_under_with_no_owner_leaves_it_none(repo: GameRepository) -> None:
+    game_id = repo.create_if_under(_real_game(), cap=5)
+    assert game_id is not None
+
+    assert repo.owner_user_id(game_id) is None
+
+
+def test_owner_user_id_is_none_for_an_unknown_game(repo: GameRepository) -> None:
+    assert repo.owner_user_id("no-such-game") is None
+
+
+# ---------------------------------------------------------------------------
 # created_at
 # ---------------------------------------------------------------------------
 

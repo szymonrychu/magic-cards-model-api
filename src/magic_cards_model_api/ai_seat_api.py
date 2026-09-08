@@ -14,11 +14,11 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from . import ai_seat
+from . import ai_seat, game_access
 from .agent_settings import AgentSettings
 from .store import store
 
-router = APIRouter(prefix="/api/lobby", tags=["lobby"])
+router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
 
 
 class StartAiSeat(BaseModel):

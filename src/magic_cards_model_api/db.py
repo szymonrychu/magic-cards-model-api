@@ -87,6 +87,13 @@ games = Table(
     Column("version", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("admin_key", String, nullable=False),
+    # The OIDC subject (JWT `sub`) that created this game, `NULL` for one
+    # created with no bearer token - every game today, and every game this
+    # deployment ever creates until an OIDC issuer is actually configured
+    # (see `oidc.py`). `game_access.py`'s ownership gate only restricts a
+    # game that carries one; `NULL` behaves exactly as this column never
+    # existed. Added by revision `f3a7c2e91b04`.
+    Column("owner_user_id", String, nullable=True),
     Column("seats", JSONB, nullable=False, server_default="{}"),
     Column("decklists", JSONB, nullable=False, server_default="{}"),
     Column("agent_settings", JSONB, nullable=False, server_default="{}"),

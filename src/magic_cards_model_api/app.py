@@ -35,6 +35,8 @@ from . import (
     decisions,
     decks_api,
     engine_api,
+    game_access,
+    oidc,
     opening,
     protocol,
     records,
@@ -108,6 +110,15 @@ from .serialize import state_view
 from .store import new_seat_uids, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
+# `FastAPI.__init__` has no `route_class` parameter of its own (it silently
+# swallows an unknown keyword into `**extra` rather than raising, which is
+# its own trap) - the router it builds internally is what actually carries
+# one, and every `@app.get`/`@app.post`/... decorator below reads
+# `app.router.route_class` fresh at the moment it runs, not at `FastAPI()`
+# construction time. Setting it here, immediately, before any route is
+# declared, is what makes `game_access.GameAccessRoute` apply to every
+# `{game_id}` route this module defines directly.
+app.router.route_class = game_access.GameAccessRoute
 app.include_router(decks_api.router)
 app.include_router(api_decks.router)
 app.include_router(ai_seat_api.router)
@@ -649,7 +660,8 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/api/games", response_model=NewGameResponse, response_model_exclude_unset=True)
-def create_game(req: NewGame) -> dict[str, Any]:
+def create_game(req: NewGame, request: Request) -> dict[str, Any]:
+    user = oidc.current_user(request)
     names = [player.username for player in req.players]
     if len(set(names)) != len(names):
         raise ValueError("player names must be unique")
@@ -667,7 +679,7 @@ def create_game(req: NewGame) -> dict[str, Any]:
     assert game.turn is not None and game.priority is not None
     game.turn.active_index = index
     game.priority.reset(index)
-    game_id = store.create(game)
+    game_id = store.create(game, owner_user_id=user.sub if user is not None else None)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
     engine_api.set_step(game, Step(req.step))
@@ -744,25 +756,33 @@ def find_seat(uid: str) -> dict[str, Any]:
 @app.get(
     "/api/games/summary", response_model=GameSummariesResponse, response_model_exclude_unset=True
 )
-def game_summaries_route(ids: str) -> dict[str, Any]:
+async def game_summaries_route(ids: str, request: Request) -> dict[str, Any]:
     """2b's T8 (map's S2): the scalars a lobby list needs, for every id in
     one call - `ids` comma-separated. Never the full `state_view` per game
     `list_lobby_games` used to build just to read four fields back out of
     it; unknown ids are silently skipped, the same way that loop already
-    skipped a `store.get` miss."""
+    skipped a `store.get` miss.
+
+    A game this caller may not reach (`game_access.can_access_game` -
+    someone else's owned game) is skipped exactly the same way - not just
+    unactionable, absent, so a caller cannot even learn *that much* about a
+    game that is not theirs by asking for its scalars directly."""
     game_ids = [i for i in ids.split(",") if i]
-    summaries = [
-        serialize.game_summary(game, game_id)
-        for game_id in game_ids
-        if (game := store.get(game_id)) is not None
-    ]
+    summaries = []
+    for game_id in game_ids:
+        game = store.get(game_id)
+        if game is None or not await game_access.can_access_game(request, game_id):
+            continue
+        summaries.append(serialize.game_summary(game, game_id))
     return {"summaries": summaries}
 
 
 @app.get("/api/games", response_model=ListGamesResponse, response_model_exclude_unset=True)
-def list_games() -> dict[str, Any]:
+async def list_games(request: Request) -> dict[str, Any]:
     games = []
     for game_id in store.ids():
+        if not await game_access.can_access_game(request, game_id):
+            continue
         game = game_or_404(game_id)
         games.append(
             {

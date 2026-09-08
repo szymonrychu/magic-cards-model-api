@@ -33,16 +33,16 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import ai_pregame, ai_seat, audit, lobby
+from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
 from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
 from .store import new_seat_uids, store
 
-router = APIRouter(prefix="/api/lobby", tags=["lobby"])
+router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
 
 #: The lobby's one dependency on the api component, for now an in-process
 #: call (`api_client.py`'s own docstring). Module-level so a test can swap it
@@ -87,7 +87,7 @@ class NewUiGameResponse(BaseModel):
 
 
 @router.post("/games", response_model=NewUiGameResponse, response_model_exclude_unset=True)
-def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
+def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any]:
     """Boot a new game from two decklists, right now, from an HTTP body -
     the request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing
     its exact boot path (`decks.load_deck_into_game`): CR 103's registration,
@@ -103,6 +103,7 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
     (409) once `MAX_LIVE_GAMES` lobby games are already live, so the table
     does not grow without bound; ending one from the lobby frees a slot.
     """
+    user = oidc.current_user(request)
     problems: dict[str, Any] = {}
     for player in req.players:
         result = api_client.validate_decklist(player.decklist_text)
@@ -151,7 +152,7 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
             seed=req.seed,
         )
         game = match.games[-1]
-        game_id = store.create(game)
+        game_id = store.create(game, owner_user_id=user.sub if user is not None else None)
         store.attach(token, game_id)
     finally:
         # A no-op once `attach` above already resolved `token` on the
@@ -231,7 +232,7 @@ class LobbyGamesResponse(BaseModel):
 
 
 @router.get("/games", response_model=LobbyGamesResponse, response_model_exclude_unset=True)
-def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
+async def list_lobby_games(request: Request, uids: str | None = None) -> dict[str, Any]:
     """Every lobby-booted game (`store.ui_games()` - not filtered to
     `live_ui_games()`, so a finished-but-not-yet-ended game still shows up for
     End game to clear), oldest first, for the lobby's game list.
@@ -240,6 +241,15 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
     every game it has ever seen - each game's `seats` in the response is
     filtered down to only the uids from that list which are actually seats of
     that game, so a browser never learns a uid that is not already its own.
+
+    OIDC-based user separation: a game this caller may not reach at all - an
+    *owned* game (`game_access.py`) belonging to a different bearer token,
+    with no uid from `uids` among its seats either - is dropped from the
+    list outright, reusing that same `seats` computation as the "do I hold
+    any capability for this one" signal rather than adding a second lookup.
+    An unowned game (every game before this feature, and every game this
+    deployment creates until an OIDC issuer is actually configured) is
+    listed exactly as before - this route's one migration guarantee.
 
     2b's T8 (map's S2): this used to build a full `serialize.state_view` per
     game just to pull `turn_number`/`step`/`winner`/`drawn` back out of it -
@@ -251,6 +261,7 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
     either.
     """
     mine = {u for u in (uids or "").split(",") if u}
+    user = oidc.current_user(request)
     game_ids = store.ui_games()
     summaries = api_client.game_summaries(game_ids)
     games = []
@@ -260,6 +271,9 @@ def list_lobby_games(uids: str | None = None) -> dict[str, Any]:
         if game is None or summary is None:
             continue
         seats = {name: uid for uid, name in store.seat_uids(game_id).items() if uid in mine}
+        owner = store.owner_user_id(game_id)
+        if owner is not None and (user is None or user.sub != owner) and not seats:
+            continue
         games.append(
             {
                 "game_id": game_id,

@@ -365,7 +365,7 @@ class PostgresRepository:
 
     # -- lifecycle ------------------------------------------------------
 
-    def create(self, game: Game) -> str:
+    def create(self, game: Game, *, owner_user_id: str | None = None) -> str:
         game_id = uuid4().hex
         now = datetime.now(UTC)
         admin_key = uuid4().hex
@@ -380,6 +380,7 @@ class PostgresRepository:
                     version=0,
                     created_at=now,
                     admin_key=admin_key,
+                    owner_user_id=owner_user_id,
                     seats={},
                     decklists={},
                     agent_settings={},
@@ -597,6 +598,12 @@ class PostgresRepository:
 
     def is_admin(self, game_id: str, key: str) -> bool:
         return bool(key) and self.admin_key(game_id) == key
+
+    # -- owner_user_id (OIDC-based user separation) --------------------------
+
+    def owner_user_id(self, game_id: str) -> str | None:
+        row = self._select_one(game_id, games.c.owner_user_id)
+        return row[0] if row is not None else None
 
     # -- created_at ---------------------------------------------------------
 
