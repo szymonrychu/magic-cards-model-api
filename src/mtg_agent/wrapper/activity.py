@@ -24,9 +24,11 @@ only reports it once a turn has ended), so the watcher globs
 `$HOME_DIR/.claude/projects/*/*.jsonl` and follows the newest file, picking
 up a new session file when one appears.
 
-Verbosity is `AGENT_LOG_LEVEL`:
+Verbosity is `AGENT_LOG_LEVEL`, and governs the text log only - `off`/`turns`
+still feed `ccw_inference_seconds` (see `InferenceTimer`), since that is a
+metric a production wrapper wants regardless of how loud its log is:
 
-    off       nothing
+    off       nothing logged
     turns     turn boundaries only (what the wrapper always logged)
     messages  + the agent's own prose
     tools     + every tool call and every tool failure   [default]
@@ -59,8 +61,11 @@ import logging
 import re
 import threading
 from collections.abc import Iterable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from .metrics import Metrics
 
 log = logging.getLogger("agent")
 
@@ -280,6 +285,86 @@ class TranscriptTail:
         return out
 
 
+def _parse_ts(raw: Any) -> float | None:
+    """A transcript line's own `timestamp` field (ISO 8601, `...Z`), as
+    epoch seconds - or `None` for a missing/unparsable one. Using the
+    JSONL's own timestamps rather than local read time is what makes the
+    duration below exact regardless of how often the watcher polls."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+class InferenceTimer:
+    """`ccw_inference_seconds` observations, fed transcript lines in order.
+
+    One inference is one `requestId`: claude flushes it as several
+    content-block lines (a `thinking` line, then a `tool_use`/`text` line),
+    each carrying the same final `usage.output_tokens`. A group's *start* is
+    the timestamp of the line immediately before its first block (the point
+    the model started responding to what came before); its *end* is the
+    timestamp of its own last block (the point the full response landed).
+    Both come from the transcript's own `timestamp` field, not wall-clock
+    read time, so the measurement is exact no matter how often the watcher
+    polls.
+
+    A group only finalizes once a later line proves it has no more blocks
+    coming - so the very last inference in flight when the transcript stops
+    growing (match end) is never recorded. That is an inherent limit of
+    timing a live tail rather than a finished file, not a bug.
+    """
+
+    def __init__(self, metrics: Metrics | None) -> None:
+        self.metrics = metrics
+        self._prev_ts: float | None = None
+        self._group_id: str | None = None
+        self._group_start: float | None = None
+        self._group_last: float | None = None
+        self._group_tokens: int = 0
+
+    def feed(self, lines: Iterable[dict]) -> None:
+        for line in lines:
+            self._feed_one(line)
+
+    def _feed_one(self, line: dict) -> None:
+        ts = _parse_ts(line.get("timestamp"))
+        kind = line.get("type")
+        rid = line.get("requestId") if kind == "assistant" else None
+
+        if self._group_id is not None and rid != self._group_id:
+            self._finish_group()
+
+        if kind == "assistant" and rid:
+            if self._group_id is None:
+                self._group_id = rid
+                self._group_start = self._prev_ts
+            message = line.get("message") or {}
+            usage = message.get("usage") or {}
+            output_tokens = usage.get("output_tokens")
+            if isinstance(output_tokens, int):
+                self._group_tokens = output_tokens
+            if ts is not None:
+                self._group_last = ts
+
+        if ts is not None:
+            self._prev_ts = ts
+
+    def _finish_group(self) -> None:
+        if (
+            self.metrics is not None
+            and self._group_start is not None
+            and self._group_last is not None
+        ):
+            self.metrics.record_inference(self._group_last - self._group_start, self._group_tokens)
+        self._group_id = None
+        self._group_start = None
+        self._group_last = None
+        self._group_tokens = 0
+
+
 def newest_transcript(home_dir: Path) -> Path | None:
     """The most recently modified session file under `~/.claude/projects`."""
     root = home_dir / ".claude" / "projects"
@@ -299,19 +384,32 @@ class ActivityWatcher:
     unaffected and only the log goes quiet.
     """
 
-    def __init__(self, home_dir: Path, level: str = "tools", poll: float = POLL_SECONDS) -> None:
+    def __init__(
+        self,
+        home_dir: Path,
+        level: str = "tools",
+        poll: float = POLL_SECONDS,
+        metrics: Metrics | None = None,
+    ) -> None:
         self.home_dir = Path(home_dir)
         self.rank = level_rank(level)
         self.poll = poll
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._tail: TranscriptTail | None = None
+        #: `ccw_inference_seconds`. Fed unconditionally in `poll_once`, not
+        #: gated on `rank` - a production wrapper turned down to `off`/`turns`
+        #: for log volume still wants latency data.
+        self._timer = InferenceTimer(metrics)
 
     def enabled(self) -> bool:
         return self.rank > level_rank("turns")
 
     def start(self) -> None:
-        if not self.enabled() or self._thread is not None:
+        # No longer gated on `enabled()`: the watcher's job is not just text
+        # logging any more (which `rank` still controls, inside `poll_once`)
+        # but also feeding `ccw_inference_seconds`, which every level wants.
+        if self._thread is not None:
             return
         self._thread = threading.Thread(target=self._run, name="agent-activity", daemon=True)
         self._thread.start()
@@ -321,8 +419,9 @@ class ActivityWatcher:
         self._stop.set()
 
     def poll_once(self) -> int:
-        """Follow the newest transcript and log whatever is new. Returns the
-        number of events logged - the unit of the tests."""
+        """Follow the newest transcript, log whatever is new, and feed
+        `ccw_inference_seconds`. Returns the number of events logged - the
+        unit of the tests."""
         newest = newest_transcript(self.home_dir)
         if newest is None:
             return 0
@@ -332,7 +431,9 @@ class ActivityWatcher:
             # only file here is this session's, and its opening turn is worth
             # logging rather than skipping.
             self._tail = TranscriptTail(newest)
-        return log_lines(self._tail.read(), self.rank)
+        lines = self._tail.read()
+        self._timer.feed(lines)
+        return log_lines(lines, self.rank)
 
     def _run(self) -> None:
         while not self._stop.wait(self.poll):

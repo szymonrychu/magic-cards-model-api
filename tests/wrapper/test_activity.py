@@ -345,3 +345,139 @@ def test_a_truncated_file_is_re_read_from_the_start(home, agent_log):
     path.write_text(json.dumps(assistant(text("rewritten"))) + "\n")
     assert watcher.poll_once() == 1
     assert "rewritten" in agent_log.text
+
+
+# ---- ccw_inference_seconds --------------------------------------------------
+#
+# One inference is one transcript `requestId`: claude flushes it as several
+# content-block lines (a `thinking` line, then a `tool_use`/`text` line), each
+# carrying the same final `usage.output_tokens`. Duration is measured between
+# the JSONL's own `timestamp` fields - the point the model started responding
+# (the line immediately before this requestId's first block) to the point the
+# full response landed (this requestId's last block) - not wall-clock read
+# time, so it is exact no matter how often the watcher polls.
+
+
+def inference_block(ts: str, request_id: str, output_tokens: int, block_type: str) -> dict:
+    return {
+        "type": "assistant",
+        "timestamp": ts,
+        "requestId": request_id,
+        "message": {"content": [{"type": block_type}], "usage": {"output_tokens": output_tokens}},
+    }
+
+
+def user_boundary(ts: str) -> dict:
+    return {
+        "type": "user",
+        "timestamp": ts,
+        "message": {"content": [{"type": "tool_result", "content": "ok"}]},
+    }
+
+
+def test_one_inference_is_timed_from_the_prior_line_to_its_last_block():
+    timer = activity.InferenceTimer(None)
+    observed = []
+    timer.metrics = type(
+        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+    )()
+    timer.feed(
+        [
+            user_boundary("2026-09-08T00:00:00.000Z"),
+            inference_block("2026-09-08T00:00:00.500Z", "r1", 200, "thinking"),
+            inference_block("2026-09-08T00:00:02.000Z", "r1", 200, "tool_use"),
+            user_boundary("2026-09-08T00:00:02.100Z"),
+        ]
+    )
+    assert observed == [(2.0, 200)]
+
+
+def test_consecutive_inferences_are_timed_independently():
+    timer = activity.InferenceTimer(None)
+    observed = []
+    timer.metrics = type(
+        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+    )()
+    timer.feed(
+        [
+            user_boundary("2026-09-08T00:00:00.000Z"),
+            inference_block("2026-09-08T00:00:00.500Z", "r1", 200, "thinking"),
+            inference_block("2026-09-08T00:00:02.000Z", "r1", 200, "tool_use"),
+            user_boundary("2026-09-08T00:00:02.100Z"),
+            inference_block("2026-09-08T00:00:02.600Z", "r2", 700, "thinking"),
+            inference_block("2026-09-08T00:00:10.000Z", "r2", 700, "text"),
+            user_boundary("2026-09-08T00:00:10.050Z"),
+        ]
+    )
+    assert len(observed) == 2
+    (d1, t1), (d2, t2) = observed
+    assert d1 == pytest.approx(2.0)
+    assert t1 == 200
+    # r2's start boundary is the prior user line (00:00:02.100), not r1's own
+    # last block - each group's start comes from what came right before IT.
+    assert d2 == pytest.approx(7.9)
+    assert t2 == 700
+
+
+def test_the_final_in_flight_inference_is_not_recorded_without_a_following_line():
+    """A streaming design cannot know an inference has ended until it sees
+    what comes after it - the last inference before the transcript stops
+    growing entirely (match end) is a documented gap, not a bug."""
+    timer = activity.InferenceTimer(None)
+    observed = []
+    timer.metrics = type(
+        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+    )()
+    timer.feed(
+        [
+            user_boundary("2026-09-08T00:00:00.000Z"),
+            inference_block("2026-09-08T00:00:00.500Z", "r1", 200, "thinking"),
+            inference_block("2026-09-08T00:00:02.000Z", "r1", 200, "tool_use"),
+        ]
+    )
+    assert observed == []
+
+
+def test_a_missing_or_unparsable_timestamp_is_skipped_not_crashed():
+    timer = activity.InferenceTimer(None)
+    observed = []
+    timer.metrics = type(
+        "M", (), {"record_inference": lambda self, d, t: observed.append((d, t))}
+    )()
+    timer.feed(
+        [
+            user_boundary("not a timestamp"),
+            inference_block("2026-09-08T00:00:00.500Z", "r1", 200, "thinking"),
+            {
+                "type": "assistant",
+                "requestId": "r1",
+                "message": {"content": [{"type": "tool_use"}]},
+            },
+            user_boundary("2026-09-08T00:00:02.100Z"),
+        ]
+    )
+    # No usable start boundary reached this group - nothing observed, and
+    # nothing raised.
+    assert observed == []
+
+
+def test_poll_once_feeds_the_watcher_s_own_metrics_regardless_of_log_level(home):
+    """Metrics must not depend on `AGENT_LOG_LEVEL` - a production wrapper
+    turned down to `off`/`turns` for log volume still wants latency data."""
+    from mtg_agent.wrapper.metrics import Metrics
+
+    root, path = home
+    metrics = Metrics()
+    watcher = activity.ActivityWatcher(root, "off", poll=0.01, metrics=metrics)
+    write(
+        path,
+        [
+            user_boundary("2026-09-08T00:00:00.000Z"),
+            inference_block("2026-09-08T00:00:00.500Z", "r1", 200, "thinking"),
+            inference_block("2026-09-08T00:00:02.000Z", "r1", 200, "tool_use"),
+            user_boundary("2026-09-08T00:00:02.100Z"),
+        ],
+    )
+    watcher.poll_once()
+    body, _ = metrics.render()
+    assert 'ccw_inference_seconds_count{output_tokens_bucket="200-500"} 1.0' in body.decode()

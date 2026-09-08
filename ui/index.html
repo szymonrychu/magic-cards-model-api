@@ -60,8 +60,8 @@
       <label>Effort
         <select id="ai-effort">
           <option value="low">low</option>
-          <option value="medium">medium</option>
-          <option value="high" selected>high</option>
+          <option value="medium" selected>medium</option>
+          <option value="high">high</option>
           <option value="xhigh">xhigh</option>
           <option value="max">max</option>
         </select>
@@ -69,6 +69,9 @@
       <label>Thinking budget (tokens, optional)
         <input type="number" id="ai-thinking" min="0" step="1" placeholder="model default" />
       </label>
+      <p class="hint">Only applies to a model with a fixed thinking budget. The
+        default model uses adaptive reasoning and ignores this - use Effort
+        above instead.</p>
     </div>
   </div>
 

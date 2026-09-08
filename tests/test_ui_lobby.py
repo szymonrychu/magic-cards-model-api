@@ -104,6 +104,25 @@ def test_agent_body_from_fields() -> None:
     ) == {"model": "sonnet", "effort": "high", "max_thinking_tokens": 0}
 
 
+def test_agent_body_falls_back_to_medium_effort() -> None:
+    """`medium`, not `high`: a live-pod audit found latency correlates almost
+    perfectly with output tokens, and `high` effort - not context size - is
+    what makes a seat slow. The per-game dropdown can still pick `high` for a
+    combo-heavy deck; this is only what an omitted or unrecognised value
+    falls back to."""
+    assert (
+        run_module("lobby_model.js", "m.agentFrom({ model: 'sonnet', thinking: '' })")["effort"]
+        == "medium"
+    )
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.agentFrom({ model: 'sonnet', effort: 'not-a-real-level', thinking: '' })",
+        )["effort"]
+        == "medium"
+    )
+
+
 def test_agent_body_rejects_a_fraction_or_a_negative_thinking_budget() -> None:
     """`AgentSettings.max_thinking_tokens` is `int | None = Field(ge=0)` - a
     fraction or a negative number is not a legal value for it, so `agentFrom`
