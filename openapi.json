@@ -1219,6 +1219,40 @@
         "title": "BlockPair",
         "type": "object"
       },
+      "BundledDeckText": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "text"
+        ],
+        "title": "BundledDeckText",
+        "type": "object"
+      },
+      "BundledDecksResponse": {
+        "properties": {
+          "decks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Decks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "decks"
+        ],
+        "title": "BundledDecksResponse",
+        "type": "object"
+      },
       "CandidateView": {
         "description": "One object `affordances.candidates` found legal for at least one of\nan announcement's targeting requirements (`affordances._label` plus\nwhich requirement slots it fills).",
         "properties": {
@@ -2972,6 +3006,81 @@
         "title": "DecideResponse",
         "type": "object"
       },
+      "DeckProblem": {
+        "properties": {
+          "card": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "DeckProblem",
+        "type": "object"
+      },
+      "DeckValidation": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/DeckProblem"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "mainboard_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mainboard Size"
+          },
+          "sideboard_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Size"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/DeckProblem"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "valid",
+          "errors",
+          "warnings"
+        ],
+        "title": "DeckValidation",
+        "type": "object"
+      },
       "DeclareBlockersRequest": {
         "properties": {
           "blocks": {
@@ -3074,6 +3183,51 @@
           "what"
         ],
         "title": "DivisionView",
+        "type": "object"
+      },
+      "EndGameResponse": {
+        "properties": {
+          "ai_seats_released": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Ai Seats Released",
+            "type": "array"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "players": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Players",
+            "type": "array"
+          },
+          "seats_invalidated": {
+            "title": "Seats Invalidated",
+            "type": "integer"
+          },
+          "watcher_stopped": {
+            "title": "Watcher Stopped",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "game_id",
+          "players",
+          "seats_invalidated",
+          "watcher_stopped",
+          "ai_seats_released",
+          "deleted"
+        ],
+        "title": "EndGameResponse",
         "type": "object"
       },
       "ExilePileView": {
@@ -3550,6 +3704,102 @@
           "games"
         ],
         "title": "ListGamesResponse",
+        "type": "object"
+      },
+      "LobbyGameSummary": {
+        "properties": {
+          "agents": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AgentSettings"
+            },
+            "title": "Agents",
+            "type": "object"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "drawn": {
+            "title": "Drawn",
+            "type": "boolean"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "players": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Players",
+            "type": "array"
+          },
+          "seats": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Seats",
+            "type": "object"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          },
+          "turn_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Number"
+          },
+          "winner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner"
+          }
+        },
+        "required": [
+          "game_id",
+          "players",
+          "step",
+          "drawn",
+          "agents",
+          "seats"
+        ],
+        "title": "LobbyGameSummary",
+        "type": "object"
+      },
+      "LobbyGamesResponse": {
+        "properties": {
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/LobbyGameSummary"
+            },
+            "title": "Games",
+            "type": "array"
+          }
+        },
+        "required": [
+          "games"
+        ],
+        "title": "LobbyGamesResponse",
         "type": "object"
       },
       "LoyaltyHintView": {
@@ -4529,6 +4779,54 @@
           "players"
         ],
         "title": "NewUiGame",
+        "type": "object"
+      },
+      "NewUiGameResponse": {
+        "properties": {
+          "admin_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Key"
+          },
+          "agents": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AgentSettings"
+            },
+            "title": "Agents",
+            "type": "object"
+          },
+          "ai_players": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ai Players",
+            "type": "array"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "seat_uids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Seat Uids",
+            "type": "object"
+          }
+        },
+        "required": [
+          "game_id",
+          "seat_uids",
+          "ai_players",
+          "agents"
+        ],
+        "title": "NewUiGameResponse",
         "type": "object"
       },
       "NewUiPlayer": {
@@ -8506,6 +8804,112 @@
         "summary": "Lookup Card"
       }
     },
+    "/api/decks": {
+      "get": {
+        "description": "The decklist files already in the repo, for a picker in the UI.",
+        "operationId": "list_bundled_decks_api_decks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundledDecksResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Bundled Decks",
+        "tags": [
+          "decks"
+        ]
+      }
+    },
+    "/api/decks/validate": {
+      "post": {
+        "operationId": "validate_decklist_api_decks_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeckValidation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Decklist",
+        "tags": [
+          "decks"
+        ]
+      }
+    },
+    "/api/decks/{name}": {
+      "get": {
+        "description": "One bundled decklist's raw text, so the UI can preview or edit it\nbefore starting a game. `name` is resolved strictly inside `DECKS_DIR` -\nno `..` escape - since this is a bare filename off a URL path.",
+        "operationId": "bundled_deck_text_api_decks__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundledDeckText"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bundled Deck Text",
+        "tags": [
+          "decks"
+        ]
+      }
+    },
     "/api/games": {
       "get": {
         "operationId": "list_games_api_games_get",
@@ -10681,118 +11085,6 @@
         "summary": "Health"
       }
     },
-    "/api/ui/decks": {
-      "get": {
-        "description": "The decklist files already in the repo, for a picker in the UI.",
-        "operationId": "list_bundled_decks_api_ui_decks_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Bundled Decks Api Ui Decks Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Bundled Decks",
-        "tags": [
-          "ui"
-        ]
-      }
-    },
-    "/api/ui/decks/validate": {
-      "post": {
-        "operationId": "validate_decklist_api_ui_decks_validate_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ValidateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Validate Decklist Api Ui Decks Validate Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Validate Decklist",
-        "tags": [
-          "ui"
-        ]
-      }
-    },
-    "/api/ui/decks/{name}": {
-      "get": {
-        "description": "One bundled decklist's raw text, so the UI can preview or edit it\nbefore starting a game. `name` is resolved strictly inside `DECKS_DIR` -\nno `..` escape - since this is a bare filename off a URL path.",
-        "operationId": "bundled_deck_text_api_ui_decks__name__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "title": "Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Bundled Deck Text Api Ui Decks  Name  Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Bundled Deck Text",
-        "tags": [
-          "ui"
-        ]
-      }
-    },
     "/api/ui/games": {
       "get": {
         "description": "Every lobby-booted game (`store.ui_games()` - not filtered to\n`live_ui_games()`, so a finished-but-not-yet-ended game still shows up for\nEnd game to clear), oldest first, for the lobby's game list.\n\n`uids` is a comma-separated list of seat uids the caller holds, across\nevery game it has ever seen - each game's `seats` in the response is\nfiltered down to only the uids from that list which are actually seats of\nthat game, so a browser never learns a uid that is not already its own.",
@@ -10820,9 +11112,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Lobby Games Api Ui Games Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LobbyGamesResponse"
                 }
               }
             },
@@ -10845,7 +11135,7 @@
         ]
       },
       "post": {
-        "description": "Boot a new game from two decklists, right now, from an HTTP body -\nthe request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing\nits exact boot path (`decks.load_deck_into_game`): CR 103's registration,\nlegality check, sideboard set-aside, seeded shuffles, and opening hands.\n\nRefuses (400, via the `ValueError`/`DeckIllegal` handlers already\nregistered in `app.py`) with the same per-card detail\n`validate_decklist_text` reports, rather than booting a broken game -\nboth decks are validated before either is registered.\n\nGames the lobby boots live side by side - starting one never ends\nanother; `DELETE /api/ui/games/{id}` (End game) is the only reset. Refuses\n(409) once `MAX_LIVE_GAMES` lobby games are already live, so the table\ndoes not grow without bound; ending one from the lobby frees a slot.",
+        "description": "Boot a new game from two decklists, right now, from an HTTP body -\nthe request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing\nits exact boot path (`decks.load_deck_into_game`): CR 103's registration,\nlegality check, sideboard set-aside, seeded shuffles, and opening hands.\n\nRefuses (400, via the `ValueError`/`DeckIllegal` handlers already\nregistered in `app.py`) with the same per-card detail\n`api_client.validate_decklist` reports, rather than booting a broken\ngame - both decks are validated before either is registered.\n\nGames the lobby boots live side by side - starting one never ends\nanother; `DELETE /api/ui/games/{id}` (End game) is the only reset. Refuses\n(409) once `MAX_LIVE_GAMES` lobby games are already live, so the table\ndoes not grow without bound; ending one from the lobby frees a slot.",
         "operationId": "start_game_from_decklists_api_ui_games_post",
         "requestBody": {
           "content": {
@@ -10862,9 +11152,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Start Game From Decklists Api Ui Games Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NewUiGameResponse"
                 }
               }
             },
@@ -10939,9 +11227,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response End Lobby Game Api Ui Games  Game Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EndGameResponse"
                 }
               }
             },

@@ -1,7 +1,16 @@
-"""`/api/ui/decks*` and `/api/ui/games`: the UI's deck-loading and game-boot
+"""`/api/decks*` (api-owned deck resolution and legality, T5) and
+`/api/ui/games` (lobby-owned game boot): the UI's deck-loading and game-boot
 endpoints, added because `serve.py` could previously only boot a game from
 `--deck`/`--match` command-line arguments read once at process start (see
 `decks_api.py`'s module docstring).
+
+Deck validation used to live at `/api/ui/decks*`, in `decks_api.py` itself.
+2b's T5 (map Finding 1) moved it to `api_decks.py`, mounted under plain
+`/api`, because it needs `magic_cards_model.models.{Card, Deck, DeckIllegal}`
+and `scryfall.py` - dependencies the lobby side of the eventual cut must not
+carry. `start_game_from_decklists` (still here, still lobby-owned) now
+reaches that endpoint through `api_client.ApiClient` rather than importing
+its function directly - the seam the cut will later swap for `httpx`.
 
 Card data comes only from the recorded Scryfall fixtures `conftest.py` pins
 (`MCM_CACHE_DIR`) - Mountain, Forest, Grizzly Bears, Lightning Bolt - so every
@@ -13,6 +22,8 @@ buildable from just these four names without touching the network.
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+
+from magic_cards_model_api.api_client import InProcessApiClient
 
 # 52 Mountain (unlimited, basic) + 4 Grizzly Bears + 4 Lightning Bolt = 60,
 # legal under CR 100.2a's four-copy limit.
@@ -27,15 +38,28 @@ TOO_FEW_CARDS = "4 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
 
 
 def test_list_bundled_decks_includes_the_repo_decklists(client: TestClient) -> None:
-    response = client.get("/api/ui/decks")
+    response = client.get("/api/decks")
     assert response.status_code == 200
     decks = response.json()["decks"]
     assert "amulet_titan.txt" in decks
     assert all(name.endswith(".txt") for name in decks)
 
 
+def test_the_old_ui_prefixed_deck_routes_are_gone(client: TestClient) -> None:
+    """T5 moved deck resolution/legality off the lobby's `/api/ui` namespace
+    entirely - proves the move happened rather than the route being merely
+    duplicated at the new path. No route answers there any more, so the
+    catch-all static mount at `/` (`test_ui_routes.py`'s own subject) is what
+    picks these up: 404 for a GET, since it looks for a matching file and
+    finds none, 405 for the POST, since the mount only serves GET/HEAD.
+    """
+    assert client.get("/api/ui/decks").status_code == 404
+    assert client.get("/api/ui/decks/amulet_titan.txt").status_code == 404
+    assert client.post("/api/ui/decks/validate", json={"text": LEGAL_DECK}).status_code == 405
+
+
 def test_bundled_deck_text_is_readable(client: TestClient) -> None:
-    response = client.get("/api/ui/decks/amulet_titan.txt")
+    response = client.get("/api/decks/amulet_titan.txt")
     assert response.status_code == 200
     body = response.json()
     assert body["name"] == "amulet_titan.txt"
@@ -43,17 +67,17 @@ def test_bundled_deck_text_is_readable(client: TestClient) -> None:
 
 
 def test_bundled_deck_text_refuses_path_escape(client: TestClient) -> None:
-    response = client.get("/api/ui/decks/..%2Fpyproject.toml")
+    response = client.get("/api/decks/..%2Fpyproject.toml")
     assert response.status_code == 404
 
 
 def test_bundled_deck_text_refuses_unknown_name(client: TestClient) -> None:
-    response = client.get("/api/ui/decks/not-a-real-deck.txt")
+    response = client.get("/api/decks/not-a-real-deck.txt")
     assert response.status_code == 404
 
 
 def test_validate_accepts_a_legal_deck(client: TestClient) -> None:
-    response = client.post("/api/ui/decks/validate", json={"text": LEGAL_DECK})
+    response = client.post("/api/decks/validate", json={"text": LEGAL_DECK})
     assert response.status_code == 200
     body = response.json()
     assert body["valid"] is True
@@ -62,7 +86,7 @@ def test_validate_accepts_a_legal_deck(client: TestClient) -> None:
 
 
 def test_validate_rejects_too_many_copies_naming_the_card(client: TestClient) -> None:
-    response = client.post("/api/ui/decks/validate", json={"text": TOO_MANY_COPIES})
+    response = client.post("/api/decks/validate", json={"text": TOO_MANY_COPIES})
     assert response.status_code == 200
     body = response.json()
     assert body["valid"] is False
@@ -70,7 +94,7 @@ def test_validate_rejects_too_many_copies_naming_the_card(client: TestClient) ->
 
 
 def test_validate_rejects_too_few_cards(client: TestClient) -> None:
-    response = client.post("/api/ui/decks/validate", json={"text": TOO_FEW_CARDS})
+    response = client.post("/api/decks/validate", json={"text": TOO_FEW_CARDS})
     assert response.status_code == 200
     body = response.json()
     assert body["valid"] is False
@@ -79,12 +103,27 @@ def test_validate_rejects_too_few_cards(client: TestClient) -> None:
 
 def test_validate_rejects_garbage_syntax_quoting_the_line(client: TestClient) -> None:
     response = client.post(
-        "/api/ui/decks/validate", json={"text": "4 Lightning Bolt\nnot a real line"}
+        "/api/decks/validate", json={"text": "4 Lightning Bolt\nnot a real line"}
     )
     assert response.status_code == 200
     body = response.json()
     assert body["valid"] is False
     assert "not a real line" in body["errors"][0]["message"]
+
+
+def test_the_in_process_api_client_matches_the_route(client: TestClient) -> None:
+    """The lobby-side seam `start_game_from_decklists` now calls
+    (`api_client.InProcessApiClient`) must answer exactly what `POST
+    /api/decks/validate` answers - it is the same function underneath, called
+    directly instead of over HTTP."""
+    api_client = InProcessApiClient()
+    direct = api_client.validate_decklist(LEGAL_DECK)
+    routed = client.post("/api/decks/validate", json={"text": LEGAL_DECK}).json()
+    assert direct == routed
+
+    direct_bad = api_client.validate_decklist(TOO_FEW_CARDS)
+    assert direct_bad["valid"] is False
+    assert any("at least 60" in e["message"] for e in direct_bad["errors"])
 
 
 def test_start_game_boots_a_real_game(client: TestClient) -> None:

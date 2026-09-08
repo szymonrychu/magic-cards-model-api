@@ -4,7 +4,7 @@ module under Node" approach every other `test_ui_*.py` file uses.
 
 `mountLobby` had no tests of its own before this whole-branch review. The one
 covered here is its most basic promise: `loadBundledDecks` fires a
-`GET /api/ui/decks` and appends one `<option>` per name it gets back to
+`GET /api/decks` and appends one `<option>` per name it gets back to
 *both* seat pickers (`#you-bundled` and `#ai-bundled`) - the two-select
 fan-out is the part worth pinning, since a one-select test would not catch a
 regression that only wired one of them.
@@ -198,7 +198,7 @@ def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
         })()
         """,
     )
-    assert result["fetchCalls"] == ["/api/ui/decks"]
+    assert result["fetchCalls"] == ["/api/decks"]
     expected = [
         {"value": "Modern Burn", "text": "Modern Burn"},
         {"value": "Modern Affinity", "text": "Modern Affinity"},
@@ -237,7 +237,7 @@ def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
           globalThis.fetch = async (path, opts) => {
             const method = (opts && opts.method) || "GET";
             fetchCalls.push(`${method} ${path}`);
-            if (path.startsWith("/api/ui/decks")) {
+            if (path.startsWith("/api/decks")) {
               return { ok: true, status: 200, json: async () => ({ decks: [] }) };
             }
             if (method === "DELETE") {
@@ -305,7 +305,7 @@ def test_lobby_end_keeps_the_row_when_the_server_refuses_the_delete() -> None:
           globalThis.fetch = async (path, opts) => {
             const method = (opts && opts.method) || "GET";
             fetchCalls.push(`${method} ${path}`);
-            if (path.startsWith("/api/ui/decks")) {
+            if (path.startsWith("/api/decks")) {
               return { ok: true, status: 200, json: async () => ({ decks: [] }) };
             }
             if (method === "DELETE") {

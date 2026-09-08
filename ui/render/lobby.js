@@ -53,7 +53,7 @@ function escapeHtml(s) {
 }
 
 async function loadBundledDecks(root) {
-  const { decks } = await api("GET", "/api/ui/decks");
+  const { decks } = await api("GET", "/api/decks");
   for (const selId of ["#you-bundled", "#ai-bundled"]) {
     const sel = $(root, selId);
     if (!sel) continue;
@@ -71,7 +71,7 @@ function wireDeckPicker(root, prefix) {
   if (bundled) {
     bundled.addEventListener("change", async (e) => {
       if (!e.target.value) return;
-      const { text } = await api("GET", `/api/ui/decks/${encodeURIComponent(e.target.value)}`);
+      const { text } = await api("GET", `/api/decks/${encodeURIComponent(e.target.value)}`);
       $(root, `#${prefix}-text`).value = text;
     });
   }
@@ -100,7 +100,7 @@ async function validateAndReport(root, prefix) {
     return null;
   }
   try {
-    const result = await api("POST", "/api/ui/decks/validate", { text });
+    const result = await api("POST", "/api/decks/validate", { text });
     renderValidation(out, result);
     return result;
   } catch (err) {

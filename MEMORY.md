@@ -465,3 +465,32 @@ whoever works on the repo itself.
   `test_ai_seat_settings.py` forge an arbitrary `Host` header on both routes
   and assert the dispatched payload still carries the configured service URL
   - a same-origin test would not have caught the original bug at all.
+- **2026-09-08 - 2b T5: deck validation's new home is `/api/decks*`, not
+  `/api/ui/decks*`, and that URL choice is load-bearing, not cosmetic.**
+  Moving `_resolve_all`/`validate_decklist_text` off the lobby's `/api/ui`
+  namespace and onto plain `/api` (a new `api_decks.py`) puts it in the same
+  URL space `app.py`'s engine-facing routes already use - which is exactly
+  where the eventual `magic-cards-api` component's surface lives after the
+  cut, while `/api/ui/*` stays `magic-cards-lobby`'s. Getting the prefix
+  right now, while both live in one process, means no route has to move
+  again at the cut. The browser's own calls (`ui/render/lobby.js`) had to
+  follow immediately - `/api/ui/decks` 404s once the router moves, and a
+  POST to a now-unclaimed path under the static mount at `/` answers 405,
+  not 404, because that mount only serves GET/HEAD (`test_ui_routes.py`'s
+  own subject) - a wrinkle a naive "old path is gone" test would get wrong
+  by asserting 404 for every method.
+
+- **2026-09-08 - 2b T5: `api_client.ApiClient`'s in-process implementation
+  is a bare function call, not an httpx round trip through `TestClient`.**
+  The precedent elsewhere in this repo (`seatkit.Seat`, and the
+  `monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))`
+  pattern the 2b plan's own risk-1 note calls out) always goes through
+  `httpx.Client`, real or monkeypatched, because those callers are meant to
+  run either in-process or against a deployed service unchanged.
+  `InProcessApiClient` deliberately does not: it calls
+  `api_decks.validate_decklist_text` directly. Pre-cut there is no separate
+  api process to call anyway, so a fake HTTP hop through `TestClient` would
+  buy nothing; the honest shape is "this function, called directly," with
+  an `HttpApiClient` (not built by this task) taking over post-cut. The
+  `ApiClient` protocol is what makes that swap cost one constructor call at
+  the call site and nothing else.

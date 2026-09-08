@@ -297,7 +297,7 @@ Sideboard
 
 #: This repo's own bundled decklists (`decks/*.txt`, real Scryfall-backed
 #: lists the lobby offers in its deck picker), three parents up from this
-#: test file - the same `DECKS_DIR` `decks_api.py` reads.
+#: test file - the same `DECKS_DIR` `api_decks.py` reads.
 BUNDLED_DECKS_DIR = Path(__file__).resolve().parents[2] / "decks"
 
 

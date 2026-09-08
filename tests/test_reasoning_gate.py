@@ -73,7 +73,7 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "an operator's call over a game they created, made by no seat, so "
         "there is no agent seat whose reasoning could be required."
     ),
-    ("POST", "/api/ui/decks/validate"): "reads a decklist and answers; mutates nothing.",
+    ("POST", "/api/decks/validate"): "reads a decklist and answers; mutates nothing.",
     ("POST", "/api/ui/games"): "the lobby boots a game. Same reason as `POST /api/games`.",
     ("DELETE", "/api/ui/games/{game_id}"): (
         "the lobby ends a game. Same reason as `DELETE /api/games/{game_id}`."
