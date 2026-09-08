@@ -369,10 +369,64 @@ def test_reconcile_deletes_jobs_of_dead_games_and_flags_missing_jobs() -> None:
         uid="u2", game_id="g2", player="bot", agent=AgentSettings(model="sonnet", effort="high")
     )
     batch.jobs.pop(job_name("g2", "u2"))  # vanished behind our back
-    report = seats.reconcile(live_game_ids={"g2"})
+    report = seats.reconcile(live_game_ids=lambda: {"g2"})
     assert batch.deleted == [job_name("g1", "u1")]
     assert report == {"deleted": [job_name("g1", "u1")], "missing": ["u2"]}
     assert seats.status("u2")["state"] == "error" and "missing" in seats.status("u2")["reason"]
+
+
+# ---- reconcile: a failed live-set query is not the same as an empty one ----
+#
+# `reconcile` now performs the live-game query itself, via the callable it is
+# handed, rather than trusting a pre-computed set built by the caller. That is
+# what makes the guard below a property of `reconcile` itself, provable with a
+# fake repository query, rather than something that only holds by accident of
+# every current caller happening to wrap the query in its own try/except. A
+# database blip that raises must never be read as "zero games are live" - the
+# one distinction this whole task exists to enforce, because collapsing it
+# deletes every seat Job in the namespace in a single pass.
+
+
+def test_reconcile_refuses_to_delete_anything_if_the_live_set_query_failed() -> None:
+    seats, batch, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    seats.start(
+        uid="u2", game_id="g2", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+
+    def failing_query() -> set[str]:
+        raise RuntimeError("postgres unreachable")
+
+    report = seats.reconcile(live_game_ids=failing_query)
+
+    assert batch.deleted == []
+    assert report == {"deleted": [], "missing": []}
+    assert set(batch.jobs) == {job_name("g1", "u1"), job_name("g2", "u2")}
+    # Neither seat was touched by a query it never got an answer from.
+    assert seats.status("u1")["state"] != "error"
+    assert seats.status("u2")["state"] != "error"
+
+
+def test_reconcile_deletes_every_job_when_the_query_genuinely_returns_empty() -> None:
+    # The contrast case: a query that *succeeds* and genuinely reports no
+    # live games is not a failure, and reconcile must still act on it -
+    # otherwise the guard above could be satisfied by a `reconcile` that
+    # simply never deletes anything, which is not the behaviour being tested.
+    seats, batch, _ = make()
+    seats.start(
+        uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+    seats.start(
+        uid="u2", game_id="g2", player="bot", agent=AgentSettings(model="sonnet", effort="high")
+    )
+
+    report = seats.reconcile(live_game_ids=lambda: set())
+
+    assert set(batch.deleted) == {job_name("g1", "u1"), job_name("g2", "u2")}
+    assert batch.jobs == {}
+    assert set(report["deleted"]) == {job_name("g1", "u1"), job_name("g2", "u2")}
 
 
 # ---- reconcile: a just-created seat must never be pinned at `error` --------
@@ -391,7 +445,7 @@ def test_reconcile_does_not_flag_a_seat_still_mid_create() -> None:
         uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
     )
     batch.jobs.pop(job_name("g1", "u1"))  # a reconcile pass landing before create returned
-    report = seats.reconcile(live_game_ids={"g1"})
+    report = seats.reconcile(live_game_ids=lambda: {"g1"})
     assert report == {"deleted": [], "missing": []}
     assert seats.status("u1")["state"] != "error"
 
@@ -402,11 +456,11 @@ def test_reconcile_clears_a_stale_missing_verdict_once_the_job_reappears() -> No
         uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet", effort="high")
     )
     job = batch.jobs.pop(job_name("g1", "u1"))
-    first = seats.reconcile(live_game_ids={"g1"})
+    first = seats.reconcile(live_game_ids=lambda: {"g1"})
     assert first["missing"] == ["u1"]
     assert seats.status("u1")["state"] == "error"
     batch.jobs[job_name("g1", "u1")] = job  # the Job is seen again
-    second = seats.reconcile(live_game_ids={"g1"})
+    second = seats.reconcile(live_game_ids=lambda: {"g1"})
     assert second["missing"] == []
     assert seats.status("u1")["state"] != "error"
 
@@ -418,7 +472,7 @@ def test_reconcile_marks_a_ttl_reaped_completed_job_gone_not_error() -> None:
     )
     assert seats.status("u1")["state"] == "gone"  # observed once, so `last_pod_phase` is recorded
     batch.jobs.pop(job_name("g1", "u1"))  # ttlSecondsAfterFinished reaped it
-    report = seats.reconcile(live_game_ids={"g1"})
+    report = seats.reconcile(live_game_ids=lambda: {"g1"})
     assert report["missing"] == []
     assert seats.status("u1")["state"] == "gone"
 
