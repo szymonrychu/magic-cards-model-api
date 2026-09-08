@@ -378,31 +378,33 @@ combination in play.
 `agent`, `driver`, the `guides` initContainer, and the `guides`, `memory`,
 `mcp-base`, `driver-workspace` volumes are all gone from `50-deployment.yaml`.
 They still exist - just per-seat, inside the Job `k8s_seats.build_job`
-constructs, not baked into this Deployment's Pod template. The API Deployment
-keeps exactly the `game` container and the `scryfall-cache` PVC, plus a new
-`serviceAccountName: mtg-api` and the downward-API env described below.
+renders from `deploy/seat-job.yaml`, not baked into this Deployment's Pod
+template. The API Deployment keeps exactly the `game` container and the
+`scryfall-cache` PVC, plus a new `serviceAccountName: mtg-api` and the env
+described below.
 
 ### `AI_SEAT_MODE=kubernetes`, and the env that goes with it
 
 The `game` container's env grew: `AI_SEAT_MODE=kubernetes` (in place of the
 old `wrapper` plus loopback `DRIVER_URL`, which no longer applies - there is
 no longer one sidecar driver to loop back to), `AGENT_NAMESPACE`,
-`AGENT_IMAGE`, `API_IMAGE`, `API_SERVICE_URL`, `SPELLSLINGER_MCP_URL`,
-`MAX_LIVE_GAMES`, and `POD_NAME`/`POD_UID`/`POD_NAMESPACE` from the downward
-API. The last three let `k8s_seats.build_job` set each Job's
-`ownerReferences` to this Pod - but only when `POD_NAMESPACE` equals
-`AGENT_NAMESPACE` (both `mtg-engine` here), because a cross-namespace
-`ownerReferences` entry makes the garbage collector delete the Job within
-seconds of creation instead of waiting for it to finish.
+`AGENT_IMAGE`, `API_IMAGE`, `API_SERVICE_URL`, `SPELLSLINGER_MCP_URL`, and
+`MAX_LIVE_GAMES`. There is deliberately no downward-API `POD_NAME`/`POD_UID`/
+`POD_NAMESPACE` any more (phase 2b T9/T10): seat Jobs carry no
+`ownerReferences` at all now, because with durable games an API restart must
+not garbage-collect the seat Jobs of games that survived it -
+`activeDeadlineSeconds`/`ttlSecondsAfterFinished` on each Job are the whole
+backstop.
 
 ### Per-seat MCP config, not a ConfigMap
 
 The old `20-configmap-mcp.yaml` supplied one `mcp.base.json`, mounted once,
 shared by whichever agent happened to be running in the one Pod. There is no
-longer one agent to share it with: each seat Job needs a `--game`-scoped `mtg`
-MCP server, one per concurrent game. `k8s_seats.build_job` bakes that JSON
-straight into the Job spec (`mcp_config`, written by the `mcp-config`
-initContainer to an emptyDir) instead - no ConfigMap, no shared object at all.
+longer one agent to share it with: each seat Job needs its own `mtg` MCP
+server entry. `deploy/seat-job.yaml`'s `mcp-config` initContainer writes a
+static two-entry `mcp.json` to an emptyDir (`mtg` as a stateless HTTP entry,
+its URL the one substituted `MCP_URL` env - phase 2b M2) - no ConfigMap, no
+shared object, and no more per-game `mcp.py --game` subprocess command.
 
 ### RBAC and a NetworkPolicy are new, because the API now creates Pods
 

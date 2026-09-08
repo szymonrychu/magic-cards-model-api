@@ -14,13 +14,14 @@ dependencies = [
     "sqlalchemy>=2.0,<2.1",
     "psycopg[binary]>=3.1,<4",
     "alembic>=1.13,<2",
+    "pyyaml>=6",
 ]
 
 [tool.uv.sources]
 magic-cards-model = { path = "../magic-cards-model", editable = true }
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.8", "pyyaml>=6"]
+dev = ["pytest>=8.3", "ruff>=0.8"]
 
 [build-system]
 requires = ["hatchling"]

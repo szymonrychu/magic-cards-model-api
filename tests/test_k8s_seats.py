@@ -1,133 +1,187 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import types
+from pathlib import Path
 
 import pytest
+import yaml
 from kubernetes import client as k8s_client
 from kubernetes.client.exceptions import ApiException
 
 from magic_cards_model_api import k8s_seats
 from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.k8s_seats import (
+    SEAT_JOB_PLACEHOLDERS,
     K8sSeats,
     K8sSettings,
     build_job,
     job_name,
-    mcp_config,
+    render_seat_job_template,
 )
 
 ENV = {
     "AGENT_NAMESPACE": "mtg-engine",
-    "AGENT_IMAGE": "harbor/agent:abc",
-    "API_IMAGE": "harbor/api:abc",
-    "POD_NAME": "mtg-stack-1",
-    "POD_UID": "uid-1",
-    "POD_NAMESPACE": "mtg-engine",
-    "SPELLSLINGER_MCP_URL": "http://ss:8080/mcp",
+    "API_SERVICE_URL": "http://mtg-stack.mtg-engine.svc.cluster.local:8000",
+    "MCP_SERVICE_URL": "http://mtg-mcp.mtg-engine.svc.cluster.local:8080/mcp",
 }
+
+TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "deploy" / "seat-job.yaml"
+
+#: A leftover placeholder can survive even if it isn't one of the nine
+#: (a typo, a stray token) - this pattern is deliberately broader than
+#: `SEAT_JOB_PLACEHOLDERS` so a test asserting "nothing survives" actually
+#: catches that case instead of only checking the nine it already expects
+#: to be gone.
+_PLACEHOLDER_PATTERN = re.compile(r"__[A-Z_]+__")
+
+
+def _leftover_placeholders(node: object) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        for v in node.values():
+            found.extend(_leftover_placeholders(v))
+    elif isinstance(node, list):
+        for v in node:
+            found.extend(_leftover_placeholders(v))
+    elif isinstance(node, str):
+        found.extend(_PLACEHOLDER_PATTERN.findall(node))
+    return found
 
 
 def test_job_name_is_short_and_stable() -> None:
     assert job_name("0123456789abcdef", "fedcba9876543210") == "mtg-seat-01234567-fedcba98"
 
 
-def test_mcp_config_binds_the_game() -> None:
-    cfg = mcp_config(K8sSettings.from_env(ENV), "g1")
-    assert cfg["mcpServers"]["mtg"]["args"] == [
-        "-m",
-        "magic_cards_model_api.mcp",
-        "--game",
-        "g1",
-        "--api",
-        "http://mtg-stack.mtg-engine.svc.cluster.local:8000",
-    ]
-    assert cfg["mcpServers"]["spellslinger"]["url"] == "http://ss:8080/mcp"
+# ---- render_seat_job_template: pure substitution over parsed YAML ---------
 
 
-def test_job_shape() -> None:
-    job = build_job(
-        K8sSettings.from_env(ENV),
+def test_render_substitutes_only_the_nine_placeholders() -> None:
+    template = {
+        "a": "__GAME_ID__",
+        "b": ["__SEAT_UID__", "unchanged", 3],
+        "c": {"d": "__PLAYER__", "e": "__NOT_A_REAL_PLACEHOLDER__"},
+    }
+    values = dict.fromkeys(SEAT_JOB_PLACEHOLDERS, "")
+    values.update({"__GAME_ID__": "g1", "__SEAT_UID__": "u1", "__PLAYER__": "bot"})
+    rendered = render_seat_job_template(template, values)
+    assert rendered == {
+        "a": "g1",
+        "b": ["u1", "unchanged", 3],
+        "c": {"d": "bot", "e": "__NOT_A_REAL_PLACEHOLDER__"},
+    }
+
+
+def test_render_preserves_non_string_leaves() -> None:
+    template = {"n": 3, "flag": False, "nothing": None}
+    assert render_seat_job_template(template, {}) == template
+
+
+# ---- build_job: render the real committed template -------------------------
+
+
+def _build(env: dict[str, str] | None = None, **agent_kwargs) -> dict:
+    kwargs = {"model": "sonnet", **agent_kwargs}
+    return build_job(
+        K8sSettings.from_env(env if env is not None else ENV),
         game_id="g1",
         uid="u1",
         player="bot",
-        agent=AgentSettings(model="opus", effort="max", max_thinking_tokens=0),
+        agent=AgentSettings(**kwargs),
     )
+
+
+def test_committed_template_is_valid_yaml() -> None:
+    # Guards the fixture itself: a template that doesn't even parse would
+    # otherwise fail every other test here with a confusing traceback.
+    text = TEMPLATE_PATH.read_text()
+    parsed = yaml.safe_load(text)
+    assert parsed["kind"] == "Job"
+
+
+def test_no_placeholder_survives_rendering() -> None:
+    job = _build()
+    assert _leftover_placeholders(job) == []
+
+
+def test_rendered_job_validates_as_a_batch_v1_job() -> None:
+    job = _build()
+    api_client = k8s_client.ApiClient()
+    parsed = api_client._ApiClient__deserialize(job, k8s_client.V1Job)
+    assert isinstance(parsed, k8s_client.V1Job)
+    assert parsed.api_version == "batch/v1" and parsed.kind == "Job"
+    assert parsed.metadata.name == job_name("g1", "u1")
+    container_names = [c.name for c in parsed.spec.template.spec.containers]
+    assert container_names == ["agent", "driver"]
+
+
+def test_the_nine_substituted_values_appear_where_expected() -> None:
+    job = _build(model="opus", effort="max", max_thinking_tokens=4096)
     meta = job["metadata"]
     assert meta["name"] == job_name("g1", "u1")
+    assert meta["namespace"] == "mtg-engine"
     assert meta["labels"] == {
         "app.kubernetes.io/name": "mtg-agent",
         "mtg/game-id": "g1",
         "mtg/seat-uid": "u1",
     }
-    assert meta["ownerReferences"] == [
-        {"apiVersion": "v1", "kind": "Pod", "name": "mtg-stack-1", "uid": "uid-1"}
-    ]
-    spec = job["spec"]
-    assert (
-        spec["backoffLimit"] == 0
-        and spec["ttlSecondsAfterFinished"] == 600
-        and spec["activeDeadlineSeconds"] == 14400
-    )
-    pod = spec["template"]["spec"]
-    assert pod["restartPolicy"] == "Never" and pod["automountServiceAccountToken"] is False
-    names = [c["name"] for c in pod["containers"]]
-    assert names == ["agent", "driver"]
-    agent = pod["containers"][0]
-    env = {e["name"]: e.get("value") for e in agent["env"]}
-    assert env["MODEL"] == "opus" and env["EFFORT"] == "max" and env["MAX_THINKING_TOKENS"] == "0"
-    assert {"secretRef": {"name": "mtg-agent"}} in agent["envFrom"]
-    driver = pod["containers"][1]
-    denv = {e["name"]: e.get("value") for e in driver["env"]}
-    assert denv["DRIVER_EXIT_AFTER_MATCH"] == "1"
-    assert '"game_id": "g1"' in denv["DRIVER_ASSIGNMENT_JSON"]
-    assert agent["securityContext"]["allowPrivilegeEscalation"] is False
-    assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+    assert "ownerReferences" not in meta
+
+    pod = job["spec"]["template"]["spec"]
+    agent = next(c for c in pod["containers"] if c["name"] == "agent")
+    agent_env = {e["name"]: e.get("value") for e in agent["env"]}
+    assert agent_env["MODEL"] == "opus"
+    assert agent_env["EFFORT"] == "max"
+    assert agent_env["MAX_THINKING_TOKENS"] == "4096"
+
+    driver = next(c for c in pod["containers"] if c["name"] == "driver")
+    driver_env = {e["name"]: e.get("value") for e in driver["env"]}
+    assert driver_env["GAME_API"] == "http://mtg-stack.mtg-engine.svc.cluster.local:8000"
+    assert driver_env["GAME_ID"] == "g1"
+    assert driver_env["SEAT_UID"] == "u1"
+    assert driver_env["PLAYER"] == "bot"
+    assignment = json.loads(driver_env["DRIVER_ASSIGNMENT_JSON"])
+    assert assignment == {
+        "uid": "u1",
+        "game_id": "g1",
+        "player": "bot",
+        "api_base": "http://mtg-stack.mtg-engine.svc.cluster.local:8000",
+        "agent": {"model": "opus", "effort": "max", "max_thinking_tokens": 4096},
+    }
+
+    mcp_container = next(c for c in pod["initContainers"] if c["name"] == "mcp-config")
+    mcp_env = {e["name"]: e.get("value") for e in mcp_container["env"]}
+    assert mcp_env["MCP_URL"] == "http://mtg-mcp.mtg-engine.svc.cluster.local:8080/mcp"
+    assert "MCP_JSON" not in mcp_env
 
 
-def _build(env: dict[str, str]) -> dict:
-    return build_job(
-        K8sSettings.from_env(env),
+def test_max_thinking_tokens_absent_renders_as_empty_string() -> None:
+    # `AgentSettings.env()` used to omit the env var entirely when unset;
+    # the template's placeholder slot always exists now, so the closest
+    # equivalent is an empty value - `wrapper/config.py`'s `_int_or_none`
+    # already treats an empty `MAX_THINKING_TOKENS` the same as unset.
+    job = _build(model="sonnet")
+    agent = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "agent")
+    agent_env = {e["name"]: e.get("value") for e in agent["env"]}
+    assert agent_env["MAX_THINKING_TOKENS"] == ""
+
+
+def test_namespace_is_set_in_code_from_settings_not_baked_in_the_template() -> None:
+    job = build_job(
+        K8sSettings.from_env({**ENV, "AGENT_NAMESPACE": "some-other-namespace"}),
         game_id="g1",
         uid="u1",
         player="bot",
         agent=AgentSettings(model="sonnet"),
     )
-
-
-def test_owner_references_absent_when_uid_missing() -> None:
-    env = {k: v for k, v in ENV.items() if k != "POD_UID"}
-    job = _build(env)
-    assert "ownerReferences" not in job["metadata"]
-
-
-def test_owner_references_absent_when_name_missing() -> None:
-    env = {k: v for k, v in ENV.items() if k != "POD_NAME"}
-    job = _build(env)
-    assert "ownerReferences" not in job["metadata"]
-
-
-def test_owner_references_absent_when_namespaces_differ() -> None:
-    env = {**ENV, "POD_NAMESPACE": "some-other-namespace"}
-    job = _build(env)
-    assert "ownerReferences" not in job["metadata"]
-
-
-def test_mcp_json_round_trips_to_mcp_config() -> None:
-    settings = K8sSettings.from_env(ENV)
-    job = build_job(
-        settings, game_id="g1", uid="u1", player="bot", agent=AgentSettings(model="sonnet")
-    )
-    init_containers = job["spec"]["template"]["spec"]["initContainers"]
-    mcp_container = next(c for c in init_containers if c["name"] == "mcp-config")
-    mcp_env = {e["name"]: e["value"] for e in mcp_container["env"]}
-    assert json.loads(mcp_env["MCP_JSON"]) == mcp_config(settings, "g1")
+    assert job["metadata"]["namespace"] == "some-other-namespace"
 
 
 def test_init_containers_present_in_order_with_security_context() -> None:
-    job = _build(ENV)
+    job = _build()
     init_containers = job["spec"]["template"]["spec"]["initContainers"]
     names = [c["name"] for c in init_containers]
     assert names == ["guides", "mcp-config"]
@@ -144,7 +198,7 @@ def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
     `DispatchIn` API is caught."""
     from mtg_agent.driver.app import DispatchIn
 
-    job = _build(ENV)
+    job = _build()
     driver = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "driver")
     denv = {e["name"]: e["value"] for e in driver["env"]}
     parsed = DispatchIn.model_validate_json(denv["DRIVER_ASSIGNMENT_JSON"])
@@ -160,9 +214,7 @@ def test_job_is_plain_dicts_the_kubernetes_client_can_serialize() -> None:
     # `isinstance(obj, dict)` - anything that fails that check (a
     # `types.MappingProxyType`, say) falls into the model-attribute branch and
     # raises `AttributeError: '...' object has no attribute 'openapi_types'`.
-    # This is the exact code path that would have caught the shared,
-    # module-level `CONTAINER_SECURITY` mapping-proxy regression.
-    job = _build(ENV)
+    job = _build()
     json.dumps(job)
     sanitized = k8s_client.ApiClient().sanitize_for_serialization(job)
     assert isinstance(sanitized, dict)

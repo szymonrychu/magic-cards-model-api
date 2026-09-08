@@ -16,17 +16,16 @@
 #
 # RECREATE, NOT ROLLING: the Deployment restart wipes every in-memory game
 # (games live in memory, see the top-level README), so there is nothing a
-# rolling update would preserve, and `ownerReferences` on every Job this Pod
-# created point at this Pod's uid - see below for what that buys.
+# rolling update would preserve.
 #
-# `POD_NAME`/`POD_UID`/`POD_NAMESPACE` come from the downward API.
-# `k8s_seats.build_job` uses them to set each Job's `ownerReferences` to this
-# Pod, but only when `POD_NAMESPACE` equals `AGENT_NAMESPACE` - a
-# cross-namespace ownerReferences entry makes the garbage collector delete the
-# Job within seconds of creation, so a mismatch instead logs a warning and
-# omits it. Both are set to `mtg-engine` here, so ownership is set: an API
-# restart, which loses every in-memory game anyway, garbage-collects its Jobs
-# instead of leaving them running for nobody.
+# NO `ownerReferences` ON THE SEAT JOBS (phase 2b T9/T10, deliberately
+# changed from the earlier design this comment used to describe): with
+# durable games, an API restart must not garbage-collect the seat Jobs of
+# games that survived it, so there is no owner-Pod GC to wire up any more -
+# `activeDeadlineSeconds`/`ttlSecondsAfterFinished` on each Job
+# (`deploy/seat-job.yaml`) are the whole backstop. The downward-API
+# `POD_NAME`/`POD_UID`/`POD_NAMESPACE` env this Pod used to carry only for
+# that purpose is gone with it.
 #
 # IMAGES come from Harbor, and `__TAG__` is a LITERAL PLACEHOLDER, not a tag
 # that exists. `mise run k8s:deploy` in this repo substitutes it with the
@@ -131,6 +130,7 @@ spec:
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES
               value: "4"
+<<<<<<< HEAD
             # Downward API: `k8s_seats.build_job` reads these to set
             # ownerReferences on every Job it creates, pointing back at this
             # Pod (see the header comment).
@@ -151,6 +151,12 @@ spec:
             # routes, and of the healthcheck, are kept out of uvicorn's access
             # log; POSTs and any non-2xx always print. Set to "0" to get the
             # full access log back.
+=======
+            # The browser re-reads the game and the AI seat's status every ~1.2s.
+            # Successful reads of those two routes, and of the healthcheck, are
+            # kept out of uvicorn's access log; POSTs and any non-2xx always print.
+            # Set to "0" to get the full access log back.
+>>>>>>> 2b-t9-seat-job-template
             - name: ACCESS_LOG_QUIET
               value: "1"
           volumeMounts:
