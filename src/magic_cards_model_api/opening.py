@@ -213,6 +213,7 @@ def declare_mulligan(
     *,
     automatic: bool = False,
     reason: str | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     """One seat's CR 103.5 declaration - "first, the starting player declares
     whether they will take a mulligan; then each other player in turn order
@@ -270,12 +271,13 @@ def declare_mulligan(
         reason=reason,
         bottom_chosen=chose_bottom,
         step=step.value,
+        reasoning=reasoning,
     )
     return {"declared": take, "step": step.value, "pregame": pregame_view(game)}
 
 
 def take_opening_hand_action(
-    game_id: str, game: Game, username: str, card_id: UUID
+    game_id: str, game: Game, username: str, card_id: UUID, *, reasoning: str | None = None
 ) -> dict[str, Any]:
     """One CR 103.6 action with a card in this seat's own opening hand."""
     card = game.find_by_id(card_id)
@@ -293,7 +295,9 @@ def take_opening_hand_action(
         _overruled(game_id, username, "opening_hand", f"this CR 103.6 action with {name}", exc)
         raise
     assert game.turn is not None
-    audit.record(game_id, "opening_hand_action", player=username, card=name, live=True)
+    audit.record(
+        game_id, "opening_hand_action", player=username, card=name, live=True, reasoning=reasoning
+    )
     return {"taken": name, "step": game.turn.step.value, "pregame": pregame_view(game)}
 
 
@@ -304,6 +308,7 @@ def finish_opening_hand_actions(
     *,
     automatic: bool = False,
     reason: str | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     """This seat is done taking CR 103.6 actions; the next seat is up, and
     when the last one finishes CR 103.8's first turn begins.
@@ -334,6 +339,7 @@ def finish_opening_hand_actions(
         live=not automatic,
         automatic=automatic,
         reason=reason,
+        reasoning=reasoning,
     )
     result: dict[str, Any] = {"step": step.value, "pregame": pregame_view(game)}
     crossed = engine_api.settle_priorityless_steps(game)

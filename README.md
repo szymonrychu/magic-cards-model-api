@@ -356,6 +356,30 @@ All under `/api`. Interactive docs at `/docs`.
 | `GET /api/games/{id}` | full state (below) |
 | `DELETE /api/games/{id}` | drop the session |
 
+`POST /api/games`'s `players` entries also take `is_agent?` (default
+`false`) - a seat's kind, recorded once at creation. It is what
+`records.require_reasoning` reads to decide whether a mutating action from
+that seat needs `reasoning` - see "The heart: legality questions" below.
+
+**Which store a deployment runs on is chosen from the environment**, once,
+at import (`store.py`'s `select_store`). A configured database URL -
+`DATABASE_URL`, or all of `POSTGRES_HOST`/`POSTGRES_USER`/
+`POSTGRES_PASSWORD`/`POSTGRES_DB` (`POSTGRES_PORT` defaults to 5432), the
+shape CloudNativePG hands a workload - selects `PostgresRepository`, and the
+schema must already be migrated (`mise run db:migrate`, one-shot, never from
+app startup). Nothing configured keeps `InMemoryRepository`, so a plain
+`mise run run` and the whole `mise run test` suite stay docker-free with no
+setup at all. A *partial* set of components counts as nothing configured
+rather than as an error.
+
+A postgres-backed deployment's mutating routes can answer `409` instead of
+`200`/`400`: another writer committed a newer version of the game first
+(`repository_postgres.py`'s optimistic-concurrency CAS). The body carries
+`{detail, game_id, current_state}` - the game exactly as it now stands,
+redacted for the caller's own `uid` the same way `GET /api/games/{id}` is -
+so the loser can re-read and recompute its attempt against what actually
+committed. There is no server-side retry.
+
 ### Cards
 
 | | |
@@ -373,7 +397,7 @@ All under `/api`. Interactive docs at `/docs`.
 | `PATCH /api/games/{id}/cards/{cid}` | `{face_up?, damage?, summoning_sick?, counters?: {"+1/+1": 2}}` |
 | `PATCH /api/games/{id}/players/{name}` | `{life?, counters?: {"poison": 4}}` |
 | `PUT /api/games/{id}/players/{name}/mana-pool` | `{add?: {"R": 2}, set?: {...}, empty?: true}` |
-| `PUT /api/games/{id}/step` | `{step: "declare_attackers"}`; forward walks the turn machine, backward rewinds it raw |
+| `PUT /api/games/{id}/step` | `{step: "declare_attackers", player?, reasoning?}`; forward walks the turn machine, backward rewinds it raw. Not board setup: it moves the turn marker and drives the suspend upkeep below, so an agent seat owes `reasoning` here like anywhere else |
 
 Zones: `library`, `hand`, `battlefield`, `graveyard`, `stack`, `exile`,
 `command`, `sideboard`. Shared zones (battlefield, stack, exile, command)
@@ -383,7 +407,33 @@ take the `player` as the controller. Counter kinds: `+1/+1`, `-1/-1`,
 ### The heart: legality questions
 
 Each returns `{allowed: bool, reason: str | null, ...}` and performs the
-action only when allowed and `dry_run` is not set.
+action only when allowed and `dry_run` is not set. Every action below (and
+`resolve-top`/`advance`/`decide`/`state-based-actions`/`PUT .../step`, and
+the three `pregame/` declarations) also takes an optional `reasoning`
+string - the seat's own stated reason for this action - **required** for a
+seat this game registered as an agent (`is_agent` at creation, or a
+decklist-booted seat's `ai: true`): omitting it there is refused with `422`,
+naming the missing field, before the engine ever sees the request. Optional
+and unenforced for a human seat. There is no exemption: every mutating route
+either requires it or is named, with its reason, in
+`tests/test_reasoning_gate.py`'s `EXEMPT_ROUTES`, and that test fails the
+suite if a new route or MCP tool forgets.
+
+Every mutating action writes exactly one row to this game's log, refusals
+included, carrying the engine's own outcome, this `reasoning`, and every
+action the acting seat could otherwise have taken at that exact moment
+(`legal-actions`'s own enumeration, captured before the action ran, in
+`legal_actions_before`, with the seat it was enumerated for in
+`legal_actions_for`). `GET /api/games/{id}/log?uid=&since=` reads that log
+back, oldest first.
+
+`legal_actions_before` is exactly as much hidden information as
+`legal-actions` itself is, and it is redacted on the same rule: only the
+seat named in `legal_actions_for` - the seat the *server* resolved, never a
+`player` field a caller filled in - and the admin key ever read it. A read
+with no `uid`, or an unrecognised one, sees none of it, which is the one
+place a `uid`-less log read is not the full debugger's eye: the rest of the
+entry (snapshots included) still comes back unredacted for it.
 
 | | |
 |---|---|
@@ -403,7 +453,7 @@ action only when allowed and `dry_run` is not set.
 | | |
 |---|---|
 | `POST /api/games/{id}/resolve-top` | resolves the top of the stack |
-| `POST /api/games/{id}/state-based-actions` | counter state-based actions, then the full check |
+| `POST /api/games/{id}/state-based-actions` | counter state-based actions, then the full check. Optional body `{player?, reasoning?}` - called with no body at all it is nobody's action and requires nothing |
 | `POST /api/games/{id}/advance` | one step, with turn-based actions; landing on `upkeep` also drives CR 702.62a's suspend upkeep trigger for every card the now-active player has suspended in exile, reported as `suspend_upkeep: [{card_id, card, time_counters, cast_permission_granted?}]` (`PUT .../step` does the same when it lands on `upkeep`) |
 | `POST /api/games/{id}/decide?uid=` | `{player, card_ids: [...]}` - answers this game's pending decision; refused if `uid` is not that decision's own player |
 

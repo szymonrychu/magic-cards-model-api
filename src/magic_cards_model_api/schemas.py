@@ -10,6 +10,14 @@ from pydantic import BaseModel, Field
 class NewPlayer(BaseModel):
     username: str = Field(min_length=1)
     life: int = 20
+    is_agent: bool = False
+    """T10: this seat's kind, recorded once at game creation - `POST
+    /api/games` registers every `True` username the same way
+    `decks_api.start_game_from_decklists` already registers a decklist's own
+    `ai` seats (`store.register_ai_players`), so `store.ai_players(game_id)`
+    is the single place either boot path's "is this an agent" fact lands.
+    `records.require_reasoning` reads it from there to decide whether a
+    mutating action needs `reasoning`."""
 
 
 class NewGame(BaseModel):
@@ -69,6 +77,14 @@ class StepUpdate(BaseModel):
     step: str
     player: str | None = None
     """Who is moving the marker, for the log's who-did-what line."""
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one. This route reads like board setup and is not
+    one: it moves the turn marker and drives the suspend upkeep the route
+    itself runs when it lands on `upkeep`, and every agent has it as an
+    MCP tool
+    (`mcp.set_step`). An agent moving the game's own turn marker with no
+    stated why is exactly what this gate exists to prevent."""
 
 
 class ActorRequest(BaseModel):
@@ -76,6 +92,9 @@ class ActorRequest(BaseModel):
     calling, so the audit log can attribute the action."""
 
     player: str | None = None
+    reasoning: str | None = None
+    """T10: this action's own reasoning - required for an agent seat
+    (`records.require_reasoning`), optional for a human one."""
 
 
 class ReportProblemRequest(BaseModel):
@@ -161,6 +180,9 @@ class CastRequest(BaseModel):
     cards pitched to Force of Negation, the Mountains sacrificed to Fireblast.
     `alternative_costs[i].requires` says how many are needed."""
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: this cast's own reasoning - required for an agent seat
+    (`records.require_reasoning`), optional for a human one."""
 
 
 class ConvokeChoice(BaseModel):
@@ -194,6 +216,9 @@ class CrewRequest(BaseModel):
     """The creatures tapped to pay for it (CR 702.122b: "a creature crews a
     Vehicle when it's tapped to pay the cost")."""
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class CycleRequest(BaseModel):
@@ -213,6 +238,9 @@ class CycleRequest(BaseModel):
     0; only a card with more than one line ending "cycling" needs another."""
     mana_sources: list[UUID | ManaSource] | None = None
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class SpecialActionRequest(BaseModel):
@@ -227,6 +255,9 @@ class SpecialActionRequest(BaseModel):
     """Card name, used when no card_id is given: first match in the player's hand."""
     mana_sources: list[UUID | ManaSource] | None = None
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class TargetRequest(BaseModel):
@@ -252,6 +283,9 @@ class ActivateRequest(BaseModel):
     that offers one - an "any color" source or a dual land. Ignored by any
     ability that does not need a choice."""
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class AttackPair(BaseModel):
@@ -270,6 +304,11 @@ class AttackRequest(BaseModel):
     `pairs` field instead - now both reach `decisions.declared_pairs_answer`
     with the same, undifferentiated empty list."""
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one - checked against the *deciding* player
+    (`_answer_declaration`'s own `engine_decision.player`), not any player
+    named on this request."""
 
 
 class PlayLandRequest(BaseModel):
@@ -277,10 +316,16 @@ class PlayLandRequest(BaseModel):
     card_id: UUID | None = None
     card: str | None = None
     dry_run: bool = False
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class PassPriorityRequest(BaseModel):
     player: str
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class ConcedeRequest(BaseModel):
@@ -290,6 +335,9 @@ class ConcedeRequest(BaseModel):
     ask permission for."""
 
     player: str
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class AdvanceRequest(BaseModel):
@@ -298,6 +346,9 @@ class AdvanceRequest(BaseModel):
     their controller, CR 723.5) rather than merely logging who asked."""
 
     player: str
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class BlockPair(BaseModel):
@@ -317,6 +368,11 @@ class DeclareBlockersRequest(BaseModel):
     stop for combat; a `min_length=1` here used to make that answer
     inexpressible through this endpoint, the same gap `AttackRequest.attackers`
     had."""
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one - checked against the *deciding* player
+    (`_answer_declaration`'s own `engine_decision.player`), not `player`
+    above."""
 
 
 class DeclaredPairRequest(BaseModel):
@@ -414,6 +470,9 @@ class DecideRequest(BaseModel):
     ("if any"). The one field both declaration kinds share, the same way
     `choice` serves both `choose_a_quality` and `choose_a_mode` - see
     `DeclaredPairRequest`."""
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class MulliganRequest(BaseModel):
@@ -422,6 +481,9 @@ class MulliganRequest(BaseModel):
 
     player: str
     take: bool
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
     bottom: list[UUID] | None = None
     """Which cards to put on the bottom of the library when keeping.
 
@@ -441,6 +503,9 @@ class OpeningHandActionRequest(BaseModel):
 
     player: str
     card_id: UUID
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one."""
 
 
 class PregameSettleRequest(BaseModel):

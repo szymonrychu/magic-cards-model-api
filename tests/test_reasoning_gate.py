@@ -1,0 +1,361 @@
+"""Nothing that changes the game may be done by an agent seat without
+saying why - and no future route or tool may quietly opt out of that.
+
+Two structural tests carry the weight here, and both are default-deny: a
+mutating HTTP route, or an MCP tool, is required to take `reasoning` and run
+`records.require_reasoning` unless it is named in an exemption list *with a
+written reason*. Adding a new one and forgetting the gate fails the suite;
+deciding it genuinely does not need one is a deliberate edit to a list
+somebody reviews.
+
+That shape exists because the gate was missed exactly once already:
+`set_step` mutates the turn marker and drives the suspend upkeep its own
+route runs, is exposed to every agent as an MCP tool, and shipped with no
+`reasoning` at all - one hand-written route audit away from never being noticed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+from typing import Any, get_args, get_type_hints
+
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+from starlette.routing import Mount
+
+from magic_cards_model_api import mcp
+from magic_cards_model_api.app import app
+from magic_cards_model_api.seatkit import Seats
+
+_MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+#: Two legal decklists, for the one test here that needs a lobby-booted game
+#: (an `ai: true` seat is only registrable through that boot path or
+#: `NewPlayer.is_agent`). Same shape `test_ui_e2e.py` uses.
+_DECK_A = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
+_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
+
+#: Mutating routes that deliberately take no `reasoning`, each with the
+#: reason it does not. Every entry is a claim somebody has to agree with in
+#: review - which is the point. A route absent from here and from the gate
+#: fails `test_every_mutating_route_gates_on_reasoning`.
+EXEMPT_ROUTES: dict[tuple[str, str], str] = {
+    ("POST", "/api/games"): (
+        "creates the game. No seat exists yet, so there is no agent seat to "
+        "hold to a reason - `is_agent` is what this call *records*."
+    ),
+    ("DELETE", "/api/games/{game_id}"): (
+        "ends the game, on the admin key or a seat uid. An operator action "
+        "over a whole game, not a move inside one; it takes no body at all."
+    ),
+    ("POST", "/api/games/{game_id}/cards"): "board setup: the harness deals a card.",
+    ("POST", "/api/games/{game_id}/cards/{card_id}/move"): "board setup.",
+    ("POST", "/api/games/{game_id}/cards/{card_id}/tap"): "board setup.",
+    ("PATCH", "/api/games/{game_id}/cards/{card_id}"): "board setup.",
+    ("PATCH", "/api/games/{game_id}/players/{username}"): "board setup.",
+    ("PUT", "/api/games/{game_id}/players/{username}/mana-pool"): "board setup.",
+    ("POST", "/api/games/{game_id}/actions/target"): (
+        "a legality probe (`engine_api.check_target`) that changes nothing - "
+        "the same category as a `dry_run`, which is also un-audited."
+    ),
+    ("POST", "/api/games/{game_id}/report"): (
+        "`ReportProblemRequest.text` *is* the reasoning: the seat's own account "
+        "of what it did, what the rules say, and what happened instead. A "
+        "second free-text 'why' beside it would be the same sentence twice."
+    ),
+    ("POST", "/api/games/{game_id}/pregame/settle"): (
+        "admin-key only, and it settles the pregame for *every* seat at once - "
+        "an operator's call over a game they created, made by no seat, so "
+        "there is no agent seat whose reasoning could be required."
+    ),
+    ("POST", "/api/ui/decks/validate"): "reads a decklist and answers; mutates nothing.",
+    ("POST", "/api/ui/games"): "the lobby boots a game. Same reason as `POST /api/games`.",
+    ("DELETE", "/api/ui/games/{game_id}"): (
+        "the lobby ends a game. Same reason as `DELETE /api/games/{game_id}`."
+    ),
+    ("POST", "/api/ui/games/{game_id}/ai-seat/start"): (
+        "the operator starts or stops an agent process. About a seat, not by one."
+    ),
+    ("POST", "/api/ui/games/{game_id}/ai-seat/stop"): (
+        "the operator starts or stops an agent process. About a seat, not by one."
+    ),
+}
+
+#: MCP tools that read and never mutate, each with the reason.
+EXEMPT_TOOLS: dict[str, str] = {
+    "wait_for_priority": "one poll for whether it is this seat's moment; reads only.",
+    "my_state": "the board as this seat may see it; reads only.",
+    "game_log": "this game's log, seat-filtered; reads only.",
+    "report_problem": ("`text` is the reasoning - see the matching note on `POST .../report`."),
+}
+
+#: Helpers a route may delegate its gate to rather than calling it inline.
+_GATE_DELEGATES = ("records.require_reasoning", "_answer_declaration")
+
+
+def _api_routes() -> list[APIRoute]:
+    """Every `APIRoute` reachable from the app, sub-routers included.
+
+    `app.include_router` leaves an opaque `_IncludedRouter` in `app.routes`
+    rather than flattening its children, so a naive one-level walk silently
+    misses every `/api/ui/...` route - and a test that silently checks
+    fewer things than it claims is worse than no test.
+    """
+    found: list[APIRoute] = []
+    seen: set[int] = set()
+
+    def walk(routes: Any) -> None:
+        for route in routes or []:
+            if id(route) in seen:
+                continue
+            seen.add(id(route))
+            if isinstance(route, APIRoute):
+                found.append(route)
+            # `_IncludedRouter` keeps the router it wrapped under
+            # `original_router`; a `Mount` (the static UI) holds no API
+            # routes worth walking into.
+            included = getattr(route, "original_router", None)
+            if included is not None:
+                walk(getattr(included, "routes", None))
+            elif not isinstance(route, Mount):
+                walk(getattr(route, "routes", None))
+
+    walk(app.routes)
+    return found
+
+
+def _body_model(endpoint: Any) -> type[BaseModel] | None:
+    """The pydantic request-body model this endpoint takes, if any -
+    unwrapping `Model | None` for the routes whose body is optional."""
+    hints = get_type_hints(endpoint)
+    for name, annotation in hints.items():
+        if name == "return":
+            continue
+        candidates = [annotation, *get_args(annotation)]
+        for candidate in candidates:
+            if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+                return candidate
+    return None
+
+
+def _body_source(endpoint: Any) -> str:
+    """This endpoint's source with its docstring removed.
+
+    Not cosmetic: `pregame_mulligan`'s docstring used to *say* "Not gated by
+    `records.require_reasoning`", and a plain substring search over the whole
+    source read that sentence as evidence the gate was there.
+    """
+    source = inspect.getsource(endpoint)
+    doc = inspect.getdoc(endpoint)
+    if doc:
+        for line in doc.splitlines():
+            source = source.replace(line, "")
+    return source
+
+
+def test_every_mutating_route_gates_on_reasoning() -> None:
+    """Default-deny over every mutating route the app serves."""
+    missing: list[str] = []
+    for route in _api_routes():
+        methods = (route.methods or set()) & _MUTATING_METHODS
+        if not methods:
+            continue
+        for method in sorted(methods):
+            key = (method, route.path)
+            if key in EXEMPT_ROUTES:
+                continue
+            model = _body_model(route.endpoint)
+            source = _body_source(route.endpoint)
+            if model is None or "reasoning" not in model.model_fields:
+                missing.append(f"{method} {route.path}: its request body has no `reasoning` field")
+            elif not any(delegate in source for delegate in _GATE_DELEGATES):
+                missing.append(
+                    f"{method} {route.path}: takes `reasoning` but never calls "
+                    "`records.require_reasoning`"
+                )
+    assert not missing, (
+        "every mutating route must require `reasoning` of an agent seat, or be "
+        "listed in EXEMPT_ROUTES with the reason it need not:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_every_mutating_mcp_tool_takes_reasoning() -> None:
+    """Default-deny over the MCP surface an agent actually drives. A tool
+    with no `reasoning` parameter cannot pass one on to the route, so the
+    route's own gate would refuse the agent outright - or, worse, the route
+    has no gate either and the action lands unexplained."""
+    server = mcp.build_server(Seats(api="http://testserver", game_id="unused"))
+    tools = asyncio.run(server.list_tools())
+    assert tools, "no tools registered - this test would prove nothing"
+    missing = [
+        tool.name
+        for tool in tools
+        if tool.name not in EXEMPT_TOOLS
+        and "reasoning" not in ((tool.input_schema or {}).get("properties") or {})
+    ]
+    assert not missing, (
+        "every mutating MCP tool must take `reasoning`, or be listed in "
+        f"EXEMPT_TOOLS with the reason it need not: {missing}"
+    )
+
+
+def test_the_exemption_lists_name_only_routes_and_tools_that_exist() -> None:
+    """An exemption for something that no longer exists is a stale claim
+    nobody notices - and it is exactly how a renamed route slips back
+    through the gate under its old name's cover."""
+    live_routes = {
+        (method, route.path)
+        for route in _api_routes()
+        for method in (route.methods or set()) & _MUTATING_METHODS
+    }
+    assert set(EXEMPT_ROUTES) <= live_routes, set(EXEMPT_ROUTES) - live_routes
+
+    server = mcp.build_server(Seats(api="http://testserver", game_id="unused"))
+    live_tools = {tool.name for tool in asyncio.run(server.list_tools())}
+    assert set(EXEMPT_TOOLS) <= live_tools, set(EXEMPT_TOOLS) - live_tools
+
+
+# ---------------------------------------------------------------------------
+# the four routes the audit found ungated, each proven at the wire
+# ---------------------------------------------------------------------------
+
+
+def _agent_game(client: TestClient) -> dict[str, Any]:
+    response = client.post(
+        "/api/games",
+        json={
+            "players": [
+                {"username": "bob", "is_agent": True},
+                {"username": "alice", "is_agent": False},
+            ],
+            "active_player": "bob",
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _missing_reasoning(response: Any) -> bool:
+    if response.status_code != 422:
+        return False
+    detail = response.json()["detail"]
+    return detail == [
+        {
+            "loc": ["body", "reasoning"],
+            "msg": (
+                "bob is an agent seat, and this action needs `reasoning` - why "
+                "it is doing this, in its own words"
+            ),
+            "type": "missing",
+        }
+    ]
+
+
+def test_set_step_refuses_an_agent_seat_with_no_reasoning(client: TestClient) -> None:
+    info = _agent_game(client)
+    try:
+        game_id = info["game_id"]
+        bare = client.put(
+            f"/api/games/{game_id}/step", json={"step": "declare_attackers", "player": "bob"}
+        )
+        assert _missing_reasoning(bare), bare.text
+        assert (
+            client.get(f"/api/games/{game_id}", params={"uid": info["admin_key"]}).json()["step"]
+            == "precombat_main"
+        ), "the marker must not have moved"
+
+        with_why = client.put(
+            f"/api/games/{game_id}/step",
+            json={
+                "step": "declare_attackers",
+                "player": "bob",
+                "reasoning": "my board is bigger, I want combat",
+            },
+        )
+        assert with_why.status_code == 200, with_why.text
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["seat_uids"]["bob"]})
+        entry = [e for e in log.json()["log"] if e["action"] == "step"][-1]
+        assert entry["reasoning"] == "my board is bigger, I want combat"
+        assert entry["legal_actions_for"] == "bob"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_state_based_actions_refuses_an_agent_seat_with_no_reasoning(client: TestClient) -> None:
+    """It also still takes no body at all - the harness's own poke, made by
+    nobody, which no agent-seat gate can apply to."""
+    info = _agent_game(client)
+    try:
+        game_id = info["game_id"]
+        bare = client.post(f"/api/games/{game_id}/state-based-actions", json={"player": "bob"})
+        assert _missing_reasoning(bare), bare.text
+
+        with_why = client.post(
+            f"/api/games/{game_id}/state-based-actions",
+            json={"player": "bob", "reasoning": "checking nothing died"},
+        )
+        assert with_why.status_code == 200, with_why.text
+
+        bodyless = client.post(f"/api/games/{game_id}/state-based-actions")
+        assert bodyless.status_code == 200, bodyless.text
+
+        log = client.get(f"/api/games/{game_id}/log", params={"uid": info["seat_uids"]["bob"]})
+        entries = [e for e in log.json()["log"] if e["action"] == "state_based_actions"]
+        assert entries[-2]["reasoning"] == "checking nothing died"
+        assert entries[-1]["reasoning"] is None, "a bodyless poke has no seat and owes nothing"
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_the_pregame_declarations_refuse_an_agent_seat_with_no_reasoning(
+    client: TestClient,
+) -> None:
+    """CR 103.5's mulligan and CR 103.6's opening-hand window are gated like
+    every other seat action. The exemption they used to have rested on a
+    claim about `ai_pregame.py`'s backstop that was simply not true of these
+    routes - it calls `opening.py` directly and never travels through them.
+    """
+    boot = client.post(
+        "/api/ui/games",
+        json={
+            "players": [
+                {"username": "bob", "decklist_text": _DECK_A, "ai": True},
+                {"username": "alice", "decklist_text": _DECK_B, "ai": False},
+            ],
+            "seed": 7,
+        },
+    )
+    assert boot.status_code == 200, boot.text
+    info = boot.json()
+    game_id = info["game_id"]
+    try:
+        uids = info["seat_uids"]
+        bare = client.post(
+            f"/api/games/{game_id}/pregame/mulligan",
+            params={"uid": uids["bob"]},
+            json={"player": "bob", "take": False},
+        )
+        assert _missing_reasoning(bare), bare.text
+
+        kept = client.post(
+            f"/api/games/{game_id}/pregame/mulligan",
+            params={"uid": uids["bob"]},
+            json={"player": "bob", "take": False, "reasoning": "two lands and a one-drop, keep"},
+        )
+        assert kept.status_code == 200, kept.text
+        client.post(
+            f"/api/games/{game_id}/pregame/mulligan",
+            params={"uid": uids["alice"]},
+            json={"player": "alice", "take": False},
+        )
+
+        bare_finish = client.post(
+            f"/api/games/{game_id}/pregame/opening-hand/finish",
+            params={"uid": uids["bob"]},
+            json={"player": "bob"},
+        )
+        assert _missing_reasoning(bare_finish), bare_finish.text
+    finally:
+        client.delete(f"/api/ui/games/{game_id}", params={"uid": info["seat_uids"]["alice"]})

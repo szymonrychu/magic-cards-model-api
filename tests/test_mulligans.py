@@ -113,8 +113,13 @@ def declare(
     take: bool,
     bottom: list[str] | None = None,
     uid: str | None = None,
+    reasoning: str = "this hand can function",
 ) -> Any:
-    body: dict[str, Any] = {"player": player, "take": take}
+    # `bob` is this file's agent seat, and an agent seat's CR 103.5
+    # declaration is gated on `reasoning` like every other action it takes
+    # (T10) - so the harness gives one rather than the route being exempted
+    # to spare it.
+    body: dict[str, Any] = {"player": player, "take": take, "reasoning": reasoning}
     if bottom is not None:
         body["bottom"] = bottom
     return client.post(
@@ -124,11 +129,16 @@ def declare(
     )
 
 
-def finish_opening_hand(client: TestClient, info: dict[str, Any], player: str) -> Any:
+def finish_opening_hand(
+    client: TestClient,
+    info: dict[str, Any],
+    player: str,
+    reasoning: str = "nothing to do from my opening hand",
+) -> Any:
     return client.post(
         f"/api/games/{info['game_id']}/pregame/opening-hand/finish",
         params={"uid": info["seat_uids"][player]},
-        json={"player": player},
+        json={"player": player, "reasoning": reasoning},
     )
 
 
@@ -1168,7 +1178,14 @@ def test_a_lost_opening_hand_action_says_so_too(client: TestClient, monkeypatch)
         answer = client.post(
             f"/api/games/{info['game_id']}/pregame/opening-hand/action",
             params={"uid": info["seat_uids"]["bob"]},
-            json={"player": "bob", "card_id": leyline},
+            json={
+                "player": "bob",
+                "card_id": leyline,
+                # An agent seat's pregame action is gated on `reasoning`
+                # (T10), and that gate runs first - without one this would
+                # be a 422 and never reach the overrule it is testing.
+                "reasoning": "a graveyard-hate leyline is worth starting with",
+            },
         )
         assert answer.status_code == 409, answer.text
         detail = answer.json()["detail"]
@@ -1198,7 +1215,14 @@ def test_the_model_is_told_the_truth_by_the_mulligan_tool(client: TestClient, mo
         server = build_server(Seats(api="http://testserver", game_id=info["game_id"]))
         text = (
             asyncio.run(
-                server.call_tool("mulligan", {"player_uid": info["seat_uids"]["bob"], "take": True})
+                server.call_tool(
+                    "mulligan",
+                    {
+                        "player_uid": info["seat_uids"]["bob"],
+                        "take": True,
+                        "reasoning": "no lands in this seven",
+                    },
+                )
             )
             .content[0]
             .text

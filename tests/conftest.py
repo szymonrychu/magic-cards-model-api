@@ -154,6 +154,13 @@ def client():
 
 
 @pytest.fixture()
+def admin_key(game: str) -> str:
+    """The `game` fixture's own admin key - the operator's full-view
+    credential, for tests that need to assert what that view still shows."""
+    return _ADMIN_KEYS[game]
+
+
+@pytest.fixture()
 def game(client: TestClient) -> str:
     response = client.post(
         "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}

@@ -347,20 +347,52 @@ def redact_snapshot(snapshot: dict[str, Any], viewer: str) -> dict[str, Any]:
 _HIDDEN_ZONES = {"hand", "library", "sideboard"}
 
 
-def redact_log_entry(entry: dict[str, Any], viewer: str) -> dict[str, Any]:
-    """One log entry, as a real seat may read it: its snapshot filtered the
-    same way state is, and the card name blanked when the action itself put
-    a card into (or read it out of) a hidden zone that is not viewer's own.
+def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """One log entry, as `viewer` may read it.
 
-    This only catches actions that record a `zone`/`to_zone` alongside the
-    card (`add_card`, `move_card`) - see the report for what is not covered.
+    Two guards, and they do not have the same audience:
+
+    - the snapshot is filtered the way state is, and the card name blanked
+      when the action itself put a card into (or read it out of) a hidden
+      zone that is not the viewer's own. This is a *seat's* view, so it is
+      applied only for a real seat uid - a `uid`-less read stays the
+      debugger's full eye `audit.py` documents its snapshots for, exactly as
+      it always was.
+    - `legal_actions_before` is dropped unless the seat it was enumerated
+      for (`legal_actions_for`, written by `audit.record` from
+      `records.LegalActionsBefore`, never from anything the request body
+      carried) is this viewer. This one applies to *every* non-admin
+      viewer, a `uid`-less read included.
+
+    The second guard is what makes this the same door `GET .../legal-actions`
+    (T11) is: that endpoint refuses any caller who does not present the named
+    player's own uid or the admin key, because the answer names cards in that
+    player's hand. `legal_actions_before` is the exact same answer, written
+    into the log instead of returned live. A caller who presents nothing must
+    therefore see no more of it than one who presents garbage - and less than
+    one who presents a real seat uid. The admin key is the single exemption,
+    matching `legal-actions`'s own; `app.py`'s `GET .../log` skips this whole
+    function only for `ADMIN`.
+
+    Fails closed: an entry carrying actions with no `legal_actions_for` at
+    all - a row written before this pairing existed, or by some future
+    caller that forgets it - is redacted for every seat rather than shown to
+    all of them.
+
+    The `zone`/`to_zone` card-blanking below only catches actions that record
+    one of those keys alongside the card (`add_card`, `move_card`) - see the
+    report for what is not covered.
     """
     entry = dict(entry)
-    if entry.get("snapshot"):
-        entry["snapshot"] = redact_snapshot(entry["snapshot"], viewer)
-    detail = entry.get("detail") or {}
-    zone = detail.get("zone") or detail.get("to_zone")
-    owner = detail.get("player") or detail.get("controller")
-    if zone in _HIDDEN_ZONES and owner != viewer and "card" in detail:
-        entry["detail"] = {**detail, "card": "<hidden>"}
+    if isinstance(viewer, str):  # a real seat - not admin, not "nobody"
+        if entry.get("snapshot"):
+            entry["snapshot"] = redact_snapshot(entry["snapshot"], viewer)
+        detail = entry.get("detail") or {}
+        zone = detail.get("zone") or detail.get("to_zone")
+        owner = detail.get("player") or detail.get("controller")
+        if zone in _HIDDEN_ZONES and owner != viewer and "card" in detail:
+            entry["detail"] = {**detail, "card": "<hidden>"}
+    if entry.get("legal_actions_before") is not None and entry.get("legal_actions_for") != viewer:
+        entry["legal_actions_before"] = None
+        entry["legal_actions_for"] = None
     return entry
