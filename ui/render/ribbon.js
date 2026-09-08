@@ -1,12 +1,16 @@
 // The right-hand ribbon: everything the game ever asks of the player that
 // is not "click something on the board" - `#prompt-box` (what is being
 // asked right now, in priority order: game over, pregame, a live decision,
-// the in-flight action's one-line summary, the combat prompt, or the click
-// hint), `#casting-strip` (the in-flight action's own controls, staged above
-// the hand), `#priority-box` (the two pass verbs, plus the untap/cleanup
-// escape hatch `priority.js`'s `advanceOffered` explains), and `#stops-box`
-// (the step ticks and the `anything on the stack` tick beside them). Plus the one floating `#popover` every
-// inline "pick one of these" menu shares.
+// the combat prompt, or the click hint - and nothing at all while an
+// announcement is in flight, because `#casting-strip` directly below it is
+// already saying so), `#casting-strip` (the in-flight action's own controls,
+// a panel in this ribbon rather than a row of the board), `#priority-box`
+// (the two pass verbs, plus the untap/cleanup escape hatch `priority.js`'s
+// `advanceOffered` explains), and `#stops-box` (the step ticks and the
+// `anything on the stack` tick beside them). Plus the one floating
+// `#popover` every card-scoped "pick one of these" menu shares - anchored
+// over the card it is about, drawn on top of the board rather than into it,
+// so a click never changes the board's geometry (`ui/menus.js`).
 //
 // Every button here fires a request the API already documents; nothing in
 // this file invents a rule. `decisions.js`'s `viewModel` is the single
@@ -36,6 +40,7 @@
 import { clear, h } from "../dom.js";
 import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
+import { anchoredPosition } from "../menus.js";
 import { withSymbols } from "../symbols.js";
 import { needsExplicitFire, readyToFire, targetSlotIndex } from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
@@ -299,6 +304,7 @@ function actionTitle(action) {
 function renderPromptBox(el, app, handlers) {
   if (focusedTextInput(el)) return;
   clear(el);
+  el.hidden = false;
   const state = app.state;
   if (!state) return;
   if (state.winner || state.drawn) {
@@ -328,15 +334,17 @@ function renderPromptBox(el, app, handlers) {
     el.appendChild(renderDecision(pending, app, handlers));
     return;
   }
+  // An announcement in flight is `#casting-strip`'s, and only its
+  // (`ui/menus.js`: `surfaceForChoice("announcement") === "ribbon"`). That
+  // panel sits directly under this box now rather than down at the board, so
+  // repeating its title and its Cancel here printed the same two things
+  // twice, an inch apart - the browser pass on a real Kozilek's Command cast
+  // is what made that obvious. This box stands down instead of saying it
+  // again; the `return` still matters, because the combat prompt and the
+  // "click a card to play it" hint below must not speak over a live cast
+  // either.
   if (app.action) {
-    el.appendChild(
-      h(
-        "div",
-        { class: "prompt-action-summary" },
-        h("span", {}, `${actionTitle(app.action)}: ${app.action.card.name}`),
-        h("button", { onClick: handlers.onCancel }, "Cancel")
-      )
-    );
+    el.hidden = true;
     return;
   }
   const combat = renderCombatPrompt(state, app, handlers);
@@ -609,9 +617,12 @@ function renderCastingStrip(el, app, handlers) {
   const ability = action.abilityIndex !== null ? (card.abilities || [])[action.abilityIndex] : null;
   const title = actionTitle(action);
 
-  el.appendChild(h("strong", {}, `${title}: ${card.name}`));
-  if (card.mana_cost && !ability) el.appendChild(withSymbols(app.symbols, card.mana_cost));
-  if (ability) el.appendChild(h("span", { class: "hint" }, ability.loyalty ? `${ability.loyalty.label} ` : "", withSymbols(app.symbols, ability.text)));
+  // One header line - what is being cast and what it costs - rather than
+  // three separate rows of the ribbon's column.
+  const head = h("div", { class: "strip-head" }, h("strong", {}, `${title}: ${card.name}`));
+  if (card.mana_cost && !ability) head.appendChild(withSymbols(app.symbols, card.mana_cost));
+  if (ability) head.appendChild(h("span", { class: "hint" }, ability.loyalty ? `${ability.loyalty.label} ` : "", withSymbols(app.symbols, ability.text)));
+  el.appendChild(head);
 
   const modeStep = renderModeChips(card, action, handlers, app.symbols);
   if (modeStep) el.appendChild(modeStep);
@@ -639,8 +650,12 @@ function renderCastingStrip(el, app, handlers) {
   const sharesStep = renderShareSteppers(action, handlers);
   if (sharesStep) el.appendChild(sharesStep);
 
+  // Done / Cast / keep priority / Cancel share one wrapping line
+  // (`.strip-actions`) rather than each taking a row of the 340px ribbon
+  // column this panel now lives in.
+  const actions = h("div", { class: "strip-actions" });
   if (!action.done && action.slots.some(slotIsOpen)) {
-    el.appendChild(h("button", { onClick: handlers.onDone }, "Done"));
+    actions.appendChild(h("button", { onClick: handlers.onDone }, "Done"));
   }
 
   // `needsExplicitFire` fires whenever pinned mana, a division, or any
@@ -656,11 +671,11 @@ function renderCastingStrip(el, app, handlers) {
   // announcement and rebuilding it. A refusal is exactly the moment the
   // player needs the button.
   if (readyToFire(action) && (needsExplicitFire(action) || action.error)) {
-    el.appendChild(h("button", { class: "primary", onClick: handlers.onCast }, title));
+    actions.appendChild(h("button", { class: "primary", onClick: handlers.onCast }, title));
   }
 
   if (action.kind === "cast" || (ability && !ability.is_mana_ability)) {
-    el.appendChild(
+    actions.appendChild(
       h(
         "label",
         { class: "hint" },
@@ -670,7 +685,8 @@ function renderCastingStrip(el, app, handlers) {
     );
   }
 
-  el.appendChild(h("button", { onClick: handlers.onCancel }, "Cancel"));
+  actions.appendChild(h("button", { onClick: handlers.onCancel }, "Cancel"));
+  el.appendChild(actions);
   if (action.error) el.appendChild(h("div", { class: "error" }, action.error));
 }
 
@@ -804,31 +820,87 @@ export function mountRibbon(root, store, handlers) {
 }
 
 // ----------------------------------------------------------------- popover
+//
+// The one anchored menu every card-scoped "pick one of these" shares. It is
+// drawn *over* the board, never into it (`ui/menus.js`'s header has the
+// card-scoped/turn-scoped split, and `menus.js`'s `anchoredPosition` the
+// arithmetic): opening one changes no element's size, so no row reflows, no
+// card moves under the cursor, and the page cannot grow a scrollbar.
 
 let popoverEl = null;
+let popoverAnchor = null;
 let outsideHandler = null;
-let escHandler = null;
+let keyHandler = null;
+let repositionHandler = null;
 
 function removeGlobalHandlers() {
   if (outsideHandler) document.removeEventListener("click", outsideHandler, true);
-  if (escHandler) document.removeEventListener("keydown", escHandler, true);
+  if (keyHandler) document.removeEventListener("keydown", keyHandler, true);
+  if (repositionHandler && typeof window !== "undefined" && window.removeEventListener) {
+    window.removeEventListener("resize", repositionHandler);
+    window.removeEventListener("scroll", repositionHandler, true);
+  }
   outsideHandler = null;
-  escHandler = null;
+  keyHandler = null;
+  repositionHandler = null;
 }
 
-/** Position `#popover` under `anchorEl`'s bounding rect and list `items` as
- * buttons - `{label, sublabel, disabled, title, onSelect}` each. Hides on a
- * click outside it or Escape. */
-export function showPopover(anchorEl, items) {
+function optionButtons(el) {
+  return (el.childNodes ? [...el.childNodes] : []).filter((n) => n.classList && n.classList.contains("option") && !n.disabled);
+}
+
+/** Move focus `step` options along from whichever one has it, wrapping - so
+ * the menu can be driven from the keyboard without becoming a trap: nothing
+ * here swallows Tab, and Escape always gets out. */
+function moveFocus(el, step) {
+  const options = optionButtons(el);
+  if (!options.length) return;
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  const at = options.indexOf(active);
+  const next = options[(((at < 0 ? -1 : at) + step) % options.length + options.length) % options.length];
+  if (next && typeof next.focus === "function") next.focus();
+}
+
+/** Place the open menu against its anchor, in viewport coordinates. Called
+ * on open and again on resize/scroll, so a menu never ends up pointing at
+ * where its card used to be. */
+function place() {
+  if (!popoverEl || !popoverAnchor) return;
+  const anchor = popoverAnchor.getBoundingClientRect();
+  // Measured with the menu already visible and unconstrained, so `height` is
+  // the list's natural height - what `anchoredPosition` needs to decide
+  // whether it fits below, and what to cap it at when it does not.
+  popoverEl.style.maxHeight = "";
+  const menu = popoverEl.getBoundingClientRect();
+  const viewport = {
+    width: (typeof window !== "undefined" && window.innerWidth) || 1024,
+    height: (typeof window !== "undefined" && window.innerHeight) || 768,
+  };
+  const box = anchoredPosition(anchor, { width: menu.width, height: menu.height }, viewport, {});
+  popoverEl.style.left = `${Math.round(box.left)}px`;
+  popoverEl.style.top = `${Math.round(box.top)}px`;
+  popoverEl.style.maxHeight = `${Math.round(box.maxHeight)}px`;
+  popoverEl.dataset.placement = box.placement;
+}
+
+/** Anchor a menu over `anchorEl` and list `items` as buttons -
+ * `{label, sublabel, disabled, title, onSelect}` each. `opts.title` captions
+ * it with the card it is about. Closes on a click outside it, on Escape, or
+ * on picking something; arrow keys walk the options. */
+export function showPopover(anchorEl, items, opts) {
   const el = document.querySelector("#popover");
-  if (!el) return;
+  if (!el || !anchorEl) return;
+  hidePopover();
   clear(el);
+  const title = (opts && opts.title) || "";
+  if (title) el.appendChild(h("div", { class: "menu-title" }, title));
   for (const item of items) {
     el.appendChild(
       h(
         "button",
         {
           class: "option",
+          type: "button",
           disabled: Boolean(item.disabled),
           title: item.title || "",
           onClick: () => {
@@ -842,27 +914,55 @@ export function showPopover(anchorEl, items) {
       )
     );
   }
-  const rect = anchorEl.getBoundingClientRect();
-  el.style.left = `${rect.left + (window.scrollX || 0)}px`;
-  el.style.top = `${rect.bottom + (window.scrollY || 0)}px`;
   el.hidden = false;
   popoverEl = el;
+  popoverAnchor = anchorEl;
+  if (anchorEl.classList) anchorEl.classList.add("menu-open");
+  place();
   removeGlobalHandlers();
   outsideHandler = (e) => {
     if (popoverEl && !popoverEl.contains(e.target)) hidePopover();
   };
-  escHandler = (e) => {
-    if (e.key === "Escape") hidePopover();
+  keyHandler = (e) => {
+    if (e.key === "Escape") return hidePopover();
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      return moveFocus(el, 1);
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      return moveFocus(el, -1);
+    }
   };
+  // A board row scrolls inside itself (`#mtg-board` and every
+  // `.battlefield-row` are `overflow-y: auto`), so the anchor can move
+  // without the window moving. `true` catches those inner scrolls too.
+  repositionHandler = () => place();
   document.addEventListener("click", outsideHandler, true);
-  document.addEventListener("keydown", escHandler, true);
+  document.addEventListener("keydown", keyHandler, true);
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("resize", repositionHandler);
+    window.addEventListener("scroll", repositionHandler, true);
+  }
+  const first = optionButtons(el)[0];
+  if (first && typeof first.focus === "function") first.focus();
 }
 
 export function hidePopover() {
   removeGlobalHandlers();
+  if (popoverAnchor && popoverAnchor.classList) popoverAnchor.classList.remove("menu-open");
+  // Focus goes back where it came from rather than being left on a node that
+  // is about to be removed - a menu that is closed must not leave the page
+  // with nothing focused.
+  if (popoverAnchor && popoverEl && typeof document !== "undefined" && popoverEl.contains(document.activeElement)) {
+    if (typeof popoverAnchor.focus === "function") popoverAnchor.focus();
+    else if (document.body && typeof document.body.focus === "function") document.body.focus();
+  }
   if (popoverEl) {
     popoverEl.hidden = true;
+    popoverEl.style.maxHeight = "";
     clear(popoverEl);
   }
   popoverEl = null;
+  popoverAnchor = null;
 }
