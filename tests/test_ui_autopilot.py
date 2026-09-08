@@ -191,9 +191,7 @@ def test_halts_on_a_new_stack_object_when_the_safe_default_is_on() -> None:
 
 def test_does_not_halt_on_a_new_stack_object_when_the_setting_is_off() -> None:
     state = base_state(stack=[{"id": "spell-1", "name": "Lightning Bolt"}])
-    reason = call_stop_reason(
-        state, known_stack_ids=[], stops={**UPKEEP_STOPS, "onStack": False}
-    )
+    reason = call_stop_reason(state, known_stack_ids=[], stops={**UPKEEP_STOPS, "onStack": False})
     assert reason is None
 
 
