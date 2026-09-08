@@ -126,6 +126,7 @@ def test_turn_zero_names_the_mcp_tools_not_seat_cli(tmp_path, guide):
         "play_land",
         "decide",
         "pass_until",
+        "declare_plan",
     ):
         assert tool in text
     assert "seat_cli" not in text
@@ -158,6 +159,33 @@ def test_current_game_names_the_running_plan_file(tmp_path, guide):
 def test_turn_zero_tells_it_to_write_the_plan_down(tmp_path, guide):
     text = turn_zero(assignment(guide), tmp_path / "current-game.md")
     assert "plan file" in text.lower()
+
+
+def test_turn_zero_tells_it_to_declare_a_plan_each_own_turn(tmp_path, guide):
+    """The per-turn plan file rewrite is gone; `declare_plan` replaces it,
+    called once at the top of each of the agent's own turns."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    lowered = text.lower()
+    assert "declare_plan" in text
+    assert "top of every one of your own turns" in lowered
+    # the three facts that make the prediction evidence rather than
+    # commentary, per the review this whole seam exists for:
+    assert "before your opponent" in lowered
+    assert "append-only ledger" in lowered
+    assert "next to what your opponent actually did" in lowered
+    assert "not scored" in lowered or "no grade" in lowered
+    assert "honest wrong read" in lowered
+
+
+def test_turn_zero_no_longer_asks_for_a_per_turn_plan_rewrite(tmp_path, guide):
+    """`declare_plan` is what pays for removing this - a `Write` round trip
+    of a whole file body, every turn, is gone. Leaving both in place would
+    have made the new tool call pure overhead rather than a replacement."""
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    lowered = text.lower()
+    assert "update it as the game moves" not in lowered
+    assert "rewrite lines rather than appending" not in lowered
+    assert "keep a plan, in writing" not in lowered
 
 
 def test_turn_zero_tells_it_to_deduce_the_matchup(tmp_path, guide):
