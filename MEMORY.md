@@ -398,3 +398,28 @@ whoever works on the repo itself.
   class and passing `response_model_exclude_unset=True` explicitly on all
   ~40 route decorators instead - repetitive, but the only form FastAPI
   actually honours here.
+
+- **2026-09-08 - landing T1 onto T13's merged tree: a `Field(alias=...)` is
+  both a validation alias and a serialization alias, and T1's
+  `response_model`s turned T13's on-purpose single-hop alias into a
+  browser-facing leak.** `AgentSettings.max_thinking_tokens` carried
+  `Field(..., alias="maxThinkingTokens")` so `to_wire()`'s
+  `model_dump(by_alias=True)` would camelCase the one seat-assignment wire
+  (T13). Once T1 gave routes real `response_model`s, FastAPI's default
+  `response_model_by_alias=True` applied that same alias to every response
+  embedding `AgentSettings` - `PlayerView.agent` via `GameStateView` - so
+  `GET /api/games/{id}` started handing the browser `maxThinkingTokens`
+  instead of the `max_thinking_tokens` `ui/lobby_model.js` and
+  `test_game_agent_settings.py` both depend on. Fixed by splitting the
+  alias: the field now carries only a `validation_alias=AliasChoices(
+  "max_thinking_tokens", "maxThinkingTokens")` (accepting both spellings on
+  input, and free for the browser's snake_case posts), no serialization
+  alias at all - so `model_dump()` and `model_dump(by_alias=True)` both
+  produce `max_thinking_tokens` by construction, and a future route that
+  embeds `AgentSettings` cannot reopen this leak by forgetting a per-route
+  opt-out. `to_wire()` renames the one field by hand instead of relying on
+  `by_alias`. `tests/test_agent_settings_wire_boundary.py` pins both wires
+  in one test. `openapi.json` needed no new diff once the code was fixed -
+  the file already committed on this branch matched the corrected shape;
+  only the live (buggy) app disagreed with it, which is what the drift test
+  caught.

@@ -20,12 +20,28 @@ The env-var path (`env()`) is untouched: the claude CLI reads
 schema does not describe, and `env()` already builds that dict from this
 model's own attributes rather than duplicating its shape by hand.
 
-`populate_by_name=True` keeps a third wire working unmodified: the browser's
-create-game request (`ui/lobby_model.js`'s `agentFrom`, read by
+`populate_by_name=True` plus `max_thinking_tokens`'s `validation_alias`
+(accepting either spelling) keep a third wire working unmodified: the
+browser's create-game request (`ui/lobby_model.js`'s `agentFrom`, read by
 `decks_api.py`) still posts `max_thinking_tokens`, and `serialize.py`'s game
 state view still echoes it that way to the play UI - that boundary was never
-part of this task's "seat assignment" scope, so both spellings validate on
-input and `to_wire()` alone is what standardises the output.
+part of this task's "seat assignment" scope.
+
+**Deliberately no `serialization_alias`/`alias` on the field.** T1
+(phase 2b) started declaring pydantic `response_model`s on routes, and
+FastAPI serialises those with `response_model_by_alias=True` by default -
+so a plain `Field(alias="maxThinkingTokens")` (which sets both the
+validation *and* the serialization alias) leaked camelCase into every
+browser-facing response that embeds `AgentSettings`
+(`PlayerView.agent` via `GameStateView`), not just the one seat-assignment
+hop it was meant for. Keeping the alias input-only means `model_dump()`
+and `model_dump(by_alias=True)` both produce `max_thinking_tokens` - by
+construction, not by every route remembering to opt out - so a future route
+that embeds `AgentSettings` in a new response model cannot regress this
+silently. `to_wire()` renames the one field by hand instead.
+`tests/test_agent_settings_wire_boundary.py` pins both ends of this
+together: the browser wire is snake_case *and* the seat-assignment wire is
+camelCase, in the same test.
 """
 
 from __future__ import annotations
@@ -33,7 +49,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
@@ -45,7 +61,11 @@ class AgentSettings(BaseModel):
 
     model: str = Field(min_length=1)
     effort: Effort = "high"
-    max_thinking_tokens: int | None = Field(default=None, ge=0, alias="maxThinkingTokens")
+    max_thinking_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("max_thinking_tokens", "maxThinkingTokens"),
+    )
 
     @classmethod
     def default(cls, env: Mapping[str, str]) -> AgentSettings:
@@ -66,5 +86,11 @@ class AgentSettings(BaseModel):
         carries `AgentSettings` (the dispatch payload posted to the driver,
         directly or via `DRIVER_ASSIGNMENT_JSON`, and the driver's own push
         to the wrapper's `POST /v1/session`) goes through this, never a bare
-        `model_dump()`."""
-        return self.model_dump(mode="json", by_alias=True)
+        `model_dump()`.
+
+        The field carries no serialization alias (see the module docstring),
+        so `by_alias=True` would not rename anything here - the one field
+        that needs it is renamed by hand instead."""
+        data = self.model_dump(mode="json")
+        data["maxThinkingTokens"] = data.pop("max_thinking_tokens")
+        return data
