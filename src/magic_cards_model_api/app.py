@@ -17,7 +17,6 @@ from uuid import UUID
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
@@ -101,33 +100,7 @@ from .schemas import (
 from .serialize import state_view
 from .store import new_seat_uids, store
 
-
-class _ExcludeUnsetRoute(APIRoute):
-    """T1: every response model below leans on `| None = None` to describe a
-    key `visibility.redact_view`/a face-down stub can *omit* (see
-    `schemas.py`'s "Response views" section docstring) - `libraries` popped
-    outright, `type_line` never set on a face-down card, `paused` never set
-    on an ordinary completed action. FastAPI's default response serialisation
-    does not know that distinction: it fills every declared field's default
-    (`None`, `False`, ...) back in, so a validated response would start
-    carrying `"paused": false`/`"you": null`/`"type_line": null` keys that
-    were never in the wire format before this task and that existing callers
-    (this repo's own tests included) assert are simply absent.
-    `response_model_exclude_unset=True` is pydantic's own "was this key in
-    the input at all" tracking, applied per route rather than repeated as a
-    kwarg on every one of the ~40 decorators below - a key genuinely present
-    with a `null` value (`state.controller` on an uncontrolled card, say)
-    stays, because it really was in the dict FastAPI validated; only a key
-    the source dict never set at all - reproducing the exact shape
-    `serialize.py`/`visibility.py` already build - is left out."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        kwargs.setdefault("response_model_exclude_unset", True)
-        super().__init__(*args, **kwargs)
-
-
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
-app.router.route_class = _ExcludeUnsetRoute
 app.include_router(decks_api.router)
 app.include_router(ai_seat_api.router)
 app.include_router(symbology.router)
@@ -813,12 +786,12 @@ def card_names(q: str = "") -> dict[str, Any]:
     return {"suggestions": scryfall.autocomplete(q)}
 
 
-@app.get("/api/cards", response_model=CardLookupResponse)
+@app.get("/api/cards", response_model=CardLookupResponse, response_model_exclude_unset=True)
 def lookup_card_query(name: str) -> dict[str, Any]:
     return scryfall.lookup_card(name)
 
 
-@app.get("/api/cards/{name}", response_model=CardLookupResponse)
+@app.get("/api/cards/{name}", response_model=CardLookupResponse, response_model_exclude_unset=True)
 def lookup_card(name: str) -> dict[str, Any]:
     return scryfall.lookup_card(name)
 
