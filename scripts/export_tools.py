@@ -100,6 +100,18 @@ def _param_record(arg: ast.arg, default: ast.expr | None) -> dict[str, object]:
     }
 
 
+#: Parameters the MCP framework injects itself. A seat never passes these, so
+#: they are not part of the surface this contract describes - and including
+#: them would have `tests/test_prompt_matches_tools.py` policing prose about a
+#: parameter no prompt should ever mention. `ctx: Context` is the only one
+#: today; it arrived with the protocol-version gate on `InputRequiredResult`.
+_FRAMEWORK_INJECTED_TYPES = frozenset({"Context", "Context | None"})
+
+
+def _is_framework_injected(arg: ast.arg) -> bool:
+    return arg.annotation is not None and ast.unparse(arg.annotation) in _FRAMEWORK_INJECTED_TYPES
+
+
 def _param_records(fn: ast.FunctionDef) -> list[dict[str, object]]:
     """Every parameter, in declared signature order. Positional-or-keyword
     and keyword-only args are both covered (every tool here is the former;
@@ -114,10 +126,12 @@ def _param_records(fn: ast.FunctionDef) -> list[dict[str, object]]:
     records = [
         _param_record(arg, default)
         for arg, default in zip(positional, aligned_defaults, strict=True)
+        if not _is_framework_injected(arg)
     ]
     records += [
         _param_record(arg, default)
         for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+        if not _is_framework_injected(arg)
     ]
     return records
 

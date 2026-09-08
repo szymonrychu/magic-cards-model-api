@@ -48,3 +48,20 @@ def test_contract_covers_every_registered_tool():
 
 def test_output_is_valid_json_on_disk():
     json.loads(OUTPUT.read_text())
+
+
+def test_framework_injected_params_are_not_in_the_contract() -> None:
+    """`ctx: Context` is injected by the MCP framework, never passed by a
+    seat, so it is not part of the surface this contract describes. It
+    arrived with the protocol-version gate on `InputRequiredResult` and
+    silently entered every action tool at once - which is exactly the shape
+    of change that would otherwise have `test_prompt_matches_tools.py`
+    policing prose about a parameter no prompt should ever mention."""
+    contract = json.loads(OUTPUT.read_text())
+    injected = [
+        (tool["name"], param["name"])
+        for tool in contract["tools"]
+        for param in tool["parameters"]
+        if param["name"] == "ctx" or (param.get("type") or "").startswith("Context")
+    ]
+    assert injected == []
