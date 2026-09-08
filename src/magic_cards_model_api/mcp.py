@@ -903,6 +903,9 @@ def build_server(seats: Seats) -> MCPServer:
         ability_index: int,
         targets: str = "",
         mana_sources: str = "",
+        sacrificing: str = "",
+        discarding: str = "",
+        exiling: str = "",
         color: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
@@ -938,6 +941,21 @@ def build_server(seats: Seats) -> MCPServer:
         such as Birds of Paradise or Mox Diamond, or a dual/shockland; it is
         ignored by abilities that do not need one.
 
+        `sacrificing`, `discarding` and `exiling` are comma-separated card ids
+        for an activation cost's own object-naming piece (CR 118.3) - the
+        engine decides what a given ability's cost actually requires, this is
+        only how you answer it. Goblin Bombardment's "Sacrifice a creature:
+        This enchantment deals 1 damage to any target" is the plain case:
+        `activate(..., sacrificing="<creature id>", targets="<any target>")`.
+        Usually one id each; a cost that names more than one object
+        ("Sacrifice two creatures") takes as many as it asks for. Leaving one
+        out when the cost needs it is refused with the engine's own count -
+        "sacrifice needs N card(s) chosen, 0 given" - never a crash and never
+        a silent no-op. `exiling` only works for an ability on the
+        battlefield: an ability that functions off the battlefield (Waker of
+        Waves, Boseiju's Channel) has no exile-as-cost path yet and refuses it
+        by name.
+
         Mana abilities resolve immediately and never touch the stack
         (CR 605.3b); every other ability goes on the stack and needs priority
         to be released before it resolves. This tool follows that split rather
@@ -971,6 +989,12 @@ def build_server(seats: Seats) -> MCPServer:
         sources = seat.sources_or_all(mana_sources, state)
         if sources:
             body["mana_sources"] = sources
+        if sacrificing:
+            body["sacrificing"] = _parse_ids(sacrificing)
+        if discarding:
+            body["discarding"] = _parse_ids(discarding)
+        if exiling:
+            body["exiling"] = _parse_ids(exiling)
         if color:
             body["color"] = color
         if reasoning:

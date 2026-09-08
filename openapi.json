@@ -440,8 +440,11 @@
           "discarding": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -453,6 +456,21 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "exiling": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exiling"
           },
           "mana_sources": {
             "anyOf": [
@@ -494,8 +512,11 @@
           "sacrificing": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"

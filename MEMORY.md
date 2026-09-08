@@ -1087,3 +1087,49 @@ whoever works on the repo itself.
   actually wins). Not fixed for the other two on purpose - reviving them is a
   visible restyling of panels that change was not about - but somebody
   should decide whether those two colours were meant to be there.
+- **2026-09-09 - Goblin Bombardment's gap ("sacrifice needs 1 card(s) chosen,
+  0 given", unreachable) was two front ends missing a field the engine layer
+  already carried, not an engine gap.** `schemas.ActivateRequest` already had
+  `sacrificing`/`discarding` and `engine_api.activate_ability` already
+  threaded them into `Game.begin_activating` - the field simply had no way in
+  from `seat_cli.py` (no `--sacrificing` flag) or `mcp.py` (no `sacrificing`
+  parameter), so a real seat could never set it. Fixed by widening the shape
+  rather than special-casing sacrifice: `sacrificing`/`discarding` are now
+  `list[UUID] | None` (a cost can ask for more than one object - "Sacrifice
+  two creatures" - and the engine already consumes a pool of however many
+  were named, `Game._choice_cost`), and `exiling: list[UUID] | None` was
+  added alongside them for Back from the Brink's own shape
+  (`Game.activation_cost`'s docstring names it). `exiling` only reaches a
+  *battlefield* activation: `machines.keywords.off_zone_activation` takes no
+  `exiling=` kwarg at all, so `engine_api._activate_off_zone_ability` refuses
+  it by name up front rather than letting it hit a bare `TypeError` on an
+  unexpected keyword. `PROTOCOL_VERSION` bumped to `seatkit-8` (a new
+  parameter on an existing, widely-used tool is a request-shape change per
+  that constant's own rule) - `protocol.py`, `seatkit.py`, `contract/
+  tools.json` (`mise run tools:export`), `openapi.json` (`mise run
+  openapi:dump`) and `src/mtg_agent/driver/prompt.py` all needed the matching
+  update, and `tests/test_openapi_drift.py`/`tests/test_prompt_matches_tools.
+  py` are what catch a repeat of any one being forgotten. The play UI
+  (`ui/actions.js`'s `bodyFor`) has the identical hole - never builds
+  `sacrificing`/`discarding`/`exiling` into an `activate` request body at all
+  - left unfixed on purpose: two other unmerged branches are already reworking
+  the choice-presentation layer, and a third touching the same file would
+  tangle the merge.
+- **2026-09-09 - merging the hand-cast-options/UI-rework stack with the
+  activate-sacrifice-cost stack: `PROTOCOL_VERSION` goes to `seatkit-9`, not
+  a straight take of either side's `seatkit-8`.** The hand-cast-options
+  branch (`3eadbd9`) never touched `protocol.py`/`seatkit.py` at all - its
+  own commit message reasoned `contract/tools.json` stayed byte-identical so
+  no bump was needed. That reasoning does not hold up against this file's
+  own precedent: `seatkit-5`'s `recent_log` was the same shape of change
+  (an additive field on an existing state view) and *was* bumped, on exactly
+  the "a stale MCP process reads this as nothing having happened" logic that
+  applies here too - a stale process reads a hand as carrying no
+  alternative-cost options rather than a hand missing a field it cannot ask
+  for. So the merged tree bumps to `seatkit-9`, one above the higher side's
+  `seatkit-8`, with a changelog entry (`seatkit.py`) naming both shape
+  changes it now covers. `protocol.py`, `seatkit.py`, `contract/tools.json`
+  (`mise run tools:export`) and `openapi.json` (`mise run openapi:dump`) all
+  needed the matching regeneration; `src/mtg_agent/driver/prompt.py` needed
+  no wording change since its evoke/cast-option and sacrifice/discard/exile
+  prose already independently describe the two features correctly.

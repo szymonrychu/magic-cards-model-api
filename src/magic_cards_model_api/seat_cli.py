@@ -279,6 +279,39 @@ def build_parser() -> argparse.ArgumentParser:
     activate.add_argument("--target", default="", help="comma-separated ids")
     activate.add_argument("--sources", default="", help="comma-separated mana source ids")
     activate.add_argument(
+        "--sacrificing",
+        default="",
+        help=(
+            "comma-separated card ids, for an activation cost's own 'Sacrifice "
+            "[quality]' piece (CR 118.3) - Goblin Bombardment's own 'Sacrifice a "
+            "creature: ...'. Usually one id; a cost that names more than one "
+            "object ('Sacrifice two creatures') takes as many as it asks for. "
+            "Omitting this when the ability's cost needs it is refused with the "
+            "engine's own count, 'sacrifice needs N card(s) chosen, 0 given' - "
+            "not a crash and not a silent no-op"
+        ),
+    )
+    activate.add_argument(
+        "--discarding",
+        default="",
+        help=(
+            "comma-separated card ids, for an activation cost's own 'Discard "
+            "[quality]' piece - the same shape as --sacrificing, for a "
+            "battlefield ability with its own independent discard cost"
+        ),
+    )
+    activate.add_argument(
+        "--exiling",
+        default="",
+        help=(
+            "comma-separated card ids, for an activation cost's own 'Exile "
+            "[quality] ... and pay its mana cost' piece (Back from the Brink's "
+            "own shape). Only a battlefield ability can take this - an ability "
+            "that functions off the battlefield has no exile-as-cost path yet "
+            "and refuses it"
+        ),
+    )
+    activate.add_argument(
         "--color",
         default="",
         help="color letter (W/U/B/R/G/C) for a mana ability that offers a choice",
@@ -754,6 +787,12 @@ def run(argv: list[str] | None = None) -> int:
         sources = sources_or_all(args.sources)
         if sources:
             body["mana_sources"] = sources
+        if args.sacrificing:
+            body["sacrificing"] = _parse_ids(args.sacrificing)
+        if args.discarding:
+            body["discarding"] = _parse_ids(args.discarding)
+        if args.exiling:
+            body["exiling"] = _parse_ids(args.exiling)
         if args.color:
             body["color"] = args.color
         if args.reasoning:

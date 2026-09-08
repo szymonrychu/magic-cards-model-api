@@ -279,6 +279,19 @@ resolve:
 So a land drop, or tapping for mana, never costs you the rest of your main
 phase - but a `cast` still does unless you hold it.
 
+**Naming what a cost sacrifices, discards, or exiles.** Some activated
+abilities cost more than mana - Goblin Bombardment is "Sacrifice a creature:
+This enchantment deals 1 damage to any target." `activate` takes
+`sacrificing`, `discarding` and `exiling` for exactly this, each a
+comma-separated list of card ids:
+
+  activate(player_uid=..., card_id=..., ability_index=0,
+           sacrificing="<creature id>", targets="<any target>")
+
+Leave one out when the ability's own cost needs it and the engine refuses the
+call with its own count rather than silently doing nothing - "sacrifice needs
+1 card(s) chosen, 0 given" means exactly that: name the object.
+
 ## Identify the matchup yourself
 
 You have NOT been told what your opponent is playing, deliberately. Work it
