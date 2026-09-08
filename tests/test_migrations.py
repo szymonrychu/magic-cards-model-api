@@ -292,6 +292,50 @@ def test_upgrade_head_adds_owner_user_id_to_an_already_migrated_database() -> No
             engine.dispose()
 
 
+def test_upgrade_head_adds_archived_at_to_an_already_migrated_database() -> None:
+    """`games.archived_at` (the soft delete) arrives on a database that
+    predates it, `NULL` for every row that already exists.
+
+    `NULL` means "still live", and that is the only correct backfill: a game
+    whose row is there to be migrated has not been ended - if it had been,
+    the old hard `DELETE` would have removed it - so stamping anything else
+    here would archive live games on the first deploy. Same reasoning as the
+    two columns above about why this is its own revision rather than an edit
+    to a shipped one: `alembic upgrade head` never re-runs a revision a
+    database is already stamped with, and `PostgresRepository` reads this
+    column on essentially every query, so a missing one is a hard error on
+    the next request rather than a subtle drift.
+    """
+    with _scratch_database() as url:
+        _alembic_to(url, "f3a7c2e91b04")  # the predecessor of this revision
+        engine = create_engine(url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO games (id, state, version, created_at, admin_key) "
+                        "VALUES ('old', '{}'::jsonb, 0, now(), 'k')"
+                    )
+                )
+            before = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "archived_at" not in before
+        finally:
+            engine.dispose()
+
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            columns = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "archived_at" in columns
+            with engine.connect() as conn:
+                value = conn.execute(
+                    text("SELECT archived_at FROM games WHERE id = 'old'")
+                ).scalar_one()
+            assert value is None, "a row that predates the column must still be live"
+        finally:
+            engine.dispose()
+
+
 def test_the_migrated_schema_matches_the_tables_the_code_defines() -> None:
     """The final schema `alembic upgrade head` produces is the schema
     `db.py`'s `metadata` describes - the definitions `repository_postgres`

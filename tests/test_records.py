@@ -26,7 +26,34 @@ def _boot(client: TestClient, *, agent: str, human: str, active: str) -> dict:
         },
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    info = response.json()
+    if active == agent:
+        # `records.require_plan` refuses an agent seat's first mutating
+        # action of its *own* turn until it has declared a plan for that
+        # turn. Every test below is about `reasoning` or about the
+        # pre-action enumeration, not about the plan gate, so the
+        # declaration is made here once rather than restated in each.
+        _declare_plan(client, info, agent)
+    return info
+
+
+def _declare_plan(client: TestClient, info: dict, player: str) -> None:
+    response = client.post(
+        f"/api/games/{info['game_id']}/plan",
+        json={
+            "player": player,
+            "uid": info["seat_uids"][player],
+            "board_read": "an empty board, my opening hand",
+            "my_role": "beatdown",
+            "plan": "make my land drop and develop",
+            "prediction": {
+                "expecting": "the opponent does nothing this turn",
+                "because": "they have played no permanents yet",
+                "confidence": "low",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
 
 
 def _end(client: TestClient, info: dict) -> None:
@@ -102,7 +129,11 @@ def test_the_same_action_from_an_agent_seat_with_reasoning_is_accepted(
         assert response.status_code == 200, response.text
         assert response.json()["allowed"] is True
 
-        log = log_of(client, info["game_id"])
+        # Read as bob: `visibility.redact_log_entry` hands a seat's stated
+        # reasoning back to that seat and to the admin key, and to nobody
+        # else - it is the agent's own account of why, and an opponent
+        # reading it live is reading its mind mid-game.
+        log = log_of(client, info["game_id"], uid=info["seat_uids"]["bob"])
         entry = entries_for(log, "play_land")[-1]
         assert entry["reasoning"] == "I need red mana on board before I can cast anything"
     finally:
@@ -192,12 +223,78 @@ def test_a_refusal_caught_before_any_command_ran_also_writes_exactly_one_row(
         )
         assert response.json()["allowed"] is False
 
-        log = log_of(client, info["game_id"])
+        log = log_of(client, info["game_id"], uid=info["seat_uids"]["bob"])
         passes = entries_for(log, "pass_priority")
         assert len(passes) == 1, [entry["seq"] for entry in passes]
         assert passes[0]["detail"]["allowed"] is False
         assert passes[0]["detail"]["reason"] == response.json()["reason"]
         assert passes[0]["reasoning"] == "checking if it is my turn"
+    finally:
+        _end(client, info)
+
+
+# ---------------------------------------------------------------------------
+# the ending: a game that ends says so, once
+# ---------------------------------------------------------------------------
+
+
+def test_a_conceded_game_writes_one_game_over_row_naming_the_winner(client: TestClient) -> None:
+    """CR 104.1: "A game ends immediately when a player wins, when the game
+    is a draw, or when the game is restarted." Until this row existed the
+    ledger had no terminal outcome at all - a game ending to lethal damage
+    left the result to be inferred from the final snapshot's life totals,
+    which is exactly the kind of inference a post-game review must not ask
+    a sceptical reader to make."""
+    info = _boot(client, agent="bob", human="alice", active="alice")
+    try:
+        conceded = client.post(
+            f"/api/games/{info['game_id']}/actions/concede",
+            json={"player": "bob", "reasoning": "no outs left"},
+        )
+        assert conceded.status_code == 200, conceded.text
+
+        endings = entries_for(log_of(client, info["game_id"]), "game_over")
+        assert len(endings) == 1, [entry["seq"] for entry in endings]
+        assert endings[0]["detail"]["winner"] == "alice"
+        assert endings[0]["detail"]["drawn"] is False
+    finally:
+        _end(client, info)
+
+
+def test_the_ending_is_written_once_however_many_calls_follow(client: TestClient) -> None:
+    """A finished game still accepts calls (they are refused by the engine,
+    and a refusal is still a row). The ending is a fact about the game, not
+    about the call that noticed it, so it is written exactly once."""
+    info = _boot(client, agent="bob", human="alice", active="alice")
+    try:
+        client.post(
+            f"/api/games/{info['game_id']}/actions/concede",
+            json={"player": "bob", "reasoning": "no outs left"},
+        )
+        for _ in range(3):
+            client.post(
+                f"/api/games/{info['game_id']}/actions/pass-priority", json={"player": "alice"}
+            )
+
+        endings = entries_for(log_of(client, info["game_id"]), "game_over")
+        assert len(endings) == 1, [entry["seq"] for entry in endings]
+    finally:
+        _end(client, info)
+
+
+def test_a_game_still_running_has_no_ending_row(client: TestClient) -> None:
+    info = _boot(client, agent="bob", human="alice", active="alice")
+    try:
+        client.post(
+            f"/api/games/{info['game_id']}/cards",
+            json={"card": "Mountain", "player": "alice", "zone": "hand"},
+        )
+        client.post(
+            f"/api/games/{info['game_id']}/actions/play-land",
+            json={"player": "alice", "card": "Mountain"},
+        )
+
+        assert entries_for(log_of(client, info["game_id"]), "game_over") == []
     finally:
         _end(client, info)
 

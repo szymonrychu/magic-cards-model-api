@@ -100,6 +100,16 @@ games = Table(
     Column("ai_players", JSONB, nullable=False, server_default="[]"),
     Column("ui_game", Boolean, nullable=False, server_default="false"),
     Column("ui_game_registered_at", DateTime(timezone=True), nullable=True),
+    # When this game was ended, `NULL` while it is still live. `delete()` is
+    # a soft delete: it stamps this column instead of removing the row, so
+    # the board, hands and final state a post-game review reads are still
+    # there after the lobby's End button, a concede, or a finished game -
+    # the owner's requirement, "Games must be persisting in the database
+    # even after are stopped/finished/conceded". Every other read filters on
+    # `archived_at IS NULL`, so an ended game is exactly as unplayable as a
+    # removed one used to be; `PostgresRepository.archived` is the single
+    # accessor that looks past the filter. Added by revision `a2f6d9c31b57`.
+    Column("archived_at", DateTime(timezone=True), nullable=True),
 )
 
 records = Table(

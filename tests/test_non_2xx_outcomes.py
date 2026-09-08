@@ -84,12 +84,21 @@ def test_call_json_never_reports_a_422_refusal_as_a_successful_outcome(monkeypat
     seat = _bob_seat(monkeypatch, client, info)
 
     # Direct HTTP proof this really is the 422 the docstring describes.
-    raw = client.post(f"/api/games/{info['game_id']}/actions/pass-priority", json={"player": "bob"})
+    # `play-land`, not `pass-priority`: a pass is exempt from the reasoning
+    # gate now (`records.require_reasoning`'s `pass_shaped`), and this file
+    # is about what `Seat.call_json` does with a 422, not about which route
+    # produces one.
+    raw = client.post(
+        f"/api/games/{info['game_id']}/actions/play-land",
+        json={"player": "bob", "card": "Mountain"},
+    )
     assert raw.status_code == 422, raw.text
     assert raw.json()["detail"][0]["type"] == "missing"
 
     outcome = seat.call_json(
-        "POST", f"/api/games/{info['game_id']}/actions/pass-priority", {"player": "bob"}
+        "POST",
+        f"/api/games/{info['game_id']}/actions/play-land",
+        {"player": "bob", "card": "Mountain"},
     )
 
     assert outcome["allowed"] is False, outcome
@@ -108,7 +117,9 @@ def test_run_action_reports_the_422_as_a_refusal_not_a_completed_action(
 
     def perform() -> Any:
         return seat.call_json(
-            "POST", f"/api/games/{info['game_id']}/actions/pass-priority", {"player": "bob"}
+            "POST",
+            f"/api/games/{info['game_id']}/actions/play-land",
+            {"player": "bob", "card": "Mountain"},
         )
 
     result = seatkit.run_action(seat, perform, hold_priority=False)
