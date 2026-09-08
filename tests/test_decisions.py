@@ -127,22 +127,29 @@ def test_a_seat_sees_and_answers_its_pending_decision(client, game):
     assert final.get("pending_decision") is None, "answered decisions do not linger"
 
 
-def test_an_unrelated_completed_command_clears_an_unrelated_pause(client, game):
-    """`app.py`'s `_run_command` calls `store.clear_paused_command` on
-    *every* `COMPLETED` result, not only the one that resumed the pause it
-    is clearing - so a totally unrelated mutating call that completes while
-    a decision sits paused discards that stored pause outright, rather than
-    leaving it sitting there stale.
+def test_an_unrelated_command_is_refused_while_a_decision_is_pending(client, game):
+    """The pause slot is one seat's half-finished command, not a scratch pad.
 
-    Deliberately safe: a paused command was never applied to the committed
-    game (`commands.py`'s own module docstring, "no half-applied `Game` kept
-    anywhere"), so nothing here throws away a real answer, only a *question*
-    - and the exact same question resurfaces, byte-identical, the moment
-    whatever would have asked it runs again, because replay is
-    deterministic. This pins that: the discard's pause is discarded by an
-    unrelated `state-based-actions` call, nothing about the game moved (the
-    discard never silently happened), and asking again reproduces the
-    identical pause and can still be answered for real.
+    This test used to assert the opposite - that `app.py`'s `_run_command`
+    discarded an unrelated pause on every `COMPLETED` result - and justified
+    it with "nothing here throws away a real answer, only a *question*".
+    That is true only while the tape is empty. The moment the paused command
+    carries answers, clearing the slot deletes them, and the identical
+    argument reads through the other door as "an unrelated command may
+    overwrite the slot", which is exactly the live defect
+    `tests/test_pause_slot_clobber.py` reproduces: a seat's fetchland search
+    answer discarded by an opponent's ordinary pass 227 ms later.
+
+    A pending decision is not a stale question to be swept up, it is the
+    game waiting on the one seat that can answer it, and nothing else may
+    happen first. Here the pause comes from `advance` - CR 514.1's cleanup
+    discard is a turn-based action, so the citation is CR 117.3a ("the
+    active player receives priority at the beginning of most steps and
+    phases, after any turn-based actions ... have been dealt with") rather
+    than the mid-resolution CR 608.2g the fetchland reproduction gets.
+
+    Staleness is handled by testing it, not by assuming it - see
+    `test_a_stale_pause_is_cleared_rather_than_wedging_the_game` below.
     """
     stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
     uids = seats_for(client, game)
@@ -152,33 +159,24 @@ def test_an_unrelated_completed_command_clears_an_unrelated_pause(client, game):
     first_pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
     assert first_pending["kind"] == "choose_cards"
 
-    # An unrelated command, against the same game, that completes rather
-    # than pausing on anything - `state-based-actions` never asks a
-    # question at all.
+    # An unrelated command, against the same game, that asks no question of
+    # its own and would otherwise complete - so the refusal below can only
+    # have come from the guard.
     sba = client.post(f"/api/games/{game}/state-based-actions")
-    assert sba.status_code == 200, sba.text
+    assert sba.status_code == 409, sba.text
+    body = sba.json()
+    assert body["allowed"] is False, body
+    assert body.get("paused") is not True, body
+    assert "CR 117.3a" in body["reason"], body
 
-    cleared = state(client, game, uid=uids["alice"])
-    assert cleared.get("pending_decision") is None, "the unrelated pause must be cleared"
-    assert cleared["step"] == "end_step", "nothing about the paused discard was silently applied"
-    assert len(cleared["hands"]["alice"]) == 8, "the discard never happened on its own"
+    # The pause survives the refusal, unchanged, and is still answerable.
+    survived = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert survived["kind"] == first_pending["kind"]
+    assert survived["player"] == first_pending["player"]
+    assert survived["amount"] == first_pending["amount"]
+    assert set(survived["cards"]) == set(first_pending["cards"])
 
-    # Asking again reproduces the identical pause - the same question, not a
-    # different or corrupted one - and it can still be answered for real.
-    # `advance_into_cleanup`'s own response is read as an anonymous viewer
-    # (no `uid`), so its `pending_decision` is redacted down to
-    # `{player, kind, prompt}` - `wait_for_pending` reads it back as alice's
-    # own seat instead, the same way `first_pending` was read, for the full,
-    # unredacted `cards`/`amount` to compare.
-    replayed = advance_into_cleanup(game)
-    assert replayed is not None
-    second_pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
-    assert second_pending["kind"] == first_pending["kind"]
-    assert second_pending["player"] == first_pending["player"]
-    assert second_pending["amount"] == first_pending["amount"]
-    assert set(second_pending["cards"]) == set(first_pending["cards"])
-
-    to_discard = second_pending["cards"][0]
+    to_discard = survived["cards"][0]
     answer = client.post(
         f"/api/games/{game}/decide",
         params={"uid": uids["alice"]},
@@ -189,6 +187,54 @@ def test_an_unrelated_completed_command_clears_an_unrelated_pause(client, game):
     final = state(client, game, uid=uids["alice"])
     assert final["step"] == "cleanup"
     assert len(final["hands"]["alice"]) == 7
+
+
+def test_a_stale_pause_is_cleared_rather_than_wedging_the_game(client, game):
+    """The other half of refusing a competing command: a pause the committed
+    state has genuinely moved past must be cleared, never stood on.
+
+    "First pause wins" without a liveness test wedges the game forever - a
+    `pending_decision` no seat can ever resolve, because resuming it replays
+    against state that no longer asks the same question. So `_run_command`
+    tests the stored pause with `commands.pause_is_live` before refusing
+    anything: the stored command is replayed from the committed snapshot
+    with the stored tape, and only an identical `PendingDecision` counts as
+    live.
+
+    `POST .../cards` is the invalidator because it is a board-setup route
+    that never goes through `_run_command` at all - which makes it the one
+    remaining way the committed state can move out from under a stored
+    pause. A ninth card in alice's hand turns CR 514.1's "discard 1" into
+    "discard 2", so the replay lands on a different question and the slot is
+    holding one nobody can answer.
+    """
+    stuff_hand(client, game, "alice", 8)  # 7 max + 1 to discard
+    uids = seats_for(client, game)
+
+    paused = advance_into_cleanup(game)
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+    stale = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert stale["kind"] == "choose_cards"
+    assert stale["amount"] == 1
+
+    # Board setup, behind `_run_command`'s back: nine cards in hand means the
+    # cleanup discard now asks for two, so the stored question is unanswerable.
+    add_card(client, game, "Mountain", "alice", "hand")
+
+    sba = client.post(f"/api/games/{game}/state-based-actions")
+    assert sba.status_code == 200, (
+        f"a stale pause must be cleared and the command carried on, never stood on: {sba.text}"
+    )
+    cleared = state(client, game, uid=uids["alice"])
+    assert cleared.get("pending_decision") is None, "the stale pause must be gone"
+    assert len(cleared["hands"]["alice"]) == 9, "nothing about the discard was applied"
+
+    # And the game is not wedged: entering cleanup asks again, for the
+    # question the current board actually poses.
+    replayed = advance_into_cleanup(game)
+    assert replayed is not None
+    fresh = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert fresh["amount"] == 2, fresh
 
 
 def test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed(client, game):

@@ -500,6 +500,27 @@ for every seat, plus `cards` and `amount` (and the rest of the kind-specific
 detail) for the deciding player (and the admin key) only - everyone else may
 see that a choice is being made, never what it is a choice among.
 
+**Nothing else can happen while a decision is pending.** Any other mutating
+command attempted meanwhile is refused with `409` and
+`{allowed: false, reason: ...}` in the engine's own words - nobody receives
+priority part-way through another command (CR 608.2g and CR 117.3b
+mid-resolution, CR 601.2i mid-announcement, CR 117.3a before a turn-based
+action is dealt with). Re-posting the *same* command that is already paused
+is not a competing command: it gets the standing question handed straight
+back, so a polling client is never pushed into escalating. Conceding
+(CR 104.3a, "at any time") and a `dry_run` probe are exempt. A pause the
+committed state has genuinely moved past is cleared rather than stood on, so
+this can never wedge a game.
+
+The deciding seat's own `pending_decision` also carries `generation`, a
+counter that advances only when the standing question is replaced. A
+resolution can ask more than one decision - a fetchland's search, then the
+shockland's "pay 2 life" - and accepting the first replaces the question
+with the second immediately. Echo it back as `decide`'s optional
+`generation` (or `seat_cli decide --generation`) and an answer aimed at the
+question you read is refused rather than applied to whatever is standing
+now; omit it and the check is skipped.
+
 ### The state object
 
 `GET /api/games/{id}` returns the turn, priority holder, players (life,

@@ -5,6 +5,11 @@ from ui_node import requires_node, run_module
 pytestmark = requires_node
 
 MAY = {
+    # Which standing question this is (`repository.pause_generation`), echoed
+    # back on `POST .../decide` as `generation` so an answer aimed at a
+    # question the resolution has already moved past is refused rather than
+    # applied to whatever is standing now.
+    "generation": 1,
     "player": "alice",
     "kind": "may",
     "prompt": "Pay 2 life?",
