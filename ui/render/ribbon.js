@@ -742,15 +742,43 @@ function renderStopsBox(el, app, handlers) {
       " anything on the stack"
     )
   );
+  // Beside it, not inside either step column, for the same reason: it is not
+  // a step, it fires (or rather, doesn't) regardless of which one you are
+  // in. Off by default - casting a spell auto-passes priority to the
+  // opponent unless this is ticked (`priority.js`'s header has the CR 117.3c
+  // reasoning and the MCP/agent side's own `hold_priority` twin).
+  el.appendChild(
+    h(
+      "label",
+      { class: "stops-anything" },
+      h("input", {
+        type: "checkbox",
+        checked: app.stops.keepPriorityAfterCasting === true,
+        onChange: () => handlers.onToggleKeepPriorityAfterCasting(),
+      }),
+      " keep priority after casting"
+    )
+  );
   const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));
   for (const step of steps) {
     const label = step.replace(/_/g, " ");
+    // `declare_attackers` on `mine` is a checked stop like any other now
+    // (`priority.js`'s header), but unticking it has a consequence nothing
+    // else on the panel warns about: declaring attackers doesn't use the
+    // stack (CR 508.1), so a run that passes through it silently declares no
+    // attackers for that combat - the step just goes by. A short line here,
+    // not a confirmation dialog: the owner's call was a tick, not a gate.
+    const mineHint =
+      step === "declare_attackers"
+        ? h("span", { class: "stop-hint" }, " - unticked, you attack with nothing that turn")
+        : null;
     grid.appendChild(
       h(
         "label",
         {},
         h("input", { type: "checkbox", checked: app.stops.mine.includes(step), onChange: () => handlers.onToggleStop("mine", step) }),
-        ` ${label}`
+        ` ${label}`,
+        mineHint
       )
     );
     grid.appendChild(

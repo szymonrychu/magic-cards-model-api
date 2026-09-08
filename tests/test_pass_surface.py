@@ -74,6 +74,18 @@ def tool_functions() -> dict[str, Any]:
     return {name: entry.fn for name, entry in registry.items()}
 
 
+def tool_registry() -> dict[str, Any]:
+    """The full `Tool` entries, not just `.fn` - `tool_functions()` throws
+    away everything but the raw callable, which is not enough to ask "what
+    can a caller actually pass": `entry.parameters` is the client-facing
+    input schema `tools/list` shows the model, with a `ctx: Context`
+    parameter already excluded (the framework's own context-injection
+    machinery skips it building that schema - see `find_context_parameter`/
+    `context_kwarg` in `mcp.server.mcpserver.tools.base`), unlike
+    `inspect.signature(entry.fn)`, which still shows it."""
+    return a_server_only_introspected()._tool_manager._tools
+
+
 def subparsers() -> argparse.Action:
     return next(a for a in seat_cli.build_parser()._actions if getattr(a, "choices", None))
 
@@ -118,9 +130,16 @@ def test_the_seat_cli_offers_exactly_the_two_pass_verbs() -> None:
 def test_the_plain_pass_takes_no_run_arguments() -> None:
     """`pass` is the primitive - one priority, given up. Everything about a
     run (a destination, the stops, the `resume` token) belongs to `pass_until`,
-    and a `pass` that still carried them is the over-grown surface again."""
-    parameters = inspect.signature(tool_functions()["pass"]).parameters
-    assert set(parameters) == {"player_uid", "reasoning"}, sorted(parameters)
+    and a `pass` that still carried them is the over-grown surface again.
+
+    Checked against the tool's client-facing input schema
+    (`entry.parameters`), not the raw Python signature - `pass` also takes a
+    framework-injected `ctx: Context` parameter now (the MCP protocol-version
+    fix, so its answer can be shaped for whichever revision the caller
+    actually negotiated), which the framework itself excludes from what a
+    caller can see or pass, same as it always excluded `self`."""
+    parameters = set(tool_registry()["pass"].parameters.get("properties", {}))
+    assert parameters == {"player_uid", "reasoning"}, sorted(parameters)
 
     flags = {
         option
@@ -164,3 +183,33 @@ def test_the_two_verbs_are_taught_everywhere_a_seat_reads() -> None:
         flat = " ".join(texts[source].split())
         for token in expected:
             assert token in flat, f"{source} never mentions {token}"
+
+
+def test_repeated_single_passes_are_taught_as_the_wrong_default() -> None:
+    """The owner's report: an agent seat that walks a whole turn by calling
+    the single-priority `pass` over and over instead of one `pass_until` to a
+    destination - each manual pass is a round trip and a whole agent turn, so
+    this is slow, expensive, and produces exactly the log noise the owner
+    complained about. `pass_until` has to read as the default way to cross a
+    stretch of windows the seat cannot act in; reaching for repeated single
+    passes has to read as the wrong move, everywhere a seat is taught the two
+    verbs."""
+    texts = agent_facing_texts()
+    for source in ("src/mtg_agent/driver/prompt.py", "docs/ai_seat_brief.md"):
+        flat = " ".join(texts[source].split())
+        assert "one priority at a time" in flat, (
+            f"{source} never warns against passing one priority at a time"
+        )
+        assert "wrong move" in flat, f"{source} never says repeated single passes are wrong"
+
+
+def test_the_pass_tools_pointer_to_pass_until_is_not_a_trailing_sentence() -> None:
+    """`pass_once`'s docstring already pointed at `pass_until` - as its very
+    last sentence, easy to skim past. The guidance has to be unmissable:
+    stated up front, not buried at the end."""
+    pass_doc = agent_facing_texts()["the pass tool docstring"]
+    flat = " ".join(pass_doc.split())
+    first_quarter = flat[: len(flat) // 4]
+    assert "pass_until" in first_quarter, (
+        "the `pass` tool's pointer to `pass_until` is not stated up front"
+    )

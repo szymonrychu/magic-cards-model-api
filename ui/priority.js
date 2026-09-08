@@ -21,9 +21,18 @@
 // A stop is one of three kinds, and only the first is a tick:
 //
 //   1. a *checked stop* - a step on `stops.mine`/`stops.theirs`, or the
-//      `stops.onStack` tick;
-//   2. an *unconditional rule* - being attacked, a pending decision, the game
-//      being over. There is no tick for these and there never was;
+//      `stops.onStack` tick. Your own `declare_attackers` pause counts here
+//      too, even though it arrives as `state.pending_decision` rather than a
+//      `state.step` match (declaring attackers doesn't use the stack, CR
+//      508.1, and doesn't move `state.step` until it is answered) - it reads
+//      `stops.mine` exactly like any other step tick, and unticking it runs
+//      the pass straight through, which silently declares no attackers for
+//      that combat (the harness answers the frozen pause with "nobody" -
+//      declaring nobody is always legal). Ticked by default for that reason;
+//   2. an *unconditional rule* - being attacked (a `declare_blockers` pause),
+//      any other pending decision, the game being over. There is no tick for
+//      these and there never was - the owner has asked only `declare_attackers`
+//      to move into kind 1, not this one;
 //   3. the `pass` verb's own "one priority, then stop".
 //
 // The `onStack` tick is deliberately NOT a destination. The owner's case for
@@ -62,10 +71,28 @@ export const VERB_LABELS = {
 // so the pass this run has not made yet is the whole of the chance to respond
 // to whatever just landed. Unticking it is the deliberate "I am answering
 // nothing in this stretch".
+//
+// `keepPriorityAfterCasting` sits beside it for the same structural reason
+// (not a step, fires regardless of which one you are in) but is not a
+// `stopReason`/`pass_until` concern at all - `fire()` (`app.js`) reads it
+// directly, once, right after a cast or activation goes on the stack. CR
+// 117.3c already gives you priority back after you cast a spell, activate an
+// ability, or take a special action; the *default* is for the harness to
+// spend that priority for you with one auto-pass, same as `hold_priority`
+// already does on the MCP/agent side (`cast`/`activate` in `mcp.py`, both
+// defaulting `hold_priority=false`) - this tick is this seat's own standing
+// override of that default, in place of re-ticking a per-cast "hold
+// priority" box every single time. Off by default, the opposite polarity
+// from `onStack`: unlike the stack tick (where "off" would silently take
+// away a chance to respond, so absent has to read as on), the auto-pass
+// default here is the EXISTING behaviour - so absent has to read as off, or
+// introducing this tick would silently start holding priority for every
+// player who never touched the setting.
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
   theirs: ["declare_attackers", "end_step"],
   onStack: true,
+  keepPriorityAfterCasting: false,
 };
 
 const STOPS_KEY = "mcm.stops.v1";
@@ -75,6 +102,7 @@ export function loadStops(storage) {
     mine: [...DEFAULT_STOPS.mine],
     theirs: [...DEFAULT_STOPS.theirs],
     onStack: DEFAULT_STOPS.onStack,
+    keepPriorityAfterCasting: DEFAULT_STOPS.keepPriorityAfterCasting,
   };
   try {
     const raw = storage.getItem(STOPS_KEY);
@@ -89,7 +117,18 @@ export function loadStops(storage) {
     // no `onStack` at all. Absent means ON, which is both the default and the
     // safe reading: the alternative silently takes the chance to respond away
     // from everyone who had already ticked a step.
-    return { mine: parsed.mine || [], theirs: parsed.theirs || [], onStack: parsed.onStack !== false };
+    //
+    // `keepPriorityAfterCasting` reads the opposite way on purpose: absent
+    // means OFF (`=== true`, not `!== false`), because a payload written
+    // before this tick existed already represents a player used to today's
+    // auto-pass-after-casting behaviour - reading it back as ON would
+    // silently start holding priority nobody asked to hold.
+    return {
+      mine: parsed.mine || [],
+      theirs: parsed.theirs || [],
+      onStack: parsed.onStack !== false,
+      keepPriorityAfterCasting: parsed.keepPriorityAfterCasting === true,
+    };
   } catch {
     return defaults;
   }
@@ -200,16 +239,37 @@ function sameOccurrence(state, run) {
 export function stopReason(state, run, stops) {
   if (state.winner || state.drawn) return "the game is over";
   if (state.pending_decision) {
-    // A pause rolls the committed game back to before the paused command
-    // ran, so `priority_holder` still reads as whoever it was before the
-    // pause - it is not necessarily the deciding player. A command that is
-    // paused cannot make progress no matter who calls `pass-priority`
-    // against it, own decision or not, so this stops (or never starts
-    // ticking) on *either* - see `interpretPassOutcome`'s and
-    // `passButtonsFor`'s own notes for the rest of this fix.
-    return state.pending_decision.player === state.you
-      ? "a decision is pending"
-      : "waiting on another seat's decision";
+    const pending = state.pending_decision;
+    // Declaring attackers is a turn-based action that doesn't use the stack
+    // (CR 508.1), so the pause that asks for it never lands on the stack tick
+    // - and it doesn't move `state.step` to "declare_attackers" either: the
+    // transition that would is the very thing that hasn't finished yet (see
+    // `seatkit.autopass_stop_reason`'s docstring for the server-side twin of
+    // this reasoning). `pending_decision` is what announces it, stamped the
+    // moment the question is asked. This used to stop unconditionally on
+    // that account - the owner overruled it: it is your own attack step, so
+    // it is an ordinary checked stop on `stops.mine` like any other, not a
+    // rule with no tick. Ticked off, nothing below can see the pause either,
+    // so falling through here is what lets the run keep going.
+    const isOwnAttackDeclaration = pending.kind === "declare_attackers" && pending.player === state.you;
+    if (isOwnAttackDeclaration) {
+      if (stops.mine.includes("declare_attackers") && !sameOccurrence(state, run)) {
+        return "stop at your declare attackers";
+      }
+    } else {
+      // A pause rolls the committed game back to before the paused command
+      // ran, so `priority_holder` still reads as whoever it was before the
+      // pause - it is not necessarily the deciding player. A command that is
+      // paused cannot make progress no matter who calls `pass-priority`
+      // against it, own decision or not, so this stops (or never starts
+      // ticking) on *either* - see `interpretPassOutcome`'s and
+      // `passButtonsFor`'s own notes for the rest of this fix. Being
+      // attacked (a `declare_blockers` pause addressed to you) falls through
+      // to here too: it was never a tick and stays that way.
+      return pending.player === state.you
+        ? "a decision is pending"
+        : "waiting on another seat's decision";
+    }
   }
   if (attackedNow(state) && !sameOccurrence(state, run)) return "you are being attacked";
   const mine = state.active_player === state.you;

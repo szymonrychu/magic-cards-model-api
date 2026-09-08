@@ -275,6 +275,15 @@ board as one card can punish.
 
 ## Passing a whole stretch at once, and when not to
 
+**`pass_until` is the default way to cross a stretch of windows you cannot act
+in - reaching for repeated single `pass` calls instead is the wrong move.**
+Each `pass` is a full round trip and a whole agent turn; walking a turn by
+calling it over and over where nothing changed is slow, expensive, and the
+exact log noise that gets noticed. `pass` is for the moment you genuinely hold
+priority once - in response to something, with your next action already
+decided for the very next window - not for a stretch where you have nothing
+to do until some later point.
+
 `pass` gives up one priority. `pass_until` is the same verb run to a
 destination: a step name, and it keeps passing every priority you currently
 hold until it gets there, instead of handing you back one priority at a time.
@@ -381,10 +390,13 @@ priority. After the game you will be asked to finish this same file.
   report. Stopping for any other reason is not allowed. A partially played
   game is worthless. Do not stop because the game is long, because you think
   you are losing, or because you are unsure.
-- In a main phase use `play_land` / `cast` / `activate`, then `pass`. There is
-  nothing else to reach for: no step needs stepping on by hand, and the untap
-  and cleanup steps (CR 502.4, CR 514.3) grant nobody priority and end on
-  their own (CR 500.3).
+- In a main phase use `play_land` / `cast` / `activate`, then `pass` for that
+  one priority. The moment there is nothing left to do until some later point
+  in the turn, reach for `pass_until` to get there in one call - never `pass`
+  called again and again through every window in between. There is nothing
+  else to reach for beyond these: no step needs stepping on by hand, and the
+  untap and cleanup steps (CR 502.4, CR 514.3) grant nobody priority and end
+  on their own (CR 500.3).
 - If `pass` is refused with "you do not have priority", call
   `wait_for_priority` again. That is the whole remedy - a refused pass means
   the other seat is still deciding, and nothing you can call moves the game

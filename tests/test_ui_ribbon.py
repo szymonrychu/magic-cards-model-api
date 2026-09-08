@@ -169,6 +169,7 @@ const HANDLERS = {
   onUnfill: NOOP, onSetShare: NOOP, onDone: NOOP, onCast: NOOP, onCancel: NOOP,
   onHoldPriority: NOOP, onDecisionDraft: NOOP, onDecide: NOOP, onVerb: NOOP,
   onStopRun: NOOP, onToggleStop: NOOP, onToggleStackStop: NOOP,
+  onToggleKeepPriorityAfterCasting: NOOP,
   onAttackConfirm: NOOP, onAttackNone: NOOP,
   onBlockConfirm: NOOP, onBlockNone: NOOP, onConcede: NOOP, onPregame: NOOP,
   nameOf: (id) => id,
@@ -797,3 +798,74 @@ def test_the_stops_box_offers_the_stack_tick_and_wires_it_up() -> None:
     assert absent["toggles"] == 1, "clicking the tick reaches no handler"
     assert off["offered"] is True
     assert off["checked"] is False, "`onStack: false` must render the tick unticked"
+
+
+def test_the_mine_declare_attackers_tick_carries_a_consequence_hint() -> None:
+    """`priority.js`'s own header explains why: unticking `declare_attackers`
+    on `mine` runs the pass straight through the pause, which silently
+    declares no attackers for that combat - there is nothing else on the
+    stack or in `state.step` to warn a player who unticks it. This is the
+    short helper text next to the tick the owner asked for instead of a
+    confirmation dialog. `theirs` gets no such note - it is not your own
+    attack, so unticking it costs nothing."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const store = makeStore(baseApp(baseState(), { stops: { mine: [], theirs: [] } }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const box = document.querySelector("#stops-box");
+          return box.textContent;
+        })()
+        """,
+    )
+    assert "declare attackers" in result
+    assert "attack with nothing" in result, result
+
+
+def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_up() -> None:
+    """The owner's newest ask: a standing tick beside "anything on the
+    stack" that overrides the new default (casting auto-passes priority),
+    the same shape as the stack tick's own test above - same placement
+    rationale (not a step, fires regardless of which one you are in), same
+    off-by-default-unless-`false`-was-never-written asymmetry check."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (stops) => {
+            const store = makeStore(baseApp(baseState(), { stops }));
+            const toggled = [];
+            m.mountRibbon(document, store, {
+              ...HANDLERS,
+              onToggleKeepPriorityAfterCasting: () => toggled.push(1),
+            });
+            store.set({});
+            const box = document.querySelector("#stops-box");
+            const tick = findByText(box, "label", "keep priority after casting");
+            const checkbox = tick && tick.children.find((c) => c.tagName === "input");
+            if (checkbox && checkbox.listeners && checkbox.listeners.change) {
+              checkbox.listeners.change({ target: checkbox });
+            }
+            return {
+              offered: Boolean(tick),
+              checked: checkbox ? "checked" in checkbox.attrs : null,
+              toggles: toggled.length,
+            };
+          };
+          return {
+            off: look({ mine: [], theirs: [], keepPriorityAfterCasting: false }),
+            on: look({ mine: [], theirs: [], keepPriorityAfterCasting: true }),
+          };
+        })()
+        """,
+    )
+    off, on = result["off"], result["on"]
+    assert off["offered"] is True, "the stops panel never renders the keep-priority tick"
+    assert off["checked"] is False
+    assert off["toggles"] == 1, "clicking the tick reaches no handler"
+    assert on["offered"] is True
+    assert on["checked"] is True
