@@ -18,7 +18,7 @@ from . import ai_seat
 from .agent_settings import AgentSettings
 from .store import store
 
-router = APIRouter(prefix="/api/ui", tags=["ui"])
+router = APIRouter(prefix="/api/lobby", tags=["lobby"])
 
 
 class StartAiSeat(BaseModel):

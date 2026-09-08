@@ -8,7 +8,7 @@ existed, a human who went back to the lobby and started a second game never
 ended the first, so the second game's seat could not be dispatched at all: the
 play UI showed a fallback, and the opponent never moved.
 
-Now games the lobby boots live side by side and `DELETE /api/ui/games/{id}`
+Now games the lobby boots live side by side and `DELETE /api/lobby/games/{id}`
 (End game) is the only reset - so this exercises the release through that
 endpoint rather than through starting a second game.
 
@@ -103,7 +103,7 @@ def world(tmp_path, monkeypatch):
 
 def boot(client: TestClient, *, seed: int) -> dict[str, Any]:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK, "ai": False},
@@ -119,7 +119,7 @@ def boot(client: TestClient, *, seed: int) -> dict[str, Any]:
 def end(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
     """End a lobby game exactly as the browser's End game button does."""
     response = client.delete(
-        f"/api/ui/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["alice"]}
+        f"/api/lobby/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["alice"]}
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -127,7 +127,7 @@ def end(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
 
 def start_ai_seat(client: TestClient, booted: dict[str, Any]) -> dict[str, Any]:
     response = client.post(
-        f"/api/ui/games/{booted['game_id']}/ai-seat/start",
+        f"/api/lobby/games/{booted['game_id']}/ai-seat/start",
         json={"uid": booted["seat_uids"]["bob"]},
     )
     assert response.status_code == 200, response.text
@@ -199,7 +199,7 @@ def test_the_old_seats_status_is_forgotten_after_end_game(world) -> None:
     second = boot(game_client, seed=2)
     try:
         answer = game_client.get(
-            f"/api/ui/games/{second['game_id']}/ai-seat/status", params={"uid": old_uid}
+            f"/api/lobby/games/{second['game_id']}/ai-seat/status", params={"uid": old_uid}
         ).json()
         assert answer["state"] == "not_started"
         assert answer["mechanism"] is None

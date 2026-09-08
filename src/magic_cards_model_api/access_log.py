@@ -4,15 +4,16 @@
 used to be a poll:
 
     driver-1  | INFO: 172.18.0.2:58554 - "GET /status HTTP/1.1" 200 OK
-    game-1    | INFO: ... - "GET /api/ui/games/<id>/ai-seat/status?uid=..." 200 OK
+    game-1    | INFO: ... - "GET /api/lobby/games/<id>/seats" 200 OK
     game-1    | INFO: ... - "GET /api/games/<id>?uid=... HTTP/1.1" 200 OK
     game-1    | INFO: ... - "GET /api/games/<id>/log?since=2&uid=... HTTP/1.1" 200 OK
 
 The browser re-reads the game and long-polls its log every ~1.2s, the play UI
-re-reads the AI seat's status alongside it, the game server re-reads the
-driver's `/status`, and the compose healthcheck probes `/api/health` every
-five seconds. Together that is tens of thousands of lines a day, and it
-buries the only thing anyone opens the log for: what the AI opponent is
+re-reads its seats (agent settings and AI-seat liveness together, 2b's T8)
+every 5s, the game server re-reads the driver's `/status`, and the compose
+healthcheck probes `/api/health` every five seconds. Together that is tens of
+thousands of lines a day, and it buries the only thing anyone opens the log
+for: what the AI opponent is
 doing.
 
 Of the ways to fix that, this one is the narrowest:
@@ -85,15 +86,17 @@ API_QUIET_PATHS: tuple[re.Pattern[str], ...] = (
 )
 
 #: Read-only, high-frequency routes on `magic-cards-lobby`: the play UI's
-#: AI-seat poll, and its own lobby-list poll (`GET /api/ui/games`, optionally
-#: `?uids=` - one comma-separated value, scoping the uids a browser may act
-#: through). The lobby-list pattern is matched only in full so a specific
-#: game's own routes (`/api/ui/games/{id}/ai-seat/status` aside, which has
-#: its own pattern above, and `DELETE /api/ui/games/{id}` - a mutation, so
-#: method-gated regardless) are never silenced by it.
+#: 5s per-game seats poll (agent settings and AI-seat liveness together,
+#: S7's fold-in - 2b's T8), and its own lobby-list poll (`GET
+#: /api/lobby/games`, optionally `?uids=` - one comma-separated value,
+#: scoping the uids a browser may act through). The lobby-list pattern is
+#: matched only in full so a specific game's own routes (`/api/lobby/games/
+#: {id}/seats` aside, which has its own pattern above, and `DELETE
+#: /api/lobby/games/{id}` - a mutation, so method-gated regardless) are
+#: never silenced by it.
 LOBBY_QUIET_PATHS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"/api/ui/games/[^/]+/ai-seat/status"),
-    re.compile(r"/api/ui/games"),
+    re.compile(r"/api/lobby/games/[^/]+/seats"),
+    re.compile(r"/api/lobby/games"),
 )
 
 #: Read-only, high-frequency routes on the wrapper entry point of

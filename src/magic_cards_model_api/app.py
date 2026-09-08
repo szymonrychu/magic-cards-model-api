@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -39,6 +39,7 @@ from . import (
     records,
     scryfall,
     seatkit,
+    serialize,
     symbology,
     visibility,
 )
@@ -65,10 +66,13 @@ from .schemas import (
     DeleteGameResponse,
     GameLogResponse,
     GameStateView,
+    GameSummariesResponse,
     HealthResponse,
     LegalActionsResponse,
     ListGamesResponse,
     ManaPoolUpdate,
+    MintSeatRequest,
+    MintSeatResponse,
     MoveCard,
     MoveCardSuccessResponse,
     MulliganRequest,
@@ -91,6 +95,7 @@ from .schemas import (
     ReportProblemRequest,
     ReportProblemResponse,
     ResolveTopResponse,
+    SeatLookupResponse,
     SeatResponse,
     SetStepResponse,
     SpecialActionRequest,
@@ -694,6 +699,64 @@ def whose_seat(game_id: str, uid: str) -> dict[str, Any]:
     if player is None:
         raise KeyError("that uid is no seat in this game")
     return {"player": player}
+
+
+@app.post(
+    "/api/games/{game_id}/seats",
+    response_model=MintSeatResponse,
+    response_model_exclude_unset=True,
+)
+def mint_seat(game_id: str, req: MintSeatRequest) -> dict[str, Any]:
+    """A fresh seat credential for an already-registered player - 2b's T8
+    (map's "seat back door"), the mint half. Replaces the tests'/mcp's habit
+    of reading `store.seat_uids` straight out of this process, which no
+    out-of-process caller can do: a test harness or a shared mcp server (M2)
+    can call this instead and get a uid it can actually use. Refuses (404) a
+    player this game does not have.
+
+    Read-modify-write under this game's own mutation lock
+    (`store.locked`), since `register_seats` replaces the whole uid map
+    rather than merging into it - the lock is what keeps two concurrent
+    mints from racing each other's read of the existing uids.
+    """
+    with store.locked(game_id) as game:
+        if req.player not in {p.username for p in game.players}:
+            raise KeyError(f"{req.player!r} is no player in this game")
+        uid = uuid4().hex
+        store.register_seats(game_id, {**store.seat_uids(game_id), uid: req.player})
+    return {"uid": uid, "player": req.player}
+
+
+@app.get("/api/seats/{uid}", response_model=SeatLookupResponse, response_model_exclude_unset=True)
+def find_seat(uid: str) -> dict[str, Any]:
+    """Resolve a seat uid to its game and player with no game id known in
+    advance - 2b's T8 (map's "seat back door"), the lookup half.
+    `whose_seat` above already answers this once the caller knows the game;
+    this is the reverse direction `store.seat_uids` gave an in-process caller
+    for free. 404 on a uid no live game recognises."""
+    for game_id in store.ids():
+        player = store.player_for_uid(game_id, uid)
+        if player is not None:
+            return {"game_id": game_id, "player": player}
+    raise KeyError(f"no seat {uid!r}")
+
+
+@app.get(
+    "/api/games/summary", response_model=GameSummariesResponse, response_model_exclude_unset=True
+)
+def game_summaries_route(ids: str) -> dict[str, Any]:
+    """2b's T8 (map's S2): the scalars a lobby list needs, for every id in
+    one call - `ids` comma-separated. Never the full `state_view` per game
+    `list_lobby_games` used to build just to read four fields back out of
+    it; unknown ids are silently skipped, the same way that loop already
+    skipped a `store.get` miss."""
+    game_ids = [i for i in ids.split(",") if i]
+    summaries = [
+        serialize.game_summary(game, game_id)
+        for game_id in game_ids
+        if (game := store.get(game_id)) is not None
+    ]
+    return {"summaries": summaries}
 
 
 @app.get("/api/games", response_model=ListGamesResponse, response_model_exclude_unset=True)

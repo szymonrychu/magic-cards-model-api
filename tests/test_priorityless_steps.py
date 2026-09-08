@@ -44,7 +44,7 @@ def boot_and_finish_the_pregame(client: TestClient) -> dict[str, Any]:
     declarations and CR 103.6's opening-hand actions by the seats themselves -
     exactly the sequence the browser UI posts. Returns the creation body."""
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": PLAIN_DECK, "ai": False},

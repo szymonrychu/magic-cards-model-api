@@ -68,7 +68,7 @@ SEED_WITH_A_DEVOURER_IN_ALICES_HAND = 4
 
 def boot(client: TestClient) -> dict[str, Any]:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": DEVOURER_DECK, "ai": False},

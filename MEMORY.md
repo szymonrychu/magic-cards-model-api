@@ -451,8 +451,6 @@ whoever works on the repo itself.
   this, since a dict literal's later `**answer` (now correctly carrying
   `allowed: False` for a non-2xx) overrides the initial `True`; neither
   needed editing.
-<<<<<<< HEAD
-
 - **2026-09-08 - T7: a seat's `api_base` was two request-derived call sites,
   not one.** The plan named `ai_seat_api.py:29`'s `_api_base(request)`, but
   `decks_api.start_game_from_decklists` imported and called the same helper
@@ -495,7 +493,7 @@ whoever works on the repo itself.
   an `HttpApiClient` (not built by this task) taking over post-cut. The
   `ApiClient` protocol is what makes that swap cost one constructor call at
   the call site and nothing else.
-=======
+
 - **2026-09-08 - T4: `TestClient`'s `httpx` transport normalises `../`
   dot-segments in a request path before sending it - a `%2e%2e` traversal
   test is the only one that actually reaches the route's own guard.**
@@ -513,4 +511,75 @@ whoever works on the repo itself.
   confirmed live against a running server (`resp.request.url` still showed
   `/g/<id>/%2e%2e/...`, status 200, body was `index.html`'s 6005 bytes, not
   `pyproject.toml`'s 1593).
->>>>>>> 2b-t4-game-addressing
+
+- **2026-09-08 - MEMORY.md itself carried an unresolved git conflict marker
+  (`<<<<<<< HEAD` / `=======` / `>>>>>>> 2b-t4-game-addressing` around the T7/
+  T5/T4 entries) from a prior merge that landed both sides' work but never
+  resolved this file's own markers.** Both sides were independent, non-
+  overlapping entries, not a real conflict - fixed by keeping both and
+  dropping the markers, while landing T8 on top.
+
+- **2026-09-08 - 2b T8: `decklist` did not simply disappear off the game
+  state view - it had a real, tested, out-of-scope consumer
+  (`mtg_agent.driver.app`'s `seat_decklist`, matchup-guide selection),
+  caught by `tests/driver/test_app.py::
+  test_the_real_game_server_carries_the_field_seat_decklist_reads`, a test
+  written specifically to guard against this exact silent regression.**
+  The plan's S6 text ("Delete those two fields from the api's player view...
+  They move to a new lobby route") was ambiguous about whether "They"
+  included `decklist` as well as `agent` - the route description only named
+  "agent settings and seat liveness". Deleting `decklist` outright would
+  have broken that test and silently reintroduced the historical bug its
+  own docstring describes (every dispatch logged `deck=unknown-deck`, no
+  matchup guide ever loaded) - proven by literally reverting
+  `seat_decklist` to return `""` and watching
+  `test_dispatch_identifies_the_deck_and_reports_it` fail with exactly that
+  symptom. Resolution: `decklist` also moved to
+  `GET /api/lobby/games/{id}/seats`, but redacted per-viewer by an optional
+  `uid` query parameter the same way `visibility._redact_player` redacted it
+  on the old route (present only on the entry whose own uid the caller
+  presents) - an unredacted route would have handed any caller who knows a
+  game id (public, via `list_lobby_games`) both players' full decklists,
+  a CR 401.2 violation `/ai-seat/status`'s unredacted agent-settings
+  exposure never was. `mtg_agent/driver/app.py`'s `seat_decklist` (not in
+  T8's own file list, but genuinely broken by the S6 change with no other
+  fix available) now calls this route instead of reading the state view,
+  best-effort - a failure to reach it answers `""` rather than aborting the
+  seat's own dispatch, since guide selection is not worth making the actual
+  assignment newly fragile over. `admin_key` gets no special access on this
+  new route (no current consumer needs it); `visibility.py` itself stays
+  untouched, per the task's own note - its `decklist`-specific redaction is
+  simply never triggered from the state view any more.
+
+- **2026-09-08 - 2b T8: `response_model_exclude_unset=True` bit a second
+  time, this time on `AgentSettings` embedded in a *new* response model.**
+  `decks_api.SeatDetail.agent` handed FastAPI the raw `AgentSettings`
+  instance straight out of `store.agent_settings()` rather than a plain
+  dict; because that instance is already the declared type, FastAPI
+  serializes it as-is rather than reconstructing one from a dict, so its
+  `model_fields_set` stayed whatever `AgentSettings.default()`'s
+  constructor happened to set explicitly (`model` only) - `effort` and
+  `max_thinking_tokens` silently vanished from the wire even though both
+  were genuinely present values, not really-unset ones. Same root cause as
+  T1's `MEMORY.md` entry on this file, different route. Fixed the way
+  `_player_view` used to get it for free: `.model_dump()` the instance into
+  a plain dict with every key present before returning it, forcing FastAPI
+  to validate a fresh instance from that dict and mark all three fields
+  set. `test_agent_settings_default_and_show_on_the_player` pins it (proven
+  by reverting to the bare instance and watching `effort`/
+  `max_thinking_tokens` disappear).
+
+- **2026-09-08 - 2b T8: `list_lobby_games`'s S2 fix (`GET
+  /api/games/summary`) intentionally does not mirror the old
+  `LobbyGameSummary` wire field-for-field.** The plan named the new
+  endpoint's own scalars exactly ("id, is_over, turn number, active player,
+  phase, seat count") - a generalised, reusable api-owned contract, not a
+  copy of the four ad hoc fields `list_lobby_games` used to extract
+  (`turn_number`, `step`, `winner`, `drawn`). `LobbyGameSummary` changed to
+  match what is actually available: `phase` (coarser than `step`) and
+  `is_over` (bool, not a winner's name) - `winner`/`drawn` were never part
+  of the N+1 anyway (already free reads off the locally-fetched `Game`), so
+  dropping the winner's *name* from the lobby list is a real, deliberate
+  narrowing this task accepted rather than an accident; nothing in `ui/`
+  displayed it beyond the boolean "over" state. `ui/lobby_model.js`,
+  `ui/render/lobby.js`, and their Node tests moved with it.

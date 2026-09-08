@@ -21,13 +21,15 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from . import api_decks
+from . import api_decks, serialize
+from .store import store
 
 
 class ApiClient(Protocol):
-    """What the lobby needs from the api component. One method today - deck
-    resolution and legality (map Finding 1) - the seam future lobby-side
-    imports of api internals replace the same way."""
+    """What the lobby needs from the api component. Deck resolution and
+    legality (map Finding 1); and, since 2b's T8 (map's S2), one bulk game-
+    summary read - the seam future lobby-side imports of api internals
+    replace the same way."""
 
     def validate_decklist(self, text: str) -> dict[str, Any]:
         """Same shape `POST /api/decks/validate` returns: `valid`, `errors`,
@@ -35,11 +37,28 @@ class ApiClient(Protocol):
         `mainboard_size`/`sideboard_size`."""
         ...
 
+    def game_summaries(self, game_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Same per-game shape `GET /api/games/summary?ids=...` returns
+        (`schemas.GameSummaryScalars`), keyed by game id - unknown ids are
+        simply absent from the result, not an error. S2's fix for
+        `list_lobby_games`'s old per-game `serialize.state_view` N+1: one
+        call for every id a poll asks about, not one per game."""
+        ...
+
 
 class InProcessApiClient:
     """The only implementation this task ships. Calls the api component's
-    own validation function directly, in this process - correct for as long
-    as lobby and api are one deployable, which is true until stage B's cut."""
+    own functions directly, in this process - correct for as long as lobby
+    and api are one deployable, which is true until stage B's cut."""
 
     def validate_decklist(self, text: str) -> dict[str, Any]:
         return api_decks.validate_decklist_text(text)
+
+    def game_summaries(self, game_ids: list[str]) -> dict[str, dict[str, Any]]:
+        summaries: dict[str, dict[str, Any]] = {}
+        for game_id in game_ids:
+            game = store.get(game_id)
+            if game is None:
+                continue
+            summaries[game_id] = serialize.game_summary(game, game_id)
+        return summaries

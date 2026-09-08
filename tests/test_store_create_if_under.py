@@ -22,7 +22,7 @@ from magic_cards_model_api.store import GameStore
 
 def _real_game():
     """A real engine `Game`, from a real (if minimal) legal decklist pair -
-    exactly what `load_deck_into_game` builds for `POST /api/ui/games`, no
+    exactly what `load_deck_into_game` builds for `POST /api/lobby/games`, no
     hand-built model."""
     match = load_deck_into_game([("you", LEGAL_DECK), ("bot", LEGAL_DECK_B)])
     return match.games[-1]

@@ -2,12 +2,12 @@
 // that actually talks to the network and the page; this is what it hands its
 // results through and what `tests/test_ui_lobby.py` runs straight under Node.
 //
-// `lobbyViewModel` joins `GET /api/ui/games`'s server rows with the browser's
+// `lobbyViewModel` joins `GET /api/lobby/games`'s server rows with the browser's
 // own saved seats (`mcm.games.v1`, see the storage helpers below) into one
 // row per game: the opponent's name, where the game currently sits, its AI
 // opponent's model/effort, and the two uids `handlers.startGame`/`DELETE`
 // need. `agentFrom` turns the AI deck picker's three raw fields (`#ai-model`,
-// `#ai-effort`, `#ai-thinking`) into the `agent` body `POST /api/ui/games`
+// `#ai-effort`, `#ai-thinking`) into the `agent` body `POST /api/lobby/games`
 // sends for the AI player, the same shape `AgentSettings` (the API's pydantic
 // model) accepts.
 
@@ -71,8 +71,8 @@ export function lobbyViewModel(games, saved) {
         gameId: g.game_id,
         opponent,
         turn: g.turn_number,
-        step: g.step,
-        over: Boolean(g.winner || g.drawn),
+        phase: g.phase,
+        over: Boolean(g.is_over),
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,
         myUid: seat.uid || (me ? g.seats[me] : null),
@@ -93,7 +93,7 @@ export function lobbyViewModel(games, saved) {
 // reads it.
 //
 // Both `ui/app.js` (appending on `startGame`) and `ui/render/lobby.js`
-// (reading the list for its `GET /api/ui/games?uids=...` query, and dropping
+// (reading the list for its `GET /api/lobby/games?uids=...` query, and dropping
 // a row on End) go through these rather than each rolling its own
 // `JSON.parse`/`JSON.stringify`, so the two never drift on the key name or
 // the migration.

@@ -81,7 +81,7 @@ def test_dispatch_payload_carries_agent(monkeypatch) -> None:
     }
 
 
-# -- creation itself starts the seat (POST /api/ui/games, subprocess mode) --
+# -- creation itself starts the seat (POST /api/lobby/games, subprocess mode) --
 #
 # This is the task's headline behavior - `start_game_from_decklists` starting
 # each `ai: true` seat right after `ai_pregame.start`, without a human having
@@ -118,7 +118,7 @@ class _CapturingDriverClient:
 
 # -- T7: the seat's API URL comes from API_SERVICE_URL, never from whatever
 # Host header the request that triggered dispatch happened to carry. Real
-# regression: after the six-way cut, `POST /api/ui/games` and
+# regression: after the six-way cut, `POST /api/lobby/games` and
 # `POST .../ai-seat/start` both arrive at the *lobby*, not the api - a URL
 # derived from that request would point every seat at the lobby, and every
 # seat call would 404. Both tests forge an arbitrary `Host` header so a fix
@@ -135,7 +135,7 @@ def test_creation_dispatch_ignores_the_hosts_header_and_uses_api_service_url(
     monkeypatch.setenv("API_SERVICE_URL", "http://mtg-stack.mtg-engine.svc.cluster.local:8000")
 
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK},
@@ -155,7 +155,7 @@ def test_manual_start_route_ignores_the_hosts_header_and_uses_api_service_url(
     # auto-starts) - isolates the manual `POST .../ai-seat/start` route's
     # own dispatch from creation's.
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK},
@@ -174,7 +174,7 @@ def test_manual_start_route_ignores_the_hosts_header_and_uses_api_service_url(
     monkeypatch.setenv("API_SERVICE_URL", "http://mtg-stack.mtg-engine.svc.cluster.local:8000")
 
     started = client.post(
-        f"/api/ui/games/{body['game_id']}/ai-seat/start",
+        f"/api/lobby/games/{body['game_id']}/ai-seat/start",
         json={"uid": bot_uid},
         headers={"host": "totally-wrong-host.example:9999"},
     )
@@ -190,7 +190,7 @@ def test_creation_starts_the_ai_seat_in_subprocess_mode(monkeypatch, client: Tes
         lambda prompt, agent: ["python3", "-c", "import time; time.sleep(30)"],
     )
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK},
@@ -212,6 +212,8 @@ def test_creation_starts_the_ai_seat_in_subprocess_mode(monkeypatch, client: Tes
 
     # The separate start route stays, and calling it for an already-started
     # uid must not spawn a second process.
-    started = client.post(f"/api/ui/games/{body['game_id']}/ai-seat/start", json={"uid": bot_uid})
+    started = client.post(
+        f"/api/lobby/games/{body['game_id']}/ai-seat/start", json={"uid": bot_uid}
+    )
     assert started.status_code == 200
     assert ai_seat.registry._runners[bot_uid] is runner

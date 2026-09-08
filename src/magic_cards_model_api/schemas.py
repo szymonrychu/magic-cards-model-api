@@ -13,8 +13,6 @@ from uuid import UUID
 from magic_cards_model.models import Action, Card
 from pydantic import BaseModel, ConfigDict, Field
 
-from .agent_settings import AgentSettings
-
 
 class NewPlayer(BaseModel):
     username: str = Field(min_length=1)
@@ -855,9 +853,13 @@ class ManaPoolView(BaseModel):
 
 
 class PlayerView(BaseModel):
-    """One seat's own block (`serialize._player_view`). `decklist` survives
-    redaction only on the viewer's own block (`visibility._redact_player`);
-    `agent` is present only for an AI seat."""
+    """One seat's own block (`serialize._player_view`). No `decklist` or
+    `agent` field any more (2b's T8, map's S6): both were lobby-owned state
+    read here on every state poll, the hot reverse seam the six-way cut
+    cannot carry. Both moved to the lobby's own
+    `GET /api/lobby/games/{id}/seats` (`decks_api.SeatDetail`), `decklist`
+    redacted there per-viewer the same way it used to be redacted here - see
+    `serialize._player_view`'s own docstring."""
 
     username: str
     life: int
@@ -868,8 +870,6 @@ class PlayerView(BaseModel):
     graveyard_count: int
     sideboard_count: int
     maximum_hand_size: int
-    decklist: str | None = None
-    agent: AgentSettings | None = None
 
 
 class PlayPermissionView(BaseModel):
@@ -1060,6 +1060,29 @@ class SeatResponse(BaseModel):
     player: str
 
 
+class MintSeatRequest(BaseModel):
+    """2b's T8, the seat back door's mint half. `player` must already be
+    registered on the game (`Game.players`) - this mints a fresh credential
+    for an existing seat, it does not add a player to the game."""
+
+    player: str = Field(min_length=1)
+
+
+class MintSeatResponse(BaseModel):
+    uid: str
+    player: str
+
+
+class SeatLookupResponse(BaseModel):
+    """2b's T8, the seat back door's lookup half: `GET /api/seats/{uid}`
+    resolves a uid to its game with no game id known in advance - the
+    capability `store.seat_uids` gave an in-process caller for free and no
+    out-of-process one (a test, or a shared mcp server, M2) can reach."""
+
+    game_id: str
+    player: str
+
+
 class GameSummary(BaseModel):
     game_id: str
     players: list[str]
@@ -1068,6 +1091,24 @@ class GameSummary(BaseModel):
 
 class ListGamesResponse(BaseModel):
     games: list[GameSummary]
+
+
+class GameSummaryScalars(BaseModel):
+    """One game's row from `GET /api/games/summary` (2b's T8, map's S2) -
+    exactly the scalars a lobby list needs and nothing a full `state_view`
+    would cost to build: no card views, no Scryfall images, one bulk call
+    for every id a poll asks about instead of one `state_view` per game."""
+
+    game_id: str
+    is_over: bool
+    turn_number: int | None = None
+    active_player: str | None = None
+    phase: str | None = None
+    seat_count: int
+
+
+class GameSummariesResponse(BaseModel):
+    summaries: list[GameSummaryScalars]
 
 
 class GameLogResponse(BaseModel):

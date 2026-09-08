@@ -355,11 +355,31 @@ def test_kubernetes_why_gone_carries_the_kubernetes_status_reason(
 
 
 def test_ai_seat_status_before_start_is_not_started(client: TestClient) -> None:
-    response = client.get("/api/ui/games/no-such-game/ai-seat/status", params={"uid": "nobody"})
+    response = client.get("/api/lobby/games/no-such-game/ai-seat/status", params={"uid": "nobody"})
     assert response.status_code == 200
     assert response.json()["state"] == "not_started"
 
 
 def test_ai_seat_start_refuses_an_unknown_uid(client: TestClient, game: str) -> None:
-    response = client.post(f"/api/ui/games/{game}/ai-seat/start", json={"uid": "not-a-real-uid"})
+    response = client.post(f"/api/lobby/games/{game}/ai-seat/start", json={"uid": "not-a-real-uid"})
     assert response.status_code == 404
+
+
+def test_the_old_ui_prefixed_ai_seat_routes_are_gone(client: TestClient, game: str) -> None:
+    """2b's T8 moved `ai_seat_api.py`'s router off `/api/ui` onto
+    `/api/lobby` - proves the move happened rather than the routes being
+    merely duplicated at the new path. The same T5 precedent
+    (`test_the_old_ui_prefixed_deck_routes_are_gone`): 404 for a GET, since
+    the catch-all static mount at `/` finds no matching file there; 405 for
+    a POST, since that mount only serves GET/HEAD."""
+    assert (
+        client.get(f"/api/ui/games/{game}/ai-seat/status", params={"uid": "nobody"}).status_code
+        == 404
+    )
+    assert (
+        client.post(f"/api/ui/games/{game}/ai-seat/start", json={"uid": "nobody"}).status_code
+        == 405
+    )
+    assert (
+        client.post(f"/api/ui/games/{game}/ai-seat/stop", json={"uid": "nobody"}).status_code == 405
+    )

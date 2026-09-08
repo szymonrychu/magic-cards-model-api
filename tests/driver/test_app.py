@@ -314,25 +314,26 @@ def test_settings_read_the_boot_wait_from_the_environment():
 
 
 def test_the_real_game_server_carries_the_field_seat_decklist_reads():
-    """The fake `get_game` above returns `players[].decklist`, and for a long
-    time nothing else did: the real API's player block carried `counters`,
-    `graveyard_count`, `hand_count`, `library_count`, `life`, `mana_pool`,
-    `maximum_hand_size`, `sideboard_count` and `username`, and no decklist at
-    all. So `seat_decklist` read `None` on every real dispatch, every game was
-    logged as `deck=unknown-deck (match 0.00, 0 cards)`, and the agent never
-    received the matchup guides that are the whole point of it. Every driver
-    test above still passed, because the double and the server disagreed.
+    """The fake `get_seats` in `world.py` returns `seats[].decklist`, and for
+    a long time the real lobby route this task added did not agree with it -
+    catching that disagreement is the whole point of this test, the same way
+    it caught the original bug this docstring used to describe: the real
+    API's game-state player block never carried `decklist` at all (2b's T8
+    moved it off that view entirely, S6), so a double that kept the field
+    only on the state view would silently disagree with reality and every
+    driver test above would still pass for the wrong reason.
 
-    This test is the join: it boots a real game through the real app, reads it
-    exactly as the driver does (`GET /api/games/{id}` with the AI seat's own
-    uid), and asserts the response really carries the field `seat_decklist`
-    looks for - and does not carry the opponent's.
+    This test is the join: it boots a real game through the real app, reads
+    its seats exactly as the driver does (`GET
+    /api/lobby/games/{id}/seats?uid=...` with the AI seat's own uid), and
+    asserts the response really carries the field `seat_decklist` looks for -
+    and does not carry the opponent's.
     """
     from magic_cards_model_api.main import app as game_app
 
     with TestClient(game_app) as game_client:
         booted = game_client.post(
-            "/api/ui/games",
+            "/api/lobby/games",
             json={
                 "players": [
                     {"username": "alice", "decklist_text": "56 Mountain\n4 Lightning Bolt"},
@@ -342,9 +343,18 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
             },
         ).json()
         try:
+            # The state view itself carries no decklist for anyone any more -
+            # the regression this task's own removal must not reintroduce a
+            # different way (leaving it there after all).
             state = game_client.get(
                 f"/api/games/{booted['game_id']}", params={"uid": booted["seat_uids"]["bob"]}
             ).json()
+            assert all("decklist" not in player for player in state["players"])
+
+            seats = game_client.get(
+                f"/api/lobby/games/{booted['game_id']}/seats",
+                params={"uid": booted["seat_uids"]["bob"]},
+            ).json()["seats"]
         finally:
             game_client.delete(
                 f"/api/games/{booted['game_id']}", params={"key": booted["admin_key"]}
@@ -352,12 +362,14 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
 
     from mtg_agent.driver.guides import parse_decklist
 
-    seats = {player["username"]: player for player in state["players"]}
-    assert seats["bob"].get("decklist") == "56 Forest\n4 Grizzly Bears"
-    assert "decklist" not in seats["alice"]
+    by_player = {seat["player"]: seat for seat in seats}
+    assert by_player["bob"].get("decklist") == "56 Forest\n4 Grizzly Bears"
+    assert not by_player["alice"].get("decklist"), (
+        "bob's own uid must never unlock alice's decklist too"
+    )
     # And it parses to a real list, which is what `GuideLibrary.identify`
     # scores: an unparseable or empty answer is the "0 cards" symptom.
-    assert parse_decklist(seats["bob"]["decklist"]) == {"Forest": 56, "Grizzly Bears": 4}
+    assert parse_decklist(by_player["bob"]["decklist"]) == {"Forest": 56, "Grizzly Bears": 4}
 
 
 # ---- a failed turn has to be visible to whoever asks the driver ------------

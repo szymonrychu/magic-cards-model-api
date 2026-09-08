@@ -185,15 +185,21 @@ def test_public_information_is_still_public(client, game):
 
 # -- the decklist each seat was booted from -----------------------------------
 #
-# `GET /api/games/{id}` never carried it at all, which is the bug that stopped
-# the continuous agent ever learning which deck it was piloting - and so which
-# matchup guides to read (`mtg_agent/driver/app.py`'s `seat_decklist`). It is
-# on each seat's own `players` block now, and it is hidden information: CR
+# `GET /api/games/{id}` never carries it at all - originally the bug that
+# stopped the continuous agent ever learning which deck it was piloting, and
+# so which matchup guides to read (`mtg_agent.driver.app`'s `seat_decklist`);
+# now, since 2b's T8 (map's S6), deliberately so: `decklist` is lobby-owned
+# state (`store.decklists`), and the api component reading it on every state
+# poll was the hot reverse seam the six-way cut cannot carry. It lives on the
+# lobby's own `GET /api/lobby/games/{id}/seats?uid=...` instead
+# (`decks_api.SeatDetail`), and it is still hidden information there: CR
 # 100.2a's constructed play is "a way of playing in which each player creates
 # their own deck ahead of time", so a seat knows its own; CR 401.1 makes that
 # deck the library, and CR 401.2 - "players can't look at or change the order
 # of cards in a library" - is exactly what would be undone by naming the
-# opponent's sixty cards.
+# opponent's sixty cards. `decks_api.game_seats` redacts it the same way
+# `visibility._redact_player` used to: present only on the entry matching the
+# caller's own `uid` query parameter.
 
 ALICE_DECK = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
 BOB_DECK = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
@@ -201,7 +207,7 @@ BOB_DECK = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
 
 def _booted(client) -> dict:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": ALICE_DECK},
@@ -218,22 +224,39 @@ def _blocks(view: dict) -> dict:
     return {player["username"]: player for player in view["players"]}
 
 
+def _seats(client, game_id: str, uid: str | None = None) -> dict:
+    params = {"uid": uid} if uid is not None else None
+    response = client.get(f"/api/lobby/games/{game_id}/seats", params=params)
+    assert response.status_code == 200, response.text
+    return {seat["player"]: seat for seat in response.json()["seats"]}
+
+
+def test_the_state_view_carries_no_decklist_for_any_viewer(client):
+    """Not even the seat's own - the field left `GET /api/games/{id}`
+    entirely (2b's T8, S6); see `test_a_seat_reads_its_own_decklist_and_never
+    _the_opponents` below for where it actually lives now."""
+    info = _booted(client)
+    game_id = info["game_id"]
+    try:
+        for uid in (info["seat_uids"]["alice"], info["seat_uids"]["bob"], info["admin_key"], None):
+            params = {"uid": uid} if uid is not None else None
+            blocks = _blocks(client.get(f"/api/games/{game_id}", params=params).json())
+            assert all("decklist" not in block for block in blocks.values())
+    finally:
+        client.delete(f"/api/games/{game_id}")
+
+
 def test_a_seat_reads_its_own_decklist_and_never_the_opponents(client):
     info = _booted(client)
     game_id = info["game_id"]
     try:
         for seat, own, theirs in (("alice", ALICE_DECK, "bob"), ("bob", BOB_DECK, "alice")):
-            view = client.get(f"/api/games/{game_id}", params={"uid": info["seat_uids"][seat]})
-            assert view.status_code == 200, view.text
-            blocks = _blocks(view.json())
-            assert blocks[seat]["decklist"] == own
-            assert "decklist" not in blocks[theirs], (
+            seats = _seats(client, game_id, uid=info["seat_uids"][seat])
+            assert seats[seat]["decklist"] == own
+            assert not seats[theirs].get("decklist"), (
                 f"{seat} was handed {theirs}'s decklist - that is the whole library, "
                 "by name, which CR 401.2 keeps from every player including its owner"
             )
-            # The counts stay public either way: nothing here hides how many
-            # cards the opponent is holding, only which ones they are.
-            assert blocks[theirs]["library_count"] == 53
     finally:
         client.delete(f"/api/games/{game_id}")
 
@@ -241,29 +264,15 @@ def test_a_seat_reads_its_own_decklist_and_never_the_opponents(client):
 def test_neither_a_stranger_nor_a_bystander_reads_any_decklist(client):
     """A caller with no uid, or one this game does not know, must never see
     more than a real seat does - the same rule the rest of this module keeps
-    for hands and libraries."""
+    for hands and libraries. `info["admin_key"]` is included too: this route
+    never learned an admin bypass, so it is exactly as much a stranger here
+    as any other unrecognised uid."""
     info = _booted(client)
     game_id = info["game_id"]
     try:
-        for params in (None, {"uid": "not-a-real-uid"}):
-            blocks = _blocks(client.get(f"/api/games/{game_id}", params=params).json())
-            assert all("decklist" not in block for block in blocks.values())
-    finally:
-        client.delete(f"/api/games/{game_id}")
-
-
-def test_the_admin_key_reads_both_decklists(client):
-    """The operator who created the game already holds both seat uids, so an
-    unfiltered view here tells them nothing a filtered one would have hidden -
-    the same reasoning `visibility.ADMIN` already carries for hands."""
-    info = _booted(client)
-    game_id = info["game_id"]
-    try:
-        blocks = _blocks(
-            client.get(f"/api/games/{game_id}", params={"uid": info["admin_key"]}).json()
-        )
-        assert blocks["alice"]["decklist"] == ALICE_DECK
-        assert blocks["bob"]["decklist"] == BOB_DECK
+        for uid in (None, "not-a-real-uid", info["admin_key"]):
+            seats = _seats(client, game_id, uid=uid)
+            assert all(not seat.get("decklist") for seat in seats.values())
     finally:
         client.delete(f"/api/games/{game_id}")
 
@@ -271,6 +280,14 @@ def test_the_admin_key_reads_both_decklists(client):
 def test_a_board_built_game_reports_no_decklist_at_all(client, game):
     """`POST /api/games` builds a board with no decks registered, so there is
     no list to report - and an absent key, not an empty string, is the honest
-    answer for "this seat never had a decklist"."""
+    answer for "this seat never had a decklist". Checked on both the state
+    view (never carried it) and the lobby's seats route (nothing registered
+    for a game the lobby never booted)."""
     blocks = _blocks(state(client, game))
     assert all("decklist" not in block for block in blocks.values())
+
+    from magic_cards_model_api.store import store
+
+    uid = next(iter(store.seat_uids(game).keys()))
+    seats = _seats(client, game, uid=uid)
+    assert all(not seat.get("decklist") for seat in seats.values())

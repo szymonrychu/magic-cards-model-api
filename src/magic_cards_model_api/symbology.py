@@ -8,6 +8,11 @@ exact `{W}`/`{U}`/`{2/R}`/`{T}` token that already appears verbatim in
 no symbol table of its own and no guessing at hybrid or Phyrexian shapes: it
 looks the token up and gets the right picture.
 
+Mounted under plain `/api`, not the lobby's `/api/ui` (2b's T8, map's
+namespace split): this is api-owned data - a Scryfall lookup cached beside
+the card cache - with no dependency on anything lobby-owned, so `GET
+/api/symbology` lives in the same URL space `api_decks.py`'s routes do.
+
 Fetched once and cached to disk beside the card cache (`scryfall.cache_dir`),
 because the symbol list changes about as often as a new mana symbol is
 printed. A cold cache with no network still answers - with an empty map, so
@@ -23,7 +28,7 @@ from fastapi import APIRouter
 
 from . import scryfall
 
-router = APIRouter(prefix="/api/ui", tags=["ui"])
+router = APIRouter(prefix="/api", tags=["symbology"])
 
 CACHE_NAME = "_symbology.json"
 

@@ -6,12 +6,12 @@
 //
 // `mountLobby(root, store, handlers)` wires the two deck pickers (`#you-*` /
 // `#ai-*`), the seed field, and `#start-game`. On a successful
-// `POST /api/ui/games` it calls `handlers.startGame({game_id, uid, aiUid})` -
+// `POST /api/lobby/games` it calls `handlers.startGame({game_id, uid, aiUid})` -
 // `ui/app.js` (Task 17) owns everything after that: hiding `#lobby`, showing
 // `#game`, and the first poll.
 //
 // This module also fires the AI seat's own
-// `POST /api/ui/games/{id}/ai-seat/start`, the way the old code did right
+// `POST /api/lobby/games/{id}/ai-seat/start`, the way the old code did right
 // after creating the game - but, unlike the old code, does not render its
 // result. `showFallbackBox`/`showAiError` read `renderAiPanel`'s state, and
 // that panel only exists once the game screen is up; Task 17's own brief
@@ -24,11 +24,11 @@
 // Task 9 adds the lobby's own game list: `#games-tbody` gets one row per
 // game this browser has ever started or opened (`mcm.games.v1`, via
 // `lobby_model.js`'s storage helpers), joined against
-// `GET /api/ui/games?uids=...` through `lobbyViewModel`. Open re-enters a
+// `GET /api/lobby/games?uids=...` through `lobbyViewModel`. Open re-enters a
 // game the same way a fresh Start does (`handlers.startGame`); End calls
-// `DELETE /api/ui/games/{id}?uid=` and drops the row from storage. The AI
+// `DELETE /api/lobby/games/{id}?uid=` and drops the row from storage. The AI
 // deck picker also gains `#ai-model`/`#ai-effort`/`#ai-thinking`, read
-// through `agentFrom` into the `agent` field `POST /api/ui/games` sends for
+// through `agentFrom` into the `agent` field `POST /api/lobby/games` sends for
 // the AI player.
 
 import { api } from "../api.js";
@@ -170,7 +170,7 @@ async function startGame(root, handlers) {
   if (seedRaw) body.seed = parseInt(seedRaw, 10);
   let created;
   try {
-    created = await api("POST", `${lobbyBase()}/ui/games`, body);
+    created = await api("POST", `${lobbyBase()}/games`, body);
   } catch (e) {
     if (err) err.textContent = e.message;
     return;
@@ -182,7 +182,7 @@ async function startGame(root, handlers) {
   // 103.5/103.6 default moves until its agent picks up), and the game
   // screen's own poll loop reads this seat's status independently once it is
   // up - so nothing here needs to await this call or render its result.
-  api("POST", `${lobbyBase()}/ui/games/${created.game_id}/ai-seat/start`, { uid: aiUid }).catch((e) => {
+  api("POST", `${lobbyBase()}/games/${created.game_id}/ai-seat/start`, { uid: aiUid }).catch((e) => {
     console.error(`could not start the AI seat: ${e.message}`);
   });
   handlers.startGame({ game_id: created.game_id, uid, aiUid });
@@ -253,7 +253,7 @@ function renderGamesTable(root, handlers, rows) {
     const opponentTd = document.createElement("td");
     opponentTd.textContent = row.opponent || "(unknown)";
     const turnTd = document.createElement("td");
-    turnTd.textContent = `${row.turn ?? "-"} / ${row.step || "-"}`;
+    turnTd.textContent = `${row.turn ?? "-"} / ${row.phase || "-"}`;
     const agentTd = document.createElement("td");
     agentTd.textContent = row.model ? `${row.model} / ${row.effort || "high"}` : "-";
     const stateTd = document.createElement("td");
@@ -286,7 +286,7 @@ function renderGamesTable(root, handlers, rows) {
  * way back to it short of the browser having saved them somewhere else. */
 async function endGame(root, handlers, row) {
   try {
-    await api("DELETE", `${lobbyBase()}/ui/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
+    await api("DELETE", `${lobbyBase()}/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
   } catch (e) {
     console.error(`could not end game vs ${row.opponent || row.gameId}: ${e.message}`);
     const err = $(root, "#start-error");
@@ -316,7 +316,7 @@ async function refreshGames(root, handlers) {
   }
   let games;
   try {
-    ({ games } = await api("GET", `${lobbyBase()}/ui/games?uids=${encodeURIComponent(uids.join(","))}`));
+    ({ games } = await api("GET", `${lobbyBase()}/games?uids=${encodeURIComponent(uids.join(","))}`));
   } catch (e) {
     console.error(`could not load the game list: ${e.message}`);
     return;

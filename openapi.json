@@ -3289,6 +3289,22 @@
         "title": "GameLogResponse",
         "type": "object"
       },
+      "GameSeatsResponse": {
+        "properties": {
+          "seats": {
+            "items": {
+              "$ref": "#/components/schemas/SeatDetail"
+            },
+            "title": "Seats",
+            "type": "array"
+          }
+        },
+        "required": [
+          "seats"
+        ],
+        "title": "GameSeatsResponse",
+        "type": "object"
+      },
       "GameStateView": {
         "description": "The full board (`serialize.state_view`), as a viewer may see it after\n`visibility.redact_view` - see this section's own module-level note for\nwhy so much of this is `| None`. `libraries`/`sideboards` are the two\nfields redaction removes outright rather than merely emptying (CR 401.2:\nnobody may look at a library, not even their own); `you` is the one field\n`redact_view` *adds* that `state_view` itself never sets.",
         "properties": {
@@ -3548,6 +3564,22 @@
         "title": "GameStateView",
         "type": "object"
       },
+      "GameSummariesResponse": {
+        "properties": {
+          "summaries": {
+            "items": {
+              "$ref": "#/components/schemas/GameSummaryScalars"
+            },
+            "title": "Summaries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "summaries"
+        ],
+        "title": "GameSummariesResponse",
+        "type": "object"
+      },
       "GameSummary": {
         "properties": {
           "game_id": {
@@ -3578,6 +3610,63 @@
           "players"
         ],
         "title": "GameSummary",
+        "type": "object"
+      },
+      "GameSummaryScalars": {
+        "description": "One game's row from `GET /api/games/summary` (2b's T8, map's S2) -\nexactly the scalars a lobby list needs and nothing a full `state_view`\nwould cost to build: no card views, no Scryfall images, one bulk call\nfor every id a poll asks about instead of one `state_view` per game.",
+        "properties": {
+          "active_player": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Player"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "is_over": {
+            "title": "Is Over",
+            "type": "boolean"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "seat_count": {
+            "title": "Seat Count",
+            "type": "integer"
+          },
+          "turn_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Number"
+          }
+        },
+        "required": [
+          "game_id",
+          "is_over",
+          "seat_count"
+        ],
+        "title": "GameSummaryScalars",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -3726,13 +3815,24 @@
             ],
             "title": "Created At"
           },
-          "drawn": {
-            "title": "Drawn",
-            "type": "boolean"
-          },
           "game_id": {
             "title": "Game Id",
             "type": "string"
+          },
+          "is_over": {
+            "title": "Is Over",
+            "type": "boolean"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
           },
           "players": {
             "items": {
@@ -3748,10 +3848,6 @@
             "title": "Seats",
             "type": "object"
           },
-          "step": {
-            "title": "Step",
-            "type": "string"
-          },
           "turn_number": {
             "anyOf": [
               {
@@ -3762,24 +3858,12 @@
               }
             ],
             "title": "Turn Number"
-          },
-          "winner": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Winner"
           }
         },
         "required": [
           "game_id",
           "players",
-          "step",
-          "drawn",
+          "is_over",
           "agents",
           "seats"
         ],
@@ -3910,6 +3994,39 @@
           "card_id"
         ],
         "title": "ManaSource",
+        "type": "object"
+      },
+      "MintSeatRequest": {
+        "description": "2b's T8, the seat back door's mint half. `player` must already be\nregistered on the game (`Game.players`) - this mints a fresh credential\nfor an existing seat, it does not add a player to the game.",
+        "properties": {
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player"
+        ],
+        "title": "MintSeatRequest",
+        "type": "object"
+      },
+      "MintSeatResponse": {
+        "properties": {
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "uid": {
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uid",
+          "player"
+        ],
+        "title": "MintSeatResponse",
         "type": "object"
       },
       "ModalHintsView": {
@@ -5892,35 +6009,14 @@
         "type": "object"
       },
       "PlayerView": {
-        "description": "One seat's own block (`serialize._player_view`). `decklist` survives\nredaction only on the viewer's own block (`visibility._redact_player`);\n`agent` is present only for an AI seat.",
+        "description": "One seat's own block (`serialize._player_view`). No `decklist` or\n`agent` field any more (2b's T8, map's S6): both were lobby-owned state\nread here on every state poll, the hot reverse seam the six-way cut\ncannot carry. Both moved to the lobby's own\n`GET /api/lobby/games/{id}/seats` (`decks_api.SeatDetail`), `decklist`\nredacted there per-viewer the same way it used to be redacted here - see\n`serialize._player_view`'s own docstring.",
         "properties": {
-          "agent": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "counters": {
             "additionalProperties": {
               "type": "integer"
             },
             "title": "Counters",
             "type": "object"
-          },
-          "decklist": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Decklist"
           },
           "graveyard_count": {
             "title": "Graveyard Count",
@@ -7046,6 +7142,76 @@
           "combat"
         ],
         "title": "ResolveTopResponse",
+        "type": "object"
+      },
+      "SeatDetail": {
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ai_seat": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Seat"
+          },
+          "decklist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decklist"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "uid": {
+            "title": "Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "uid"
+        ],
+        "title": "SeatDetail",
+        "type": "object"
+      },
+      "SeatLookupResponse": {
+        "description": "2b's T8, the seat back door's lookup half: `GET /api/seats/{uid}`\nresolves a uid to its game with no game id known in advance - the\ncapability `store.seat_uids` gave an in-process caller for free and no\nout-of-process one (a test, or a shared mcp server, M2) can reach.",
+        "properties": {
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          }
+        },
+        "required": [
+          "game_id",
+          "player"
+        ],
+        "title": "SeatLookupResponse",
         "type": "object"
       },
       "SeatResponse": {
@@ -8962,6 +9128,46 @@
           }
         },
         "summary": "Create Game"
+      }
+    },
+    "/api/games/summary": {
+      "get": {
+        "description": "2b's T8 (map's S2): the scalars a lobby list needs, for every id in\none call - `ids` comma-separated. Never the full `state_view` per game\n`list_lobby_games` used to build just to read four fields back out of\nit; unknown ids are silently skipped, the same way that loop already\nskipped a `store.get` miss.",
+        "operationId": "game_summaries_route_api_games_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ids",
+            "required": true,
+            "schema": {
+              "title": "Ids",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSummariesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Game Summaries Route"
       }
     },
     "/api/games/{game_id}": {
@@ -10943,6 +11149,56 @@
         "summary": "Whose Seat"
       }
     },
+    "/api/games/{game_id}/seats": {
+      "post": {
+        "description": "A fresh seat credential for an already-registered player - 2b's T8\n(map's \"seat back door\"), the mint half. Replaces the tests'/mcp's habit\nof reading `store.seat_uids` straight out of this process, which no\nout-of-process caller can do: a test harness or a shared mcp server (M2)\ncan call this instead and get a uid it can actually use. Refuses (404) a\nplayer this game does not have.\n\nRead-modify-write under this game's own mutation lock\n(`store.locked`), since `register_seats` replaces the whole uid map\nrather than merging into it - the lock is what keeps two concurrent\nmints from racing each other's read of the existing uids.",
+        "operationId": "mint_seat_api_games__game_id__seats_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MintSeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MintSeatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint Seat"
+      }
+    },
     "/api/games/{game_id}/state-based-actions": {
       "post": {
         "description": "Check and perform this game's state-based actions right now.\n\nThe body is optional and carries only who asked (`player`) and why\n(`reasoning`) - the same shape `resolve-top` takes. Nobody *takes* a\nstate-based action, the game performs them; but somebody asked for this\ncheck, and once an agent seat can ask, it owes the same stated reason it\nowes for every other move it makes. Called with no body at all (the\nharness's own poke) there is no seat to hold to anything, and nothing is\nrequired.\n\nBefore T10's audit this route took no body at all, which left two\ndocuments wrong about it - `README.md` said it took an optional\n`reasoning` and `MEMORY.md` said it was gated. Giving it the body they\nboth described was cheaper, and more honest, than editing them to\ndescribe a hole.",
@@ -11085,10 +11341,10 @@
         "summary": "Health"
       }
     },
-    "/api/ui/games": {
+    "/api/lobby/games": {
       "get": {
-        "description": "Every lobby-booted game (`store.ui_games()` - not filtered to\n`live_ui_games()`, so a finished-but-not-yet-ended game still shows up for\nEnd game to clear), oldest first, for the lobby's game list.\n\n`uids` is a comma-separated list of seat uids the caller holds, across\nevery game it has ever seen - each game's `seats` in the response is\nfiltered down to only the uids from that list which are actually seats of\nthat game, so a browser never learns a uid that is not already its own.",
-        "operationId": "list_lobby_games_api_ui_games_get",
+        "description": "Every lobby-booted game (`store.ui_games()` - not filtered to\n`live_ui_games()`, so a finished-but-not-yet-ended game still shows up for\nEnd game to clear), oldest first, for the lobby's game list.\n\n`uids` is a comma-separated list of seat uids the caller holds, across\nevery game it has ever seen - each game's `seats` in the response is\nfiltered down to only the uids from that list which are actually seats of\nthat game, so a browser never learns a uid that is not already its own.\n\n2b's T8 (map's S2): this used to build a full `serialize.state_view` per\ngame just to pull `turn_number`/`step`/`winner`/`drawn` back out of it -\nthe hot N+1 the browser's 1.2s poll paid for on every tick, times however\nmany games are live. `api_client.game_summaries` answers every game's\nscalars in one call instead, through the same seam T5 built for deck\nvalidation - `players` and `agents` stay locally sourced (`store.get`,\n`store.agent_settings`), since neither ever needed the full board view\neither.",
+        "operationId": "list_lobby_games_api_lobby_games_get",
         "parameters": [
           {
             "in": "query",
@@ -11131,12 +11387,12 @@
         },
         "summary": "List Lobby Games",
         "tags": [
-          "ui"
+          "lobby"
         ]
       },
       "post": {
-        "description": "Boot a new game from two decklists, right now, from an HTTP body -\nthe request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing\nits exact boot path (`decks.load_deck_into_game`): CR 103's registration,\nlegality check, sideboard set-aside, seeded shuffles, and opening hands.\n\nRefuses (400, via the `ValueError`/`DeckIllegal` handlers already\nregistered in `app.py`) with the same per-card detail\n`api_client.validate_decklist` reports, rather than booting a broken\ngame - both decks are validated before either is registered.\n\nGames the lobby boots live side by side - starting one never ends\nanother; `DELETE /api/ui/games/{id}` (End game) is the only reset. Refuses\n(409) once `MAX_LIVE_GAMES` lobby games are already live, so the table\ndoes not grow without bound; ending one from the lobby frees a slot.",
-        "operationId": "start_game_from_decklists_api_ui_games_post",
+        "description": "Boot a new game from two decklists, right now, from an HTTP body -\nthe request-time counterpart to `serve.py`'s `--deck`/`--match`, sharing\nits exact boot path (`decks.load_deck_into_game`): CR 103's registration,\nlegality check, sideboard set-aside, seeded shuffles, and opening hands.\n\nRefuses (400, via the `ValueError`/`DeckIllegal` handlers already\nregistered in `app.py`) with the same per-card detail\n`api_client.validate_decklist` reports, rather than booting a broken\ngame - both decks are validated before either is registered.\n\nGames the lobby boots live side by side - starting one never ends\nanother; `DELETE /api/lobby/games/{id}` (End game) is the only reset. Refuses\n(409) once `MAX_LIVE_GAMES` lobby games are already live, so the table\ndoes not grow without bound; ending one from the lobby frees a slot.",
+        "operationId": "start_game_from_decklists_api_lobby_games_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -11171,14 +11427,14 @@
         },
         "summary": "Start Game From Decklists",
         "tags": [
-          "ui"
+          "lobby"
         ]
       }
     },
-    "/api/ui/games/{game_id}": {
+    "/api/lobby/games/{game_id}": {
       "delete": {
         "description": "End game: the only reset there is now. `uid` must be a seat uid of\nthis game, or `key` this game's admin key - anything else is refused (404)\nrather than letting an arbitrary caller end somebody else's game.",
-        "operationId": "end_lobby_game_api_ui_games__game_id__delete",
+        "operationId": "end_lobby_game_api_lobby_games__game_id__delete",
         "parameters": [
           {
             "in": "path",
@@ -11246,13 +11502,13 @@
         },
         "summary": "End Lobby Game",
         "tags": [
-          "ui"
+          "lobby"
         ]
       }
     },
-    "/api/ui/games/{game_id}/ai-seat/start": {
+    "/api/lobby/games/{game_id}/ai-seat/start": {
       "post": {
-        "operationId": "start_ai_seat_api_ui_games__game_id__ai_seat_start_post",
+        "operationId": "start_ai_seat_api_lobby_games__game_id__ai_seat_start_post",
         "parameters": [
           {
             "in": "path",
@@ -11280,7 +11536,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Start Ai Seat Api Ui Games  Game Id  Ai Seat Start Post",
+                  "title": "Response Start Ai Seat Api Lobby Games  Game Id  Ai Seat Start Post",
                   "type": "object"
                 }
               }
@@ -11300,13 +11556,13 @@
         },
         "summary": "Start Ai Seat",
         "tags": [
-          "ui"
+          "lobby"
         ]
       }
     },
-    "/api/ui/games/{game_id}/ai-seat/status": {
+    "/api/lobby/games/{game_id}/ai-seat/status": {
       "get": {
-        "operationId": "ai_seat_status_api_ui_games__game_id__ai_seat_status_get",
+        "operationId": "ai_seat_status_api_lobby_games__game_id__ai_seat_status_get",
         "parameters": [
           {
             "in": "path",
@@ -11333,7 +11589,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Ai Seat Status Api Ui Games  Game Id  Ai Seat Status Get",
+                  "title": "Response Ai Seat Status Api Lobby Games  Game Id  Ai Seat Status Get",
                   "type": "object"
                 }
               }
@@ -11353,13 +11609,13 @@
         },
         "summary": "Ai Seat Status",
         "tags": [
-          "ui"
+          "lobby"
         ]
       }
     },
-    "/api/ui/games/{game_id}/ai-seat/stop": {
+    "/api/lobby/games/{game_id}/ai-seat/stop": {
       "post": {
-        "operationId": "stop_ai_seat_api_ui_games__game_id__ai_seat_stop_post",
+        "operationId": "stop_ai_seat_api_lobby_games__game_id__ai_seat_stop_post",
         "parameters": [
           {
             "in": "path",
@@ -11387,7 +11643,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Stop Ai Seat Api Ui Games  Game Id  Ai Seat Stop Post",
+                  "title": "Response Stop Ai Seat Api Lobby Games  Game Id  Ai Seat Stop Post",
                   "type": "object"
                 }
               }
@@ -11407,21 +11663,120 @@
         },
         "summary": "Stop Ai Seat",
         "tags": [
-          "ui"
+          "lobby"
         ]
       }
     },
-    "/api/ui/symbology": {
+    "/api/lobby/games/{game_id}/seats": {
+      "get": {
+        "description": "2b's T8 (map's S6/S7): per-seat agent settings and liveness, in one\nanswer. Replaces three things at once - `serialize._player_view` reading\nlobby-owned `agent_settings` *and* `decklists` on every state poll (S6),\nand the play UI's own separate 1.2s `/ai-seat/status` poll (S7) - with a\nsingle lobby-owned route the play UI now polls every 5s instead.\n\n`decklist` moved here rather than being dropped outright: it is still\ngenuinely needed (`mtg_agent.driver.app`'s `seat_decklist`, matchup-guide\nselection - see `tests/driver/test_app.py`'s\n`test_the_real_game_server_carries_the_field_seat_decklist_reads`), and\nit is still hidden information (CR 401.2) - so it is redacted the same\nway `visibility._redact_player` redacted it on the old route: present\nonly for the seat whose own `uid` the caller presents, absent for every\nother entry and for a caller with no `uid` or an unrecognised one.",
+        "operationId": "game_seats_api_lobby_games__game_id__seats_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSeatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Game Seats",
+        "tags": [
+          "lobby"
+        ]
+      }
+    },
+    "/api/seats/{uid}": {
+      "get": {
+        "description": "Resolve a seat uid to its game and player with no game id known in\nadvance - 2b's T8 (map's \"seat back door\"), the lookup half.\n`whose_seat` above already answers this once the caller knows the game;\nthis is the reverse direction `store.seat_uids` gave an in-process caller\nfor free. 404 on a uid no live game recognises.",
+        "operationId": "find_seat_api_seats__uid__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uid",
+            "required": true,
+            "schema": {
+              "title": "Uid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeatLookupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Find Seat"
+      }
+    },
+    "/api/symbology": {
       "get": {
         "description": "`{\"symbols\": {\"{R}\": {\"svg\": ..., \"text\": ...}, ...}}`, for the UI.",
-        "operationId": "get_symbology_api_ui_symbology_get",
+        "operationId": "get_symbology_api_symbology_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Get Symbology Api Ui Symbology Get",
+                  "title": "Response Get Symbology Api Symbology Get",
                   "type": "object"
                 }
               }
@@ -11431,7 +11786,7 @@
         },
         "summary": "Get Symbology",
         "tags": [
-          "ui"
+          "symbology"
         ]
       }
     }

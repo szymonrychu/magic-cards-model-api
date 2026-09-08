@@ -201,8 +201,8 @@ def test_api_quiet_paths_are_the_games_health_and_state_routes():
 
 def test_lobby_quiet_paths_are_the_play_uis_two_polls():
     assert [p.pattern for p in access_log.LOBBY_QUIET_PATHS] == [
-        r"/api/ui/games/[^/]+/ai-seat/status",
-        r"/api/ui/games",
+        r"/api/lobby/games/[^/]+/seats",
+        r"/api/lobby/games",
     ]
 
 
@@ -246,10 +246,9 @@ POLLED = [
     "/api/games/f8e61463c97842a2b5ff6790834b36e6?uid=beefcafe",
     "/api/games/f8e61463c97842a2b5ff6790834b36e6/log",
     "/api/games/f8e61463c97842a2b5ff6790834b36e6/log?since=2&uid=beefcafe",
-    "/api/ui/games/f8e61463c97842a2b5ff6790834b36e6/ai-seat/status",
-    "/api/ui/games/f8e61463c97842a2b5ff6790834b36e6/ai-seat/status?uid=beefcafe",
-    "/api/ui/games",
-    "/api/ui/games?uids=beefcafe",
+    "/api/lobby/games/f8e61463c97842a2b5ff6790834b36e6/seats",
+    "/api/lobby/games",
+    "/api/lobby/games?uids=beefcafe",
 ]
 
 #: Of `POLLED`, the ones `main.py`'s app (api + lobby) actually silences.
@@ -325,8 +324,8 @@ def test_the_silenced_game_routes_are_the_ones_the_app_serves(client, game):
     for response in (
         client.get(f"/api/games/{game}"),
         client.get(f"/api/games/{game}/log", params={"uid": "nobody", "since": 0}),
-        client.get(f"/api/ui/games/{game}/ai-seat/status", params={"uid": "nobody"}),
-        client.get("/api/ui/games"),
+        client.get(f"/api/lobby/games/{game}/seats"),
+        client.get("/api/lobby/games"),
     ):
         assert response.status_code == 200, response.text
         assert access_log.is_quiet_path(response.request.url.path, APP_QUIET_PATHS), (
@@ -347,14 +346,12 @@ def test_the_api_quiet_paths_are_anchored_whole():
 
 
 def test_the_lobby_quiet_paths_are_anchored_whole():
-    """Same for `/api/ui/games`: the bare list is the lobby's poll and is
-    silent, but a specific game under it (`.../ai-seat/status` aside, which
-    has its own pattern) is a new question, not the loop."""
-    assert access_log.is_quiet_path("/api/ui/games", access_log.LOBBY_QUIET_PATHS)
-    assert not access_log.is_quiet_path("/api/ui/games/abc", access_log.LOBBY_QUIET_PATHS)
-    assert access_log.is_quiet_path(
-        "/api/ui/games/abc/ai-seat/status", access_log.LOBBY_QUIET_PATHS
-    )
+    """Same for `/api/lobby/games`: the bare list is the lobby's poll and is
+    silent, but a specific game under it (`.../seats` aside, which has its
+    own pattern) is a new question, not the loop."""
+    assert access_log.is_quiet_path("/api/lobby/games", access_log.LOBBY_QUIET_PATHS)
+    assert not access_log.is_quiet_path("/api/lobby/games/abc", access_log.LOBBY_QUIET_PATHS)
+    assert access_log.is_quiet_path("/api/lobby/games/abc/seats", access_log.LOBBY_QUIET_PATHS)
 
 
 def test_wrapper_quiet_paths_do_not_match_the_driver_or_the_api():

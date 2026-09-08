@@ -1,5 +1,5 @@
 """`/api/decks*` (api-owned deck resolution and legality, T5) and
-`/api/ui/games` (lobby-owned game boot): the UI's deck-loading and game-boot
+`/api/lobby/games` (lobby-owned game boot): the UI's deck-loading and game-boot
 endpoints, added because `serve.py` could previously only boot a game from
 `--deck`/`--match` command-line arguments read once at process start (see
 `decks_api.py`'s module docstring).
@@ -128,7 +128,7 @@ def test_the_in_process_api_client_matches_the_route(client: TestClient) -> None
 
 def test_start_game_boots_a_real_game(client: TestClient) -> None:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": LEGAL_DECK, "ai": False},
@@ -169,7 +169,7 @@ def test_start_game_boots_a_real_game(client: TestClient) -> None:
 
 def test_start_game_refuses_an_illegal_deck_naming_the_problem(client: TestClient) -> None:
     response = client.post(
-        "/api/ui/games",
+        "/api/lobby/games",
         json={
             "players": [
                 {"username": "alice", "decklist_text": TOO_FEW_CARDS, "ai": False},
