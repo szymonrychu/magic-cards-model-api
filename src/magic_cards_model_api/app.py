@@ -209,7 +209,7 @@ def audit_outcome(
     *,
     dry_run: bool = False,
     reasoning: str | None = None,
-    legal_actions_before: list[dict[str, Any]] | None = None,
+    legal_actions_before: records.LegalActionsBefore | None = None,
     seq_hint: int | None = None,
     **keys: Any,
 ) -> dict[str, Any]:
@@ -258,7 +258,7 @@ def audit_outcome(
 
 def _run_command(
     game_id: str, kind: str, request: Any
-) -> tuple[commands.RunResult, Game, list[dict[str, Any]] | None, int | None]:
+) -> tuple[commands.RunResult, Game, records.LegalActionsBefore | None, int | None]:
     """Run `kind` fresh against `game_id`'s current committed state
     (`commands.run_command`), and settle the result into the store: commit
     the new game on `RunStatus.COMPLETED`, or stash `(command, tape,
@@ -345,7 +345,7 @@ def _respond(
     *,
     dry_run: bool = False,
     reasoning: str | None = None,
-    legal_actions_before: list[dict[str, Any]] | None = None,
+    legal_actions_before: records.LegalActionsBefore | None = None,
     seq_hint: int | None = None,
     **keys: Any,
 ) -> dict[str, Any]:
@@ -414,7 +414,7 @@ def _resume(
     answer: Answer,
     *,
     player: str | None = None,
-) -> tuple[commands.RunResult, list[dict[str, Any]] | None, int | None]:
+) -> tuple[commands.RunResult, records.LegalActionsBefore | None, int | None]:
     """Resume `game_id`'s paused command with `answer` appended to `tape`
     (`commands.resume_command`), and settle the result into the store
     exactly like `_run_command` does for a fresh command: commit on
@@ -588,13 +588,18 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
 def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, Any]:
     """The action log.
 
-    Unlike `/api/games/{game_id}` this defaults to full: a bare call (no
-    uid, or an unrecognised one) is treated as the debugger's eye that
-    `audit.py` already documents its snapshots for - the same view the admin
-    key gets. A real seat uid instead gets its own filtered view, because
-    this is also the log mcp.py's `game_log` tool hands a live player - and
-    that must not read the opponent's hand any more than the state endpoint
-    does.
+    Unlike `/api/games/{game_id}` the *snapshots* default to full: a bare
+    call (no uid, or an unrecognised one) is treated as the debugger's eye
+    that `audit.py` already documents its snapshots for. A real seat uid
+    instead gets its own filtered view, because this is also the log
+    mcp.py's `game_log` tool hands a live player - and that must not read
+    the opponent's hand any more than the state endpoint does.
+
+    `legal_actions_before` is the one thing no unauthenticated read ever
+    gets, however full the rest is: it is the same hidden information
+    `GET .../legal-actions` refuses to hand anyone but the named seat and
+    the admin key, so it is dropped for every viewer except the seat it was
+    enumerated for and `ADMIN` - see `visibility.redact_log_entry`.
 
     `since` is the last `seq` the caller already has; only newer entries
     come back, and `last_seq` says where to resume next time.
@@ -604,7 +609,14 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
     log = audit.entries(game_id)
     last_seq = log[-1]["seq"] if log else 0
     log = [entry for entry in log if entry["seq"] > since]
-    if isinstance(viewer, str):  # a real seat - not admin, not "nobody"
+    if viewer is not visibility.ADMIN:
+        # Every non-admin viewer, a `uid`-less one included - not only a real
+        # seat. `redact_log_entry` applies the seat-shaped snapshot filtering
+        # only for a real seat uid (so the debugger's eye below is unchanged),
+        # but it drops `legal_actions_before` for anyone who is not the seat it
+        # was enumerated for. That field is hidden information of exactly the
+        # kind `GET .../legal-actions` refuses to hand out, and a caller who
+        # presents nothing must never see more than one who presents garbage.
         log = [visibility.redact_log_entry(entry, viewer) for entry in log]
     return {"log": log, "last_seq": last_seq}
 
@@ -800,8 +812,22 @@ def set_mana_pool(game_id: str, username: str, req: ManaPoolUpdate) -> dict[str,
 
 @app.put("/api/games/{game_id}/step")
 def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str, Any]:
+    """Jump the turn marker to a named step.
+
+    Gated like every other mutating seat action (T10): this looks like board
+    setup and is not one. It moves the game's own turn marker, runs the
+    suspend upkeep below when it lands on `upkeep`, and every agent seat has
+    it as an MCP tool - so an agent doing it owes the same stated reason it
+    owes for an attack.
+    """
+    records.require_reasoning(game_id, req.player, req.reasoning)
     with store.locked(game_id) as game:
         before = game.turn.step.value if game.turn is not None else None
+        # Read before the marker moves, like every other route's own
+        # `legal_actions_before` - see `records.py`'s module docstring.
+        legal_before = records.legal_actions_before(
+            game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
+        )
         engine_api.set_step(game, Step(req.step))
         suspend_upkeep: list[dict[str, Any]] = []
         if Step(req.step) is Step.UPKEEP and game.turn is not None and req.player:
@@ -814,6 +840,8 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
             "step",
             player=req.player,
             suspend_upkeep=suspend_upkeep,
+            reasoning=req.reasoning,
+            legal_actions_before=legal_before,
             **{"from": before, "to": req.step},
         )
         viewer = visibility.resolve_viewer(game_id, uid)
@@ -1186,7 +1214,9 @@ def _answer_declaration(
     `actions/declare-blockers` enforced nothing at all.
     """
 
-    def refuse(reason: str, legal_before: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def refuse(
+        reason: str, legal_before: records.LegalActionsBefore | None = None
+    ) -> dict[str, Any]:
         seq = audit.record(
             game_id,
             action,
@@ -1210,14 +1240,21 @@ def _answer_declaration(
             f"{expected_kind.value!r} - answer that one first (POST .../decide, "
             f"or the matching action)"
         )
-    # T10: computed once the pending decision's own player is known, and
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer != engine_decision.player or not isinstance(viewer, str):
+        # No enumeration on this branch, deliberately: the caller has just
+        # been told this is not their decision, and "what else the deciding
+        # seat could have done" is that seat's own hidden information.
+        # Computing it here at all is how it first leaked - the row was
+        # attributed to `detail["player"]`, straight off the request body,
+        # so a refused caller who named themselves read it back out of the
+        # log.
+        return refuse("that uid does not open the deciding player's seat")
+    records.require_reasoning(game_id, engine_decision.player, reasoning)
+    # T10: computed once the deciding seat is the *resolved* viewer, and
     # reused for every branch below (including a later refusal) - always the
     # *pre*-mutation enumeration, since nothing here has touched `game` yet.
     legal_before = records.legal_actions_before(game, engine_decision.player, pending)
-    viewer = visibility.resolve_viewer(game_id, uid)
-    if viewer != engine_decision.player or not isinstance(viewer, str):
-        return refuse("that uid does not open the deciding player's seat", legal_before)
-    records.require_reasoning(game_id, engine_decision.player, reasoning)
     try:
         value = decisions.declared_pairs_answer(pairs)
         decisions.validate_answer(engine_decision, value)
@@ -1409,14 +1446,34 @@ def action_declare_blockers(
 
 
 @app.post("/api/games/{game_id}/state-based-actions")
-def state_based_actions(game_id: str) -> dict[str, Any]:
-    result, _, legal_before, seq_hint = _run_command(game_id, "state_based_actions", ActorRequest())
+def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[str, Any]:
+    """Check and perform this game's state-based actions right now.
+
+    The body is optional and carries only who asked (`player`) and why
+    (`reasoning`) - the same shape `resolve-top` takes. Nobody *takes* a
+    state-based action, the game performs them; but somebody asked for this
+    check, and once an agent seat can ask, it owes the same stated reason it
+    owes for every other move it makes. Called with no body at all (the
+    harness's own poke) there is no seat to hold to anything, and nothing is
+    required.
+
+    Before T10's audit this route took no body at all, which left two
+    documents wrong about it - `README.md` said it took an optional
+    `reasoning` and `MEMORY.md` said it was gated. Giving it the body they
+    both described was cheaper, and more honest, than editing them to
+    describe a hole.
+    """
+    req = req or ActorRequest()
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    result, _, legal_before, seq_hint = _run_command(game_id, "state_based_actions", req)
     if result.status is commands.RunStatus.PAUSED:
         seq = audit.record(
             game_id,
             "state_based_actions",
+            player=req.player,
             allowed=None,
             paused=True,
+            reasoning=req.reasoning,
             legal_actions_before=legal_before,
         )
         game = game_or_404(game_id)
@@ -1425,8 +1482,10 @@ def state_based_actions(game_id: str) -> dict[str, Any]:
     audit.record(
         game_id,
         "state_based_actions",
+        player=req.player,
         destroyed=result.outcome["destroyed"],
         changed=result.outcome["changed"],
+        reasoning=req.reasoning,
         legal_actions_before=legal_before,
         _fill_seq=seq_hint,
     )
@@ -1599,16 +1658,22 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         return {"accepted": False, "reason": reason, "log_seq": seq}
 
     game = game_or_404(game_id)
-    # T10: computed once, from `player`'s side of the board before this
-    # answer runs, and reused for every refusal below and the eventual
-    # success - `game` here is never touched by anything until `_resume`
-    # takes its own lock and works against its own copy.
-    legal_before = records.legal_actions_before(
-        game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
-    )
+    legal_before: records.LegalActionsBefore | None = None
     player = visibility.resolve_viewer(game_id, uid)
     if player != req.player or not isinstance(player, str):
+        # Refused before anything is enumerated: `req.player` is a request
+        # field, and enumerating a seat the caller has merely *named* is
+        # what put another seat's hidden information into a row the caller
+        # could then read back.
         return refuse("that uid does not open the deciding player's seat")
+    # T10: computed once the caller's uid has been agreed to open `player`'s
+    # own seat, from that seat's side of the board before this answer runs,
+    # and reused for every refusal below and the eventual success - `game`
+    # here is never touched by anything until `_resume` takes its own lock
+    # and works against its own copy.
+    legal_before = records.legal_actions_before(
+        game, player, (store.paused_command(game_id) or (None, None, None))[2]
+    )
     paused = store.paused_command(game_id)
     if paused is None or paused[2].decision.player != req.player:
         return refuse("no pending decision for you")
@@ -1821,16 +1886,18 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
     asked back through `decide`, so this request never blocks. See
     `opening.py`.
 
-    Not gated by `records.require_reasoning` (T10), unlike every seat action
-    below `actions/`: CR 103.5's declaration is routinely made *for* an agent
-    seat by `ai_pregame.py`'s own backstop when the agent has gone quiet
-    (`opening.declare_mulligan`'s `automatic=True`), and is exercised directly
-    by test harnesses and race-condition tests that have no reasoning of
-    their own to give - unlike a targeted spell or an attack, there is no
-    live "why" behind a pregame declaration this api can require honestly.
-    `reasoning` is still accepted and recorded when a caller does give one.
+    Gated by `records.require_reasoning` like every other seat action (T10).
+    An earlier pass exempted the three pregame routes on the grounds that
+    `ai_pregame.py`'s backstop makes this declaration *for* a quiet agent
+    seat with no reasoning to give - which is not true of this route:
+    `ai_pregame.settle_now` calls `opening.declare_mulligan` directly, in
+    process, and never travels through here, so the gate it would have to
+    pass is one it never reaches. Keeping the hand or taking a mulligan is a
+    real choice with a real why - the first one an agent makes in a game -
+    and there is no reason it alone should be unexplained.
     """
     _pregame_seat(game_id, uid, req.player)
+    records.require_reasoning(game_id, req.player, req.reasoning)
     with store.locked(game_id) as game:
         game.player(req.player)  # 404 for a player who is not in this game
         return opening.declare_mulligan(
@@ -1850,10 +1917,11 @@ def pregame_opening_hand_action(
     opening_hand_actor` on the state view; a seat that wants none of them calls
     the `finish` endpoint below instead.
 
-    Not gated by `records.require_reasoning` - see `pregame_mulligan`'s
-    docstring for why no pregame declaration is.
+    Gated by `records.require_reasoning` - see `pregame_mulligan`'s
+    docstring.
     """
     _pregame_seat(game_id, uid, req.player)
+    records.require_reasoning(game_id, req.player, req.reasoning)
     with store.locked(game_id) as game:
         game.player(req.player)
         return opening.take_opening_hand_action(
@@ -1873,12 +1941,13 @@ def pregame_opening_hand_finish(
     response's `step` is the first one somebody can act in: `upkeep`. See
     `engine_api.settle_priorityless_steps`.
 
-    Not gated by `records.require_reasoning` - see `pregame_mulligan`'s
-    docstring for why no pregame declaration is.
+    Gated by `records.require_reasoning` - see `pregame_mulligan`'s
+    docstring.
     """
     if not req.player:
         raise ValueError("finishing CR 103.6's actions needs the player who is finishing")
     _pregame_seat(game_id, uid, req.player)
+    records.require_reasoning(game_id, req.player, req.reasoning)
     with store.locked(game_id) as game:
         game.player(req.player)
         result = opening.finish_opening_hand_actions(

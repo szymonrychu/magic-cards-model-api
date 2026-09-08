@@ -75,18 +75,22 @@ def booted_game(client: TestClient) -> dict:
     # merely run slowly then - it hung for the whole run, because the settling
     # thread held the game lock that every call below needs.
     started = time.monotonic()
+    # `bob` is this fixture's `ai: true` seat, and CR 103.5's declaration is
+    # gated on `reasoning` for an agent seat exactly like every other action
+    # it takes (T10) - so this harness supplies one, rather than the routes
+    # being exempted to keep it quiet.
     for player in ("alice", "bob"):
         kept = client.post(
             f"/api/games/{body['game_id']}/pregame/mulligan",
             params={"uid": body["seat_uids"][player]},
-            json={"player": player, "take": False},
+            json={"player": player, "take": False, "reasoning": "a keepable seven"},
         )
         assert kept.status_code == 200, kept.text
     for player in ("alice", "bob"):
         done = client.post(
             f"/api/games/{body['game_id']}/pregame/opening-hand/finish",
             params={"uid": body["seat_uids"][player]},
-            json={"player": player},
+            json={"player": player, "reasoning": "nothing to do from my opening hand"},
         )
         assert done.status_code == 200, done.text
     # CR 103.8's first turn has begun. Its untap step grants nobody priority

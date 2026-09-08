@@ -1226,16 +1226,23 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
-    def set_step(player_uid: str, step: str) -> str:
+    def set_step(player_uid: str, step: str, reasoning: str = "") -> str:
         """Jump the turn marker to a named step ("precombat_main",
         "beginning_of_combat", "declare_attackers", "declare_blockers",
         "combat_damage", "end_step", ...). Forward moves are real step
-        changes; use advance() for ordinary flow. Board setup, not a priority
-        action - does not block."""
+        changes; use advance() for ordinary flow. Not a priority action -
+        does not block.
+
+        `reasoning`: why you are moving the marker there, in your own words -
+        required, and refused without it. This one moves the game's own turn
+        structure and can fire the suspend upkeep on the way in, so it is a
+        real move, not board setup."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
         body = {"step": step, "player": seat.player}
+        if reasoning:
+            body["reasoning"] = reasoning
         return seat.call("PUT", f"/api/games/{seat.game_id()}/step", body)
 
     @server.tool()

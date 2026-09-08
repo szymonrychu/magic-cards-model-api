@@ -77,6 +77,14 @@ class StepUpdate(BaseModel):
     step: str
     player: str | None = None
     """Who is moving the marker, for the log's who-did-what line."""
+    reasoning: str | None = None
+    """T10: required for an agent seat (`records.require_reasoning`),
+    optional for a human one. This route reads like board setup and is not
+    one: it moves the turn marker and drives the suspend upkeep the route
+    itself runs when it lands on `upkeep`, and every agent has it as an
+    MCP tool
+    (`mcp.set_step`). An agent moving the game's own turn marker with no
+    stated why is exactly what this gate exists to prevent."""
 
 
 class ActorRequest(BaseModel):
