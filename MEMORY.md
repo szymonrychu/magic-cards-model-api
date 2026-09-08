@@ -92,14 +92,26 @@ whoever works on the repo itself.
   `self._records[game_id]`) - the two tables are linked only by `game_id`
   values matching, never by a constraint the database enforces.
 
-- **2026-09-08 - the initial alembic migration was edited in place, not
-  superseded.** `374af1d25f73_initial_schema.py` had `down_revision = None`
-  and nothing else in the chain - T9 had just landed this session, before
-  any real deployment could depend on the old shape - so the `ForeignKey`
-  removal above went directly into that migration rather than a second
-  `alembic revision` on top of it. This is a one-time allowance for a schema
-  still in its first iteration, not a precedent: once a migration has shipped
-  anywhere real, the right move is a new revision, never editing history.
+- **2026-09-08 (corrected same day) - editing a shipped migration in place
+  is never a one-time allowance, and this one broke every already-migrated
+  database.** The `ForeignKey` removal above first went straight into
+  `374af1d25f73_initial_schema.py` with its revision id unchanged, on the
+  reasoning that T9 had landed only hours earlier so nothing real could
+  depend on the old shape. That reasoning is wrong wherever the migration
+  has run *at all*, deployment or not: `alembic upgrade head` is a no-op on
+  a database already stamped `374af1d25f73`, so the CASCADE survives there
+  forever while this branch's code hard-depends on it being gone -
+  `append_record` for an unknown game raises `ForeignKeyViolation` on that
+  database and nowhere else. It was green locally only because `mise run
+  test:pg` reuses the persistent `magic-cards-model-api_postgres-data`
+  volume, which happened to have been provisioned from the edited file:
+  green on one machine, red on the next. Fixed properly: the initial
+  revision is restored to what it shipped as, and `8f1c47a0b6d2` drops the
+  constraint as its own revision (guarded on `pg_constraint`, so it is a
+  no-op on a database provisioned from the briefly-edited file).
+  `tests/test_migrations.py` creates its own scratch database per test,
+  provisions it from the initial revision, and proves the upgrade removes
+  the constraint - never reusing the shared, possibly-cached one.
 
 - **2026-09-08 - a `dry_run` request must skip repository persistence
   outright, not just skip auditing it.** Before T10, `_run_command` called
@@ -135,25 +147,102 @@ whoever works on the repo itself.
   record`'s own `fill_record` call silently lands on the untouched real
   `InMemoryRepository` singleton and raises `KeyError` for a row that
   genuinely exists - just in the other store. More importantly: this also
-  means `store.py`'s singleton selection is still hardcoded to
-  `InMemoryRepository` with no env-var-driven switch to `PostgresRepository`
-  at all - T9 built the postgres implementation and this task exercises it
-  end-to-end from a test, but nothing wires it into an actual deployment.
-  That wiring is real, additional scope (a new env var, `store.py` choosing
-  a class, probably `serve.py`/`main.py` touching startup) that neither T9
-  nor T10 was asked to do - noted here so it is not mistaken for already
-  done.
+  means `store.py`'s singleton selection was, at the time this was written,
+  hardcoded to `InMemoryRepository` with no switch to `PostgresRepository`
+  at all. That wiring landed later the same day - see the
+  `store.select_store()` note at the end of this file - and the two-bindings
+  trap above is exactly why the choice is made at import rather than by
+  rebinding the name afterward.
 
-- **2026-09-08 - reasoning is required for an agent seat's *game* action, not
-  for a CR 103.5/103.6 pregame declaration, even from the same seat.**
-  `records.require_reasoning` gates every `actions/*`, `resolve-top`,
-  `advance`, `decide`, and `state-based-actions` route, but deliberately not
-  `pregame/mulligan`, `pregame/opening-hand/action`, or `pregame/opening-
-  hand/finish`. Two reasons, not one: `ai_pregame.py`'s own backstop makes
-  these exact declarations *for* a quiet agent seat with no reasoning to
-  give (`opening.declare_mulligan`'s `automatic=True`), and the existing,
-  pinned race-condition suite (`test_mulligans.py`) drives them directly
-  over HTTP from a test harness that has none either - unlike a targeted
-  spell or a declared attack, a pregame declaration has no live "why" this
-  api could require honestly. `reasoning` is still accepted and recorded on
-  all three when a caller does supply one.
+- **2026-09-08 (corrected same day) - the pregame routes ARE gated, and the
+  exemption they briefly had rested on a false premise.** An earlier pass
+  left `pregame/mulligan`, `pregame/opening-hand/action` and
+  `pregame/opening-hand/finish` outside `records.require_reasoning`, giving
+  two reasons. The first was simply not true: `ai_pregame.settle_now` calls
+  `opening.declare_mulligan` / `opening.finish_opening_hand_actions`
+  directly, in process (`ai_pregame.py`'s `_take_default`), and never
+  travels through the HTTP route at all - so the backstop never reaches the
+  gate and could not have been affected by it. The second was test
+  pressure, not a rule: `tests/test_ui_e2e.py` and `tests/test_mulligans.py`
+  post those routes for a seat that *is* this fixture's `ai: true` one, with
+  no reasoning. Both are now gated like every other mutating route and the
+  fixtures supply a reason, which is the honest direction of that fix.
+  Keeping or mulliganing an opening hand is the first real choice an agent
+  makes in a game; there is no reason it alone should be unexplained.
+
+- **2026-09-08 - `state-based-actions` and `PUT .../step` are gated too, and
+  the enumeration list is now enforced by a test rather than by hand.**
+  `state-based-actions` took no body at all, so it could neither name a seat
+  nor be gated, while `README.md` said it took an optional `reasoning` and
+  this file said it was gated - two documents describing a hole. It now
+  takes the optional `ActorRequest` body they both described (called with no
+  body it is nobody's action and requires nothing). `PUT .../step` reads
+  like board setup and is not: it moves the turn marker, runs the suspend
+  upkeep, and is an MCP tool every agent holds - it was the one mutating
+  tool that never grew `reasoning`. `tests/test_reasoning_gate.py` is the
+  standing guard: default-deny over every mutating route *and* every MCP
+  tool, with an exemption list that must name a reason, plus a check that
+  no exemption names something that no longer exists.
+
+- **2026-09-08 - `legal_actions_before` must be redacted on the seat the
+  server resolved, never on a field the caller supplied.** The first version
+  keyed the log's redaction on the audit entry's `detail["player"]`. On
+  `actions/declare-blockers` that field is `req.player`, straight off the
+  request body and validated against nothing, while the enumeration itself
+  was computed for the *deciding* seat (`engine_decision.player`) - so alice
+  could post with her own uid and `"player": "alice"`, be refused for not
+  opening bob's seat, and then read bob's own pre-decision enumeration out
+  of the log. `records.legal_actions_before` now returns a
+  `LegalActionsBefore(player, actions)` pair, `audit.record` writes both
+  halves or neither (`legal_actions_before` + `legal_actions_for`), and
+  `visibility.redact_log_entry` reads the subject rather than anything the
+  request carried - the two can no longer come apart. `_answer_declaration`
+  and `decide` additionally compute nothing at all until the uid gate has
+  agreed who the caller is.
+
+- **2026-09-08 - `GET .../log` with no uid used to hand out every seat's
+  `legal_actions_before` in full.** `redact_log_entry` was applied only for
+  `isinstance(viewer, str)`, which is false for no-uid *and* for an
+  unrecognised uid, so a caller presenting nothing saw strictly more than
+  one presenting garbage - of exactly the hidden information
+  `GET .../legal-actions` refuses to anyone but the named seat. The
+  unauthenticated *snapshot* view predates this branch and is deliberate
+  (the debugger's eye), so it stays; `legal_actions_before` now goes through
+  the gate for every non-admin viewer, and `redact_log_entry` applies the
+  seat-shaped snapshot filtering only for a real seat uid so that stayed
+  unchanged.
+
+- **2026-09-08 - `store.py` now selects its repository from the
+  environment**, superseding the note above that recorded this as unwired
+  scope. `db.configured_database_url` answers "is a database configured at
+  all" (`None` is not an error, unlike `database_url_from_env`), and
+  `store.select_store()` picks `PostgresRepository` when it says yes and
+  `InMemoryRepository` when it says no. The choice is made *at import*
+  precisely because of the two-bindings trap recorded above: choosing once,
+  before `app.py`'s static import or `audit.py`'s lazy one can run, is what
+  keeps both views the same object. `PostgresRepository` had to grow
+  `record_automatic_pregame`/`automatic_pregame` (process-local dicts, like
+  its `_locks`) to be selectable at all - `opening.py` calls them on
+  whichever store was chosen. `tests/test_store_selection.py` boots real
+  subprocesses and checks both bindings.
+
+- **2026-09-08 - the `records` table has no retention, no GC, and no way to
+  read an orphaned row back through the API.** Dropping the FK is genuinely
+  motivated - `lobby.reset_game` writes the `game_reset` row and *then*
+  deletes the game, so a CASCADE would delete the very row that makes the
+  transcript end with the reset - but the consequence is that every deleted
+  game's rows stay in `records` forever, and `GET /api/games/{id}/log`
+  404s on the game before it ever reads them. Nothing prunes them and
+  nothing exports them. That is a deliberate deferral, not an oversight:
+  reading a finished game's transcript back is what the review surface in
+  `docs/architecture.md` is for, and retention belongs with it.
+
+- **2026-09-08 - `audit.entries` no longer deep-copies each entry's
+  `detail`.** The old module-global version returned
+  `dict(entry, detail=dict(entry["detail"]))`; reading from the repository
+  returns `{**defaults, **row["payload"]}`, whose `detail` is the stored
+  dict itself for `InMemoryRepository` (postgres re-parses JSONB, so it is
+  a fresh object there). No current caller mutates it, and `redact_log_entry`
+  already rebuilds rather than edits in place - noted because the two
+  implementations differ in aliasing, which is the kind of difference a
+  future caller could trip over.
