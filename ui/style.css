@@ -218,13 +218,21 @@ h3 { font-size: 14px; }
 
 /* --------------------------------------------------------- the board ---- */
 
-/* A flex column, not a grid. Four of these rows (`#exile-row`, `#red-zone`,
-   `#casting-strip`, `#permitted-row`) are `hidden` most of the time, and a
-   `display: none` element is not a flex item at all: it consumes neither
-   height nor a gap, and nothing below it lands on a differently-sized track
-   when it appears. The grid this replaced had to keep an explicit track list
-   in sync with the row order by hand, and every row added here - the two land
-   rows and the exile strip - was a chance to get that wrong.
+/* A flex column, not a grid. Some of these rows (`#red-zone`,
+   `#permitted-row`) are `hidden` most of the time, and a `display: none`
+   element is not a flex item at all: it consumes neither height nor a gap,
+   and nothing below it lands on a differently-sized track when it appears.
+   The grid this replaced had to keep an explicit track list in sync with the
+   row order by hand, and every row added here - the two land rows and the
+   exile strip - was a chance to get that wrong.
+
+   Nothing the player *clicks* is allowed to appear here, only what the game
+   itself puts on the table. `#casting-strip` was the exception and is one no
+   longer: it lived between the land row and the hand, so beginning a cast
+   inserted a whole block of chips into this column and shoved every card
+   above it. It is a panel in `#side-panel` now, and a card-scoped menu is
+   `.popover`, drawn over this column rather than into it - so clicking
+   never changes the board's geometry.
 
    Which rows grow is now stated by the rows themselves. `.main-row` (each
    seat's non-lands) takes the slack; `.lands-row` and everything else is
@@ -489,19 +497,37 @@ h3 { font-size: 14px; }
   background: rgba(242, 105, 95, 0.06);
 }
 
-/* The row above the hand where a spell being cast or an ability being
+/* The control ribbon's panel where a spell being cast or an ability being
    activated stages its choices before it is fired (CR 601.2's announcement
-   sequence). */
+   sequence). It is in `#side-panel`, directly under `#prompt-box` - see
+   `#mtg-board`'s own note for why it is no longer a row of the board.
+
+   A column rather than a wrapping row, because the ribbon is 340px wide and
+   the steps read as a sequence: what is being cast, then each choice it
+   still wants, then the buttons. `.tray-step` stretches to the panel's full
+   width; a bare button or the hold-priority tick sizes to its own content. */
 .casting-strip {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+.casting-strip > .tray-step { align-self: stretch; margin: 0; }
+.strip-head {
+  align-self: stretch;
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
-  min-height: 34px;
-  padding: 6px 10px;
-  border-radius: 7px;
-  background: var(--bg-raised);
-  border: 1px solid var(--accent);
+  gap: 5px;
+}
+/* Done / Cast / keep priority / Cancel share one wrapping line instead of
+   taking four of the panel's own rows. */
+.strip-actions {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* ------------------------------------------------ permanents and piles ---- */
@@ -778,8 +804,18 @@ h3 { font-size: 14px; }
    (`#log-box`) - which alone takes whatever height the other three leave, so
    a long log scrolls in place instead of pushing the panel taller than the
    viewport. */
+/* Careful with the next two rules: `#side-panel > div` above is an id *and*
+   a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
+   it does - measured with `getComputedStyle` in a real browser, both of them
+   render `--line`, not the colour named here. Left as they are rather than
+   revived, because reviving them would visibly restyle two panels this
+   change is not about. The `#casting-strip` rule is deliberately written to
+   match that specificity instead, because its colour is not a new one: the
+   announcement panel had an accent border when it was a board row, and
+   moving it into this column must not quietly take that away. */
 #prompt-box { border-color: var(--warn); }
 #priority-box { border-color: var(--accent); }
+#side-panel > #casting-strip { border-color: var(--accent); }
 #log-box {
   flex: 1 1 auto;
   min-height: 0;
@@ -816,20 +852,66 @@ h3 { font-size: 14px; }
 }
 .toast.bad { border-color: var(--bad); color: var(--bad); }
 
-/* A small floating menu anchored to whatever opened it via `style.left` /
-   `style.top`, rather than a fixed position - a card's context actions, a
-   mana source's color choice. */
+/* A small menu anchored over the card it is about - a card's context
+   actions, a permanent's abilities, a mana source's colour, an attacker's
+   defender. `menus.js`'s `anchoredPosition` computes `left`/`top`/
+   `max-height` and `render/ribbon.js`'s `showPopover` writes them.
+
+   `position: fixed`, and that is the whole point, not a detail. This was
+   `position: absolute` with the anchor's *document* coordinates and no
+   bound: every card in the hand row sits at the bottom of the window, so its
+   menu was placed below the bottom of the window, the document stretched to
+   contain it, and the page grew a vertical scrollbar it did not have a
+   moment earlier. Fixed coordinates are viewport coordinates - a fixed box
+   cannot extend the document however it is placed - and `overflow-y: auto`
+   with the `max-height` `showPopover` sets means a long list scrolls inside
+   itself rather than needing the room in the first place. */
 .popover {
-  position: absolute;
+  position: fixed;
   z-index: 50;
-  min-width: 140px;
+  min-width: 168px;
+  /* Narrow windows (the 1100px breakpoint stacks the grid) must not get a
+     menu wider than the window; `anchoredPosition` clamps `left` against the
+     measured width, and this is what keeps that width sane in the first
+     place. An ability's full oracle text wraps rather than widening it. */
+  max-width: min(300px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg-raised);
   border: 1px solid var(--line-bright);
   border-radius: 8px;
   box-shadow: var(--shadow);
   padding: 4px;
 }
-.popover button.option { display: block; width: 100%; text-align: left; }
+.popover button.option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  white-space: normal;
+}
+.popover button.option:hover:not(:disabled),
+.popover button.option:focus-visible {
+  background: var(--bg-sunken);
+  border-color: var(--accent);
+  outline: none;
+}
+/* Which card this menu belongs to, said once at the top. An anchored menu
+   can be read a card away from its anchor on a crowded board; the caption
+   and the anchor's own outline below are what keep "this is about that
+   card" true rather than merely implied. */
+.popover .menu-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-faint);
+  padding: 3px 8px 5px;
+}
+/* The card whose menu is open. `outline` rather than `border`/`padding`
+   deliberately: it is drawn outside the box and takes no layout space, so
+   marking a card cannot move its neighbours. */
+.menu-open { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .tray-step { margin: 10px 0; }
 .tray-step > .label {
@@ -952,7 +1034,6 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .split-row span { flex: 1 1 6em; min-width: 6em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .combat-prompt .combat-list { margin: 4px 0; padding-left: 18px; font-size: 12px; }
-.prompt-action-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .prompt-gameover { font-weight: 600; color: var(--warn); }
 
 /* `#stops-box`'s two-column grid over `STEPS` minus `untap`/`cleanup` - one

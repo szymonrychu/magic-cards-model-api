@@ -19,6 +19,7 @@ import * as A from "./actions.js";
 import * as P from "./priority.js";
 import * as C from "./combat.js";
 import { untappedSources, colorOptions } from "./mana.js";
+import * as M from "./menus.js";
 import { viewModel } from "./decisions.js";
 import { fill, canFill } from "./targeting.js";
 import { mountBoard } from "./render/board.js";
@@ -428,25 +429,43 @@ export async function fire() {
   await poll();
 }
 
-async function onHandCard(card) {
+/** The element a card-scoped menu anchors itself over: the card node that
+ * was actually clicked, so the menu sits against that card and not against
+ * whatever else shares its id. `board.js`'s `patchStacks` wraps a permanent
+ * and everything tucked under it in a `.perm-stack` keyed by the *same* id,
+ * so a `[data-key]` lookup finds the wrapper first - the click's own
+ * `currentTarget` is the card. The lookup is the fallback for the callers
+ * that have no event (nothing anchors to `document` - `showPopover` with no
+ * anchor does nothing rather than opening a menu in the corner). */
+function anchorFor(card, event) {
+  return (event && event.currentTarget) || document.querySelector(`[data-key="${card.id}"]`);
+}
+
+/** Open a card-scoped menu over the clicked card. `items` are `menus.js`'s
+ * `{key, label, sublabel}` descriptors; `run(key)` is what this file does
+ * about the one that gets picked. `menus.js` decides what is offered, this
+ * decides what happens - neither knows about the other's half. */
+function openCardMenu(card, event, items, run) {
+  return showPopover(
+    anchorFor(card, event),
+    items.map((item) => ({ ...item, onSelect: () => run(item.key) })),
+    { title: card.name }
+  );
+}
+
+async function onHandCard(card, event) {
   const app = store.get();
   const plan = planHandCardClick(card, app);
   if (plan.kind === "cancel") return cancel();
   if (plan.kind === "target") return tryTarget(plan.id);
   if (plan.kind === "land") return playLand(card);
   if (plan.kind === "cast") return beginCast(card);
-  return showPopover(document.querySelector(`[data-key="${card.id}"]`), [
-    {
-      label: plan.isLand ? "Play" : "Cast",
-      onSelect: () => (plan.isLand ? playLand(card) : beginCast(card)),
-    },
-    ...plan.specials.map((k) => ({
-      label: k[0].toUpperCase() + k.slice(1),
-      sublabel: card.special_actions[k].cost,
-      onSelect: () => fireSpecial(card, k),
-    })),
-    ...plan.cycling.map((c) => ({ label: "Cycle", sublabel: c.cost, onSelect: () => cycle(card) })),
-  ]);
+  return openCardMenu(card, event, M.handMenuItems(plan, card), (key) => {
+    if (key === "play") return playLand(card);
+    if (key === "cast") return beginCast(card);
+    if (key === "cycle") return cycle(card);
+    if (key.startsWith("special:")) return fireSpecial(card, key.slice("special:".length));
+  });
 }
 
 async function beginCast(card) {
@@ -513,13 +532,10 @@ async function onPermanent(card, event) {
     return;
   }
   if (plan.kind === "activate") return beginActivate(card, plan.abilityIndex);
-  const items = plan.abilities.map((a) => ({
-    label: a.text,
-    sublabel: a.cost || "",
-    onSelect: () => beginActivate(card, a.index),
-  }));
-  if (plan.vehicle) items.push({ label: "Crew", onSelect: () => beginCrew(card) });
-  showPopover(event.currentTarget, items);
+  return openCardMenu(card, event, M.abilityMenuItems(plan), (key) => {
+    if (key === "crew") return beginCrew(card);
+    if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
+  });
 }
 
 async function beginActivate(card, index) {
@@ -565,17 +581,11 @@ async function pinLand(card, event) {
     store.set({ action: A.pinSource(app.action, card.id, colors[0] || null) });
     return previewAndMaybeFire();
   }
-  showPopover(
-    event.currentTarget,
-    colors.map((c) => ({
-      label: `Tap for {${c}}`,
-      onSelect: () => {
-        hidePopover();
-        store.set((s) => ({ action: A.pinSource(s.action, card.id, c) }));
-        previewAndMaybeFire();
-      },
-    }))
-  );
+  openCardMenu(card, event, M.manaMenuItems(colors), (key) => {
+    const colour = key.slice("colour:".length);
+    store.set((s) => ({ action: A.pinSource(s.action, card.id, colour) }));
+    previewAndMaybeFire();
+  });
 }
 
 // Exported for `tests/test_ui_app.py` only, alongside `store` above - see
@@ -666,16 +676,10 @@ function toggleAttacker(card, event) {
       combatDraft: C.toggleAttacker(app.combatDraft, card.id, app.combatDraft[card.id] || defenders[0].id),
     });
   }
-  showPopover(
-    event.currentTarget,
-    defenders.map((d) => ({
-      label: `Attack ${d.label}`,
-      onSelect: () => {
-        hidePopover();
-        store.set((s) => ({ combatDraft: C.toggleAttacker(s.combatDraft, card.id, d.id) }));
-      },
-    }))
-  );
+  openCardMenu(card, event, M.defenderMenuItems(defenders), (key) => {
+    const defenderId = key.slice("defender:".length);
+    store.set((s) => ({ combatDraft: C.toggleAttacker(s.combatDraft, card.id, defenderId) }));
+  });
 }
 
 async function confirmAttack() {

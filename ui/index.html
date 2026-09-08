@@ -167,7 +167,6 @@
 
     <div id="my-battlefield" class="battlefield-row main-row"></div>
     <div id="my-lands" class="battlefield-row lands-row"></div>
-    <div id="casting-strip" class="casting-strip" hidden></div>
     <div id="my-hand" class="hand-row"></div>
     <!-- CR 601.3's dynamic play permissions - cascade, suspend's own third
          ability - cast again from wherever they were exiled to. -->
@@ -188,9 +187,20 @@
   <aside id="zone-ribbon"></aside>
 
   <!-- the one place anything is ever asked of the player - the bottom of
-       the right-hand ribbon, under the turn block and the banners -->
+       the right-hand ribbon, under the turn block and the banners.
+
+       `#casting-strip` (the announcement in progress: modes, X,
+       alternative costs, target slots, division) is a panel here, directly
+       under `#prompt-box`, rather than a row of `#mtg-board`. It used to sit
+       between the land row and the hand, so beginning a cast inserted a
+       block into the board's own flex column and every card above it moved -
+       the board got uglier the more you clicked. It is also not an anchored
+       menu over the card (`ui/menus.js` has the reasoning): it stays open
+       while you click other cards to fill its slots, and a menu closes on
+       the first click-away. -->
   <aside id="side-panel">
     <div id="prompt-box"></div>
+    <div id="casting-strip" class="casting-strip" hidden></div>
     <div id="priority-box"></div>
     <div id="stops-box"></div>
     <div id="log-box"></div>

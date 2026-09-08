@@ -1039,3 +1039,51 @@ whoever works on the repo itself.
   `POST .../state-based-actions`) return `state_view` with no redaction at
   all, so they already hand back both hands by name - adding one field to a
   view that already carries every card's identity changes nothing there.
+
+- **2026-09-09 - interacting with the board does not change the board's
+  geometry, and that is now enforced in two places.** The reported symptom
+  was "the webUI is getting ugly with clicks": choices rendered under the
+  cards, and the casting-method dropdown grew the page a vertical scrollbar.
+  Both were one property being violated. (1) `#casting-strip` was a row of
+  `#mtg-board`, between `#my-lands` and `#my-hand`, so beginning a cast
+  inserted a block into the board's own flex column and every card above it
+  moved; it is a panel in `#side-panel` now, directly under `#prompt-box`.
+  (2) `.popover` was `position: absolute` at the anchor's *document*
+  coordinates with no bound - and every card in the hand row sits at the
+  bottom of the window, so its menu was placed below the bottom of the
+  window and the document stretched to contain it. It is `position: fixed`
+  with `ui/menus.js`'s `anchoredPosition` clamping it into the viewport and
+  capping `max-height`. Measured on a real 26-permanent board at 1440x900,
+  1000x800, 1440x520, 1440x260 and 1440x150: `documentElement.scrollHeight`
+  is identical before and after opening any menu, and no board row's
+  `getBoundingClientRect` moves by a pixel.
+- **2026-09-09 - the two surfaces are split by scope, not by convenience.**
+  A choice *about a card* (which way to cast it, which ability, which colour
+  a land taps for, which player an attacker is aimed at) is an anchored menu
+  over that card. The in-flight announcement reads card-scoped but
+  cannot be one: it stays open while the player clicks *other* cards to fill
+  its target slots, and an anchored menu closes on the first click-away - so
+  it is the ribbon panel. Turn-scoped questions (a pending decision, CR
+  103.5/103.6's pregame, the combat prompt) stay in `#prompt-box`.
+  `ui/menus.js`'s `surfaceForChoice`/`choiceForPlan` are that rule as pure
+  functions, tested directly.
+- **2026-09-09 - two ugliness fixes that only a browser pass could find.**
+  With the strip moved next to `#prompt-box`, the prompt box's own in-flight
+  summary printed the same title and the same Cancel an inch above the panel
+  saying it again - `#prompt-box` now hides entirely while an announcement is
+  in flight (`tests/test_ui_ribbon.py`'s Kozilek scenario asserts it). And
+  the ability menu on Walking Ballista read "Remove a +1/+1 counter from this
+  creature: It deals 1 damage to any target." with "Remove a +1/+1 counter
+  from this creature" repeated in dim type below it: a printed activated
+  ability is "cost: effect", so `abilityMenuItems` drops the cost sublabel
+  when the text already opens with it.
+- **2026-09-09 - `#prompt-box`'s and `#priority-box`'s border colours are
+  dead rules, and have been.** `#side-panel > div` (`style.css`) is an id
+  plus a type selector, so it outranks the bare `#prompt-box { border-color:
+  var(--warn) }` and `#priority-box { border-color: var(--accent) }` below
+  it: measured with `getComputedStyle` on a live board, both render `--line`
+  like every other panel. Found while giving the relocated `#casting-strip`
+  its accent border back (written `#side-panel > #casting-strip` so it
+  actually wins). Not fixed for the other two on purpose - reviving them is a
+  visible restyling of panels that change was not about - but somebody
+  should decide whether those two colours were meant to be there.
