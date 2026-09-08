@@ -6,7 +6,9 @@
         "-m",
         "magic_cards_model_api.mcp",
         "--api",
-        "http://game:8000"
+        "http://game:8000",
+        "--transport",
+        "stdio"
       ]
     },
     "spellslinger": {

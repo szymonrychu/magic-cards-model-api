@@ -18,9 +18,10 @@ hand in another terminal:
 
     claude --print --dangerously-skip-permissions --allowedTools Bash -- "<prompt>"
 
-copy-pasted from the API repo directory. The game is fully playable this way;
-only the automatic spawn is unavailable. The UI surfaces this box whenever
-`mechanism` is `"fallback"`.
+copy-pasted anywhere `claude` and the `mcp-seat` console script (2b T11) are
+both on `PATH` - the prompt no longer names a repo directory to `cd` into.
+The game is fully playable this way; only the automatic spawn is
+unavailable. The UI surfaces this box whenever `mechanism` is `"fallback"`.
 
 **"Visibly alive."** This module does not parse the subprocess's own
 reasoning - the ground truth for "what did the AI seat last do" is the game's
@@ -42,27 +43,19 @@ establish - see its docstring for which way each failure falls and why.
 
 from __future__ import annotations
 
+import importlib.resources
 import os
 import shutil
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import httpx
 
 from . import k8s_seats
 from .agent_settings import AgentSettings
-
-#: Root of this repo (`src/magic_cards_model_api/ai_seat.py` -> repo root),
-#: the working directory `seat_cli` must run from, and where `claude` is
-#: invoked from so its own CLAUDE.md/settings apply the same way they would
-#: for a human running the identical command by hand.
-API_REPO = Path(__file__).resolve().parents[2]
-
-BRIEF_PATH = API_REPO / "docs" / "ai_seat_brief.md"
 
 #: How many lines of stdout/stderr are kept per runner - enough to show a
 #: crash's own error text without holding a whole game transcript in memory
@@ -131,13 +124,27 @@ def claude_available() -> bool:
     return shutil.which("claude") is not None
 
 
+def load_brief() -> str:
+    """The raw brief text, unfilled - package data (2b T11), read the same
+    way regardless of how this package got installed (editable/path install,
+    a wheel, a wheel unpacked into a container image), unlike a repo-relative
+    path: once `ai_seat.py`'s repo (`magic-cards-lobby`, per 2b's
+    decomposition map) is a separate container from the api's, there is no
+    `docs/` checkout sitting next to it to read from disk."""
+    return (
+        importlib.resources.files("magic_cards_model_api")
+        .joinpath("docs", "ai_seat_brief.md")
+        .read_text()
+    )
+
+
 def build_prompt(*, uid: str, game_id: str, player: str, api_base: str) -> str:
     """The brief plus this seat's own identifiers, substituted in - the same
-    shape a human dispatching a player through `seat_cli` would be given by
+    shape a human dispatching a player through `mcp-seat` would be given by
     hand (see `docs/ai_seat_brief.md`, adapted from the CLI playtest brief
     this project already uses)."""
-    brief = BRIEF_PATH.read_text()
-    filled = brief.format(api_repo=str(API_REPO), uid=uid, game_id=game_id, api_base=api_base)
+    brief = load_brief()
+    filled = brief.format(uid=uid, game_id=game_id, api_base=api_base)
     return (
         f"You are seated as {player!r} in game {game_id}, seat uid {uid}, "
         f"API at {api_base}.\n\n{filled}"
@@ -197,9 +204,15 @@ class AiSeatRunner:
             uid=self.uid, game_id=self.game_id, player=self.player, api_base=self.api_base
         )
         try:
+            # 2b T11: no `cwd=API_REPO` any more - `claude` runs `mcp-seat`
+            # (an installed console script, reachable on `PATH` regardless of
+            # cwd; see `load_brief`) rather than `cd {api_repo} && ... -m
+            # magic_cards_model_api.seat_cli`. There is no single "repo
+            # directory" left to pin `claude` itself to once this module's
+            # own repo (`magic-cards-lobby`) is a container without the
+            # api's checkout beside it - it inherits this process's cwd.
             self.process = subprocess.Popen(
                 command_for(prompt, self.agent),
-                cwd=API_REPO,
                 env={**os.environ, **self.agent.env()},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,

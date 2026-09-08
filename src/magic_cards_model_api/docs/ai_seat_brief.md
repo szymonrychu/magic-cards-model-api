@@ -9,7 +9,7 @@ but the game must never sit still because you did not make one.
 Every command is a fresh process. Always pass BOTH your uid and your game id
 (and `--api` if the server is not on the default `http://127.0.0.1:8000`):
 
-  cd {api_repo} && .venv/bin/python -m magic_cards_model_api.seat_cli \
+  mcp-seat \
       --uid {uid} --game {game_id} --api {api_base} <subcommand>
 
 Subcommands: state, wait, mulligan, opening-hand-action, opening-hand-done,
