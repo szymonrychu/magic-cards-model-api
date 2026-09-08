@@ -70,6 +70,33 @@
       ]
     },
     {
+      "docstring_first_line": "The game as you may see it: your hand, both sides of the public",
+      "name": "battlefield_state",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "sections",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "both",
+          "has_default": true,
+          "name": "side",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "Cast a spell. Most casts are from your hand, and need nothing",
       "name": "cast",
       "parameters": [
@@ -201,7 +228,7 @@
       ]
     },
     {
-      "docstring_first_line": "Answer your pending decision (CR 608.2d) - `my_state`'s",
+      "docstring_first_line": "Answer your pending decision (CR 608.2d) - `battlefield_state`'s",
       "name": "decide",
       "parameters": [
         {
@@ -524,19 +551,6 @@
           "default": "",
           "has_default": true,
           "name": "reasoning",
-          "type": "str",
-          "type_error": null
-        }
-      ]
-    },
-    {
-      "docstring_first_line": "The game as you may see it: your hand, both sides of the public",
-      "name": "my_state",
-      "parameters": [
-        {
-          "default": null,
-          "has_default": false,
-          "name": "player_uid",
           "type": "str",
           "type_error": null
         }

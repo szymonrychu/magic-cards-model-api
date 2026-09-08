@@ -37,10 +37,11 @@ after every move and used to spend a round trip - and so a whole inference
 cycle, which is what a seat's turn latency is actually made of - on each:
 `state` (the board it left behind), `available_actions` (what is legal in it,
 the engine's own enumeration) and `recent_log` (the tail of what has actually
-happened, both seats, allowed and refused). `my_state` and `wait_for_priority`
-carry `recent_log` too. The pair this closes is the one the driver prompt used
-to spell out in as many words - "read `my_state`, read `game_log`" - and which
-a live seat pod was observed doing mid-game: two calls for one question.
+happened, both seats, allowed and refused). `battlefield_state` and
+`wait_for_priority` carry `recent_log` too. The pair this closes is the one
+the driver prompt used to spell out in as many words - "read `my_state`, read
+`game_log`", `my_state` being what `battlefield_state` was called then - and
+which a live seat pod was observed doing mid-game: two calls for one question.
 `game_log` remains for the whole history and for the full board snapshot each
 entry carries; `seatkit.RECENT_LOG_ENTRIES` bounds the tail, and its `omitted`
 count is what tells a seat the tail dropped something.
@@ -149,6 +150,94 @@ def _guarded(seats: Seats):
         return wrapper
 
     return decorate
+
+
+#: `battlefield_state`'s section vocabulary: the name a seat asks for, and
+#: the top-level keys of the state view it selects. The names ARE the view's
+#: own keys (`serialize.state_view`, after `visibility.redact_view`) rather
+#: than a prettier parallel vocabulary, so what a seat asks for is spelled
+#: exactly like what it reads back and there is nothing to translate in
+#: either direction. `exile` is the one section covering two keys, because
+#: `exile_pile` is a filtered *view* of `exile` (`serialize.state_view`) and
+#: not a second zone - asking for the pile without the pile it is drawn from
+#: would be asking for a shadow.
+SECTION_KEYS: dict[str, tuple[str, ...]] = {
+    "battlefield": ("battlefield",),
+    "hands": ("hands",),
+    "graveyards": ("graveyards",),
+    "exile": ("exile", "exile_pile"),
+    "command": ("command",),
+    "stack": ("stack",),
+    "combat": ("combat",),
+    "players": ("players",),
+    "play_permissions": ("play_permissions",),
+    "pregame": ("pregame",),
+    "pending_decision": ("pending_decision",),
+    "recent_log": ("recent_log",),
+}
+
+#: Sections whose entries are card views carrying whose they are - the two
+#: shared zones, the command zone, and the stack. `side` filters these on
+#: `controller`, falling back to `owner` for a card view that has no
+#: controller of its own.
+_CARD_LIST_KEYS = ("battlefield", "exile", "exile_pile", "command", "stack")
+
+#: Sections shaped `{username: [...]}` - `side` filters these by key.
+_BY_USERNAME_KEYS = ("hands", "graveyards", "play_permissions")
+
+#: What `side` accepts. Deliberately not usernames: the caller already
+#: identified itself with `player_uid`, and a mirror match - both seats on
+#: the same decklist, the same card names on both boards - is exactly where
+#: naming a side by hand goes wrong. `mine` is whoever that uid opens,
+#: `opponent` is every other seat, and the answer's `focus` block says which
+#: usernames each one resolved to so the reading is never a guess.
+_SIDES = ("both", "mine", "opponent")
+
+
+def _owner_of(card: dict[str, Any]) -> str | None:
+    return card.get("controller") or card.get("owner")
+
+
+def _narrow_to_side(view: dict[str, Any], allowed: set[str] | None) -> dict[str, Any]:
+    """`view`, keeping only what belongs to a seat in `allowed` (`None` for
+    every seat - the `side="both"` default, which returns `view` untouched).
+
+    Only sections whose entries *say* whose they are get narrowed. `combat`
+    is not: an attack is a relationship between the two sides, so there is no
+    honest half of it to keep. Neither are `pregame`, `pending_decision`,
+    `recent_log` or the spine - none of them is one seat's property.
+    """
+    if allowed is None:
+        return view
+    narrowed = dict(view)
+    for key in _CARD_LIST_KEYS:
+        cards = narrowed.get(key)
+        if isinstance(cards, list):
+            narrowed[key] = [card for card in cards if _owner_of(card) in allowed]
+    for key in _BY_USERNAME_KEYS:
+        block = narrowed.get(key)
+        if isinstance(block, dict):
+            narrowed[key] = {name: value for name, value in block.items() if name in allowed}
+    players = narrowed.get("players")
+    if isinstance(players, list):
+        narrowed["players"] = [player for player in players if player.get("username") in allowed]
+    return narrowed
+
+
+def _select_sections(view: dict[str, Any], wanted: list[str]) -> dict[str, Any]:
+    """`view` with every section outside `wanted` removed.
+
+    Removal, never selection: a key claimed by no section at all - the game
+    id, the turn, the step, the phase, who is active, who has priority, who
+    won, and `you` - is always kept. Those are what tell a seat *which* board
+    it is looking at, they cost nothing to carry, and an answer that dropped
+    them would be a board a seat could act on without knowing whose turn it
+    is.
+    """
+    dropped = {
+        key for section, keys in SECTION_KEYS.items() if section not in wanted for key in keys
+    }
+    return {key: value for key, value in view.items() if key not in dropped}
 
 
 def build_server(seats: Seats) -> MCPServer:
@@ -292,11 +381,45 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
-    def my_state(player_uid: str) -> str:
+    def battlefield_state(player_uid: str, sections: str = "", side: str = "both") -> str:
         """The game as you may see it: your hand, both sides of the public
         board (battlefield, stack, graveyards, exile), life and mana pools,
         turn/step, priority, and combat. The opponent's hand and both
         libraries are hidden - only their sizes are shown.
+
+        **Call it with nothing but your uid and you get all of that**, which
+        is what you normally want. The two options below narrow the answer
+        when you already know which part of the board your next question is
+        about - they can only ever leave things out, never add anything you
+        could not otherwise see.
+
+        `sections` is a comma-separated list of the parts to keep, named with
+        this answer's own top-level keys, so what you ask for is spelled like
+        what you read: `battlefield`, `hands`, `graveyards`, `exile` (which
+        brings `exile_pile` with it), `command`, `stack`, `combat`,
+        `players`, `play_permissions`, `pregame`, `pending_decision`,
+        `recent_log`. An empty `sections` - the default - is all of them. A
+        name that is not on that list is refused, with the list, rather than
+        quietly ignored.
+
+        `side` is `both` (the default), `mine`, or `opponent`, and it is
+        resolved from the uid you passed, not from a username you have to get
+        right: `mine` is your own seat and `opponent` is every other seat.
+        That matters in a mirror match, where both boards hold the same card
+        names - the answer's `focus` block says which usernames each side
+        resolved to (`you`, `opponents`), so you never have to infer it. It
+        narrows every section whose entries say whose they are - the
+        battlefield, hands, graveyards, exile, the command zone, the stack,
+        `players` and `play_permissions`. It does NOT narrow `combat` (an
+        attack belongs to both sides at once), `pregame`, `pending_decision`
+        or `recent_log`.
+
+        Whatever you narrow to, the answer always carries the game id, the
+        turn, the step, the phase, the active player, the priority holder,
+        the result if the game is over, and `you`. `focus` also lists
+        `omitted_sections`, so a narrowed board can never be misread as an
+        empty one: if you did not ask for `battlefield`, the absence of a
+        battlefield here is your own doing, not an empty board.
 
         `pending_decision` is the question you are being asked right now,
         answered with `decide` - see that tool for the field each `kind`
@@ -331,9 +454,48 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
+        asked = [name.strip() for name in sections.split(",") if name.strip()]
+        unknown = [name for name in asked if name not in SECTION_KEYS]
+        if unknown:
+            return (
+                f"no such section: {', '.join(repr(name) for name in unknown)}. "
+                f"battlefield_state takes any comma-separated mix of "
+                f"{', '.join(sorted(SECTION_KEYS))} - or no sections at all, "
+                "which is the whole board."
+            )
+        if side not in _SIDES:
+            return (
+                f"no such side: {side!r}. battlefield_state takes side="
+                f"{', '.join(_SIDES)} - resolved from your own uid, never a "
+                "username. Nothing was returned; ask again with one of those."
+            )
+        wanted = sorted(asked) if asked else sorted(SECTION_KEYS)
         state = seat.fetch_state()
-        state["recent_log"] = seat.recent_log()
-        return json.dumps(state, indent=1, sort_keys=True)
+        # Only fetched when it was asked for: `recent_log` is its own HTTP
+        # call to the API (`Seat.recent_log`), so a seat that narrowed it away
+        # saves the round trip rather than merely hiding its answer.
+        if "recent_log" in wanted:
+            state["recent_log"] = seat.recent_log()
+        seated = [
+            player.get("username")
+            for player in state.get("players", [])
+            if isinstance(player, dict)
+        ]
+        opponents = [name for name in seated if name != seat.player and name is not None]
+        allowed = {
+            "both": None,
+            "mine": {seat.player},
+            "opponent": set(opponents),
+        }[side]
+        view = _select_sections(_narrow_to_side(state, allowed), wanted)
+        view["focus"] = {
+            "sections": wanted,
+            "omitted_sections": sorted(set(SECTION_KEYS) - set(wanted)),
+            "side": side,
+            "you": seat.player,
+            "opponents": opponents,
+        }
+        return json.dumps(view, indent=1, sort_keys=True)
 
     @server.tool()
     @_guarded(seats)
@@ -361,7 +523,7 @@ def build_server(seats: Seats) -> MCPServer:
                 A card sitting in your graveyard or exile is castable too, but only
                 under a *named* permission (CR 601.3: "a player can begin to cast a
                 spell only if a rule or effect allows that player to cast it"), and
-                `keyword` is how you name it. Read your `my_state`'s graveyard/exile
+                `keyword` is how you name it. Read your `battlefield_state`'s graveyard/exile
                 card - `cast_options` names every keyword that card currently offers,
                 alongside the cost it would pay - rather than guessing; the keywords
                 this engine knows are:
@@ -910,7 +1072,7 @@ def build_server(seats: Seats) -> MCPServer:
         reasoning: str = "",
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
-        """Answer your pending decision (CR 608.2d) - `my_state`'s
+        """Answer your pending decision (CR 608.2d) - `battlefield_state`'s
         `pending_decision` field says what is being asked, by `kind`.
 
         - `choose_cards` (the cleanup discard, a "discard N" effect, a
@@ -965,7 +1127,7 @@ def build_server(seats: Seats) -> MCPServer:
           players can see the cards' faces ... graveyard, battlefield, stack,
           exile, ante, and command are public zones" - the library and the
           hand are not among them) your own state carries no detail to look
-          the id up against: `my_state` strips every library, including your
+          the id up against: `battlefield_state` strips every library, including your
           own. `pending_decision.card_details` carries the fuller view of the
           same ids where the server can resolve them, and is worth reading
           for oracle text; `card_labels` is the naming that is always there
@@ -1438,7 +1600,7 @@ def build_server(seats: Seats) -> MCPServer:
         """Declare whether you take a mulligan (CR 103.5), before the game starts.
 
         A game dealt from decklists rests in the mulligan step until every seat
-        has declared - `my_state`'s `pregame` block says who is still owed.
+        has declared - `battlefield_state`'s `pregame` block says who is still owed.
         `take=true` shuffles your hand back and draws a fresh seven;
         `take=false` keeps what you have.
 
@@ -1470,7 +1632,7 @@ def build_server(seats: Seats) -> MCPServer:
 
         Some cards let you act with them from your opening hand - Leyline of
         the Void's "you may begin the game with this card on the battlefield",
-        Gemstone Caverns' reveal. `my_state`'s `pregame.opening_hand_options`
+        Gemstone Caverns' reveal. `battlefield_state`'s `pregame.opening_hand_options`
         lists what yours offers, and `pregame.opening_hand_actor` says whose
         turn it is.
 
@@ -1568,10 +1730,10 @@ def build_server(seats: Seats) -> MCPServer:
         tried, allowed and refused, newest last, each entry carrying the whole
         board snapshot of its moment - your own view, though: entries touching
         the opponent's hidden zones have their card names blanked the same way
-        my_state hides them.
+        battlefield_state hides them.
 
         **You usually do not need this.** Every answer that carries the board
-        - `my_state`, `wait_for_priority`, `pass_until`, and every action tool
+        - `battlefield_state`, `wait_for_priority`, `pass_until`, and every action tool
         - already carries a `recent_log` tail of the same history alongside
         it, so asking "what happened" separately from "what can I do" spends a
         whole extra call and a whole extra turn on something you were handed

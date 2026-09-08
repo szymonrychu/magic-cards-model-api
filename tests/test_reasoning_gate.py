@@ -110,7 +110,7 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
 #: MCP tools that read and never mutate, each with the reason.
 EXEMPT_TOOLS: dict[str, str] = {
     "wait_for_priority": "one poll for whether it is this seat's moment; reads only.",
-    "my_state": "the board as this seat may see it; reads only.",
+    "battlefield_state": "the board as this seat may see it; reads only.",
     "game_log": "this game's log, seat-filtered; reads only.",
     "report_problem": ("`text` is the reasoning - see the matching note on `POST .../report`."),
     "declare_plan": (

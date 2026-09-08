@@ -186,14 +186,35 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
   specifically want the immediate poll-and-return, right after your own
   action, when something has plausibly already changed.
-- `my_state(player_uid)` is the board as you are allowed to see it, and it
-  answers the other half of the same question in the same breath: every
-  answer that carries the board also carries `recent_log`, the tail of what
-  both seats have actually done since - allowed and refused, in the game's
-  own words. That holds for `wait_for_priority`, `pass_until` and every
-  action tool too, so "what happened while I was not looking" and "what can
-  I do now" are one call between them. Never spend a second call asking for
-  what the first one already handed you.
+- `battlefield_state(player_uid)` is the board as you are allowed to see it,
+  and it answers the other half of the same question in the same breath:
+  every answer that carries the board also carries `recent_log`, the tail of
+  what both seats have actually done since - allowed and refused, in the
+  game's own words. That holds for `wait_for_priority`, `pass_until` and
+  every action tool too, so "what happened while I was not looking" and
+  "what can I do now" are one call between them. Never spend a second call
+  asking for what the first one already handed you.
+
+  Called with your uid alone it hands you everything, which is the right
+  default. Two options narrow it when your next question is about one part
+  of the board - they only ever leave things out, never show you anything
+  you could not otherwise see:
+
+      battlefield_state(player_uid=..., sections="graveyards,exile")
+      battlefield_state(player_uid=..., sections="battlefield", side="opponent")
+
+  `sections=` takes a comma-separated list of the answer's own top-level
+  keys - battlefield, hands, graveyards, exile, command, stack, combat,
+  players, play_permissions, pregame, pending_decision, recent_log - and an
+  unknown name is refused with the real list rather than ignored. `side=`
+  takes both (the default), mine, or opponent, and is resolved from your own
+  uid, so it stays right in a mirror match where both boards hold the same
+  card names; the answer's focus block names which seats each side resolved
+  to and which sections you left out. Whatever you narrow to, the turn, the
+  step, the phase, the active player and the priority holder always come
+  back. Reach for the options when one narrowed call answers a question two
+  calls would have - not to make a single answer shorter, which buys you
+  nothing.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
   `declare_attackers`, `declare_blockers`, `decide`, `pass`, `pass_until` act.
   Priority has exactly those two pass verbs and no more, because the rules give

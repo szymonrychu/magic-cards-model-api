@@ -84,13 +84,13 @@ def test_http_transport_answers_tools_list_and_a_real_tool_call_over_a_socket(
         async with Client(url) as mcp_client:
             tools = await mcp_client.list_tools()
             names = [tool.name for tool in tools.tools]
-            result = await mcp_client.call_tool("my_state", {"player_uid": uid})
+            result = await mcp_client.call_tool("battlefield_state", {"player_uid": uid})
             text = result.content[0].text
             return names, text
 
     names, text = asyncio.run(drive())
 
-    assert "my_state" in names
+    assert "battlefield_state" in names
     assert "cast" in names
     assert '"active_player": "alice"' in text
     assert '"you": "alice"' in text

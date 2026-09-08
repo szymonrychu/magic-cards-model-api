@@ -61,7 +61,7 @@ def thinking(signature: str = "sig") -> dict:
     ("name", "expected"),
     [
         ("mcp__mtg__wait_for_priority", activity.WAITING),
-        ("mcp__mtg__my_state", activity.READING_BOARD),
+        ("mcp__mtg__battlefield_state", activity.READING_BOARD),
         ("mcp__mtg__game_log", activity.READING_BOARD),
         ("mcp__mtg__decide", activity.DECIDING),
         ("mcp__mtg__mulligan", activity.DECIDING),
@@ -222,19 +222,19 @@ def test_the_age_comes_from_the_transcript_s_own_clock():
     the agent container and a browser can make a fresh state look stale."""
     written = epoch("2026-09-08T00:00:00Z")
     current = activity.CurrentActivity(now=lambda: written + 12.0)
-    current.feed([assistant(tool("mcp__mtg__my_state"), timestamp="2026-09-08T00:00:00Z")])
+    current.feed([assistant(tool("mcp__mtg__battlefield_state"), timestamp="2026-09-08T00:00:00Z")])
     assert current.snapshot()["seconds"] == pytest.approx(12.0, abs=0.5)
 
 
 def test_a_line_with_no_usable_timestamp_is_aged_from_now():
     current = activity.CurrentActivity(now=lambda: 500.0)
-    current.feed([assistant(tool("mcp__mtg__my_state"))])
+    current.feed([assistant(tool("mcp__mtg__battlefield_state"))])
     assert current.snapshot()["seconds"] == pytest.approx(0.0, abs=0.01)
 
 
 def test_a_clock_that_disagrees_never_publishes_a_negative_age():
     current = activity.CurrentActivity(now=lambda: epoch("2026-09-08T00:00:00Z"))
-    current.feed([assistant(tool("mcp__mtg__my_state"), timestamp="2026-09-08T00:01:00Z")])
+    current.feed([assistant(tool("mcp__mtg__battlefield_state"), timestamp="2026-09-08T00:01:00Z")])
     assert current.snapshot()["seconds"] == 0.0
 
 

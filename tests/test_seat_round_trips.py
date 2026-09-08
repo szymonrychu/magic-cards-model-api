@@ -27,7 +27,7 @@ transcript (`mtg-seat-3b6613e0`, 65 tool calls in one agent activation):
    carries a state view already carries `available_actions` - what this
    seat can do now - but not one line of what just happened, so the seat
    had to spend a second call on `game_log` to find out. `prompt.py` says
-   so outright ("read `my_state`, read `game_log`"), and the live
+   so outright ("read `battlefield_state`, read `game_log`"), and the live
    transcript shows the seat doing exactly that mid-loop. The log tail now
    rides along on the same answer.
 
@@ -162,18 +162,20 @@ def stock_a_bolt(client: TestClient, game_id: str, uid: str) -> tuple[str, str]:
     return board["hands"]["alice"][0]["id"], find(board["battlefield"], "Mountain")["id"]
 
 
-def test_my_state_carries_the_recent_log(client, game, monkeypatch) -> None:
+def test_battlefield_state_carries_the_recent_log(client, game, monkeypatch) -> None:
     """ "What happened since I last acted" and "what can I do now" are one
-    round trip. Before this, `my_state` answered only the second half and the
+    round trip. Before this, `battlefield_state` answered only the second half and the
     seat spent a whole extra cycle on `game_log` for the first."""
     seats = wired(monkeypatch, game)
     uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
     client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
 
     server = build_server(seats)
-    answer = call(server, "my_state", {"player_uid": uid})
+    answer = call(server, "battlefield_state", {"player_uid": uid})
 
-    assert "recent_log" in answer, "my_state must carry the log tail, not make it a second call"
+    assert "recent_log" in answer, (
+        "battlefield_state must carry the log tail, not make it a second call"
+    )
     assert answer["recent_log"]["entries"], answer["recent_log"]
     assert answer["recent_log"]["last_seq"] > 0
     assert len(answer["recent_log"]["entries"]) <= seatkit.RECENT_LOG_ENTRIES

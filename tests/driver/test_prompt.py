@@ -121,7 +121,7 @@ def test_turn_zero_names_the_mcp_tools_not_seat_cli(tmp_path, guide):
     text = turn_zero(assignment(guide), tmp_path / "current-game.md")
     for tool in (
         "wait_for_priority",
-        "my_state",
+        "battlefield_state",
         "cast",
         "play_land",
         "decide",

@@ -255,7 +255,7 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
 
 #: `mcp__mtg__wait_for_priority` - parked, waiting for its moment to act.
 WAITING = "waiting"
-#: `my_state`/`game_log` - reading the board it is allowed to see.
+#: `battlefield_state`/`game_log` - reading the board it is allowed to see.
 READING_BOARD = "reading_board"
 #: A spellslinger card lookup.
 READING_CARDS = "reading_cards"
@@ -286,7 +286,7 @@ _SPELLSLINGER_PREFIX = "mcp__spellslinger__"
 #: changes the game, so `ACTING` is its default - see `state_for`.
 _MTG_STATES = {
     "wait_for_priority": WAITING,
-    "my_state": READING_BOARD,
+    "battlefield_state": READING_BOARD,
     "game_log": READING_BOARD,
     "decide": DECIDING,
     "mulligan": DECIDING,

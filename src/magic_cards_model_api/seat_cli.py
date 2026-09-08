@@ -190,7 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
             '"Mayhem" for a graveyard card (CR 702.34a, CR 702.187a/b), "Plot", '
             '"Foretell" or "Madness" for an exile card (CR 702.170d, CR 702.143a, '
             'CR 702.35a/b), or "Airbend" for one exiled by an airbend effect '
-            "(CR 701.65a) - read the card's own cast_options in `my_state` for "
+            "(CR 701.65a) - read the card's own cast_options in `battlefield_state` for "
             "which keyword and cost actually apply right now, rather than "
             "guessing. A card covered by a live PlayPermission instead (suspend's "
             "free cast once its last time counter is off, cascade, Past in "
