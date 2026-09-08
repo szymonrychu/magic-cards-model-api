@@ -21,7 +21,11 @@ dependencies = [
 magic-cards-model = { path = "../magic-cards-model", editable = true }
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.8"]
+# `jsonschema` was already an indirect dependency (via `mcp`); listed
+# explicitly because `tests/test_agent_settings_contract.py` imports it
+# directly to validate `contract/agent-settings.schema.json`. `pyyaml` is a
+# real dependency now (T9's renderer reads the Job template), not a dev one.
+dev = ["pytest>=8.3", "ruff>=0.8", "jsonschema>=4"]
 
 [build-system]
 requires = ["hatchling"]

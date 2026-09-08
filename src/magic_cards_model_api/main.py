@@ -12,6 +12,8 @@ on.
 from magic_cards_model_api import access_log
 from magic_cards_model_api.app import app
 
-access_log.install()
+# This process still serves both the api's and the lobby's routes, pre-cut
+# (T13, phase 2b) - so it installs both owners' quiet patterns.
+access_log.install(access_log.API_QUIET_PATHS + access_log.LOBBY_QUIET_PATHS)
 
 __all__ = ["app"]

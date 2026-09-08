@@ -101,6 +101,14 @@ def driver_url() -> str:
 
 
 def _driver_client(base_url: str) -> httpx.Client:
+    # Two very different calls share this client: the one-time dispatch
+    # handoff (`POST /dispatch`, accepting the assignment - not the whole
+    # match) and the play UI's own ~1.2s `GET /status` poll, relayed through
+    # `_live_driver_status`/`_driver_activity` to whatever is dispatched
+    # right now. Both are ordinary request/response round trips to a driver
+    # on the same network, never a long-poll; 30s is a generous bound
+    # against jitter and a driver mid-boot, not a step expected to take that
+    # long.
     return httpx.Client(base_url=base_url, timeout=30.0)
 
 
@@ -260,7 +268,7 @@ class AiSeatRegistry:
             "game_id": game_id,
             "player": player,
             "api_base": api_base,
-            "agent": agent.model_dump(),
+            "agent": agent.to_wire(),
         }
         try:
             with _driver_client(base) as client:

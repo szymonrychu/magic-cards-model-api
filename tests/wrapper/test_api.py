@@ -238,7 +238,7 @@ def test_post_session_restarts_claude_with_the_new_settings(restartable):
     manager, spawned, public = restartable
     assert len(spawned) == 1
     response = public.post(
-        "/v1/session", json={"model": "opus", "effort": "max", "max_thinking_tokens": 4096}
+        "/v1/session", json={"model": "opus", "effort": "max", "maxThinkingTokens": 4096}
     )
     assert response.status_code == 202
     assert response.json() == {"restarting": True, "model": "opus", "effort": "max"}
@@ -248,6 +248,19 @@ def test_post_session_restarts_claude_with_the_new_settings(restartable):
     assert snapshot["effort"] == "max"
     assert snapshot["maxThinkingTokens"] == 4096
     assert snapshot["state"] == "ready"
+
+
+def test_post_session_refuses_the_snake_case_spelling(restartable):
+    """T13: this wire is camelCase only. The shape it replaced
+    (`max_thinking_tokens`) must be a hard 422 over real HTTP, not a silent
+    fallback to the default budget - see `SessionIn`'s own `extra="forbid"`
+    docstring."""
+    manager, spawned, public = restartable
+    response = public.post(
+        "/v1/session", json={"model": "opus", "effort": "max", "max_thinking_tokens": 4096}
+    )
+    assert response.status_code == 422
+    assert len(spawned) == 1, "a rejected body must not restart the supervised claude"
 
 
 def test_post_session_is_409_while_a_turn_is_in_flight(restartable):

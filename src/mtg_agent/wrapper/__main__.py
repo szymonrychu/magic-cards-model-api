@@ -44,7 +44,7 @@ def main() -> None:
         level=settings.log_level.upper(), format="%(levelname)s %(name)s %(message)s"
     )
     # `/healthz` and `/readyz` are polled; the turns are not. See access_log.py.
-    access_log.install()
+    access_log.install(access_log.WRAPPER_QUIET_PATHS)
 
     bootstrap.render(settings)
 

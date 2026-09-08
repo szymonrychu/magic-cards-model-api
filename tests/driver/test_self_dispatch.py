@@ -18,7 +18,7 @@ from mtg_agent.driver.app import build_app
 from mtg_agent.driver.config import DriverSettings
 from tests.driver.test_app import wait_for, world  # noqa: F401 - `world` is the fixture
 
-AGENT_SETTINGS = {"model": "sonnet", "effort": "high", "max_thinking_tokens": None}
+AGENT_SETTINGS = {"model": "sonnet", "effort": "high", "maxThinkingTokens": None}
 
 
 def _env(tmp_path, **overrides) -> dict:

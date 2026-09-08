@@ -102,7 +102,7 @@ def build_world(tmp_path) -> SimpleNamespace:
         session_settings.update(
             model=body.get("model", ""),
             effort=body.get("effort", ""),
-            maxThinkingTokens=body.get("max_thinking_tokens"),
+            maxThinkingTokens=body.get("maxThinkingTokens"),
         )
         return {"restarting": True}
 

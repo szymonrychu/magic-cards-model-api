@@ -66,7 +66,7 @@ def test_dispatch_payload_carries_agent(monkeypatch) -> None:
     assert captured["json"]["agent"] == {
         "model": "fable",
         "effort": "low",
-        "max_thinking_tokens": 0,
+        "maxThinkingTokens": 0,
     }
 
 

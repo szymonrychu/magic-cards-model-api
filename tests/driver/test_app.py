@@ -149,7 +149,7 @@ def test_status_reports_the_dispatched_agent_settings(world):
     `/status`, so the game server (and a human reading the driver's own
     status) can see what model/effort this container is running under."""
     client = world.client
-    agent = {"model": "opus", "effort": "max", "max_thinking_tokens": None}
+    agent = {"model": "opus", "effort": "max", "maxThinkingTokens": None}
     dispatch(client, agent=agent)
     assert client.get("/status").json()["agent"] == agent
 
@@ -450,8 +450,8 @@ def test_a_dispatch_that_is_still_reaching_the_agent_has_no_live_turn(world):
 
 def test_dispatch_pushes_differing_agent_settings_to_the_wrapper_before_turn_0(world):
     client = world.client
-    dispatch(client, agent={"model": "opus", "effort": "max", "max_thinking_tokens": 4096})
-    assert world.session_posts == [{"model": "opus", "effort": "max", "max_thinking_tokens": 4096}]
+    dispatch(client, agent={"model": "opus", "effort": "max", "maxThinkingTokens": 4096})
+    assert world.session_posts == [{"model": "opus", "effort": "max", "maxThinkingTokens": 4096}]
     assert world.session_settings == {
         "model": "opus",
         "effort": "max",
@@ -464,7 +464,7 @@ def test_dispatch_pushes_differing_agent_settings_to_the_wrapper_before_turn_0(w
 def test_dispatch_does_not_push_agent_settings_that_already_match(world):
     client = world.client
     world.session_settings.update(model="opus", effort="max", maxThinkingTokens=None)
-    dispatch(client, agent={"model": "opus", "effort": "max", "max_thinking_tokens": None})
+    dispatch(client, agent={"model": "opus", "effort": "max", "maxThinkingTokens": None})
     assert world.session_posts == []
 
 

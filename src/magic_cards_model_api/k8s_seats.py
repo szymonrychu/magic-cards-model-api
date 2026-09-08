@@ -124,7 +124,7 @@ def _seat_job_values(
         "game_id": game_id,
         "player": player,
         "api_base": api_url,
-        "agent": agent.model_dump(),
+        "agent": agent.to_wire(),
     }
     return {
         "__GAME_ID__": game_id,

@@ -42,6 +42,17 @@ Installed from each service's entry point (`magic_cards_model_api.main`,
 `mtg_agent.driver.__main__`, `mtg_agent.wrapper.__main__`), which run after
 uvicorn has configured logging - so the filter is attached to the logger
 uvicorn actually built, not to one it is about to replace.
+
+`QUIET_PATHS` used to be one constant, a union of four future services'
+routes - `magic-cards-api`, `magic-cards-lobby`, and the wrapper and driver
+entry points that both ship in `magic-cards-claude-wrapper`. Phase 2b's T13
+splits it into four named tuples below, one per owner, so each repo's copy of
+this file (copied whole at the stage-B cut) keeps only the one or two
+patterns it actually serves rather than carrying the other three services'
+routes along for no reason. `install()` takes the caller's own tuple; there
+is deliberately no module-wide default any more; `main.py`, still serving
+both the api's and the lobby's routes pre-cut, installs both of its tuples
+together.
 """
 
 from __future__ import annotations
@@ -59,33 +70,48 @@ QUIET_ENV = "ACCESS_LOG_QUIET"
 
 _FILTER_NAME = "mcm-quiet-access"
 
-#: Read-only, high-frequency routes, one regex each, anchored whole-path.
+#: Read-only, high-frequency routes on `magic-cards-api`: the compose
+#: healthcheck, the browser's game-state poll, and the browser's/a seat's
+#: `/log` long-poll (re-read on every ~1.2s tick for whatever is new since
+#: `since=`).
 #:
-#: Deliberately narrow. `/api/games/{id}` is the browser's state poll and is
-#: silenced, but `/api/games` (the list) and `/api/games/{id}/anything-else`
-#: are not - a sub-route is somebody asking a new question, not the loop.
-QUIET_PATHS: tuple[re.Pattern[str], ...] = (
-    # the compose healthcheck, and the liveness/readiness routes on the
-    # driver and the agent wrapper
+#: Deliberately narrow. `/api/games/{id}` is silenced, but `/api/games` (the
+#: list) and `/api/games/{id}/anything-else` are not - a sub-route is
+#: somebody asking a new question, not the loop.
+API_QUIET_PATHS: tuple[re.Pattern[str], ...] = (
     re.compile(r"/api/health"),
+    re.compile(r"/api/games/[^/]+"),
+    re.compile(r"/api/games/[^/]+/log"),
+)
+
+#: Read-only, high-frequency routes on `magic-cards-lobby`: the play UI's
+#: AI-seat poll, and its own lobby-list poll (`GET /api/ui/games`, optionally
+#: `?uids=` - one comma-separated value, scoping the uids a browser may act
+#: through). The lobby-list pattern is matched only in full so a specific
+#: game's own routes (`/api/ui/games/{id}/ai-seat/status` aside, which has
+#: its own pattern above, and `DELETE /api/ui/games/{id}` - a mutation, so
+#: method-gated regardless) are never silenced by it.
+LOBBY_QUIET_PATHS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/api/ui/games/[^/]+/ai-seat/status"),
+    re.compile(r"/api/ui/games"),
+)
+
+#: Read-only, high-frequency routes on the wrapper entry point of
+#: `magic-cards-claude-wrapper`: its own `startupProbe`/`readinessProbe`
+#: (`k8s_seats.py`'s `agent` container, port 8080).
+WRAPPER_QUIET_PATHS: tuple[re.Pattern[str], ...] = (
     re.compile(r"/healthz"),
     re.compile(r"/readyz"),
-    # the driver's assignment poll, read by the game server's AI seat
+)
+
+#: Read-only, high-frequency routes on the driver entry point of
+#: `magic-cards-claude-wrapper`: its own `readinessProbe` (`k8s_seats.py`'s
+#: `driver` container, port 8090) and the assignment poll read by the game
+#: server's AI seat (`ai_seat.py`) and by the k8s reconcile loop
+#: (`k8s_seats.K8sSeats._driver_status`).
+DRIVER_QUIET_PATHS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/healthz"),
     re.compile(r"/status"),
-    # the browser's game-state poll
-    re.compile(r"/api/games/[^/]+"),
-    # the browser's and a seat's `/log` long-poll - the game's own log,
-    # re-read on every ~1.2s tick for whatever is new since `since=`
-    re.compile(r"/api/games/[^/]+/log"),
-    # the play UI's AI-seat poll
-    re.compile(r"/api/ui/games/[^/]+/ai-seat/status"),
-    # the play UI's lobby poll: `GET /api/ui/games` (optionally `?uids=` -
-    # one comma-separated value, scoping the uids a browser may act
-    # through), matched only in full so a specific game's own routes below
-    # (`/api/ui/games/{id}/ai-seat/status`, and `DELETE
-    # /api/ui/games/{id}` - a mutation, so method-gated regardless) are
-    # never silenced by this one
-    re.compile(r"/api/ui/games"),
 )
 
 #: Methods that can be silenced. Everything else - POST, DELETE, PATCH - is a
@@ -100,9 +126,10 @@ def quiet_enabled(env: Mapping[str, str] | None = None) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def is_quiet_path(path: str) -> bool:
-    """True when `path` (query string already removed) is one of the polls."""
-    return any(pattern.fullmatch(path) for pattern in QUIET_PATHS)
+def is_quiet_path(path: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    """True when `path` (query string already removed) is one of `patterns`'
+    polls - the caller's own owner tuple, e.g. `API_QUIET_PATHS`."""
+    return any(pattern.fullmatch(path) for pattern in patterns)
 
 
 class QuietAccessFilter(logging.Filter):
@@ -114,7 +141,7 @@ class QuietAccessFilter(logging.Filter):
     must never be the reason a log line goes missing.
     """
 
-    def __init__(self, patterns: tuple[re.Pattern[str], ...] = QUIET_PATHS) -> None:
+    def __init__(self, patterns: tuple[re.Pattern[str], ...]) -> None:
         super().__init__(name=_FILTER_NAME)
         self.patterns = patterns
 
@@ -141,8 +168,17 @@ class QuietAccessFilter(logging.Filter):
 HealthAccessFilter = QuietAccessFilter
 
 
-def install(env: Mapping[str, str] | None = None) -> QuietAccessFilter | None:
+def install(
+    patterns: tuple[re.Pattern[str], ...], env: Mapping[str, str] | None = None
+) -> QuietAccessFilter | None:
     """Attach the filter to `uvicorn.access`, at most once.
+
+    `patterns` is the caller's own owner tuple - `main.py` installs
+    `API_QUIET_PATHS + LOBBY_QUIET_PATHS` (it still serves both, pre-cut),
+    the wrapper installs `WRAPPER_QUIET_PATHS`, the driver
+    `DRIVER_QUIET_PATHS`. There is deliberately no default: a call site that
+    forgot its tuple should fail loudly at import, not silently filter
+    nothing (or, worse, another service's routes).
 
     Returns `None` when `ACCESS_LOG_QUIET` is off, and removes any filter a
     previous call installed - so the env var is the last word rather than the
@@ -156,6 +192,6 @@ def install(env: Mapping[str, str] | None = None) -> QuietAccessFilter | None:
         return None
     if already:
         return already[0]  # type: ignore[return-value]
-    installed = QuietAccessFilter()
+    installed = QuietAccessFilter(patterns)
     logger.addFilter(installed)
     return installed

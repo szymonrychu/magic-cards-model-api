@@ -32,9 +32,10 @@ class Assignment:
     guide: DeckGuide | None
     match_score: float
     agent: dict | None = None
-    """The chosen model/effort/thinking budget (`AgentSettings.model_dump()`),
-    carried through from the dispatch that created this assignment - `None`
-    for a caller that dispatched before agent settings existed."""
+    """The chosen model/effort/thinking budget (`AgentSettings.to_wire()`,
+    camelCase - see `contract/agent-settings.schema.json`), carried through
+    from the dispatch that created this assignment - `None` for a caller
+    that dispatched before agent settings existed."""
 
     @property
     def deck_slug(self) -> str:
