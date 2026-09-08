@@ -158,6 +158,8 @@ POLLED = [
     "/status",
     "/api/games/f8e61463c97842a2b5ff6790834b36e6",
     "/api/games/f8e61463c97842a2b5ff6790834b36e6?uid=beefcafe",
+    "/api/games/f8e61463c97842a2b5ff6790834b36e6/log",
+    "/api/games/f8e61463c97842a2b5ff6790834b36e6/log?since=2&uid=beefcafe",
     "/api/ui/games/f8e61463c97842a2b5ff6790834b36e6/ai-seat/status",
     "/api/ui/games/f8e61463c97842a2b5ff6790834b36e6/ai-seat/status?uid=beefcafe",
     "/api/ui/games",
@@ -203,16 +205,37 @@ def test_real_traffic_is_still_printed():
         access_line("/api/games/abc/actions", 200)
         access_line("/api/games", 200)
         access_line("/play/", 200)
-        access_line("/api/games/abc/log", 200)
+        access_line("/api/games/abc/legal-actions", 200)
     assert len(printed.records) == 5, printed.text
+
+
+def test_the_log_long_poll_is_silenced():
+    """The exact shape of the noise the user hit: `docker compose`'s console
+    drowning in the browser's and the seat's `/log` long-poll."""
+    access_log.install()
+    with capturing("uvicorn.access") as printed:
+        access_line(
+            "/api/games/855a7081ca494834b7b8c8056d01a0e4/log"
+            "?since=2&uid=0ae40d1c8ee342d1b47c273db1667df5",
+            200,
+        )
+    assert printed.records == []
+
+
+def test_a_failing_log_poll_is_still_printed():
+    access_log.install()
+    with capturing("uvicorn.access") as printed:
+        access_line("/api/games/abc/log", 404)
+    assert len(printed.records) == 1, printed.text
 
 
 def test_the_silenced_game_routes_are_the_ones_the_app_serves(client, game):
     """The filter is only sound if its patterns match routes that exist. These
-    are the ones the browser polls; all are answered here for real, and the
-    path each request actually took is the one that gets silenced."""
+    are the ones the browser and a seat poll; all are answered here for real,
+    and the path each request actually took is the one that gets silenced."""
     for response in (
         client.get(f"/api/games/{game}"),
+        client.get(f"/api/games/{game}/log", params={"uid": "nobody", "since": 0}),
         client.get(f"/api/ui/games/{game}/ai-seat/status", params={"uid": "nobody"}),
         client.get("/api/ui/games"),
     ):
@@ -233,6 +256,9 @@ def test_the_quiet_paths_are_anchored_whole():
     assert not access_log.is_quiet_path("/api/healthy")
     assert access_log.is_quiet_path("/api/ui/games")
     assert not access_log.is_quiet_path("/api/ui/games/abc")
+    assert access_log.is_quiet_path("/api/games/abc/log")
+    assert not access_log.is_quiet_path("/api/games/abc/logs")
+    assert not access_log.is_quiet_path("/api/games/abc/legal-actions")
 
 
 def test_the_env_var_gives_the_whole_access_log_back():

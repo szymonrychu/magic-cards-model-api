@@ -216,7 +216,7 @@ Nothing here needs `LOG_LEVEL=debug`; that is for the wrapper's own internals.
 
 | env var | default | what it does |
 |---|---|---|
-| `ACCESS_LOG_QUIET` | `1` | Drops uvicorn access lines for *successful reads* of the polled routes on all three services: `/api/health`, `/healthz`, `/readyz`, `/status`, `/api/games/{id}` and `/api/ui/games/{id}/ai-seat/status`. Those four polls are the whole of the idle log. A POST is never dropped, and neither is any response that is not 2xx/3xx - a poll answering 404 or 500 is the thing worth reading. Set to `0` for uvicorn's unfiltered log. (`access_log.py`) |
+| `ACCESS_LOG_QUIET` | `1` | Drops uvicorn access lines for *successful reads* of the polled routes on all three services: `/api/health`, `/healthz`, `/readyz`, `/status`, `/api/games/{id}`, `/api/games/{id}/log` and `/api/ui/games/{id}/ai-seat/status`. Those polls are the whole of the idle log. A POST is never dropped, and neither is any response that is not 2xx/3xx - a poll answering 404 or 500 is the thing worth reading. Set to `0` for uvicorn's unfiltered log. (`access_log.py`) |
 | `AGENT_LOG_LEVEL` | `tools` | How much of the agent's activity the agent container prints: `off`, `turns` (boundaries only), `messages` (+ the agent's prose), `tools` (+ every tool call and every tool failure). (`wrapper/activity.py`) |
 
 Both are read from `.env` by `docker compose`, so

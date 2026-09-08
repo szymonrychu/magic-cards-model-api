@@ -146,10 +146,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            # The browser re-reads the game and the AI seat's status every ~1.2s.
-            # Successful reads of those two routes, and of the healthcheck, are
-            # kept out of uvicorn's access log; POSTs and any non-2xx always print.
-            # Set to "0" to get the full access log back.
+            # The browser re-reads the game, long-polls its log, and re-reads
+            # the AI seat's status every ~1.2s. Successful reads of those
+            # routes, and of the healthcheck, are kept out of uvicorn's access
+            # log; POSTs and any non-2xx always print. Set to "0" to get the
+            # full access log back.
             - name: ACCESS_LOG_QUIET
               value: "1"
           volumeMounts:

@@ -85,10 +85,11 @@ services:
     environment:
       - AI_SEAT_MODE=wrapper
       - DRIVER_URL=http://driver:8090
-      # The browser re-reads the game and the AI seat's status every ~1.2s.
-      # Successful reads of those two routes, and of the healthcheck, are kept
-      # out of uvicorn's access log; POSTs and any non-2xx always print.
-      # ACCESS_LOG_QUIET=0 gives the full access log back on any service.
+      # The browser re-reads the game, long-polls its log, and re-reads the AI
+      # seat's status every ~1.2s. Successful reads of those routes, and of
+      # the healthcheck, are kept out of uvicorn's access log; POSTs and any
+      # non-2xx always print. ACCESS_LOG_QUIET=0 gives the full access log
+      # back on any service.
       - ACCESS_LOG_QUIET=${ACCESS_LOG_QUIET:-1}
     volumes:
       - ${MTG_DECKS:?set MTG_DECKS in .env}:/guides:ro

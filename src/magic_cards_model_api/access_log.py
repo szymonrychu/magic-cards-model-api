@@ -6,12 +6,14 @@ used to be a poll:
     driver-1  | INFO: 172.18.0.2:58554 - "GET /status HTTP/1.1" 200 OK
     game-1    | INFO: ... - "GET /api/ui/games/<id>/ai-seat/status?uid=..." 200 OK
     game-1    | INFO: ... - "GET /api/games/<id>?uid=... HTTP/1.1" 200 OK
+    game-1    | INFO: ... - "GET /api/games/<id>/log?since=2&uid=... HTTP/1.1" 200 OK
 
-The browser re-reads the game every ~1.2s, the play UI re-reads the AI seat's
-status alongside it, the game server re-reads the driver's `/status`, and the
-compose healthcheck probes `/api/health` every five seconds. Together that is
-tens of thousands of lines a day, and it buries the only thing anyone opens
-the log for: what the AI opponent is doing.
+The browser re-reads the game and long-polls its log every ~1.2s, the play UI
+re-reads the AI seat's status alongside it, the game server re-reads the
+driver's `/status`, and the compose healthcheck probes `/api/health` every
+five seconds. Together that is tens of thousands of lines a day, and it
+buries the only thing anyone opens the log for: what the AI opponent is
+doing.
 
 Of the ways to fix that, this one is the narrowest:
 
@@ -72,6 +74,9 @@ QUIET_PATHS: tuple[re.Pattern[str], ...] = (
     re.compile(r"/status"),
     # the browser's game-state poll
     re.compile(r"/api/games/[^/]+"),
+    # the browser's and a seat's `/log` long-poll - the game's own log,
+    # re-read on every ~1.2s tick for whatever is new since `since=`
+    re.compile(r"/api/games/[^/]+/log"),
     # the play UI's AI-seat poll
     re.compile(r"/api/ui/games/[^/]+/ai-seat/status"),
     # the play UI's lobby poll: `GET /api/ui/games` (optionally `?uids=` -
