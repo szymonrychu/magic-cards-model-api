@@ -775,3 +775,37 @@ def test_get_starts_background_threads_before_a_failing_initial_reconcile(monkey
         assert len(starts) == 1  # started even though the initial reconcile raised
     finally:
         k8s_seats.set_for_tests(None)
+
+
+def test_the_seat_job_images_come_from_settings_not_the_template() -> None:
+    """The committed template must not carry a baked image tag.
+
+    T9 generated `deploy/seat-job.yaml` from `build_job`'s output while the
+    test environment was in force, so the fixture tag `t1` was baked into
+    every `image:` line, and the images were left out of
+    `SEAT_JOB_PLACEHOLDERS`. `k8s_seats` then stopped reading `AGENT_IMAGE`
+    and `API_IMAGE` at all, while `deploy/k8s/50-deployment.yaml` went on
+    publishing both with the real `__TAG__`. Every seat Job in the cluster
+    asked for `...:t1`, which does not exist:
+
+        Init:ErrImagePull
+        harbor.szymonrichert.pl/containers/magic-cards-model-agent:t1
+
+    T9's own "diff old output against new" check could not catch it: both
+    sides were rendered under the same test env, so both said `t1`.
+    """
+    template = TEMPLATE_PATH.read_text()
+    assert ":t1" not in template, "a test fixture image tag is baked into the committed template"
+
+    job = build_job(
+        K8sSettings.from_env(
+            {**ENV, "AGENT_IMAGE": "reg.example/agent:v9", "API_IMAGE": "reg.example/api:v9"}
+        ),
+        game_id="g1",
+        uid="u1",
+        player="bot",
+        agent=AgentSettings(model="sonnet"),
+    )
+    pod = job["spec"]["template"]["spec"]
+    images = [c["image"] for c in pod["initContainers"]] + [c["image"] for c in pod["containers"]]
+    assert set(images) == {"reg.example/agent:v9", "reg.example/api:v9"}, images

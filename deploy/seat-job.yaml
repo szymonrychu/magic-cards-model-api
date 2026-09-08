@@ -82,7 +82,7 @@ spec:
         emptyDir: {}
       initContainers:
       - name: guides
-        image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:t1
+        image: __AGENT_IMAGE__
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
@@ -127,7 +127,7 @@ spec:
             cpu: 500m
             memory: 256Mi
       - name: mcp-config
-        image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:t1
+        image: __AGENT_IMAGE__
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
@@ -154,7 +154,7 @@ spec:
             memory: 64Mi
       containers:
       - name: agent
-        image: harbor.szymonrichert.pl/containers/magic-cards-model-agent:t1
+        image: __AGENT_IMAGE__
         imagePullPolicy: IfNotPresent
         ports:
         - name: agent
@@ -232,7 +232,7 @@ spec:
             cpu: '2'
             memory: 3Gi
       - name: driver
-        image: harbor.szymonrichert.pl/containers/magic-cards-model-api:t1
+        image: __API_IMAGE__
         imagePullPolicy: IfNotPresent
         command:
         - python
