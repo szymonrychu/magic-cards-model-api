@@ -714,3 +714,47 @@ whoever works on the repo itself.
   must not depend on log verbosity, so `start()` no longer gates on it -
   `rank` still gates the text log inside `poll_once`, but the watcher itself
   (and `ccw_inference_seconds`) always runs.
+- **2026-09-08 - the eager-load key is `alwaysLoad`, and the other spelling
+  is a decoy.** Claude Code defers every MCP server's tools behind its
+  `ToolSearch` tool by default; the per-server opt-out is `alwaysLoad: true`,
+  a plain sibling of `command`/`url` on the entry inside `mcpServers`
+  (code.claude.com/docs/en/mcp, "Exempt a server from deferral"; confirmed
+  again against the installed CLI's own config schema). `anthropic/alwaysLoad`
+  is a *different thing that looks like the same thing*: an MCP `_meta` key a
+  **server** puts on an individual tool in its `tools/list` answer. Written
+  into a config file it does nothing at all, silently. Both
+  `deploy/seat-job.yaml`'s mcp-config branches and `deploy/mcp.base.json`
+  carry the real one, and `tests/test_k8s_seats.py` executes the initContainer
+  script and asserts on the JSON it wrote rather than on the template text -
+  the only thing that would have caught the wrong spelling. `spellslinger` is
+  left deferred on purpose: large, occasional reference surface, not the
+  seat's per-turn toolset.
+- **2026-09-08 - a wake reason that means "you can do nothing" is a spin
+  loop, not a wake.** `compute_wake_reason` returned "the game has not started
+  yet: another seat owes a pregame declaration" as a *reason*, and
+  `block_until_wake` returns the instant a reason is non-None - so
+  `max_seconds` never applied in the pregame at all. A live seat pod
+  (`mtg-seat-3b6613e0`) made 55 `wait_for_priority` calls in one agent
+  activation, 53 of them back to back, each returning in ~70 ms with a
+  byte-identical 9.5 KB board, one full inference cycle every 3.2 seconds for
+  as long as its human opponent thought about a mulligan. It now returns
+  `None` there (CR 103.5: each player declares in turn order and nothing
+  happens until all have; CR 103.6 does not begin until that process is
+  complete - both read in full in the session), so the bounded wait binds. The
+  seat the game is actually waiting on is still woken at once, and there is a
+  test pinning that half specifically: it is the half whose regression would
+  hang the whole game.
+- **2026-09-08 - the answer a seat gets carries what happened, not just what
+  is.** Every state-bearing answer already carried `available_actions` and
+  none carried a line of history, so `prompt.py` told the agent in as many
+  words to read `my_state` and then `game_log` - two calls and two inference
+  cycles for one question. `recent_log` now rides along on `run_action`,
+  `pass_until`, `block_until_wake` and `my_state` (`seatkit.RECENT_LOG_ENTRIES`
+  entries, `omitted` counting what the tail dropped). It carries
+  `LOG_HEADLINE_FIELDS` rather than whole rows *not* to save tokens - payload
+  size buys no latency here, corr(latency, context) = -0.101 - but because
+  `audit.record` stamps every row with a full board `snapshot` and a
+  `legal_actions_before` pool, and fifteen of each bolted onto an answer that
+  already carries the current one of each is not a log tail. `game_log` still
+  serves whole rows, and gained the `since` the api's own `GET .../log` always
+  had.
