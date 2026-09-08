@@ -466,11 +466,11 @@ def test_the_decide_docstring_keeps_the_keyword_pair_only_as_the_fallback():
     )
 
 
-def test_my_state_tells_a_seat_the_two_label_fields_are_there():
+def test_battlefield_state_tells_a_seat_the_two_label_fields_are_there():
     """A seat that never reads `decide`'s bullet still reads its own state.
-    `my_state` describes what that payload holds, so it has to mention the two
+    `battlefield_state` describes what that payload holds, so it has to mention the two
     fields that decide where a split's cards go."""
-    docstring = inspect.getdoc(_tool_functions(build_a_server())["my_state"]) or ""
+    docstring = inspect.getdoc(_tool_functions(build_a_server())["battlefield_state"]) or ""
 
     assert "pending_decision" in docstring
     assert "moved_label" in docstring and "kept_label" in docstring
@@ -653,11 +653,11 @@ def test_the_decide_docstring_teaches_a_search_as_one_choice_over_the_whole_zone
     )
 
 
-def test_my_state_tells_a_seat_the_three_search_fields_are_there():
+def test_battlefield_state_tells_a_seat_the_three_search_fields_are_there():
     """A seat that never reads `decide`'s bullet still reads its own state, the
     same argument the `moved_label` guard above makes."""
     docstring = " ".join(
-        (inspect.getdoc(_tool_functions(build_a_server())["my_state"]) or "").split()
+        (inspect.getdoc(_tool_functions(build_a_server())["battlefield_state"]) or "").split()
     )
 
     assert "`exact` says whether" in docstring

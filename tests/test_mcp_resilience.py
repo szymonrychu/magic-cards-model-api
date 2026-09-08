@@ -123,7 +123,7 @@ def test_guarded_tool_returns_clear_error_when_api_unreachable(monkeypatch) -> N
     seats.http = _RaisingHttp()  # the API is down before the call even starts
     server = build_server(seats)
 
-    text = call_tool_raw(server, "my_state", {"player_uid": "whoever"})
+    text = call_tool_raw(server, "battlefield_state", {"player_uid": "whoever"})
 
     assert "not reachable" in text
     assert "http://testserver" in text
@@ -142,7 +142,7 @@ def test_guarded_tool_survives_httpx_error_mid_call(monkeypatch) -> None:
     monkeypatch.setattr(Seats, "seat_for", boom)
     server = build_server(seats)
 
-    text = call_tool_raw(server, "my_state", {"player_uid": "whoever"})
+    text = call_tool_raw(server, "battlefield_state", {"player_uid": "whoever"})
 
     assert "unreachable mid-call" in text
     assert "http://testserver" in text

@@ -921,3 +921,31 @@ whoever works on the repo itself.
   real bug: `.lands-row` was `flex: 0 1 auto` and shrank, slicing the bottom
   off anything tucked under a land (a Utopia Sprawl under its Forest). It no
   longer shrinks; `#mtg-board` scrolls instead.
+- **2026-09-08 - `my_state` is now `battlefield_state`, removed rather than
+  aliased, and `PROTOCOL_VERSION` is `seatkit-7`.** The tool answers the same
+  whole board when called with a uid alone; two options narrow it -
+  `sections` (a comma-separated list of the state view's own top-level keys:
+  `battlefield`, `hands`, `graveyards`, `exile` (which carries `exile_pile`),
+  `command`, `stack`, `combat`, `players`, `play_permissions`, `pregame`,
+  `pending_decision`, `recent_log`) and `side` (`both`/`mine`/`opponent`,
+  resolved from the caller's own uid, never a username - a mirror match is
+  where a username-shaped option breaks). Three decisions worth keeping.
+  (1) The section names are the payload's own keys on purpose: a prettier
+  parallel vocabulary would be a second thing to learn and a second thing to
+  drift. (2) No deprecation alias. An MCP process is spawned once and never
+  reloads its code (`mcp.py`'s docstring), so a stale one serves `my_state`
+  whatever this repo does; an alias helps neither direction of skew, and the
+  `seatkit-7` bump is what turns "new prompt, old MCP server" into the
+  PROTOCOL MISMATCH sentence naming the stale side instead of a bare "Unknown
+  tool". (3) Do not sell this as a latency win. Measured on this machine,
+  per-inference latency fits `0.78s + output_tokens/84` and correlates with
+  context size at -0.101 - prefill caches, so a shorter answer buys nothing.
+  What it does buy is fewer round trips when one narrowed call replaces two,
+  and slower growth toward the ~185k-token compaction cliff a three-turn
+  session hit. The one mechanical saving is real but small: `recent_log` is
+  its own HTTP call (`Seat.recent_log`), and narrowing it away skips it.
+  Filtering happens on the already-redacted view the API returns
+  (`visibility.redact_view` runs server-side), so narrowing can only remove -
+  `tests/test_battlefield_state.py` proves it rather than arguing it, by
+  asserting every focused answer's strings are a subset of the unfocused
+  one's.

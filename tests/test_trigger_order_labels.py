@@ -19,7 +19,7 @@ Two halves are fixed here, and they are separable on purpose:
   public zones" - and `serialize._stack_view`'s ability entry already carries
   the source's printed name and the ability's own text, which is what tells two
   triggers of the *same* permanent apart. Every surface that prints the state
-  view gets this for free: the browser, `mcp.my_state`, `seat_cli state`.
+  view gets this for free: the browser, `mcp.battlefield_state`, `seat_cli state`.
 - **the clients.** `ui/decisions.js` names each option instead of slicing the id, and
   falls back to the position in `pending.cards` - never a raw id - for an
   object it cannot find.
@@ -139,13 +139,13 @@ def wired_seats(monkeypatch, game_id: str) -> Seats:
 
 
 def test_an_agent_sees_the_source_named_through_mcp(client, game, monkeypatch):
-    """`mcp.my_state` prints the seat's whole filtered state view, so the same
+    """`mcp.battlefield_state` prints the seat's whole filtered state view, so the same
     `card_labels` the browser reads is what an agent seat reads."""
     uids = seats_for(client, game)
     pending = stage_order_triggers_decision(client, game, uids["alice"])
 
     server = build_server(wired_seats(monkeypatch, game))
-    result = asyncio.run(server.call_tool("my_state", {"player_uid": uids["alice"]}))
+    result = asyncio.run(server.call_tool("battlefield_state", {"player_uid": uids["alice"]}))
     seen = json.loads(result.content[0].text)["pending_decision"]
     assert seen["cards"] == pending["cards"]
     assert len(seen["card_labels"]) == 2

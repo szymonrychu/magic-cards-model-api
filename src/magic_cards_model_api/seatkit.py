@@ -160,7 +160,22 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-6"
+PROTOCOL_VERSION = "seatkit-7"
+#: `seatkit-7` replaced the `my_state` tool with `battlefield_state`, which
+#: answers the same whole board when called with nothing but a uid and takes
+#: two options to narrow it: `sections` (a comma-separated list of the state
+#: view's own top-level keys) and `side` (`both`/`mine`/`opponent`, resolved
+#: from the caller's own uid). The old name is gone outright rather than kept
+#: as an alias, and this bump is what makes that safe to do: an MCP process
+#: built before it serves `my_state` and has no `battlefield_state` at all,
+#: so an agent driven by a prompt from after it would call a tool that does
+#: not exist and read "Unknown tool" - a failure with no name on it. With the
+#: bump, that same stale process refuses every call up front with the
+#: PROTOCOL MISMATCH sentence naming which side is stale, which is exactly
+#: what this check is for. An alias would not have helped either direction:
+#: the stale process is stale in its *own* code, and nothing added here
+#: reaches it (this process is spawned once and never reloads - see `mcp.py`).
+#:
 #: `seatkit-6` added the `declare_plan` tool/method (`POST .../plan`,
 #: `schemas.DeclarePlanIn`). This one is not an optional-degrade case the way
 #: earlier bumps mostly were (an older client missing a nicety, still able to
@@ -175,12 +190,13 @@ PROTOCOL_VERSION = "seatkit-6"
 #: loud, named refusal instead of a mystery.
 #:
 #: `seatkit-5` put a `recent_log` on every answer that already carried a
-#: state view (`my_state`, `wait_for_priority`, every action tool through
-#: `run_action`, `pass_until`) and gave the `game_log` tool the `since`
-#: parameter the api's own `GET .../log` has always had. "What happened since
-#: I last acted" and "what can I do now" used to be two tool calls and two
-#: whole inference cycles - `prompt.py` said so outright ("read `my_state`,
-#: read `game_log`") - and they are one now. An MCP process from before this
+#: state view (`my_state`, as `battlefield_state` was then called,
+#: `wait_for_priority`, every action tool through `run_action`, `pass_until`)
+#: and gave the `game_log` tool the `since` parameter the api's own
+#: `GET .../log` has always had. "What happened since I last acted" and "what
+#: can I do now" used to be two tool calls and two whole inference cycles -
+#: `prompt.py` said so outright ("read `my_state`, read `game_log`") - and
+#: they are one now. An MCP process from before this
 #: simply does not carry the log, which reads to a seat as a game where
 #: nothing ever happened between its own moves.
 #:
@@ -501,7 +517,7 @@ class Seat:
         return parsed
 
     def fetch_state(self) -> dict[str, Any]:
-        """This seat's filtered view of the game, right now (`my_state`'s
+        """This seat's filtered view of the game, right now (`battlefield_state`'s
         answer, minus image trimming duplication - callers that print it do
         that themselves)."""
         state = self.http.get(f"/api/games/{self.game_id()}", params={"uid": self.uid}).json()
@@ -515,9 +531,9 @@ class Seat:
         This is the half of the seat's question that no answer used to carry.
         Every state-bearing answer already says what this seat *can do*
         (`available_actions`); none of them said what had *been done*, so
-        `prompt.py` told the agent to read `my_state` and then `game_log` -
+        `prompt.py` told the agent to read `battlefield_state` and then `game_log` -
         two tool calls and two whole inference cycles for one question. Now
-        `run_action`, `pass_until`, `block_until_wake` and `my_state` all
+        `run_action`, `pass_until`, `block_until_wake` and `battlefield_state` all
         carry this, and the pair collapses to one call.
 
         One HTTP request, and it can never raise: like `available_actions`
@@ -786,7 +802,7 @@ def _board_signature(state: dict[str, Any]) -> Any:
 
 #: Keys a caller may have bolted onto a state view that are this harness
 #: talking, not the board: `wake_reason` (`mcp.wait_for_priority` stamps it
-#: on) and `recent_log` (`mcp.my_state`). Both change without the board
+#: on) and `recent_log` (`mcp.battlefield_state`). Both change without the board
 #: changing - the log strictly grows - so counting either as board state
 #: would wake a seat for its own history.
 _NOT_THE_BOARD = frozenset({"wake_reason", "recent_log"})
