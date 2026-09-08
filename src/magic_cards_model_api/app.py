@@ -170,6 +170,34 @@ def _command_divergence(_: Request, exc: commands.CommandDivergenceError) -> JSO
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+@app.exception_handler(commands.DecisionInProgressError)
+def _decision_in_progress(_: Request, exc: commands.DecisionInProgressError) -> JSONResponse:
+    """409: this game is part-way through another seat's command and is
+    waiting on a decision only that seat can answer, so nobody has priority
+    to take this action with - see `commands.DecisionInProgressError` for
+    the rules that make it a refusal rather than a lock.
+
+    Registered above the `ValueError` handler with the other 409s. It is a
+    `RuntimeError` on purpose and not a `ValueError`: `pass-priority`'s and
+    `advance`'s own `except ValueError` blocks turn an engine refusal into a
+    200 with `allowed: False`, and this must not be swallowed into one of
+    those - the whole point is that the command did not run.
+
+    `allowed: False` and `reason` are what `seatkit._refused` reads, so a
+    seat sees "nothing changed, still your move" rather than an error it has
+    no handling for. Deliberately no `paused: True`: `seatkit._paused` keys
+    off exactly that, and would send this seat off to answer a decision that
+    is not its own. Deliberately no `pending_decision` either - the question
+    standing here belongs to the other seat, and its candidates can be cards
+    out of a hidden library (CR 400.2), which the refused caller is not
+    entitled to see.
+    """
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc), "allowed": False, "reason": str(exc)},
+    )
+
+
 @app.exception_handler(ValueError)
 def _value_error(_: Request, exc: ValueError) -> JSONResponse:
     """Setup requests that name an unknown zone, counter, color, or card."""
@@ -256,6 +284,47 @@ def audit_outcome(
     return {**outcome.body(), "log_seq": seq}
 
 
+def _pause_slot_guard(
+    game_id: str, game: Game, command: commands.Command
+) -> tuple[commands.Command, tuple[Answer, ...], PendingDecisionEngine] | None:
+    """Settle what a stored pause means for `command`, before `command` runs.
+
+    Returns the stored `(command, tape, pending)` triple when the standing
+    pause is live and is `command`'s own - the caller hands that straight
+    back as its result instead of re-running anything. Returns `None` when
+    nothing stands in this command's way, either because the slot was empty
+    or because the pause in it turned out to be stale and was cleared.
+    Raises `commands.DecisionInProgressError` when the pause is live and
+    belongs to a different command.
+
+    **Liveness is tested, not assumed** (`commands.pause_is_live`): the
+    stored command is replayed from the committed `game` with the stored
+    tape, and only a replay landing on the identical `PendingDecision`
+    counts. Bare "first pause wins" would wedge a game forever on a
+    question no seat can answer any more - a board-setup route such as
+    `POST .../cards` writes straight to the committed game without going
+    through `_run_command` at all, and is now the only real way the state
+    can move out from under a stored pause.
+
+    **The identical command is a retry, not a competitor.** `seatkit`'s
+    autopass re-posts its own `pass-priority` on every `paused: true` it
+    reads (`seatkit.py`), so the command in the slot is very often the next
+    one to arrive; that must get the question that is actually standing,
+    with its tape intact, rather than a 409 it can only escalate over or a
+    fresh run from an empty tape.
+    """
+    paused = store.paused_command(game_id)
+    if paused is None:
+        return None
+    stored_command, stored_tape, stored_pending = paused
+    if not commands.pause_is_live(game, stored_command, stored_tape, stored_pending):
+        store.clear_paused_command(game_id)
+        return None
+    if stored_command != command:
+        raise commands.DecisionInProgressError(stored_command, stored_pending, command)
+    return paused
+
+
 def _run_command(
     game_id: str, kind: str, request: Any
 ) -> tuple[commands.RunResult, Game, records.LegalActionsBefore | None, int | None]:
@@ -281,27 +350,41 @@ def _run_command(
     caller threads it into `_respond`/`audit_outcome` as `seq_hint` so the
     row gets filled in rather than duplicated once the outcome is known.
 
-    **Deliberately clears any *unrelated* stored pause too.** `store
-    .clear_paused_command` runs here on every `COMPLETED` result, not only
-    one that resumed the paused command it is clearing - so an unrelated
-    mutating call that completes while a *different* decision sits paused
-    (a spectator's board-setup poke, another seat's own unrelated action)
-    discards that stored pause outright rather than leaving it stale
-    alongside a game that has since moved on. This is safe because a paused
-    command was never applied to the committed game in the first place - see
-    `commands.py`'s own module docstring, "no half-applied `Game` kept
-    anywhere" - so nothing here is thrown away but a *question*, and the
-    exact same question resurfaces, byte-identical, the moment whatever
-    would have asked it is attempted again (`run_command`'s replay is
-    deterministic). The alternative - clearing only when the completed
-    command IS the one that was paused - would leave a genuinely stale
-    pause sitting in the store forever once its game state has moved past
-    the point that ever asked it, which is worse: a `pending_decision` a
-    live seat can never actually answer, since resuming it would replay
-    against state that no longer produces the same question at all. See
-    `tests/test_decisions.py::
-    test_an_unrelated_completed_command_clears_an_unrelated_pause` for the
-    pinned behaviour.
+    **A live pause blocks every other command.** Before `commands
+    .run_command` is called at all, this reads the stored `(command, tape,
+    pending)` slot and, when something is there, hands it to
+    `_pause_slot_guard`: a pause that no longer describes the committed
+    game is cleared and this request carries on, a live one that is *this
+    very command* is handed straight back un-re-run, and a live one
+    belonging to anything else raises `commands.DecisionInProgressError`
+    (409) rather than being overwritten.
+
+    This is the pause-slot clobber, closed. `_run_command` used to run every
+    fresh command from the committed snapshot with an empty tape and then
+    store `(command, tape, pending)` unconditionally, so any of the fourteen
+    mutating routes could write its own empty tape over a live pause that
+    already carried answers - which is how a seat's fetchland search answer
+    was deleted by the opponent's ordinary autopass 227 ms later, and the
+    fetch resolved as a decline (`tests/test_pause_slot_clobber.py`).
+
+    Two commands are exempt. A `dry_run` commits nothing and never touches
+    the slot in either direction (`seatkit.available_actions` probes every
+    card in hand and every ability on the battlefield this way on every
+    wake, and none of those probes is an action anyone took), and `concede`
+    is legal "at any time" - CR 104.3a - which includes part-way through
+    somebody else's command.
+
+    `store.clear_paused_command` still runs on every `COMPLETED` result, and
+    the guard above is what makes that safe: the only slot it can now find
+    is one this same call already proved stale, or one a `concede`/`dry_run`
+    exemption deliberately walked past. The argument it used to rest on -
+    that a paused command was never applied to the committed game, so
+    nothing is thrown away but a *question* - holds only while the tape is
+    empty. The moment the pause carries answers, clearing the slot deletes
+    them, and no guard can see it afterwards: a deleted tape leaves no
+    trace. Staleness is handled by testing it (`commands.pause_is_live`)
+    rather than by assuming it, so refusing here still cannot wedge a game
+    on a pause nobody can answer.
 
     **A `dry_run` request commits nothing (T10).** `request.dry_run`, when
     the request shape carries one, never reaches `store.replace`/`store.
@@ -322,6 +405,22 @@ def _run_command(
     player = getattr(request, "player", None)
     dry_run = getattr(request, "dry_run", False)
     with store.locked(game_id) as game:
+        if not dry_run and kind != "concede":
+            standing = _pause_slot_guard(game_id, game, command)
+            if standing is not None:
+                _, standing_tape, standing_pending = standing
+                return (
+                    commands.RunResult(
+                        status=commands.RunStatus.PAUSED,
+                        pending=standing_pending,
+                        tape=standing_tape,
+                    ),
+                    game,
+                    records.legal_actions_before(game, player, standing_pending),
+                    None,
+                )
+        # Read *after* the guard: a stale slot it just cleared must not be
+        # handed to `legal_actions_before` as if it were still standing.
         paused = store.paused_command(game_id)
         legal_before = records.legal_actions_before(game, player, paused[2] if paused else None)
         result = commands.run_command(game, command)
@@ -1986,6 +2085,30 @@ def pregame_settle(
     if req.use_defaults:
         command = commands.Command.build("pregame_settle", req)
         with store.locked(game_id) as game:
+            # `_run_command`'s pause-slot guard, which this branch bypasses
+            # entirely: `run_command_to_completion` answers every question
+            # with the engine's own default, so it never pauses and never
+            # consults the slot. Deliberately keyed on the stored command's
+            # *kind* rather than on `_pause_slot_guard`'s exact-command
+            # equality, because `use_defaults` is itself part of the payload:
+            # the pause this call is most likely to meet is the one a
+            # `use_defaults=False` settle left behind, and overriding exactly
+            # that is what an operator reaches for when a seat has gone quiet
+            # mid-pregame. Making every seat's CR 103.5 declaration at once
+            # is what this admin-key endpoint was asked to do (see
+            # `PregameSettleRequest.use_defaults`), so walking over a
+            # `pregame_settle` question is an override by design, recorded
+            # here rather than left implicit. Any *other* live command's
+            # pause is still refused - a seat part-way through a resolution
+            # is not the operator's to overrule - and a stale pause is
+            # cleared, exactly as anywhere else.
+            paused = store.paused_command(game_id)
+            if paused is not None:
+                stored_command, stored_tape, stored_pending = paused
+                if not commands.pause_is_live(game, stored_command, stored_tape, stored_pending):
+                    store.clear_paused_command(game_id)
+                elif stored_command.kind != "pregame_settle":
+                    raise commands.DecisionInProgressError(stored_command, stored_pending, command)
             result = commands.run_command_to_completion(game, command)
             assert result.status is commands.RunStatus.COMPLETED
             assert result.game is not None

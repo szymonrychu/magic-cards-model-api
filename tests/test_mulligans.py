@@ -651,6 +651,48 @@ def test_a_live_seat_answers_the_mulligan_declaration_through_decide(client: Tes
         delete(client, info)
 
 
+def test_settling_with_defaults_overrides_its_own_standing_pregame_pause(
+    client: TestClient,
+) -> None:
+    """The one deliberate exception to "a live pause blocks every other
+    command" (`app.py::_pause_slot_guard`).
+
+    A `use_defaults=False` settle leaves a live `mulligan` pause in the
+    slot, waiting on a seat. `use_defaults=True` is the operator's headless
+    escape hatch for exactly that situation - a seat has gone quiet and the
+    game has to be made playable - so it answers every outstanding question
+    with the engine's own default and walks over that pause rather than
+    being refused by it. It is keyed on the stored command's *kind*, not on
+    command equality: `use_defaults` is part of the payload, so the two
+    settles are never the identical `Command`.
+
+    A pause belonging to any other command is still refused here, the same
+    as on every other route; there is no way to reach one during CR 103.5,
+    which is why this pins the override rather than the refusal.
+    """
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1)
+    game_id = info["game_id"]
+    try:
+        opened = client.post(
+            f"/api/games/{game_id}/pregame/settle", params={"uid": info["admin_key"]}
+        )
+        assert opened.status_code == 200, opened.text
+        assert opened.json()["pending_decision"]["kind"] == "mulligan", opened.json()
+
+        forced = client.post(
+            f"/api/games/{game_id}/pregame/settle",
+            params={"uid": info["admin_key"]},
+            json={"use_defaults": True},
+        )
+        assert forced.status_code == 200, forced.text
+        assert forced.json().get("paused") is not True, forced.json()
+        assert store.paused_command(game_id) is None, "the overridden pause must be retired"
+        game = store.get(game_id)
+        assert game.turn is not None and game.turn.step.value == FIRST_PLAYABLE_STEP
+    finally:
+        delete(client, info)
+
+
 def test_a_seat_cannot_settle_the_pregame_for_the_whole_table(client: TestClient) -> None:
     """Settling makes *both* seats' CR 103.5 declarations. That is the
     operator's call over a game they created, never one seat's over the

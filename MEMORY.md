@@ -246,3 +246,30 @@ whoever works on the repo itself.
   already rebuilds rather than edits in place - noted because the two
   implementations differ in aliasing, which is the kind of difference a
   future caller could trip over.
+
+- **2026-09-08 - the pause slot is one seat's half-finished command, and the
+  guard is keyed on command equality everywhere except
+  `pregame/settle?use_defaults=true`.** `app.py::_pause_slot_guard` refuses
+  any command that is not byte-identical to the live stored one
+  (`DecisionInProgressError`, 409), and hands the identical one its own
+  standing question back rather than re-running it - that idempotent-retry
+  branch is what actually closes the clobber, because seatkit's autopass
+  re-posts *its own* `pass-priority` on every `paused: true` it reads, so
+  the clobbering command was the stored command. Staleness is tested
+  (`commands.pause_is_live` replays from the committed snapshot) rather than
+  assumed, or a stale pause would wedge the game forever. The `use_defaults`
+  settle is deliberately keyed on the stored command's *kind* instead:
+  `use_defaults` is part of the payload, so the `use_defaults=False` settle
+  that left the pause and the `use_defaults=True` call that overrides it are
+  never the same `Command`, and refusing there would take away the
+  operator's only escape hatch for a seat gone quiet mid-pregame.
+
+- **2026-09-08 - not built: a `pause_generation` on the pause slot.** The
+  guard above makes a stale answer impossible to *apply* (the slot is never
+  silently replaced, so an answer can only ever be read against the pause it
+  was offered for), but a client still has no token proving the
+  `pending_decision` it is answering is the one it read. That is a
+  client-side confusion, not a lost answer; it needs a `games
+  .pause_generation` column, an alembic revision, an optional `generation`
+  on `DecideRequest` and a `--generation` flag on `seat_cli decide`, and it
+  was left out whole rather than half-built.

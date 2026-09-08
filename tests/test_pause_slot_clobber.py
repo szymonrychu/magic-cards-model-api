@@ -120,8 +120,7 @@ def test_an_opponents_pass_does_not_discard_the_answered_search(client, game) ->
 
     standing = state(client, game, uid=uids["alice"])["pending_decision"]
     assert standing is not None and standing["kind"] == "pay_life", (
-        "the opponent's pass must not have rewound the slot to the search: "
-        f"{standing}"
+        f"the opponent's pass must not have rewound the slot to the search: {standing}"
     )
 
     declined = client.post(
@@ -142,6 +141,81 @@ def test_an_opponents_pass_does_not_discard_the_answered_search(client, game) ->
     library = [card.name for card in store.get(game).player("alice").library]
     assert library == ["Island"], f"the fetch took Steam Vents out of the library: {library}"
     assert life_of(after, "alice") == 19, (
-        "1 life for the fetch's own cost, and none for the shockland whose payment "
-        "was declined"
+        "1 life for the fetch's own cost, and none for the shockland whose payment was declined"
+    )
+
+
+def test_an_unrelated_command_is_refused_while_a_resolution_is_in_progress(client, game) -> None:
+    """The rules half of the fix: mid-resolution there is no priority to act
+    on, so a competing command is refused in the engine's own words rather
+    than tolerated as a race.
+
+    `state-based-actions` is the unrelated command on purpose - it asks no
+    question of its own and would otherwise complete, so a 409 here can only
+    have come from the guard and not from the engine refusing the action for
+    some reason of its own. CR 608.2g is the citation
+    `commands.DecisionInProgressError` picks for a pause `pass_priority`
+    reached, and the refusal must NOT be dressed as a pause: `seatkit._paused`
+    keys off `paused: True` and would send the seat off to answer a decision
+    that is not its own, while `seatkit._refused` keys off `allowed: False`,
+    which is what this actually is.
+    """
+    uids = seats_for(game)
+    paused = crack_the_strand(client, game)
+    vents = steam_vents_in(paused["pending_decision"])
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [vents]},
+    )
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["pending_decision"]["kind"] == "pay_life", answered.json()
+
+    refused = client.post(f"/api/games/{game}/state-based-actions")
+    assert refused.status_code == 409, refused.text
+    body = refused.json()
+    assert body["allowed"] is False, body
+    assert body.get("paused") is not True, (
+        "a refusal must never carry `paused: True` - `seatkit._paused` would "
+        f"read it as this seat's own decision to answer: {body}"
+    )
+    assert "CR 608.2g" in body["reason"], body
+    assert "pay_life" in body["reason"], body
+
+    standing = state(client, game, uid=uids["alice"])["pending_decision"]
+    assert standing is not None and standing["kind"] == "pay_life", (
+        f"the refused command must not have touched the slot: {standing}"
+    )
+
+
+def test_re_posting_the_paused_command_gets_the_standing_question_back(client, game) -> None:
+    """The idempotent retry, which is exactly the shape the live defect took:
+    the command sitting in the slot IS bob's `pass_priority`, and seatkit's
+    autopass re-posts it byte-identically on every `paused: true` it sees
+    (`seatkit.py`'s autopass loop).
+
+    Re-posting it must hand back the question that is actually standing -
+    `pay_life`, the one alice's Steam Vents answer moved the resolution on to
+    - without re-running the command from an empty tape. A 409 here would be
+    just as wrong as the clobber: a polling client cannot be pushed into
+    escalating over its own standing command.
+    """
+    uids = seats_for(game)
+    paused = crack_the_strand(client, game)
+    vents = steam_vents_in(paused["pending_decision"])
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [vents]},
+    )
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["pending_decision"]["kind"] == "pay_life", answered.json()
+
+    retry = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert retry.status_code == 200, retry.text
+    body = retry.json()
+    assert body["allowed"] is None, body
+    assert body["paused"] is True, body
+    assert body["pending_decision"]["kind"] == "pay_life", (
+        f"the re-post rewound the slot to the search it had already been answered: {body}"
     )
