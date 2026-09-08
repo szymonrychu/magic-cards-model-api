@@ -275,3 +275,39 @@ def test_post_session_is_503_once_the_session_is_dead(restartable):
     manager, _, public = restartable
     manager._state = State.DEAD
     assert public.post("/v1/session", json={"model": "opus"}).status_code == 503
+
+
+# ---- what the agent is doing right now -------------------------------------
+#
+# `GET /v1/session` is the only surface the driver can reach, so it is where
+# the transcript watcher's coarse activity word crosses out of this
+# container. See `tests/wrapper/test_activity_state.py` for the word itself.
+
+
+def test_the_session_reports_no_activity_before_anything_is_observed(wired):
+    _, _, public, _ = wired
+    assert public.get("/v1/session").json()["activity"] is None
+
+
+def test_the_session_reports_whatever_the_watcher_last_observed(wired):
+    manager, _, public, _ = wired
+    manager.activity_source = lambda: {"state": "reading_cards", "seconds": 1.2, "seq": 4}
+    assert public.get("/v1/session").json()["activity"] == {
+        "state": "reading_cards",
+        "seconds": 1.2,
+        "seq": 4,
+    }
+
+
+def test_a_watcher_that_raises_never_takes_the_session_route_down(wired):
+    """The watcher is read-only and out of the turn path by design; a hiccup
+    in it must not turn the driver's own poll into a 500."""
+    manager, _, public, _ = wired
+
+    def broken():
+        raise RuntimeError("the transcript went away")
+
+    manager.activity_source = broken
+    response = public.get("/v1/session")
+    assert response.status_code == 200
+    assert response.json()["activity"] is None

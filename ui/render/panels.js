@@ -32,7 +32,7 @@ import { cardNode } from "../cards.js";
 import { withSymbols } from "../symbols.js";
 import { targetingOpts } from "./board.js";
 import { STEPS, PHASE_OF } from "../priority.js";
-import { aiStallNotice, aiSeatLoadingNotice } from "../store.js";
+import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel } from "../store.js";
 
 const STEP_LABELS = {
   untap: "untap",
@@ -132,8 +132,14 @@ function renderAiPanel(root, app) {
     return;
   }
   const bad = status.state === "error" || status.state === "unreachable";
+  // What the agent is actually doing, when the wrapper observed it and this
+  // page can still stand behind the observation; otherwise the plain seat
+  // state, exactly as this pill has always read. The class stays keyed to
+  // `status.state` either way - the styling is about the seat's health, not
+  // about which of eight things it is doing.
+  const doing = aiSeatActivityLabel(app.state, status) || status.state;
   panel.appendChild(
-    h("span", { class: `pill ${bad ? "bad " : ""}state-${status.state}` }, `AI (${status.player}): ${status.state}`)
+    h("span", { class: `pill ${bad ? "bad " : ""}state-${status.state}` }, `AI (${status.player}): ${doing}`)
   );
   if (bad) panel.appendChild(h("button", { class: "ghost", onClick: () => showAiError(root, status) }, "why"));
 }

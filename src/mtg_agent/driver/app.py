@@ -99,6 +99,13 @@ def _default_client_factory(base_url: str) -> httpx.Client:
     return httpx.Client(base_url=base_url, timeout=30.0)
 
 
+#: How long `/status` will wait on the wrapper for the agent's current
+#: activity. Deliberately far shorter than the 30s above: this is one
+#: localhost hop, on the play UI's own poll path, for one cosmetic word - a
+#: wrapper that is busy or wedged must cost the pill its label, never hold
+#: up the status the pregame backstop also reads.
+ACTIVITY_READ_TIMEOUT = 2.0
+
 #: Statuses the agent answers with while it is still coming up, or while a
 #: turn from its previous life is still draining. All of them clear on their
 #: own; none of them means "this game is not for me".
@@ -684,11 +691,51 @@ def build_app(
             "reflected": False,
         }
 
+    def agent_activity() -> dict[str, Any] | None:
+        """What the agent is doing right now, read off the wrapper.
+
+        The agent's own listener is not reachable from outside the pod, and
+        `/status` below is already what the game server polls for this seat -
+        so this is where the wrapper's coarse activity word crosses over on
+        its way to the play UI's AI pill.
+
+        Never raises, and bounded by `ACTIVITY_READ_TIMEOUT`: an unreachable
+        agent, a wrapper old enough to 404 the route, a non-JSON body and an
+        `activity` that is not an object all come back as `None`, which the
+        UI reads as "fall back to the plain state word".
+        """
+        try:
+            with make_client(settings.wrapper_api) as client:
+                # Set on the client rather than passed as a per-request
+                # `timeout=`: the two are the same thing for a real httpx
+                # client, and `TestClient` (what the driver tests inject
+                # here) warns about the keyword argument.
+                client.timeout = httpx.Timeout(ACTIVITY_READ_TIMEOUT)
+                response = client.get("/v1/session", headers=wrapper_headers())
+        except Exception as exc:  # noqa: BLE001 - a status read never fails
+            log.debug("could not read the agent's activity: %s", exc)
+            return None
+        if response.status_code >= 400:
+            return None
+        try:
+            answer = response.json()
+        except ValueError:
+            return None
+        if not isinstance(answer, dict):
+            return None
+        activity = answer.get("activity")
+        return activity if isinstance(activity, dict) else None
+
     @app.get("/status")
     def status() -> dict:
+        # Outside the lock: it is an HTTP round trip, and nothing below
+        # depends on it being consistent with the snapshot taken under the
+        # lock - it is one coarse word about the agent, not driver state.
+        activity = agent_activity()
         with lock:
             assignment = current["assignment"]
             return {
+                "agentActivity": activity,
                 "gameId": assignment.game_id if assignment else None,
                 "player": assignment.player if assignment else None,
                 "deck": (assignment.guide.slug if assignment and assignment.guide else None),

@@ -158,6 +158,15 @@ class Manager:
         self._last_fatal: str = ""
         self._stopping = False
         self._threads: list[threading.Thread] = []
+        #: What the agent is doing right now, as one coarse word - set by
+        #: `__main__` to the `ActivityWatcher`'s own `activity_snapshot`
+        #: once that thread exists. An attribute rather than a constructor
+        #: argument because the watcher is started *after* the session (it
+        #: follows the transcript this boot creates), and because the
+        #: wrapper must run perfectly well without one: left `None`, the
+        #: snapshot simply reports no activity and the play UI falls back
+        #: to the seat's plain state word.
+        self.activity_source: Callable[[], dict[str, Any] | None] | None = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -553,10 +562,28 @@ class Manager:
 
     # ---- reporting -------------------------------------------------------
 
+    def _activity(self) -> dict[str, Any] | None:
+        """`activity_source()`, or `None` - never a raise.
+
+        The watcher is read-only and deliberately outside the turn path;
+        `GET /v1/session` is on the play UI's own poll path, through the
+        driver, so a hiccup reading the transcript must cost the pill its
+        word and nothing else.
+        """
+        if self.activity_source is None:
+            return None
+        try:
+            return self.activity_source()
+        except Exception as exc:  # noqa: BLE001 - a status read never fails
+            log.debug("could not read the agent's current activity: %s", exc)
+            return None
+
     def snapshot(self) -> dict[str, Any]:
+        activity = self._activity()
         completed, finished = self.store.counts()
         with self._lock:
             return {
+                "activity": activity,
                 "state": str(self._state),
                 "turnsCompleted": completed,
                 "turnsFinished": finished,

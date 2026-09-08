@@ -365,6 +365,15 @@ class AiSeatRegistry:
         except Exception as exc:  # noqa: BLE001 - a poll must not 500 the panel
             return status | {"state": "unreachable", "last_error": f"driver unreachable: {exc}"}
         last_error = answer.get("lastError")
+        # What the agent is doing right now - one coarse word the driver
+        # read off the wrapper's transcript watcher (`mtg_agent/wrapper/
+        # activity.py`), carried onto this status because the play UI's AI
+        # pill is what shows it. Never a raise and never a KeyError: a
+        # driver too old to report it, or one whose agent is unreachable,
+        # leaves this `None` and the pill falls back to the state word it
+        # has always shown.
+        activity = answer.get("agentActivity")
+        status["activity"] = activity if isinstance(activity, dict) else None
         status["last_error"] = last_error
         status["last_turn_id"] = answer.get("lastTurnId")
         status["reflected"] = bool(answer.get("reflected"))

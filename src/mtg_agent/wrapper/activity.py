@@ -50,6 +50,12 @@ one physical line, and every word of it is still there in order. The full
 text with its original line breaks is always on `GET /v1/messages/{turnId}`
 and in the transcript, for a reader that wants the original formatting.
 
+The same tail feeds two things that are not logs at all: `ccw_inference_
+seconds` (see `InferenceTimer`) and the coarse "what is the agent doing right
+now" word the play UI's AI pill shows (see `CurrentActivity`, and the block
+comment above it for the two rules that word obeys). Both are fed regardless
+of `AGENT_LOG_LEVEL`.
+
 Nothing here can fail a turn: the thread catches everything and keeps going.
 Logging is not worth breaking a game over.
 """
@@ -60,7 +66,8 @@ import json
 import logging
 import re
 import threading
-from collections.abc import Iterable, Iterator
+import time
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -223,6 +230,127 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
             yield "tool-error", one_line(_result_text(block.get("content")))
 
 
+# ---- what the agent is doing right now, as one coarse word -----------------
+#
+# The play UI's AI pill used to read "AI (claude): thinking" for the whole of
+# a match, whatever the agent was doing, because the seat status is the only
+# thing the browser can see and all it knew was "a turn is in flight". The
+# transcript this module already tails knows far more than that - so the
+# watcher publishes one word off it, the driver carries that word to the game
+# server on `GET /status`, and the pill says what the agent is actually up to.
+#
+# Two rules shape everything below, and neither is negotiable:
+#
+# - **Observed, never inferred.** A state is set by an event that happened,
+#   and nothing else moves it. No timer promotes silence into a narrative;
+#   a quiet agent keeps whatever it was last seen doing, and the age of that
+#   observation is published alongside it so a reader can discount it.
+# - **The word, and nothing else.** The human opponent reads this label
+#   mid-game. A tool argument, a card name or a line of the agent's prose
+#   reaching it would hand them the agent's plan and its read of the board -
+#   the leak `visibility.py` had to be changed to close. `observations`
+#   therefore yields the event kind and the *tool name*, never any content,
+#   and `state_for` maps that to a fixed word; there is no channel here for
+#   text to travel down, by construction rather than by filtering.
+
+#: `mcp__mtg__wait_for_priority` - parked, waiting for its moment to act.
+WAITING = "waiting"
+#: `my_state`/`game_log` - reading the board it is allowed to see.
+READING_BOARD = "reading_board"
+#: A spellslinger card lookup.
+READING_CARDS = "reading_cards"
+#: A spellslinger rules lookup (`knowledge_search`), and anything else on
+#: that server: it is the cards-and-rules knowledge service, so "looking
+#: something up" is the honest default for a tool this mapping has not met.
+READING_RULES = "reading_rules"
+#: Answering something the game asked it: a pending decision, a mulligan, an
+#: opening-hand action, or the plan it has to declare before it acts.
+DECIDING = "deciding"
+#: Any other `mtg` tool - all of them mutate the game.
+ACTING = "acting"
+#: A `thinking` block, or the agent's own prose. `thinking` blocks arrive
+#: carrying a signature and ZERO characters of text (measured on a live pod
+#: and independently on a second machine, 36 blocks and nothing between
+#: them), so their presence is the whole of the evidence: the model is
+#: reasoning. What about is not in the transcript and is not shown.
+THINKING = "thinking"
+#: Everything else the agent can do - `Bash`, `Read`, `Write`, its todo list,
+#: a tool from a server nobody here has met. Deliberately vague, because
+#: this is exactly the case where a specific word would be a guess.
+WORKING = "working"
+
+_MTG_PREFIX = "mcp__mtg__"
+_SPELLSLINGER_PREFIX = "mcp__spellslinger__"
+
+#: The `mtg` tools that are not plays. Everything else the server offers
+#: changes the game, so `ACTING` is its default - see `state_for`.
+_MTG_STATES = {
+    "wait_for_priority": WAITING,
+    "my_state": READING_BOARD,
+    "game_log": READING_BOARD,
+    "decide": DECIDING,
+    "mulligan": DECIDING,
+    "opening_hand_action": DECIDING,
+    "declare_plan": DECIDING,
+}
+
+
+def state_for(kind: str, name: str) -> str | None:
+    """One observation - `(kind, tool name)` from `observations` - as one of
+    the coarse states above, or `None` for an event that says nothing about
+    what the agent is doing.
+
+    `None` means "leave the last observed state standing". It is not a state
+    of its own and never reaches a reader: an event this function does not
+    recognise must not be dressed up as activity.
+    """
+    if kind in ("thinking", "say"):
+        return THINKING
+    if kind != "tool":
+        return None
+    tool = str(name or "")
+    if tool.startswith(_MTG_PREFIX):
+        return _MTG_STATES.get(tool[len(_MTG_PREFIX) :], ACTING)
+    if tool.startswith(_SPELLSLINGER_PREFIX):
+        # This repo does not pin spellslinger's tool list (it is another
+        # service's contract), so the split is on the name: `resolve_cards`
+        # and anything else card-shaped is a card lookup, the rest of the
+        # server is a rules lookup. Both are honest at this grain - the
+        # agent is looking something up either way.
+        return READING_CARDS if "card" in tool[len(_SPELLSLINGER_PREFIX) :] else READING_RULES
+    return WORKING
+
+
+def observations(line: dict) -> Iterator[tuple[str, str]]:
+    """`(kind, tool name)` for one transcript object - the activity-facing
+    counterpart of `events` above.
+
+    Deliberately a separate parser rather than a filter over `events`: this
+    one never touches a tool's input or a text block's body, so no content
+    can reach the published state even by accident. `thinking` blocks, which
+    `events` skips because they carry no readable text, are exactly what
+    this one wants: their presence is the evidence.
+    """
+    if line.get("type") != "assistant":
+        return
+    message = line.get("message")
+    if not isinstance(message, dict):
+        return
+    content = message.get("content")
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "thinking":
+            yield "thinking", ""
+        elif block_type == "text" and str(block.get("text", "")).strip():
+            yield "say", ""
+        elif block_type == "tool_use":
+            yield "tool", str(block.get("name") or "")
+
+
 def emit(kind: str, text: str, rank: int) -> None:
     """One event to the `agent` logger, if the level allows it."""
     if kind == "say":
@@ -305,6 +433,60 @@ def _parse_ts(raw: Any) -> float | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+class CurrentActivity:
+    """The last thing the agent was observed doing, and how long ago.
+
+    Fed transcript lines in order; `snapshot()` is what `GET /v1/session`
+    publishes and, through the driver, what the play UI's AI pill reads.
+
+    The age is computed *here*, in seconds, rather than shipping a timestamp
+    downstream: this clock and the transcript's own timestamps belong to the
+    same host, so no skew between the agent container and a browser can make
+    a fresh observation look stale or a stale one look fresh. A negative age
+    (a line stamped in the future by a resyncing clock) publishes as zero
+    rather than as a number nothing downstream would know what to do with.
+    """
+
+    def __init__(self, now: Callable[[], float] = time.time) -> None:
+        self._now = now
+        self._lock = threading.Lock()
+        self._state: str | None = None
+        self._at = 0.0
+        self._seq = 0
+
+    def feed(self, lines: Iterable[dict]) -> None:
+        for line in lines:
+            self._feed_one(line)
+
+    def _feed_one(self, line: dict) -> None:
+        stamped = _parse_ts(line.get("timestamp"))
+        for kind, name in observations(line):
+            state = state_for(kind, name)
+            if state is None:
+                continue
+            with self._lock:
+                self._state = state
+                self._at = stamped if stamped is not None else self._now()
+                self._seq += 1
+
+    def snapshot(self) -> dict[str, Any] | None:
+        """`{state, seconds, seq}`, or `None` before anything was observed.
+
+        `seq` counts observations rather than state changes, so a reader can
+        tell "still reading the board, three tools later" from "nothing has
+        happened since I last looked" - which is the only honest way to know
+        an agent has gone quiet without guessing from a timer.
+        """
+        with self._lock:
+            if self._state is None:
+                return None
+            return {
+                "state": self._state,
+                "seconds": round(max(0.0, self._now() - self._at), 1),
+                "seq": self._seq,
+            }
 
 
 class InferenceTimer:
@@ -410,9 +592,19 @@ class ActivityWatcher:
         #: gated on `rank` - a production wrapper turned down to `off`/`turns`
         #: for log volume still wants latency data.
         self._timer = InferenceTimer(metrics)
+        #: What the play UI's AI pill says. Fed unconditionally for the same
+        #: reason: `AGENT_LOG_LEVEL` is a choice about this container's log
+        #: volume, not a decision to leave the human opposite this seat
+        #: staring at one static word for the whole match.
+        self._activity = CurrentActivity()
 
     def enabled(self) -> bool:
         return self.rank > level_rank("turns")
+
+    def activity_snapshot(self) -> dict[str, Any] | None:
+        """What the agent is doing right now, for `Manager.snapshot` to
+        publish - `None` until the transcript shows something."""
+        return self._activity.snapshot()
 
     def start(self) -> None:
         # No longer gated on `enabled()`: the watcher's job is not just text
@@ -428,9 +620,9 @@ class ActivityWatcher:
         self._stop.set()
 
     def poll_once(self) -> int:
-        """Follow the newest transcript, log whatever is new, and feed
-        `ccw_inference_seconds`. Returns the number of events logged - the
-        unit of the tests."""
+        """Follow the newest transcript, log whatever is new, feed
+        `ccw_inference_seconds`, and update what the agent is currently
+        doing. Returns the number of events logged - the unit of the tests."""
         newest = newest_transcript(self.home_dir)
         if newest is None:
             return 0
@@ -442,6 +634,7 @@ class ActivityWatcher:
             self._tail = TranscriptTail(newest)
         lines = self._tail.read()
         self._timer.feed(lines)
+        self._activity.feed(lines)
         return log_lines(lines, self.rank)
 
     def _run(self) -> None:

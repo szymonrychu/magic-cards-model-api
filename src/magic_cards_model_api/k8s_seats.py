@@ -488,7 +488,21 @@ class K8sSeats:
             if driver.get("turnActive")
             else ("pending" if driver.get("pending") else "idle")
         )
-        return {**base, "state": state, "reason": None, "pod": phase, "driver": driver}
+        # What the agent is doing right now, as one coarse word the driver
+        # read off its own agent container's transcript watcher
+        # (`mtg_agent/wrapper/activity.py`) - the play UI's AI pill shows it
+        # instead of the static "thinking" it used to. Only on this branch:
+        # every branch above is a seat that is not playing, and a failure or
+        # a pod still booting must never be dressed up as an activity.
+        activity = driver.get("agentActivity")
+        return {
+            **base,
+            "state": state,
+            "reason": None,
+            "pod": phase,
+            "driver": driver,
+            "activity": activity if isinstance(activity, dict) else None,
+        }
 
     def release(self, uid: str) -> dict[str, Any]:
         with self._lock:
