@@ -697,3 +697,20 @@ whoever works on the repo itself.
   scoped to deck validation and the batch game-summary read; giving it a
   create-game method is stage B's (the actual HTTP extraction) job, not
   T6's, while the lobby and api are still one process.
+- **2026-09-08 - `ccw_inference_seconds`: claude's own JSONL transcript lines
+  carry a `timestamp` (ISO 8601 ms) and `requestId`, confirmed against a real
+  session file rather than assumed.** One inference is one `requestId`,
+  flushed as several content-block lines (a `thinking` line, then a
+  `tool_use`/`text` line) that all carry the same final `usage.output_tokens`
+  - so both duration and output tokens are observable at the same point,
+  from the transcript's own timestamps rather than local read time, making
+  the measurement exact regardless of the watcher's poll interval.
+  `activity.InferenceTimer` times a group from the line immediately before
+  its first block to its own last block, and only finalizes once a *later*
+  line proves the group has no more blocks coming - so the one inference
+  still in flight when the transcript stops growing (match end) is never
+  recorded. Also: `ActivityWatcher.start()` used to skip spawning the thread
+  entirely when `AGENT_LOG_LEVEL` was `off`/`turns` (`enabled()`); metrics
+  must not depend on log verbosity, so `start()` no longer gates on it -
+  `rank` still gates the text log inside `poll_once`, but the watcher itself
+  (and `ccw_inference_seconds`) always runs.

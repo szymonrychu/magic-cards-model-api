@@ -25,6 +25,31 @@ def test_the_root_serves_the_lobby(client: TestClient) -> None:
     assert 'id="start-game"' in response.text
 
 
+def test_the_lobby_defaults_the_effort_dropdown_to_medium(client: TestClient) -> None:
+    """A live-pod audit found latency correlates almost perfectly with output
+    tokens and `high` effort - not context size - is what makes a seat slow.
+    `low` is deliberately not the default (documented as stopping to ask when
+    a task is multi-step, but a seat's `AskUserQuestion` is denied and it is
+    forbidden from stopping). The dropdown itself must still offer every
+    level - a combo-heavy deck can still be dispatched at `high` - only the
+    pre-selected option moves."""
+    text = client.get("/").text
+    assert '<option value="medium" selected>medium</option>' in text
+    assert '<option value="high">high</option>' in text
+    for level in ("low", "medium", "high", "xhigh", "max"):
+        assert f'value="{level}"' in text
+
+
+def test_the_thinking_budget_field_explains_when_it_applies(client: TestClient) -> None:
+    """`max_thinking_tokens` is silently ignored by the default model
+    (Sonnet 5, adaptive reasoning) - the field must say so rather than let
+    someone set it and wonder why nothing changed."""
+    text = client.get("/").text
+    assert 'id="ai-thinking"' in text
+    assert "adaptive" in text.lower()
+    assert "effort" in text.lower().split('id="ai-thinking"', 1)[1][:600]
+
+
 def test_the_relative_assets_resolve_from_the_root(client: TestClient) -> None:
     """`index.html` asks for `app.js` and `style.css` relative to wherever it
     was served, so both have to answer at the root too."""

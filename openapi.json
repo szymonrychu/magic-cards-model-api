@@ -1039,7 +1039,7 @@
       "AgentSettings": {
         "properties": {
           "effort": {
-            "default": "high",
+            "default": "medium",
             "enum": [
               "low",
               "medium",

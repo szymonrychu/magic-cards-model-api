@@ -110,7 +110,7 @@ def main() -> None:
     # Started after the session, so the transcript it follows is this
     # container's. Daemon thread, read-only, and exempt from the exit path:
     # nothing it does can hold up a turn or a shutdown.
-    watcher = ActivityWatcher(settings.home_dir, settings.agent_log_level)
+    watcher = ActivityWatcher(settings.home_dir, settings.agent_log_level, metrics=metrics)
     watcher.start()
 
     def stop(_signum, _frame) -> None:

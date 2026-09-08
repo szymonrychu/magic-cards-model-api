@@ -272,7 +272,7 @@ def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
     assert parsed.uid == "u1"
     assert parsed.game_id == "g1"
     assert parsed.player == "bot"
-    assert parsed.agent == {"model": "sonnet", "effort": "high", "maxThinkingTokens": None}
+    assert parsed.agent == {"model": "sonnet", "effort": "medium", "maxThinkingTokens": None}
 
 
 def test_job_is_plain_dicts_the_kubernetes_client_can_serialize() -> None:

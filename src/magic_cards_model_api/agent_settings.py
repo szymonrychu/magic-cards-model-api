@@ -5,6 +5,22 @@ plays the seat (subprocess argv, wrapper dispatch, or a Job's env).
 Names follow Claude Code's own: `--model`, `--effort` (low, medium, high,
 xhigh, max) and the `MAX_THINKING_TOKENS` environment variable.
 
+The default `effort` is `medium`, not `high`: a live-pod audit (14 minutes of
+real play, 133 inferences) found latency correlates almost perfectly with
+output tokens (corr 0.976), context size does not (corr -0.101 - prefill
+caches nearly perfectly), and ~90% of every inference's output is
+extended-thinking tokens - so effort, not state size, is what makes a seat
+slow. `low` is deliberately not the default: it is documented as stopping to
+ask when a task is multi-step, but a seat's `AskUserQuestion` tool is denied
+and it is forbidden from stopping, so a seat that wants to ask and cannot may
+simply stop - worse than slow. The per-game lobby dropdown can still choose
+`high` for a combo-heavy deck; this only changes the default.
+
+`MAX_THINKING_TOKENS`/`max_thinking_tokens` is honoured only by models with a
+fixed (non-adaptive) reasoning budget. The default model, Sonnet 5, uses
+adaptive reasoning and silently ignores it - `effort` is the only control
+that bites there. The field is kept for models that still honour it.
+
 This crossed four repos in three spellings (T13, phase 2b): a snake_case
 pydantic model, the `MODEL`/`EFFORT`/`MAX_THINKING_TOKENS` environment
 variables, a bare `model_dump()` dict, and a camelCase `maxThinkingTokens`
@@ -60,7 +76,7 @@ class AgentSettings(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     model: str = Field(min_length=1)
-    effort: Effort = "high"
+    effort: Effort = "medium"
     max_thinking_tokens: int | None = Field(
         default=None,
         ge=0,

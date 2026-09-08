@@ -33,7 +33,7 @@ export function thinkingTokensAreValid(raw) {
 
 export function agentFrom(fields) {
   const model = (fields.model || "").trim() || "sonnet";
-  const effort = EFFORTS.includes(fields.effort) ? fields.effort : "high";
+  const effort = EFFORTS.includes(fields.effort) ? fields.effort : "medium";
   const thinking = String(fields.thinking === undefined || fields.thinking === null ? "" : fields.thinking).trim();
   const max_thinking_tokens = thinkingTokensAreValid(thinking) && thinking !== "" ? Number(thinking) : null;
   return { model, effort, max_thinking_tokens };
