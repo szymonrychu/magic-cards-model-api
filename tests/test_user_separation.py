@@ -56,13 +56,13 @@ def _game_scoped_operations(game_id: str) -> list[tuple[str, str]]:
     route names `{game_id}` in its path - `game_id` substituted with the real
     id under test, every other path parameter with a harmless placeholder.
     Read straight from the live route table, not a hand-maintained list."""
+    params = {**_DUMMY_PATH_PARAMS, "game_id": game_id}
     operations: list[tuple[str, str]] = []
     for route in raw_app.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
         if not path or not methods or "{game_id}" not in path:
             continue
-        params = {**_DUMMY_PATH_PARAMS, "game_id": game_id}
         concrete = re.sub(r"\{(\w+)\}", lambda m: params[m.group(1)], path)
         for method in sorted(methods):
             if method == "HEAD":

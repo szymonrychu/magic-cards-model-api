@@ -7,6 +7,15 @@ Nothing here talks to a network or a real IdP: `jwks()` builds the exact
 `{"keys": [...]}` document a real realm's `/certs` endpoint would serve, and
 `oidc.py`'s `OIDC_JWKS_STATIC` escape hatch takes that document literally -
 see that module's docstring for why the static path exists at all.
+
+`ISSUER`/`AUDIENCE` are shaped after the real deployment target - the
+`spellslinger` Keycloak realm's `magic-trainer-webui` confidential client
+(GitLab `terraform` MR !243: an audience mapper, a default `groups` scope,
+and the two test users `magic-trainer-test-user-a@szymonrichert.pl`/
+`-b@...`), not a hypothetical `magic-trainer` realm that does not exist -
+there is no new realm, this deployment reuses `spellslinger`'s. `oidc.py`
+itself hardcodes neither; production points `OIDC_ISSUER`/`OIDC_AUDIENCE`/
+`OIDC_JWKS_URL` at these same real values once the MR is applied.
 """
 
 from __future__ import annotations
@@ -20,7 +29,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from jwt.algorithms import RSAAlgorithm
 
-ISSUER = "https://issuer.test.example/realms/mtg"
+ISSUER = "https://sso.szymonrichert.pl/realms/spellslinger"
+AUDIENCE = "magic-trainer-webui"
 KID = "test-signing-key-1"
 
 

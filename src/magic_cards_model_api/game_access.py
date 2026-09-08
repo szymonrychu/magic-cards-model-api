@@ -20,11 +20,13 @@ through a request that carried a valid bearer token - set once, at creation,
 by `app.create_game`/`decks_api.start_game_from_decklists`, never
 reassigned. **A game with no owner is exactly as unrestricted as every game
 was before this module existed** - this is the whole migration story: no
-bearer token has ever reached this deployment (there is no OIDC issuer
-configured, and no frontend forwards one yet - `docs/2b-plan.md`'s decision 2
-keeps basic auth as the only thing in front of this service for this phase),
-so every game created today gets no owner, and this module changes nothing
-about it. The moment a caller *does* start sending a valid bearer token -
+bearer token has ever reached this deployment (this api has no OIDC issuer
+configured yet, and even once oauth2-proxy fronts the play UI - GitHub PR
+#18 - the play UI itself does not forward a token to this api, and the api's
+own ingress carries no bypass past the proxy at all yet; see `oidc.py`'s own
+note on what that bypass needs before it is safe), so every game created
+today gets no owner, and this module changes nothing about it. The moment a
+caller *does* start sending a valid bearer token -
 this task's own manual verification does, and a real OIDC-integrated
 frontend eventually will - every game it creates is owned, and this module's
 gate activates for exactly those games, immediately, with no further

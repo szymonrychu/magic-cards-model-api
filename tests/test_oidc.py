@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from oidc_testkit import ISSUER, generate_keypair, jwks, token
+from oidc_testkit import AUDIENCE, ISSUER, generate_keypair, jwks, token
 from starlette.requests import Request
 
 from magic_cards_model_api import oidc
@@ -194,9 +194,9 @@ def test_no_audience_configured_accepts_a_token_that_carries_one_anyway(
 def test_configured_audience_is_required_and_checked(
     monkeypatch: pytest.MonkeyPatch, configured_env: None, private_key
 ) -> None:
-    monkeypatch.setenv("OIDC_AUDIENCE", "magic-cards-model-api")
+    monkeypatch.setenv("OIDC_AUDIENCE", AUDIENCE)
 
-    matching = token(private_key, sub="alice", audience="magic-cards-model-api")
+    matching = token(private_key, sub="alice", audience=AUDIENCE)
     user = oidc.current_user(_request({"Authorization": f"Bearer {matching}"}))
     assert user is not None and user.sub == "alice"
 

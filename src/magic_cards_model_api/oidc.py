@@ -5,17 +5,19 @@ The owner's own words: "adding support for oidc-based (eg. through it's
 headers), so engine supports user separation (no way for 1 user to login as
 the other and see other's games)". "Through its headers" names oauth2-proxy's
 usual shape (`X-Forwarded-User`, `X-Auth-Request-Email`, ...) - but a header
-is only trustworthy when the request cannot reach this app except through the
-proxy that sets it, and nothing about this deployment guarantees that today
-(`deploy/k8s/70-ingress.yaml` routes straight to this service; there is no
-oauth2-proxy in front of it, and `docs/2b-plan.md`'s decision 2 keeps it that
-way for this phase). Trusting `X-Forwarded-User` here would mean trusting
-whatever the caller sends, which is exactly the hole this task exists to
-close. So this module validates a **signed bearer JWT locally against the
-realm's JWKS** instead - the primitive `docs/architecture.md`'s own security
-section already names as the target ("API services validate bearer JWTs
-locally against the realm's JWKS. They never trust `X-Forwarded-*` headers.")
-- and never trusts a header no signature backs.
+is only trustworthy when the request cannot reach the header-checking code
+except through the proxy that set it. That condition is not met for this
+process: GitHub PR #18 (open, not merged as this module lands) puts
+oauth2-proxy in front of the **play UI only** (`play-magic.szymonrichert.pl`,
+matching `docs/architecture.md`'s "oauth2-proxy fronts only the two
+frontends") and deliberately gives `/api/*` no bypass past it yet - see this
+module's own note below on what that bypass needs before it is safe to add.
+Even once it exists, `docs/architecture.md`'s security section is explicit
+that an API service must never be the thing trusting the proxy's headers:
+"API services validate bearer JWTs locally against the realm's JWKS. They
+never trust `X-Forwarded-*` headers." This module is that validator - a
+**signed bearer JWT, checked locally against the realm's JWKS** - and never
+trusts a header no signature backs, regardless of what fronts it.
 
 **Fails closed, not open.** A request that presents no `Authorization` header
 is anonymous (`current_user` returns `None`) - the pre-existing, credential-
@@ -32,16 +34,50 @@ as nobody.
 
 **Nothing here is reachable until an operator actually configures it.**
 `oidc_settings()` returns `None` - "OIDC is off" - unless `OIDC_ISSUER` and
-either `OIDC_JWKS_URL` or `OIDC_JWKS_STATIC` are all set. No Keycloak realm
-exists for this deployment yet (`docs/2b-plan.md`'s M1: the terraform repo
-that would stand one up is out of this phase) - this module is the API-side
-half the owner asked to be built now, wired to whatever issuer eventually
-exists, not a claim that the issuer exists today. `OIDC_JWKS_STATIC` (a
-literal JWKS JSON document) is the escape hatch that makes this testable and
-runnable end to end without one: CI, `tests/test_oidc.py`, and this task's
-own manual verification all sign tokens against a throwaway keypair and hand
-its public JWKS to the app the same way a real realm's `/certs` endpoint
-would, over `OIDC_JWKS_URL` in production.
+either `OIDC_JWKS_URL` or `OIDC_JWKS_STATIC` are all set. The realm this
+deployment will actually point at already exists as of GitLab `terraform` MR
+!243 (not yet applied): the confidential client `magic-trainer-webui` in the
+**existing `spellslinger` realm** - not a new `magic-trainer` realm - with an
+audience mapper, a default `groups` scope, and two test users
+(`magic-trainer-test-user-a@szymonrichert.pl`/`-b@...`). This module hardcodes
+none of that; production sets `OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL`
+to those real values once the MR is applied and the api's deployment carries
+them. `OIDC_JWKS_STATIC` (a literal JWKS JSON document) is the escape hatch
+that makes this testable and runnable end to end without waiting on that:
+CI, `tests/test_oidc.py`, and this task's own manual verification all sign
+tokens against a throwaway keypair and hand its public JWKS to the app the
+same way `spellslinger`'s own `/certs` endpoint would, over `OIDC_JWKS_URL`
+in production.
+
+**What the ingress needs before `/api/*` can safely bypass oauth2-proxy.**
+PR #18 deliberately does not give the api ingress a bypass past the proxy,
+correct at the time it was written: before this module existed, bypassing
+would have exposed a completely unauthenticated game api to the internet.
+Once this module is deployed and configured (the paragraph above), a bypass
+becomes safe **only when both of these hold**:
+
+1. `OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL` are actually set on the api's
+   deployment, pointing at `spellslinger`/`magic-trainer-webui` - not merely
+   that this module exists in the image. Ownership only ever activates for a
+   game created by an authenticated request (see `game_access.py`); with no
+   OIDC config, every game stays ownerless and indistinguishable from today.
+2. The api ingress carries **no `auth-url`/`auth-signin` annotation** - the
+   existing, binding rule (`docs/architecture.md`) - so a machine client
+   (an AI seat, `seat_cli`, the MCP http transport, none of which ever hold a
+   bearer token) reaches this process directly and gets this module's plain
+   JSON 401/`KeyError`-mapped 404 responses, never oauth2-proxy's HTML login
+   redirect. This is also what a browser's unauthenticated `fetch` needs: PR
+   #18's `--api-route=^/api/` makes an unauthenticated XHR through the proxy
+   fail with a detectable 401 rather than a cross-origin 302 that `fetch`
+   only ever sees as an opaque `TypeError` - bypassing the proxy for `/api/*`
+   preserves that same detectability, since this module's own 401s are
+   already `{"detail": ...}`-shaped JSON, exactly what the play UI's `api()`
+   wrapper (`ui/api.js`) already knows how to surface as a real error rather
+   than swallowing it as state.
+
+Bypassing the proxy without (1) is not unsafe - it is simply inert, identical
+to today. Bypassing without (2) reintroduces the HTML-redirect failure mode
+PR #18 was written to avoid for exactly the clients that cannot follow one.
 """
 
 from __future__ import annotations

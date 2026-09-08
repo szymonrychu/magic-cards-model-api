@@ -296,18 +296,19 @@ def test_create_records_the_given_owner(repo: GameRepository) -> None:
     assert repo.owner_user_id(game_id) == "oidc-sub-alice"
 
 
-def test_create_if_under_records_the_given_owner(repo: GameRepository) -> None:
-    game_id = repo.create_if_under(_real_game(), cap=5, owner_user_id="oidc-sub-bob")
-    assert game_id is not None
+def test_attach_does_not_disturb_the_owner_create_already_recorded(
+    repo: GameRepository,
+) -> None:
+    """M8's `reserve_slot`/`create`/`attach` split (replacing the deleted
+    `create_if_under`) still leaves ownership exactly where `create()` put
+    it: `attach` only resolves the reservation and registers the ui game, it
+    never touches `owner_user_id`."""
+    token = repo.reserve_slot(cap=5)
+    assert token is not None
+    game_id = repo.create(_real_game(), owner_user_id="oidc-sub-bob")
+    repo.attach(token, game_id)
 
     assert repo.owner_user_id(game_id) == "oidc-sub-bob"
-
-
-def test_create_if_under_with_no_owner_leaves_it_none(repo: GameRepository) -> None:
-    game_id = repo.create_if_under(_real_game(), cap=5)
-    assert game_id is not None
-
-    assert repo.owner_user_id(game_id) is None
 
 
 def test_owner_user_id_is_none_for_an_unknown_game(repo: GameRepository) -> None:
