@@ -1560,23 +1560,33 @@ def pass_until(
             # answered on this seat's behalf.
             continue
 
-        if pending is not None and pending_kind in ("declare_attackers", "declare_blockers"):
-            # Addressed to the *other* seat (the branch above already handled
-            # this seat's own pause). Nothing this seat can do moves the game
-            # until they answer: `state["priority_holder"]` cannot be trusted
-            # here either, because CR 508.1/CR 509.1's turn-based action never
-            # finished, so `priority.reset` never ran and the value this state
-            # carries is simply whatever it was before the freeze - not
-            # "nobody has priority", which is what a frozen game actually is.
-            # Attempting a pass on the strength of it is the race that used to
-            # surface here: it could land *after* their declaration resolves
-            # and genuinely regrants them priority, and be refused for a reason
-            # this seat had no way to see coming. So this is a hand-back, which
-            # is what the old code slept through.
+        if pending is not None:
+            # Any decision still outstanding, addressed to anyone - this seat's
+            # own already stopped the run in `autopass_stop_reason`, except the
+            # two combat kinds the branch above answers, so what reaches here
+            # is somebody else's. Nothing this seat can do moves the game until
+            # they answer, and `state["priority_holder"]` cannot be trusted
+            # here: a paused command rolls the committed game back to before
+            # the attempt (`commands.py`), so the value this state carries is
+            # simply whoever held priority before the freeze - not "nobody has
+            # priority", which is what a frozen game actually is.
+            #
+            # Passing on the strength of it is worse than useless. The pass
+            # cannot complete (it crosses the same unanswered question), so it
+            # pauses too - and `app.py`'s `_run_command` stores that second
+            # pause over the first, discarding the question the other seat was
+            # about to answer. A run that kept re-posting one is how a stored
+            # pause slot got clobbered and an accepted answer went missing. So
+            # this is a hand-back: the caller looks, and calls again once the
+            # decision is answered.
+            if pending_kind in ("declare_attackers", "declare_blockers"):
+                frozen_on = f"{pending_kind} (CR 508.1, CR 509.1)"
+            else:
+                frozen_on = f"{pending_kind} decision (CR 608.2d)"
             return handed_back(
                 state,
                 f"the game is frozen on {pending.get('player')}'s own "
-                f"{pending_kind} (CR 508.1, CR 509.1) and only they can answer it",
+                f"{frozen_on} and only they can answer it",
             )
 
         if state.get("priority_holder") == seat.player:

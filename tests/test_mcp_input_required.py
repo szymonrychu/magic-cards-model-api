@@ -12,10 +12,10 @@ checks once and returns immediately either way (`seatkit.NOTHING_NEW_YET`),
 and this file is what pins "immediately" - not merely "eventually, with a
 shorter bound".
 
-`pass_priority(until=...)` was the last holdout on both counts: it kept its own
-deadline loop (`seatkit.pass_until`, which slept to `max_seconds`) and it
-returned raw JSON rather than going through `mcp._tool_result`, so a run that
-stopped *on* a decision could not say so on the wire. Both are pinned here.
+`pass_until` was the last holdout on both counts: it kept its own deadline
+loop (`seatkit.pass_until`, which slept to `max_seconds`) and it returned raw
+JSON rather than going through `mcp._tool_result`, so a run that stopped *on* a
+decision could not say so on the wire. Both are pinned here.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ def test_an_action_tool_also_surfaces_its_own_raised_decision_as_input_required(
     client, game, monkeypatch
 ):
     """Not only `wait_for_priority`: any `run_action`-backed tool (here,
-    `pass_priority`) that crosses into a decision addressed to this very
+    `pass`) that crosses into a decision addressed to this very
     seat - alice's own pass closing the priority round and walking the turn
     into her own cleanup discard - surfaces the same way, through the shared
     `mcp._tool_result` helper, not a second, divergent implementation."""
@@ -132,7 +132,7 @@ def test_an_action_tool_also_surfaces_its_own_raised_decision_as_input_required(
     assert bobs_pass.status_code == 200, bobs_pass.text
 
     server = build_server(seats)
-    result = call_tool(server, "pass_priority", {"player_uid": uids["alice"]})
+    result = call_tool(server, "pass", {"player_uid": uids["alice"]})
     assert isinstance(result, InputRequiredResult), (
         f"expected an InputRequiredResult, got {type(result)}: {result!r}"
     )
@@ -140,12 +140,11 @@ def test_an_action_tool_also_surfaces_its_own_raised_decision_as_input_required(
     assert "choose_cards" in result.request_state
 
 
-def test_pass_priority_until_also_surfaces_a_decision_as_input_required(client, game, monkeypatch):
-    """The `until` branch of `pass_priority` is a second, longer-lived path
-    through the same tool, and it used to return `json.dumps(...)` directly
-    rather than going through `mcp._tool_result` - so the tool most likely to
-    be mid-run when a decision arrives was the only one that could not say so
-    on the wire.
+def test_pass_until_also_surfaces_a_decision_as_input_required(client, game, monkeypatch):
+    """`pass_until` is the longer-lived of the two priority verbs, and it used
+    to return `json.dumps(...)` directly rather than going through
+    `mcp._tool_result` - so the verb most likely to be mid-run when a decision
+    arrives was the only one that could not say so on the wire.
 
     It is not a path where no decision can arise: `seatkit.pass_until` stops
     and returns the moment one is addressed to this seat, with the full state
@@ -171,10 +170,10 @@ def test_pass_priority_until_also_surfaces_a_decision_as_input_required(client, 
 
     server = build_server(seats)
     started = time.monotonic()
-    result = call_tool(server, "pass_priority", {"player_uid": uids["alice"], "until": "upkeep"})
+    result = call_tool(server, "pass_until", {"player_uid": uids["alice"], "step": "upkeep"})
     elapsed = time.monotonic() - started
 
-    assert elapsed < 3.0, f"pass_priority(until=...) blocked for {elapsed:.1f}s"
+    assert elapsed < 3.0, f"pass_until blocked for {elapsed:.1f}s"
     assert isinstance(result, InputRequiredResult), (
         f"expected an InputRequiredResult, got {type(result)}: {result!r}"
     )
@@ -183,8 +182,8 @@ def test_pass_priority_until_also_surfaces_a_decision_as_input_required(client, 
     assert "stopped_because" in result.request_state, "it must still be a pass_until answer"
 
 
-def test_pass_priority_until_returns_promptly_when_it_must_wait(client, game, monkeypatch):
-    """The `until` branch used to hold one request open for its whole
+def test_pass_until_returns_promptly_when_it_must_wait(client, game, monkeypatch):
+    """`pass_until` used to hold one request open for its whole
     `max_seconds` - measured at 6.0s for 6.0, and its MCP input schema exposed
     the parameter as an unbounded number, so an agent could hold a single call
     open for 570 seconds. bob has no priority here and nobody is moving: the
@@ -195,17 +194,17 @@ def test_pass_priority_until_returns_promptly_when_it_must_wait(client, game, mo
 
     server = build_server(seats)
     started = time.monotonic()
-    result = call_tool(server, "pass_priority", {"player_uid": uids["bob"], "until": "end_step"})
+    result = call_tool(server, "pass_until", {"player_uid": uids["bob"], "step": "end_step"})
     elapsed = time.monotonic() - started
 
-    assert elapsed < 3.0, f"pass_priority(until=...) blocked for {elapsed:.1f}s"
+    assert elapsed < 3.0, f"pass_until blocked for {elapsed:.1f}s"
     answer = json.loads(result.content[0].text)
     assert answer["finished"] is False
     assert answer["resume"], "an unfinished run must say how to continue it"
     assert "Call again" in answer["stopped_because"]
 
 
-def test_the_pass_priority_tool_no_longer_takes_a_max_seconds_at_all(client, game, monkeypatch):
+def test_no_tool_takes_a_max_seconds_at_all(client, game, monkeypatch):
     """Read off the live signature and the live MCP input schema, not off
     prose. An MCP client receives no `description` on any *parameter* - the
     schema for `max_seconds` was `{"default": 60.0, "title": "Max Seconds",
@@ -252,7 +251,7 @@ def test_both_briefs_tell_the_seat_to_pace_its_own_polling():
         )
         assert "resume" in flat, (
             f"{name} never tells the seat to hand back the resume token an "
-            "unfinished pass_priority(until=...) run carries"
+            "unfinished pass_until run carries"
         )
         assert "no way to strand your turn by calling it in a loop" not in flat, (
             f"{name} still argues for an unthrottled poll loop"

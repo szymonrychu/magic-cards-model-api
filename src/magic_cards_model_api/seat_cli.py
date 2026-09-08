@@ -3,11 +3,20 @@
 The same seat `mcp.py` exposes, sharing the same "one call, one meaningful
 action" flow (`seatkit.run_action`): the same hidden-information filter - the
 opponent's hand and both libraries never appear - and the same
-cast/play-land/activate/attackers/blockers/resolve/advance/decide/pass
-behaviour: perform the action, then check once for this seat's next moment
-to act (poll-and-return - see `seatkit.block_until_wake`'s own docstring),
-printing the outcome and whatever state that check saw together. `wait`
-checks the same way with no action of its own; run it again to keep checking.
+cast/play-land/activate/attackers/blockers/decide/pass behaviour: perform the
+action, then check once for this seat's next moment to act (poll-and-return -
+see `seatkit.block_until_wake`'s own docstring), printing the outcome and
+whatever state that check saw together. `wait` checks the same way with no
+action of its own; run it again to keep checking.
+
+Priority has exactly two verbs here, `pass` and `pass-until`, because the
+rules give it exactly two: CR 117.1 lists what the player with priority may do
+("cast spells, activate abilities, and take special actions") and CR 117.3d
+has a player who chooses none of them pass. Resolving the stack's top and
+ending a step are what CR 117.4 makes happen once everyone has passed in
+succession, and CR 703.2 says turn-based actions "are not controlled by any
+player" - none of them is a move a seat makes, so none of them is a
+subcommand.
 
 Whether priority is released on your behalf first is NOT uniform, and this
 file and `mcp.py` must agree on it command for command:
@@ -389,93 +398,99 @@ def build_parser() -> argparse.ArgumentParser:
     )
     priority_flag(decide)
 
-    passer = sub.add_parser("pass", help="pass priority - 'I am done for now'")
-    passer.add_argument(
-        "--resume",
-        default="",
-        metavar="JSON",
-        help=(
-            "the `resume` object a previous `--until` run printed, handed back "
-            "verbatim, so this call continues that run instead of starting a "
-            "new one. A run prints one whenever its `finished` is false; "
-            "without it the next call re-stamps the run where you are standing "
-            "now and would skip the very combat step it should stop you at "
-            "(see seatkit.pass_until)"
-        ),
+    # The two priority verbs, and the only two. CR 117.1 lists what the player
+    # with priority may do ("cast spells, activate abilities, and take special
+    # actions") and CR 117.3d has a player who chooses none of them pass; CR
+    # 117.4 makes resolving the stack's top and ending the step consequences of
+    # everyone passing, and CR 703.2 says turn-based actions "are not
+    # controlled by any player". So there is no subcommand here for resolving
+    # the stack, stepping the turn on, or moving the turn marker - none of the
+    # three is something a seat does.
+    sub.add_parser(
+        "pass",
+        help="pass priority once - 'I am done for now' (CR 117.3d)",
     )
-    passer.add_argument(
-        "--until",
-        default="",
+
+    until = sub.add_parser(
+        "pass-until",
+        help="keep passing automatically until a stop condition fires",
+    )
+    until.add_argument(
+        "step",
         metavar="STEP",
         help=(
             f"one of: {', '.join(AUTOPASS_STEPS)}. "
             "Keep passing every priority you currently hold until this step, "
             "instead of handing back one priority at a time. This waits for "
-            "nothing either: it returns the moment it would have to wait for "
-            "your opponent, printing finished=false and a --resume token to "
-            "carry on with. Naming the step "
-            "you are standing in means its NEXT occurrence, never this one - "
-            "'--until upkeep' asked in your upkeep passes a whole turn round. "
-            "untap and cleanup are not offered: nobody receives priority in "
-            "either (CR 502.4, CR 514.3), so a run could never stop there"
+            "nothing: it returns the moment it would have to wait for your "
+            "opponent, printing finished=false and a --resume token to carry "
+            "on with. Naming the step you are standing in means its NEXT "
+            "occurrence, never this one - 'pass-until upkeep' asked in your "
+            "upkeep passes a whole turn round. untap and cleanup are not "
+            "offered: nobody receives priority in either (CR 502.4, CR 514.3), "
+            "and the game crosses both on its own (CR 500.3)"
         ),
     )
-    passer.add_argument(
-        "--until-whose-turn",
+    until.add_argument(
+        "--whose-turn",
         default="mine",
         metavar="WHOSE",
         help=(
-            f"one of: {', '.join(AUTOPASS_WHOSE_TURN)}. Whose turn --until's "
-            "step must be in; 'any' takes whichever comes first"
+            f"one of: {', '.join(AUTOPASS_WHOSE_TURN)}. Whose turn STEP must "
+            "be in; 'any' takes whichever comes first"
         ),
     )
-    passer.add_argument(
+    until.add_argument(
+        "--resume",
+        default="",
+        metavar="JSON",
+        help=(
+            "the `resume` object a previous run printed, handed back verbatim, "
+            "so this call continues that run instead of starting a new one. A "
+            "run prints one whenever its `finished` is false; without it the "
+            "next call re-stamps the run where you are standing now and would "
+            "skip the very combat step it should stop you at "
+            "(see seatkit.pass_until)"
+        ),
+    )
+    until.add_argument(
         "--no-stop-on-stack",
         action="store_true",
         help=(
-            "with --until: run straight through anything that lands on the "
-            "stack instead of stopping to respond to it. You will not get the "
-            "chance to answer the opponent's spell or a trigger, so use it "
-            "only where you have decided you are responding to nothing"
+            "run straight through anything that lands on the stack instead of "
+            "stopping to respond to it. This is the stop that gives you your "
+            "chance to answer a spell cast in a window you were passing "
+            "through, and CR 117.4 resolves that spell the moment everyone has "
+            "passed in succession - so switching it off means you will not get "
+            "the chance. Only where you have decided you are responding to "
+            "nothing"
         ),
     )
-    passer.add_argument(
+    until.add_argument(
         "--no-stop-when-attacked",
         action="store_true",
         help=(
-            "with --until: run straight through your own declare-blockers "
-            "step. YOU WILL BLOCK NOTHING AND TAKE THE WHOLE ATTACK. "
-            "Declaring blockers is a turn-based action that does not use the "
-            "stack (CR 509.1), so --no-stop-on-stack's condition cannot catch "
-            "it for you. Only for a board that cannot block or a life total "
-            "the attack cannot reach"
+            "run straight through your own declare-blockers step. YOU WILL "
+            "BLOCK NOTHING AND TAKE THE WHOLE ATTACK. Declaring blockers is a "
+            "turn-based action that does not use the stack (CR 509.1), so "
+            "--no-stop-on-stack's condition cannot catch it for you. Only for "
+            "a board that cannot block or a life total the attack cannot reach"
         ),
     )
-    passer.add_argument(
+    until.add_argument(
         "--no-stop-when-you-can-attack",
         action="store_true",
         help=(
-            "with --until: run straight through your own declare-attackers "
-            "step. YOU WILL ATTACK WITH NOTHING that turn. Declaring attackers "
-            "does not use the stack either (CR 508.1), and skipping it is "
-            "silent - the engine treats a player who never declares as "
-            "declaring nobody, so the turn just produces no attack and nothing "
-            "says why. Left on, a run aimed past combat stops in your "
-            "declare-attackers step every turn, which is the point. Switching "
-            "it off is the deliberate 'I am not attacking this turn'"
+            "run straight through your own declare-attackers step. YOU WILL "
+            "ATTACK WITH NOTHING that turn. Declaring attackers does not use "
+            "the stack either (CR 508.1), and skipping it is silent - the "
+            "engine treats a player who never declares as declaring nobody, so "
+            "the turn just produces no attack and nothing says why. Left on, a "
+            "run aimed past combat stops in your declare-attackers step every "
+            "turn, which is the point. Switching it off is the deliberate "
+            "'I am not attacking this turn'"
         ),
     )
-
-    resolve = sub.add_parser(
-        "resolve", help="resolve the top of the stack (only if a pass left it unresolved)"
-    )
-    priority_flag(resolve)
-
-    advance = sub.add_parser("advance", help="move through untap/cleanup on your own turn")
-    priority_flag(advance)
-
-    step = sub.add_parser("set-step", help="jump the turn marker to a named step")
-    step.add_argument("step")
 
     # CR 103.5 and CR 103.6. A game booted from decklists *rests* in these two
     # steps before turn 1, and nothing on the board can happen until every seat
@@ -700,20 +715,19 @@ def run(argv: list[str] | None = None) -> int:
             ],
         }
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/declare-blockers", body))
-    elif args.command == "pass" and args.until:
+    elif args.command == "pass-until":
         # The shared loop and the shared validator, not a second copy of
-        # either: `mcp.pass_priority(until=)` calls the same two functions with
-        # the same defaults, so the two front ends cannot stop in different
-        # places or disagree about what a legal destination is. See
-        # `seatkit.pass_until`.
-        problem = autopass_target_error(args.until, args.until_whose_turn)
+        # either: `mcp.pass_until` calls the same two functions with the same
+        # defaults, so the two front ends cannot stop in different places or
+        # disagree about what a legal destination is. See `seatkit.pass_until`.
+        problem = autopass_target_error(args.step, args.whose_turn)
         if problem:
             print(problem)
             return 1
         result = pass_until(
             seat,
-            until_step=args.until,
-            whose_turn=args.until_whose_turn,
+            until_step=args.step,
+            whose_turn=args.whose_turn,
             stop_on_stack=not args.no_stop_on_stack,
             stop_when_attacked=not args.no_stop_when_attacked,
             stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
@@ -731,28 +745,6 @@ def run(argv: list[str] | None = None) -> int:
             release=False,
         )
         print(json.dumps(result, indent=1, sort_keys=True))
-    elif args.command == "resolve":
-
-        def perform_resolve() -> Any:
-            answer = seat.call_json(
-                "POST", f"/api/games/{gid}/resolve-top", {"player": seat.player}
-            )
-            return {"allowed": answer.get("reason") is None, **answer}
-
-        act(perform_resolve)
-    elif args.command == "advance":
-
-        def perform_advance() -> Any:
-            return {
-                "allowed": True,
-                **seat.call_json("POST", f"/api/games/{gid}/advance", {"player": seat.player}),
-            }
-
-        act(perform_advance)
-    elif args.command == "set-step":
-        print(
-            seat.call("PUT", f"/api/games/{gid}/step", {"step": args.step, "player": seat.player})
-        )
     elif args.command == "decide":
         # `--decline` and an omitted `card_ids` post the identical request -
         # the empty answer, which for a CR 701.23b search ("that player isn't

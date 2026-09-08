@@ -1,6 +1,5 @@
 """Auto-passing priority up to a named point in the turn: `seatkit.pass_until`,
-and the two front ends onto it (`mcp.pass_priority(until=...)`,
-`seat_cli pass --until`).
+and the two front ends onto it (`mcp.pass_until`, `seat_cli pass-until`).
 
 A seat that must call `pass` for every priority it is handed spends most of a
 game answering "no" to questions it could never answer any other way, and the
@@ -968,19 +967,19 @@ def answer_text(raw: Any) -> str:
 
 
 def drive_mcp(server: Any, uid: str) -> dict[str, Any]:
-    """`pass_priority(until=...)` through the MCP tool, driven to its stop the
-    way an agent must now drive it: hand `resume` back until `finished`."""
+    """`pass_until` through the MCP tool, driven to its stop the way an agent
+    must now drive it: hand `resume` back until `finished`."""
     resume = ""
     for _ in range(200):
         answer = json.loads(
             answer_text(
                 asyncio.run(
                     server.call_tool(
-                        "pass_priority",
+                        "pass_until",
                         {
                             "player_uid": uid,
-                            "until": "upkeep",
-                            "until_whose_turn": "mine",
+                            "step": "upkeep",
+                            "whose_turn": "mine",
                             "resume": resume,
                         },
                     )
@@ -995,7 +994,7 @@ def drive_mcp(server: Any, uid: str) -> dict[str, Any]:
 
 
 def drive_cli(capsys: Any, uid: str, game_id: str) -> dict[str, Any]:
-    """The same run through `seat_cli pass --until`, driven the same way."""
+    """The same run through `seat_cli pass-until`, driven the same way."""
     resume = ""
     for _ in range(200):
         argv = [
@@ -1003,10 +1002,9 @@ def drive_cli(capsys: Any, uid: str, game_id: str) -> dict[str, Any]:
             uid,
             "--game",
             game_id,
-            "pass",
-            "--until",
+            "pass-until",
             "upkeep",
-            "--until-whose-turn",
+            "--whose-turn",
             "mine",
         ]
         if resume:
@@ -1062,11 +1060,11 @@ def test_both_front_ends_refuse_the_same_bad_destination(client, game, monkeypat
 
     server = build_server(Seats(api="http://testserver", game_id=game))
     raw = asyncio.run(
-        server.call_tool("pass_priority", {"player_uid": uids["alice"], "until": "cleanup"})
+        server.call_tool("pass_until", {"player_uid": uids["alice"], "step": "cleanup"})
     )
     from_mcp = raw.content[0].text
 
-    rc = seat_cli.run(["--uid", uids["alice"], "--game", game, "pass", "--until", "cleanup"])
+    rc = seat_cli.run(["--uid", uids["alice"], "--game", game, "pass-until", "cleanup"])
     from_cli = capsys.readouterr().out.strip()
 
     assert rc == 1, "a destination that cannot be reached is an error, not a no-op"
@@ -1091,14 +1089,14 @@ def test_the_cli_and_the_tool_default_every_stop_to_on():
     import inspect
 
     server = build_server(a_server_only_introspected())
-    tool = server._tool_manager._tools["pass_priority"].fn
+    tool = server._tool_manager._tools["pass_until"].fn
     parameters = inspect.signature(tool).parameters
-    assert parameters["until_whose_turn"].default == "mine"
+    assert parameters["whose_turn"].default == "mine"
 
     sub = next(a for a in seat_cli.build_parser()._actions if getattr(a, "choices", None))
     flags = {
         option
-        for action in sub.choices["pass"]._actions
+        for action in sub.choices["pass-until"]._actions
         for option in getattr(action, "option_strings", ())
     }
     for parameter, flag in SWITCHABLE_STOPS:
@@ -1124,7 +1122,7 @@ def test_the_tool_docstring_says_what_switching_each_stop_off_costs():
     # Whitespace-normalised: these are sentences wrapped for a source file, and
     # a line break landing mid-phrase must not read as the phrase being gone.
     docstring = " ".join(
-        (inspect.getdoc(server._tool_manager._tools["pass_priority"].fn) or "").split()
+        (inspect.getdoc(server._tool_manager._tools["pass_until"].fn) or "").split()
     )
 
     assert "CR 509.1" in docstring, "the reason the stack stop cannot cover blocking"
@@ -1170,3 +1168,189 @@ def test_the_two_briefs_tell_a_player_when_not_to_auto_pass():
         )
         assert "represents a trick" in flat, f"{name} never says a pass can be a bluff"
         assert "NEXT occurrence" in flat, f"{name} never says naming this step means the next"
+
+
+# -- the stack stop is a modifier, not a destination ---------------------------
+
+
+def test_a_spell_cast_in_a_window_the_run_passed_through_hands_priority_back(
+    client, game, monkeypatch
+):
+    """The owner's own example, end to end: "I'm passing until my
+    pre-combat-main, but opponent casts a spell in my upkeep - I need to have a
+    way to respond to it."
+
+    The destination (a step) and the stack stop are two different kinds of
+    thing, and this is why they combine rather than compete: the run is aimed
+    at alice's own precombat main and must still hand the board back the moment
+    bob's Lightning Bolt lands in her upkeep, with the bolt still on the stack
+    and alice holding priority - because CR 117.4 only resolves it once *all*
+    players have passed in succession, and alice's chance to respond is the
+    pass she has not made yet.
+
+    The response is taken for real, not merely asserted to be possible: alice
+    casts her own bolt on top of his.
+    """
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    add_card(client, game, "Mountain", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "bob", "hand")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    board = state(client, game)
+    bobs_mountain = next(card["id"] for card in board["battlefield"] if card["controller"] == "bob")
+    alices_mountain = next(
+        card["id"] for card in board["battlefield"] if card["controller"] == "alice"
+    )
+    bobs_bolt = board["hands"]["bob"][0]["id"]
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    cast = threading.Event()
+
+    def bob_bolts_in_alices_upkeep() -> None:
+        bob_client = TestClient(app)
+        for _ in range(2000):
+            board = bob_client.get(f"/api/games/{game}").json()
+            if board.get("priority_holder") == "bob" and board.get("step") == "upkeep":
+                bob_client.post(
+                    f"/api/games/{game}/actions/cast",
+                    json={
+                        "player": "bob",
+                        "card_id": bobs_bolt,
+                        "targets": ["alice"],
+                        "mana_sources": [bobs_mountain],
+                    },
+                )
+                bob_client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+                cast.set()
+                return
+            time.sleep(FAST_POLL)
+
+    thread = threading.Thread(target=bob_bolts_in_alices_upkeep, daemon=True)
+    thread.start()
+    try:
+        result = run_to_stop(alice, until_step="precombat_main", whose_turn="mine")
+    finally:
+        thread.join(timeout=10)
+
+    assert cast.is_set(), "bob never got the chance to cast, so nothing was tested"
+    assert result["stopped_because"] == "something new went on the stack: Lightning Bolt"
+    assert result["state"]["step"] == "upkeep", (
+        "the run was aimed at precombat_main and must have stopped short of it"
+    )
+    assert [obj["name"] for obj in result["state"]["stack"]] == ["Lightning Bolt"]
+    assert result["state"]["priority_holder"] == "alice", (
+        "a stop that does not hand priority back is not a chance to respond"
+    )
+
+    alices_bolt = state(client, game)["hands"]["alice"][0]["id"]
+    responded = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": alices_bolt,
+            "targets": ["bob"],
+            "mana_sources": [alices_mountain],
+        },
+    )
+    assert responded.json()["allowed"] is True, responded.json()
+    assert len(state(client, game)["stack"]) == 2, "alice's response is on top of bob's spell"
+
+
+def test_the_stack_stop_combines_with_the_destination_rather_than_replacing_it(
+    client, game, monkeypatch
+):
+    """The other half of "a modifier, not a tick of its own": with nothing
+    landing on the stack, the same run with the same stack stop switched on
+    still reaches the step it named. If the stack stop were a *destination*
+    this run would have no destination left to reach."""
+    seats, uids = wired(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    stock_libraries(client, game)
+    set_step(client, game, "upkeep")
+
+    with Opponent(game, "bob"):
+        result = run_to_stop(
+            alice,
+            until_step="precombat_main",
+            whose_turn="mine",
+            stop_on_stack=True,
+        )
+
+    assert result["stopped_because"] == "reached your precombat main"
+    assert result["state"]["step"] == "precombat_main"
+
+
+# -- never re-post a command while the game is paused on a decision -----------
+
+
+def test_a_run_never_passes_at_a_game_frozen_on_another_seats_decision(client, monkeypatch):
+    """A paused command is a game that no pass can move, and passing at it is
+    actively destructive.
+
+    The board here is the exact shape that produced the bug: on the real
+    Devourer of Destiny board, alice passes in her upkeep, bob passes, and
+    CR 117.4 resolves the trigger on top of the stack - which asks *alice* a
+    question. bob's pass pauses on it, and a pause rolls the committed game
+    back to before that attempt (`commands.py`), so what every client now reads
+    is `priority_holder: bob` with a `pending_decision` addressed to alice.
+
+    `priority_holder` is simply stale there: nobody holds priority in a frozen
+    game. A run that trusts it posts another `pass-priority`, which pauses
+    again and stores a *second* pause slot over the first - discarding the
+    question alice was about to answer. So the run hands the board back
+    instead. The half addressed to this seat is
+    `test_a_decision_addressed_to_this_seat_stops_the_run`; this is the other
+    seat's, which used to fall through every check and pass anyway.
+    """
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    info = boot_the_devourer(client)
+    game_id = info["game_id"]
+    alice_uid, bob_uid = info["seat_uids"]["alice"], info["seat_uids"]["bob"]
+    try:
+        reach_the_devourer_upkeep(client, info)
+        assert (
+            client.post(
+                f"/api/games/{game_id}/actions/pass-priority", json={"player": "alice"}
+            ).json()["allowed"]
+            is True
+        )
+        paused = client.post(
+            f"/api/games/{game_id}/actions/pass-priority", json={"player": "bob"}
+        ).json()
+        assert paused["paused"] is True, paused
+        assert paused["pending_decision"]["player"] == "alice", paused
+
+        board = client.get(f"/api/games/{game_id}", params={"uid": bob_uid}).json()
+        assert board["priority_holder"] == "bob", (
+            "this test is only meaningful while the stale priority holder is bob"
+        )
+        assert board["pending_decision"]["player"] == "alice"
+
+        bob = Seats(api="http://testserver", game_id=game_id).seat_for(bob_uid)
+        result = pass_until(bob, until_step="end_step", whose_turn="any")
+
+        assert result["passes"] == 0, (
+            "not one command may be posted while the game is paused on a decision"
+        )
+        assert result["finished"] is False, "the run can be continued once alice answers"
+        assert "alice" in result["stopped_because"], result["stopped_because"]
+        assert "only they can answer" in result["stopped_because"], result["stopped_because"]
+
+        # And the question alice was asked really did survive the run. Read
+        # from alice's own view: `visibility.py` redacts the four cards she is
+        # being shown out of bob's copy of the same decision, which is right.
+        asked = client.get(f"/api/games/{game_id}", params={"uid": alice_uid}).json()
+        answered = client.post(
+            f"/api/games/{game_id}/decide",
+            params={"uid": alice_uid},
+            json={
+                "player": "alice",
+                "moved": [asked["pending_decision"]["cards"][0]],
+                "top_order": None,
+            },
+        )
+        assert answered.status_code == 200, answered.text
+    finally:
+        client.delete(f"/api/games/{game_id}")

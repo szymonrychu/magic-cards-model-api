@@ -15,9 +15,20 @@ unredacted state - it could not leak it if it tried, which is the point:
 before, this file computed the correct answer and anything that talked to
 the API directly (skipping this process) got the unfiltered one instead.
 
+A seat has exactly two priority verbs, `pass` and `pass_until`, and that is
+the whole of what priority offers: CR 117.1 says the player with priority "may
+cast spells, activate abilities, and take special actions", and CR 117.3d says
+a player who chooses none of those passes. What follows from a pass is not a
+move anybody makes - CR 117.4 resolves the top of the stack, or ends the step,
+once all players have passed in succession, and CR 703.2 says turn-based
+actions "are not controlled by any player" - so there is deliberately no tool
+here for resolving the stack, stepping the turn on, or putting the turn marker
+somewhere. `pass_until` is the same verb run to a destination, with the stop
+conditions that decide when it hands the board back.
+
 Every action tool below - `cast`, `play_land`, `suspend`, `plot`, `foretell`,
-`cycle`, `activate`, `declare_attackers`, `declare_blockers`, `resolve_top`,
-`advance`, `decide`, `pass_priority` - is "one call, one meaningful action":
+`cycle`, `activate`, `declare_attackers`, `declare_blockers`, `decide`,
+`pass`, `pass_until` - is "one call, one meaningful action":
 it performs the action, checks once for this seat's next moment to act, and
 returns the outcome plus whatever state that check saw, all in one answer.
 This never blocks - MCP protocol revision 2026-07-28 removed resumability
@@ -184,10 +195,13 @@ def build_server(seats: Seats) -> MCPServer:
                   plain text, so an MCP client that understands the 2026-07-28
                   surface can tell at a glance that this call cannot go further
                   until you resolve it),
-                - you have priority (act, or pass_priority),
+                - you have priority (act, or pass),
                 - the game is over (a winner is set, or it is a draw),
-                - the step gives nobody priority (untap, cleanup) and you are the
-                  active player - your move is to advance the turn.
+                - the step gives nobody priority (untap, cleanup) and you are
+                  the active player. Nothing is asked of you there (CR 502.4,
+                  CR 514.3) and the step ends of its own accord (CR 500.3), so
+                  the game will already have moved on by the time you look
+                  again.
 
         This used to poll for up to a caller-given `max_seconds` (570s by
                 default), holding one request open the whole time; that parameter is
@@ -289,7 +303,8 @@ def build_server(seats: Seats) -> MCPServer:
                   `keyword` is still that keyword's own name either way.
 
                 A card you `suspend`d needs no `keyword`: once its last time counter
-                is off (see `advance`'s `suspend_upkeep`), the free cast it grants is
+                is off (removed one per the suspending player's own upkeep, CR
+                702.62a), the free cast it grants is
                 picked up automatically as a live `PlayPermission` - the same is true
                 of cascade and Past in Flames, and `play_permissions` in your state
                 names every one that is currently live for you.
@@ -400,8 +415,8 @@ def build_server(seats: Seats) -> MCPServer:
         name or id in your hand. `mana_sources` is comma-separated source ids;
         leave it empty to offer all your untapped mana sources.
 
-        Once N reaches zero (removed one per your own upkeep - see `advance`'s
-        `suspend_upkeep`), you may cast it without paying its mana cost: call
+        Once N reaches zero (removed one per your own upkeep, CR 702.62a),
+        you may cast it without paying its mana cost: call
         `cast` on it with no `keyword`, the permission is picked up
         automatically.
 
@@ -643,7 +658,7 @@ def build_server(seats: Seats) -> MCPServer:
           succession while the stack is empty", which ends the step or phase
           (CR 500.2, CR 505.2), and "any unspent mana left in a player's mana
           pool empties" as it does (CR 500.5) - so an auto-pass here could
-          bin the mana this very call just made. Spend it, or `pass_priority`
+          bin the mana this very call just made. Spend it, or `pass`
           deliberately to throw it away.
         - any other ability releases priority and then checks once for your
           next moment to act, unless `hold_priority` is true.
@@ -1019,176 +1034,51 @@ def build_server(seats: Seats) -> MCPServer:
 
         return act(seat, perform, hold_priority, reasoning=reasoning)
 
-    @server.tool()
+    @server.tool(name="pass")
     @_guarded(seats)
-    def pass_priority(
-        player_uid: str,
-        until: str = "",
-        until_whose_turn: str = "mine",
-        resume: str = "",
-        stop_on_stack: bool = True,
-        stop_when_attacked: bool = True,
-        stop_when_you_can_attack: bool = True,
-        reasoning: str = "",
-    ) -> str | InputRequiredResult:
-        """Pass priority - "I am done for now". If everyone passes with
-        spells on the stack, the top of the stack resolves. If everyone
-        passes with the stack empty, the step ends and the game rolls to the
-        next step on its own (the outcome says "end_step") - you do NOT call
-        advance() for that.
+    def pass_once(player_uid: str, reasoning: str = "") -> str | InputRequiredResult:
+        """Pass priority once - "I am done for now". The whole of what a player
+        does with priority besides acting.
+
+        CR 117.1 lists what the player with priority may do: "cast spells,
+        activate abilities, and take special actions". CR 117.3d is the rest of
+        it: "If a player has priority and chooses not to take any actions, that
+        player passes ... Then the next player in turn order receives priority."
+        There is no other priority move, and this tool is it.
+
+        What follows from a pass is not yours to do, and there is no tool for
+        it - CR 117.4: "If all players pass in succession ... the spell or
+        ability on top of the stack resolves or, if the stack is empty, the
+        phase or step ends." So `outcome` tells you which of the two your pass
+        caused:
+
+        - `outcome: "resolve_top"` - both seats had passed with something on
+          the stack, so its top object resolved and priority goes round again;
+        - `outcome: "end_step"` - both seats had passed on an empty stack, so
+          the step ended and the next one has already begun. The game rolls
+          itself through any step nobody receives priority in (untap, and
+          cleanup unless CR 514.3a's exception applies - CR 500.3), and
+          `settled_through` lists the steps it crossed;
+        - `outcome: "passed"` - it is simply the other seat's turn to decide.
 
         Checks once for your next moment to act and returns immediately -
         never blocks (poll-and-return, `seatkit.block_until_wake`'s own
         docstring: MCP 2026-07-28 removed resumability). Call again to keep
         checking, the same as any other action tool. There is no
-        `hold_priority` here (passing already is giving priority up); a
+        `hold_priority` here - passing already is giving priority up - and a
         refusal (it was not your turn to decide) returns immediately either
-        way, the same as it always did. A decision this very pass raises for
-        you comes back shaped `input_required` rather than plain text - see
-        `wait_for_priority`'s own docstring.
+        way. A decision this very pass raises for you comes back shaped
+        `input_required` rather than plain text - see `wait_for_priority`'s own
+        docstring.
 
-        ## `until`: pass repeatedly, up to a named point in the turn
+        `reasoning`: why you are done here, in your own words - required for an
+        agent seat.
 
-        Set `until` to a step name and this keeps passing every priority it
-        is given until it gets there, instead of handing you back one
-        priority at a time. `until_whose_turn` says whose turn that step has
-        to be in: "mine" (default), "opponent", or "any" for whichever comes
-        first. Legal steps, in turn order:
-
-            upkeep, draw, precombat_main, beginning_of_combat,
-            declare_attackers, declare_blockers, combat_damage,
-            end_of_combat, postcombat_main, end_step
-
-        (`untap` and `cleanup` are not offered: no player receives priority
-        in either, CR 502.4 and CR 514.3, so a run could never stop there.)
-
-        Naming the step you are standing in right now means its NEXT
-        occurrence, never this one: `until="upkeep"` asked during your upkeep
-        passes a whole turn round to your next one, which is what "until my
-        upkeep" means when you say it out loud.
-
-        **`until` does not block either.** It passes every priority you
-        currently hold - one after another, with no waiting between them,
-        each paid for by a pass that already went through - and returns the
-        moment it would otherwise have to wait for your opponent. It never
-        sleeps and never sits on a deadline; there is no `max_seconds`, and
-        there never should have been one.
-
-        `finished` says which kind of answer you got:
-
-        - `finished: true` - a real stop condition fired, and
-          `stopped_because` says which: the destination is reached; a
-          decision is addressed to you (CR 608.2d), which arrives shaped
-          `input_required`; something new landed on the stack; it is your own
-          declare-attackers step; you are being attacked and it is your
-          declare-blockers step; a pass was refused; the game ended.
-        - `finished: false` - the run got as far as it could on its own and
-          handed the board back, because your opponent holds priority or owes
-          a declaration only they can make. The answer carries a `resume`
-          token; **pass it back verbatim as `resume` on your next call**, and
-          the run continues as one run. Without it the next call starts a
-          fresh run stamped where you are standing right now, which would
-          make it skip the very combat step it is supposed to stop you at
-          (the exemption for "the step the run began in" - see below).
-
-        `passes` counts the priorities it actually gave up, in this call.
-
-        A combat stop never fires on the step the run *started* in, the same
-        way the destination never does: asking to auto-pass past combat while
-        already standing in that step is you having looked at combat and moved
-        on, and stopping there would make the call do nothing at all.
-
-        ## The three stop conditions you can switch off
-
-        All three default to true, because each defends against something you
-        cannot see going wrong. They are the same three checkboxes the human
-        player has in their own auto-pass panel, and they mean the same thing
-        there, so you and your opponent never stop in different places.
-
-        - `stop_on_stack=false` runs straight through anything the opponent
-          casts or any trigger that goes on the stack. You will not get the
-          chance to respond to it, so this is only for a stretch where you
-          have decided you are not responding to anything - no instant, no
-          activated ability, nothing worth holding up.
-        - `stop_when_attacked=false` runs straight through your own
-          declare-blockers step. **You will block nothing and take the whole
-          attack.** Declaring blockers is a turn-based action that "doesn't
-          use the stack" (CR 509.1), so nothing lands on the stack when you
-          are attacked and `stop_on_stack` cannot catch it for you. Switch
-          this off only when you have genuinely decided not to block - an
-          empty board, or a life total the attack cannot reach. The run stops
-          whenever you are the defending player in a declare-blockers step
-          with at least one attacker declared; it does not try to work out
-          whether any block would be *legal* (evasion, menace, protection,
-          CR 509.1b) - that is the engine's job, and you decide what to do
-          with the stop.
-        - `stop_when_you_can_attack=false` runs straight through your own
-          declare-attackers step. **You will attack with nothing that turn.**
-          Declaring attackers is a turn-based action that "doesn't use the
-          stack" too (CR 508.1), so again nothing lands on the stack to catch.
-          This costs you an attack rather than the game, and the reason it
-          still stops by default is that skipping it is *silent*: the engine
-          treats a player who never declares as declaring nobody, which is
-          always legal, so the turn simply produces no attack and nothing
-          anywhere tells you why. Leaving it on means a run aimed past combat
-          - `until="postcombat_main"`, `until="end_step"` - stops in your
-          declare-attackers step every one of your turns. That is the point:
-          you are being asked before the attack goes by. Switching it off is
-          the deliberate statement "I am not attacking this turn", not a way
-          to make the call quieter. It does not check whether you control a
-          creature that could legally attack (summoning sickness, defender,
-          tap state, CR 508.1's restrictions and requirements) - that is the
-          engine's job too.
-
-        ## Passing by hand is still a play
-
-        Do not reach for `until` every time. A pass your opponent watches you
-        make is information: holding priority with mana up represents a trick
-        whether or not you have one, and auto-passing a window where they
-        expect a flash threat throws that away. Auto-passing every time also
-        tells them "I have nothing" just as reliably. Use `until` for the
-        stretches where you genuinely cannot act, and pass by hand where the
-        pass itself is part of the game."""
+        Use `pass_until` instead for a stretch of windows you cannot act in;
+        use this one where the pass itself is part of the game."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        if until:
-            problem = seatkit.autopass_target_error(until, until_whose_turn)
-            if problem:
-                return problem
-            try:
-                resumed = json.loads(resume) if resume else None
-            except ValueError as exc:
-                return (
-                    f"`resume` is not JSON: {exc}. Hand it back exactly as the "
-                    "previous answer gave it to you, or leave it out to start a new run."
-                )
-            if resumed is not None and not isinstance(resumed, dict):
-                return (
-                    "`resume` must be the object a previous `pass_priority(until=...)` "
-                    "answer carried under `resume`, handed back unchanged."
-                )
-            # Through `_tool_result`, not `json.dumps`: a run stops *on* a
-            # decision addressed to this seat (`seatkit.pass_until` returns
-            # the moment `autopass_stop_reason` sees one, with the whole
-            # state under `"state"`), which is exactly the case
-            # `InputRequiredResult` exists for. This was the one action tool
-            # returning raw text on that path, so the one tool most likely to
-            # be mid-run when a decision arrives was also the only one that
-            # could not say so on the wire.
-            return _tool_result(
-                seat,
-                seatkit.pass_until(
-                    seat,
-                    until_step=until,
-                    whose_turn=until_whose_turn,
-                    stop_on_stack=stop_on_stack,
-                    stop_when_attacked=stop_when_attacked,
-                    stop_when_you_can_attack=stop_when_you_can_attack,
-                    resume=resumed,
-                    reasoning=reasoning or None,
-                ),
-            )
         body: dict[str, Any] = {"player": seat.player}
         if reasoning:
             body["reasoning"] = reasoning
@@ -1202,77 +1092,169 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
-    def resolve_top(
+    def pass_until(
         player_uid: str,
-        hold_priority: bool = False,
+        step: str,
+        whose_turn: str = "mine",
+        resume: str = "",
+        stop_on_stack: bool = True,
+        stop_when_attacked: bool = True,
+        stop_when_you_can_attack: bool = True,
         reasoning: str = "",
     ) -> str | InputRequiredResult:
-        """Resolve the top object on the stack. Normally the engine does this
-        for you when everyone passes; use this only if a pass left the stack
-        unresolved. Releases priority and then checks once for your next
-        moment to act, unless `hold_priority` is true - it never blocks or
-        waits; see `cast`'s docstring for the shape."""
+        """Keep passing priority - one `pass` after another, automatically -
+        until something worth looking at happens. The same verb, run to a
+        destination instead of one window at a time.
+
+        ## Where it is going: `step` and `whose_turn`
+
+        `step` is the point in the turn to run to, and `whose_turn` says whose
+        turn that step has to be in: "mine" (default), "opponent", or "any" for
+        whichever comes first. Legal steps, in turn order:
+
+            upkeep, draw, precombat_main, beginning_of_combat,
+            declare_attackers, declare_blockers, combat_damage,
+            end_of_combat, postcombat_main, end_step
+
+        (`untap` and `cleanup` are not offered: no player receives priority in
+        either, CR 502.4 and CR 514.3, so a run could never stop there. The
+        game crosses both on its own - CR 500.3.)
+
+        Naming the step you are standing in right now means its NEXT
+        occurrence, never this one: `step="upkeep"` asked during your upkeep
+        passes a whole turn round to your next one, which is what "until my
+        upkeep" means when you say it out loud.
+
+        **It does not block.** It passes every priority you currently hold -
+        one after another, with no waiting between them, each paid for by a
+        pass that already went through - and returns the moment it would
+        otherwise have to wait for your opponent. It never sleeps and never
+        sits on a deadline.
+
+        `finished` says which kind of answer you got:
+
+        - `finished: true` - a real stop condition fired, and `stopped_because`
+          says which: the destination is reached; a decision is addressed to
+          you (CR 608.2d), which arrives shaped `input_required`; something new
+          landed on the stack; it is your own declare-attackers step; you are
+          being attacked and it is your declare-blockers step; a pass was
+          refused; the game ended.
+        - `finished: false` - the run got as far as it could on its own and
+          handed the board back, because your opponent holds priority or the
+          game is frozen on a question only they can answer. The answer carries
+          a `resume` token; **pass it back verbatim as `resume` on your next
+          call**, and the run continues as one run. Without it the next call
+          starts a fresh run stamped where you are standing right now, which
+          would make it skip the very combat step it is supposed to stop you at
+          (the exemption for "the step the run began in" - see below).
+
+        `passes` counts the priorities it actually gave up, in this call.
+
+        A combat stop never fires on the step the run *started* in, the same
+        way the destination never does: asking to auto-pass past combat while
+        already standing in that step is you having looked at combat and moved
+        on, and stopping there would make the call do nothing at all.
+
+        ## The three stop conditions you can switch off
+
+        These are not destinations and they do not replace `step` - they are
+        extra reasons to stop *on the way there*, and all three default to true
+        because each defends against something you cannot see going wrong. They
+        are the same three ticks the human player has in their own stops panel,
+        and they mean the same thing there, so you and your opponent never stop
+        in different places.
+
+        - `stop_on_stack=false` runs straight through anything the opponent
+          casts or any trigger that goes on the stack. **This is the one that
+          gives you your chance to respond**: a spell cast in a window you were
+          passing through - your opponent's instant in your upkeep while you
+          were running to your own precombat main - is only answerable while
+          the stack still holds it, and CR 117.4 resolves it the moment all
+          players have passed in succession. Left on (the default), the run
+          hands the board back with the spell still on the stack and priority
+          still yours. Switch it off only for a stretch where you have decided
+          you are responding to nothing - no instant, no activated ability,
+          nothing worth holding up.
+        - `stop_when_attacked=false` runs straight through your own
+          declare-blockers step. **You will block nothing and take the whole
+          attack.** Declaring blockers is a turn-based action that "doesn't use
+          the stack" (CR 509.1), so nothing lands on the stack when you are
+          attacked and `stop_on_stack` cannot catch it for you. Switch this off
+          only when you have genuinely decided not to block - an empty board, or
+          a life total the attack cannot reach. The run stops whenever you are
+          the defending player in a declare-blockers step with at least one
+          attacker declared; it does not try to work out whether any block would
+          be *legal* (evasion, menace, protection, CR 509.1b) - that is the
+          engine's job, and you decide what to do with the stop.
+        - `stop_when_you_can_attack=false` runs straight through your own
+          declare-attackers step. **You will attack with nothing that turn.**
+          Declaring attackers is a turn-based action that "doesn't use the
+          stack" too (CR 508.1), so again nothing lands on the stack to catch.
+          This costs you an attack rather than the game, and the reason it
+          still stops by default is that skipping it is *silent*: the engine
+          treats a player who never declares as declaring nobody, which is
+          always legal, so the turn simply produces no attack and nothing
+          anywhere tells you why. Leaving it on means a run aimed past combat -
+          `step="postcombat_main"`, `step="end_step"` - stops in your
+          declare-attackers step every one of your turns. That is the point:
+          you are being asked before the attack goes by. Switching it off is
+          the deliberate statement "I am not attacking this turn", not a way to
+          make the call quieter. It does not check whether you control a
+          creature that could legally attack (summoning sickness, defender, tap
+          state, CR 508.1's restrictions and requirements) - that is the
+          engine's job too.
+
+        ## Passing by hand is still a play
+
+        Do not reach for this every time. A pass your opponent watches you make
+        is information: holding priority with mana up represents a trick whether
+        or not you have one, and auto-passing a window where they expect a flash
+        threat throws that away. Auto-passing every time also tells them "I have
+        nothing" just as reliably. Use this for the stretches where you
+        genuinely cannot act, and pass by hand where the pass itself is part of
+        the game.
+
+        `reasoning`: why you are giving up this whole stretch, in your own
+        words - said once, for the run, and threaded onto every pass it
+        makes."""
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        body: dict[str, Any] = {"player": seat.player}
-        if reasoning:
-            body["reasoning"] = reasoning
-
-        def perform() -> Any:
-            answer = seat.call_json("POST", f"/api/games/{seat.game_id()}/resolve-top", body)
-            return {"allowed": answer.get("reason") is None, **answer}
-
-        return act(seat, perform, hold_priority, reasoning=reasoning)
-
-    @server.tool()
-    @_guarded(seats)
-    def advance(
-        player_uid: str,
-        hold_priority: bool = False,
-        reasoning: str = "",
-    ) -> str | InputRequiredResult:
-        """Move to the next step or phase. Passing priority already rolls the
-        game through every step where players get priority; this is only for
-        the steps nobody gets priority in - untap and cleanup on your own
-        turn. Releases priority and then checks once for your next moment to
-        act, unless `hold_priority` is true - it never blocks or waits; see
-        `cast`'s docstring for the shape."""
-        seat = resolve(player_uid)
-        if seat is None:
-            return NO_SUCH_SEAT
-        body: dict[str, Any] = {"player": seat.player}
-        if reasoning:
-            body["reasoning"] = reasoning
-
-        def perform() -> Any:
-            return {
-                "allowed": True,
-                **seat.call_json("POST", f"/api/games/{seat.game_id()}/advance", body),
-            }
-
-        return act(seat, perform, hold_priority, reasoning=reasoning)
-
-    @server.tool()
-    @_guarded(seats)
-    def set_step(player_uid: str, step: str, reasoning: str = "") -> str:
-        """Jump the turn marker to a named step ("precombat_main",
-        "beginning_of_combat", "declare_attackers", "declare_blockers",
-        "combat_damage", "end_step", ...). Forward moves are real step
-        changes; use advance() for ordinary flow. Not a priority action -
-        does not block.
-
-        `reasoning`: why you are moving the marker there, in your own words -
-        required, and refused without it. This one moves the game's own turn
-        structure and can fire the suspend upkeep on the way in, so it is a
-        real move, not board setup."""
-        seat = resolve(player_uid)
-        if seat is None:
-            return NO_SUCH_SEAT
-        body = {"step": step, "player": seat.player}
-        if reasoning:
-            body["reasoning"] = reasoning
-        return seat.call("PUT", f"/api/games/{seat.game_id()}/step", body)
+        problem = seatkit.autopass_target_error(step, whose_turn)
+        if problem:
+            return problem
+        try:
+            resumed = json.loads(resume) if resume else None
+        except ValueError as exc:
+            return (
+                f"`resume` is not JSON: {exc}. Hand it back exactly as the "
+                "previous answer gave it to you, or leave it out to start a new run."
+            )
+        if resumed is not None and not isinstance(resumed, dict):
+            return (
+                "`resume` must be the object a previous `pass_until` answer "
+                "carried under `resume`, handed back unchanged."
+            )
+        # Through `_tool_result`, not `json.dumps`: a run stops *on* a decision
+        # addressed to this seat (`seatkit.pass_until` returns the moment
+        # `autopass_stop_reason` sees one, with the whole state under
+        # `"state"`), which is exactly the case `InputRequiredResult` exists
+        # for. This was the one action tool returning raw text on that path, so
+        # the one tool most likely to be mid-run when a decision arrives was
+        # also the only one that could not say so on the wire.
+        return _tool_result(
+            seat,
+            seatkit.pass_until(
+                seat,
+                until_step=step,
+                whose_turn=whose_turn,
+                stop_on_stack=stop_on_stack,
+                stop_when_attacked=stop_when_attacked,
+                stop_when_you_can_attack=stop_when_you_can_attack,
+                resume=resumed,
+                reasoning=reasoning or None,
+            ),
+        )
 
     @server.tool()
     @_guarded(seats)
