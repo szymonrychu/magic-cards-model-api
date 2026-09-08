@@ -42,31 +42,59 @@ from . import (
 )
 from .repository_postgres import VersionConflict
 from .schemas import (
+    ActionOutcome,
     ActivateRequest,
     ActorRequest,
     AdvanceRequest,
+    AdvanceResponse,
+    AffordancesResponse,
     AttackRequest,
+    CardLookupResponse,
+    CardNamesResponse,
     CastRequest,
     ConcedeRequest,
+    ConcedeResponse,
     CrewRequest,
     CycleRequest,
     DecideRequest,
+    DecideResponse,
     DeclareBlockersRequest,
     DeclaredPairRequest,
+    DeleteGameResponse,
+    GameLogResponse,
+    GameStateView,
+    HealthResponse,
+    LegalActionsResponse,
+    ListGamesResponse,
     ManaPoolUpdate,
     MoveCard,
+    MoveCardSuccessResponse,
     MulliganRequest,
+    MulliganResponse,
     NewGame,
+    NewGameResponse,
     OpeningHandActionRequest,
+    OpeningHandActionResponse,
+    OpeningHandFinishResponse,
     PassPriorityRequest,
+    PassPriorityResponse,
     PatchCard,
+    PatchCardResponse,
     PatchPlayer,
     PlayLandRequest,
     PregameSettleRequest,
+    PregameSettleResponse,
     PutCard,
+    PutCardResponse,
     ReportProblemRequest,
+    ReportProblemResponse,
+    ResolveTopResponse,
+    SeatResponse,
+    SetStepResponse,
     SpecialActionRequest,
+    StateBasedActionsResponse,
     StepUpdate,
+    TapCardResponse,
     TargetRequest,
 )
 from .serialize import state_view
@@ -579,7 +607,7 @@ def frontend_dir() -> Path | None:
 # -- sessions ---------------------------------------------------------------
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthResponse, response_model_exclude_unset=True)
 def health() -> dict[str, Any]:
     """`protocol_version` is what `mcp.py`'s startup self-check compares
     against its own build of `seatkit.py` - see that constant's docstring for
@@ -599,7 +627,7 @@ def health() -> dict[str, Any]:
     }
 
 
-@app.post("/api/games")
+@app.post("/api/games", response_model=NewGameResponse, response_model_exclude_unset=True)
 def create_game(req: NewGame) -> dict[str, Any]:
     names = [player.username for player in req.players]
     if len(set(names)) != len(names):
@@ -640,7 +668,9 @@ def create_game(req: NewGame) -> dict[str, Any]:
     }
 
 
-@app.get("/api/games/{game_id}/seat")
+@app.get(
+    "/api/games/{game_id}/seat", response_model=SeatResponse, response_model_exclude_unset=True
+)
 def whose_seat(game_id: str, uid: str) -> dict[str, Any]:
     """Whose seat this uid opens. A uid that is not in the game is nobody's."""
     game_or_404(game_id)
@@ -650,7 +680,7 @@ def whose_seat(game_id: str, uid: str) -> dict[str, Any]:
     return {"player": player}
 
 
-@app.get("/api/games")
+@app.get("/api/games", response_model=ListGamesResponse, response_model_exclude_unset=True)
 def list_games() -> dict[str, Any]:
     games = []
     for game_id in store.ids():
@@ -665,7 +695,7 @@ def list_games() -> dict[str, Any]:
     return {"games": games}
 
 
-@app.get("/api/games/{game_id}")
+@app.get("/api/games/{game_id}", response_model=GameStateView, response_model_exclude_unset=True)
 def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
     """The board, filtered to what `uid` may see (`visibility.py`).
 
@@ -685,7 +715,9 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
     return visibility.redact_view(state_view(game, game_id), viewer)
 
 
-@app.get("/api/games/{game_id}/log")
+@app.get(
+    "/api/games/{game_id}/log", response_model=GameLogResponse, response_model_exclude_unset=True
+)
 def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, Any]:
     """The action log.
 
@@ -722,7 +754,9 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
     return {"log": log, "last_seq": last_seq}
 
 
-@app.delete("/api/games/{game_id}")
+@app.delete(
+    "/api/games/{game_id}", response_model=DeleteGameResponse, response_model_exclude_unset=True
+)
 def delete_game(game_id: str, uid: str | None = None, key: str | None = None) -> dict[str, Any]:
     """Delete a game outright. `uid` must be a seat uid of this game, or `key`
     this game's admin key - the same guard `decks_api.end_lobby_game` uses,
@@ -747,17 +781,17 @@ def delete_game(game_id: str, uid: str | None = None, key: str | None = None) ->
 # -- cards ------------------------------------------------------------------
 
 
-@app.get("/api/card-names")
+@app.get("/api/card-names", response_model=CardNamesResponse, response_model_exclude_unset=True)
 def card_names(q: str = "") -> dict[str, Any]:
     return {"suggestions": scryfall.autocomplete(q)}
 
 
-@app.get("/api/cards")
+@app.get("/api/cards", response_model=CardLookupResponse, response_model_exclude_unset=True)
 def lookup_card_query(name: str) -> dict[str, Any]:
     return scryfall.lookup_card(name)
 
 
-@app.get("/api/cards/{name}")
+@app.get("/api/cards/{name}", response_model=CardLookupResponse, response_model_exclude_unset=True)
 def lookup_card(name: str) -> dict[str, Any]:
     return scryfall.lookup_card(name)
 
@@ -765,7 +799,9 @@ def lookup_card(name: str) -> dict[str, Any]:
 # -- setting the board up ---------------------------------------------------
 
 
-@app.post("/api/games/{game_id}/cards")
+@app.post(
+    "/api/games/{game_id}/cards", response_model=PutCardResponse, response_model_exclude_unset=True
+)
 def put_card(game_id: str, req: PutCard) -> dict[str, Any]:
     with store.locked(game_id) as game:
         game.player(req.player)  # 404 when unknown
@@ -804,7 +840,11 @@ def put_card(game_id: str, req: PutCard) -> dict[str, Any]:
         return view
 
 
-@app.post("/api/games/{game_id}/cards/{card_id}/move")
+@app.post(
+    "/api/games/{game_id}/cards/{card_id}/move",
+    response_model=ActionOutcome | MoveCardSuccessResponse,
+    response_model_exclude_unset=True,
+)
 def move_card(game_id: str, card_id: UUID, req: MoveCard) -> dict[str, Any]:
     with store.locked(game_id) as game:
         state = card_or_404(game, card_id)
@@ -835,7 +875,11 @@ def move_card(game_id: str, card_id: UUID, req: MoveCard) -> dict[str, Any]:
         return {**state_view(game, game_id), **outcome.body()}
 
 
-@app.post("/api/games/{game_id}/cards/{card_id}/tap")
+@app.post(
+    "/api/games/{game_id}/cards/{card_id}/tap",
+    response_model=TapCardResponse,
+    response_model_exclude_unset=True,
+)
 def tap_card(game_id: str, card_id: UUID, req: dict[str, bool]) -> dict[str, Any]:
     with store.locked(game_id) as game:
         state = card_or_404(game, card_id)
@@ -852,7 +896,11 @@ def tap_card(game_id: str, card_id: UUID, req: dict[str, bool]) -> dict[str, Any
         return audit_outcome(game_id, "tap", outcome, **keys)
 
 
-@app.patch("/api/games/{game_id}/cards/{card_id}")
+@app.patch(
+    "/api/games/{game_id}/cards/{card_id}",
+    response_model=PatchCardResponse,
+    response_model_exclude_unset=True,
+)
 def patch_card(game_id: str, card_id: UUID, req: PatchCard) -> dict[str, Any]:
     with store.locked(game_id) as game:
         state = card_or_404(game, card_id)
@@ -872,7 +920,11 @@ def patch_card(game_id: str, card_id: UUID, req: PatchCard) -> dict[str, Any]:
         return view
 
 
-@app.patch("/api/games/{game_id}/players/{username}")
+@app.patch(
+    "/api/games/{game_id}/players/{username}",
+    response_model=GameStateView,
+    response_model_exclude_unset=True,
+)
 def patch_player(game_id: str, username: str, req: PatchPlayer) -> dict[str, Any]:
     with store.locked(game_id) as game:
         player = game.player(username)
@@ -886,7 +938,11 @@ def patch_player(game_id: str, username: str, req: PatchPlayer) -> dict[str, Any
         return state_view(game, game_id)
 
 
-@app.put("/api/games/{game_id}/players/{username}/mana-pool")
+@app.put(
+    "/api/games/{game_id}/players/{username}/mana-pool",
+    response_model=GameStateView,
+    response_model_exclude_unset=True,
+)
 def set_mana_pool(game_id: str, username: str, req: ManaPoolUpdate) -> dict[str, Any]:
     with store.locked(game_id) as game:
         player = game.player(username)
@@ -911,7 +967,9 @@ def set_mana_pool(game_id: str, username: str, req: ManaPoolUpdate) -> dict[str,
         return state_view(game, game_id)
 
 
-@app.put("/api/games/{game_id}/step")
+@app.put(
+    "/api/games/{game_id}/step", response_model=SetStepResponse, response_model_exclude_unset=True
+)
 def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str, Any]:
     """Jump the turn marker to a named step. The harness's own way to stage a
     board, and deliberately NOT a seat verb: no rule puts the turn marker
@@ -955,7 +1013,11 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
 # -- the heart: legality questions ------------------------------------------
 
 
-@app.post("/api/games/{game_id}/actions/cast")
+@app.post(
+    "/api/games/{game_id}/actions/cast",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     """Cast a card. `dry_run` never asks anything unscripted (it builds and
     rewinds its `Casting` against an isolated probe copy of the game - see
@@ -980,7 +1042,11 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/suspend")
+@app.post(
+    "/api/games/{game_id}/actions/suspend",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
@@ -1001,7 +1067,11 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/plot")
+@app.post(
+    "/api/games/{game_id}/actions/plot",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
@@ -1021,7 +1091,11 @@ def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/foretell")
+@app.post(
+    "/api/games/{game_id}/actions/foretell",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
@@ -1042,7 +1116,11 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/cycle")
+@app.post(
+    "/api/games/{game_id}/actions/cycle",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
@@ -1064,7 +1142,11 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/target")
+@app.post(
+    "/api/games/{game_id}/actions/target",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_target(game_id: str, req: TargetRequest) -> dict[str, Any]:
     game = game_or_404(game_id)
     outcome = engine_api.check_target(game, req)
@@ -1079,7 +1161,11 @@ def action_target(game_id: str, req: TargetRequest) -> dict[str, Any]:
     )
 
 
-@app.get("/api/games/{game_id}/affordances/{card_id}")
+@app.get(
+    "/api/games/{game_id}/affordances/{card_id}",
+    response_model=AffordancesResponse,
+    response_model_exclude_unset=True,
+)
 def get_affordances(
     game_id: str,
     card_id: UUID,
@@ -1132,7 +1218,11 @@ def get_affordances(
     return result
 
 
-@app.get("/api/games/{game_id}/legal-actions")
+@app.get(
+    "/api/games/{game_id}/legal-actions",
+    response_model=LegalActionsResponse,
+    response_model_exclude_unset=True,
+)
 def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict[str, Any]:
     """Every action `player` could legally take right now
     (`machines.legal_actions.legal_actions`, Phase 1) - the api's own door
@@ -1197,7 +1287,11 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     return {"actions": [action.model_dump(mode="json") for action in actions]}
 
 
-@app.post("/api/games/{game_id}/actions/concede")
+@app.post(
+    "/api/games/{game_id}/actions/concede",
+    response_model=ConcedeResponse,
+    response_model_exclude_unset=True,
+)
 def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     """Concede (CR 104.3a). A player may do this at any time, and leaves the
     game immediately - there is no priority check and nothing to refuse, which
@@ -1240,7 +1334,11 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     return {"allowed": True, "winner": result.outcome["winner"], "log_seq": logged}
 
 
-@app.post("/api/games/{game_id}/actions/activate")
+@app.post(
+    "/api/games/{game_id}/actions/activate",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
     records.require_reasoning(game_id, req.player, req.reasoning)
     result, _, legal_before, seq = _run_command(game_id, "activate_ability", req)
@@ -1260,7 +1358,11 @@ def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/crew")
+@app.post(
+    "/api/games/{game_id}/actions/crew",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
@@ -1396,7 +1498,11 @@ def _answer_declaration(
     return {"allowed": True, "log_seq": seq}
 
 
-@app.post("/api/games/{game_id}/actions/attack")
+@app.post(
+    "/api/games/{game_id}/actions/attack",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> dict[str, Any]:
     """Declare attackers (CR 508.1) - see `_answer_declaration`. `dry_run`
     answers without touching the pending decision at all: it only checks
@@ -1426,7 +1532,11 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     )
 
 
-@app.post("/api/games/{game_id}/actions/play-land")
+@app.post(
+    "/api/games/{game_id}/actions/play-land",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
     records.require_reasoning(game_id, req.player, req.reasoning)
     result, _, legal_before, seq = _run_command(game_id, "play_land", req)
@@ -1443,7 +1553,11 @@ def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
     )
 
 
-@app.post("/api/games/{game_id}/actions/pass-priority")
+@app.post(
+    "/api/games/{game_id}/actions/pass-priority",
+    response_model=PassPriorityResponse,
+    response_model_exclude_unset=True,
+)
 def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, Any]:
     """Pass priority - "I am done for now". `outcome` tells the caller what
     the pass caused: `resolve_top` (the stack's top resolved, priority goes
@@ -1530,7 +1644,11 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     }
 
 
-@app.post("/api/games/{game_id}/actions/declare-blockers")
+@app.post(
+    "/api/games/{game_id}/actions/declare-blockers",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
 def action_declare_blockers(
     game_id: str, req: DeclareBlockersRequest, uid: str | None = None
 ) -> dict[str, Any]:
@@ -1552,7 +1670,11 @@ def action_declare_blockers(
 # -- running the game forward ------------------------------------------------
 
 
-@app.post("/api/games/{game_id}/state-based-actions")
+@app.post(
+    "/api/games/{game_id}/state-based-actions",
+    response_model=StateBasedActionsResponse,
+    response_model_exclude_unset=True,
+)
 def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[str, Any]:
     """Check and perform this game's state-based actions right now.
 
@@ -1599,7 +1721,11 @@ def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[s
     return {**state_view(result.game, game_id), **result.outcome}
 
 
-@app.post("/api/games/{game_id}/resolve-top")
+@app.post(
+    "/api/games/{game_id}/resolve-top",
+    response_model=ResolveTopResponse,
+    response_model_exclude_unset=True,
+)
 def resolve_top(
     game_id: str, req: ActorRequest | None = None, uid: str | None = None
 ) -> dict[str, Any]:
@@ -1644,7 +1770,11 @@ def resolve_top(
     }
 
 
-@app.post("/api/games/{game_id}/advance")
+@app.post(
+    "/api/games/{game_id}/advance",
+    response_model=ActionOutcome | AdvanceResponse,
+    response_model_exclude_unset=True,
+)
 def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[str, Any]:
     """Move the turn marker forward. Refused (`allowed: False`) rather than
     performed when the stack is non-empty in a step that grants priority
@@ -1722,7 +1852,11 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     }
 
 
-@app.post("/api/games/{game_id}/report")
+@app.post(
+    "/api/games/{game_id}/report",
+    response_model=ReportProblemResponse,
+    response_model_exclude_unset=True,
+)
 def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
     """A player files a problem report straight into the game log."""
     game = game_or_404(game_id)
@@ -1731,7 +1865,9 @@ def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
     return {"recorded": True}
 
 
-@app.post("/api/games/{game_id}/decide")
+@app.post(
+    "/api/games/{game_id}/decide", response_model=DecideResponse, response_model_exclude_unset=True
+)
 def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str, Any]:
     """Answer this game's pending decision - most kinds CR 608.2d,
     `choose_targets` CR 603.3d/601.2c, `order_triggers` CR 603.3b, and
@@ -1997,7 +2133,11 @@ def _settled(game: Game, result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-@app.post("/api/games/{game_id}/pregame/mulligan")
+@app.post(
+    "/api/games/{game_id}/pregame/mulligan",
+    response_model=MulliganResponse,
+    response_model_exclude_unset=True,
+)
 def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None) -> dict[str, Any]:
     """Declare whether this seat takes a mulligan (CR 103.5).
 
@@ -2031,7 +2171,11 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
         )
 
 
-@app.post("/api/games/{game_id}/pregame/opening-hand/action")
+@app.post(
+    "/api/games/{game_id}/pregame/opening-hand/action",
+    response_model=OpeningHandActionResponse,
+    response_model_exclude_unset=True,
+)
 def pregame_opening_hand_action(
     game_id: str, req: OpeningHandActionRequest, uid: str | None = None
 ) -> dict[str, Any]:
@@ -2055,7 +2199,11 @@ def pregame_opening_hand_action(
         )
 
 
-@app.post("/api/games/{game_id}/pregame/opening-hand/finish")
+@app.post(
+    "/api/games/{game_id}/pregame/opening-hand/finish",
+    response_model=OpeningHandFinishResponse,
+    response_model_exclude_unset=True,
+)
 def pregame_opening_hand_finish(
     game_id: str, req: ActorRequest, uid: str | None = None
 ) -> dict[str, Any]:
@@ -2082,7 +2230,11 @@ def pregame_opening_hand_finish(
         return _settled(game, result)
 
 
-@app.post("/api/games/{game_id}/pregame/settle")
+@app.post(
+    "/api/games/{game_id}/pregame/settle",
+    response_model=PregameSettleResponse,
+    response_model_exclude_unset=True,
+)
 def pregame_settle(
     game_id: str, req: PregameSettleRequest | None = None, uid: str | None = None
 ) -> dict[str, Any]:
