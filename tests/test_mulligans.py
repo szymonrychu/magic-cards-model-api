@@ -783,6 +783,75 @@ def test_the_whole_pregame_is_reachable_from_the_cli_alone(monkeypatch, client, 
     capsys.readouterr()
 
 
+def test_the_cli_pregame_carries_reasoning_for_an_agent_seat(monkeypatch, client, capsys) -> None:
+    """`mulligan`/`opening-hand-done` through `seat_cli` must thread
+    `--reasoning` onto the request body: an agent seat's declaration is gated
+    on `reasoning` exactly like every other mutating action it takes (T10,
+    `records.require_reasoning`), and the two CLI pregame tests above never
+    caught a missing one because neither seat there is an agent seat - `boot`
+    defaults `ai_players` to `()`. `bob` here is the agent seat, so an
+    unreasoned CLI call must be refused (422) and a reasoned one must succeed.
+    """
+    info = boot(client, alice_deck=PLAIN_DECK, bob_deck=PLAIN_DECK, seed=1, ai_players=("bob",))
+
+    # `seat_cli`'s `mulligan` branch prints whatever the API answers with and
+    # always returns 0 (unlike `cast`/`activate`, it never inspects the
+    # answer for a refusal) - so the refusal shows up in stdout, not in `rc`.
+    run_cli(
+        monkeypatch,
+        client,
+        ["--uid", info["seat_uids"]["bob"], "--game", info["game_id"], "mulligan"],
+    )
+    printed = capsys.readouterr().out
+    assert "needs `reasoning`" in printed, (
+        f"an agent seat's declaration must be refused with no reasoning given: {printed}"
+    )
+    assert view(client, info, "alice")["pregame"]["awaiting_mulligan"] == ["alice", "bob"], (
+        "the refused, unreasoned declaration must not have counted as bob declaring"
+    )
+
+    reasoned = run_cli(
+        monkeypatch,
+        client,
+        [
+            "--uid",
+            info["seat_uids"]["bob"],
+            "--game",
+            info["game_id"],
+            "--reasoning",
+            "this hand can function",
+            "mulligan",
+        ],
+    )
+    assert reasoned == 0, capsys.readouterr().out
+    assert view(client, info, "alice")["pregame"]["awaiting_mulligan"] == ["alice"], (
+        "bob's reasoned CLI declaration should have left only alice to declare"
+    )
+
+    # alice is not an agent seat, so her own declaration needs no reasoning.
+    declare(client, info, "alice", take=False)
+
+    for player in ("alice", "bob"):
+        rc = run_cli(
+            monkeypatch,
+            client,
+            [
+                "--uid",
+                info["seat_uids"][player],
+                "--game",
+                info["game_id"],
+                "--reasoning",
+                "nothing to do from my opening hand",
+                "opening-hand-done",
+            ],
+        )
+        assert rc == 0, capsys.readouterr().out
+
+    assert view(client, info, "alice")["pregame"] is None, (
+        "CR 103.8's first turn never began - a reasoned opening-hand-done was still refused"
+    )
+
+
 # -- a bot seat that goes quiet must not hang the human ----------------------
 #
 # The seat CLI above gives an AI seat a *door* to the pregame. It does not

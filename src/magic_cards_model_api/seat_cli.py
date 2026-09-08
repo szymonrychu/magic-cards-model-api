@@ -109,6 +109,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--uid", required=True, help="your seat uid, given at dispatch")
     parser.add_argument("--game", default=None, help="game id; default: the live game")
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base url; default {DEFAULT_API}")
+    parser.add_argument(
+        "--reasoning",
+        default=None,
+        help=(
+            "why you are doing this, in your own words - required by the API for "
+            "an agent seat on every mutating command (T10/seatkit-4)"
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("state", help="the game as you may see it, right now")
@@ -626,7 +634,7 @@ def run(argv: list[str] | None = None) -> int:
             print(json.dumps(perform(), indent=1, sort_keys=True))
             return
         hold = args.hold or args.command in SPECIAL_ACTIONS
-        result = run_action(seat, perform, hold_priority=hold)
+        result = run_action(seat, perform, hold_priority=hold, reasoning=args.reasoning)
         print(json.dumps(result, indent=1, sort_keys=True))
         note(result.get("state") if isinstance(result, dict) else None)
 
@@ -656,6 +664,8 @@ def run(argv: list[str] | None = None) -> int:
             body["x_value"] = args.x
         if args.keyword:
             body["keyword"] = args.keyword
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cast", body),
             dry_run=args.dry_run,
@@ -669,6 +679,8 @@ def run(argv: list[str] | None = None) -> int:
         sources = sources_or_all(args.sources)
         if sources:
             body["mana_sources"] = sources
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/{args.command}", body),
             dry_run=args.dry_run,
@@ -682,6 +694,8 @@ def run(argv: list[str] | None = None) -> int:
         sources = sources_or_all(args.sources)
         if sources:
             body["mana_sources"] = sources
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
             dry_run=args.dry_run,
@@ -692,6 +706,8 @@ def run(argv: list[str] | None = None) -> int:
             body["card_id"] = args.card.strip()
         else:
             body["card"] = args.card
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/play-land", body))
     elif args.command == "activate":
         body = {
@@ -707,6 +723,8 @@ def run(argv: list[str] | None = None) -> int:
             body["mana_sources"] = sources
         if args.color:
             body["color"] = args.color
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/activate", body),
             dry_run=args.dry_run,
@@ -719,6 +737,8 @@ def run(argv: list[str] | None = None) -> int:
                 for pair in _parse_pairs(args.pairs)
             ],
         }
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/attack", body))
     elif args.command == "blockers":
         body = {
@@ -728,6 +748,8 @@ def run(argv: list[str] | None = None) -> int:
                 for pair in _parse_pairs(args.pairs)
             ],
         }
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/declare-blockers", body))
     elif args.command == "pass-until":
         # The shared loop and the shared validator, not a second copy of
@@ -746,15 +768,17 @@ def run(argv: list[str] | None = None) -> int:
             stop_when_attacked=not args.no_stop_when_attacked,
             stop_when_you_can_attack=not args.no_stop_when_you_can_attack,
             resume=json.loads(args.resume) if args.resume else None,
+            reasoning=args.reasoning,
         )
         print(json.dumps(result, indent=1, sort_keys=True))
         note(result.get("state"))
     elif args.command == "pass":
+        pass_body: dict[str, Any] = {"player": seat.player}
+        if args.reasoning:
+            pass_body["reasoning"] = args.reasoning
         result = run_action(
             seat,
-            lambda: seat.call_json(
-                "POST", f"/api/games/{gid}/actions/pass-priority", {"player": seat.player}
-            ),
+            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/pass-priority", pass_body),
             hold_priority=False,
             release=False,
         )
@@ -800,6 +824,8 @@ def run(argv: list[str] | None = None) -> int:
                 body["order"] = _parse_ids(args.order)
             if args.generation is not None:
                 body["generation"] = args.generation
+            if args.reasoning:
+                body["reasoning"] = args.reasoning
             answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
             if isinstance(answer, dict) and answer.get("accepted") is False:
                 return {"allowed": False, **answer}
@@ -815,6 +841,8 @@ def run(argv: list[str] | None = None) -> int:
         body: dict[str, Any] = {"player": seat.player, "take": bool(args.take)}
         if args.bottom:
             body["bottom"] = _parse_ids(args.bottom)
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
         print(
             json.dumps(
                 seat.call_json("POST", f"/api/games/{gid}/pregame/mulligan", body),
@@ -823,24 +851,30 @@ def run(argv: list[str] | None = None) -> int:
             )
         )
     elif args.command == "opening-hand-action":
+        oha_body: dict[str, Any] = {"player": seat.player, "card_id": args.card.strip()}
+        if args.reasoning:
+            oha_body["reasoning"] = args.reasoning
         print(
             json.dumps(
                 seat.call_json(
                     "POST",
                     f"/api/games/{gid}/pregame/opening-hand/action",
-                    {"player": seat.player, "card_id": args.card.strip()},
+                    oha_body,
                 ),
                 indent=1,
                 sort_keys=True,
             )
         )
     elif args.command == "opening-hand-done":
+        ohd_body: dict[str, Any] = {"player": seat.player}
+        if args.reasoning:
+            ohd_body["reasoning"] = args.reasoning
         print(
             json.dumps(
                 seat.call_json(
                     "POST",
                     f"/api/games/{gid}/pregame/opening-hand/finish",
-                    {"player": seat.player},
+                    ohd_body,
                 ),
                 indent=1,
                 sort_keys=True,
