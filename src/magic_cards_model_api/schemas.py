@@ -395,8 +395,30 @@ class ActivateRequest(BaseModel):
     ability_index: int = 0
     targets: list[str] | None = None
     mana_sources: list[UUID | ManaSource] | None = None
-    sacrificing: UUID | None = None
-    discarding: UUID | None = None
+    sacrificing: list[UUID] | None = None
+    """The objects an activation cost's own `[Sacrifice|Discard|Exile] a
+    ...` piece needs named (CR 118.3) - Goblin Bombardment's own "Sacrifice
+    a creature", read the same general way `CastRequest.choosing` already
+    reads Fireblast's Mountains: the engine (`Game.activation_cost`,
+    `machines.cost.ComponentKind`) decides how many a given ability's cost
+    actually asks for and whether each object named qualifies, this field
+    only carries the seat's answer. A list, not a single id, because a cost
+    can name a quantity greater than one ("Sacrifice two creatures") - the
+    engine consumes as many as the cost needs and refuses with its own count
+    if too few were named ("sacrifice needs N card(s) chosen, M given")."""
+    discarding: list[UUID] | None = None
+    """Same shape as `sacrificing`, for an activation cost's own `Discard
+    ...` piece - Waker of Waves' `{1}{U}, Discard this card: ...` is the one
+    already reachable through `off_zone_activation`; a battlefield ability
+    with an independent discard cost reaches it here."""
+    exiling: list[UUID] | None = None
+    """Same shape again, for an activation cost's own `Exile ...` piece -
+    Back from the Brink's "Exile a creature card from your graveyard and pay
+    its mana cost" is the engine's own example (`Game.activation_cost`'s
+    docstring). Only a *battlefield* activation reaches this: the
+    off-battlefield path (`machines.keywords.off_zone_activation`) has no
+    exile-as-cost shape yet, and naming this for one is refused rather than
+    silently dropped (`engine_api._activate_off_zone_ability`)."""
     color: str | None = None
     """Color letter ("W", "U", "B", "R", "G", "C") chosen for a mana ability
     that offers one - an "any color" source or a dual land. Ignored by any

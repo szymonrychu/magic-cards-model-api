@@ -160,7 +160,22 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-7"
+PROTOCOL_VERSION = "seatkit-8"
+#: `seatkit-8` added `sacrificing`/`discarding`/`exiling` to the `activate`
+#: tool/CLI command, closing the gap a live game found: an activated ability
+#: whose own cost names an object (Goblin Bombardment's "Sacrifice a
+#: creature: ...") had no way to be paid at all, because
+#: `ActivateRequest.sacrificing`/`.discarding` already existed on the request
+#: schema (`engine_api.activate_ability` already threaded them into
+#: `Game.begin_activating`) but neither seat surface exposed a way to set
+#: them - every attempt failed with the engine's own honest, unreachable
+#: refusal, "sacrifice needs 1 card(s) chosen, 0 given". A request-shape
+#: change to a widely-used tool, per this constant's own rule: an old MCP
+#: process built before this addition has no `sacrificing` parameter to
+#: forward even if a newer prompt asked it to use one, so the version bump
+#: is what turns that silent gap back into the PROTOCOL MISMATCH sentence
+#: rather than a call that quietly omits the field again.
+#:
 #: `seatkit-7` replaced the `my_state` tool with `battlefield_state`, which
 #: answers the same whole board when called with nothing but a uid and takes
 #: two options to narrow it: `sections` (a comma-separated list of the state

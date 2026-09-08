@@ -996,3 +996,31 @@ whoever works on the repo itself.
   `tests/test_battlefield_state.py` proves it rather than arguing it, by
   asserting every focused answer's strings are a subset of the unfocused
   one's.
+- **2026-09-09 - Goblin Bombardment's gap ("sacrifice needs 1 card(s) chosen,
+  0 given", unreachable) was two front ends missing a field the engine layer
+  already carried, not an engine gap.** `schemas.ActivateRequest` already had
+  `sacrificing`/`discarding` and `engine_api.activate_ability` already
+  threaded them into `Game.begin_activating` - the field simply had no way in
+  from `seat_cli.py` (no `--sacrificing` flag) or `mcp.py` (no `sacrificing`
+  parameter), so a real seat could never set it. Fixed by widening the shape
+  rather than special-casing sacrifice: `sacrificing`/`discarding` are now
+  `list[UUID] | None` (a cost can ask for more than one object - "Sacrifice
+  two creatures" - and the engine already consumes a pool of however many
+  were named, `Game._choice_cost`), and `exiling: list[UUID] | None` was
+  added alongside them for Back from the Brink's own shape
+  (`Game.activation_cost`'s docstring names it). `exiling` only reaches a
+  *battlefield* activation: `machines.keywords.off_zone_activation` takes no
+  `exiling=` kwarg at all, so `engine_api._activate_off_zone_ability` refuses
+  it by name up front rather than letting it hit a bare `TypeError` on an
+  unexpected keyword. `PROTOCOL_VERSION` bumped to `seatkit-8` (a new
+  parameter on an existing, widely-used tool is a request-shape change per
+  that constant's own rule) - `protocol.py`, `seatkit.py`, `contract/
+  tools.json` (`mise run tools:export`), `openapi.json` (`mise run
+  openapi:dump`) and `src/mtg_agent/driver/prompt.py` all needed the matching
+  update, and `tests/test_openapi_drift.py`/`tests/test_prompt_matches_tools.
+  py` are what catch a repeat of any one being forgotten. The play UI
+  (`ui/actions.js`'s `bodyFor`) has the identical hole - never builds
+  `sacrificing`/`discarding`/`exiling` into an `activate` request body at all
+  - left unfixed on purpose: two other unmerged branches are already reworking
+  the choice-presentation layer, and a third touching the same file would
+  tangle the merge.
