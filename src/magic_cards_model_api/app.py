@@ -16,7 +16,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
@@ -24,6 +24,7 @@ from magic_cards_model.machines.decisions import PendingDecision as PendingDecis
 from magic_cards_model.machines.legal_actions import legal_actions as compute_legal_actions
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
+from starlette.responses import Response
 
 from . import (
     affordances,
@@ -2382,6 +2383,32 @@ if _ui_dir.is_dir():
     @app.get("/play/{rest:path}", include_in_schema=False)
     def play_moved(rest: str = "") -> RedirectResponse:
         return RedirectResponse(url=f"/{rest}", status_code=307)
+
+    # T4 - `/g/<uuid>/` addressing (map ordering risk 5). A game gets its own
+    # bookmarkable, shareable URL, served from the same `ui/index.html` the
+    # lobby root serves - `document.baseURI` is how the play modules tell
+    # which game they are looking at, not `store`, so this only has to
+    # decide which file answers each request. No trailing slash redirects to
+    # one (`/g/<id>` -> `/g/<id>/`) for the same reason `/play` did above: a
+    # relative `app.js` resolved against a base with no trailing slash drops
+    # the last segment - the game id itself - and asks for `/g/app.js`
+    # instead.
+    @app.get("/g/{game_id}", include_in_schema=False)
+    def game_path_no_slash(game_id: str) -> RedirectResponse:
+        return RedirectResponse(url=f"/g/{game_id}/", status_code=307)
+
+    @app.get("/g/{game_id}/{rest:path}", include_in_schema=False)
+    def game_path(game_id: str, rest: str = "") -> Response:
+        # `rest` is attacker-controlled - resolve it inside `_ui_dir` and
+        # refuse anything that walks out of it (`../../pyproject.toml`)
+        # rather than serving whatever it points at. An escape, like any
+        # other path this route doesn't recognise as a real asset, falls
+        # back to the page itself instead of 404ing.
+        if rest:
+            candidate = (_ui_dir / rest).resolve()
+            if candidate.is_relative_to(_ui_dir.resolve()) and candidate.is_file():
+                return FileResponse(candidate)
+        return FileResponse(_ui_dir / "index.html")
 
     app.mount("/", StaticFiles(directory=_ui_dir, html=True), name="play-ui")
 elif _frontend is not None:

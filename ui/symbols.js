@@ -9,9 +9,9 @@
 
 import { h } from "./dom.js";
 
-export async function loadSymbols(api) {
+export async function loadSymbols(api, base = "/api") {
   try {
-    const { symbols } = await api("GET", "/api/ui/symbology");
+    const { symbols } = await api("GET", `${base}/ui/symbology`);
     return symbols || {};
   } catch {
     return {};

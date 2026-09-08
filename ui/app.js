@@ -27,6 +27,7 @@ import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./render/panels.js";
 import { loadSavedGames, saveGames, upsertSavedGame } from "./lobby_model.js";
+import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
 const POLL_MS = 1200;
 
@@ -77,8 +78,19 @@ function you() {
  * blank on that one character, so the poll's path is exported and pinned.
  */
 export function gamePath(rest) {
-  const base = `/api/games/${store.get().gameId}`;
+  const base = `${apiBase()}/games/${store.get().gameId}`;
   return rest ? `${base}/${rest}` : base;
+}
+
+/** The game id a page served at `/g/<id>/` is looking at, read straight off
+ * `document.baseURI` rather than requiring `store.gameId` to already be set
+ * - a fresh load of that URL (a bookmark, a shared link, a browser refresh)
+ * has nothing in the store yet. `null` for the plain lobby root, or any
+ * other path this deployment might serve, so `main()`'s boot can tell "this
+ * page is a game" from "this page is the lobby" without a separate flag. */
+export function gameIdFromBaseURI(baseURI) {
+  const match = new URL(baseURI).pathname.match(/^\/g\/([^/]+)\/?/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 /**
@@ -218,7 +230,7 @@ async function poll() {
     if (app.aiUid) {
       try {
         store.set({
-          aiStatus: await api("GET", `/api/ui/games/${app.gameId}/ai-seat/status?uid=${app.aiUid}`),
+          aiStatus: await api("GET", `${lobbyBase()}/ui/games/${app.gameId}/ai-seat/status?uid=${app.aiUid}`),
         });
       } catch {
         /* transient - the next poll tries again */
@@ -785,8 +797,13 @@ async function passForAiSeat(aiPlayer) {
  * running - it stays in `mcm.games.v1` and in the lobby's own table, exactly
  * the point of that table over the old one-game `mcm.game` key it replaced.
  * Only **End game** (the lobby's own button, `render/lobby.js`'s `endGame`)
- * actually ends a game. */
-function leaveGame() {
+ * actually ends a game.
+ *
+ * T4: a real navigation back to `/` rather than an in-page `hidden` toggle -
+ * a game now has its own address (`/g/<uuid>/`), so leaving it is leaving
+ * that address, the same way a browser's own Back would. Exported for
+ * `tests/test_ui_app.py` only, alongside `store`/`tryTarget` above. */
+export function leaveGame() {
   store.set({
     gameId: null,
     uid: null,
@@ -801,6 +818,10 @@ function leaveGame() {
     aiStatus: null,
     connection: "idle",
   });
+  if (typeof window !== "undefined" && window.location) {
+    window.location.href = "/";
+    return;
+  }
   document.querySelector("#game").hidden = true;
   document.querySelector("#lobby").hidden = false;
   if (lobbyApi) lobbyApi.refresh().catch((e) => console.error(e));
@@ -808,7 +829,16 @@ function leaveGame() {
 
 // ---- boot ----------------------------------------------------------------
 
-export async function startGame(created) {
+/** Enter `created`'s game screen. `navigate` (default `true`) is what the
+ * lobby's Start/Open buttons drive: a real navigation to `/g/<uuid>/`
+ * (T4) rather than an in-page `hidden` toggle, so the game has its own
+ * address from the moment it is entered. `navigate: false` is `main()`'s
+ * own boot path - a page load that is *already* at `/g/<uuid>/` (the id
+ * came from `document.baseURI`, not from a click) renders straight into
+ * the game screen on this same page instead of navigating again. Either
+ * way the game is saved to `mcm.games.v1` first, so the reloaded/navigated
+ * page can find its own `uid`/`aiUid` again. */
+export async function startGame(created, { navigate = true } = {}) {
   store.set({ gameId: created.game_id, uid: created.uid, aiUid: created.aiUid, log: { entries: [], lastSeq: 0 } });
   // Appends rather than overwrites: `mcm.games.v1` is a list, one entry per
   // game this browser has started or opened, not the single `{gameId, uid,
@@ -826,13 +856,20 @@ export async function startGame(created) {
       })
     );
   }
+  if (navigate) {
+    if (typeof window !== "undefined" && window.location) {
+      window.location.href = `/g/${encodeURIComponent(created.game_id)}/`;
+    }
+    return;
+  }
   document.querySelector("#lobby").hidden = true;
   document.querySelector("#game").hidden = false;
   await poll();
 }
 
 async function main() {
-  store.set({ symbols: await loadSymbols(api) });
+  await loadConfig();
+  store.set({ symbols: await loadSymbols(api, lobbyBase()) });
   lobbyApi = mountLobby(document, store, { startGame });
   mountBoard(document, store, {
     onHandCard,
@@ -961,14 +998,6 @@ async function main() {
     cancel();
     hidePopover();
   });
-  // The lobby is the entry point now that it lists every live game - so
-  // booting straight back into a game is no longer the default. The one
-  // exception: exactly one saved game is the same situation the old
-  // single-game `mcm.game` key always described, and jumping straight back
-  // into it (rather than making a player click through to their only game
-  // every time) is worth keeping. Two or more saved games always land on
-  // the lobby table instead, since there is no longer one obvious game to
-  // resume into.
   let saved = [];
   try {
     saved = loadSavedGames(currentStorage());
@@ -976,9 +1005,34 @@ async function main() {
     // a corrupted or unreadable localStorage entry is no worse than none
     saved = [];
   }
+  // T4: `/g/<uuid>/` addressing. A page loaded at that path - a bookmark, a
+  // shared link, a reload - names its own game in `document.baseURI`, not in
+  // `store`, so this always wins over anything saved. `saved` only supplies
+  // this browser's own seat when it has one; with no matching entry the game
+  // still renders, just with no seat to act as (a spectator).
+  const urlGameId = gameIdFromBaseURI(document.baseURI);
+  if (urlGameId) {
+    const entry = saved.find((g) => g.gameId === urlGameId);
+    await startGame(
+      { game_id: urlGameId, uid: entry ? entry.uid : null, aiUid: entry ? entry.aiUid : null },
+      { navigate: false }
+    );
+    setInterval(poll, POLL_MS);
+    return;
+  }
+  // The lobby is the entry point now that it lists every live game - so
+  // booting straight back into a game is no longer the default. The one
+  // exception: exactly one saved game is the same situation the old
+  // single-game `mcm.game` key always described, and jumping straight back
+  // into it (rather than making a player click through to their only game
+  // every time) is worth keeping - now a real navigation to that game's own
+  // `/g/<uuid>/` address (T4) rather than an in-page section swap. Two or
+  // more saved games always land on the lobby table instead, since there is
+  // no longer one obvious game to resume into.
   if (saved.length === 1) {
     const only = saved[0];
     await startGame({ game_id: only.gameId, uid: only.uid, aiUid: only.aiUid });
+    return;
   }
   setInterval(poll, POLL_MS);
 }
