@@ -451,7 +451,6 @@ whoever works on the repo itself.
   this, since a dict literal's later `**answer` (now correctly carrying
   `allowed: False` for a non-2xx) overrides the initial `True`; neither
   needed editing.
-<<<<<<< HEAD
 
 - **2026-09-08 - T7: a seat's `api_base` was two request-derived call sites,
   not one.** The plan named `ai_seat_api.py:29`'s `_api_base(request)`, but
@@ -495,7 +494,6 @@ whoever works on the repo itself.
   an `HttpApiClient` (not built by this task) taking over post-cut. The
   `ApiClient` protocol is what makes that swap cost one constructor call at
   the call site and nothing else.
-=======
 - **2026-09-08 - T4: `TestClient`'s `httpx` transport normalises `../`
   dot-segments in a request path before sending it - a `%2e%2e` traversal
   test is the only one that actually reaches the route's own guard.**
@@ -513,4 +511,3 @@ whoever works on the repo itself.
   confirmed live against a running server (`resp.request.url` still showed
   `/g/<id>/%2e%2e/...`, status 200, body was `index.html`'s 6005 bytes, not
   `pyproject.toml`'s 1593).
->>>>>>> 2b-t4-game-addressing
