@@ -451,3 +451,17 @@ whoever works on the repo itself.
   this, since a dict literal's later `**answer` (now correctly carrying
   `allowed: False` for a non-2xx) overrides the initial `True`; neither
   needed editing.
+
+- **2026-09-08 - T7: a seat's `api_base` was two request-derived call sites,
+  not one.** The plan named `ai_seat_api.py:29`'s `_api_base(request)`, but
+  `decks_api.start_game_from_decklists` imported and called the same helper
+  for the auto-start-on-creation path (`POST /api/ui/games`) - undetected
+  because every existing test hits the app on one origin, so a request-
+  derived URL and the real api URL were always equal by coincidence. Both
+  call sites now read `ai_seat.api_service_url()` (`API_SERVICE_URL`, same
+  env var and default `K8sSettings.from_env` already used for the kubernetes
+  mechanism - `k8s_seats.py`). `_api_base` and the now-unused `Request`
+  parameters on both routes are gone. The two new HTTP-level tests in
+  `test_ai_seat_settings.py` forge an arbitrary `Host` header on both routes
+  and assert the dispatched payload still carries the configured service URL
+  - a same-origin test would not have caught the original bug at all.
