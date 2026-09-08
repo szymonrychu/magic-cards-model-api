@@ -13,7 +13,11 @@ config = context.config
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` is load-bearing: the default (True)
+    # switches off every logger this ini does not name, `mcm.audit`
+    # included - so a migration run in-process silently kills the game
+    # log and every action outcome for the rest of that process.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # `db.py`'s `Table` definitions are the single source of truth for the
 # schema - autogenerate diffs against these, and the initial migration was

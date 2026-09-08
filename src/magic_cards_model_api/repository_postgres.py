@@ -2,6 +2,12 @@
 backed by real postgres, for a stateless multi-replica deployment instead of
 `InMemoryRepository`'s process-local dict.
 
+One deliberate exception to "stateless": `reserve_slot`/`attach`/`release`'s
+reservation ledger (M8) is process-local, like `_locks`/`_automatic_pregame`
+below - see `__init__`'s note on why that is still the right shape for as
+long as this whole phase deploys the lobby at `replicas: 1` (the 2b plan's
+M9), and `T17` for when it stops being one.
+
 **Two different concurrency techniques for two different problems**, per the
 design gate's decision 5 (`docs/superpowers/plans/2026-09-07-api-pause-model-
 and-postgres.md`):
@@ -19,18 +25,17 @@ and-postgres.md`):
   transaction is open, and a paused command can sit for as long as a human
   seat takes to answer - a lock held that long is a lock that starves every
   other request against the same row.
-- **`create_if_under`'s cap check** is a short, self-contained "is there room"
-  decision with no long-running work inside it, so it uses an ordinary
-  transaction-scoped `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE`: released
-  automatically at commit/rollback, never a session-scoped advisory lock that
-  could leak across a pooled connection. `SHARE ROW EXCLUSIVE` conflicts with
-  `ROW EXCLUSIVE` - the lock every plain `INSERT`/`UPDATE`/`DELETE` takes - so
-  it genuinely blocks every concurrent `replace()` for as long as the
-  transaction holding it is open, table-wide, not just the row it eventually
-  inserts. That is acceptable here only because "create a lobby game" is a
-  cold path with a short, bounded critical section (one count query plus one
-  insert, no waiting on a decision or a human) - not because it leaves the
-  per-turn gameplay path unlocked, which it does not.
+- **`reserve_slot`'s cap check (M8)** used to be `create_if_under`'s
+  transaction-scoped `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` around one
+  count query plus one insert. It is now a plain Python `threading.Lock`
+  (`_reservations_lock`) around one count query plus an in-memory ledger
+  update, no DB-level lock at all - correct precisely because the ledger it
+  protects is itself process-local (see the module docstring's opening
+  note): the only concurrent writers `_reservations_lock` needs to serialise
+  against are other threads of *this* process, which a Python lock already
+  does, without needing postgres to enforce it table-wide. `T17` reintroduces
+  a real DB-level constraint once the reservation is a durable, cross-replica
+  row instead.
 
 **The identity-preserving read cache.** `locked()`/`get()` hand back the
 *same* `Game` object across repeated calls in this process, as long as
@@ -84,6 +89,7 @@ from sqlalchemy.engine import Engine
 from .agent_settings import AgentSettings
 from .commands import Command
 from .db import games, make_engine, records
+from .repository import DEFAULT_RESERVATION_TTL_SECONDS, _ReservationLedger
 
 __all__ = ["PostgresRepository", "VersionConflict"]
 
@@ -209,6 +215,12 @@ class PostgresRepository:
     `GameRepository` by having the same methods, not by inheriting from it.
     """
 
+    #: See `repository.DEFAULT_RESERVATION_TTL_SECONDS` and
+    #: `InMemoryRepository`'s own copy of this attribute - same name, same
+    #: reasoning, so a test can shrink either implementation's TTL
+    #: identically through the shared contract suite.
+    RESERVATION_TTL_SECONDS: float = DEFAULT_RESERVATION_TTL_SECONDS
+
     def __init__(self, database_url: str, *, engine: Engine | None = None) -> None:
         #: `engine` lets a caller (the contract-suite factory, in
         #: particular) share one connection pool across many
@@ -240,6 +252,21 @@ class PostgresRepository:
         # the same surface `InMemoryRepository` does - `opening.py` calls
         # both of these on whichever store `store.py` selected.
         self._automatic_pregame: dict[str, dict[str, set[str]]] = {}
+        # M8: pending reservations against `MAX_LIVE_GAMES`, keyed by token.
+        # Process-local, like `_locks`/`_automatic_pregame` above and for the
+        # same underlying reason: this whole phase deploys the lobby at
+        # `replicas: 1` (the 2b plan's M9) precisely because other lobby
+        # state (the pregame watcher, `AiSeatRegistry`) is still
+        # process-local too, so a reservation racing only within this one
+        # process is already the real deployment target - a durable,
+        # cross-replica reservation is T17's job (its own `lobby_games`
+        # table and a single atomic `INSERT ... WHERE count(*) < cap`), once
+        # the lobby is its own service with its own database. A separate
+        # lock from `_locks_lock`/`_cache_lock`: a reservation decision holds
+        # it across a real DB round trip (`_live_ui_game_ids`) - see
+        # `reserve_slot`.
+        self._reservations = _ReservationLedger()
+        self._reservations_lock = threading.Lock()
 
     # -- internal helpers ---------------------------------------------------
 
@@ -277,12 +304,11 @@ class PostgresRepository:
 
     def _live_ui_game_ids(self, conn: Any) -> list[str]:
         """`ui_games()`, filtered to `not Game.is_over`, oldest-registered
-        first - the shared logic `live_ui_games()` and `create_if_under`'s
-        cap check both need. Takes an open `conn` rather than opening its own
-        (`create_if_under` calls this from inside the transaction already
-        holding the table lock; there is no reason to check a second
-        connection out of the pool for a read the held connection can just
-        as well serve).
+        first - the shared logic `live_ui_games()` and `reserve_slot`'s cap
+        check both need. Takes an open `conn` rather than opening its own
+        (`reserve_slot` calls this from inside a connection it already has
+        open; there is no reason to check a second one out of the pool for a
+        read the held connection can just as well serve).
 
         Deliberately **not** a `state->>'winner'` SQL predicate: `is_over`
         is evaluated in Python, through `_game_from_row`'s cache, so a game
@@ -368,40 +394,37 @@ class PostgresRepository:
             self._locks[game_id] = threading.Lock()
         return game_id
 
-    def create_if_under(self, game: Game, cap: int, *, ui_game: bool = True) -> str | None:
-        game_id = uuid4().hex
-        now = datetime.now(UTC)
-        admin_key = uuid4().hex
-        with self._engine.begin() as conn:
-            # Transaction-scoped table lock - see the module docstring for
-            # why this path (and only this path) takes one.
-            conn.execute(text("LOCK TABLE games IN SHARE ROW EXCLUSIVE MODE"))
-            live = len(self._live_ui_game_ids(conn))
-            if live >= cap:
-                return None
-            conn.execute(
-                insert(games).values(
-                    id=game_id,
-                    state=game.model_dump(mode="json"),
-                    command=None,
-                    tape=None,
-                    pending=None,
-                    version=0,
-                    created_at=now,
-                    admin_key=admin_key,
-                    seats={},
-                    decklists={},
-                    agent_settings={},
-                    ai_players=[],
-                    ui_game=ui_game,
-                    ui_game_registered_at=now if ui_game else None,
-                )
+    def reserve_slot(self, cap: int) -> str | None:
+        """M8: claim one of `cap` lobby slots against this process's
+        in-memory reservation ledger plus a fresh read of how many `games`
+        rows are actually live - see `__init__`'s note on why the ledger
+        itself is process-local. `_reservations_lock` (a plain Python lock,
+        not the DB's own `LOCK TABLE` `create_if_under` used to take) is
+        sufficient here precisely because the whole decision - the DB read
+        and the ledger update - happens while this one process's lock is
+        held, so no other thread in this process can interleave a
+        conflicting decision; a second replica racing the same table is a
+        scenario `replicas: 1` (M9) does not create."""
+        with self._reservations_lock:
+            with self._engine.connect() as conn:
+                live = len(self._live_ui_game_ids(conn))
+            return self._reservations.reserve(
+                live_count=live, cap=cap, ttl_seconds=self.RESERVATION_TTL_SECONDS
             )
-        with self._cache_lock:
-            self._cache[game_id] = (game, 0)
-        with self._locks_lock:
-            self._locks[game_id] = threading.Lock()
-        return game_id
+
+    def attach(self, token: str, game_id: str) -> None:
+        """Resolve `token` and register `game_id` as a live ui game as one
+        step under `_reservations_lock`, so a concurrent `reserve_slot`'s DB
+        read can never land in the gap between the two - the same reasoning
+        `InMemoryRepository.attach` gives for doing both under one lock."""
+        with self._reservations_lock:
+            if not self._reservations.resolve(token, ttl_seconds=self.RESERVATION_TTL_SECONDS):
+                raise KeyError(f"no such reservation {token}")
+            self.register_ui_game(game_id)
+
+    def release(self, token: str) -> None:
+        with self._reservations_lock:
+            self._reservations.resolve(token, ttl_seconds=self.RESERVATION_TTL_SECONDS)
 
     def get(self, game_id: str) -> Game | None:
         try:
