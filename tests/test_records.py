@@ -9,6 +9,7 @@ pre-action enumeration. Docker-free (`InMemoryRepository`) - the postgres
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from test_flow import cast_and_resolve_bears, seats_for
 
 
 def _boot(client: TestClient, *, agent: str, human: str, active: str) -> dict:
@@ -299,3 +300,155 @@ def test_legal_actions_before_is_the_pre_mutation_enumeration_not_the_post(
         assert mountain_id not in after_play_lands, "bob already played his land for the turn"
     finally:
         _end(client, info)
+
+
+# ---------------------------------------------------------------------------
+# who may read "what else was legal": the server's own resolved seat, never a
+# field the caller filled in
+# ---------------------------------------------------------------------------
+
+
+def _pause_on_bobs_blockers(client: TestClient, game: str) -> dict[str, str]:
+    """Drive `game` to a pending `declare_blockers` decision addressed to
+    bob, with alice attacking. Returns the seat uids."""
+    bears = cast_and_resolve_bears(client, game)
+    client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    uids = seats_for(game)
+    attack = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert attack.json()["allowed"] is True, attack.json()
+    paused = client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    assert paused.json()["pending_decision"]["kind"] == "declare_blockers", paused.json()
+    return uids
+
+
+def test_a_seat_that_is_not_the_deciding_one_cannot_read_its_legal_actions(
+    client: TestClient, game: str
+) -> None:
+    """The leak this guards: `declare-blockers`'s audit detail carries
+    `player` straight off the request body, which nothing validates against
+    the deciding seat, while the enumeration is computed for the *deciding*
+    player. alice, refused for presenting the wrong uid, could name herself
+    in `player` and then read bob's own pre-decision enumeration - every
+    blocking assignment his hand and board allowed - back out of the log.
+
+    Redaction has to key on the identity the server resolved, never on a
+    field the caller supplied.
+    """
+    uids = _pause_on_bobs_blockers(client, game)
+
+    refused = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "blocks": []},
+    )
+    assert refused.json()["allowed"] is False
+    assert "does not open the deciding player's seat" in refused.json()["reason"]
+
+    alice_log = log_of(client, game, uid=uids["alice"])
+    for entry in entries_for(alice_log, "declare_blockers"):
+        assert entry["legal_actions_before"] is None, (
+            "alice is not the deciding seat - she must never read bob's own "
+            f"enumeration out of the log: {entry}"
+        )
+
+
+def test_the_deciding_seat_still_reads_its_own_declaration_enumeration(
+    client: TestClient, game: str
+) -> None:
+    """The other half: the whole point of the column is that the acting
+    seat learns from it, so bob's own successful declaration comes back to
+    bob with the enumeration intact."""
+    uids = _pause_on_bobs_blockers(client, game)
+
+    declared = client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": []},
+    )
+    assert declared.json()["allowed"] is True, declared.json()
+
+    bob_log = log_of(client, game, uid=uids["bob"])
+    entry = entries_for(bob_log, "declare_blockers")[-1]
+    assert entry["legal_actions_before"], entry
+    assert entry["legal_actions_for"] == "bob"
+    assert all(action["player"] == "bob" for action in entry["legal_actions_before"])
+
+
+def test_the_attacking_seat_reads_its_own_attack_enumeration_back(
+    client: TestClient, game: str
+) -> None:
+    """`actions/attack` recorded `attackers`/`dry_run` as audit detail but
+    never named the acting seat, so the enumeration was redacted from every
+    seat viewer - the attacker included - and only an unauthenticated reader
+    ever saw it. alice declared the attack; alice must be able to read what
+    else she could have declared."""
+    bears = cast_and_resolve_bears(client, game)
+    client.patch(f"/api/games/{game}/cards/{bears}", json={"summoning_sick": False})
+    client.put(f"/api/games/{game}/step", json={"step": "beginning_of_combat"})
+    client.post(f"/api/games/{game}/advance", json={"player": "alice"})
+    uids = seats_for(game)
+    attack = client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uids["alice"]},
+        json={"attackers": [{"card_id": bears, "defender": "bob"}]},
+    )
+    assert attack.json()["allowed"] is True, attack.json()
+
+    alice_log = log_of(client, game, uid=uids["alice"])
+    entry = entries_for(alice_log, "attack")[-1]
+    assert entry["legal_actions_before"] is not None, (
+        "the attacking seat must read its own enumeration - that is what the column is for"
+    )
+    assert entry["legal_actions_for"] == "alice"
+    assert all(action["player"] == "alice" for action in entry["legal_actions_before"])
+
+    bob_log = log_of(client, game, uid=uids["bob"])
+    assert entries_for(bob_log, "attack")[-1]["legal_actions_before"] is None
+
+
+def test_a_log_read_with_no_uid_sees_no_legal_actions_before(client: TestClient, game: str) -> None:
+    """A caller presenting nothing must never see more than one presenting
+    garbage. `GET .../log` with no uid used to skip redaction entirely and
+    hand back every seat's enumeration in full - hidden information, named
+    card by card, to anybody who knows the game id.
+
+    The admin key is still the operator's own full eye; an unauthenticated
+    read is not.
+    """
+    uids = _pause_on_bobs_blockers(client, game)
+    client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": []},
+    )
+
+    anonymous = log_of(client, game)
+    assert anonymous, "the log is not empty - this test would prove nothing"
+    assert all(entry["legal_actions_before"] is None for entry in anonymous), (
+        "an unauthenticated log read must carry no seat's legal-action enumeration at all"
+    )
+
+    garbage = log_of(client, game, uid="not-a-real-uid")
+    assert all(entry["legal_actions_before"] is None for entry in garbage)
+
+
+def test_the_admin_key_still_reads_every_seats_enumeration(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    """The operator's own key keeps the full view - `GET .../legal-actions`
+    grants it the same exemption, so the log has to agree."""
+    uids = _pause_on_bobs_blockers(client, game)
+    client.post(
+        f"/api/games/{game}/actions/declare-blockers",
+        params={"uid": uids["bob"]},
+        json={"player": "bob", "blocks": []},
+    )
+    admin_log = log_of(client, game, uid=admin_key)
+    entry = entries_for(admin_log, "declare_blockers")[-1]
+    assert entry["legal_actions_before"] is not None

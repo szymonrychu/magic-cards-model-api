@@ -25,9 +25,12 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from magic_cards_model.machines import PHASE_OF
+
+if TYPE_CHECKING:  # keep this module importable without the app's own wiring
+    from .records import LegalActionsBefore
 
 #: The audited action a seat's `report_problem` MCP call turns into. Named
 #: here because this module treats it specially - see `record`.
@@ -63,7 +66,7 @@ def record(
     action: str,
     *,
     reasoning: str | None = None,
-    legal_actions_before: list[dict[str, Any]] | None = None,
+    legal_actions_before: LegalActionsBefore | None = None,
     _fill_seq: int | None = None,
     **detail: Any,
 ) -> int:
@@ -82,10 +85,14 @@ def record(
     reason for this action - required by `app.py`'s mutating routes for an
     agent seat before this is ever called (`records.require_reasoning`), so
     by the time it reaches here the gate has already passed. `legal_actions_
-    before` is `records.legal_actions_before`'s enumeration, computed by the
-    caller *before* the action ran - never recomputed here, since by the
-    time `record` runs the game this reads (`store.get`) may already be the
-    *post*-action state.
+    before` is `records.legal_actions_before`'s `LegalActionsBefore` -
+    the enumeration *and* the one seat it belongs to, computed by the caller
+    *before* the action ran and never recomputed here, since by the time
+    `record` runs the game this reads (`store.get`) may already be the
+    *post*-action state. It lands as two payload keys, `legal_actions_
+    before` (the actions) and `legal_actions_for` (the seat), which is what
+    lets `visibility.redact_log_entry` decide who may read them without
+    consulting anything the caller put in `detail`.
 
     `_fill_seq`: `app.py`'s `_run_command`/`_resume` call `store.replace`
     before the engine's outcome (allowed/refused, the reason) is known to
@@ -125,7 +132,17 @@ def record(
         "stack_size": len(game.stack) if game is not None else None,
         "snapshot": snapshot(game) if game is not None else None,
         "reasoning": reasoning,
-        "legal_actions_before": legal_actions_before,
+        # Two keys, written from one object or not at all: the actions
+        # and the single seat they belong to. `visibility.redact_log_
+        # entry` reads `legal_actions_for` to decide who may see them -
+        # never `detail["player"]`, which is whatever the request body
+        # said. See `records.LegalActionsBefore`.
+        "legal_actions_before": (
+            legal_actions_before.actions if legal_actions_before is not None else None
+        ),
+        "legal_actions_for": (
+            legal_actions_before.player if legal_actions_before is not None else None
+        ),
     }
     if _fill_seq is not None:
         store.fill_record(game_id, _fill_seq, payload)
@@ -166,6 +183,7 @@ _UNRECORDED_DEFAULTS: dict[str, Any] = {
     "snapshot": None,
     "reasoning": None,
     "legal_actions_before": None,
+    "legal_actions_for": None,
 }
 
 

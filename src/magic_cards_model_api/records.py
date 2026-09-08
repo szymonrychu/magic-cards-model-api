@@ -42,6 +42,7 @@ mutates.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from magic_cards_model.machines.decisions import PendingDecision
@@ -79,16 +80,45 @@ def require_reasoning(game_id: str, player: str | None, reasoning: str | None) -
         raise MissingReasoning(player)
 
 
+@dataclass(frozen=True)
+class LegalActionsBefore:
+    """An enumeration and the seat it belongs to, inseparably.
+
+    This pairing is the whole point of the type. The enumeration names
+    cards in `player`'s own hand, so exactly one seat may ever read it back
+    out of the log - and the first version of this feature decided *which*
+    seat by looking at the audit entry's `detail["player"]`, a field the
+    caller fills in and nothing validates. On `actions/declare-blockers`
+    the two came apart: the enumeration was computed for the deciding seat
+    while `detail["player"]` was whatever the request body said, so naming
+    yourself in a refused request handed you the opponent's own answer.
+
+    Carrying the subject alongside the actions makes that failure
+    unexpressible: `audit.record` writes both keys from this one object or
+    neither, and `visibility.redact_log_entry` reads the subject rather
+    than anything the request supplied.
+    """
+
+    player: str
+    actions: list[dict[str, Any]]
+
+
 def legal_actions_before(
     game: Game, player: str | None, pending: PendingDecision | None
-) -> list[dict[str, Any]] | None:
+) -> LegalActionsBefore | None:
     """`player`'s full legal-action enumeration against `game` as it stands
-    right now - `None` when there is no clear actor to enumerate for (a
-    system action like `state_based_actions` with nobody named). Each
+    right now, paired with `player` itself - `None` when there is no clear
+    actor to enumerate for (a system action with nobody named). Each
     `Action` is `model_dump(mode="json")`-ed, the same JSON-safe shape
     `GET .../legal-actions` already hands a caller, so it round-trips through
-    the `records` table's JSONB `payload` column with no second codec."""
+    the `records` table's JSONB `payload` column with no second codec.
+
+    `player` must be the seat the server itself resolved for this action,
+    never one read straight off a request body that a uid gate has not yet
+    agreed with - see `LegalActionsBefore`."""
     if not player:
         return None
     actions = _legal_actions(game, player, pending=pending)
-    return [action.model_dump(mode="json") for action in actions]
+    return LegalActionsBefore(
+        player=player, actions=[action.model_dump(mode="json") for action in actions]
+    )
