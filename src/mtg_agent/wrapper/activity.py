@@ -31,11 +31,22 @@ Verbosity is `AGENT_LOG_LEVEL`:
     messages  + the agent's own prose
     tools     + every tool call and every tool failure   [default]
 
-Everything is truncated. An agent message can be a page, a Bash command can
-be a hundred-line heredoc, and a tool result can be an entire board state -
-none of that belongs in an interleaved compose log, so each is cut to a
-single line with an explicit `[+N chars]` marker. The full text is always on
-`GET /v1/messages/{turnId}` and in the transcript.
+Every event is the full content, not a head with the rest elided. An earlier
+version cut each line to a few hundred characters with a `[+N chars]` marker;
+that hid exactly the part an operator reading `kubectl logs` needs when
+debugging what the agent decided and why, so it is gone. `AGENT_LOG_LEVEL` is
+still the way to get a terser log - drop to `messages` or `turns` to lose
+whole categories of line - but a line that is emitted is emitted whole.
+
+An agent message can be a page and a Bash command can be a hundred-line
+heredoc; both contain newlines, and a raw multi-line dump would interleave
+badly with the rest of the compose log and break line-oriented log shipping
+(kubectl/docker compose logs, and anything reading this stream expect one
+event per physical line). So each event's whitespace - including every
+newline - is collapsed to single spaces before it is emitted: one event stays
+one physical line, and every word of it is still there in order. The full
+text with its original line breaks is always on `GET /v1/messages/{turnId}`
+and in the transcript, for a reader that wants the original formatting.
 
 Nothing here can fail a turn: the thread catches everything and keeps going.
 Logging is not worth breaking a game over.
@@ -52,19 +63,6 @@ from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("agent")
-
-#: One agent message, collapsed to a line. Long enough for a real "here is my
-#: plan for this combat" paragraph, short enough that ten of them do not push
-#: the driver's and the game's lines off the screen.
-SAY_CHARS = 400
-
-#: One tool call. A seat command (`mtg-seat cast ...`) is well under this; a
-#: heredoc or a long grep gets cut, and the point of the line - which tool,
-#: against what - survives the cut because it is at the front.
-TOOL_CHARS = 220
-
-#: A failing tool's error. Enough to see the refusal the engine gave.
-ERROR_CHARS = 300
 
 #: How often the watcher looks for new transcript bytes, and for a newer
 #: session file. Fast enough that a line lands while the agent is still on the
@@ -86,28 +84,45 @@ def level_rank(level: str) -> int:
 # ---- redaction -------------------------------------------------------------
 
 #: Anything shaped like a credential. The stack handles an ANTHROPIC_API_KEY
-#: and a wrapper shared secret, and the agent's own Bash commands can echo an
-#: environment; none of that goes to stdout. Seat uids are NOT redacted - they
-#: are already in every URL in this log and identify which seat is talking.
+#: and a wrapper shared secret, the agent's own Bash commands can echo an
+#: environment, and the container also carries a GH_PAT (deploy/seat-job.yaml,
+#: used to clone the deck-guides repo) that could end up embedded in a
+#: command the agent runs; none of that goes to stdout. Seat uids are NOT
+#: redacted - they are already in every URL in this log and identify which
+#: seat is talking.
+#:
+#: Now that lines carry full content instead of a truncated head, a
+#: credential can no longer hide past the cut - these patterns are what
+#: stands between "full logs" and "full logs including a token".
 _SECRETS = (
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),
-    re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd)\b(\s*[:=]\s*)\S+"),
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),  # an ANTHROPIC_API_KEY
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),  # an Authorization header
+    re.compile(r"\bgh[oprsu]_[A-Za-z0-9]{20,}"),  # a classic GitHub token (GH_PAT et al)
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),  # a fine-grained GitHub PAT
+    re.compile(r"://[^\s/@]+:[^\s/@]+@"),  # user:secret@ basic auth in any URL
 )
+
+#: `token=...`, `secret: ...`, and friends - anything the credential-shaped
+#: patterns above don't already catch by their own value shape.
+_KEY_VALUE_SECRET = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd)\b(\s*[:=]\s*)\S+")
 
 
 def redact(text: str) -> str:
-    out = _SECRETS[0].sub("sk-ant-<redacted>", text)
+    out = str(text)
+    out = _SECRETS[0].sub("sk-ant-<redacted>", out)
     out = _SECRETS[1].sub("Bearer <redacted>", out)
-    return _SECRETS[2].sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", out)
+    out = _SECRETS[2].sub("<redacted>", out)
+    out = _SECRETS[3].sub("<redacted>", out)
+    out = _SECRETS[4].sub("://<redacted>@", out)
+    return _KEY_VALUE_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", out)
 
 
-def one_line(text: str, limit: int) -> str:
-    """Collapse whitespace, redact, and cut at `limit` with a visible marker."""
-    flat = " ".join(redact(str(text)).split())
-    if len(flat) <= limit:
-        return flat
-    return flat[:limit].rstrip() + f" ... [+{len(flat) - limit} chars]"
+def one_line(text: str) -> str:
+    """Collapse whitespace - including every newline - to single spaces, and
+    redact. No length limit: the full content is the point. Collapsing
+    whitespace, rather than cutting the text, is what keeps one event on one
+    physical line for a line-oriented log reader."""
+    return " ".join(redact(str(text)).split())
 
 
 # ---- turning transcript lines into events ----------------------------------
@@ -131,21 +146,21 @@ _HEADLINE_FIELD = {
 def describe_tool(name: str, payload: Any) -> str:
     """`name` plus the readable part of its input, on one line."""
     if not isinstance(payload, dict):
-        return one_line(f"{name} {payload}", TOOL_CHARS)
+        return one_line(f"{name} {payload}")
     field = _HEADLINE_FIELD.get(name)
     if field:
         value = payload.get(field)
         if value:
-            return one_line(f"{name} {value}", TOOL_CHARS)
+            return one_line(f"{name} {value}")
     if field == "":
-        return one_line(name, TOOL_CHARS)
+        return one_line(name)
     try:
         rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     except (TypeError, ValueError):
         rendered = str(payload)
     if rendered in ("{}", "null"):
-        return one_line(name, TOOL_CHARS)
-    return one_line(f"{name} {rendered}", TOOL_CHARS)
+        return one_line(name)
+    return one_line(f"{name} {rendered}")
 
 
 def _result_text(content: Any) -> str:
@@ -179,7 +194,7 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "text" and str(block.get("text", "")).strip():
-                yield "say", one_line(block["text"], SAY_CHARS)
+                yield "say", one_line(block["text"])
             elif block.get("type") == "tool_use":
                 yield "tool", describe_tool(str(block.get("name") or "?"), block.get("input"))
         return
@@ -191,7 +206,7 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
                 continue
             if not block.get("is_error"):
                 continue
-            yield "tool-error", one_line(_result_text(block.get("content")), ERROR_CHARS)
+            yield "tool-error", one_line(_result_text(block.get("content")))
 
 
 def emit(kind: str, text: str, rank: int) -> None:
