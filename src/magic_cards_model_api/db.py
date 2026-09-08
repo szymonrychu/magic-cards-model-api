@@ -78,6 +78,12 @@ games = Table(
     Column("command", JSONB, nullable=True),
     Column("tape", JSONB, nullable=True),
     Column("pending", JSONB, nullable=True),
+    # How many times this game's standing question has been replaced -
+    # bumped by `store_paused_command` alone, never reset (not even by
+    # `clear_paused_command`), so a number a client is holding can never be
+    # reused by a later pause. See `repository.GameRepository
+    # .pause_generation`. Added by revision `c4e91b7d2a58`.
+    Column("pause_generation", Integer, nullable=False, server_default="0"),
     Column("version", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("admin_key", String, nullable=False),

@@ -468,7 +468,9 @@ def _respond(
     """
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
-        pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        pending = decisions.PendingDecision.from_engine(
+            result.pending.decision, store.pause_generation(game_id)
+        )
         body = {
             "allowed": None,
             "reason": None,
@@ -1207,7 +1209,9 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     result, _, legal_before, seq = _run_command(game_id, "concede", req)
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
-        pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        pending = decisions.PendingDecision.from_engine(
+            result.pending.decision, store.pause_generation(game_id)
+        )
         logged = audit.record(
             game_id,
             "concede",
@@ -1380,7 +1384,9 @@ def _answer_declaration(
     )
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
-        next_pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        next_pending = decisions.PendingDecision.from_engine(
+            result.pending.decision, store.pause_generation(game_id)
+        )
         return {
             "allowed": True,
             "paused": True,
@@ -1478,7 +1484,9 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
         return {"allowed": False, "reason": str(exc), "outcome": None, "log_seq": seq}
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
-        pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        pending = decisions.PendingDecision.from_engine(
+            result.pending.decision, store.pause_generation(game_id)
+        )
         seq = audit.record(
             game_id,
             "pass_priority",
@@ -1776,6 +1784,23 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     paused = store.paused_command(game_id)
     if paused is None or paused[2].decision.player != req.player:
         return refuse("no pending decision for you")
+    # Which question this answer is for, when the caller said
+    # (`DecideRequest.generation`). `_pause_slot_guard` already makes it
+    # impossible for one command to overwrite another's live pause, so an
+    # answer can never be applied to a question it was not offered for - but
+    # a resolution asking two decisions replaces the standing question the
+    # instant the first is accepted, and a client that read the earlier one
+    # would post its answer against a question it never saw. Refused here,
+    # with the pause left exactly where it is, so the seat re-reads and
+    # answers what is actually standing.
+    generation = store.pause_generation(game_id)
+    if req.generation is not None and req.generation != generation:
+        return refuse(
+            f"that answer names generation {req.generation}, but this game's standing "
+            f"question is generation {generation}: the decision you read has already "
+            "been answered and the resolution has moved on. Re-read pending_decision "
+            "and answer the question standing now."
+        )
     records.require_reasoning(game_id, req.player, req.reasoning)
     command, tape, pending = paused
     engine_decision = pending.decision
@@ -1916,7 +1941,9 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     )
     if result.status is commands.RunStatus.PAUSED:
         assert result.pending is not None
-        next_pending = decisions.PendingDecision.from_engine(result.pending.decision)
+        next_pending = decisions.PendingDecision.from_engine(
+            result.pending.decision, store.pause_generation(game_id)
+        )
         return {
             "accepted": True,
             "paused": True,

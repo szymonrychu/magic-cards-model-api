@@ -694,6 +694,48 @@ def test_clear_paused_command_is_a_no_op_when_nothing_was_pending(repo: GameRepo
     assert repo.paused_command(game_id) is None
 
 
+def test_pause_generation_starts_at_zero(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    assert repo.pause_generation(game_id) == 0
+
+
+def test_pause_generation_advances_on_every_store_and_survives_a_clear(
+    repo: GameRepository,
+) -> None:
+    """The counter tracks how many times the standing question has been
+    *replaced*, so a client holding a `pending_decision` can tell whether the
+    one it read is still the one standing (`app.py`'s `decide`).
+
+    It never goes backwards, and `clear_paused_command` does not reset it:
+    a reset would let the next pause reuse a number a stale client is still
+    holding, which is the one thing a generation may never do.
+    """
+    game_id = repo.create(_real_game())
+    pending = _real_pending()
+
+    repo.store_paused_command(game_id, Command(kind="cast", payload={}), (), pending)
+    first = repo.pause_generation(game_id)
+    repo.store_paused_command(game_id, Command(kind="advance", payload={}), (), pending)
+    second = repo.pause_generation(game_id)
+
+    assert second > first
+    repo.clear_paused_command(game_id)
+    assert repo.pause_generation(game_id) == second
+    repo.store_paused_command(game_id, Command(kind="cast", payload={}), (), pending)
+    assert repo.pause_generation(game_id) > second
+
+
+def test_pause_generations_are_isolated_per_game(repo: GameRepository) -> None:
+    game_a = repo.create(_real_game())
+    game_b = repo.create(_real_game())
+
+    repo.store_paused_command(game_a, Command(kind="cast", payload={}), (), _real_pending())
+
+    assert repo.pause_generation(game_a) > 0
+    assert repo.pause_generation(game_b) == 0
+
+
 def test_paused_commands_are_isolated_per_game(repo: GameRepository) -> None:
     game_a = repo.create(_real_game())
     game_b = repo.create(_real_game())

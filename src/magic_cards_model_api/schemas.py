@@ -470,6 +470,21 @@ class DecideRequest(BaseModel):
     ("if any"). The one field both declaration kinds share, the same way
     `choice` serves both `choose_a_quality` and `choose_a_mode` - see
     `DeclaredPairRequest`."""
+    generation: int | None = None
+    """Which standing question this answer is for -
+    `pending_decision.generation`, echoed back.
+
+    A resolution that asks two decisions hands the same seat a second
+    question the instant the first is accepted, and a client that assembled
+    its answer from the earlier read would otherwise post it against a
+    question it never saw. Naming the generation makes that a refusal
+    instead: the counter advances only when the pause slot's question is
+    replaced (`repository.GameRepository.pause_generation`), so a mismatch
+    means exactly "the question you read is not the one standing".
+
+    `None` (the default) skips the check entirely, which is what every
+    client that predates this field does. It is a guarantee a caller opts
+    into, never a required field."""
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
     optional for a human one."""

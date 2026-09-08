@@ -665,7 +665,15 @@ class PostgresRepository:
             command=command.to_json(),
             tape=[answer.model_dump(mode="json") for answer in tape],
             pending=_pending_to_json(pending),
+            # Bumped in the same `UPDATE` that writes the question, and
+            # computed by the database rather than read-then-written here,
+            # so two concurrent stores can never land on the same number.
+            pause_generation=games.c.pause_generation + 1,
         )
+
+    def pause_generation(self, game_id: str) -> int:
+        row = self._select_one(game_id, games.c.pause_generation)
+        return int(row[0]) if row is not None and row[0] is not None else 0
 
     def paused_command(
         self, game_id: str

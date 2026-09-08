@@ -264,12 +264,17 @@ whoever works on the repo itself.
   never the same `Command`, and refusing there would take away the
   operator's only escape hatch for a seat gone quiet mid-pregame.
 
-- **2026-09-08 - not built: a `pause_generation` on the pause slot.** The
-  guard above makes a stale answer impossible to *apply* (the slot is never
-  silently replaced, so an answer can only ever be read against the pause it
-  was offered for), but a client still has no token proving the
-  `pending_decision` it is answering is the one it read. That is a
-  client-side confusion, not a lost answer; it needs a `games
-  .pause_generation` column, an alembic revision, an optional `generation`
-  on `DecideRequest` and a `--generation` flag on `seat_cli decide`, and it
-  was left out whole rather than half-built.
+- **2026-09-08 - `pause_generation` is bumped by `store_paused_command` and
+  by nothing else, and is never reset.** The guard above makes a stale
+  answer impossible to *apply*; the generation is what tells a *client* the
+  standing question moved on between its read and its answer, which a
+  two-decision resolution does the instant the first answer is accepted.
+  Bumping it anywhere else (a commit, a clear) would make it mean "something
+  happened to this game" instead of "the standing question changed", and
+  resetting it on `clear_paused_command` would let a later pause reuse a
+  number a stale client is still holding - the one thing a generation may
+  never do. It is deliberately absent from the redacted
+  `{player, kind, prompt}` a non-deciding seat sees: only the deciding seat
+  can answer, so only the deciding seat has any use for it.
+  `DecideRequest.generation` is optional, so every client that predates it
+  keeps working - it is a guarantee a caller opts into.

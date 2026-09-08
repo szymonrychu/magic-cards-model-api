@@ -324,6 +324,10 @@ def redact_pending_decision(
             if details:
                 pending = {**pending, "card_details": details}
         return pending
+    # `{player, kind, prompt}` and nothing else, `generation` included: only
+    # the deciding seat can answer, so only the deciding seat has any use
+    # for the token that says which question it is answering. Handing it to
+    # everyone would widen this payload for no one's benefit.
     return {
         "player": pending.get("player"),
         "kind": pending.get("kind"),

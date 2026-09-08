@@ -271,6 +271,23 @@ class GameRepository(Protocol):
         kind this module reaches ... never has two questions pending on the
         same player at once"). Called from a mutating route the moment
         `commands.run_command`/`resume_command` returns `RunStatus.PAUSED`.
+
+        **Bumps `pause_generation`.** This is the only call that does, which
+        is what makes the counter mean "the standing question changed" and
+        not "something happened to this game".
+        """
+        ...
+
+    def pause_generation(self, game_id: str) -> int:
+        """How many times this game's standing question has been replaced -
+        `0` for a game that has never paused.
+
+        Monotonic per game and never reset, `clear_paused_command` included:
+        a reset would let a later pause reuse a number a stale client is
+        still holding, which is the one thing a generation may never do. It
+        rides out on every `pending_decision` view and comes back as
+        `DecideRequest.generation`, so a seat can say which question it
+        believes it is answering - see `app.py`'s `decide`.
         """
         ...
 
@@ -332,6 +349,10 @@ class InMemoryRepository:
         # answers already accepted, and the question it is waiting on. At
         # most one per game (`store_paused_command`'s own docstring).
         self._paused_commands: dict[str, tuple[Command, tuple[Answer, ...], PendingDecision]] = {}
+        # game_id -> how many times its standing question has been replaced.
+        # Bumped by `store_paused_command` and by nothing else; deliberately
+        # NOT cleared by `clear_paused_command` (see `pause_generation`).
+        self._pause_generations: dict[str, int] = {}
         self._decklists: dict[str, dict[str, str]] = {}  # game_id -> username -> decklist text
         # Lobby-owned. game_id -> username -> that seat's AgentSettings. Only
         # AI seats have an entry - a human seat is never given one, same as
@@ -560,6 +581,11 @@ class InMemoryRepository:
     ) -> None:
         with self._lock:
             self._paused_commands[game_id] = (command, tape, pending)
+            self._pause_generations[game_id] = self._pause_generations.get(game_id, 0) + 1
+
+    def pause_generation(self, game_id: str) -> int:
+        with self._lock:
+            return self._pause_generations.get(game_id, 0)
 
     def paused_command(
         self, game_id: str
@@ -620,6 +646,7 @@ class InMemoryRepository:
             self._created_at.pop(game_id, None)
             self._locks.pop(game_id, None)
             self._paused_commands.pop(game_id, None)
+            self._pause_generations.pop(game_id, None)
             self._decklists.pop(game_id, None)
             self._agent_settings.pop(game_id, None)
             self._ai_players.pop(game_id, None)

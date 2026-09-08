@@ -387,6 +387,20 @@ def build_parser() -> argparse.ArgumentParser:
             "pending_decision.prompt numbers those positionally against cards"
         ),
     )
+    decide.add_argument(
+        "--generation",
+        type=int,
+        default=None,
+        help=(
+            "pending_decision.generation, echoed back to say WHICH question this "
+            "answer is for. A resolution can ask more than one decision - a "
+            "fetchland's search, then the shockland's pay 2 life - and accepting "
+            "the first replaces the standing question with the second "
+            "immediately. Passing the generation you actually read turns an "
+            "answer aimed at the previous question into a refusal instead of a "
+            "wrong answer to the current one. Omit it to skip the check"
+        ),
+    )
     priority_flag(decide)
 
     passer = sub.add_parser("pass", help="pass priority - 'I am done for now'")
@@ -792,6 +806,8 @@ def run(argv: list[str] | None = None) -> int:
                 body["top"] = args.top == "top"
             if args.order:
                 body["order"] = _parse_ids(args.order)
+            if args.generation is not None:
+                body["generation"] = args.generation
             answer = seat.call_json("POST", f"/api/games/{gid}/decide", body)
             if isinstance(answer, dict) and answer.get("accepted") is False:
                 return {"allowed": False, **answer}
