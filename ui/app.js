@@ -70,6 +70,11 @@ export const store = createStore({
   aiStatus: null,
   connection: "idle",
   polling: false,
+  // How many mutating requests this tab has issued. Never displayed - it is
+  // the only ordering `poll()` has between its own reads and this seat's own
+  // actions, and `send()` (every mutating request in this file goes through
+  // it) is the one place it moves. See `poll()` for the defect it exists for.
+  mutations: 0,
   concedeArmed: false,
 });
 
@@ -133,6 +138,12 @@ export function gameIdFromBaseURI(baseURI) {
  * the previous `store.set` call unmade).
  */
 export async function send(method, path, body) {
+  // Bumped BEFORE the request, not after it: a board read that was answered
+  // while this request was still in flight is just as much a picture of the
+  // world before it as one answered before it was sent, and `poll()` has to
+  // discard both. Every mutating request in this file goes through here, so
+  // this is the only place the counter moves.
+  store.set((s) => ({ mutations: s.mutations + 1 }));
   try {
     return await api(method, path, body);
   } catch (err) {
@@ -238,13 +249,49 @@ export function planPermanentClick(card, app, state) {
 
 // -------------------------------------------------------------- polling --
 
-async function poll() {
+/** One poll cycle: read the board, read the log, show both, let the run act.
+ *
+ * `mutations` is what keeps those four steps honest with each other. The two
+ * reads are answered at the moment the server handles them, and `tickRun()`
+ * runs only once BOTH have landed - so anything this seat does in between (a
+ * "Pass until" click, a blocker declaration, a cast) lands on a server whose
+ * answer to the already-issued board read was written before it. Writing
+ * that answer into the store as current puts the pre-action board back on
+ * the screen, and then hands it to `tickRun()`, which reads
+ * `priority_holder` as still this seat's and passes a second time. The
+ * engine refuses that pass, and the run is over before it went anywhere -
+ * the owner's "my pass_until doesn't work", reproduced against a live server
+ * (`tests/test_ui_app.py`'s stale-board tests, and MEMORY.md's own note).
+ *
+ * It is not a rare race. One poll cycle grew past `POLL_MS` in the late game
+ * - a bigger board and a longer log make the `/log` read the slow half - so
+ * a poll was in flight at every instant and every click landed inside one.
+ *
+ * So a cycle that spans one of this seat's own requests throws its reads
+ * away rather than publishing them: nothing is written, nothing acts, and
+ * the next tick (1.2s) reads a board that includes the action. Losing a
+ * cycle is cheap; acting on a board that has already moved is not.
+ *
+ * Exported for `tests/test_ui_app.py` only, the same reason `store`/
+ * `tickRun`/`declareNoAttackers` are: the defect lives in the ordering
+ * between a poll's reads and this seat's own action, so a test of it has to
+ * drive the real poll rather than a restatement of it. */
+export async function poll() {
   const app = store.get();
   if (!app.gameId || app.polling) return;
   store.set({ polling: true });
   try {
+    const mutationsBefore = app.mutations;
     const state = await api("GET", withUid(gamePath(""), app.uid));
     const log = await api("GET", withUid(gamePath(`log?since=${app.log.lastSeq}`), app.uid));
+    if (store.get().mutations !== mutationsBefore) {
+      // One of this seat's own actions was issued while these two reads were
+      // outstanding, so they describe a board that no longer exists. The
+      // connection is fine, though - both reads landed - and saying so is
+      // what keeps a discarded cycle from reading as a dropped one.
+      store.set({ connection: "ok" });
+      return;
+    }
     store.set((s) => ({
       state,
       connection: "ok",
@@ -709,10 +756,31 @@ export async function declareNoBlockers() {
 
 async function passOnce() {
   const res = await send("POST", gamePath("actions/pass-priority"), { player: you() });
-  if (res === null) return { ok: false, reason: null, outcome: null, settledThrough: null };
+  // `transport: true`: `send` already told the player the connection is
+  // down, and nothing was decided - the pass was never refused, it was never
+  // asked. `tickRun` must tell that apart from a refusal, which is a real
+  // answer from the engine.
+  if (res === null) {
+    return { ok: false, reason: null, outcome: null, settledThrough: null, transport: true };
+  }
   const out = P.interpretPassOutcome(res);
   if (!out.ok) toast(out.reason);
   return out;
+}
+
+/** One board read, and nothing else: no log, no `store.set` of anything but
+ * the state, and - unlike `poll()` - no `tickRun()`, so this can be called
+ * from inside `tickRun` without re-entering it. `null` when the read itself
+ * failed, which is not the same answer as any board. */
+async function readState() {
+  try {
+    const state = await api("GET", withUid(gamePath(""), store.get().uid));
+    store.set({ state, connection: "ok" });
+    return state;
+  } catch (err) {
+    store.set({ connection: `error: ${err.message}` });
+    return null;
+  }
 }
 
 /** CR 502.4/514.3: nobody receives priority during untap or (most) cleanup
@@ -793,8 +861,32 @@ export async function tickRun() {
     // opponent's attack step".
     return;
   }
+  if (!out.ok) {
+    // A refusal is two different things wearing one word, and ending the run
+    // on both of them - which `if (!out.ok) store.set({run: null})` did - is
+    // how a run dies silently.
+    //
+    // "This seat does not hold priority any more" is a LOST RACE: the board
+    // moved between the read this tick acted on and the pass it sent. The
+    // opponent's own move landing in that gap is ordinary, and the very next
+    // tick sees the new board and does the right thing - there is nothing
+    // here for a player to be told about, let alone to end a run over.
+    //
+    // "This move is not available" is a real disagreement, and a run that
+    // cannot make its one move has nowhere to go.
+    //
+    // The board says which, so ask it rather than pattern-matching the
+    // refusal text: engine wording is not a client contract, and this is the
+    // one place a wrong guess costs the player their run. A read that itself
+    // fails answers nothing, so it decides nothing either - the run stays,
+    // and the next tick asks again.
+    if (out.transport) return;
+    const fresh = await readState();
+    if (!fresh || fresh.priority_holder !== you()) return;
+    store.set({ run: null });
+    return;
+  }
   store.set((s) => ({ run: s.run ? P.recordPass(run, s.state) : null }));
-  if (!out.ok) store.set({ run: null });
 }
 
 // ---- decisions -----------------------------------------------------------
