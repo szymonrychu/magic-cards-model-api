@@ -120,32 +120,17 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
         if player.ai
     }
 
-    # A fast, non-atomic pre-check: cheap, and saves `load_deck_into_game`'s
-    # real work (card resolution among it) in the common case of a lobby
-    # already at the cap. It is NOT what actually enforces the cap - two
-    # concurrent requests could both pass it - so `store.create_if_under`
-    # below is the one call that has the final, race-safe word.
-    live = store.live_ui_games()
-    if len(live) >= max_live_games():
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{len(live)} games are already live, the cap is {max_live_games()}; "
-                "end one from the lobby first"
-            ),
-        )
-
-    match = load_deck_into_game(
-        [(player.username, player.decklist_text) for player in req.players],
-        seed=req.seed,
-    )
-    game = match.games[-1]
-    game_id = store.create_if_under(game, max_live_games())
-    if game_id is None:
-        # The cap was crossed by a concurrent request between the pre-check
-        # above and here - `create_if_under` checked the live count and
-        # created atomically under one lock, so this is the race actually
-        # closing rather than a duplicate of the same message.
+    # M8: reserve-then-create, never create-then-reserve. `reserve_slot`
+    # claims one of `max_live_games()` slots atomically - counting live ui
+    # games and every other outstanding reservation - before any of the
+    # (real, sometimes slow) work below runs, so no concurrent request can
+    # ever slip a `live_ui_games` count under the cap while this reservation
+    # is outstanding. This is also what used to be a separate fast,
+    # non-atomic pre-check ahead of `load_deck_into_game`'s real work: that
+    # pre-check bought nothing `reserve_slot` doesn't already give for free
+    # now that the cap decision itself no longer waits on deck construction.
+    token = store.reserve_slot(max_live_games())
+    if token is None:
         live = store.live_ui_games()
         raise HTTPException(
             status_code=409,
@@ -154,6 +139,26 @@ def start_game_from_decklists(req: NewUiGame) -> dict[str, Any]:
                 "end one from the lobby first"
             ),
         )
+    try:
+        # `store.create` is the api half's plain, cap-unaware create (M8:
+        # "the api half keeps a plain `create`") - not routed through
+        # `api_client.ApiClient`, which pre-cut is still an in-process call
+        # to this same module's own functions and has no game-creation
+        # method of its own; that seam is for the extraction itself
+        # (stage B), not this task.
+        match = load_deck_into_game(
+            [(player.username, player.decklist_text) for player in req.players],
+            seed=req.seed,
+        )
+        game = match.games[-1]
+        game_id = store.create(game)
+        store.attach(token, game_id)
+    finally:
+        # A no-op once `attach` above already resolved `token` on the
+        # success path (`GameRepository.release`'s own docstring) - this is
+        # the one call standing between a failed or raised create and a
+        # permanently leaked reservation.
+        store.release(token)
     uids = new_seat_uids(game)
     store.register_seats(game_id, uids)
     store.register_decklists(
