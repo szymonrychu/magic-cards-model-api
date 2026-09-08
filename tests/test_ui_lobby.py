@@ -87,6 +87,8 @@ def test_lobby_rows_join_server_games_with_saved_seats() -> None:
             "turn": 3,
             "phase": "precombat_main",
             "over": False,
+            "archived": False,
+            "endedAt": None,
             "model": "opus",
             "effort": "max",
             "myUid": "u1",
@@ -223,13 +225,19 @@ def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
     assert result["ai"] == expected
 
 
-def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
+def test_lobby_table_renders_a_row_and_end_ends_the_game() -> None:
     """`mountLobby` reads `mcm.games.v1`, joins it against
     `GET /api/lobby/games?uids=...` through `lobbyViewModel`, and renders one
     `<tr>` per row into `#games-tbody`. Clicking a row's End button calls
-    `DELETE /api/lobby/games/{id}?uid=<my seat uid>` and drops the row from both
-    the table and `mcm.games.v1` - proven here by the saved list actually
-    being empty afterward, not just the DELETE call having fired."""
+    `DELETE /api/lobby/games/{id}?uid=<my seat uid>`.
+
+    End used to *drop* the row from `mcm.games.v1`. It now keeps it, stamped
+    `endedAt`, and the row re-renders as an ended one - because `DELETE` is a
+    soft delete (`games.archived_at`) whose entire purpose is that a finished
+    game stays reviewable, and `GET .../review` needs a seat uid that only
+    this browser ever held. Dropping the entry made the server's archive
+    unreachable forever. The row's own Forget button drops it when a person
+    means to."""
     result = run_module(
         "render/lobby.js",
         FAKE_DOM
@@ -287,8 +295,13 @@ def test_lobby_table_renders_a_row_and_end_deletes_the_game() -> None:
     assert result["rowText"][0] == "bot"
     assert result["rowText"][3] == "playing"
     assert "DELETE /api/lobby/games/g1?uid=u1" in result["fetchCalls"]
-    assert result["rowCountAfter"] == 0
-    assert result["savedAfter"] == []
+    assert result["rowCountAfter"] == 1
+    assert len(result["savedAfter"]) == 1
+    kept = result["savedAfter"][0]
+    assert kept["gameId"] == "g1"
+    assert kept["uid"] == "u1", "the seat uid the review needs must survive End"
+    assert kept["opponent"] == "bot"
+    assert kept["endedAt"]
 
 
 def test_lobby_end_keeps_the_row_when_the_server_refuses_the_delete() -> None:
@@ -356,3 +369,134 @@ def test_lobby_end_keeps_the_row_when_the_server_refuses_the_delete() -> None:
     assert result["rowCountAfter"] == 1
     assert result["savedAfter"] == SAVED
     assert "that uid is no seat in this game" in result["errorText"]
+
+
+# ------------------------------------------------------- the review's door --
+#
+# The post-game review is only reachable from the lobby, and only for a game
+# that is finished - a live game's plans and reasoning are hidden information
+# about how a seat intends to play, so the door itself is the first gate and
+# the endpoint's own 409 is the second.
+
+GAMES_OVER = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": 11,
+        "phase": "postcombat_main",
+        "is_over": True,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        "seats": {"you": "u1"},
+    }
+]
+
+
+def test_a_game_the_server_no_longer_lists_stays_in_the_table_as_an_ended_one() -> None:
+    """`DELETE /api/lobby/games/{id}` soft-deletes (`games.archived_at`) so a
+    finished game stays reviewable - which is worth nothing if the browser
+    throws away the seat uid the review needs. An ended game keeps its row,
+    marked, with the opponent's name it was saved with."""
+    rows = run_module(
+        "lobby_model.js",
+        "m.lobbyViewModel(games, saved)",
+        games=[],
+        saved=[
+            {
+                "gameId": "g1",
+                "uid": "u1",
+                "aiUid": "u2",
+                "endedAt": "2026-09-08T20:00:00Z",
+                "opponent": "bot",
+            }
+        ],
+    )
+    assert len(rows) == 1
+    assert rows[0]["gameId"] == "g1"
+    assert rows[0]["archived"] is True
+    assert rows[0]["over"] is True
+    assert rows[0]["opponent"] == "bot"
+    assert rows[0]["myUid"] == "u1"
+
+
+def test_a_live_game_is_not_marked_archived() -> None:
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES, saved=SAVED)
+    assert rows[0]["archived"] is False
+
+
+def test_a_finished_game_offers_show_thinking_and_a_live_one_does_not() -> None:
+    """The entry point, and the gate on it: the button exists only on a row
+    the lobby already knows is over, and it hands the review the game's id
+    and this browser's own seat uid."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+
+          const shown = [];
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: (r) => shown.push(r) });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+
+          const cell = tbody.children[0].children[tbody.children[0].children.length - 1];
+          const labels = cell.children.map((b) => b.textContent);
+          const review = cell.children.find((b) => b.textContent === "Show thinking");
+          if (review) review.listeners.click();
+          return { labels, shown };
+        })()
+        """,
+        games=GAMES_OVER,
+        saved=SAVED,
+    )
+    assert "Show thinking" in result["labels"]
+    assert result["shown"] == [{"gameId": "g1", "uid": "u1"}]
+
+    live = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const cell = tbody.children[0].children[tbody.children[0].children.length - 1];
+          return cell.children.map((b) => b.textContent);
+        })()
+        """,
+        games=GAMES,
+        saved=SAVED,
+    )
+    assert "Show thinking" not in live, (
+        "a live game must never offer the review - it would hand one seat the other's plan mid-game"
+    )

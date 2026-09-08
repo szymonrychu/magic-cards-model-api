@@ -847,3 +847,31 @@ whoever works on the repo itself.
   would have walked out of: `reasoning` and a `plan_declared` row's whole
   detail are now dropped for every viewer that is not that row's own actor
   or the admin key.
+
+- **2026-09-08 - the review's board has to be parsed back out of strings, and
+  loses two relationships doing it.** `serialize.snapshot` writes each
+  permanent as one line ("alice: Grizzly Bears (tapped) (sick) [4/5] dmg:2
+  (+1/+1=2)") and hands, graveyards and exile as bare card names - it is the
+  audit log's compact frame, not the `state_view` card objects. So
+  `ui/review_model.js` parses those lines back into card-shaped objects
+  (`parsePermanent`) and joins the printings in by name from `GET
+  /api/cards/{name}`, which is also the only way the review board can put
+  lands in the land row at all (`board_layout.isLandRow` reads a `type_line`,
+  and the snapshot carries none). Two things the snapshot simply does not
+  record and the review therefore cannot draw: which permanent an Aura or
+  Equipment is attached to, and which card was exiled with which permanent -
+  so a review board never tucks a card under another one where the live board
+  does. Also worth knowing: a `cast` row's `detail["card"]` is whatever the
+  client sent, so a client that cast by `card_id` leaves a uuid there; the
+  page drops uuids rather than showing them.
+
+- **2026-09-08 - the lobby's End no longer drops the game from
+  `mcm.games.v1`.** `DELETE /api/lobby/games/{id}` is a soft delete
+  (`games.archived_at`) whose whole purpose is that a finished game stays
+  reviewable, and `GET .../review` needs a seat uid that only the browser
+  holds - dropping the entry made the server's archive permanently
+  unreachable. End now stamps the entry `endedAt` (keeping `uid`, and the
+  opponent's name, since an archived game is filtered out of `GET
+  /api/lobby/games` and the server will never name it again), the row renders
+  as "ended" with Show thinking and Forget, and Forget is what actually drops
+  it.
