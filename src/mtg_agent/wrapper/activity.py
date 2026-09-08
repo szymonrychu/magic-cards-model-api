@@ -24,18 +24,31 @@ only reports it once a turn has ended), so the watcher globs
 `$HOME_DIR/.claude/projects/*/*.jsonl` and follows the newest file, picking
 up a new session file when one appears.
 
-Verbosity is `AGENT_LOG_LEVEL`:
+Verbosity is `AGENT_LOG_LEVEL`, and governs the text log only - `off`/`turns`
+still feed `ccw_inference_seconds` (see `InferenceTimer`), since that is a
+metric a production wrapper wants regardless of how loud its log is:
 
-    off       nothing
+    off       nothing logged
     turns     turn boundaries only (what the wrapper always logged)
     messages  + the agent's own prose
     tools     + every tool call and every tool failure   [default]
 
-Everything is truncated. An agent message can be a page, a Bash command can
-be a hundred-line heredoc, and a tool result can be an entire board state -
-none of that belongs in an interleaved compose log, so each is cut to a
-single line with an explicit `[+N chars]` marker. The full text is always on
-`GET /v1/messages/{turnId}` and in the transcript.
+Every event is the full content, not a head with the rest elided. An earlier
+version cut each line to a few hundred characters with a `[+N chars]` marker;
+that hid exactly the part an operator reading `kubectl logs` needs when
+debugging what the agent decided and why, so it is gone. `AGENT_LOG_LEVEL` is
+still the way to get a terser log - drop to `messages` or `turns` to lose
+whole categories of line - but a line that is emitted is emitted whole.
+
+An agent message can be a page and a Bash command can be a hundred-line
+heredoc; both contain newlines, and a raw multi-line dump would interleave
+badly with the rest of the compose log and break line-oriented log shipping
+(kubectl/docker compose logs, and anything reading this stream expect one
+event per physical line). So each event's whitespace - including every
+newline - is collapsed to single spaces before it is emitted: one event stays
+one physical line, and every word of it is still there in order. The full
+text with its original line breaks is always on `GET /v1/messages/{turnId}`
+and in the transcript, for a reader that wants the original formatting.
 
 Nothing here can fail a turn: the thread catches everything and keeps going.
 Logging is not worth breaking a game over.
@@ -48,23 +61,13 @@ import logging
 import re
 import threading
 from collections.abc import Iterable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .metrics import Metrics
+
 log = logging.getLogger("agent")
-
-#: One agent message, collapsed to a line. Long enough for a real "here is my
-#: plan for this combat" paragraph, short enough that ten of them do not push
-#: the driver's and the game's lines off the screen.
-SAY_CHARS = 400
-
-#: One tool call. A seat command (`mtg-seat cast ...`) is well under this; a
-#: heredoc or a long grep gets cut, and the point of the line - which tool,
-#: against what - survives the cut because it is at the front.
-TOOL_CHARS = 220
-
-#: A failing tool's error. Enough to see the refusal the engine gave.
-ERROR_CHARS = 300
 
 #: How often the watcher looks for new transcript bytes, and for a newer
 #: session file. Fast enough that a line lands while the agent is still on the
@@ -86,28 +89,45 @@ def level_rank(level: str) -> int:
 # ---- redaction -------------------------------------------------------------
 
 #: Anything shaped like a credential. The stack handles an ANTHROPIC_API_KEY
-#: and a wrapper shared secret, and the agent's own Bash commands can echo an
-#: environment; none of that goes to stdout. Seat uids are NOT redacted - they
-#: are already in every URL in this log and identify which seat is talking.
+#: and a wrapper shared secret, the agent's own Bash commands can echo an
+#: environment, and the container also carries a GH_PAT (deploy/seat-job.yaml,
+#: used to clone the deck-guides repo) that could end up embedded in a
+#: command the agent runs; none of that goes to stdout. Seat uids are NOT
+#: redacted - they are already in every URL in this log and identify which
+#: seat is talking.
+#:
+#: Now that lines carry full content instead of a truncated head, a
+#: credential can no longer hide past the cut - these patterns are what
+#: stands between "full logs" and "full logs including a token".
 _SECRETS = (
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),
-    re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd)\b(\s*[:=]\s*)\S+"),
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),  # an ANTHROPIC_API_KEY
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),  # an Authorization header
+    re.compile(r"\bgh[oprsu]_[A-Za-z0-9]{20,}"),  # a classic GitHub token (GH_PAT et al)
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),  # a fine-grained GitHub PAT
+    re.compile(r"://[^\s/@]+:[^\s/@]+@"),  # user:secret@ basic auth in any URL
 )
+
+#: `token=...`, `secret: ...`, and friends - anything the credential-shaped
+#: patterns above don't already catch by their own value shape.
+_KEY_VALUE_SECRET = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd)\b(\s*[:=]\s*)\S+")
 
 
 def redact(text: str) -> str:
-    out = _SECRETS[0].sub("sk-ant-<redacted>", text)
+    out = str(text)
+    out = _SECRETS[0].sub("sk-ant-<redacted>", out)
     out = _SECRETS[1].sub("Bearer <redacted>", out)
-    return _SECRETS[2].sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", out)
+    out = _SECRETS[2].sub("<redacted>", out)
+    out = _SECRETS[3].sub("<redacted>", out)
+    out = _SECRETS[4].sub("://<redacted>@", out)
+    return _KEY_VALUE_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", out)
 
 
-def one_line(text: str, limit: int) -> str:
-    """Collapse whitespace, redact, and cut at `limit` with a visible marker."""
-    flat = " ".join(redact(str(text)).split())
-    if len(flat) <= limit:
-        return flat
-    return flat[:limit].rstrip() + f" ... [+{len(flat) - limit} chars]"
+def one_line(text: str) -> str:
+    """Collapse whitespace - including every newline - to single spaces, and
+    redact. No length limit: the full content is the point. Collapsing
+    whitespace, rather than cutting the text, is what keeps one event on one
+    physical line for a line-oriented log reader."""
+    return " ".join(redact(str(text)).split())
 
 
 # ---- turning transcript lines into events ----------------------------------
@@ -131,21 +151,21 @@ _HEADLINE_FIELD = {
 def describe_tool(name: str, payload: Any) -> str:
     """`name` plus the readable part of its input, on one line."""
     if not isinstance(payload, dict):
-        return one_line(f"{name} {payload}", TOOL_CHARS)
+        return one_line(f"{name} {payload}")
     field = _HEADLINE_FIELD.get(name)
     if field:
         value = payload.get(field)
         if value:
-            return one_line(f"{name} {value}", TOOL_CHARS)
+            return one_line(f"{name} {value}")
     if field == "":
-        return one_line(name, TOOL_CHARS)
+        return one_line(name)
     try:
         rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     except (TypeError, ValueError):
         rendered = str(payload)
     if rendered in ("{}", "null"):
-        return one_line(name, TOOL_CHARS)
-    return one_line(f"{name} {rendered}", TOOL_CHARS)
+        return one_line(name)
+    return one_line(f"{name} {rendered}")
 
 
 def _result_text(content: Any) -> str:
@@ -164,8 +184,17 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
     """`(kind, text)` for one transcript object.
 
     Kinds are `say`, `tool` and `tool-error`. `thinking` blocks are skipped
-    on purpose: they are the agent talking to itself, they are long, and the
-    text blocks say the same thing in a form meant to be read.
+    on purpose: they are the agent talking to itself, and the text blocks
+    say the same thing in a form meant to be read.
+
+    This used to add "and they are long", which is simply not true of what
+    reaches this function. Measured on a live pod and independently on a
+    second machine: 36 `thinking` blocks in the transcript, **zero**
+    characters of text between them - they arrive carrying a signature and
+    nothing else. So there is no thinking text here to harvest, skipped or
+    not; anything that wants the agent's reasoning has to ask the agent for
+    it (`POST /api/games/{id}/plan`, and the per-action `reasoning` every
+    mutating route already requires), not mine it out of a transcript.
     """
     kind = line.get("type")
     message = line.get("message")
@@ -179,7 +208,7 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "text" and str(block.get("text", "")).strip():
-                yield "say", one_line(block["text"], SAY_CHARS)
+                yield "say", one_line(block["text"])
             elif block.get("type") == "tool_use":
                 yield "tool", describe_tool(str(block.get("name") or "?"), block.get("input"))
         return
@@ -191,7 +220,7 @@ def events(line: dict) -> Iterator[tuple[str, str]]:
                 continue
             if not block.get("is_error"):
                 continue
-            yield "tool-error", one_line(_result_text(block.get("content")), ERROR_CHARS)
+            yield "tool-error", one_line(_result_text(block.get("content")))
 
 
 def emit(kind: str, text: str, rank: int) -> None:
@@ -265,6 +294,86 @@ class TranscriptTail:
         return out
 
 
+def _parse_ts(raw: Any) -> float | None:
+    """A transcript line's own `timestamp` field (ISO 8601, `...Z`), as
+    epoch seconds - or `None` for a missing/unparsable one. Using the
+    JSONL's own timestamps rather than local read time is what makes the
+    duration below exact regardless of how often the watcher polls."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+class InferenceTimer:
+    """`ccw_inference_seconds` observations, fed transcript lines in order.
+
+    One inference is one `requestId`: claude flushes it as several
+    content-block lines (a `thinking` line, then a `tool_use`/`text` line),
+    each carrying the same final `usage.output_tokens`. A group's *start* is
+    the timestamp of the line immediately before its first block (the point
+    the model started responding to what came before); its *end* is the
+    timestamp of its own last block (the point the full response landed).
+    Both come from the transcript's own `timestamp` field, not wall-clock
+    read time, so the measurement is exact no matter how often the watcher
+    polls.
+
+    A group only finalizes once a later line proves it has no more blocks
+    coming - so the very last inference in flight when the transcript stops
+    growing (match end) is never recorded. That is an inherent limit of
+    timing a live tail rather than a finished file, not a bug.
+    """
+
+    def __init__(self, metrics: Metrics | None) -> None:
+        self.metrics = metrics
+        self._prev_ts: float | None = None
+        self._group_id: str | None = None
+        self._group_start: float | None = None
+        self._group_last: float | None = None
+        self._group_tokens: int = 0
+
+    def feed(self, lines: Iterable[dict]) -> None:
+        for line in lines:
+            self._feed_one(line)
+
+    def _feed_one(self, line: dict) -> None:
+        ts = _parse_ts(line.get("timestamp"))
+        kind = line.get("type")
+        rid = line.get("requestId") if kind == "assistant" else None
+
+        if self._group_id is not None and rid != self._group_id:
+            self._finish_group()
+
+        if kind == "assistant" and rid:
+            if self._group_id is None:
+                self._group_id = rid
+                self._group_start = self._prev_ts
+            message = line.get("message") or {}
+            usage = message.get("usage") or {}
+            output_tokens = usage.get("output_tokens")
+            if isinstance(output_tokens, int):
+                self._group_tokens = output_tokens
+            if ts is not None:
+                self._group_last = ts
+
+        if ts is not None:
+            self._prev_ts = ts
+
+    def _finish_group(self) -> None:
+        if (
+            self.metrics is not None
+            and self._group_start is not None
+            and self._group_last is not None
+        ):
+            self.metrics.record_inference(self._group_last - self._group_start, self._group_tokens)
+        self._group_id = None
+        self._group_start = None
+        self._group_last = None
+        self._group_tokens = 0
+
+
 def newest_transcript(home_dir: Path) -> Path | None:
     """The most recently modified session file under `~/.claude/projects`."""
     root = home_dir / ".claude" / "projects"
@@ -284,19 +393,32 @@ class ActivityWatcher:
     unaffected and only the log goes quiet.
     """
 
-    def __init__(self, home_dir: Path, level: str = "tools", poll: float = POLL_SECONDS) -> None:
+    def __init__(
+        self,
+        home_dir: Path,
+        level: str = "tools",
+        poll: float = POLL_SECONDS,
+        metrics: Metrics | None = None,
+    ) -> None:
         self.home_dir = Path(home_dir)
         self.rank = level_rank(level)
         self.poll = poll
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._tail: TranscriptTail | None = None
+        #: `ccw_inference_seconds`. Fed unconditionally in `poll_once`, not
+        #: gated on `rank` - a production wrapper turned down to `off`/`turns`
+        #: for log volume still wants latency data.
+        self._timer = InferenceTimer(metrics)
 
     def enabled(self) -> bool:
         return self.rank > level_rank("turns")
 
     def start(self) -> None:
-        if not self.enabled() or self._thread is not None:
+        # No longer gated on `enabled()`: the watcher's job is not just text
+        # logging any more (which `rank` still controls, inside `poll_once`)
+        # but also feeding `ccw_inference_seconds`, which every level wants.
+        if self._thread is not None:
             return
         self._thread = threading.Thread(target=self._run, name="agent-activity", daemon=True)
         self._thread.start()
@@ -306,8 +428,9 @@ class ActivityWatcher:
         self._stop.set()
 
     def poll_once(self) -> int:
-        """Follow the newest transcript and log whatever is new. Returns the
-        number of events logged - the unit of the tests."""
+        """Follow the newest transcript, log whatever is new, and feed
+        `ccw_inference_seconds`. Returns the number of events logged - the
+        unit of the tests."""
         newest = newest_transcript(self.home_dir)
         if newest is None:
             return 0
@@ -317,7 +440,9 @@ class ActivityWatcher:
             # only file here is this session's, and its opening turn is worth
             # logging rather than skipping.
             self._tail = TranscriptTail(newest)
-        return log_lines(self._tail.read(), self.rank)
+        lines = self._tail.read()
+        self._timer.feed(lines)
+        return log_lines(lines, self.rank)
 
     def _run(self) -> None:
         while not self._stop.wait(self.poll):

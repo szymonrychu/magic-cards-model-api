@@ -16,6 +16,19 @@ docker-free with no environment set up at all. `db.configured_database_url`
 is the whole rule, and a partial set of components counts as nothing
 configured rather than as an error - see its docstring.
 
+**`REQUIRE_POSTGRES` makes that same silence loud.** A production deployment
+that only sets some `POSTGRES_*` vars, or points them at a Postgres that
+isn't listening, would otherwise pass every check above and run happily on
+`InMemoryRepository` (or, once reachability is the only thing wrong, on a
+`PostgresRepository` whose first real query is the first anyone finds out) -
+no error, no crash, just a pod that loses every game on its next restart
+with nothing in any log to say why. With `REQUIRE_POSTGRES` truthy-set,
+`select_store` refuses both of those: nothing/partial configured raises
+`db.database_url_from_env`'s own `RuntimeError` instead of falling back, and
+a configured-but-unreachable database is probed - connected to and
+immediately disconnected from - before this function ever returns, so a bad
+deployment crashes at startup rather than at its first game.
+
 Until this existed, T9's postgres repository and T10's `records` table were
 unreachable from the shipped application: this module said
 `GameStore = InMemoryRepository; store = GameStore()` outright and nothing
@@ -37,11 +50,13 @@ bindings resolve to the same object.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from uuid import uuid4
 
 from magic_cards_model.models import Game
 
-from .db import configured_database_url
+from .db import configured_database_url, database_url_from_env, make_engine
 from .repository import GameRepository, InMemoryRepository
 
 __all__ = ["GameRepository", "GameStore", "new_seat_uids", "store"]
@@ -55,19 +70,47 @@ is chosen from the environment, while this name keeps meaning what it always
 meant, "the in-memory repository"."""
 
 
-def select_store() -> GameRepository:
+def select_store(env: Mapping[str, str] | None = None) -> GameRepository:
     """The repository this process runs on, per the environment.
 
     Imports `repository_postgres` only when it is actually going to be used,
     so nothing about a docker-free run pays for SQLAlchemy engine setup or
     fails on a driver it does not need.
+
+    `env` follows `db.py`'s own convention (`configured_database_url`,
+    `database_url_from_env`) so this stays testable without mutating
+    `os.environ` - `os.environ` itself is still the real default.
     """
-    database_url = configured_database_url()
+    env = os.environ if env is None else env
+    require_postgres = bool(env.get("REQUIRE_POSTGRES"))
+
+    database_url = configured_database_url(env)
     if database_url is None:
-        return InMemoryRepository()
+        if not require_postgres:
+            return InMemoryRepository()
+        # REQUIRE_POSTGRES turns "nothing, or only some POSTGRES_* vars, are
+        # set" from configured_database_url's deliberate silent fallback
+        # into a startup crash - database_url_from_env raises the RuntimeError
+        # that names exactly what's missing; let it propagate uncaught.
+        database_url = database_url_from_env(env)
+
     from .repository_postgres import PostgresRepository
 
-    return PostgresRepository(database_url)
+    engine = None
+    if require_postgres:
+        # SQLAlchemy connects lazily, so a syntactically fine but unreachable
+        # database_url would otherwise pass every check above and only fail
+        # on the first real query - invisible to both this startup path and
+        # to /api/health, which is a static dict with no DB check of its own.
+        # Build the engine here and probe it before PostgresRepository ever
+        # sees it, so a bad deployment crashes once, now, at import - and
+        # hand the same engine to PostgresRepository below rather than
+        # letting it open a second pool for the same URL.
+        engine = make_engine(database_url)
+        with engine.connect():
+            pass
+
+    return PostgresRepository(database_url, engine=engine)
 
 
 store: GameRepository = select_store()

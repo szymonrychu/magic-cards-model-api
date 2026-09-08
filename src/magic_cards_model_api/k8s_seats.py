@@ -68,7 +68,11 @@ class K8sSettings:
     #: The mcp service's own URL (M2: a stateless streamable-HTTP service,
     #: not an in-process stdio subprocess). Empty until a later stage's chart
     #: sets `MCP_SERVICE_URL` - the mcp service does not exist as its own
-    #: deployment until the phase-2b cut.
+    #: deployment until the phase-2b cut. Empty is not a gap: the
+    #: `mcp-config` initContainer (`deploy/seat-job.yaml`) falls back to a
+    #: stdio `mtg` server run in-container from the agent image, the same
+    #: shape `docker compose` already uses, so every seat gets a working
+    #: `mtg` MCP server either way.
     mcp_url: str = ""
     #: Where `build_job` reads the seat Job template from - see that
     #: function and `deploy/seat-job.yaml`'s own header comment.
@@ -79,6 +83,11 @@ class K8sSettings:
     #: on its own, so without this a pod stuck exactly that way reports
     #: `pending` forever and `ai_pregame.py`'s backstop never fires.
     driver_grace_seconds: int = 60
+    #: Set by `deploy/k8s/50-deployment.yaml`, rendered per-deploy with the
+    #: pushed sha. Defaulted to the `:latest` tags only so a bare local run
+    #: has something syntactically valid; a real cluster always sets both.
+    agent_image: str = "harbor.szymonrichert.pl/containers/magic-cards-model-agent:latest"
+    api_image: str = "harbor.szymonrichert.pl/containers/magic-cards-model-api:latest"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> K8sSettings:
@@ -91,6 +100,12 @@ class K8sSettings:
             mcp_url=value("MCP_SERVICE_URL", ""),
             job_template_path=value("SEAT_JOB_TEMPLATE_PATH", "deploy/seat-job.yaml"),
             driver_grace_seconds=int(value("AGENT_DRIVER_GRACE_SECONDS", "60")),
+            agent_image=value(
+                "AGENT_IMAGE", "harbor.szymonrichert.pl/containers/magic-cards-model-agent:latest"
+            ),
+            api_image=value(
+                "API_IMAGE", "harbor.szymonrichert.pl/containers/magic-cards-model-api:latest"
+            ),
         )
 
 
@@ -113,11 +128,26 @@ SEAT_JOB_PLACEHOLDERS = (
     "__MODEL__",
     "__EFFORT__",
     "__MAX_THINKING_TOKENS__",
+    #: The two images. These are placeholders and not baked into the template
+    #: on purpose: `mise run k8s:deploy` renders `50-deployment.yaml`'s
+    #: `AGENT_IMAGE`/`API_IMAGE` with the sha it just pushed, and the seat Job
+    #: has to name that same sha. A literal here is how every seat Job in the
+    #: cluster ended up asking for a tag that never existed.
+    "__AGENT_IMAGE__",
+    "__API_IMAGE__",
 )
 
 
 def _seat_job_values(
-    *, game_id: str, uid: str, player: str, api_url: str, mcp_url: str, agent: AgentSettings
+    *,
+    game_id: str,
+    uid: str,
+    player: str,
+    api_url: str,
+    mcp_url: str,
+    agent: AgentSettings,
+    agent_image: str,
+    api_image: str,
 ) -> dict[str, str]:
     assignment = {
         "uid": uid,
@@ -138,6 +168,8 @@ def _seat_job_values(
         "__MAX_THINKING_TOKENS__": (
             "" if agent.max_thinking_tokens is None else str(agent.max_thinking_tokens)
         ),
+        "__AGENT_IMAGE__": agent_image,
+        "__API_IMAGE__": api_image,
     }
 
 
@@ -189,6 +221,8 @@ def build_job(
         api_url=settings.api_url,
         mcp_url=settings.mcp_url,
         agent=agent,
+        agent_image=settings.agent_image,
+        api_image=settings.api_image,
     )
     template = _load_seat_job_template(settings.job_template_path)
     job = render_seat_job_template(template, values)

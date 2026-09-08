@@ -39,7 +39,7 @@ def schema() -> dict:
 def test_the_wire_shape_of_a_default_agent_validates(schema):
     payload = AgentSettings(model="sonnet").to_wire()
     jsonschema.validate(payload, schema)
-    assert payload == {"model": "sonnet", "effort": "high", "maxThinkingTokens": None}
+    assert payload == {"model": "sonnet", "effort": "medium", "maxThinkingTokens": None}
 
 
 def test_the_wire_shape_with_a_thinking_budget_validates(schema):

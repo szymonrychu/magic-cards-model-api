@@ -277,6 +277,45 @@ def test_admin_key_is_none_for_an_unknown_game(repo: GameRepository) -> None:
 
 
 # ---------------------------------------------------------------------------
+# owner_user_id - OIDC-based user separation
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_no_owner_leaves_it_none(repo: GameRepository) -> None:
+    """Backward compatibility: a caller that never names an owner (every
+    caller today, since nothing issues bearer tokens yet) gets a game exactly
+    as ownerless as before this feature existed."""
+    game_id = repo.create(_real_game())
+
+    assert repo.owner_user_id(game_id) is None
+
+
+def test_create_records_the_given_owner(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game(), owner_user_id="oidc-sub-alice")
+
+    assert repo.owner_user_id(game_id) == "oidc-sub-alice"
+
+
+def test_attach_does_not_disturb_the_owner_create_already_recorded(
+    repo: GameRepository,
+) -> None:
+    """M8's `reserve_slot`/`create`/`attach` split (replacing the deleted
+    `create_if_under`) still leaves ownership exactly where `create()` put
+    it: `attach` only resolves the reservation and registers the ui game, it
+    never touches `owner_user_id`."""
+    token = repo.reserve_slot(cap=5)
+    assert token is not None
+    game_id = repo.create(_real_game(), owner_user_id="oidc-sub-bob")
+    repo.attach(token, game_id)
+
+    assert repo.owner_user_id(game_id) == "oidc-sub-bob"
+
+
+def test_owner_user_id_is_none_for_an_unknown_game(repo: GameRepository) -> None:
+    assert repo.owner_user_id("no-such-game") is None
+
+
+# ---------------------------------------------------------------------------
 # created_at
 # ---------------------------------------------------------------------------
 
@@ -903,3 +942,127 @@ def test_delete_clears_the_paused_command_too(repo: GameRepository) -> None:
 
     assert repo.get(game_id) is None
     assert repo.paused_command(game_id) is None
+
+
+# ---------------------------------------------------------------------------
+# recent_records - the bounded window the plan gate reads
+# ---------------------------------------------------------------------------
+
+
+def test_recent_records_returns_the_newest_rows_oldest_first(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    for n in range(10):
+        repo.append_record(game_id, {"action": f"a{n}"})
+
+    window = repo.recent_records(game_id, 3)
+
+    assert [row["seq"] for row in window] == [8, 9, 10]
+    assert [row["payload"]["action"] for row in window] == ["a7", "a8", "a9"]
+
+
+def test_recent_records_never_returns_more_than_the_window(repo: GameRepository) -> None:
+    """The property the plan gate depends on: this sits on the hot action
+    path, and a full `records()` load would get slower every turn of a long
+    game. Whatever the ledger grows to, the window does not."""
+    game_id = repo.create(_real_game())
+    sizes = []
+    for batch in range(4):
+        for n in range(50):
+            repo.append_record(game_id, {"action": f"b{batch}-{n}"})
+        sizes.append(len(repo.recent_records(game_id, 20)))
+
+    assert sizes == [20, 20, 20, 20]
+    assert len(repo.records(game_id)) == 200, "the ledger really did grow underneath it"
+
+
+def test_recent_records_of_a_short_ledger_returns_all_of_it(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.append_record(game_id, {"action": "only"})
+
+    assert [row["payload"]["action"] for row in repo.recent_records(game_id, 20)] == ["only"]
+
+
+def test_recent_records_is_empty_for_a_game_with_none(repo: GameRepository) -> None:
+    assert repo.recent_records("no-such-game", 20) == []
+
+
+# ---------------------------------------------------------------------------
+# delete is soft: the row and its state survive for review
+# ---------------------------------------------------------------------------
+
+
+def test_archived_returns_a_live_game_with_no_deletion_stamp(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_seats(game_id, {"uid-you": "you"})
+
+    archived = repo.archived(game_id)
+
+    assert archived is not None
+    assert archived.deleted_at is None
+    assert archived.admin_key == repo.admin_key(game_id)
+    assert archived.seat_uids == {"uid-you": "you"}
+    assert [player.username for player in archived.game.players] == ["you", "bot"]
+
+
+def test_archived_is_none_for_a_game_that_never_existed(repo: GameRepository) -> None:
+    assert repo.archived("no-such-game") is None
+
+
+def test_a_deleted_games_state_and_credentials_survive_for_review(repo: GameRepository) -> None:
+    """The user's own requirement: "Games must be persisting in the database
+    even after are stopped/finished/conceded." A hard delete kept the audit
+    trail and threw away the board it describes, so a post-game review would
+    have had reasoning with nothing to read it against."""
+    game = _real_game()
+    game_id = repo.create(game)
+    repo.register_seats(game_id, {"uid-you": "you", "uid-bot": "bot"})
+    admin = repo.admin_key(game_id)
+
+    assert repo.delete(game_id) is True
+
+    archived = repo.archived(game_id)
+    assert archived is not None, "the row must outlive the deletion"
+    assert archived.deleted_at is not None, "and must say when it was ended"
+    assert [player.username for player in archived.game.players] == ["you", "bot"]
+    assert len(archived.game.player("you").library) == len(game.player("you").library)
+    assert archived.admin_key == admin
+    assert archived.seat_uids == {"uid-you": "you", "uid-bot": "bot"}
+
+
+def test_a_deleted_game_is_gone_from_every_live_surface(repo: GameRepository) -> None:
+    """Soft, not invisible-only: everything that answers "is this game
+    playable" must still say no, exactly as a hard delete made it say no."""
+    game_id = repo.create(_real_game())
+    repo.register_ui_game(game_id)
+
+    assert repo.delete(game_id) is True
+
+    assert repo.get(game_id) is None
+    assert game_id not in repo.ids()
+    assert game_id not in repo.ui_games()
+    assert game_id not in repo.live_ui_games()
+    assert repo.seat_uids(game_id) == {}
+    assert repo.admin_key(game_id) is None
+    with pytest.raises(KeyError), repo.locked(game_id):
+        pass
+
+
+def test_deleting_twice_reports_false_the_second_time(repo: GameRepository) -> None:
+    """`lobby.reset_game` reports `deleted` off this return value, and the
+    lobby's End button is clickable twice - the second click ends nothing."""
+    game_id = repo.create(_real_game())
+
+    assert repo.delete(game_id) is True
+    assert repo.delete(game_id) is False
+
+
+def test_a_deleted_game_does_not_hold_a_live_slot(repo: GameRepository) -> None:
+    """`MAX_LIVE_GAMES` counts `live_ui_games()`; an archived row must not
+    keep occupying a seat at the table it has been taken away from."""
+    first = repo.create(_real_game())
+    repo.register_ui_game(first)
+    repo.delete(first)
+
+    token = repo.reserve_slot(1)
+
+    assert token is not None, "the ended game must have given its slot back"

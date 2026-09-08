@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from magic_cards_model.models import Action, Card
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 class NewPlayer(BaseModel):
@@ -102,6 +102,83 @@ class ActorRequest(BaseModel):
     reasoning: str | None = None
     """T10: this action's own reasoning - required for an agent seat
     (`records.require_reasoning`), optional for a human one."""
+
+
+#: A field a seat has to actually say something in. Whitespace is stripped
+#: first and then required to be non-empty, so `"   "` is refused the same
+#: way `""` is - `records.require_reasoning` already treats a
+#: whitespace-only reason as none given, and a declaration made of spaces
+#: would satisfy the plan gate while telling a reviewer nothing.
+Stated = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class OpponentPrediction(BaseModel):
+    """What a seat expects its opponent to do next, and why.
+
+    The prediction is the part of a declaration that makes it evidence
+    rather than commentary: it is checkable against what the opponent then
+    actually did, and `review.py` puts the two side by side without grading
+    either. `because` is required for the same reason - a call with no read
+    behind it is a guess, and a guess that happens to land proves nothing.
+    """
+
+    expecting: Stated
+    """What the opponent will do, concretely enough to be wrong about."""
+    because: Stated
+    """The read that supports it - what on the board, in the log, or in the
+    matchup makes this the expected line."""
+    confidence: Literal["low", "medium", "high"] = "medium"
+    """How strongly. Three levels rather than a percentage: a number invites
+    false precision nobody can calibrate, and a sceptic reading the review
+    will argue with a 65% far harder than with a "medium"."""
+
+
+class DeclarePlanIn(BaseModel):
+    """`POST /api/games/{game_id}/plan` - a seat's declaration, made before
+    it acts, of how it reads this turn.
+
+    Deliberately five fields and no more. Each one is something the post-game
+    review has to show and cannot reconstruct from the board: what the seat
+    saw (`board_read`), where it thought it stood in the matchup
+    (`my_role`), what it meant to do (`plan`), and what it expected back
+    (`prediction`, with its own reason and confidence). Anything longer and
+    an agent fills it in with filler; anything shorter and the review is
+    narrative again rather than evidence.
+
+    `uid` is the seat's own credential, carried in the body beside `player`
+    rather than in the query string: a plan is hidden information about how
+    a seat intends to play, so the server checks that the caller *is* the
+    seat it is declaring for before writing anything into its name.
+    """
+
+    player: Stated
+    uid: Stated
+    """This seat's own uid - `player` must be the seat it opens."""
+    board_read: Stated
+    """What you see on the board right now - the state you are planning
+    against, in your own words."""
+    my_role: Stated
+    """Your own role in this matchup as you understand it - who is the
+    beatdown, what your deck is trying to do, what losing looks like."""
+    plan: Stated
+    """What you intend to do this turn, and why that follows from the two
+    above."""
+    prediction: OpponentPrediction
+    """What you expect the opponent to do in response, and why."""
+
+
+class DeclarePlanResponse(BaseModel):
+    """`POST .../plan`'s answer. No state view: a declaration mutates no
+    `Game`, so there is nothing about the board that this could have
+    changed."""
+
+    declared: bool
+    log_seq: int
+    """The `records` row this declaration became - the same monotonic marker
+    every action response carries."""
+    player: str
+    turn_number: int | None = None
+    """The turn this plan is for, as the ledger stamped it."""
 
 
 class ReportProblemRequest(BaseModel):
@@ -730,6 +807,10 @@ class ExilePileView(BaseModel):
     marker: str
     owner: str | None = None
     turn_exiled: int | None = None
+    linked_permanent_id: str | None = None
+    """The permanent this card was exiled *with* - imprint, hideaway. Absent
+    for every marker that links nothing, and a lookup that may find nothing
+    even when present: nothing unlinks the two when the permanent leaves."""
 
 
 class SpecialActionEntry(BaseModel):
@@ -816,6 +897,7 @@ class CardView(BaseModel):
     special_actions: SpecialActionsView | None = None
     exile_pile: ExilePileView | None = None
     cast_options: list[CastOptionView] | None = None
+    attached_to: TargetRefView | None = None
     printed_type_line: str | None = None
     printed_power: int | None = None
     printed_toughness: int | None = None
@@ -1124,6 +1206,73 @@ class GameLogResponse(BaseModel):
 
     log: list[dict[str, Any]]
     last_seq: int
+
+
+class ReviewEntry(BaseModel):
+    """One ledger row as a declaration's pairing carries it - no `snapshot`,
+    which lives once in `GameReviewResponse.entries` (see `review.py`)."""
+
+    seq: int
+    ts: str | None = None
+    turn: int | None = None
+    step: str | None = None
+    phase: str | None = None
+    action: str
+    player: str | None = None
+    """Whose row this is - lifted out of `detail` for readability, and still
+    in `detail` too."""
+    reasoning: str | None = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+    """The action's own per-route keys - as per-action-shaped as
+    `GameLogResponse.log`'s, and left `dict[str, Any]` for the same reason."""
+
+
+class ReviewDeclaration(BaseModel):
+    """One `plan_declared` row, paired with what happened next.
+
+    Nothing on this model grades the prediction - no score, no hit flag, no
+    verdict. See `review.py` for why the raw pairing is the thing a sceptic
+    cannot argue with.
+    """
+
+    seq: int
+    ts: str | None = None
+    turn: int | None = None
+    turns_taken: int | None = None
+    step: str | None = None
+    phase: str | None = None
+    player: str | None = None
+    board_read: str | None = None
+    my_role: str | None = None
+    plan: str | None = None
+    prediction: OpponentPrediction | None = None
+    did: list[ReviewEntry] = Field(default_factory=list)
+    """What the declaring seat actually did, its own reasoning beside each."""
+    opponent_did: list[ReviewEntry] = Field(default_factory=list)
+    """What the opponent actually did in the same window."""
+
+
+class GameReviewResponse(BaseModel):
+    """`GET /api/games/{game_id}/review` - post-game only, and never open."""
+
+    game_id: str
+    players: list[str]
+    created_at: str | None = None
+    ended_at: str | None = None
+    """When the game was ended from the lobby or deleted, `None` for one that
+    simply finished."""
+    is_over: bool
+    winner: str | None = None
+    drawn: bool = False
+    ended_seq: int | None = None
+    """The `game_over` row's own `seq`, `None` for a game that was ended
+    before it finished."""
+    declarations: list[ReviewDeclaration] = Field(default_factory=list)
+    entries: list[dict[str, Any]] = Field(default_factory=list)
+    """The whole ledger, oldest first, each row carrying its own
+    full-information `snapshot` - the frames a reviewer renders. Left
+    `dict[str, Any]` exactly as `GameLogResponse.log` is, and for the same
+    reason."""
 
 
 class DeleteGameResponse(BaseModel):

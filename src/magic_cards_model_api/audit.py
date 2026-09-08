@@ -42,14 +42,33 @@ PROBLEM_ACTION = "report_problem"
 #: a hundred routine ones is not how that should surface.
 OVERRULE_ACTION = "pregame_overruled"
 
+#: A seat's declaration, before it acts, of what it reads on the board, what
+#: its own role in the matchup is, what it plans to do this turn, and what it
+#: expects the opponent to do and why (`POST /api/games/{id}/plan`,
+#: `schemas.DeclarePlanIn`). One per player-turn - `records.require_plan`
+#: refuses an agent seat's first mutating action of its own turn until this
+#: row exists for that turn, which is what stops the facility being one
+#: nobody uses.
+PLAN_ACTION = "plan_declared"
+
+#: The game ended (CR 104.1: "A game ends immediately when a player wins,
+#: when the game is a draw, or when the game is restarted"). Written once,
+#: the moment `Game.is_over` first reads true after a committed command -
+#: concede included. Without it a game ending to lethal damage left nothing
+#: in the ledger saying who won, and a reader had to infer the result from
+#: the final snapshot's life totals.
+GAME_OVER_ACTION = "game_over"
+
 #: The actions that get a banner at WARNING rather than one compact line.
-LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION)
+LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION)
 
 #: The heading each loud action's banner carries, preposition included: one
-#: is something the seat did, the other something done to it.
+#: is something the seat did, the next something done to it, the last
+#: something the seat said it was about to do.
 _LOUD_HEADINGS = {
     PROBLEM_ACTION: "PROBLEM REPORTED by",
     OVERRULE_ACTION: "PREGAME DECISION OVERRULED for",
+    PLAN_ACTION: "PLAN DECLARED by",
 }
 
 logger = logging.getLogger("mcm.audit")
@@ -210,7 +229,7 @@ def _loud_block(entry: dict[str, Any]) -> str:
     turn = entry["turn"] if entry["turn"] is not None else "?"
     step = entry["step"] or "?"
     who = detail.get("player") or "?"
-    text = str(detail.get("text") or "").strip() or "(no text)"
+    text = str(detail.get("text") or _plan_text(detail) or "").strip() or "(no text)"
     heading = _LOUD_HEADINGS.get(entry["action"], f"{entry['action'].upper()} by")
     lines = [
         "=" * 72,
@@ -218,6 +237,29 @@ def _loud_block(entry: dict[str, Any]) -> str:
     ]
     lines += [f"  {line}" for line in text.splitlines()]
     lines.append("=" * 72)
+    return "\n".join(lines)
+
+
+def _plan_text(detail: dict[str, Any]) -> str | None:
+    """A `plan_declared` entry rendered for the console banner - `None` for
+    any other entry, so `_loud_block`'s ordinary `text` path is untouched.
+
+    A declaration has no single free-text field the way a problem report
+    does; four fields is what makes it evidence rather than a slogan, and an
+    operator watching `docker compose logs` should see all four rather than
+    whichever one was picked to stand for the rest.
+    """
+    if not any(key in detail for key in ("board_read", "my_role", "plan", "prediction")):
+        return None
+    prediction = detail.get("prediction") or {}
+    lines = [
+        f"board: {detail.get('board_read') or '?'}",
+        f"role : {detail.get('my_role') or '?'}",
+        f"plan : {detail.get('plan') or '?'}",
+        f"expects: {prediction.get('expecting') or '?'}"
+        f" ({prediction.get('confidence') or 'unstated'} confidence)",
+        f"because: {prediction.get('because') or '?'}",
+    ]
     return "\n".join(lines)
 
 

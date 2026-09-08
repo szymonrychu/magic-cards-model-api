@@ -82,16 +82,39 @@ from uuid import UUID, uuid4
 from magic_cards_model.machines.decisions import Answer, Decision, DecisionKind, PendingDecision
 from magic_cards_model.models import Game
 from magic_cards_model.models.card_state import TargetRef
-from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import Engine
 
 from .agent_settings import AgentSettings
 from .commands import Command
 from .db import games, make_engine, records
-from .repository import DEFAULT_RESERVATION_TTL_SECONDS, _ReservationLedger
+from .repository import DEFAULT_RESERVATION_TTL_SECONDS, ArchivedGame, _ReservationLedger
 
 __all__ = ["PostgresRepository", "VersionConflict"]
+
+
+def _utc_isoformat(stamp: datetime | None) -> str | None:
+    """One `DateTime(timezone=True)` column as UTC ISO 8601, or `None`.
+
+    A naive value is read as UTC rather than as local time: every stamp this
+    module writes is `datetime.now(UTC)`, and some drivers/backends hand a
+    timestamp back with its tzinfo stripped.
+    """
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return stamp.astimezone(UTC).isoformat()
+
+
+def _record_row(row: Any) -> dict[str, Any]:
+    """One `records` row in the `{"seq", "payload", "created_at"}` shape the
+    `GameRepository` protocol promises."""
+    return {
+        "seq": row.seq,
+        "payload": row.payload,
+        "created_at": _utc_isoformat(row.created_at),
+    }
 
 
 def _looks_like_id(game_id: str) -> bool:
@@ -295,7 +318,9 @@ class PostgresRepository:
             raise KeyError(f"no game {game_id}")
         with self._engine.connect() as conn:
             row = conn.execute(
-                select(games.c.state, games.c.version).where(games.c.id == game_id)
+                select(games.c.state, games.c.version).where(
+                    games.c.id == game_id, games.c.archived_at.is_(None)
+                )
             ).first()
         if row is None:
             raise KeyError(f"no game {game_id}")
@@ -322,7 +347,7 @@ class PostgresRepository:
         """
         rows = conn.execute(
             select(games.c.id, games.c.state, games.c.version)
-            .where(games.c.ui_game.is_(True))
+            .where(games.c.ui_game.is_(True), games.c.archived_at.is_(None))
             .order_by(games.c.ui_game_registered_at.asc())
         ).all()
         return [
@@ -348,24 +373,40 @@ class PostgresRepository:
             return self._locks.setdefault(game_id, threading.Lock())
 
     def _update_column(self, game_id: str, **values: Any) -> None:
+        # `archived_at IS NULL`: an ended game is not writable through any
+        # of these accessors, matching `InMemoryRepository`, whose `delete`
+        # pops the collections they read outright.
         if not _looks_like_id(game_id):
             return
         with self._engine.begin() as conn:
-            conn.execute(update(games).where(games.c.id == game_id).values(**values))
+            conn.execute(
+                update(games)
+                .where(games.c.id == game_id, games.c.archived_at.is_(None))
+                .values(**values)
+            )
 
     def _select_one(self, game_id: str, *columns: Any) -> Any | None:
         """One row (or `None`) from `games`, projected to `columns` - the
         shared read path every plain accessor below uses. `None` both for an
         unknown id and for an id that is not even valid uuid syntax, which a
-        native `uuid` `id` column would otherwise reject at the driver."""
+        native `uuid` `id` column would otherwise reject at the driver.
+
+        Also `None` for a game that has been ended: `delete()` is a soft
+        delete, and every accessor built on this one must answer for an
+        archived game exactly what it answered when the row was really gone
+        (`InMemoryRepository.delete` still pops all of these). `archived()`
+        is the single method that deliberately does not go through here.
+        """
         if not _looks_like_id(game_id):
             return None
         with self._engine.connect() as conn:
-            return conn.execute(select(*columns).where(games.c.id == game_id)).first()
+            return conn.execute(
+                select(*columns).where(games.c.id == game_id, games.c.archived_at.is_(None))
+            ).first()
 
     # -- lifecycle ------------------------------------------------------
 
-    def create(self, game: Game) -> str:
+    def create(self, game: Game, *, owner_user_id: str | None = None) -> str:
         game_id = uuid4().hex
         now = datetime.now(UTC)
         admin_key = uuid4().hex
@@ -380,6 +421,7 @@ class PostgresRepository:
                     version=0,
                     created_at=now,
                     admin_key=admin_key,
+                    owner_user_id=owner_user_id,
                     seats={},
                     decklists={},
                     agent_settings={},
@@ -539,25 +581,48 @@ class PostgresRepository:
                 .where(records.c.game_id == game_id)
                 .order_by(records.c.seq.asc())
             ).all()
-        result = []
-        for row in rows:
-            stamp = row.created_at
-            if stamp.tzinfo is None:
-                stamp = stamp.replace(tzinfo=UTC)
-            result.append(
-                {
-                    "seq": row.seq,
-                    "payload": row.payload,
-                    "created_at": stamp.astimezone(UTC).isoformat(),
-                }
-            )
-        return result
+        return [_record_row(row) for row in rows]
+
+    def recent_records(self, game_id: str, limit: int) -> list[dict[str, Any]]:
+        """`ORDER BY seq DESC LIMIT :limit`, reversed back to oldest-first.
+
+        `uq_records_game_id_seq` already indexes `(game_id, seq)`, so this is
+        an index scan of at most `limit` rows however long the game has run -
+        which is the whole reason the plan gate asks this rather than
+        `records()`. No new index is needed.
+        """
+        if limit <= 0:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(records.c.seq, records.c.payload, records.c.created_at)
+                .where(records.c.game_id == game_id)
+                .order_by(records.c.seq.desc())
+                .limit(limit)
+            ).all()
+        return [_record_row(row) for row in reversed(rows)]
 
     def delete(self, game_id: str) -> bool:
+        """The soft delete: stamp `archived_at` rather than issue a
+        `DELETE`, so the board, hands and final state survive for a
+        post-game review (revision `a2f6d9c31b57`, and `GameRepository
+        .delete`'s own docstring).
+
+        `command`/`tape`/`pending` are cleared in the same statement: a game
+        that has ended holds no standing question, and `paused_command` must
+        answer `None` for it exactly as it did when the row was destroyed.
+        `ui_game` is deliberately *not* cleared - it records that the lobby
+        booted this game, which stays true; `ui_games()`/`live_ui_games()`
+        filter on `archived_at` instead.
+        """
         if not _looks_like_id(game_id):
             return False
         with self._engine.begin() as conn:
-            result = conn.execute(sa_delete(games).where(games.c.id == game_id))
+            result = conn.execute(
+                update(games)
+                .where(games.c.id == game_id, games.c.archived_at.is_(None))
+                .values(archived_at=datetime.now(UTC), command=None, tape=None, pending=None)
+            )
         with self._cache_lock:
             self._cache.pop(game_id, None)
             self._automatic_pregame.pop(game_id, None)
@@ -565,9 +630,41 @@ class PostgresRepository:
             self._locks.pop(game_id, None)
         return result.rowcount > 0
 
+    def archived(self, game_id: str) -> ArchivedGame | None:
+        """The one read that looks past `archived_at` - see `ArchivedGame`.
+
+        Goes through `_game_from_row` rather than parsing `state` itself, so
+        a game this process is still holding live comes back as the same
+        object every other read hands out (in-place mutations included), the
+        way the contract suite requires of every read on this class.
+        """
+        if not _looks_like_id(game_id):
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(
+                    games.c.state,
+                    games.c.version,
+                    games.c.admin_key,
+                    games.c.seats,
+                    games.c.created_at,
+                    games.c.archived_at,
+                ).where(games.c.id == game_id)
+            ).first()
+        if row is None:
+            return None
+        return ArchivedGame(
+            game_id=game_id,
+            game=self._game_from_row(game_id, row.state, row.version),
+            admin_key=row.admin_key,
+            seat_uids=dict(row.seats or {}),
+            created_at=_utc_isoformat(row.created_at),
+            deleted_at=_utc_isoformat(row.archived_at),
+        )
+
     def ids(self) -> list[str]:
         with self._engine.connect() as conn:
-            rows = conn.execute(select(games.c.id)).all()
+            rows = conn.execute(select(games.c.id).where(games.c.archived_at.is_(None))).all()
         return [row[0] for row in rows]
 
     @contextmanager
@@ -598,16 +695,17 @@ class PostgresRepository:
     def is_admin(self, game_id: str, key: str) -> bool:
         return bool(key) and self.admin_key(game_id) == key
 
+    # -- owner_user_id (OIDC-based user separation) --------------------------
+
+    def owner_user_id(self, game_id: str) -> str | None:
+        row = self._select_one(game_id, games.c.owner_user_id)
+        return row[0] if row is not None else None
+
     # -- created_at ---------------------------------------------------------
 
     def created_at(self, game_id: str) -> str | None:
         row = self._select_one(game_id, games.c.created_at)
-        if row is None or row[0] is None:
-            return None
-        stamp = row[0]
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=UTC)
-        return stamp.astimezone(UTC).isoformat()
+        return _utc_isoformat(row[0]) if row is not None else None
 
     # -- decklists ------------------------------------------------------
 
@@ -657,7 +755,11 @@ class PostgresRepository:
         with self._engine.begin() as conn:
             conn.execute(
                 update(games)
-                .where(games.c.id == game_id, games.c.ui_game.is_(False))
+                .where(
+                    games.c.id == game_id,
+                    games.c.ui_game.is_(False),
+                    games.c.archived_at.is_(None),
+                )
                 .values(ui_game=True, ui_game_registered_at=now)
             )
 
@@ -665,7 +767,7 @@ class PostgresRepository:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(games.c.id)
-                .where(games.c.ui_game.is_(True))
+                .where(games.c.ui_game.is_(True), games.c.archived_at.is_(None))
                 .order_by(games.c.ui_game_registered_at.asc())
             ).all()
         return [row[0] for row in rows]

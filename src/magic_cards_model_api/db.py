@@ -87,12 +87,29 @@ games = Table(
     Column("version", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("admin_key", String, nullable=False),
+    # The OIDC subject (JWT `sub`) that created this game, `NULL` for one
+    # created with no bearer token - every game today, and every game this
+    # deployment ever creates until an OIDC issuer is actually configured
+    # (see `oidc.py`). `game_access.py`'s ownership gate only restricts a
+    # game that carries one; `NULL` behaves exactly as this column never
+    # existed. Added by revision `f3a7c2e91b04`.
+    Column("owner_user_id", String, nullable=True),
     Column("seats", JSONB, nullable=False, server_default="{}"),
     Column("decklists", JSONB, nullable=False, server_default="{}"),
     Column("agent_settings", JSONB, nullable=False, server_default="{}"),
     Column("ai_players", JSONB, nullable=False, server_default="[]"),
     Column("ui_game", Boolean, nullable=False, server_default="false"),
     Column("ui_game_registered_at", DateTime(timezone=True), nullable=True),
+    # When this game was ended, `NULL` while it is still live. `delete()` is
+    # a soft delete: it stamps this column instead of removing the row, so
+    # the board, hands and final state a post-game review reads are still
+    # there after the lobby's End button, a concede, or a finished game -
+    # the owner's requirement, "Games must be persisting in the database
+    # even after are stopped/finished/conceded". Every other read filters on
+    # `archived_at IS NULL`, so an ended game is exactly as unplayable as a
+    # removed one used to be; `PostgresRepository.archived` is the single
+    # accessor that looks past the filter. Added by revision `a2f6d9c31b57`.
+    Column("archived_at", DateTime(timezone=True), nullable=True),
 )
 
 records = Table(

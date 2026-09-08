@@ -32,7 +32,7 @@ import { cardNode } from "../cards.js";
 import { withSymbols } from "../symbols.js";
 import { targetingOpts } from "./board.js";
 import { STEPS, PHASE_OF } from "../priority.js";
-import { aiStallNotice } from "../store.js";
+import { aiStallNotice, aiSeatLoadingNotice } from "../store.js";
 
 const STEP_LABELS = {
   untap: "untap",
@@ -138,6 +138,30 @@ function renderAiPanel(root, app) {
   if (bad) panel.appendChild(h("button", { class: "ghost", onClick: () => showAiError(root, status) }, "why"));
 }
 
+// --------------------------------------------------------- AI boot banner --
+
+/** `aiSeatLoadingNotice` (`ui/store.js`) turned into `#ai-loading-banner` -
+ * the non-blocking half of the loading-gap fix: it never covers the board
+ * and never gates a human's own pregame actions (CR 103.5/103.6 gate those
+ * on nothing but the human's own seat), it just says what the opponent's
+ * agent is doing while it is still booting, and clears itself the moment
+ * `aiSeatLoadingNotice` says there is nothing left to report. */
+function renderAiLoadingBanner(root, app) {
+  const banner = root.querySelector("#ai-loading-banner");
+  if (!banner) return;
+  const notice = aiSeatLoadingNotice(app.aiUid, app.aiStatus);
+  clear(banner);
+  if (!notice) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  banner.classList.toggle("bad", notice.failed);
+  const player = app.aiStatus && app.aiStatus.player;
+  const who = player ? `${player}'s agent` : "The AI seat";
+  banner.appendChild(h("span", {}, `${who}: ${notice.message}.`));
+}
+
 // ---------------------------------------------------------- AI stall banner
 
 // How long the board has looked exactly like this, keyed by (priority
@@ -220,7 +244,7 @@ function renderPhaseTrack(el, state) {
 
 /** Mount the topbar into `root` (normally `document`): `#turn-info`,
  * `#phase-track`, `#ai-panel`, `#conn-status`/`#conn-status-game`, and
- * `#ai-stall-banner`, plus wiring `#open-zones`/`#leave-game`/
+ * `#ai-loading-banner`/`#ai-stall-banner`, plus wiring `#open-zones`/`#leave-game`/
  * `#report-problem`. `handlers = {onOpenZones(), onLeaveGame(),
  * onPassForAiSeat(aiPlayer), onReportProblem(text)}`. Returns the
  * `store.subscribe` unsubscribe function. */
@@ -237,6 +261,7 @@ export function mountTopbar(root, store, handlers) {
     renderTurnInfo(root.querySelector("#turn-info"), app.state);
     renderPhaseTrack(root.querySelector("#phase-track"), app.state);
     renderAiPanel(root, app);
+    renderAiLoadingBanner(root, app);
     renderAiStallBanner(root, app, handlers);
   });
 }

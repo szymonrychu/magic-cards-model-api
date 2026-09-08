@@ -209,6 +209,76 @@ def test_live_game_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
         )
 
 
+def test_an_ended_game_leaves_the_lobby_but_not_the_database(client: TestClient) -> None:
+    """End game is a soft delete now, and the lobby must not notice.
+
+    The row stays so the post-game review has a board to read its ledger
+    against ("Games must be persisting in the database even after are
+    stopped/finished/conceded"), but every live surface has to keep
+    answering exactly what it answered when the row was destroyed - the
+    lobby list above all, since a game nobody can join reappearing there is
+    the most visible way this could go wrong.
+    """
+    created = create(client)
+    game_id = created["game_id"]
+    other = create(client)
+    try:
+        ended = client.delete(
+            f"/api/lobby/games/{game_id}", params={"uid": created["seat_uids"]["you"]}
+        )
+        assert ended.status_code == 200
+        assert ended.json()["deleted"] is True
+
+        listed = {g["game_id"] for g in client.get("/api/lobby/games").json()["games"]}
+        assert game_id not in listed
+        assert other["game_id"] in listed, "and the game beside it is untouched"
+
+        assert client.get(f"/api/games/{game_id}").status_code == 404
+        assert client.get(f"/api/games/{game_id}/log").status_code == 404
+        assert game_id not in {g["game_id"] for g in client.get("/api/games").json()["games"]}
+
+        # ...and the row is still there, which is the whole change.
+        review = client.get(f"/api/games/{game_id}/review", params={"key": created["admin_key"]})
+        assert review.status_code == 200, review.text
+        assert review.json()["ended_at"] is not None
+        assert sorted(review.json()["players"]) == ["bot", "you"]
+    finally:
+        client.delete(
+            f"/api/lobby/games/{other['game_id']}", params={"uid": other["seat_uids"]["you"]}
+        )
+
+
+def test_ending_a_game_gives_its_live_slot_back(client: TestClient, monkeypatch) -> None:
+    """`MAX_LIVE_GAMES` counts `live_ui_games()`. An archived row that kept
+    occupying a slot would make End game stop working after the cap, which
+    is the other way a soft delete could quietly break the lobby."""
+    monkeypatch.setattr(decks_api, "max_live_games", lambda: 1)
+    first = create(client)
+    try:
+        refused = client.post(
+            "/api/lobby/games",
+            json={
+                "players": [
+                    {"username": "you", "decklist_text": create.__globals__["DECK_A"]},
+                    {"username": "bot", "decklist_text": create.__globals__["DECK_B"]},
+                ]
+            },
+        )
+        assert refused.status_code == 409, refused.text
+
+        client.delete(
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+        )
+        second = create(client)
+        client.delete(
+            f"/api/lobby/games/{second['game_id']}", params={"uid": second["seat_uids"]["you"]}
+        )
+    finally:
+        client.delete(
+            f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}
+        )
+
+
 def test_the_old_ui_prefixed_lobby_game_routes_are_gone(client: TestClient) -> None:
     """2b's T8 moved `decks_api.py`'s lobby-owned game routes off `/api/ui`
     onto `/api/lobby` - proves the move happened rather than the routes

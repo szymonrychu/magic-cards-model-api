@@ -160,7 +160,30 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-4"
+PROTOCOL_VERSION = "seatkit-6"
+#: `seatkit-6` added the `declare_plan` tool/method (`POST .../plan`,
+#: `schemas.DeclarePlanIn`). This one is not an optional-degrade case the way
+#: earlier bumps mostly were (an older client missing a nicety, still able to
+#: play): the backend gate this pays for, `records.require_plan`, already
+#: refuses an agent seat's first mutating action of its own turn until a
+#: `plan_declared` record exists for that turn - and it shipped *before* any
+#: client could call the route that satisfies it. An MCP process built before
+#: this bump has no `declare_plan` tool at all, so an agent seat driven by it
+#: is refused, 422, on the very first action of every one of its own turns,
+#: forever - not a degraded seat, a seat that cannot play. That is exactly
+#: the silent-misbehaviour case this version check exists to turn into a
+#: loud, named refusal instead of a mystery.
+#:
+#: `seatkit-5` put a `recent_log` on every answer that already carried a
+#: state view (`my_state`, `wait_for_priority`, every action tool through
+#: `run_action`, `pass_until`) and gave the `game_log` tool the `since`
+#: parameter the api's own `GET .../log` has always had. "What happened since
+#: I last acted" and "what can I do now" used to be two tool calls and two
+#: whole inference cycles - `prompt.py` said so outright ("read `my_state`,
+#: read `game_log`") - and they are one now. An MCP process from before this
+#: simply does not carry the log, which reads to a seat as a game where
+#: nothing ever happened between its own moves.
+#:
 #: `seatkit-4` (T10) gave every mutating tool a `reasoning` parameter - "why
 #: are you doing this", in the seat's own words - required by the API for an
 #: agent seat (refused 422 when it is missing) and optional for a human one.
@@ -190,6 +213,45 @@ NO_SUCH_SEAT = (
     "that uid is no seat in this game. You cannot act, and you may see nothing - "
     "a seat uid is given to you when you are dispatched."
 )
+
+#: How many log entries ride along on an answer that already carries a state
+#: view. A tail, not the history: `game_log` is still the tool for the whole
+#: thing, and `recent_log["omitted"]` says when this tail dropped something so
+#: a seat is never quietly told less than happened.
+RECENT_LOG_ENTRIES = 15
+
+#: The fields a ride-along log entry keeps. Deliberately NOT the whole entry:
+#: `audit.record` stamps every row with a full-information `snapshot` of the
+#: board and with `legal_actions_before`, the enumerated action pool of that
+#: moment - so fifteen whole entries would be fifteen more board states and
+#: fifteen more action pools bolted onto an answer that already carries the
+#: current one of each. That is not a token-trimming judgement (payload size
+#: buys no latency here); it is what a log *tail* is for. A seat asking "what
+#: has happened since I last acted" is asking for the narrative, and the
+#: snapshots are still one `game_log` call away, unchanged.
+LOG_HEADLINE_FIELDS = ("seq", "ts", "action", "detail", "turn", "step", "reasoning")
+
+
+def log_headline(entry: dict[str, Any]) -> dict[str, Any]:
+    """One log entry as the narrative line a ride-along tail carries - the
+    `LOG_HEADLINE_FIELDS` that are present, and nothing invented for one that
+    is not."""
+    return {field: entry[field] for field in LOG_HEADLINE_FIELDS if field in entry}
+
+
+def _log_unavailable(since: int, reason: str) -> dict[str, Any]:
+    """`recent_log`'s answer when the call itself failed: an empty tail that
+    says so, rather than one a reader would take for "nothing happened"."""
+    return {
+        "entries": [],
+        "last_seq": since,
+        "omitted": 0,
+        "log_error": (
+            f"{reason} - this is NOT 'nothing has happened': the log could not be "
+            "fetched at all. Call game_log, or call again."
+        ),
+    }
+
 
 #: How often `_call_watching_for_self_decision` re-fetches state while one
 #: mutating call of its own is genuinely in flight on another thread - the
@@ -446,6 +508,97 @@ class Seat:
         _trim_images(state)
         return state
 
+    def recent_log(self, *, since: int = 0, limit: int = RECENT_LOG_ENTRIES) -> dict[str, Any]:
+        """The tail of this seat's own view of the action log - what happened,
+        in the game's words, since `since` (0 for "the whole history, tailed").
+
+        This is the half of the seat's question that no answer used to carry.
+        Every state-bearing answer already says what this seat *can do*
+        (`available_actions`); none of them said what had *been done*, so
+        `prompt.py` told the agent to read `my_state` and then `game_log` -
+        two tool calls and two whole inference cycles for one question. Now
+        `run_action`, `pass_until`, `block_until_wake` and `my_state` all
+        carry this, and the pair collapses to one call.
+
+        One HTTP request, and it can never raise: like `available_actions`
+        (see there for the same reasoning at greater length) this is called on
+        paths that have already performed a mutating action and must still
+        return that action's own outcome, so every failure comes back as
+        `log_error` naming what went wrong rather than as an exception. An
+        empty `entries` with no `log_error` means "nothing has happened since
+        `since`" and nothing else.
+
+        `omitted` is how many entries `limit` dropped off the front. It exists
+        so a seat is never quietly handed less than happened: a non-zero
+        `omitted` is the signal to call `game_log` for the rest, and the
+        entries themselves are headlines (`LOG_HEADLINE_FIELDS`) rather than
+        whole rows, which `game_log` also still serves in full.
+        """
+        params = {"uid": self.uid, "since": since}
+        try:
+            response = self.http.get(f"/api/games/{self.game_id()}/log", params=params)
+        except _AMBIGUOUS_TIMEOUTS as exc:
+            return _log_unavailable(since, f"the log call timed out: {exc}")
+        except httpx.HTTPError as exc:
+            return _log_unavailable(since, f"could not reach the API for the log: {exc}")
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if response.status_code != 200 or not isinstance(payload, dict):
+            detail = payload.get("detail") if isinstance(payload, dict) else response.text.strip()
+            return _log_unavailable(
+                since, f"the log call answered HTTP {response.status_code}: {detail}"
+            )
+        entries = [entry for entry in (payload.get("log") or []) if isinstance(entry, dict)]
+        kept = entries[-limit:] if limit and len(entries) > limit else entries
+        return {
+            "entries": [log_headline(entry) for entry in kept],
+            "last_seq": payload.get("last_seq", since),
+            "omitted": len(entries) - len(kept),
+        }
+
+    def declare_plan(
+        self,
+        *,
+        board_read: str,
+        my_role: str,
+        plan: str,
+        expecting: str,
+        because: str,
+        confidence: str = "medium",
+    ) -> dict[str, Any]:
+        """`POST .../plan` (`schemas.DeclarePlanIn`) - a thin passthrough,
+        no rule of the engine's own re-implemented here. This mutates no
+        `Game` and holds no priority to release, so it goes through
+        `call_json` directly rather than `run_action`: there is no wake
+        condition to check afterward, and none of `run_action`'s auto-pass
+        machinery applies to a call that never touched the board.
+
+        `uid` travels in the request body, not only as the query parameter
+        every other call already carries: the route checks it there
+        (`app.declare_plan`), because a plan is hidden information about how
+        this seat means to play, and the server must confirm the caller
+        actually *is* the seat it is declaring for before writing anything
+        into that seat's name.
+
+        Returns `call_json`'s normalised shape either way - `declared: True`
+        with the ledger's own `log_seq` on success, or `{"allowed": False,
+        "reason": ...}` on a refusal (a blank field, or a uid that does not
+        open this seat) - the same shape every action tool's own outcome
+        already is, so a caller checks a refusal the one way it already
+        knows rather than learning a second one for this call alone.
+        """
+        body = {
+            "player": self.player,
+            "uid": self.uid,
+            "board_read": board_read,
+            "my_role": my_role,
+            "plan": plan,
+            "prediction": {"expecting": expecting, "because": because, "confidence": confidence},
+        }
+        return self.call_json("POST", f"/api/games/{self.game_id()}/plan", body)
+
     def sources_or_all(self, given: str, state: dict[str, Any] | None = None) -> list[str]:
         """Which mana sources to offer: the ones named, else all untapped ones.
 
@@ -628,7 +781,15 @@ def _board_signature(state: dict[str, Any]) -> Any:
     only to tell "the board changed since the call began" apart from "priority
     bounced straight back with nothing new". Two filtered views compare equal
     under this exactly when nothing visible to this seat differs."""
-    return {key: value for key, value in state.items() if key != "wake_reason"}
+    return {key: value for key, value in state.items() if key not in _NOT_THE_BOARD}
+
+
+#: Keys a caller may have bolted onto a state view that are this harness
+#: talking, not the board: `wake_reason` (`mcp.wait_for_priority` stamps it
+#: on) and `recent_log` (`mcp.my_state`). Both change without the board
+#: changing - the log strictly grows - so counting either as board state
+#: would wake a seat for its own history.
+_NOT_THE_BOARD = frozenset({"wake_reason", "recent_log"})
 
 
 def compute_wake_reason(
@@ -654,7 +815,29 @@ def compute_wake_reason(
             return "the game is waiting on your CR 103.5 mulligan declaration"
         if pregame.get("opening_hand_actor") == player:
             return "it is your turn to take CR 103.6 opening-hand actions, or finish"
-        return "the game has not started yet: another seat owes a pregame declaration"
+        # ...but a seat that has already declared and is waiting on somebody
+        # else's declaration is NOT woken. This used to return "the game has
+        # not started yet: another seat owes a pregame declaration", and a
+        # non-None reason is exactly what makes `block_until_wake` return
+        # before its bound - so every `wait_for_priority(max_seconds=...)` a
+        # seat made in the pregame came straight back with an unchanged board
+        # and the seat spent a whole inference on it. A live pod
+        # (`mtg-seat-3b6613e0`) ran 53 of those back to back, one every 3.2
+        # seconds for the whole time its human opponent spent thinking, each
+        # answer byte-identical to the last.
+        #
+        # It is not a wake because there is nothing there to act on. CR 103.5:
+        # "First, the starting player declares whether they will take a
+        # mulligan. Then each other player in turn order does the same. Once
+        # each player has made a declaration, all players who decided to take
+        # mulligans do so at the same time" - a seat that has declared has no
+        # further move until every seat has, and CR 103.6's opening-hand
+        # actions do not begin until "the mulligan process (see rule 103.5) is
+        # complete". That is the definition of `NOTHING_NEW_YET`, so `None` is
+        # the honest answer and the bounded wait gets to do its job. Both
+        # rules were read in full (`mise run rules:find`) in the session that
+        # changed this.
+        return None
     if pending is not None and pending.get("player") == player:
         return f"a decision is waiting for you: {pending.get('prompt')}"
     if (
@@ -747,7 +930,16 @@ def block_until_wake(
         reason = compute_wake_reason(state, before, seat.player)
         remaining = deadline - time.monotonic()
         if reason is not None or remaining <= 0:
-            return {"state": state, "wake_reason": reason or NOTHING_NEW_YET}
+            # `recent_log` is a sibling of `state`, never a key inside it:
+            # callers hand this very `state` back as the next call's `before`
+            # (`run_action`, and `test_action_flow.py`), and `_board_signature`
+            # would then read a growing log as "the board has changed" and
+            # wake the seat for its own history.
+            return {
+                "state": state,
+                "wake_reason": reason or NOTHING_NEW_YET,
+                "recent_log": seat.recent_log(),
+            }
         time.sleep(min(WAIT_POLL_SECONDS, remaining))
 
 
@@ -1030,6 +1222,22 @@ def run_action(
     nothing here would know how to fill in honestly.
     """
     before = seat.fetch_state()
+
+    def answered(state: dict[str, Any], **fields: Any) -> dict[str, Any]:
+        """One answer shape for all eight of this function's returns, so a
+        field can never be added to seven of them and forgotten in the
+        eighth. Three things ride together because a seat needs all three
+        after every action and used to spend a separate round trip on each:
+        the state the action left behind, this seat's legal actions in it,
+        and the tail of what has actually happened (`recent_log` - see
+        `Seat.recent_log`)."""
+        return {
+            **fields,
+            "state": state,
+            "available_actions": available_actions(seat, state),
+            "recent_log": seat.recent_log(),
+        }
+
     outcome, self_decision = _call_watching_for_self_decision(seat, perform)
     if self_decision is None and _paused(outcome):
         # `perform()` itself paused (`commands.py`) rather than a decision
@@ -1039,19 +1247,18 @@ def run_action(
 
     if self_decision is not None:
         state = seat.fetch_state()
-        return {
-            "outcome": None,
-            "held_priority": None,
-            "wake_reason": (
+        return answered(
+            state,
+            outcome=None,
+            held_priority=None,
+            wake_reason=(
                 "a decision is waiting for you, raised by this very call: "
                 f"{self_decision.get('prompt')} - answer it with decide() now; "
                 "that unblocks the action you just took, whose own outcome you "
-                "will only see afterward, from state or the game log"
+                "will only see afterward, from `recent_log` below or from state"
             ),
-            "state": state,
-            "available_actions": available_actions(seat, state),
-            "in_flight_action": True,
-        }
+            in_flight_action=True,
+        )
 
     if _unknown_outcome(outcome):
         # A transport timeout, not a rules refusal: re-fetch state (a fresh
@@ -1063,30 +1270,24 @@ def run_action(
         # branches, this call cannot say whether it does or does not hold
         # priority, because it does not know whether the action happened.
         state = seat.fetch_state()
-        return {
-            "outcome": outcome,
-            "held_priority": None,
-            "wake_reason": UNKNOWN_OUTCOME,
-            "state": state,
-            "available_actions": available_actions(seat, state),
-        }
+        return answered(state, outcome=outcome, held_priority=None, wake_reason=UNKNOWN_OUTCOME)
 
     if _refused(outcome):
         state = seat.fetch_state()
-        return {
-            "outcome": outcome,
-            "held_priority": True,
-            "wake_reason": "refused - nothing changed, still your move",
-            "state": state,
-            "available_actions": available_actions(seat, state),
-        }
+        return answered(
+            state,
+            outcome=outcome,
+            held_priority=True,
+            wake_reason="refused - nothing changed, still your move",
+        )
 
     if hold_priority or added_mana(outcome):
         state = seat.fetch_state()
-        return {
-            "outcome": outcome,
-            "held_priority": True,
-            "wake_reason": (
+        return answered(
+            state,
+            outcome=outcome,
+            held_priority=True,
+            wake_reason=(
                 "hold_priority=true: kept priority, not blocking"
                 if hold_priority
                 else (
@@ -1096,9 +1297,7 @@ def run_action(
                     "(CR 500.5). Spend it now, or pass explicitly to throw it away"
                 )
             ),
-            "state": state,
-            "available_actions": available_actions(seat, state),
-        }
+        )
 
     pass_outcome = None
     if release:
@@ -1122,19 +1321,18 @@ def run_action(
             # itself: report it and let the caller `decide()` as a separate
             # call rather than sit behind its own in-flight pass.
             state = seat.fetch_state()
-            return {
-                "outcome": outcome,
-                "held_priority": None,
-                "wake_reason": (
+            return answered(
+                state,
+                outcome=outcome,
+                held_priority=None,
+                wake_reason=(
                     "your action went through, but releasing priority raised a "
                     f"decision only you can answer: {pass_self_decision.get('prompt')} - "
-                    "answer it with decide() now; check state or the game log "
+                    "answer it with decide() now; check state or `recent_log` "
                     "afterward for what releasing priority itself then did"
                 ),
-                "state": state,
-                "available_actions": available_actions(seat, state),
-                "in_flight_action": True,
-            }
+                in_flight_action=True,
+            )
         if _unknown_outcome(pass_outcome):
             # The action itself is confirmed (we are past that check above);
             # it is *releasing priority* that is now ambiguous. Blocking
@@ -1143,23 +1341,21 @@ def run_action(
             # easily be "you have priority", which is simply not knowable
             # yet.
             state = seat.fetch_state()
-            return {
-                "outcome": outcome,
-                "pass_outcome": pass_outcome,
-                "held_priority": None,
-                "wake_reason": UNKNOWN_OUTCOME,
-                "state": state,
-                "available_actions": available_actions(seat, state),
-            }
+            return answered(
+                state,
+                outcome=outcome,
+                pass_outcome=pass_outcome,
+                held_priority=None,
+                wake_reason=UNKNOWN_OUTCOME,
+            )
 
     woken = block_until_wake(seat, before)
-    result: dict[str, Any] = {
-        "outcome": outcome,
-        "held_priority": False,
-        "wake_reason": woken["wake_reason"],
-        "state": woken["state"],
-        "available_actions": available_actions(seat, woken["state"]),
-    }
+    result = answered(
+        woken["state"],
+        outcome=outcome,
+        held_priority=False,
+        wake_reason=woken["wake_reason"],
+    )
     if pass_outcome is not None:
         result["pass_outcome"] = pass_outcome
     return result
@@ -1680,6 +1876,12 @@ def _pass_until_once(
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
             "available_actions": available_actions(seat, state),
+            # A run crosses windows this seat never looks at, so it is the
+            # tool with the most to say about what happened while it was not
+            # watching - and until this it said none of it, leaving the seat
+            # to spend a second call on `game_log` to find out what it had
+            # just passed through. See `Seat.recent_log`.
+            "recent_log": seat.recent_log(),
         }
         if not finished:
             # A plain copy: `run` is JSON-safe by construction (see

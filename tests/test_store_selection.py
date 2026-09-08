@@ -51,6 +51,13 @@ _DB_ENV = (
     "POSTGRES_DB",
 )
 
+#: Same reasoning as `_DB_ENV`, for the flag that turns a partial or
+#: unreachable database configuration from a silent `InMemoryRepository`
+#: fallback into a startup crash - stripped for the same reason: a
+#: developer's shell should never turn one of these tests into a different
+#: test than its name says.
+_REQUIRE_POSTGRES_ENV = "REQUIRE_POSTGRES"
+
 #: Imports the app the way uvicorn does, then reports what both bindings
 #: resolved to. `audit` is asked for its store the same lazy way `record`
 #: does, so this is the real second binding and not a restatement of the
@@ -73,8 +80,19 @@ print(json.dumps({
 """
 
 
+def _clean_env() -> dict[str, str]:
+    """The parent process's environment with every database-selection
+    variable stripped, ready for one test to set exactly what it means to
+    test - shared by `_probe` and `_run_probe` below."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in _DB_ENV and key != _REQUIRE_POSTGRES_ENV
+    }
+
+
 def _probe(**overrides: str) -> dict[str, object]:
-    env = {key: value for key, value in os.environ.items() if key not in _DB_ENV}
+    env = _clean_env()
     env["MCM_CACHE_DIR"] = str(_REPO_ROOT / "tests" / "fixtures" / "scryfall")
     env.update(overrides)
     result = subprocess.run(
@@ -87,6 +105,24 @@ def _probe(**overrides: str) -> dict[str, object]:
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def _run_probe(**overrides: str) -> subprocess.CompletedProcess[str]:
+    """Like `_probe`, but returns the raw `CompletedProcess` without
+    asserting success - the `REQUIRE_POSTGRES` tests below want to see a
+    nonzero exit and the crash message on stderr, not the store bindings a
+    successful import would print."""
+    env = _clean_env()
+    env["MCM_CACHE_DIR"] = str(_REPO_ROOT / "tests" / "fixtures" / "scryfall")
+    env.update(overrides)
+    return subprocess.run(
+        [sys.executable, "-c", _PROBE],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +245,7 @@ with TestClient(app) as client:
         "unrecorded": [e["action"] for e in log if e["action"] == "(unrecorded)"],
     }))
 """
-    env = {key: value for key, value in os.environ.items() if key not in _DB_ENV}
+    env = _clean_env()
     env["MCM_CACHE_DIR"] = str(_REPO_ROOT / "tests" / "fixtures" / "scryfall")
     env["DATABASE_URL"] = url
     result = subprocess.run(
@@ -228,4 +264,75 @@ with TestClient(app) as client:
     assert probed["unrecorded"] == [], (
         "every row this run wrote must have a real payload - an "
         "'(unrecorded)' one means a `fill_record` landed on another store"
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQUIRE_POSTGRES - a misconfigured production deployment must crash at
+# startup instead of silently keeping InMemoryRepository. See store.py's
+# module docstring for the failure mode this closes.
+# ---------------------------------------------------------------------------
+
+
+def test_require_postgres_unset_with_nothing_configured_keeps_in_memory_store() -> None:
+    """Regression guard for the existing docker-free default: with
+    `REQUIRE_POSTGRES` unset, nothing configured must still silently resolve
+    to `InMemoryRepository`, exactly as `test_with_nothing_configured_the_
+    app_keeps_the_in_memory_store` above already checks - repeated here,
+    explicitly named, as the baseline the `REQUIRE_POSTGRES=1` tests below
+    are contrasted against."""
+    probed = _probe()
+    assert probed["app_binding"] == "InMemoryRepository"
+
+
+def test_require_postgres_unset_with_partial_config_keeps_in_memory_store() -> None:
+    """The regression this whole feature must not cause: a partial
+    `POSTGRES_*` set with `REQUIRE_POSTGRES` unset (or empty) is still read
+    as nothing configured, not as an error - unchanged from today."""
+    probed = _probe(POSTGRES_HOST="db", POSTGRES_USER="mtg", REQUIRE_POSTGRES="")
+    assert probed["app_binding"] == "InMemoryRepository"
+    assert probed["same_object"] is True
+
+
+def test_require_postgres_with_nothing_configured_crashes_naming_missing_vars() -> None:
+    """`REQUIRE_POSTGRES=1` turns `configured_database_url`'s deliberate
+    silent fallback into a startup crash: the app must not even import."""
+    result = _run_probe(REQUIRE_POSTGRES="1")
+    assert result.returncode != 0, result.stdout
+    assert "RuntimeError" in result.stderr
+    assert "no database URL" in result.stderr
+    for name in (
+        "DATABASE_URL",
+        "POSTGRES_HOST",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+    ):
+        assert name in result.stderr, result.stderr
+
+
+def test_require_postgres_with_partial_components_crashes_naming_only_missing() -> None:
+    """The message must still name only what is actually missing, matching
+    `database_url_from_env`'s own text verbatim - `POSTGRES_HOST` and
+    `POSTGRES_USER` are set here and must not be reported as missing."""
+    result = _run_probe(REQUIRE_POSTGRES="1", POSTGRES_HOST="db", POSTGRES_USER="mtg")
+    assert result.returncode != 0, result.stdout
+    assert "missing: POSTGRES_PASSWORD, POSTGRES_DB)." in result.stderr, result.stderr
+
+
+def test_require_postgres_with_unreachable_database_crashes_at_import() -> None:
+    """A fully valid-looking `DATABASE_URL` is not enough when
+    `REQUIRE_POSTGRES=1`: nothing is listening on port 1, so the connectivity
+    probe must fail the same way at import time - not merely on the first
+    real query, which is where an unguarded `PostgresRepository` would first
+    notice. No real postgres is started for this test; a closed local port
+    is a sufficient stand-in for "misconfigured and unreachable"."""
+    result = _run_probe(
+        REQUIRE_POSTGRES="1",
+        DATABASE_URL="postgresql+psycopg://user:pass@127.0.0.1:1/nonexistent",
+    )
+    assert result.returncode != 0, result.stdout
+    assert "app_binding" not in result.stdout, (
+        "the probe script's own print never ran - the crash happened during "
+        "import, before app.py's `from .store import store` could complete"
     )

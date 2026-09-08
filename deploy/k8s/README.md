@@ -12,6 +12,8 @@ Plain YAML, no Helm, no Kustomize, no operator.
 |---|---|
 | `00-namespace.yaml` | the `mtg-engine` namespace (NOT `mtg` - see below) |
 | `10-secret.template.yaml` | templates for the Claude credential and the GitHub PAT - placeholders only, never real values |
+| `20-database.yaml` | the `mtg-database` CloudNativePG `Cluster` - see [Database: CloudNativePG](#database-cloudnativepg) |
+| `25-migration-job.yaml` | one-shot `alembic upgrade head` Job, run before the Deployment on every deploy - see [Migrations: a Job, waited on](#migrations-a-job-waited-on) |
 | `30-storage.yaml` | PVCs for the agent's memory (now `ReadWriteMany` - see below) and the Scryfall cache |
 | `40-rbac.yaml` | a `mtg-api` ServiceAccount, namespaced Role and RoleBinding letting the API create/watch/delete Jobs and read Pods |
 | `45-networkpolicy.yaml` | pins every agent-seat Pod: reachable only from the API, allowed out only to the API, DNS, spellslinger, and HTTPS |
@@ -179,6 +181,111 @@ kubectl -n mtg-engine create secret docker-registry regcred \
 
 Without it the containers sit in `ImagePullBackOff` with
 `unauthorized to access repository`.
+
+## Database: CloudNativePG
+
+`20-database.yaml` is a hand-written `postgresql.cnpg.io/v1` `Cluster` named
+`mtg-database`, applied by this repo's own `mise run k8s:deploy` - not a Helm
+chart, not anything in the separate `infrastructure` estate repo. The CNPG
+*operator* is already installed cluster-wide (namespace `postgres-operator`)
+and needs nothing extra to serve a new namespace; this file only asks it for
+one database.
+
+`spec.instances: 1`, a 5Gi data volume and a separate 1Gi WAL volume (CNPG's
+own convention - every other CNPG `Cluster` in this cluster does the same),
+`bootstrap.initdb` creating database `mtg` owned by role `mtg`. No
+`imageName` (rides the operator's default Postgres image), no `monitoring:`
+block, no `backups:`/`.spec.backup` block - all three default off, correct
+for a small single-instance database with no stated backup requirement.
+`enableSuperuserAccess` is left at its default (`false`): nothing in this
+repo ever needs more than the owner role below.
+
+**StorageClass: `rook-ceph`, not the cluster's default `rook-ceph-rwx`.**
+`rook-ceph` is RBD block storage (ReadWriteOnce) - the right shape for a
+single-writer Postgres instance, and what every other CNPG `Cluster` in this
+cluster pins explicitly. `rook-ceph-rwx` is CephFS (ReadWriteMany) - right
+for `mtg-agent-memory` above, wrong here: an RWX volume for a database that
+never shares its own storage is over-provisioned, not merely unnecessary.
+
+CNPG auto-generates a role and a Secret from `bootstrap.initdb` - **no
+password is written anywhere in this repo.** The Secret is named
+`<cluster-name>-app`, i.e. **`mtg-database-app`**, and carries (among other,
+unused, keys):
+
+| key | value |
+|---|---|
+| `host` | the primary's in-cluster service DNS name |
+| `port` | `5432` |
+| `username` | `mtg` |
+| `password` | generated |
+| `dbname` | `mtg` |
+
+`25-migration-job.yaml` and `50-deployment.yaml` both read these five keys
+via `secretKeyRef` into `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/
+`POSTGRES_PASSWORD`/`POSTGRES_DB` - **not** a composed `DATABASE_URL`, even
+though the Secret also carries ready-made `uri`/`fqdn-uri`/`jdbc-uri` keys:
+none of those include the `postgresql+psycopg://` driver prefix (psycopg 3)
+this app's SQLAlchemy engine needs (`db.database_url_from_env` assembles the
+DSN itself from the five components). Both manifests' `env:` blocks are
+shaped identically on purpose, so a reviewer can see at a glance they read
+the same Secret the same way.
+
+## Migrations: a Job, waited on
+
+`25-migration-job.yaml` is a one-shot `batch/v1` `Job` running
+`alembic upgrade head` against `mtg-database` - the exact command
+`docker-compose.yml`'s already-working `migrate` service runs against the
+same image. It is a Job, never an initContainer and never something `game`
+runs at its own startup: **alembic takes no lock of its own**, so a
+concurrent or premature `upgrade head` is a real corruption hazard, not a
+hypothetical one - the same reasoning `docker-compose.yml`'s `migrate`
+service comments carry.
+
+The Job's name is `mtg-migrate-__TAG__` - the same `__TAG__` placeholder
+every other manifest here carries, substituted the same way. A Job's spec is
+mostly immutable, so re-applying an existing Job with a different image would
+be rejected outright; naming it after the tag means a new deploy (new tag) is
+always a fresh Job object, while re-applying an unchanged tag hits an
+already-existing, already-`Complete` Job and is a no-op.
+`ttlSecondsAfterFinished: 3600` cleans each one up an hour after it finishes.
+`backoffLimit: 0` and `restartPolicy: Never`: a failed migration should stop
+and be looked at, not silently retried. `activeDeadlineSeconds: 300` bounds
+how long a hung migration can occupy the namespace.
+
+`mise run k8s:deploy` applies this Job and **waits for it to finish before
+applying the Deployment** - see [the phased `k8s:deploy` below](#apply). A
+bare `kubectl apply -f deploy/k8s/` of the whole directory is **not**
+equivalent to `mise run k8s:deploy` any more: it would apply everything,
+including the Deployment, in one shot with no ordering guarantee between the
+migration and the app rolling onto the new schema. Do the same thing by hand,
+in order, if you are not using mise:
+
+```sh
+TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
+NS=mtg-engine
+
+# 1. everything except the migration Job, Deployment, Service, Ingress
+for f in deploy/k8s/00-namespace.yaml deploy/k8s/20-database.yaml \
+         deploy/k8s/30-storage.yaml deploy/k8s/40-rbac.yaml \
+         deploy/k8s/45-networkpolicy.yaml; do
+  sed "s/__TAG__/${TAG}/g" "$f"
+done | kubectl apply -f -
+
+# 2. wait for the database
+kubectl wait --for=condition=Ready cluster/mtg-database -n "$NS" --timeout=300s
+
+# 3. run the migration and wait for it to finish - do NOT proceed on failure
+#    or timeout; see the mise task's own comment for the Complete/Failed/
+#    timeout polling logic and why a plain `kubectl wait --for=condition=
+#    complete` is not enough here
+sed "s/__TAG__/${TAG}/g" deploy/k8s/25-migration-job.yaml | kubectl apply -f -
+kubectl -n "$NS" logs "job/mtg-migrate-${TAG}" -f   # watch it, or poll .status.conditions
+
+# 4. only once the migration Job is Complete: the app itself
+for f in deploy/k8s/50-deployment.yaml deploy/k8s/60-service.yaml deploy/k8s/70-ingress.yaml; do
+  sed "s/__TAG__/${TAG}/g" "$f"
+done | kubectl apply -f -
+```
 
 ## Create the Secrets
 
@@ -421,13 +528,21 @@ kubectl apply -f deploy/k8s/40-rbac.yaml
 kubectl -n mtg-engine get secret mtg-play-proxy
 
 # 5. everything else, with the image tag substituted - deploy/k8s/*.yaml now
-#    includes 55-oauth2-proxy.yaml, so this one command also stands up the
-#    proxy Deployment and Service; see Login: oauth2-proxy and Keycloak for
-#    the two-step cutover that actually routes traffic to it
+#    includes 55-oauth2-proxy.yaml, so this also stands up the proxy
+#    Deployment and Service (see Login: oauth2-proxy and Keycloak for the
+#    two-step cutover that actually routes traffic to it). This is now a
+#    PHASED apply, not one `kubectl apply -f -` of the whole directory: the
+#    database Cluster is created and waited on, then a migration Job runs
+#    and is waited on, and only once it succeeds is the Deployment (which
+#    expects the new schema) applied - see "Migrations: a Job, waited on"
+#    above for why, and the mise task itself for the exact ordering.
 mise run k8s:deploy
 #   or, without mise (TAG must match mise.toml's <api-sha>-<engine-sha>):
-#   TAG="$(git rev-parse --short HEAD)-$(git -C ../magic-cards-model rev-parse --short HEAD)"
-#   sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -
+#   see the hand-equivalent phased sequence under
+#   "Migrations: a Job, waited on" above - do NOT run
+#   `sed "s/__TAG__/${TAG}/g" deploy/k8s/*.yaml | kubectl apply -f -` as a
+#   single shot any more, it applies the Deployment before the migration Job
+#   is known to have finished
 
 # 6. watch it come up
 kubectl -n mtg-engine get pod -l app=mtg-stack -w
@@ -568,10 +683,18 @@ The `game` container's env grew: `AI_SEAT_MODE=kubernetes` (in place of the
 old `wrapper` plus loopback `DRIVER_URL`, which no longer applies - there is
 no longer one sidecar driver to loop back to), `AGENT_NAMESPACE`,
 `AGENT_IMAGE`, `API_IMAGE`, `API_SERVICE_URL`, `SPELLSLINGER_MCP_URL`, and
-`MAX_LIVE_GAMES`. There is deliberately no downward-API `POD_NAME`/`POD_UID`/
-`POD_NAMESPACE` any more (phase 2b T9/T10): seat Jobs carry no
-`ownerReferences` at all now, because with durable games an API restart must
-not garbage-collect the seat Jobs of games that survived it -
+`MAX_LIVE_GAMES`. It also now carries `POSTGRES_HOST`/`POSTGRES_PORT`/
+`POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` (from the `mtg-database-app`
+Secret) and `REQUIRE_POSTGRES=1` - see [Database: CloudNativePG](#database-cloudnativepg)
+and [Migrations: a Job, waited on](#migrations-a-job-waited-on).
+`REQUIRE_POSTGRES` is what makes `store.py` crash loudly at startup on a
+missing or unreachable database instead of silently falling back to
+`InMemoryRepository` - the whole reason this Deployment now points at a real
+database rather than merely being able to. There is deliberately no
+downward-API `POD_NAME`/`POD_UID`/`POD_NAMESPACE` any more (phase 2b T9/T10):
+seat Jobs carry no `ownerReferences` at all now, because with durable games
+an API restart must not garbage-collect the seat Jobs of games that survived
+it -
 `activeDeadlineSeconds`/`ttlSecondsAfterFinished` on each Job are the whole
 backstop.
 
@@ -667,7 +790,7 @@ never start; `30-storage.yaml` explains the fix.
   Service's single port, the NetworkPolicy's selector and policy types, and
   the cross-file invariant that the NetworkPolicy's ingress source matches
   the Deployment's own pod-template labels.
-- `kubectl apply --dry-run=client -f <rendered>` - all 11 objects accepted.
+- `kubectl apply --dry-run=client -f <rendered>` - all 13 objects accepted.
 - `kubectl apply --dry-run=server -f <rendered>` against the live cluster
   (context `kubernetes-admin@kubernetes`, namespace `mtg-engine`, which
   already exists on this cluster from an earlier apply of the previous

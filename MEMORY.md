@@ -697,3 +697,181 @@ whoever works on the repo itself.
   scoped to deck validation and the batch game-summary read; giving it a
   create-game method is stage B's (the actual HTTP extraction) job, not
   T6's, while the lobby and api are still one process.
+- **2026-09-08 - `ccw_inference_seconds`: claude's own JSONL transcript lines
+  carry a `timestamp` (ISO 8601 ms) and `requestId`, confirmed against a real
+  session file rather than assumed.** One inference is one `requestId`,
+  flushed as several content-block lines (a `thinking` line, then a
+  `tool_use`/`text` line) that all carry the same final `usage.output_tokens`
+  - so both duration and output tokens are observable at the same point,
+  from the transcript's own timestamps rather than local read time, making
+  the measurement exact regardless of the watcher's poll interval.
+  `activity.InferenceTimer` times a group from the line immediately before
+  its first block to its own last block, and only finalizes once a *later*
+  line proves the group has no more blocks coming - so the one inference
+  still in flight when the transcript stops growing (match end) is never
+  recorded. Also: `ActivityWatcher.start()` used to skip spawning the thread
+  entirely when `AGENT_LOG_LEVEL` was `off`/`turns` (`enabled()`); metrics
+  must not depend on log verbosity, so `start()` no longer gates on it -
+  `rank` still gates the text log inside `poll_once`, but the watcher itself
+  (and `ccw_inference_seconds`) always runs.
+- **2026-09-08 - the eager-load key is `alwaysLoad`, and the other spelling
+  is a decoy.** Claude Code defers every MCP server's tools behind its
+  `ToolSearch` tool by default; the per-server opt-out is `alwaysLoad: true`,
+  a plain sibling of `command`/`url` on the entry inside `mcpServers`
+  (code.claude.com/docs/en/mcp, "Exempt a server from deferral"; confirmed
+  again against the installed CLI's own config schema). `anthropic/alwaysLoad`
+  is a *different thing that looks like the same thing*: an MCP `_meta` key a
+  **server** puts on an individual tool in its `tools/list` answer. Written
+  into a config file it does nothing at all, silently. Both
+  `deploy/seat-job.yaml`'s mcp-config branches and `deploy/mcp.base.json`
+  carry the real one, and `tests/test_k8s_seats.py` executes the initContainer
+  script and asserts on the JSON it wrote rather than on the template text -
+  the only thing that would have caught the wrong spelling. `spellslinger` is
+  left deferred on purpose: large, occasional reference surface, not the
+  seat's per-turn toolset.
+- **2026-09-08 - a wake reason that means "you can do nothing" is a spin
+  loop, not a wake.** `compute_wake_reason` returned "the game has not started
+  yet: another seat owes a pregame declaration" as a *reason*, and
+  `block_until_wake` returns the instant a reason is non-None - so
+  `max_seconds` never applied in the pregame at all. A live seat pod
+  (`mtg-seat-3b6613e0`) made 55 `wait_for_priority` calls in one agent
+  activation, 53 of them back to back, each returning in ~70 ms with a
+  byte-identical 9.5 KB board, one full inference cycle every 3.2 seconds for
+  as long as its human opponent thought about a mulligan. It now returns
+  `None` there (CR 103.5: each player declares in turn order and nothing
+  happens until all have; CR 103.6 does not begin until that process is
+  complete - both read in full in the session), so the bounded wait binds. The
+  seat the game is actually waiting on is still woken at once, and there is a
+  test pinning that half specifically: it is the half whose regression would
+  hang the whole game.
+- **2026-09-08 - the answer a seat gets carries what happened, not just what
+  is.** Every state-bearing answer already carried `available_actions` and
+  none carried a line of history, so `prompt.py` told the agent in as many
+  words to read `my_state` and then `game_log` - two calls and two inference
+  cycles for one question. `recent_log` now rides along on `run_action`,
+  `pass_until`, `block_until_wake` and `my_state` (`seatkit.RECENT_LOG_ENTRIES`
+  entries, `omitted` counting what the tail dropped). It carries
+  `LOG_HEADLINE_FIELDS` rather than whole rows *not* to save tokens - payload
+  size buys no latency here, corr(latency, context) = -0.101 - but because
+  `audit.record` stamps every row with a full board `snapshot` and a
+  `legal_actions_before` pool, and fifteen of each bolted onto an answer that
+  already carries the current one of each is not a log tail. `game_log` still
+  serves whole rows, and gained the `since` the api's own `GET .../log` always
+  had.
+
+- **2026-09-08 - `pass_priority` is exempt from the reasoning gate, and the
+  exemption is at the gate rather than in the tool signature.** Measured on
+  the live database: 149 rows, 92 carrying reasoning, but only 43 distinct
+  strings - and 75 of those 92 (82%) were `pass_priority`, averaging 80
+  characters, with one string appearing 38 times because
+  `seatkit.pass_until` threads a single reason onto every pass a run makes.
+  A search of the whole corpus for a genuine opponent read returned zero.
+  Requiring a bigger `reasoning` field would have made the same non-answer
+  longer at roughly +28.6s per game turn. `require_reasoning` grew a
+  `pass_shaped` keyword and `app.py`'s `action_pass_priority` passes it;
+  `PassPriorityRequest.reasoning` is still accepted and still audited, so
+  the pass that *does* mean something ("holding up my counterspell") can
+  still say so.
+
+- **2026-09-08 - the agent's thinking cannot be harvested: the transcript
+  keeps signatures and zero characters of text.** Verified on a live pod and
+  independently on a second machine - 36 `thinking` blocks, 0 chars between
+  them. `wrapper/activity.py`'s comment claiming they are skipped because
+  they are *long* was written against a premise that no longer holds and has
+  been corrected. Anything that wants an agent's reasoning has to ask the
+  agent (`POST .../plan`, and the per-action `reasoning` gate), never mine a
+  transcript for it.
+
+- **2026-09-08 - the plan gate's ledger lookup is bounded on purpose, and
+  keyed on `turns_taken` rather than on the audit row's `turn`.**
+  `records.require_plan` runs on the hot action path, so it reads at most
+  `RECENT_RECORDS_WINDOW` (500) of the newest rows through the new
+  `GameRepository.recent_records` - postgres serves that with `ORDER BY seq
+  DESC LIMIT`, already indexed by `uq_records_game_id_seq` on `(game_id,
+  seq)`, so no new index was needed. A full `store.records()` load would
+  have got slower every turn of a long game, and an in-process "who has
+  declared" cache would answer differently per replica. The window is safe
+  because a plan for the *current* turn is always among the newest rows.
+  The key matters too: `TurnMachine.turn_number` counts rounds of the table,
+  so both seats share it in a round and an extra turn (CR 500.7) does not
+  move it at all; `turns_taken` goes up exactly once per turn that begins,
+  which is the identity a per-turn plan needs. `audit.record` stamps `turn`
+  (the round) on every row regardless, so the declaration writes
+  `turns_taken` into its own `detail`.
+
+- **2026-09-08 - `delete()` is a soft delete now (`games.archived_at`,
+  revision `a2f6d9c31b57`), and every other accessor pretends nothing
+  changed.** The owner's requirement was "Games must be persisting in the
+  database even after are stopped/finished/conceded". `records` already
+  outlived its game (no foreign key, revision `8f1c47a0b6d2`), so what
+  survived a delete was the reasoning and what did not was the board it
+  reasoned about. `delete` now stamps `archived_at` and clears
+  `command`/`tape`/`pending`; `get`/`ids`/`ui_games`/`live_ui_games`/`locked`
+  /`seat_uids`/`admin_key` all filter on `archived_at IS NULL`, so an ended
+  game is exactly as unplayable as a removed one was, and the whole existing
+  contract suite passes unmodified. `archived()` (returning `ArchivedGame`)
+  is the single accessor that looks past the filter, and only the review
+  route uses it. `InMemoryRepository` keeps the parity by still popping every
+  live collection and moving the four retained facts into its own
+  `_archived` dict, rather than teaching twenty accessors about a flag.
+  Worth knowing: `k8s_seats`' reconcile uses `store.ids()` as "which games
+  still exist" to garbage-collect agent Jobs - had `ids()` started including
+  archived rows, every ended game would have kept its Job alive forever.
+
+- **2026-09-08 - `GET .../review` deliberately does NOT use
+  `game_or_404`, and deliberately does NOT use
+  `visibility.resolve_viewer`.** The first is what stranded 144 rows of the
+  live deployment's only substantively played game: the ledger outlives the
+  game, but `GET .../log` checks the game exists before reading it. The
+  second is subtler - `resolve_viewer(game_id, None)` returns `None`, which
+  is a viewer in its own right (the "debugger's eye" the log route documents
+  and `redact_log_entry` only partly guards). That is the wrong primitive
+  for a credential check, so the review route compares the presented
+  `uid`/`key` against the *archived* row's own `admin_key` and `seat_uids`
+  and 404s otherwise, then refuses with 409 until the game is over
+  (`Game.is_over`, CR 104.1 - looked up in session: "A game ends immediately
+  when a player wins, when the game is a draw, or when the game is
+  restarted") or has been ended.
+
+- **2026-09-08 - PRE-EXISTING, NOT FIXED HERE: `GET /api/games/{id}/log`
+  with no `uid` returns both players' full hands on a live game.**
+  `visibility.redact_log_entry` applies its snapshot filtering only `if
+  isinstance(viewer, str)`, and `resolve_viewer(game_id, None)` returns
+  `None`, which is not a `str` - so a caller presenting nothing gets the
+  unredacted snapshot. `app.py`'s own docstring calls this the debugger's
+  eye and means it, but `GET /api/lobby/games` publishes every lobby game's
+  id with no credential, so "nobody knows the id" is not the protection it
+  reads as. Left alone deliberately (a separate defect, and fixing it here
+  would have tangled this diff); the review route was built not to inherit
+  it. What *was* tightened, because it is the same door the new plan data
+  would have walked out of: `reasoning` and a `plan_declared` row's whole
+  detail are now dropped for every viewer that is not that row's own actor
+  or the admin key.
+
+- **2026-09-08 - the review's board has to be parsed back out of strings, and
+  loses two relationships doing it.** `serialize.snapshot` writes each
+  permanent as one line ("alice: Grizzly Bears (tapped) (sick) [4/5] dmg:2
+  (+1/+1=2)") and hands, graveyards and exile as bare card names - it is the
+  audit log's compact frame, not the `state_view` card objects. So
+  `ui/review_model.js` parses those lines back into card-shaped objects
+  (`parsePermanent`) and joins the printings in by name from `GET
+  /api/cards/{name}`, which is also the only way the review board can put
+  lands in the land row at all (`board_layout.isLandRow` reads a `type_line`,
+  and the snapshot carries none). Two things the snapshot simply does not
+  record and the review therefore cannot draw: which permanent an Aura or
+  Equipment is attached to, and which card was exiled with which permanent -
+  so a review board never tucks a card under another one where the live board
+  does. Also worth knowing: a `cast` row's `detail["card"]` is whatever the
+  client sent, so a client that cast by `card_id` leaves a uuid there; the
+  page drops uuids rather than showing them.
+
+- **2026-09-08 - the lobby's End no longer drops the game from
+  `mcm.games.v1`.** `DELETE /api/lobby/games/{id}` is a soft delete
+  (`games.archived_at`) whose whole purpose is that a finished game stays
+  reviewable, and `GET .../review` needs a seat uid that only the browser
+  holds - dropping the entry made the server's archive permanently
+  unreachable. End now stamps the entry `endedAt` (keeping `uid`, and the
+  opponent's name, since an archived game is filtered out of `GET
+  /api/lobby/games` and the server will never name it again), the row renders
+  as "ended" with Show thinking and Forget, and Forget is what actually drops
+  it.

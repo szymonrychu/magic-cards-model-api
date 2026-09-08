@@ -1,0 +1,97 @@
+# A one-shot alembic migration, run as a Job - never from `game`'s own
+# startup and never from an initContainer. Alembic takes no lock of its own:
+# a concurrent `upgrade head` from two sources at once is a real corruption
+# hazard, not a hypothetical one (see the same rationale on
+# `docker-compose.yml`'s `migrate` service, and `mise.toml`'s `k8s:deploy`
+# task, which waits for this Job to finish before applying the Deployment so
+# the running pod never rolls onto code that expects a schema this Job has
+# not yet created).
+#
+# NAME CARRIES __TAG__ ON PURPOSE: a Job's spec (bar a handful of fields) is
+# immutable, so re-applying an existing Job to change its image would be
+# rejected outright. Naming it `mtg-migrate-__TAG__` means a new image tag is
+# a new Job object - a fresh migration run every real deploy - while
+# re-applying the same tag hits an already-existing, already-`Complete` Job
+# and is a no-op. `ttlSecondsAfterFinished` cleans each one up an hour after
+# it finishes so these do not accumulate forever.
+#
+# The container mirrors `docker-compose.yml`'s `migrate` service exactly:
+# same image, same `alembic upgrade head` command (relying on the image's
+# `WORKDIR /app`, where `alembic.ini`/`alembic/` live - see `Dockerfile`),
+# same five `POSTGRES_*` components rather than an assembled `DATABASE_URL`
+# (`db.database_url_from_env` builds the `postgresql+psycopg://` DSN from
+# them itself - CNPG's own `-app` Secret carries ready-made URI keys too, but
+# none of them include the `+psycopg` driver prefix this app's SQLAlchemy
+# engine needs).
+#
+# Pod/container `securityContext` below is copied verbatim from
+# `50-deployment.yaml`'s `game` container and pod template so this Job is
+# admission-compatible with the namespace's restricted Pod Security Standard
+# by construction, not by re-deriving it.
+#
+# SECRET KEYS: `host`/`port`/`username`/`password`/`dbname` are CNPG's
+# documented convention for the `<cluster-name>-app` Secret it generates from
+# `20-database.yaml`'s `bootstrap.initdb`. Confirmed live against a real CNPG
+# `-app` Secret elsewhere in this cluster: the keys are exactly
+# `host`/`port`/`username`/`password`/`dbname`, as assumed above.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mtg-migrate-__TAG__
+  namespace: mtg-engine
+  labels:
+    app: mtg-migrate
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: mtg-migrate
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: regcred
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: host
+            - name: POSTGRES_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: port
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: mtg-database-app
+                  key: dbname

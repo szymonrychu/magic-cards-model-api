@@ -109,10 +109,13 @@ function boxed(id, hidden) {
 }
 boxed("opp-info");
 boxed("opp-hand");
+boxed("opp-lands");
 boxed("opp-battlefield");
 boxed("stack-row");
+boxed("exile-row", true);
 boxed("red-zone", true);
 boxed("my-battlefield");
+boxed("my-lands");
 boxed("my-hand");
 boxed("you-info");
 
@@ -278,7 +281,11 @@ def test_clicking_a_battlefield_card_calls_on_permanent_with_that_card() -> None
             onPermanent: (card, event) => calls.push(card.id),
           });
           store.set({});
-          const bfCard = document.querySelector("#my-battlefield").children[0];
+          // Every permanent is drawn inside its own `.perm-stack` wrapper
+          // now - the pile that carries whatever is attached to it - so the
+          // card itself is one level down even when nothing is attached.
+          const stack = document.querySelector("#my-battlefield").children[0];
+          const bfCard = stack.children[0];
           bfCard.onclick({ currentTarget: bfCard });
           return calls;
         })()

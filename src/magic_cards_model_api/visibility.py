@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .audit import PLAN_ACTION
 from .store import store
 
 
@@ -386,8 +387,45 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     The `zone`/`to_zone` card-blanking below only catches actions that record
     one of those keys alongside the card (`add_card`, `move_card`) - see the
     report for what is not covered.
+
+    **A seat's own words are its own.** Two more guards, on the same "every
+    non-admin viewer, `uid`-less included" footing as `legal_actions_before`:
+
+    - `reasoning` - the acting seat's stated why - is dropped for anyone but
+      the seat that wrote it. An opponent reading it live is reading the
+      agent's mind mid-game, which is worth strictly more than seeing its
+      hand.
+    - a `plan_declared` row (`audit.PLAN_ACTION`) keeps only its `player`.
+      Its detail is a whole turn's intent *and a prediction about the
+      opponent*, declared before anything happened - the single most
+      damaging thing in this ledger to hand the other seat. The row itself
+      stays visible, because "bob declared a plan at this point" is public
+      the way "bob took a long time" is; its content does not.
+
+    Both are keyed on `detail["player"]`, which is what the acting route
+    recorded. That is safe *in this direction* and only in this direction:
+    `detail["player"]` is caller-supplied on some routes, so trusting it
+    could at worst let a caller hide its own words from itself, never reveal
+    somebody else's - a request's `reasoning` is the reasoning that same
+    request carried. Contrast `legal_actions_before`, which is server-computed
+    hidden information about another seat and therefore must be keyed on
+    `legal_actions_for` (see `records.LegalActionsBefore`).
+
+    The post-game review (`review.py`) shows all of this, both seats, in
+    full - that is what a review is for, and `app.py`'s `game_review`
+    refuses to run at all until the game is over or ended.
     """
     entry = dict(entry)
+    detail_player = (entry.get("detail") or {}).get("player")
+    # Fails closed, like `legal_actions_before` below: `viewer` has to be a
+    # real seat *and* be this row's own actor. A `uid`-less read is
+    # `None`, and a row nobody made carries no player - "None is None" must
+    # not read as "this is your row".
+    own = viewer is ADMIN or (isinstance(viewer, str) and detail_player == viewer)
+    if not own:
+        entry["reasoning"] = None
+        if entry.get("action") == PLAN_ACTION:
+            entry["detail"] = {"player": detail_player} if detail_player else {}
     if isinstance(viewer, str):  # a real seat - not admin, not "nobody"
         if entry.get("snapshot"):
             entry["snapshot"] = redact_snapshot(entry["snapshot"], viewer)

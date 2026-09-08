@@ -9,7 +9,8 @@
         "http://game:8000",
         "--transport",
         "stdio"
-      ]
+      ],
+      "alwaysLoad": true
     },
     "spellslinger": {
       "type": "http",

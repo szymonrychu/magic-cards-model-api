@@ -98,6 +98,64 @@ def test_network_policy_pins_agent_pods() -> None:
     assert ingress_from_labels == deployment_pod_labels
 
 
+def test_migration_job_secret_keys_match_deployment() -> None:
+    # Cross-file invariant: the migration Job and the Deployment's `game`
+    # container must read the exact same five POSTGRES_* keys from the exact
+    # same Secret - a typo'd key name in one manifest would only surface at
+    # Job-run time in production.
+    docs = rendered()
+    # Phase 2b oauth2-proxy added a second Deployment (mtg-oauth2-proxy)
+    # alongside mtg-stack's own, so `(deploy,) = by_kind(docs, "Deployment")`
+    # no longer selects a single object - select by name instead.
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    game = deploy["spec"]["template"]["spec"]["containers"][0]
+    (job,) = by_kind(docs, "Job")
+    migrate = job["spec"]["template"]["spec"]["containers"][0]
+    deploy_env = {e["name"]: e for e in game["env"]}
+    job_env = {e["name"]: e for e in migrate["env"]}
+    postgres_vars = [
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+    ]
+    for name in postgres_vars:
+        assert (
+            job_env[name]["valueFrom"]["secretKeyRef"]
+            == deploy_env[name]["valueFrom"]["secretKeyRef"]
+        )
+
+
+def test_migration_job_security_context_matches_deployment() -> None:
+    # Cross-file invariant: the migration Job's pod- and container-level
+    # securityContext must be identical to the Deployment's, since that
+    # identity is what makes the Job admissible under the namespace's
+    # restricted Pod Security Standard.
+    docs = rendered()
+    # Same by-name reasoning as above: two Deployments exist post phase 2b.
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    pod = deploy["spec"]["template"]["spec"]
+    (job,) = by_kind(docs, "Job")
+    job_pod = job["spec"]["template"]["spec"]
+    assert job_pod["securityContext"] == pod["securityContext"]
+    (game,) = pod["containers"]
+    (migrate,) = job_pod["containers"]
+    assert migrate["securityContext"] == game["securityContext"]
+
+
+def test_database_cluster_uses_rook_ceph_and_no_manual_credentials() -> None:
+    docs = rendered()
+    (cluster,) = by_kind(docs, "Cluster")
+    spec = cluster["spec"]
+    assert spec["storage"]["storageClass"] == "rook-ceph"
+    assert spec["walStorage"]["storageClass"] == "rook-ceph"
+    # CNPG must auto-generate the app Secret - never a hand-set credential.
+    assert "superuserSecret" not in spec
+    assert spec.get("enableSuperuserAccess", False) is False
+    assert "password" not in str(spec).lower()
+
+
 # ---------------------------------------------------------- phase 2b oauth2-proxy --
 #
 # The play UI host moves from nginx basic auth to oauth2-proxy in front of

@@ -60,6 +60,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
@@ -86,6 +87,46 @@ from .commands import Command
 #: instance without needing a constructor argument the contract suite's
 #: zero-argument factories don't have room for.
 DEFAULT_RESERVATION_TTL_SECONDS = 30.0
+
+#: How many of a game's newest `records` rows a bounded lookup reads. The
+#: plan gate (`records.require_plan`) sits on the hot action path and asks
+#: one question of the ledger - "has this seat declared a plan for the turn
+#: it is acting in" - and the answer, when it is yes, is always inside the
+#: current player-turn's own rows, which are by construction the newest ones.
+#: So the window only has to be comfortably larger than one player-turn's
+#: record count (a dozen steps, a priority round each, both seats' actions
+#: among them), and 500 is that with a wide margin while staying O(1) in the
+#: length of the game. A full `store.records()` load here would get slower
+#: every turn, which is exactly the failure this constant exists to avoid.
+RECENT_RECORDS_WINDOW = 500
+
+
+@dataclass(frozen=True)
+class ArchivedGame:
+    """Everything about one game that outlives its own deletion.
+
+    `delete()` is a *soft* delete: the game stops being live, disappears
+    from the lobby and answers `None` to `get()`, but its row is kept so a
+    post-game review has something to read the audit trail against. This is
+    the one accessor that sees a game whether it is live or archived, and it
+    is deliberately the only one - every other method on the protocol
+    behaves exactly as it did when `delete` threw the row away, so nothing
+    that asks "can this game be played" can accidentally answer yes.
+
+    `admin_key` and `seat_uids` are here because the review endpoint has to
+    authorise a reader *after* the game has ended, and the credentials it
+    authorises against are the ones the game was played with. `deleted_at`
+    is `None` for a game that is still live, and a UTC ISO 8601 stamp for
+    one that has been ended.
+    """
+
+    game_id: str
+    game: Game
+    admin_key: str | None
+    seat_uids: dict[str, str]
+    """uid -> username, as `seat_uids()` returns it for a live game."""
+    created_at: str | None
+    deleted_at: str | None
 
 
 class _ReservationLedger:
@@ -133,8 +174,18 @@ class GameRepository(Protocol):
     today's implementation; a postgres-backed one (T9) is another.
     """
 
-    def create(self, game: Game) -> str:
-        """Store `game` under a fresh id and return it."""
+    def create(self, game: Game, *, owner_user_id: str | None = None) -> str:
+        """Store `game` under a fresh id and return it.
+
+        `owner_user_id` is the OIDC subject (JWT `sub`) of whoever created
+        this game, when the request that created it carried a valid bearer
+        token - `None` (the default) for every caller that did not, which is
+        every caller today. A game with no owner is unrestricted, exactly as
+        every game was before this parameter existed: `game_access.py`'s
+        ownership gate only ever narrows access for a game that *has* an
+        owner, so an ownerless game stays reachable by uid/admin key alone,
+        the pre-existing model. See `game_access.py`'s module docstring for
+        the full authorization design and the migration story."""
         ...
 
     def reserve_slot(self, cap: int) -> str | None:
@@ -210,8 +261,33 @@ class GameRepository(Protocol):
         ...
 
     def delete(self, game_id: str) -> bool:
-        """Remove this game and everything recorded beside it. Returns
-        whether a game actually existed to remove."""
+        """End this game: it stops being live, and every other method here
+        answers for it exactly as if it had been removed - `get` is `None`,
+        `ids`/`ui_games`/`live_ui_games` omit it, `locked` raises, its seat
+        credentials and admin key are gone, its paused command is cleared.
+        Returns whether a live game actually existed to end (`False` for an
+        unknown id, and for one already ended).
+
+        **The row itself is kept** (`archived()` reads it back), which is
+        the one thing this no longer does. The user's requirement was
+        "Games must be persisting in the database even after are
+        stopped/finished/conceded": the audit trail already outlived the
+        game it describes (`records` carries no foreign key), but the board,
+        hands and state it describes did not, so a post-game review would
+        have had reasoning with nothing to read it against. See
+        `ArchivedGame`.
+        """
+        ...
+
+    def archived(self, game_id: str) -> ArchivedGame | None:
+        """This game as a review may read it - live or ended - or `None`
+        when no such game was ever created.
+
+        The only method that sees past `delete()`. Everything a post-game
+        review needs and nothing else: the final state, the credentials to
+        authorise a reader against, and when (if ever) the game was ended.
+        See `ArchivedGame`.
+        """
         ...
 
     def append_record(self, game_id: str, payload: dict[str, Any]) -> int:
@@ -246,6 +322,24 @@ class GameRepository(Protocol):
         unknown game - this mirrors `audit.entries`'s old behaviour rather
         than raising, since `GET /api/games/{id}/log` reads this for a game
         that has already been checked to exist by its own 404."""
+        ...
+
+    def recent_records(self, game_id: str, limit: int) -> list[dict[str, Any]]:
+        """At most `limit` of this game's newest `records` rows, in the same
+        oldest-first order and the same shape `records()` returns them.
+
+        The bounded read. `records()` is fine for a review, which runs once
+        when a game is over; it is the wrong shape for anything on the hot
+        action path, because its cost grows with every turn played. Every
+        implementation must answer this without loading the whole ledger -
+        postgres does it with `ORDER BY seq DESC LIMIT`, served by the
+        `uq_records_game_id_seq` unique index that already exists on
+        `(game_id, seq)`.
+
+        Deliberately not a cache: the api may run more than one replica, and
+        an in-process memo of "who has declared a plan" would answer
+        differently depending on which pod took the request.
+        """
         ...
 
     def record_automatic_pregame(self, game_id: str, player: str, kind: str) -> None:
@@ -301,6 +395,20 @@ class GameRepository(Protocol):
     def is_admin(self, game_id: str, key: str) -> bool:
         """Whether `key` is this game's admin key. A missing key is never
         one."""
+        ...
+
+    def owner_user_id(self, game_id: str) -> str | None:
+        """The OIDC subject that owns this game - `None` for an unknown game
+        and, just as importantly, for a known one nobody ever attributed an
+        owner to. `game_access.py`'s ownership gate treats the two
+        identically: no owner means no restriction beyond the pre-existing
+        uid/admin-key model. Set once, at `create()`, never afterward -
+        `attach()` only turns a `reserve_slot()` reservation into a live ui
+        game, it never touches ownership, which the caller already named at
+        `create()` time. There is no `register_owner`, on purpose, so
+        ownership can never be reassigned out from under a game after the
+        fact.
+        """
         ...
 
     def created_at(self, game_id: str) -> str | None:
@@ -442,6 +550,11 @@ class InMemoryRepository:
         self._games: dict[str, Game] = {}
         self._seats: dict[str, dict[str, str]] = {}  # game_id -> uid -> username
         self._admin_keys: dict[str, str] = {}  # game_id -> admin key
+        # game_id -> the OIDC subject that created it, only when the creating
+        # request carried a valid bearer token - absent (never `None`, just
+        # missing) for every ownerless game, matching every other optional
+        # per-game fact this store keeps beside `_games`. See `create()`.
+        self._owner_user_id: dict[str, str] = {}
         self._created_at: dict[str, str] = {}  # game_id -> UTC ISO 8601 creation time
         # game_id -> its mutation lock. Process-local by nature, and not part
         # of `GameRepository` - only `locked()` itself is.
@@ -478,6 +591,13 @@ class InMemoryRepository:
         # satisfies exactly the same `GameRepository` surface postgres does -
         # see `replace`/`append_record`/`fill_record`/`records`.
         self._records: dict[str, list[dict[str, Any]]] = {}
+        # game_id -> what `delete()` kept when it ended that game. The
+        # postgres implementation keeps the whole row and flags it with
+        # `archived_at`; here, `delete` still pops every live collection
+        # exactly as it always did (so no accessor has to learn about
+        # archiving) and moves the handful of facts a review needs into
+        # this one dict instead. See `ArchivedGame` and `archived()`.
+        self._archived: dict[str, ArchivedGame] = {}
         self._lock = threading.Lock()
         # M8: pending reservations against `MAX_LIVE_GAMES`, keyed by token.
         # Protected by `self._lock`, exactly like everything else here - see
@@ -485,11 +605,13 @@ class InMemoryRepository:
         # its own.
         self._reservations = _ReservationLedger()
 
-    def create(self, game: Game) -> str:
+    def create(self, game: Game, *, owner_user_id: str | None = None) -> str:
         game_id = uuid4().hex
         with self._lock:
             self._games[game_id] = game
             self._admin_keys[game_id] = uuid4().hex
+            if owner_user_id is not None:
+                self._owner_user_id[game_id] = owner_user_id
             self._created_at[game_id] = datetime.now(UTC).isoformat()
             self._locks[game_id] = threading.Lock()
         return game_id
@@ -704,6 +826,10 @@ class InMemoryRepository:
         with self._lock:
             return bool(key) and self._admin_keys.get(game_id) == key
 
+    def owner_user_id(self, game_id: str) -> str | None:
+        with self._lock:
+            return self._owner_user_id.get(game_id)
+
     def register_seats(self, game_id: str, uids: dict[str, str]) -> None:
         """Record `uids` (uid -> username) as this game's seat credentials."""
         with self._lock:
@@ -737,9 +863,27 @@ class InMemoryRepository:
         # `game_reset` row is written just before this call
         # (`lobby.reset_game`), and it must still be there to read
         # afterward, or "the transcript ends with the reset" is a lie.
+        #
+        # Nor is the game itself thrown away any more: it moves into
+        # `self._archived`, which is the whole of this store's soft delete.
+        # Every live collection is still popped, so `get`/`ids`/`ui_games`/
+        # `locked`/`seat_uids`/`admin_key` keep answering exactly what they
+        # answered when this really did destroy the game - only `archived()`
+        # can see what was kept.
         with self._lock:
+            game = self._games.pop(game_id, None)
+            if game is not None:
+                self._archived[game_id] = ArchivedGame(
+                    game_id=game_id,
+                    game=game,
+                    admin_key=self._admin_keys.get(game_id),
+                    seat_uids=dict(self._seats.get(game_id, {})),
+                    created_at=self._created_at.get(game_id),
+                    deleted_at=datetime.now(UTC).isoformat(),
+                )
             self._seats.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
+            self._owner_user_id.pop(game_id, None)
             self._created_at.pop(game_id, None)
             self._locks.pop(game_id, None)
             self._paused_commands.pop(game_id, None)
@@ -750,7 +894,24 @@ class InMemoryRepository:
             self._automatic_pregame.pop(game_id, None)
             if game_id in self._ui_games:
                 self._ui_games.remove(game_id)
-            return self._games.pop(game_id, None) is not None
+            return game is not None
+
+    def archived(self, game_id: str) -> ArchivedGame | None:
+        with self._lock:
+            ended = self._archived.get(game_id)
+            if ended is not None:
+                return ended
+            game = self._games.get(game_id)
+            if game is None:
+                return None
+            return ArchivedGame(
+                game_id=game_id,
+                game=game,
+                admin_key=self._admin_keys.get(game_id),
+                seat_uids=dict(self._seats.get(game_id, {})),
+                created_at=self._created_at.get(game_id),
+                deleted_at=None,
+            )
 
     def _append_record_locked(self, game_id: str, payload: dict[str, Any]) -> int:
         """`append_record`'s own body, called with `self._lock` already
@@ -781,6 +942,14 @@ class InMemoryRepository:
                 {**entry, "payload": dict(entry["payload"])}
                 for entry in self._records.get(game_id, [])
             ]
+
+    def recent_records(self, game_id: str, limit: int) -> list[dict[str, Any]]:
+        with self._lock:
+            # `[-limit:]` on a list is the in-memory twin of postgres's
+            # `ORDER BY seq DESC LIMIT` - the point of the method is that
+            # neither implementation's cost grows with the ledger.
+            window = self._records.get(game_id, [])[-limit:] if limit > 0 else []
+            return [{**entry, "payload": dict(entry["payload"])} for entry in window]
 
     def ids(self) -> list[str]:
         with self._lock:

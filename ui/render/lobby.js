@@ -39,6 +39,7 @@ import {
   loadSavedGames,
   saveGames,
   dropSavedGame,
+  upsertSavedGame,
 } from "../lobby_model.js";
 import { apiBase, lobbyBase } from "../config.js";
 
@@ -224,12 +225,26 @@ function currentStorage() {
 }
 
 /** "pending" (still in CR 103.5/103.6's pregame - `booted_game`'s own boot
- * leaves a game resting at turn 0 until both seats clear it), "playing", or
- * "over" (a winner or a draw). */
+ * leaves a game resting at turn 0 until both seats clear it), "playing",
+ * "over" (a winner or a draw), or "ended" (this browser ended it from the
+ * lobby: soft-deleted server-side, unplayable, still reviewable). */
 function gameState(row) {
+  if (row.archived) return "ended";
   if (row.over) return "over";
   if (row.turn === 0) return "pending";
   return "playing";
+}
+
+/** Whether this row may open the post-game review.
+ *
+ * The review shows both seats' plans and their per-action reasoning, which
+ * is the whole point once a game is finished and would be handing one seat
+ * the other's plan while it is still being played. So the door is only ever
+ * on a game the lobby already knows is finished - `is_over` from the server,
+ * or a game this browser ended. `GET .../review`'s own 409 is the second
+ * line of defence, never the only one. */
+function reviewable(row) {
+  return Boolean(row.over || row.archived);
 }
 
 /** `tbody.replaceChildren()` on a real DOM; falls back to reassigning
@@ -259,31 +274,64 @@ function renderGamesTable(root, handlers, rows) {
     const stateTd = document.createElement("td");
     stateTd.textContent = gameState(row);
     const actionsTd = document.createElement("td");
-    const openBtn = document.createElement("button");
-    openBtn.textContent = "Open";
-    openBtn.addEventListener("click", () => {
-      handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
-    });
-    const endBtn = document.createElement("button");
-    endBtn.textContent = "End";
-    endBtn.className = "danger";
-    endBtn.addEventListener("click", () => {
-      endGame(root, handlers, row).catch((e) => console.error(e));
-    });
-    actionsTd.appendChild(openBtn);
-    actionsTd.appendChild(endBtn);
+    if (!row.archived) {
+      const openBtn = document.createElement("button");
+      openBtn.textContent = "Open";
+      openBtn.addEventListener("click", () => {
+        handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
+      });
+      const endBtn = document.createElement("button");
+      endBtn.textContent = "End";
+      endBtn.className = "danger";
+      endBtn.addEventListener("click", () => {
+        endGame(root, handlers, row).catch((e) => console.error(e));
+      });
+      actionsTd.appendChild(openBtn);
+      actionsTd.appendChild(endBtn);
+    }
+    // The review's door - only on a finished game, and only when the page
+    // that mounted this lobby actually has somewhere to send it.
+    if (reviewable(row) && handlers.showReview) {
+      const reviewBtn = document.createElement("button");
+      reviewBtn.textContent = "Show thinking";
+      reviewBtn.className = "primary";
+      reviewBtn.title = "What the agent said it expected, and what happened next";
+      reviewBtn.addEventListener("click", () => {
+        handlers.showReview({ gameId: row.gameId, uid: row.myUid });
+      });
+      actionsTd.appendChild(reviewBtn);
+    }
+    if (row.archived) {
+      const forgetBtn = document.createElement("button");
+      forgetBtn.textContent = "Forget";
+      forgetBtn.className = "ghost";
+      forgetBtn.title = "Drop this game from this browser's list - the review goes with it";
+      forgetBtn.addEventListener("click", () => {
+        const storage = currentStorage();
+        saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
+        refreshGames(root, handlers).catch((e) => console.error(e));
+      });
+      actionsTd.appendChild(forgetBtn);
+    }
     for (const cell of [opponentTd, turnTd, agentTd, stateTd, actionsTd]) tr.appendChild(cell);
     tbody.appendChild(tr);
   }
 }
 
-/** End game: only drop `row` from `mcm.games.v1` (and refresh the table)
+/** End game: only mark `row` ended in `mcm.games.v1` (and refresh the table)
  * once the server has actually agreed to it. A refused or unreachable
  * `DELETE` (the uid is stale, the game is already gone some other way, the
- * network drops) must leave the row exactly where it was - dropping it
- * first and finding out the delete failed after the fact would make the
- * lobby forget a game that is still live and still holds its uids, with no
- * way back to it short of the browser having saved them somewhere else. */
+ * network drops) must leave the row exactly where it was - marking it first
+ * and finding out the delete failed after the fact would make the lobby show
+ * a game that is still live as finished, and offer its plans for reading
+ * while it is still being played.
+ *
+ * The entry is *kept*, stamped `endedAt`, rather than dropped. `DELETE
+ * /api/lobby/games/{id}` is a soft delete (`games.archived_at`) precisely so
+ * a finished game stays reviewable, and the review needs a seat uid that
+ * only this browser holds - throwing the entry away here would make the
+ * server's archive unreachable forever. The row's own Forget button is what
+ * drops it, deliberately, when a person means to. */
 async function endGame(root, handlers, row) {
   try {
     await api("DELETE", `${lobbyBase()}/games/${row.gameId}?uid=${encodeURIComponent(row.myUid)}`);
@@ -294,7 +342,25 @@ async function endGame(root, handlers, row) {
     return;
   }
   const storage = currentStorage();
-  saveGames(storage, dropSavedGame(loadSavedGames(storage), row.gameId));
+  const saved = loadSavedGames(storage);
+  const entry = saved.find((g) => g.gameId === row.gameId) || { gameId: row.gameId };
+  saveGames(
+    storage,
+    upsertSavedGame(saved, {
+      ...entry,
+      uid: entry.uid || row.myUid,
+      aiUid: entry.aiUid || row.aiUid,
+      // Kept because the server will not tell us again: an archived game is
+      // filtered out of `GET /api/lobby/games`, so the row's own name for
+      // the opponent (and the agent it was played against) has to survive
+      // here or the ended row has nothing to identify itself by.
+      opponent: entry.opponent || row.opponent || null,
+      model: entry.model || row.model || null,
+      effort: entry.effort || row.effort || null,
+      turn: row.turn === undefined ? null : row.turn,
+      endedAt: new Date().toISOString(),
+    })
+  );
   await refreshGames(root, handlers);
 }
 

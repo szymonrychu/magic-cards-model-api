@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import threading
 import time
 import types
@@ -29,7 +30,9 @@ ENV = {
     "MCP_SERVICE_URL": "http://mtg-mcp.mtg-engine.svc.cluster.local:8080/mcp",
 }
 
-TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "deploy" / "seat-job.yaml"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+TEMPLATE_PATH = REPO_ROOT / "deploy" / "seat-job.yaml"
 
 #: A leftover placeholder can survive even if it isn't one of the nine
 #: (a typo, a stray token) - this pattern is deliberately broader than
@@ -189,6 +192,112 @@ def test_init_containers_present_in_order_with_security_context() -> None:
         assert container["securityContext"]["allowPrivilegeEscalation"] is False
 
 
+# ---- mcp-config initContainer: the T9 fix ----------------------------------
+#
+# Assertions on the rendered *value* alone (the string ended up in the right
+# place) would not have caught the production bug this fixes - a rendered
+# `MCP_URL=""` produced valid-looking YAML whose `mcp.json` was still wrong
+# for a live agent. So `_run_mcp_config_script` actually executes the
+# initContainer's own `/bin/sh -euc <script>` command with its own rendered
+# env, exactly the way the real initContainer does, and reads back the JSON
+# it wrote - the only way to prove the *emitted file*, not the template text,
+# is correct.
+
+
+def _run_mcp_config_script(job: dict, tmp_path: Path) -> dict:
+    pod = job["spec"]["template"]["spec"]
+    container = next(c for c in pod["initContainers"] if c["name"] == "mcp-config")
+    command = container["command"]
+    assert command[:2] == ["/bin/sh", "-euc"]
+    script = command[2]
+    env = {e["name"]: e.get("value") or "" for e in container["env"]}
+    out = tmp_path / "mcp.json"
+    env["MCP_JSON_OUT"] = str(out)
+    subprocess.run(["/bin/sh", "-euc", script], env=env, check=True)
+    return json.loads(out.read_text())
+
+
+def test_mcp_config_env_carries_api_url_and_game_id_when_mcp_url_empty() -> None:
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    mcp_container = next(
+        c for c in job["spec"]["template"]["spec"]["initContainers"] if c["name"] == "mcp-config"
+    )
+    mcp_env = {e["name"]: e.get("value") for e in mcp_container["env"]}
+    assert mcp_env["MCP_URL"] == ""
+    assert mcp_env["API_URL"] == ENV["API_SERVICE_URL"]
+    assert mcp_env["GAME_ID"] == "g1"
+
+
+def test_mcp_config_script_emits_stdio_mtg_entry_when_mcp_url_empty(tmp_path: Path) -> None:
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"] == {
+        "command": "/app/.venv/bin/python",
+        "args": [
+            "-m",
+            "magic_cards_model_api.mcp",
+            "--api",
+            ENV["API_SERVICE_URL"],
+            "--game",
+            "g1",
+            "--transport",
+            "stdio",
+        ],
+        "alwaysLoad": True,
+    }
+    assert rendered["mcpServers"]["spellslinger"] == {
+        "type": "http",
+        "url": ("http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp"),
+    }
+
+
+def test_mcp_config_script_emits_http_mtg_entry_when_mcp_url_set(tmp_path: Path) -> None:
+    job = _build(ENV)  # ENV carries a non-empty MCP_SERVICE_URL
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"] == {
+        "type": "http",
+        "url": ENV["MCP_SERVICE_URL"],
+        "alwaysLoad": True,
+    }
+    assert "command" not in rendered["mcpServers"]["mtg"]
+    assert rendered["mcpServers"]["spellslinger"]["type"] == "http"
+
+
+def test_mcp_config_script_marks_mtg_always_loaded_in_the_stdio_branch(tmp_path: Path) -> None:
+    """Claude Code defers MCP tools behind `ToolSearch` unless the server's
+    own entry says otherwise, and the `mtg` server's tools are the seat's
+    whole job - a seat that has to *search* for them spends its first
+    inferences hunting instead of playing (13 `ToolSearch` calls and ~51s in
+    one production pod before it gave up). `alwaysLoad` is the documented
+    per-server opt-out (code.claude.com/docs/en/mcp, "Exempt a server from
+    deferral": "set `alwaysLoad` to `true` in that server's configuration"),
+    a plain sibling of `command`/`url` on the server entry. Note it is NOT
+    the `anthropic/alwaysLoad` `_meta` key - that one is a *server*'s own
+    per-tool marker in `tools/list` and does nothing in a config file, which
+    is exactly the silently-wrong spelling this test pins against."""
+    job = _build({**ENV, "MCP_SERVICE_URL": ""})
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"]["alwaysLoad"] is True
+
+
+def test_mcp_config_script_marks_mtg_always_loaded_in_the_http_branch(tmp_path: Path) -> None:
+    """The same, for the branch a non-empty `MCP_URL` takes. The script has
+    two branches and only one of them is exercised by any given render, so
+    both are asserted - a flag added to one and forgotten in the other fails
+    silently in whichever deployment shape happens to take the other."""
+    job = _build(ENV)  # ENV carries a non-empty MCP_SERVICE_URL
+    rendered = _run_mcp_config_script(job, tmp_path)
+    assert rendered["mcpServers"]["mtg"]["alwaysLoad"] is True
+
+
+def test_compose_mcp_base_marks_mtg_always_loaded() -> None:
+    """`deploy/mcp.base.json` is the docker-compose path's own base config,
+    written by hand rather than by the initContainer script above - the same
+    deferral applies to it, so it carries the same flag."""
+    base = json.loads((REPO_ROOT / "deploy" / "mcp.base.json").read_text())
+    assert base["mcpServers"]["mtg"]["alwaysLoad"] is True
+
+
 def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
     """`build_job` writes the driver's own `DispatchIn` shape into
     `DRIVER_ASSIGNMENT_JSON` (the self-dispatch payload the driver's
@@ -205,7 +314,7 @@ def test_driver_assignment_json_validates_as_a_dispatch_in() -> None:
     assert parsed.uid == "u1"
     assert parsed.game_id == "g1"
     assert parsed.player == "bot"
-    assert parsed.agent == {"model": "sonnet", "effort": "high", "maxThinkingTokens": None}
+    assert parsed.agent == {"model": "sonnet", "effort": "medium", "maxThinkingTokens": None}
 
 
 def test_job_is_plain_dicts_the_kubernetes_client_can_serialize() -> None:
@@ -775,3 +884,37 @@ def test_get_starts_background_threads_before_a_failing_initial_reconcile(monkey
         assert len(starts) == 1  # started even though the initial reconcile raised
     finally:
         k8s_seats.set_for_tests(None)
+
+
+def test_the_seat_job_images_come_from_settings_not_the_template() -> None:
+    """The committed template must not carry a baked image tag.
+
+    T9 generated `deploy/seat-job.yaml` from `build_job`'s output while the
+    test environment was in force, so the fixture tag `t1` was baked into
+    every `image:` line, and the images were left out of
+    `SEAT_JOB_PLACEHOLDERS`. `k8s_seats` then stopped reading `AGENT_IMAGE`
+    and `API_IMAGE` at all, while `deploy/k8s/50-deployment.yaml` went on
+    publishing both with the real `__TAG__`. Every seat Job in the cluster
+    asked for `...:t1`, which does not exist:
+
+        Init:ErrImagePull
+        harbor.szymonrichert.pl/containers/magic-cards-model-agent:t1
+
+    T9's own "diff old output against new" check could not catch it: both
+    sides were rendered under the same test env, so both said `t1`.
+    """
+    template = TEMPLATE_PATH.read_text()
+    assert ":t1" not in template, "a test fixture image tag is baked into the committed template"
+
+    job = build_job(
+        K8sSettings.from_env(
+            {**ENV, "AGENT_IMAGE": "reg.example/agent:v9", "API_IMAGE": "reg.example/api:v9"}
+        ),
+        game_id="g1",
+        uid="u1",
+        player="bot",
+        agent=AgentSettings(model="sonnet"),
+    )
+    pod = job["spec"]["template"]["spec"]
+    images = [c["image"] for c in pod["initContainers"]] + [c["image"] for c in pod["containers"]]
+    assert set(images) == {"reg.example/agent:v9", "reg.example/api:v9"}, images

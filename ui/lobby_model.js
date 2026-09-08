@@ -33,15 +33,42 @@ export function thinkingTokensAreValid(raw) {
 
 export function agentFrom(fields) {
   const model = (fields.model || "").trim() || "sonnet";
-  const effort = EFFORTS.includes(fields.effort) ? fields.effort : "high";
+  const effort = EFFORTS.includes(fields.effort) ? fields.effort : "medium";
   const thinking = String(fields.thinking === undefined || fields.thinking === null ? "" : fields.thinking).trim();
   const max_thinking_tokens = thinkingTokensAreValid(thinking) && thinking !== "" ? Number(thinking) : null;
   return { model, effort, max_thinking_tokens };
 }
 
+/** A saved game the server's list no longer carries - one this browser
+ * ended, which `DELETE /api/lobby/games/{id}` soft-deletes (`archived_at`)
+ * rather than destroys, so its ledger is still there to review. Everything
+ * shown for it comes from the saved entry itself, because that is all there
+ * is: `list_lobby_games` filters archived games out, and asking the server
+ * about one would be a second round trip to be told the same thing. */
+function archivedRow(entry) {
+  return {
+    gameId: entry.gameId,
+    opponent: entry.opponent || null,
+    turn: entry.turn === undefined ? null : entry.turn,
+    phase: null,
+    over: true,
+    archived: true,
+    endedAt: entry.endedAt || null,
+    model: entry.model || null,
+    effort: entry.effort || null,
+    myUid: entry.uid || null,
+    aiUid: entry.aiUid || null,
+  };
+}
+
 export function lobbyViewModel(games, saved) {
   const mine = new Map((saved || []).map((s) => [s.gameId, s]));
-  return (games || [])
+  const listed = new Set((games || []).map((g) => g.game_id));
+  const ended = (saved || [])
+    .filter((s) => s.endedAt && !listed.has(s.gameId))
+    .map((s) => archivedRow(s));
+  return [
+    ...(games || [])
     // `list_lobby_games` lists every lobby-booted game on the server, not
     // only this browser's own - its own `seats` filter (only uids in the
     // caller's `?uids=` query) is what actually narrows it, so a game this
@@ -73,12 +100,16 @@ export function lobbyViewModel(games, saved) {
         turn: g.turn_number,
         phase: g.phase,
         over: Boolean(g.is_over),
+        archived: false,
+        endedAt: null,
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,
         myUid: seat.uid || (me ? g.seats[me] : null),
         aiUid: seat.aiUid || null,
       };
-    });
+    }),
+    ...ended,
+  ];
 }
 
 // ------------------------------------------------------------- storage ----
