@@ -311,6 +311,19 @@ Leave one out when the ability's own cost needs it and the engine refuses the
 call with its own count rather than silently doing nothing - "sacrifice needs
 1 card(s) chosen, 0 given" means exactly that: name the object.
 
+**Naming X for an activated ability.** Some activation costs carry a variable
+X too - Fiend Artisan's "{{X}}{{B/G}}, {{T}}, Sacrifice another creature:
+Search your library for a creature card with mana value X or less, put it
+onto the battlefield, then shuffle." `activate` takes `x_value` for this, the
+same as `cast` does:
+
+  activate(player_uid=..., card_id=..., ability_index=0,
+           sacrificing="<creature id>", x_value=2)
+
+Leave it out when the ability's own cost needs one and the call is refused,
+never silently activated for X=0 - a chosen X of 0 and no X chosen at all are
+not the same thing, and only the first is a real answer.
+
 ## Identify the matchup yourself
 
 You have NOT been told what your opponent is playing, deliberately. Work it

@@ -907,6 +907,7 @@ def build_server(seats: Seats) -> MCPServer:
         discarding: str = "",
         exiling: str = "",
         color: str = "",
+        x_value: int | None = None,
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
@@ -956,6 +957,13 @@ def build_server(seats: Seats) -> MCPServer:
         Waves, Boseiju's Channel) has no exile-as-cost path yet and refuses it
         by name.
 
+        `x_value` is CR 107.3a's X, for an activation cost that carries one -
+        Fiend Artisan's own "{X}{B/G}, {T}, Sacrifice another creature: Search
+        your library for a creature card with mana value X or less, put it
+        onto the battlefield, then shuffle." Leaving it out when the ability's
+        own cost needs it is refused with the engine's own reason - it is
+        never silently activated for X=0.
+
         Mana abilities resolve immediately and never touch the stack
         (CR 605.3b); every other ability goes on the stack and needs priority
         to be released before it resolves. This tool follows that split rather
@@ -995,6 +1003,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["discarding"] = _parse_ids(discarding)
         if exiling:
             body["exiling"] = _parse_ids(exiling)
+        if x_value is not None:
+            body["x_value"] = x_value
         if color:
             body["color"] = color
         if reasoning:

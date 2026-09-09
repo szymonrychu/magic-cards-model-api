@@ -392,6 +392,23 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
     try:
         if req.modes:
             casting.choose_modes(req.modes, x_value=req.x_value)
+        elif req.x_value is not None:
+            # CR 107.3a's X is announced as part of CR 601.2b, before targets
+            # are chosen at CR 601.2c - `Casting.targeting`'s own docstring
+            # says so outright: "X is announced before targets, so it is
+            # always known here." `choose_modes` is the one call that sets
+            # `Casting.x_value`, and a non-modal spell has no modes of its
+            # own to give it, so it still has to be called, with an empty
+            # list, purely to announce X this early. Skipping it whenever
+            # `req.modes` was empty (as it always is for a non-modal spell)
+            # left `x_value` at its unset default for every `choose_targets`
+            # below - Postmortem Lunge's own "target creature card with mana
+            # value X" read X as 0 no matter what the caller actually
+            # announced, and refused every legal target above mana value 0.
+            # `determine_cost` still receives the same `x_value` afterwards;
+            # this only moves the *announcement* earlier, exactly where CR
+            # 601.2b already puts it.
+            casting.choose_modes([], x_value=req.x_value)
         if req.targets:
             casting.choose_targets([target_thing(game, token) for token in req.targets])
     except ValueError as exc:
@@ -774,6 +791,18 @@ def _activate_off_zone_ability(game: Game, card: CardState, req: ActivateRequest
             "sacrificing and discarding are supported there"
         )
 
+    if req.x_value is not None:
+        # `off_zone_activation` takes no `x_value=` at all - none of the
+        # CR 113.6j/113.6m abilities in the pool carry an `{X}` in a cost
+        # that also functions off the battlefield, so the engine has built
+        # no shape for one there yet either. Refused in words, the same
+        # reasoning as the `exiling` guard above, rather than a bare
+        # `TypeError` on the unexpected keyword.
+        return refused(
+            f"{card.name}'s ability functions off the battlefield (CR 113.6j/113.6m), "
+            "and an off-battlefield activation has no X-announcement path yet"
+        )
+
     try:
         targets = (
             [target_thing(game, token) for token in req.targets]
@@ -855,6 +884,22 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
     if refusal is not None:
         return refused(refusal)
 
+    # CR 602.2b: X is announced as part of the same moment the activation
+    # cost is fixed, so it has to be known before `begin_activating` builds
+    # `TotalCost` - a missing one is refused here, in words, rather than
+    # defaulting to `x_value=0` the way `begin_activating`'s own signature
+    # would otherwise let it. `"{X}" in ability.cost` is the same check
+    # `affordances._needs_x`/`AbilityView.needs_x` already report to a seat
+    # ahead of time; a mistaken cast whose reader could not classify the
+    # ability at all has no `cost` (a basic land's intrinsic ability) and so
+    # never matches.
+    ability = game.activated_abilities(permanent)[req.ability_index]
+    if "{X}" in (getattr(ability, "cost", None) or "") and req.x_value is None:
+        return refused(
+            f"{permanent.name}'s ability needs X announced before its cost can be "
+            "paid (CR 602.2b) - pass x_value"
+        )
+
     def resolve_states(ids: list[UUID] | None) -> list[CardState] | None:
         return [find_card(game, card_id) for card_id in ids] if ids else None
 
@@ -867,6 +912,7 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
             sacrificing=resolve_states(req.sacrificing),
             discarding=resolve_states(req.discarding),
             exiling=resolve_states(req.exiling),
+            x_value=req.x_value or 0,
         )
         pay_with(payment, list(req.mana_sources or []), game)
         if req.dry_run:
@@ -891,8 +937,13 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
             if req.targets is not None
             else None
         )
-        ability = game.activate_ability(
-            permanent, req.ability_index, req.player, targets=targets, color=color
+        ability_on_stack = game.activate_ability(
+            permanent,
+            req.ability_index,
+            req.player,
+            targets=targets,
+            color=color,
+            x_value=req.x_value or 0,
         )
     except ValueError as exc:
         if payment is not None:
@@ -900,9 +951,9 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
         return refused(exc)
 
     game.retain_priority(req.player)
-    if ability is None:
+    if ability_on_stack is None:
         return Outcome(True, detail={"mana_ability": True, "cost": str(payment.cost)})
-    return Outcome(True, detail={"ability_id": str(ability.id), "cost": str(payment.cost)})
+    return Outcome(True, detail={"ability_id": str(ability_on_stack.id), "cost": str(payment.cost)})
 
 
 # -- attacking -------------------------------------------------------------

@@ -160,7 +160,25 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-10"
+PROTOCOL_VERSION = "seatkit-11"
+#: `seatkit-11` (base `seatkit-9`; `seatkit-10` was claimed by another
+#: unmerged branch, so this skips past it rather than colliding) added
+#: `x_value` to the `activate` tool/CLI command, closing the gap a live game
+#: found: Fiend Artisan's "{X}{B/G}, {T}, Sacrifice another creature: Search
+#: your library for a creature card with mana value X or less..." had no way
+#: to announce X at all, because `cast` already carried `x_value` and
+#: `activate` did not - every activation of a cost with `{X}` in it silently
+#: ran at the engine's own default, `x_value=0`, rather than refusing or
+#: honouring what the seat actually asked for. `ActivateRequest.x_value` is
+#: new, `engine_api.activate_ability` now threads it into
+#: `Game.begin_activating`/`Game.activate_ability`, and refuses in words - the
+#: engine's own `needs_x` answer, not a guess made here - when the ability's
+#: own cost carries an `{X}` and none was named, rather than silently running
+#: at zero. A request-shape change to a widely-used tool, the same
+#: `seatkit-8` reasoning: an old MCP process built before this addition has
+#: no `x_value` parameter to forward even if a newer prompt asked it to use
+#: one, so the version bump is what turns that silent gap back into the
+#: PROTOCOL MISMATCH sentence rather than a call that quietly omits X again.
 #: `seatkit-10` (this repo's own numbering - picked deliberately past 8 and 9
 #: to avoid a confusing collision: an unmerged branch had already taken this
 #: constant to `seatkit-9` at the time this bump was written, and whichever
