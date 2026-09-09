@@ -137,6 +137,11 @@
             ],
             "title": "Card Id"
           },
+          "color_choice_count": {
+            "default": 0,
+            "title": "Color Choice Count",
+            "type": "integer"
+          },
           "color_options": {
             "default": [],
             "items": {

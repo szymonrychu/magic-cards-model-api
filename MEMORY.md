@@ -7,6 +7,43 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-09 - the artifacts were generated against a partial engine, and
+  "integrated" is a claim that has to be checked against the branch heads.**
+  `magic-cards-model-integration` held engine `main` plus both engine branches
+  of this wave, and that was the base every generated artifact here was dumped
+  from - but it had taken `eng1-restriction-grammar` only as far as the commit
+  that was its head when the worktree was made. eng1 put three more on top
+  afterwards (the per-mana colour count, Smokebraider as the second printing of
+  "any combination of colors", and the schema 5 -> 6 bump), so the integration
+  branch did not merge cleanly with eng1's real head and could not land -
+  which mattered here because the same wave's ledger fix, the one that stops
+  eng1 and eng2 being red when merged separately, was sitting on that partial
+  base. Merged properly, engine-side, before regenerating anything.
+
+  Three conflicts, all of them two branches adding a field beside each other:
+  `Action` takes `color_choice_count` next to `produces`/`restriction`/
+  `restriction_understood`, `_battlefield_ability_actions` fills both onto each
+  of its two construction sites, and `docs/engine-coverage.md`'s CR 106.6 row
+  keeps the "read bar one documented fail-closed row" narrowing while taking
+  eng1's addition of Smokebraider to the read list. `KNOWN_UNREAD_RESTRICTIONS`
+  still names exactly Rosheen Meanderer, because Smokebraider arrives read.
+
+  The lesson for the artifact task, which is the one that owns generated files:
+  a `path` dependency and a green `test_openapi_drift.py` prove only that the
+  dump matches the code that is *installed*, never that the installed code is
+  the whole wave. Check the integration base against `git log <branch>..HEAD`
+  and `HEAD..<branch>` for **every** branch it claims to carry, not against the
+  commit it was branched from. `tests/test_restricted_mana_contract.py` is the
+  standing version of that check and now pins `Action.color_choice_count`
+  alongside the other eight fields: a regeneration against an engine carrying
+  only part of the wave goes red on the committed bytes.
+
+  Regenerating on the real base moved `openapi.json` by exactly one property
+  (`Action.color_choice_count`, `integer`, default `0`). `mise run
+  fixtures:payloads` and `mise run tools:export` both came back byte-identical
+  - the payloads because no fixture board activates a colour-choosing mana
+  ability, and `tools.json` because decision D6 is browser-only.
+
 - **2026-09-09 - restricted mana on the wire: four decisions that are not
   obvious from the diff.** (1) `Action.produces` is the **printed**
   production, deliberately not board-resolved. Cavern of Souls reports "{1}"

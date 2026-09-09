@@ -64,3 +64,17 @@ def test_action_says_what_it_produces_and_what_binds_the_mana() -> None:
     assert "produces" in properties
     assert "restriction" in properties
     assert "restriction_understood" in properties
+
+
+def test_action_says_how_many_colours_a_caller_names() -> None:
+    """`color_options` is a flat pool, so it cannot tell "one colour among
+    five" from "two colours among five" - `color_choice_count` is the other
+    half of that parameter space, and Interdimensional Web Watch's `{W}{U}` is
+    unreachable through this contract without it.
+
+    It arrives on the engine `Action` in the same wave as the three fields
+    above, so it is pinned in the same place: a regeneration against an engine
+    that carries only part of the wave is exactly the failure this file
+    exists to catch.
+    """
+    assert "color_choice_count" in _properties("Action")
