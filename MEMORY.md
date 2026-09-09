@@ -7,6 +7,32 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-09 - restricted mana on the wire: four decisions that are not
+  obvious from the diff.** (1) `Action.produces` is the **printed**
+  production, deliberately not board-resolved. Cavern of Souls reports "{1}"
+  plus one mana of any colour because that is what the printing says;
+  resolving "any colour" against the creature type its controller actually
+  named is the reader's job, not this wire's. Resolving it here would have
+  meant the engine answering a question about a board state the seat can
+  already see, and it would have made the same action serialise differently
+  for two viewers of the same permanent. (2) `ManaSource.ability_index` must
+  be sent with `restriction=` **explicitly**; never inferred from the index
+  alone. Inference breaks the Cavern of Souls / Delighted Halfling tie in the
+  wrong direction: both have a restricted second mana ability, both are
+  reached at the same index, and an inferring reader resolves the pair toward
+  *unrestricted*, which is the one answer that silently spends creature-only
+  mana on a non-creature spell. Passing the restriction through is what keeps
+  the fail-closed side of the tie. (3) The audit snapshot pools were left
+  alone on purpose. They are a recorded historical answer, not a fixture
+  regenerated to match today's schema - rewriting them to carry the new
+  fields would have destroyed the very thing they are kept for. (4)
+  `fixtures/payloads/*.json` is pinned **by SHA** from `magic-cards-frontend`.
+  Running `mise run fixtures:payloads` is therefore a real cross-repo
+  consequence, not a local artifact refresh: every regeneration moves the
+  hash that repo asserts against, and the frontend has to be updated in the
+  same wave or its own pin goes red. Regenerate it only when the payload
+  shape genuinely moved, and say so when you do.
+
 - **2026-09-09 - split-card decklist matching (`Wear/Tear` etc.) was already
   general, from a prior session; the only real gap was `Fire Magic` missing
   from the pool entirely, and one bundled-deck assertion pinned the old
