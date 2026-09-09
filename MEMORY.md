@@ -1476,3 +1476,22 @@ whoever works on the repo itself.
   `image`/`small_image`/`art_crop` outright before an agent ever sees them,
   and nothing in `seatkit.py`/`mcp.py` reads `symbology` at all - so this
   needed no `PROTOCOL_VERSION` bump, checked rather than assumed.
+
+- **2026-09-09 - the play UI can now say WHICH mana ability a pinned source
+  taps, and `ability_index` is sent only when the player actually chose.**
+  Mid-cast, `pinLand` used to take `findIndex(a => a.is_mana_ability)` - the
+  first mana ability and nothing else - and then throw the index away
+  anyway, so Eldrazi Temple's restricted `{C}{C}` (its index 1) was
+  unreachable from the browser. `app.js` now plans the pin in two pure,
+  exported steps (`planPin`, then `planPinnedAbility` once a menu answered),
+  and a source with more than one mana ability gets an anchored popover of
+  its abilities, each labelled with its whole printed text so the restricted
+  one is identifiable. The deliberate asymmetry: a source with exactly ONE
+  mana ability names no index at all (`abilityIndex: null`), so `mana.js`'s
+  `manaSources` keeps emitting a bare id (or `{card_id, colors}`) and the
+  engine's `auto_tap` keeps solving the common case - adding a click, or an
+  index, to every basic land would have been the regression. Also fixed
+  while in there: a menu opened from inside another menu's `onSelect` cannot
+  re-read the original click's `event.currentTarget` (that dispatch is over
+  and the browser has nulled it), so `pinLand` resolves the anchor element
+  once, up front, and hands it to both popovers.
