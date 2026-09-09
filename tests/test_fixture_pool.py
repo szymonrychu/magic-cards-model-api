@@ -119,6 +119,37 @@ def test_double_faced_and_split_names_both_resolve(pool):
         assert (scryfall.load_pooled(requested) or {}).get("name") == "Wear // Tear"
 
 
+def test_every_multi_faced_pool_card_resolves_from_any_spelling(pool):
+    """The property that actually matters is not "Wear // Tear resolves" -
+    it is that *every* multi-faced printing in the pool resolves the same
+    way, with no per-card knowledge anywhere in the reader. Derived straight
+    from each printing's own name (the `//` separator and its faces, exactly
+    what `scryfall._faces`/`fixture_slug`/`_pool_names_match` already key
+    off): the full Scryfall name, the front face alone, and both slash-only
+    spellings a real decklist export uses ("A/B", "A//B") must all find it,
+    and must all agree on which printing they found. A split, transform, or
+    modal-DFC card added to the pool tomorrow needs no further code change to
+    pass this - that is the point of the test."""
+    multi_faced = [
+        data["name"]
+        for path in sorted(pool.glob("*.json"))
+        for data in [json.loads(path.read_text())]
+        if "//" in data.get("name", "")
+    ]
+    # Sanity: this is exercising a real handful of cards, not an empty loop.
+    assert len(multi_faced) >= 20, f"expected many multi-faced printings, found {len(multi_faced)}"
+
+    for full in multi_faced:
+        front = full.split("//")[0].strip()
+        spellings = {full, front, full.replace(" // ", "/"), full.replace(" // ", "//")}
+        for spelling in spellings:
+            found = scryfall.load_pooled(spelling)
+            assert found is not None, f"{spelling!r} (for {full!r}) did not resolve"
+            assert found["name"] == full, (
+                f"{spelling!r} resolved to {found['name']!r} instead of {full!r}"
+            )
+
+
 def test_a_pool_file_holding_a_different_card_is_refused(pool, tmp_path, monkeypatch):
     """The front-face filing rule means a slug can collide with an unrelated
     card's name. The reader compares names before believing the file, so a
@@ -182,8 +213,10 @@ def test_the_slow_decks_validate_off_the_pool_alone(deck, pool, cold_cache):
 
 def test_every_bundled_deck_is_almost_entirely_pooled(pool):
     """A sweep of `decks/*.txt`, so a deck added later that would be slow is
-    visible. `Fire Magic` is the one printing the pool does not have; it is
-    listed rather than tolerated silently."""
+    visible. `Fire Magic` used to be the one printing the pool lacked (added
+    via `scripts/add_card.py` in the engine repo); every bundled deck's
+    every card must now be pooled, with no exception listed or tolerated
+    silently."""
     unpooled = {
         name
         for path in sorted(DECKS_DIR.glob("*.txt"))
@@ -191,7 +224,7 @@ def test_every_bundled_deck_is_almost_entirely_pooled(pool):
         for name in {n for _, n in [*count_and_name[0], *count_and_name[1]]}
         if scryfall.load_pooled(name) is None
     }
-    assert unpooled == {"Fire Magic"}
+    assert unpooled == set()
 
 
 def test_the_board_view_shows_art_for_a_pooled_card_on_a_cold_cache(pool, cold_cache, client, game):

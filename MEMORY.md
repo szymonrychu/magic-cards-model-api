@@ -7,6 +7,25 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-09 - split-card decklist matching (`Wear/Tear` etc.) was already
+  general, from a prior session; the only real gap was `Fire Magic` missing
+  from the pool entirely, and one bundled-deck assertion pinned the old
+  gap.** `scryfall._faces`/`fixture_slug`/`_pool_names_match`/`load_pooled`
+  already derive every accepted spelling from a printing's own name
+  structure (split on `//`, casefold, strip) - verified generically across
+  all 32 multi-faced pool printings and 4 spellings each (full name, front
+  face, `A/B`, `A//B`), 0 misses, via a new
+  `test_every_multi_faced_pool_card_resolves_from_any_spelling`
+  (`tests/test_fixture_pool.py`). No code change was needed there. `Fire
+  Magic` was added to the engine's pool via `scripts/add_card.py` (engine
+  repo). `test_every_bundled_deck_is_almost_entirely_pooled`'s assertion
+  moved from `{"Fire Magic"}` to `set()` and is **expected to stay red
+  here** until the engine-repo commit adding `fire_magic.json` merges to
+  `../magic-cards-model` (this repo's `path` dependency is editable against
+  that shared checkout, not any worktree) - confirmed it goes green with no
+  further api-repo change by pointing `MCM_FIXTURE_CARDS_DIR` at the
+  engine worktree that already has the file.
+
 - **2026-09-09 - a cost that names objects was unreachable from `cast` at
   three layers at once, and the answer was too big to say so.** A live
   kubernetes seat (`mtg-seat-75bd9739-35bc3b7f-wkl4j`) spent a whole turn and
