@@ -16,13 +16,19 @@ whoever works on the repo itself.
   meant the engine answering a question about a board state the seat can
   already see, and it would have made the same action serialise differently
   for two viewers of the same permanent. (2) `ManaSource.ability_index` must
-  be sent with `restriction=` **explicitly**; never inferred from the index
-  alone. Inference breaks the Cavern of Souls / Delighted Halfling tie in the
-  wrong direction: both have a restricted second mana ability, both are
-  reached at the same index, and an inferring reader resolves the pair toward
-  *unrestricted*, which is the one answer that silently spends creature-only
-  mana on a non-creature spell. Passing the restriction through is what keeps
-  the fail-closed side of the tie. (3) `serialize.snapshot`'s `pools` were
+  be sent with `restriction=` **explicitly**; never left to
+  `restriction_for_production` to infer from what the mana turned out to be.
+  The plan expected the Cavern of Souls / Delighted Halfling tie to be the
+  case that proves it - both carrying a restricted second mana ability whose
+  colours overlap the first - and that is **not** what a sweep of all 747
+  engine printings found: no card in the pool has a restricted and an
+  unrestricted `{T}` ability that can produce the same mana, so inference and
+  the named ability agree on both of those cards today. The real divergence is
+  board-blindness, and it is live: inference asks `ManaAbility.effective()`
+  with no board at all, so Sunken Citadel's two "the chosen color" abilities
+  match nothing and come back **unrestricted** however restricted they are.
+  Passing the restriction through is what keeps the fail-closed side of that,
+  and the tie-break toward unrestricted is what makes getting it wrong quiet. (3) `serialize.snapshot`'s `pools` were
   left alone on purpose - they stay a flat colour-to-count dict and did
   **not** grow `restricted`/`spend_effects` the way `ManaPoolView` did. That
   snapshot is the audit log's recorded answer about a moment already passed,
@@ -36,14 +42,30 @@ whoever works on the repo itself.
   same wave or its own pin goes red. Regenerate it only when the payload
   shape genuinely moved, and say so when you do.
 
-  Operationally: the artifact task cannot run *beside* the tasks it
-  regenerates for, only after they merge. `openapi.json` is dumped from the
-  live app, so it can only show a field once that field's code is in the
-  tree, and the api's engine is a `path` dependency against the shared
-  `../magic-cards-model` checkout, not against any worktree - so an engine
-  change is invisible here until it is on engine `main`. Regenerating early
-  commits a half-finished schema that `test_openapi_drift.py` then holds
-  wrong in both directions.
+  Operationally, the artifact task cannot run *beside* the tasks it
+  regenerates for, and the first attempt at it proved that by committing an
+  artifact with none of the new fields in it. `openapi.json` is dumped from
+  the live app, so it can only show a field once that field's code is in the
+  tree, and the api's engine is a `path` dependency on `../magic-cards-model`
+  - which in a workbench worktree is a **symlink to the shared checkout**, not
+  to any sibling worktree, so an engine change is invisible here until it is
+  on engine `main`. Regenerating before then commits a half-finished schema
+  that `test_openapi_drift.py` holds wrong in both directions: it passes,
+  because a stale-but-self-consistent dump matches the app that produced it.
+
+  The fix is to make the base real rather than to wait for it. This branch
+  merges its three sibling api branches into itself (it lands last, so their
+  commits arrive here first either way), and the engine side is a detached
+  worktree at `magic-cards-model-integration` holding engine `main` plus both
+  engine branches, with the `magic-cards-model` symlink repointed at it and
+  `uv sync --reinstall-package magic-cards-model` run so the venv's editable
+  `.pth` follows. Repointing the venv and reverting it afterwards proves
+  nothing, because nothing committed then holds the claim; that is what
+  `tests/test_restricted_mana_contract.py` is for. It asserts the eight fields
+  against the committed bytes of `openapi.json` - the assertion
+  `test_openapi_drift.py` structurally cannot make - so an artifact
+  regenerated against a base missing the change fails loudly instead of
+  passing quietly.
 
 - **2026-09-09 - CR 106.6 reached the wire, and a payment can now name which
   mana ability it taps.** Two halves. Read-only: `ManaPoolView` gained

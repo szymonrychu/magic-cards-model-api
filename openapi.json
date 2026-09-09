@@ -55,6 +55,16 @@
             "title": "Needs X",
             "type": "boolean"
           },
+          "restriction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RestrictionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "targeting": {
             "$ref": "#/components/schemas/TargetingProfileView"
           },
@@ -253,6 +263,39 @@
           "player": {
             "title": "Player",
             "type": "string"
+          },
+          "produces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produces"
+          },
+          "restriction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction"
+          },
+          "restriction_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction Understood"
           },
           "rule": {
             "title": "Rule",
@@ -4324,23 +4367,50 @@
             "title": "Floating",
             "type": "object"
           },
+          "restricted": {
+            "items": {
+              "$ref": "#/components/schemas/RestrictedManaView"
+            },
+            "title": "Restricted",
+            "type": "array"
+          },
           "snow": {
             "additionalProperties": {
               "type": "integer"
             },
             "title": "Snow",
             "type": "object"
+          },
+          "spend_effects": {
+            "items": {
+              "$ref": "#/components/schemas/SpendEffectManaView"
+            },
+            "title": "Spend Effects",
+            "type": "array"
           }
         },
         "required": [
           "floating",
-          "snow"
+          "snow",
+          "restricted",
+          "spend_effects"
         ],
         "title": "ManaPoolView",
         "type": "object"
       },
       "ManaSource": {
         "properties": {
+          "ability_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ability Index"
+          },
           "card_id": {
             "format": "uuid",
             "title": "Card Id",
@@ -7624,6 +7694,46 @@
         "title": "ResolveTopResponse",
         "type": "object"
       },
+      "RestrictedManaView": {
+        "description": "How much of a pool carries one particular CR 106.6 restriction\n(`models.mana.RestrictedMana`).\n\n`amounts` is a **subset** of `ManaPoolView.floating`, never a replacement\nfor it: CR 106.4a has the player announce all the mana that is there, and\nthe restriction narrows only what may be done with it. Without the amount\ntwo restricted `{C}` and two plain `{C}` are one `floating {\"C\": 2}` and\nnothing tells them apart.",
+        "properties": {
+          "amounts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Amounts",
+            "type": "object"
+          },
+          "restriction": {
+            "$ref": "#/components/schemas/RestrictionView"
+          }
+        },
+        "required": [
+          "restriction",
+          "amounts"
+        ],
+        "title": "RestrictedManaView",
+        "type": "object"
+      },
+      "RestrictionView": {
+        "description": "A CR 106.6 \"Spend this mana only to ...\" sentence, as a seat sees it.\n\n`text` is the printed sentence verbatim, so a refusal quotes the card\nrather than the parser's reading of it.\n\n`understood` is whether the engine turned that sentence into anything it\ncan check. **False is not cosmetic and is never hidden**: an unread\nrestriction is fail-closed in the engine - the mana exists, is announced\n(CR 106.4a), empties with the pool, and pays for nothing at all - so a view\nthat showed the mana without this flag would be telling the player they\nhave a resource they cannot spend.\n\nDeliberately two fields and no third: the engine's own `SpendClause` tuple\nis the parser's internal shape and is still being changed underneath, so\npublishing it here would pin it.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "understood": {
+            "title": "Understood",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "understood"
+        ],
+        "title": "RestrictionView",
+        "type": "object"
+      },
       "ReviewDeclaration": {
         "description": "One `plan_declared` row, paired with what happened next.\n\nNothing on this model grades the prediction - no score, no hit flag, no\nverdict. See `review.py` for why the raw pairing is the thing a sceptic\ncannot argue with.",
         "properties": {
@@ -8342,6 +8452,28 @@
           }
         },
         "title": "SpecialActionsView",
+        "type": "object"
+      },
+      "SpendEffectManaView": {
+        "description": "`RestrictedManaView`'s twin for CR 106.6's *other* clause - \"have an\nadditional effect that affects the spell or ability that mana is spent on\"\n(`models.mana.SpendEffectMana`).\n\nIts own list rather than a permissive restriction, because it narrows\nnothing: the mana pays for whatever it could have paid for anyway, and the\nsentence only says what happens to the spell it is spent on. So there is no\n`understood` half to report - an unread one costs the player nothing.",
+        "properties": {
+          "amounts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Amounts",
+            "type": "object"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "amounts"
+        ],
+        "title": "SpendEffectManaView",
         "type": "object"
       },
       "SpliceOption": {
