@@ -159,8 +159,12 @@ def test_both_front_ends_keep_the_mana_from_a_tapped_land(client, game, monkeypa
         )
         mcp_answer = json.loads(answer.content[0].text)
         assert mcp_answer["held_priority"] is True
-        assert mcp_answer["state"]["priority_holder"] == "alice"
-        assert floating(mcp_answer["state"], "alice") == {"G": 1}
+        # `board`, not `state`: an MCP action answer carries the narrowed
+        # board (`mcp._action_answer`), where the CLI prints `run_action`'s
+        # own full `state` for a human to scroll. Who holds priority and what
+        # is floating are in both, and that is what parity is about here.
+        assert mcp_answer["board"]["priority_holder"] == "alice"
+        assert floating(mcp_answer["board"], "alice") == {"G": 1}
     finally:
         client.delete(f"/api/games/{second}")
 

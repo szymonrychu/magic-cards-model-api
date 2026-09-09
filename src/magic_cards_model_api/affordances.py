@@ -462,11 +462,86 @@ def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[st
             "description": option.description,
             "cost": str(option.cost) if option.cost is not None else None,
             "requires": option.requires,
+            "candidates": _alternative_cost_candidates(probe, option, caster),
             "available": option.available,
             "unavailable": option.unavailable,
         }
         for option in options
     ]
+
+
+def _alternative_cost_candidates(game: Game, option: Any, caster: str) -> list[dict[str, Any]]:
+    """Which of `caster`'s cards could actually be named in `choosing` for
+    this option, per component of its cost, in the engine's own words.
+
+    `requires` on its own says *how many* and nothing about *which*, and the
+    difference is a whole round trip: Solitude's evoke cost is "Exile a white
+    card from your hand", so a hand of six with two white cards has two legal
+    answers and four refusals, and neither the web UI's pitch tray nor an
+    agent seat could tell them apart from `requires: 1` and a sentence of
+    prose. `object_costs` has published `candidates` for convoke, delve and
+    crew since those existed, for exactly this reason; this is the same answer
+    for the same question, on the other half of the cost model.
+
+    Legality is asked of the engine, never re-derived here: each candidate is
+    offered to a copy of the component itself and kept only if
+    `CostComponent.why_not` has nothing to say about it - the same call the
+    real payment will make, so a card listed here cannot be one the cast then
+    refuses.
+    """
+    from magic_cards_model.machines.cost import ComponentKind
+
+    if option.cost is None:
+        return []
+    found: list[dict[str, Any]] = []
+    seen: set[UUID] = set()
+    for component in option.cost.components:
+        if not component.required:
+            continue
+        for card in _cards_in_reach(game, component, caster):
+            if card.id in seen:
+                continue
+            probe = component.model_copy(
+                update={"cards": [card], "required": 1, "payer": component.payer or caster}
+            )
+            if probe.why_not(game) is None:
+                seen.add(card.id)
+                found.append({**_label(card), "pays": ComponentKind(component.kind).value})
+    return found
+
+
+def _cards_in_reach(game: Game, component: Any, caster: str) -> list[CardState]:
+    """The cards a cost component of this kind could possibly name, before
+    legality is asked - the pool `_alternative_cost_candidates` filters.
+
+    The zone follows the kind, the way the engine's own `why_not` checks do:
+    tapping and sacrificing look at the battlefield (CR 701.21a's "you can
+    only sacrifice something you control" narrows it to this player's own),
+    discarding is hand-only by definition (CR 701.9a), and exiling reads the
+    component's own `zone`, which is why Force of Negation exiles from hand
+    and Abhorrent Oculus from a graveyard.
+    """
+    from magic_cards_model.machines.cost import ComponentKind
+
+    kind = ComponentKind(component.kind)
+    if kind in (ComponentKind.TAP, ComponentKind.UNTAP, ComponentKind.SACRIFICE):
+        return [
+            card
+            for card in game.shared_zones.get(Zone.BATTLEFIELD, [])
+            if isinstance(card, CardState) and card.controller == caster
+        ]
+    if kind is ComponentKind.DISCARD:
+        return list(game.player(caster).hand)
+    if kind is ComponentKind.EXILE:
+        zone = component.zone
+        if zone is Zone.BATTLEFIELD:
+            return [
+                card
+                for card in game.shared_zones.get(Zone.BATTLEFIELD, [])
+                if isinstance(card, CardState) and card.controller == caster
+            ]
+        return list(game.player(caster).zones.get(zone, []))
+    return []
 
 
 def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:

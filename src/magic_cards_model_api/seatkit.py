@@ -160,7 +160,43 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-11"
+PROTOCOL_VERSION = "seatkit-12"
+#: `seatkit-12` is two shape changes at once, both found by one stuck
+#: kubernetes seat that spent a whole turn failing to evoke Solitude.
+#:
+#: (1) **Request.** `cast` gained `choosing`, `alternative_cost`,
+#: `sacrificing`, `discarding`, `exiling`, `tapping`, `delve` and `convoke`,
+#: and `CastRequest` gained the four printed-additional-cost fields those
+#: last need. Not one cost that names objects was reachable through the tool:
+#: `CastRequest.choosing` had existed since Force of Negation's pitch and was
+#: never exposed, `engine_api._drive_cast` dropped it entirely on the
+#: `keyword` branch (which is the branch `legal-actions` and a hand card's
+#: own `cast_options` both point a seat at), and CR 118.8a's printed
+#: additional costs had no field on the request at all. The seat's own words:
+#: "the cast tool has no parameter to specify which card to exile as the
+#: alternative cost. Tried `targets`, `mana_sources`, and `exiling`
+#: (undocumented) ... all rejected". Same reasoning as `seatkit-8`, which
+#: closed exactly this gap for `activate`: an old MCP process has no
+#: `choosing` parameter to forward however new the prompt telling it to is,
+#: so the bump turns a silently-omitted field back into the PROTOCOL MISMATCH
+#: sentence.
+#:
+#: (2) **Response.** Every action tool's answer (`cast`, `activate`, `pass`,
+#: `decide`, `play_land`, `cycle`, `suspend`/`plot`/`foretell`,
+#: `declare_attackers`/`declare_blockers`, `pass_until`) no longer carries the
+#: whole board under `state`. It carries `outcome` first, then `wake_reason`,
+#: `pending_decision`, a `board` block holding the spine, the stack, combat
+#: and both players, then `available_actions` and `recent_log`;
+#: `board.omitted_sections` names what was left out and `board
+#: .read_the_board_with` points at `battlefield_state`. One `cast` answer had
+#: reached 25,397 tokens - past the seat's own client's ceiling, so the agent
+#: could not read the refusal the engine had spelled out and retried the same
+#: illegal cast four times. `wait_for_priority` and `battlefield_state` are
+#: unchanged: handing over the board is what they are for. An MCP process
+#: built before this reads a response with no `state` key and shows a seat an
+#: empty board rather than a narrowed one, which is precisely the silent
+#: misbehaviour this check exists to make loud.
+#:
 #: `seatkit-11` (base `seatkit-9`; `seatkit-10` was claimed by another
 #: unmerged branch, so this skips past it rather than colliding) added
 #: `x_value` to the `activate` tool/CLI command, closing the gap a live game
@@ -846,6 +882,32 @@ def _parse_ids(value: str) -> list[str]:
     if value.startswith("["):
         return [str(entry) for entry in json.loads(value)]
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def parse_convoke(value: str) -> list[dict[str, str]]:
+    """`ConvokeChoice` objects out of a comma-separated string, where each
+    entry is a creature id and, optionally, `:` and the colour symbol that
+    creature covers.
+
+    CR 702.51a lets a convoking creature pay "{1} or one mana of that
+    creature's color", and those are genuinely different answers: four
+    Savannah Lions offered against Conclave Tribunal's `{3}{W}` need three
+    against the generic and one named `W`, and offering all four with no
+    colour is refused - correctly - with "{W} has no {1} left to pay". An id
+    on its own means the generic symbol, which is what the engine's own
+    `color=None` already meant, so the plain spelling keeps working unchanged.
+
+    A JSON list of ids is accepted too, the same as `_parse_ids`, and means
+    every one against a generic symbol.
+    """
+    choices: list[dict[str, str]] = []
+    for entry in _parse_ids(value):
+        card_id, _, color = entry.partition(":")
+        choice = {"card_id": card_id.strip()}
+        if color.strip():
+            choice["color"] = color.strip().upper()
+        choices.append(choice)
+    return choices
 
 
 def _parse_pairs(value: str) -> list[dict[str, str]]:

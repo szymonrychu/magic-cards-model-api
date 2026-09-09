@@ -1178,7 +1178,15 @@ def test_both_front_ends_stop_in_the_same_place_for_the_same_run(client, monkeyp
         assert "you are being attacked by 1 creature" in answer["stopped_because"], front_end
         # Frozen on `declare_attackers`, the step the pausing call was made
         # from - see `test_a_run_stops_when_this_seat_is_being_attacked`.
-        assert answer["state"]["step"] == "declare_attackers", front_end
+        #
+        # The two front ends name that block differently on purpose, and this
+        # is the one place the difference shows: the CLI prints
+        # `seatkit.pass_until`'s own `state` (a human at a terminal can scroll
+        # a whole board), while the MCP answer carries the narrowed `board`
+        # (`mcp._action_answer` - a seat's client could not read the full one).
+        # The step itself has to agree, which is what this compares.
+        board = answer.get("board") or answer["state"]
+        assert board["step"] == "declare_attackers", front_end
         assert answer["until"] == {"step": "upkeep", "whose_turn": "mine"}, front_end
 
 

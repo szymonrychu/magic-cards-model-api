@@ -446,6 +446,158 @@ def test_mounting_a_kozilek_command_action_renders_strip_with_two_slots() -> Non
     assert "keep priority" in strip
 
 
+# -- renderAltCosts: only the affordance's own candidates get offered ------
+#
+# The second problem the task brief names: `renderAltCosts`'s `requires`
+# branch used to list the player's *entire* hand as pitch chips, with no
+# filter for which ones actually pay the cost - Solitude's evoke is "Exile a
+# white card from your hand", and offering a blue card got a server refusal
+# on click. The affordance's own `alternative_costs[i].candidates`
+# (`schemas.AlternativeCostView`) is the engine's own answer to "which of
+# these are legal"; this is the one place `renderAltCosts` should read it
+# from, never the raw hand.
+SOLITUDE = {
+    "id": "s1",
+    "name": "Solitude",
+    "mana_cost": "{3}{W}{W}",
+    "zone": "hand",
+    "controller": "alice",
+    "type_line": "Creature",
+    "cast": {
+        "mana_cost": "{3}{W}{W}",
+        "needs_x": False,
+        "modes": None,
+        "targeting": {
+            "targets_anything": False,
+            "understood": True,
+            "minimum": 0,
+            "maximum": 0,
+            "requirements": [],
+        },
+    },
+    "abilities": [],
+}
+SOLITUDE_AFF = {
+    "targets_anything": False,
+    "understood": True,
+    "minimum": 0,
+    "maximum": 0,
+    "requirements": [],
+    "division": None,
+    "candidates": [],
+    "alternative_costs": [
+        {
+            "index": 0,
+            "source": "keyword",
+            "keyword": "Evoke",
+            "source_name": "Solitude",
+            "rule": "CR 702.74a",
+            "description": "Exile a white card from your hand",
+            "cost": None,
+            "requires": 1,
+            "candidates": [
+                {
+                    "id": "w1",
+                    "kind": "card",
+                    "name": "Savannah Lions",
+                    "zone": "hand",
+                    "controller": "alice",
+                    "pays": "exile",
+                },
+            ],
+            "available": True,
+            "unavailable": None,
+        }
+    ],
+}
+
+
+def _solitude_action(overrides: dict | None = None) -> dict:
+    return {
+        "kind": "cast",
+        "cardId": SOLITUDE["id"],
+        "card": SOLITUDE,
+        "abilityIndex": None,
+        "keyword": None,
+        "modes": [],
+        "xValue": None,
+        "color": None,
+        "altCost": 0,
+        "choosing": [],
+        "convoke": [],
+        "delve": [],
+        "crewing": [],
+        "slots": [],
+        "shares": {},
+        "pinned": [],
+        "freeTargets": [],
+        "pendingTargets": [],
+        "affordance": SOLITUDE_AFF,
+        "error": None,
+        "holdPriority": False,
+        "done": False,
+        **(overrides or {}),
+    }
+
+
+def test_alt_cost_pitch_tray_offers_only_the_affordances_own_candidate() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const hand = [
+            SOLITUDE,
+            { id: "w1", name: "Savannah Lions" },
+            { id: "b1", name: "Faithful Mending" },
+          ];
+          const state = baseState({ hands: { alice: hand } });
+          const action = solitudeAction;
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#casting-strip").textContent;
+        })()
+        """,
+        SOLITUDE=SOLITUDE,
+        solitudeAction=_solitude_action(),
+    )
+    assert "Savannah Lions" in result
+    assert "Faithful Mending" not in result, (
+        "the whole hand used to be offered as pitch chips - only the "
+        "affordance's own legal candidate must show"
+    )
+
+
+def test_alt_cost_pitch_tray_says_so_plainly_when_nothing_is_eligible() -> None:
+    """The task brief's own words: if `candidates` is empty but `requires >
+    0`, say so plainly rather than rendering an empty tray that looks like a
+    bug."""
+    affordance = {
+        **SOLITUDE_AFF,
+        "alternative_costs": [{**SOLITUDE_AFF["alternative_costs"][0], "candidates": []}],
+    }
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const hand = [SOLITUDE, { id: "w1", name: "Savannah Lions" }];
+          const state = baseState({ hands: { alice: hand } });
+          const action = solitudeAction;
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          return document.querySelector("#casting-strip").textContent;
+        })()
+        """,
+        SOLITUDE=SOLITUDE,
+        solitudeAction=_solitude_action({"affordance": affordance}),
+    )
+    assert "Savannah Lions" not in result
+    assert "nothing eligible" in result.lower()
+
+
 def test_clicking_a_choose_cards_option_reports_card_ids() -> None:
     calls = run_module(
         "render/ribbon.js",

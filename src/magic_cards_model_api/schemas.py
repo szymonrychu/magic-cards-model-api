@@ -309,8 +309,45 @@ class CastRequest(BaseModel):
     Only one alternative cost may ever be paid (CR 118.9a)."""
     choosing: list[UUID] | None = None
     """The objects an alternative cost requires the caster to supply - the
-    cards pitched to Force of Negation, the Mountains sacrificed to Fireblast.
-    `alternative_costs[i].requires` says how many are needed."""
+    cards pitched to Force of Negation, the Mountains sacrificed to Fireblast,
+    the white card Solitude's evoke exiles (CR 702.74a).
+    `alternative_costs[i].requires` says how many are needed, and that same
+    view's `candidates` says which cards actually qualify.
+
+    Read by *both* announcements, not just one: `alternative_cost` (the option
+    by index or name) and `keyword` (the same option named by its keyword) are
+    two spellings of one CR 601.2b announcement, so a seat that announced
+    evoke the way `legal-actions` and a hand card's `cast_options` spell it -
+    by keyword - names its pitch here exactly as one announcing by index
+    would. Handing this to only one of the two branches is what made
+    `keyword="Evoke"` unusable for every non-mana evoke cost."""
+    sacrificing: list[UUID] | None = None
+    """The permanents chosen to pay a printed "As an additional cost to cast
+    this spell, sacrifice ..." sentence (CR 118.8a) - Fling's own creature.
+
+    An *additional* cost, not an alternative one, so it stacks with the
+    printed mana cost rather than replacing it, and it is announced at
+    CR 601.2b and folded into the total cost at CR 601.2f
+    (`Casting._charge_printed_additional_costs`). The engine has carried
+    `Casting.sacrificing`/`.discarding`/`.exiling`/`.tapping` all along with
+    nothing on this request able to fill them, so Fling was announced for
+    {1}{R}, sacrificed nothing, and refused to be paid.
+
+    Same vocabulary and same shape as `ActivateRequest.sacrificing` on
+    purpose: the engine decides how many objects a given sentence asks for and
+    whether each one qualifies, and this only carries the caster's answer.
+    Naming too few is refused with the engine's own count ("sacrifice needs N
+    card(s) chosen, M given"), never silently cast for less."""
+    discarding: list[UUID] | None = None
+    """Same shape, for a printed "discard ..." additional cost - Cathartic
+    Reunion's two cards (CR 701.9a)."""
+    exiling: list[UUID] | None = None
+    """Same shape, for a printed "exile ..." additional cost - Abhorrent
+    Oculus's six graveyard cards (CR 406.2; the component's own `zone` says
+    where each card must presently be)."""
+    tapping: list[UUID] | None = None
+    """Same shape, for a printed "tap ..." additional cost - Swallow Whole's
+    "tap an untapped creature you control"."""
     dry_run: bool = False
     reasoning: str | None = None
     """T10: this cast's own reasoning - required for an agent seat
@@ -1603,15 +1640,30 @@ class AlternativeCostView(BaseModel):
     description: str
     cost: str | None = None
     requires: int
+    candidates: list[ObjectCostCandidateView] = Field(default_factory=list)
+    """Which of the caster's cards could actually be named in
+    `CastRequest.choosing` for this option, each carrying the `pays` kind of
+    cost component it would answer ("exile", "sacrifice", "discard", "tap").
+
+    `requires` says how many; this says which, and without it neither a UI's
+    pitch tray nor an agent seat can tell a legal answer from a refusal:
+    Solitude's evoke cost is "Exile a white card from your hand", and a hand
+    of six with two white cards has four cards in it that will be refused.
+    `object_costs` has published `candidates` for convoke, delve and crew from
+    the start (`ObjectCostsView`); this is the same answer on the other half
+    of the cost model."""
     available: bool
     unavailable: str | None = None
 
 
 class ObjectCostCandidateView(BaseModel):
-    """One object offered against a convoke/delve/crew cost
-    (`affordances.object_costs`'s `eligible()`) - `CandidateView`'s shape
-    minus `requirements` (this is a payment offer, not a targeting slot)
-    plus an optional `power`, present only for a battlefield candidate."""
+    """One object offered against a cost that is paid with objects rather
+    than mana - convoke/delve/crew (`affordances.object_costs`'s `eligible()`)
+    or an alternative cost's own `choosing`
+    (`affordances._alternative_cost_candidates`). `CandidateView`'s shape
+    minus `requirements` (this is a payment offer, not a targeting slot) plus
+    an optional `power`, present only for a battlefield candidate, and an
+    optional `pays`, present only on an alternative cost's candidates."""
 
     id: str
     kind: str
@@ -1619,6 +1671,12 @@ class ObjectCostCandidateView(BaseModel):
     zone: str | None = None
     controller: str | None = None
     power: int | None = None
+    pays: str | None = None
+    """Which kind of cost component this card would answer - "exile",
+    "sacrifice", "discard" or "tap" (`machines.cost.ComponentKind`). An
+    alternative cost can carry more than one component ("sacrifice a creature
+    and exile a card"), and a caller passing everything in one `choosing` list
+    needs to know which of its cards covered which half."""
 
 
 class ConvokeCostView(BaseModel):

@@ -32,7 +32,16 @@ export function needsChoices(card, abilityIndex) {
   }
   const hints = castHints(card);
   const modes = hints.modes && hints.modes.options && hints.modes.options.length;
-  return Boolean(modes || (hints.targeting && hints.targeting.targets_anything) || hints.needs_x);
+  if (modes || (hints.targeting && hints.targeting.targets_anything) || hints.needs_x) return true;
+  // CR 118.9 alternative costs (evoke, dash, morph, ...) live entirely on an
+  // enter-the-battlefield trigger line for a card like Wistfulness or
+  // Solitude, which the engine's `_spell_text` strips before it ever builds
+  // `cast.targeting` - so the checks above never see them. `card.cast_options`
+  // (`serialize._cast_options_of`, present on every hand card in the board
+  // poll before any affordance fetch) is the one place a hand-zone
+  // alternative cost is visible this early; any entry there means `beginCast`
+  // must fetch the affordance rather than firing at the printed mana cost.
+  return Boolean(card && card.cast_options && card.cast_options.length);
 }
 
 export function begin(kind, card, extra) {
@@ -299,6 +308,19 @@ export function needsExplicitFire(action) {
   );
 }
 
+// How many objects the *chosen* alternative cost still needs in
+// `action.choosing` before it is actually payable - Solitude's evoke is
+// "exile a white card from your hand" (`requires: 1`), Wistfulness's is
+// mana-only (`requires: 0`). An alt cost that has not been chosen
+// (`action.altCost` still null) imposes nothing here; that is
+// `hasChoosableAltCost`'s own job below.
+function chosenAltCostRequires(action) {
+  if (action.altCost === null || action.altCost === undefined) return 0;
+  const alts = (action.affordance && action.affordance.alternative_costs) || [];
+  const chosen = alts.find((alt) => alt.index === action.altCost);
+  return (chosen && chosen.requires) || 0;
+}
+
 export function readyToFire(action) {
   if (action.kind === "crew") return action.crewing.length > 0;
   // A special action (foretell, plot, suspend, CR 116.2) exiles the card
@@ -308,6 +330,12 @@ export function readyToFire(action) {
   if (action.kind === "special") return true;
   if (!modesReady(action)) return false;
   if (needsX(action) && action.xValue === null) return false;
+  // A chosen alternative cost that still needs objects pitched/exiled/
+  // sacrificed for it must not fire, or even dry-run, until they are
+  // (`onChooseAltCost`'s own click would otherwise post a refused dry run
+  // before the player can click a single pitch chip - the reported evoke
+  // defect's third half).
+  if (action.choosing.length < chosenAltCostRequires(action)) return false;
   const profile = targeting(action);
   if (profile.targets_anything) {
     if (!action.affordance) return false;

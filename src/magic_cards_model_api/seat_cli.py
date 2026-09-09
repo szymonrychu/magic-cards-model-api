@@ -62,6 +62,7 @@ from .seatkit import (
     api_trouble,
     autopass_target_error,
     block_until_wake,
+    parse_convoke,
     pass_until,
     run_action,
 )
@@ -200,6 +201,70 @@ def build_parser() -> argparse.ArgumentParser:
             "guessing. A card covered by a live PlayPermission instead (suspend's "
             "free cast once its last time counter is off, cascade, Past in "
             "Flames) needs no --keyword: it is picked up automatically."
+        ),
+    )
+    cast.add_argument(
+        "--alternative-cost",
+        default="",
+        help=(
+            "CR 118.9's alternative cost named by its index (or source name) out "
+            "of GET .../affordances/{card_id}'s alternative_costs - the same "
+            "CR 601.2b announcement --keyword makes, for an option with no "
+            "keyword of its own (Force of Negation's printed pitch). Only one "
+            "alternative cost may ever be paid (CR 118.9a)"
+        ),
+    )
+    cast.add_argument(
+        "--choosing",
+        default="",
+        help=(
+            "comma-separated card ids paying an ALTERNATIVE cost that names "
+            "objects - the white card Solitude's 'Evoke-Exile a white card from "
+            "your hand' exiles (CR 702.74a), the blue card pitched to Force of "
+            "Negation, the Mountains sacrificed to Fireblast. Not --target, "
+            "which is the spell's own targets (CR 601.2c). Omitting it is "
+            "refused with the engine's own count, 'exile needs N card(s) "
+            "chosen, 0 given'"
+        ),
+    )
+    cast.add_argument(
+        "--sacrificing",
+        default="",
+        help=(
+            "comma-separated card ids for a printed 'As an additional cost to "
+            "cast this spell, sacrifice ...' sentence (CR 118.8a) - Fling's own "
+            "creature. Additional, not alternative: the printed mana cost is "
+            "still paid on top"
+        ),
+    )
+    cast.add_argument(
+        "--discarding",
+        default="",
+        help="same shape, for a printed 'discard ...' additional cost (Cathartic Reunion)",
+    )
+    cast.add_argument(
+        "--exiling",
+        default="",
+        help="same shape, for a printed 'exile ...' additional cost (Abhorrent Oculus)",
+    )
+    cast.add_argument(
+        "--tapping",
+        default="",
+        help="same shape, for a printed 'tap ...' additional cost (Swallow Whole)",
+    )
+    cast.add_argument(
+        "--delve",
+        default="",
+        help="comma-separated graveyard card ids exiled to pay generic mana (CR 702.66a)",
+    )
+    cast.add_argument(
+        "--convoke",
+        default="",
+        help=(
+            "comma-separated ids of your untapped creatures, tapped to pay "
+            "(CR 702.51a). A creature pays '{1} or one mana of that creature's "
+            "color', so an entry is a bare id for the generic symbol or "
+            "<id>:W to cover a coloured one"
         ),
     )
     priority_flag(cast)
@@ -743,6 +808,24 @@ def run(argv: list[str] | None = None) -> int:
             body["x_value"] = args.x
         if args.keyword:
             body["keyword"] = args.keyword
+        if args.alternative_cost:
+            body["alternative_cost"] = (
+                int(args.alternative_cost)
+                if args.alternative_cost.strip().isdigit()
+                else args.alternative_cost
+            )
+        for field, value in (
+            ("choosing", args.choosing),
+            ("sacrificing", args.sacrificing),
+            ("discarding", args.discarding),
+            ("exiling", args.exiling),
+            ("tapping", args.tapping),
+            ("delve", args.delve),
+        ):
+            if value:
+                body[field] = _parse_ids(value)
+        if args.convoke:
+            body["convoke"] = parse_convoke(args.convoke)
         if args.reasoning:
             body["reasoning"] = args.reasoning
         act(

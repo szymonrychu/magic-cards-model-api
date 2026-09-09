@@ -349,12 +349,42 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
         rewind_unfinished(casting)
 
 
+#: The four object-naming pieces a printed "As an additional cost to cast this
+#: spell, ..." sentence can ask for (CR 118.8a), mapped from this request's own
+#: field to the `Casting` attribute the engine reads them off at CR 601.2f.
+#: `Casting._printed_additional_costs` pools them by `ComponentKind` and hands
+#: each sentence as many as it needs, in the order the sentences print, so
+#: nothing here has to know which sentence wants which object.
+_PRINTED_ADDITIONAL_COST_FIELDS = ("sacrificing", "discarding", "exiling", "tapping")
+
+
+def _announce_printed_additional_costs(game: Game, req: CastRequest, casting: Casting) -> None:
+    """Put the caster's CR 601.2b announcement of a printed additional cost
+    onto the `Casting`, before anything asks what the spell costs.
+
+    An empty list is left alone rather than written as one: the engine builds
+    the component asking for its own count either way and refuses to be paid
+    until the cards are there (CR 118.3), which is what lets a Fling announced
+    with no creature rewind cleanly instead of failing at announcement.
+    """
+    for name in _PRINTED_ADDITIONAL_COST_FIELDS:
+        ids = getattr(req, name)
+        if ids:
+            setattr(casting, name, [find_card(game, card_id) for card_id in ids])
+
+
 def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bool) -> Outcome:
     """Announce, pay and cast an already-proposed `Casting` (CR 601.2b-h).
 
     Every return that is not the final `Outcome` at the bottom leaves the
     casting unsettled on purpose - `cast_card`'s `finally` rewinds it.
     """
+    try:
+        _announce_printed_additional_costs(game, req, casting)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+
+    chosen = [find_card(game, card_id) for card_id in req.choosing] if req.choosing else None
     try:
         if req.alternative_cost is not None:
             # CR 118.9, announced at CR 601.2b - before targets are chosen at
@@ -363,17 +393,23 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             # over all four origins (a printed pitch offer, a keyword, a
             # granted permission, another permanent's static ability), so
             # this needs no branch per origin.
-            casting.use_alternative_cost(
-                req.alternative_cost,
-                choosing=[find_card(game, card_id) for card_id in req.choosing]
-                if req.choosing
-                else None,
-            )
+            casting.use_alternative_cost(req.alternative_cost, choosing=chosen)
         elif req.keyword:
             # CR 601.2b: plot and foretell are announced this way - the
             # keyword names both the exile pile the card must be in and what
             # is paid instead of the mana cost (`Casting.use_keyword`).
-            casting.use_keyword(req.keyword)
+            #
+            # `choosing` goes through here too, and used not to. A keyword
+            # cost is not always mana: evoke is "Evoke—Exile a white card from
+            # your hand" on Solitude and "Exile a black card from your hand"
+            # on Grief (CR 702.74a), and `Casting.use_keyword` has always
+            # taken the objects that pays with. Dropping them here made every
+            # such cast refuse itself with "exile needs 1 card(s) chosen, 0
+            # given" no matter what the caller sent - and by keyword is
+            # exactly how `legal-actions` and a hand card's `cast_options`
+            # both tell a caller to announce it, so the one spelling every
+            # seat is pointed at was the one spelling that could not work.
+            casting.use_keyword(req.keyword, choosing=chosen)
         elif permitted:
             # CR 601.3's dynamic half: a live `PlayPermission` covering this
             # exact object, player and action - suspend's own free cast

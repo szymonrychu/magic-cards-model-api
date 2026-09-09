@@ -151,6 +151,73 @@ def test_memnite_needs_no_choices_and_bolt_does() -> None:
     ) == [False, True]
 
 
+def test_needs_choices_is_true_for_a_hand_alternative_cost_the_targeting_hints_never_saw() -> None:
+    """The owner's report, restated as the smallest fixture that reproduces
+    it: Wistfulness and Solitude both target only on their enter-the-
+    battlefield trigger, which `_spell_text` strips before it ever reaches
+    `cast.targeting` - so `targets_anything`/`needs_x`/`modes` are all false
+    or absent, exactly like a card with nothing to choose. The one place a
+    hand-zone alternative cost (evoke) is visible before the affordance
+    itself has been fetched is the card's own `cast_options`
+    (`serialize._cast_options_of`, published on every hand card in the board
+    poll) - `needsChoices` must read it, or `beginCast` never fetches the
+    affordance and the evoke chip is never drawn."""
+    wistfulness = {
+        "id": "w1",
+        "name": "Wistfulness",
+        "zone": "hand",
+        "controller": "alice",
+        "type_line": "Enchantment Creature",
+        "cast": {
+            "mana_cost": "{3}{G}{G}",
+            "needs_x": False,
+            "modes": None,
+            "targeting": {
+                "targets_anything": False,
+                "understood": True,
+                "minimum": 0,
+                "maximum": 0,
+                "requirements": [],
+            },
+        },
+        "abilities": [],
+        "cast_options": [
+            {
+                "keyword": "Evoke",
+                "rule": "CR 702.74a",
+                "pays_mana_cost": False,
+                "cost": "{G}",
+                "usable_now": True,
+                "why_not": None,
+            }
+        ],
+    }
+    solitude = {
+        **wistfulness,
+        "id": "s1",
+        "name": "Solitude",
+        "cast_options": [
+            {
+                "keyword": "Evoke",
+                "rule": "CR 702.74a",
+                "pays_mana_cost": False,
+                "cost": None,
+                "usable_now": True,
+                "why_not": None,
+            }
+        ],
+    }
+    no_alt_cost = {**wistfulness, "cast_options": []}
+    assert run_module(
+        "actions.js",
+        "[m.needsChoices(wistfulness, null), m.needsChoices(solitude, null), "
+        "m.needsChoices(no_alt_cost, null)]",
+        wistfulness=wistfulness,
+        solitude=solitude,
+        no_alt_cost=no_alt_cost,
+    ) == [True, True, False]
+
+
 def test_bolt_body_carries_target_and_all_sources() -> None:
     body = run_module(
         "actions.js",
@@ -708,6 +775,65 @@ def test_needs_explicit_fire_waits_for_an_unchosen_available_alternative_cost() 
         False,  # the only alternative cost is unavailable - auto-fires
         False,  # the available alternative cost was already chosen - fires
         True,  # an exact filled target slot AND an available alternative cost - waits
+    ]
+
+
+def test_ready_to_fire_waits_for_the_chosen_alt_costs_own_object_requirement() -> None:
+    """The third problem the task brief names: `onChooseAltCost` used to call
+    `previewAndMaybeFire` the instant Evoke was picked, with `choosing` still
+    empty - Solitude's evoke costs "exile a white card from your hand", so
+    that dry run came back refused before the player ever got to click a
+    pitch chip, and every intermediate click on the way to `requires` posted
+    another refused dry run. `readyToFire` must not consider the announcement
+    ready until `action.choosing` has caught up with the *chosen* option's
+    own `requires` - an unchosen or unavailable option (Wistfulness's
+    mana-only evoke, `requires: 0`) must not gate anything at all."""
+    solitude_alt = {
+        "index": 0,
+        "keyword": "Evoke",
+        "requires": 1,
+        "available": True,
+        "unavailable": None,
+        "candidates": [{"id": "w1", "kind": "card", "name": "Savannah Lions", "pays": "exile"}],
+    }
+    not_chosen = {
+        "pinned": [],
+        "slots": [],
+        "modes": [],
+        "xValue": None,
+        "abilityIndex": None,
+        "card": {},
+        "kind": "cast",
+        "affordance": {"alternative_costs": [solitude_alt]},
+        "altCost": None,
+        "choosing": [],
+    }
+    chosen_nothing_pitched = {**not_chosen, "altCost": 0}
+    chosen_and_pitched = {**not_chosen, "altCost": 0, "choosing": ["w1"]}
+    wistfulness_alt = {**solitude_alt, "requires": 0, "candidates": []}
+    mana_only_chosen = {
+        **not_chosen,
+        "affordance": {"alternative_costs": [wistfulness_alt]},
+        "altCost": 0,
+    }
+    result = run_module(
+        "actions.js",
+        """[
+          m.readyToFire(not_chosen),
+          m.readyToFire(chosen_nothing_pitched),
+          m.readyToFire(chosen_and_pitched),
+          m.readyToFire(mana_only_chosen),
+        ]""",
+        not_chosen=not_chosen,
+        chosen_nothing_pitched=chosen_nothing_pitched,
+        chosen_and_pitched=chosen_and_pitched,
+        mana_only_chosen=mana_only_chosen,
+    )
+    assert result == [
+        True,  # nothing chosen yet - the alt cost's own object requirement doesn't apply
+        False,  # Evoke chosen, nothing pitched yet - not ready
+        True,  # Evoke chosen and the one white card pitched - ready
+        True,  # Wistfulness's mana-only evoke chosen, requires 0 - ready immediately
     ]
 
 

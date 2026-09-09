@@ -58,6 +58,14 @@ NON_TOOL_VOCABULARY = {
     "recent_log",
     "omitted",
     "seq",
+    # the shape an action tool's answer now has (`mcp._action_answer`) - the
+    # refusal-or-acceptance it leads with, the narrowed board block, and that
+    # block's own honesty about what it left out. All three are answer shape;
+    # none is a tool or a parameter.
+    "outcome",
+    "board",
+    "pending_decision",
+    "cast_options",
     # the fail-closed notice list every action/pass tool can now carry
     # (commands._attach_notices) and two of its own per-entry fields - answer
     # shape, none of them a tool or a parameter

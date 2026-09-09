@@ -1115,6 +1115,13 @@
             "title": "Available",
             "type": "boolean"
           },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectCostCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
           "cost": {
             "anyOf": [
               {
@@ -2356,10 +2363,40 @@
             ],
             "title": "Delve"
           },
+          "discarding": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discarding"
+          },
           "dry_run": {
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "exiling": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exiling"
           },
           "from_zone": {
             "default": "hand",
@@ -2428,6 +2465,21 @@
             ],
             "title": "Reasoning"
           },
+          "sacrificing": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sacrificing"
+          },
           "shares": {
             "anyOf": [
               {
@@ -2441,6 +2493,21 @@
               }
             ],
             "title": "Shares"
+          },
+          "tapping": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tapping"
           },
           "targets": {
             "anyOf": [
@@ -5285,7 +5352,7 @@
         "type": "object"
       },
       "ObjectCostCandidateView": {
-        "description": "One object offered against a convoke/delve/crew cost\n(`affordances.object_costs`'s `eligible()`) - `CandidateView`'s shape\nminus `requirements` (this is a payment offer, not a targeting slot)\nplus an optional `power`, present only for a battlefield candidate.",
+        "description": "One object offered against a cost that is paid with objects rather\nthan mana - convoke/delve/crew (`affordances.object_costs`'s `eligible()`)\nor an alternative cost's own `choosing`\n(`affordances._alternative_cost_candidates`). `CandidateView`'s shape\nminus `requirements` (this is a payment offer, not a targeting slot) plus\nan optional `power`, present only for a battlefield candidate, and an\noptional `pays`, present only on an alternative cost's candidates.",
         "properties": {
           "controller": {
             "anyOf": [
@@ -5309,6 +5376,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "pays": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pays"
           },
           "power": {
             "anyOf": [

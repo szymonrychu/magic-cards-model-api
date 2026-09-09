@@ -7,6 +7,54 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-09 - a cost that names objects was unreachable from `cast` at
+  three layers at once, and the answer was too big to say so.** A live
+  kubernetes seat (`mtg-seat-75bd9739-35bc3b7f-wkl4j`) spent a whole turn and
+  four identical calls failing to evoke Solitude. Every layer was wrong in a
+  different way and each one hid the next. (1) `engine_api._drive_cast`
+  handed `req.choosing` to `use_alternative_cost` and *not* to
+  `casting.use_keyword` next to it - and by keyword is exactly how
+  `legal-actions` and a hand card's own `cast_options` tell a caller to
+  announce evoke, so the one spelling every surface points at was the one
+  spelling that could not pay a non-mana keyword cost. (2) `mcp.py`'s `cast`
+  tool exposed none of `CastRequest`'s cost fields at all - not `choosing`,
+  which had existed since Force of Negation's pitch, nor `alternative_cost`,
+  `delve` or `convoke` - so the seat guessed `targets`, `mana_sources` and
+  `exiling` and was refused by each. (3) CR 118.8a's printed additional costs
+  had no field on `CastRequest` in the first place: `Casting.sacrificing`
+  /`.discarding`/`.exiling`/`.tapping` had always been there with nothing able
+  to fill them, so Fling was announced for {1}{R}, sacrificed nothing and
+  refused to be paid. All three are closed, `seat_cli` carries the same eight
+  flags (the parity `test_front_end_parity.py` exists for), and
+  `affordances.alternative_costs` now publishes `candidates` next to
+  `requires` - which cards qualify, not just how many - because "Exile a white
+  card from your hand" is prose no client can filter a hand on. The engine
+  itself needed no change: its refusals ("exile needs 1 card(s) chosen, 0
+  given") were correct and complete the whole time, and merely unreachable.
+
+- **2026-09-09 - an action tool answers about the action, not about the
+  world; measured, not estimated.** The same stuck seat could not read the
+  refusal above because one `cast` result was 25,397 tokens, past its own
+  client's 25,000-token ceiling - so it fell back to `grep` and `python3 -c`
+  over the blob and still never found it. Reproduced through the real MCP
+  tool on a 28-permanent board: 66,636 bytes, of which `state` was 37,683 and
+  `available_actions` another 11,538, while the `outcome` that answered the
+  call was 84 bytes sitting at character 13,724 - behind everything else,
+  because the payload was serialised `sort_keys=True`. Now 12,244 bytes on
+  that same board (an 81.6% cut) with `outcome` at character 3.
+  `mcp._action_answer` drops the board's bulk (battlefield, hands,
+  graveyards, exile, command) in favour of a `board` block holding the spine,
+  the stack, combat and both players, names what it left out in
+  `board.omitted_sections`, and drops the ~20 null/empty fields every
+  `ActionView` printed. Three things were deliberate: the narrowing lives at
+  the MCP boundary and NOT in `seatkit.run_action`, because `seat_cli.py` is
+  the other front end onto that same function and is a human who can scroll
+  (and `test_action_flow.py` pins that dict); `wait_for_priority` and
+  `battlefield_state` are untouched, since handing over the board is what
+  they are for; and `pending_decision` is lifted to the top level, which is
+  where `mcp._tool_result` already looks when a payload has no `state` key,
+  so the `input_required` shaping keeps working with no second check.
+
 - **2026-09-07 - `Game.model_dump()` size scales with library size, not board
   complexity.** Measured through the real HTTP action endpoints (`POST
   .../actions/play-land`, `POST .../advance`), not hand-built: two real 60-card

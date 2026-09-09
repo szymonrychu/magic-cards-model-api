@@ -195,6 +195,18 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   "what can I do now" are one call between them. Never spend a second call
   asking for what the first one already handed you.
 
+  It is also the only tool that hands you the zones. An action tool's answer
+  is about the action: `outcome` first (whether it was allowed, and if not,
+  the engine's own refusal in its own words - read that before you do
+  anything else, it is the whole reason the call did what it did), then
+  `wake_reason`, any `pending_decision`, a `board` block with the turn, the
+  step, whose priority it is, the stack, combat and both players, then your
+  legal actions and the log tail. The battlefield, both hands, both
+  graveyards, exile and the command zone are deliberately not in it - they
+  are named in `board.omitted_sections`, and this is where you come for them.
+  An action answer is small enough to read whole; do not grep it, and do not
+  treat the absence of a battlefield in it as an empty board.
+
   Called with your uid alone it hands you everything, which is the right
   default. Two options narrow it when your next question is about one part
   of the board - they only ever leave things out, never show you anything
@@ -227,6 +239,26 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   for resolving the stack or stepping the turn on, and you never need one: the
   game rolls itself through every step nobody receives priority in (CR 500.3's
   untap and cleanup).
+
+  **A cost is not always mana, and `targets` never pays one.** `targets` is
+  the spell's own targets and nothing else - a card named there to pay a cost
+  comes back "too many targets", and a great many creatures do their
+  targeting on an enter-the-battlefield trigger rather than on the spell, so
+  the cast itself takes none at all. Every cost that needs objects named has
+  its own parameter on `cast`, each taking comma-separated card ids:
+  `choosing` for an alternative cost's own objects (Solitude's evoke cost is
+  "Exile a white card from your hand", so `cast(card="Solitude",
+  keyword="Evoke", choosing="<a white card in your hand>")` in one call);
+  `sacrificing`, `discarding`, `exiling` and `tapping` for a printed "as an
+  additional cost to cast this spell" sentence; `delve` and `convoke` for
+  those two keywords; and `alternative_cost` to announce an option that has
+  no keyword of its own. `activate` takes `sacrificing`, `discarding` and
+  `exiling` the same way for an activation cost. When one is missing you are
+  refused with the engine's own count - "exile needs 1 card(s) chosen, 0
+  given" - which names the kind of cost and how many it wants, so read the
+  refusal instead of guessing another parameter. A card's `cast_options` in
+  `battlefield_state` names every keyword it currently offers and what that
+  keyword would cost.
 
   Any of those - and `pass` and `pass_until` too, since a pass is exactly
   where a spell or ability on the stack resolves - can hand back a `notices`

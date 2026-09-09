@@ -424,7 +424,7 @@ function renderXInput(card, action, handlers) {
   );
 }
 
-function renderAltCosts(action, app, handlers) {
+function renderAltCosts(action, handlers) {
   const alts = (action.affordance && action.affordance.alternative_costs) || [];
   if (!alts.length || action.kind !== "cast") return null;
   const chips = alts.map((alt) => {
@@ -443,16 +443,22 @@ function renderAltCosts(action, app, handlers) {
   const step = h("div", { class: "tray-step" }, h("div", { class: "label" }, "Alternative cost (CR 118.9) - optional"), h("div", { class: "chip-row" }, ...chips));
   const chosen = alts.find((a) => a.index === action.altCost);
   if (chosen && chosen.requires) {
-    const hand = ((app.state.hands || {})[app.state.you] || []).filter((c) => c.id !== action.cardId);
+    // Which of the caster's own cards actually pay this - the engine's own
+    // answer (`chosen.candidates`, `AlternativeCostView.candidates`), never
+    // the whole hand: Solitude's evoke is "Exile a white card from your
+    // hand", and offering a blue one is a click that comes back refused.
+    const candidates = chosen.candidates || [];
     step.appendChild(h("div", { class: "hint" }, `pay it with ${chosen.requires} card(s) from your hand:`));
     step.appendChild(
-      h(
-        "div",
-        { class: "chip-row" },
-        ...hand.map((c) =>
-          h("button", { class: `chip ${action.choosing.includes(c.id) ? "on" : ""}`, onClick: () => handlers.onTogglePitch(c.id) }, c.name)
-        )
-      )
+      candidates.length
+        ? h(
+            "div",
+            { class: "chip-row" },
+            ...candidates.map((c) =>
+              h("button", { class: `chip ${action.choosing.includes(c.id) ? "on" : ""}`, onClick: () => handlers.onTogglePitch(c.id) }, c.name)
+            )
+          )
+        : h("div", { class: "hint" }, "nothing eligible right now")
     );
   }
   return step;
@@ -638,7 +644,7 @@ function renderCastingStrip(el, app, handlers) {
     if (objectCosts.delve) el.appendChild(renderObjectCostStep(action, objectCosts.delve, "delve", "Delve", handlers.onToggleDelve));
   }
 
-  const altStep = renderAltCosts(action, app, handlers);
+  const altStep = renderAltCosts(action, handlers);
   if (altStep) el.appendChild(altStep);
 
   const xStep = renderXInput(card, action, handlers);

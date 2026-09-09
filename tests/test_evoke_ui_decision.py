@@ -13,7 +13,22 @@ This test drives both real halves rather than restating either: the real
 engine, through the real HTTP affordance endpoint, computing Wistfulness's
 real evoke option; and the real `ui/actions.js` module (`needsExplicitFire`),
 fed that real payload, deciding whether the cast should wait for the player.
-No mock stands in for either side."""
+No mock stands in for either side.
+
+That fix was not the whole defect: `needsExplicitFire` only ever runs on an
+affordance that has already been fetched, and `ui/app.js::beginCast` decides
+whether to fetch one at all by calling `A.needsChoices(card, null)` on the
+hand card's own board-poll JSON, *before* any affordance exists. Wistfulness
+and Solitude both target only on their enter-the-battlefield trigger, which
+`_spell_text` strips before it ever reaches `cast.targeting` - so
+`needsChoices` came back false, `beginCast` never fetched an affordance at
+all, and `needsExplicitFire` above was dead code on the browser path even
+though this file stayed green: it was handed a hand-fetched affordance
+directly, never the real gate that decides whether to fetch one. The tests
+below exercise `needsChoices` itself against the real hand card JSON
+(`cast_options`, `serialize._cast_options_of`), plus Solitude's own object
+cost (CR 118.9's "exile a white card") end to end against
+`readyToFire`, so the fix on `beginCast`'s own gate has real coverage too."""
 
 from __future__ import annotations
 
@@ -30,6 +45,19 @@ def _wistfulness_affordance(client: TestClient, game: str) -> dict:
         "hands"
     ]["alice"]
     (card,) = [c for c in hand if c["name"] == "Wistfulness"]
+    response = client.get(f"/api/games/{game}/affordances/{card['id']}", params={"player": "alice"})
+    assert response.status_code == 200, response.text
+    return card, response.json()
+
+
+def _solitude_affordance(client: TestClient, game: str) -> tuple[dict, dict]:
+    add_card(client, game, "Solitude", "alice", "hand")
+    add_card(client, game, "Savannah Lions", "alice", "hand")  # white - the legal pitch
+    add_card(client, game, "Delver of Secrets", "alice", "hand")  # blue - must never be offered
+    hand = client.get(f"/api/games/{game}", params={"uid": _alice_uid(client, game)}).json()[
+        "hands"
+    ]["alice"]
+    (card,) = [c for c in hand if c["name"] == "Solitude"]
     response = client.get(f"/api/games/{game}/affordances/{card['id']}", params={"player": "alice"})
     assert response.status_code == 200, response.text
     return card, response.json()
@@ -81,3 +109,74 @@ def test_wistfulness_with_no_alternative_costs_offered_still_auto_fires(client, 
 
     action = {"pinned": [], "affordance": affordance, "slots": [], "altCost": None}
     assert run_module("actions.js", "m.needsExplicitFire(action)", action=action) is False
+
+
+def test_beginning_a_cast_on_wistfulness_or_solitude_needs_choices(client, game):
+    """The gate that was dead while this file stayed green: `beginCast`
+    (`ui/app.js`) calls `A.needsChoices(card, null)` on the hand card's own
+    board-poll JSON before it ever fetches an affordance, and only fetches
+    one - which is what makes the evoke chip drawable at all - when this
+    comes back true. Both of the owner's cards must trip it, driven by the
+    real engine's own hand-card view rather than a hand-built fixture."""
+    wistfulness_card, _ = _wistfulness_affordance(client, game)
+    solitude_card, _ = _solitude_affordance(client, game)
+    assert wistfulness_card.get("cast_options"), wistfulness_card
+    assert solitude_card.get("cast_options"), solitude_card
+
+    result = run_module(
+        "actions.js",
+        "[m.needsChoices(wistfulness, null), m.needsChoices(solitude, null)]",
+        wistfulness=wistfulness_card,
+        solitude=solitude_card,
+    )
+    assert result == [True, True]
+
+
+def test_needs_choices_is_false_for_a_hand_card_with_no_alternative_cost(client, game):
+    """The control case: a card that offers nothing at all
+    (`cast_options` absent) must not suddenly grow a needless affordance
+    fetch - `beginCast`'s existing auto-fire path for a plain creature like
+    Savannah Lions is unaffected by this fix."""
+    add_card(client, game, "Savannah Lions", "alice", "hand")
+    hand = client.get(f"/api/games/{game}", params={"uid": _alice_uid(client, game)}).json()[
+        "hands"
+    ]["alice"]
+    (lions,) = [c for c in hand if c["name"] == "Savannah Lions"]
+    assert not lions.get("cast_options"), lions
+    assert run_module("actions.js", "m.needsChoices(lions, null)", lions=lions) is False
+
+
+def test_solitudes_evoke_waits_for_the_white_card_and_never_offers_the_blue_one(client, game):
+    """The whole reported flow for Solitude, end to end against the real
+    engine: `needsChoices` trips (so `beginCast` fetches the affordance),
+    `alternative_costs[i].candidates` names only the white card - never the
+    blue one also in hand, the second problem the task brief calls out -
+    and `readyToFire` refuses to fire (or dry-run) Evoke until that white
+    card has actually been pitched via `togglePitch`, the third problem."""
+    card, affordance = _solitude_affordance(client, game)
+    assert run_module("actions.js", "m.needsChoices(card, null)", card=card) is True
+
+    evoke = next(alt for alt in affordance["alternative_costs"] if alt["keyword"] == "Evoke")
+    assert evoke["available"] is True, affordance
+    candidate_names = {c["name"] for c in evoke["candidates"]}
+    assert candidate_names == {"Savannah Lions"}, evoke  # never the blue Delver of Secrets
+
+    result = run_module(
+        "actions.js",
+        """(() => {
+          let a = m.begin('cast', card, {});
+          a = m.withAffordance(a, affordance);
+          a = m.chooseAltCost(a, evoke.index);
+          const beforePitch = m.readyToFire(a);
+          a = m.togglePitch(a, evoke.candidates[0].id);
+          const afterPitch = m.readyToFire(a);
+          return [beforePitch, afterPitch];
+        })()""",
+        card=card,
+        affordance=affordance,
+        evoke=evoke,
+    )
+    assert result == [
+        False,  # Evoke chosen, nothing pitched yet - the refusal-flash defect
+        True,  # the one legal white card pitched - ready to fire
+    ]

@@ -120,6 +120,7 @@ from .seatkit import (
     Seats,
     _parse_ids,
     _parse_pairs,
+    parse_convoke,
     run_action,
 )
 
@@ -240,6 +241,120 @@ def _select_sections(view: dict[str, Any], wanted: list[str]) -> dict[str, Any]:
     return {key: value for key, value in view.items() if key not in dropped}
 
 
+#: The sections of the board an *action* tool's answer keeps. Everything else
+#: - the battlefield, both hands, both graveyards, exile and the command zone -
+#: is `battlefield_state`'s job, and re-serialising it after every single
+#: action is what made one `cast` answer 25,397 tokens: more than the seat's
+#: own client would read at all, so the agent never saw the refusal the engine
+#: had spelled out for it and spent four identical retries and a whole turn
+#: guessing from the board instead.
+#:
+#: What survives is what an action's own answer is *about*: the spine
+#: (`_select_sections` keeps the game id, turn, step, phase, active player,
+#: priority holder and `you` unconditionally), the stack the cast just changed,
+#: combat, both players' life and pools, and the permissions that decide what
+#: can be cast next. All of it is small and none of it scales with the board.
+ACTION_ANSWER_SECTIONS: tuple[str, ...] = (
+    "stack",
+    "combat",
+    "players",
+    "play_permissions",
+    "pregame",
+)
+
+#: What an action answer says instead of the board it left out, so a narrowed
+#: board is never misread as an empty one - the same promise
+#: `battlefield_state`'s own `focus.omitted_sections` makes.
+_READ_THE_BOARD_WITH = (
+    "battlefield_state - this answer carries the spine, the stack, combat and "
+    "both players only. The battlefield, hands, graveyards, exile and command "
+    "zone are not missing from the game, only from this answer; ask for them "
+    "there, with `sections` to narrow further."
+)
+
+
+def _without_empty(entry: dict[str, Any]) -> dict[str, Any]:
+    """`entry` without the keys carrying nothing to act on.
+
+    Every `ActionView` prints all twenty-five of its fields, and on any one
+    entry about twenty of them are `null` or `[]` - `ability_index` on a cast,
+    `spell_face` on a pass, `target_slots` on a land drop. Nineteen legal
+    actions cost 11,440 bytes that way, roughly 600 each, almost all of it
+    padding a reader has to skip past. An absent key and a null one say the
+    same thing to whoever reads this, and only one of them costs tokens.
+
+    `False` and `0` are kept: both are answers ("this is not modal", "X is
+    zero"), and `in` compares by equality, which is why they are not caught by
+    the `None`/`[]`/`{}`/`""` test above them.
+    """
+    return {key: value for key, value in entry.items() if value not in (None, [], {}, "")}
+
+
+def _compact_actions(available: Any) -> Any:
+    """`available_actions` with each action entry stripped to what it says."""
+    if not isinstance(available, dict):
+        return available
+    compacted = _without_empty(available)
+    actions = compacted.get("actions")
+    if isinstance(actions, list):
+        compacted["actions"] = [
+            _without_empty(action) if isinstance(action, dict) else action for action in actions
+        ]
+    return compacted
+
+
+def _action_answer(payload: dict[str, Any]) -> dict[str, Any]:
+    """One `run_action`/`pass_until` result, reshaped for a reader with a
+    token budget: the outcome first, the board's bulk gone, and the keys in
+    the order a seat needs them rather than in alphabetical order.
+
+    `seatkit.run_action` itself is deliberately left alone. `seat_cli.py` is
+    the other front end onto the same function and is a human at a terminal
+    who can scroll; `tests/test_action_flow.py` pins that dict's contract; and
+    the narrowing only ever needs to happen where the tokens are spent, which
+    is here.
+
+    `pending_decision` is lifted out of the board and up to the top level.
+    That is where `_tool_result` looks for it when a payload has no `"state"`
+    key (its own docstring), so promoting it keeps the `input_required`
+    shaping working with no second check - and it puts the question a seat has
+    to answer next to the outcome that raised it, rather than inside a board
+    block. It is written only when there actually is one; every other key the
+    caller sent is carried through untouched, in the order it arrived, so a
+    `pass_until` run keeps `finished`/`stopped_because`/`until`/`resume` and an
+    action keeps `held_priority`/`in_flight_action`/`pass_outcome`.
+
+    `outcome` and `wake_reason` lead when the payload has them, `None`
+    included: `run_action` sets `outcome` to `None` on purpose when the action
+    paused on a decision it could not see through, and dropping that key would
+    turn "it has not finished yet" into "nobody said". `pass_until` carries
+    neither, and no null placeholder is invented for it.
+    """
+    state = payload.get("state")
+    state = state if isinstance(state, dict) else {}
+    board = _select_sections(state, list(ACTION_ANSWER_SECTIONS))
+    board.pop("pending_decision", None)
+    board["omitted_sections"] = sorted(
+        section
+        for section in SECTION_KEYS
+        if section not in ACTION_ANSWER_SECTIONS and section != "pending_decision"
+    )
+    board["read_the_board_with"] = _READ_THE_BOARD_WITH
+
+    answer: dict[str, Any] = {
+        key: payload[key] for key in ("outcome", "wake_reason") if key in payload
+    }
+    pending = state.get("pending_decision")
+    if pending:
+        answer["pending_decision"] = pending
+    carried = ("outcome", "wake_reason", "state", "available_actions", "recent_log")
+    answer.update({key: value for key, value in payload.items() if key not in carried})
+    answer["board"] = board
+    answer["available_actions"] = _compact_actions(payload.get("available_actions"))
+    answer["recent_log"] = payload.get("recent_log")
+    return answer
+
+
 def build_server(seats: Seats) -> MCPServer:
     server = MCPServer(name="mtg")
 
@@ -256,15 +371,21 @@ def build_server(seats: Seats) -> MCPServer:
         negotiated a revision that knows that shape.
 
         `payload` is either a whole state view (`wait_for_priority`) or a
-        `run_action` result carrying one under `"state"` (every action tool,
-        via `act`) - either shape puts `pending_decision` at the same key a
-        level down from `payload` itself: `payload["pending_decision"]` for
-        the former, `payload["state"]["pending_decision"]` for the latter.
-        Checking both, rather than requiring a caller to say which shape it
-        has, is what lets `wait_for_priority` and `act` share this one
-        function instead of each hand-rolling the same check - a duplicate
-        this project has paid for twice before (this module's own
-        docstring).
+        `run_action`/`pass_until` result carrying one under `"state"` (every
+        action tool, via `act`). Which of the two it is decides both the
+        shaping and where the pending decision is read from, and the presence
+        of a `"state"` key is what tells them apart - no caller has to say.
+
+        A state view is passed through as it always was: `wait_for_priority`
+        and `battlefield_state` exist to hand a seat the board, and narrowing
+        their answer would be narrowing the thing that was asked for.
+
+        An action's answer goes through `_action_answer` first, which drops
+        the board's bulk (the battlefield, both hands, both graveyards, exile,
+        the command zone - all of it `battlefield_state`'s job), lifts
+        `pending_decision` to the top level, and writes `outcome` first. See
+        that function for the 25,397-token `cast` answer this exists to stop
+        being produced.
 
         Only a decision addressed to *this* seat gets the treatment: one
         pending for the opponent is not this call's business to interrupt
@@ -293,9 +414,18 @@ def build_server(seats: Seats) -> MCPServer:
         the one that structurally cannot occur in production. The pending
         decision itself is never dropped either way - a legacy client still
         gets it, as ordinary text, just without the distinct wire shape."""
-        state = payload.get("state") if "state" in payload else payload
-        pending = state.get("pending_decision") if isinstance(state, dict) else None
-        text = json.dumps(payload, indent=1, sort_keys=True)
+        if "state" in payload:
+            # An action's answer, not a board: narrow it and put the outcome
+            # first (`_action_answer`). `sort_keys` is off for this shape on
+            # purpose - alphabetical order buried the 84-byte `outcome` at
+            # character 13,724, behind the whole legal-action list, in the
+            # very answer a stuck seat was trying to read the refusal out of.
+            answer = _action_answer(payload)
+            pending = answer.get("pending_decision")
+            text = json.dumps(answer, indent=1)
+        else:
+            pending = payload.get("pending_decision")
+            text = json.dumps(payload, indent=1, sort_keys=True)
         modern = protocol_version is None or protocol_version in MODERN_PROTOCOL_VERSIONS
         if isinstance(pending, dict) and pending.get("player") == seat.player and modern:
             return InputRequiredResult(request_state=text)
@@ -507,6 +637,14 @@ def build_server(seats: Seats) -> MCPServer:
         modes: str = "",
         x_value: int | None = None,
         keyword: str = "",
+        alternative_cost: str = "",
+        choosing: str = "",
+        sacrificing: str = "",
+        discarding: str = "",
+        exiling: str = "",
+        tapping: str = "",
+        delve: str = "",
+        convoke: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
@@ -565,6 +703,53 @@ def build_server(seats: Seats) -> MCPServer:
                 of cascade and Past in Flames, and `play_permissions` in your state
                 names every one that is currently live for you.
 
+        **A cost is not always mana, and `targets` is never how you pay one.**
+                `targets` is the spell's own targets (CR 601.2c) and nothing else -
+                naming a card there to pay a cost is refused with "too many targets".
+                Every cost that needs you to *name objects* has its own parameter,
+                and each takes comma-separated card ids:
+
+                - `choosing` - the objects an ALTERNATIVE cost (CR 118.9) requires
+                  you to supply. Solitude's evoke cost is not mana at all: it reads
+                  "Exile a white card from your hand" (CR 702.74a), and `choosing`
+                  is the white card. So is the black card Grief's exiles, the blue
+                  card pitched to Force of Negation, and the Mountains sacrificed
+                  to Fireblast. **Announce the cost and name its objects in the
+                  same call**: `cast(card="Solitude", keyword="Evoke",
+                  choosing="<a white card in your hand>")`. Leaving it out is
+                  refused with the engine's own count - "exile needs 1 card(s)
+                  chosen, 0 given" - never a silent no-op. `GET
+                  .../affordances/{card_id}`'s `alternative_costs[i]` says how many
+                  (`requires`) and which cards qualify (`candidates`).
+                - `alternative_cost` - the same CR 601.2b announcement named by its
+                  `index` (or source name) out of that same `alternative_costs`
+                  list, for an alternative cost that has no keyword of its own -
+                  Force of Negation's printed "you may exile a blue card from your
+                  hand rather than pay this spell's mana cost". `keyword` and
+                  `alternative_cost` are two spellings of one announcement; only
+                  one may ever be paid (CR 118.9a), and `choosing` feeds whichever
+                  you used.
+                - `sacrificing`, `discarding`, `exiling`, `tapping` - the objects a
+                  printed ADDITIONAL cost asks for (CR 118.8a, "As an additional
+                  cost to cast this spell, ..."): Fling's creature, Cathartic
+                  Reunion's two cards, Abhorrent Oculus's six graveyard cards,
+                  Swallow Whole's untapped creature. Additional, not alternative -
+                  the printed mana cost is still paid on top. Name as many ids as
+                  the sentence asks for; too few is refused with the same count.
+                - `delve` - graveyard cards exiled to pay generic mana
+                  (CR 702.66a), one per generic symbol.
+                - `convoke` - your untapped creatures tapped to pay (CR 702.51a).
+                  A creature pays "{1} or one mana of that creature's color", and
+                  which one is your choice, so an entry may be a bare id (the
+                  generic symbol) or `<id>:W` to cover a coloured one. Four white
+                  creatures offered against `{3}{W}` are three bare ids and one
+                  `<id>:W`.
+
+                `GET .../affordances/{card_id}` is the one place that answers all of
+                these for a specific card, and a hand card's own `cast_options` in
+                `battlefield_state` already names each keyword and the cost it would
+                pay. Read one of those rather than guessing a parameter name.
+
         Otherwise this does the whole turn of events in one call: cast, then
                 - unless `hold_priority` is true - release priority and check once
                 for your next moment to act. **No tool in this server ever blocks or
@@ -612,6 +797,28 @@ def build_server(seats: Seats) -> MCPServer:
             body["x_value"] = x_value
         if keyword:
             body["keyword"] = keyword
+        if alternative_cost:
+            # `CastRequest.alternative_cost` is `int | str`: an index into
+            # `alternative_costs`, or the option's own keyword/source name.
+            # The MCP wire has one string type for this, so a caller who
+            # answered with the index sends its digits - handed on as an int
+            # so the request means the index it looks like, not a source
+            # named "0".
+            body["alternative_cost"] = (
+                int(alternative_cost) if alternative_cost.strip().isdigit() else alternative_cost
+            )
+        for field, value in (
+            ("choosing", choosing),
+            ("sacrificing", sacrificing),
+            ("discarding", discarding),
+            ("exiling", exiling),
+            ("tapping", tapping),
+            ("delve", delve),
+        ):
+            if value:
+                body[field] = _parse_ids(value)
+        if convoke:
+            body["convoke"] = parse_convoke(convoke)
         if reasoning:
             body["reasoning"] = reasoning
         if dry_run:
