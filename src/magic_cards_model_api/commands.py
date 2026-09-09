@@ -75,7 +75,6 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import (
     Answer,
     DecisionPending,
@@ -310,10 +309,9 @@ def _run_pass_priority(game: Game, payload: dict[str, Any]) -> Any:
     `settle_priorityless_steps` runs inside this handler too, after
     `pass_priority` itself, so a step crossed automatically (CR 500.3) is
     part of the same deterministic replay a pause resumes into, rather than
-    a second mutation `app.py` performed outside `run_command` entirely -
-    the same reasoning `_run_advance`'s docstring gives for
-    `drive_suspend_upkeep`. The resolution fingerprint is taken *before* it
-    runs - see `_resolution_state`'s own docstring for why the order matters.
+    a second mutation `app.py` performed outside `run_command` entirely.
+    The resolution fingerprint is taken *before* it runs - see
+    `_resolution_state`'s own docstring for why the order matters.
     """
     req = PassPriorityRequest.model_validate(payload)
     resolving_obj = game.stack[-1] if game.stack else None
@@ -338,19 +336,14 @@ def _run_advance(game: Game, payload: dict[str, Any]) -> Any:
     discard, CR 508.1's/CR 509.1's combat declarations - pauses here exactly
     like a resolution does.
 
-    `drive_suspend_upkeep` runs INSIDE this handler, against the same
-    `game` `Game.advance` just mutated, not after `run_command` returns -
-    it has to, so that a paused-then-resumed attempt replays the very same
-    time-counter removal and free-cast permission grant rather than skipping
-    it on a resumed attempt or double-applying it on a completed one.
+    CR 702.62a's suspend countdown is one of the beginning-of-step triggers
+    `Game.advance` itself puts on the stack as part of this same call, along
+    with everything else that triggers "at the beginning of" the step just
+    entered - nothing further is needed here for it.
     """
     req = AdvanceRequest.model_validate(payload)
     step = game.advance(req.player)
-    suspend_upkeep: list[dict[str, Any]] = []
-    if step is Step.UPKEEP:
-        assert game.turn is not None
-        suspend_upkeep = engine_api.drive_suspend_upkeep(game, game.turn.active_player)
-    return {"advanced_to": step.value, "suspend_upkeep": suspend_upkeep}
+    return {"advanced_to": step.value}
 
 
 def _run_state_based_actions(game: Game, payload: dict[str, Any]) -> Any:

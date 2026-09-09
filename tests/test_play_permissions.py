@@ -28,7 +28,7 @@ and cached the same way.
 
 from __future__ import annotations
 
-from conftest import add_card, find, state
+from conftest import add_card, drain_suspend_upkeeps, find, state
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api.store import store
@@ -55,8 +55,7 @@ def test_suspends_free_cast_permission_is_discoverable_before_it_is_used(client,
         json={"player": "alice", "card": "Living End", "mana_sources": swamps},
     )
 
-    for _ in range(3):
-        client.put(f"/api/games/{game}/step", json={"step": "upkeep", "player": "alice"})
+    drain_suspend_upkeeps(client, game, "alice", 3)
 
     living_end = find(state(client, game)["exile"], "Living End")
 
@@ -119,8 +118,7 @@ def test_bobs_own_view_never_carries_alices_permission_under_the_wrong_key(clien
         f"/api/games/{game}/actions/suspend",
         json={"player": "alice", "card": "Living End", "mana_sources": swamps},
     )
-    for _ in range(3):
-        client.put(f"/api/games/{game}/step", json={"step": "upkeep", "player": "alice"})
+    drain_suspend_upkeeps(client, game, "alice", 3)
 
     uids = seats_for(client, game)
     as_bob = state(client, game, uid=uids["bob"])
@@ -149,8 +147,7 @@ def test_suspends_free_cast_is_only_good_for_its_own_upkeep_not_the_rest_of_the_
         f"/api/games/{game}/actions/suspend",
         json={"player": "alice", "card": "Living End", "mana_sources": swamps},
     )
-    for _ in range(3):
-        client.put(f"/api/games/{game}/step", json={"step": "upkeep", "player": "alice"})
+    drain_suspend_upkeeps(client, game, "alice", 3)
 
     living_end = find(state(client, game)["exile"], "Living End")
     permission = state(client, game)["play_permissions"]["alice"][0]

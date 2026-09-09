@@ -12,7 +12,8 @@ hand-written card data, per the project's "no mocks" rule.
 
 from __future__ import annotations
 
-from conftest import add_card, find, state
+from conftest import add_card, find, force_turn_position, resolve_whole_stack, state
+from magic_cards_model.machines import Step
 
 from magic_cards_model_api.store import store
 
@@ -81,10 +82,27 @@ def test_suspend_discoverable_in_hand_state_before_it_is_taken(client, game):
 
 
 def test_time_counters_come_off_each_upkeep_and_the_free_cast_reanimates(client, game):
-    """CR 702.62a's second ability (one time counter per upkeep, driven by
-    `advance`/`step`'s hook into `engine_api.drive_suspend_upkeep`) and third
+    """CR 702.62a's second ability (one time counter per upkeep) and third
     (once the last comes off, a free cast - picked up automatically by
-    `actions/cast` with no `keyword`, via the granted `PlayPermission`)."""
+    `actions/cast` with no `keyword`, via the granted `PlayPermission`) are
+    both live triggered abilities now: the engine puts a real ability on the
+    stack for each at the owner's upkeep (`machines/keywords.
+    _suspend_abilities`), the same as any other trigger, so nothing in this
+    repo drives the countdown by hand any more - a seat has to let it
+    resolve.
+
+    `advance` and ordinary `pass-priority` play both reach the trigger
+    through the identical `Game.advance` funnel (`pass_priority` calls it
+    internally the moment both players pass on an empty stack, CR 117.4, and
+    `commands._run_pass_priority`'s own `settle_priorityless_steps` carries
+    it on through the untap step that follows) - `PUT .../step`'s raw
+    teleport deliberately does not, since it is a harness-only board stager
+    and never a seat verb, no more entitled to fire a turn-based trigger than
+    it is to skip a draw or a combat declaration. This drives the same
+    suspended card through one upkeep via each of the two real paths and
+    checks the counter moves by exactly one on both, never two - the
+    symmetry the deleted hand-driven code never had, which is why a live
+    game (all `pass-priority`) never saw a counter move at all."""
     add_card(client, game, "Living End", "alice", "hand")
     for _ in range(4):
         add_card(client, game, "Swamp", "alice", "battlefield")
@@ -94,17 +112,42 @@ def test_time_counters_come_off_each_upkeep_and_the_free_cast_reanimates(client,
         json={"player": "alice", "card": "Living End", "mana_sources": swamps},
     )
 
-    for expected_remaining in (2, 1, 0):
-        response = client.put(f"/api/games/{game}/step", json={"step": "upkeep", "player": "alice"})
-        body = response.json()
-        (entry,) = body["suspend_upkeep"]
-        assert entry["card"] == "Living End"
-        assert entry["time_counters"] == expected_remaining
-        if expected_remaining == 0:
-            assert entry["cast_permission_granted"] is True
-        else:
-            assert "cast_permission_granted" not in entry
+    # First upkeep, via `advance` (POST .../advance): CR 702.62a's second
+    # ability triggers and goes on the stack as a real ability, resolved
+    # here rather than read off a response field that no longer exists.
+    force_turn_position(game, Step.UNTAP, "alice")
+    advanced = client.post(f"/api/games/{game}/advance", json={"player": "alice"}).json()
+    assert advanced["advanced_to"] == "upkeep", advanced
+    assert resolve_whole_stack(client, game) == ["ability from Living End"]
+    living_end = find(state(client, game)["exile"], "Living End")
+    assert living_end["counters"].get("time", 0) == 2
 
+    # Second upkeep, via ordinary priority-passing play instead of `advance`
+    # - both players pass on an empty end step (CR 117.4), which crosses the
+    # boundary into the priorityless untap step and on into upkeep entirely
+    # inside `Game.advance`'s own funnel, the "third path" a live game
+    # actually takes and the one the deleted driver never touched.
+    force_turn_position(game, Step.END_STEP, "bob")
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"}).json()
+    assert passed["allowed"] is True, passed
+    passed = client.post(
+        f"/api/games/{game}/actions/pass-priority", json={"player": "alice"}
+    ).json()
+    assert passed["allowed"] is True, passed
+    assert state(client, game)["step"] == "upkeep", state(client, game)
+    assert resolve_whole_stack(client, game) == ["ability from Living End"]
+    living_end = find(state(client, game)["exile"], "Living End")
+    assert living_end["counters"].get("time", 0) == 1
+
+    # Third and last: the same `advance` path as the first, and this time
+    # the last time counter's own removal raises CR 702.62a's third trigger
+    # (`finish_suspend`), a *second* ability on the stack once the first
+    # resolves - both are drained by `resolve_whole_stack` the same way.
+    force_turn_position(game, Step.UNTAP, "alice")
+    advanced = client.post(f"/api/games/{game}/advance", json={"player": "alice"}).json()
+    assert advanced["advanced_to"] == "upkeep", advanced
+    resolved = resolve_whole_stack(client, game)
+    assert resolved == ["ability from Living End", "ability from Living End"]
     living_end = find(state(client, game)["exile"], "Living End")
     assert living_end["counters"].get("time", 0) == 0
 

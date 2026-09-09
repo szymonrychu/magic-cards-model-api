@@ -867,16 +867,6 @@ class PregameView(BaseModel):
     opening_hand_notices: list[str]
 
 
-class SuspendUpkeepEntry(BaseModel):
-    """One suspended card `engine_api.drive_suspend_upkeep` touched this
-    upkeep - a time counter removed, and whether that was the last one."""
-
-    card_id: str
-    card: str
-    time_counters: int
-    cast_permission_granted: bool | None = None
-
-
 class ExilePileView(BaseModel):
     """CR 406.4's pile marker (`serialize._exile_pile`) - which special
     action put this card in exile, whose it is, and the turn it landed."""
@@ -1171,7 +1161,11 @@ class PatchCardResponse(GameStateView):
 
 
 class SetStepResponse(GameStateView):
-    suspend_upkeep: list[SuspendUpkeepEntry]
+    """`PUT .../step`'s response - the harness teleport, always just the
+    board: it moves the raw turn marker (`engine_api.set_step`,
+    `Game.advance_to`) rather than running `Game.advance`'s own
+    beginning-of-step turn-based actions and triggers, so there is nothing
+    beyond `GameStateView` for it to carry."""
 
 
 class ActionOutcome(BaseModel):
@@ -1419,7 +1413,6 @@ class AdvanceResponse(GameStateView):
     allowed: bool | None = None
     paused: bool = False
     advanced_to: str | None = None
-    suspend_upkeep: list[SuspendUpkeepEntry] | None = None
     notices: list[dict[str, Any]] = Field(default_factory=list)
     """`commands.run_command`'s notices for this `advance` (see
     `ActionOutcome.notices`'s own docstring) - absent whenever there is
