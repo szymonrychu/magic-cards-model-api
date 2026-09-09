@@ -227,6 +227,25 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   for resolving the stack or stepping the turn on, and you never need one: the
   game rolls itself through every step nobody receives priority in (CR 500.3's
   untap and cleanup).
+
+  Any of those - and `pass` and `pass_until` too, since a pass is exactly
+  where a spell or ability on the stack resolves - can hand back a `notices`
+  list alongside the ordinary result. Each entry means the engine recognised
+  a clause on a resolving spell, ability, or permanent but could not read it
+  well enough to carry it out, and refused it rather than guess - a modal
+  spell's mode that quietly did nothing, a triggered ability that went on
+  the stack with no target chosen, a static ability's text it could not
+  parse into an effect. That is not the same thing as a legal "nothing to
+  do" - a `mode_number`, `source_name`, and the clause's own printed `text`
+  are right there in the entry, so read it: something you expected to happen
+  did not, and the engine is telling you why in its own words rather than
+  leaving you to guess a mandatory action was skipped. A `notices: []` (or
+  the key absent) means exactly the opposite and is just as real an
+  answer - nothing was refused, because there was genuinely nothing left for
+  that clause to do. A blanked entry (`source_name`/its text field read
+  `"<hidden>"`) named a card you are not allowed to see - an opponent's
+  hand, most likely - and that is the whole of what you get to know about
+  it.
 - `mulligan` and `opening_hand_action` are the pregame (CR 103.5, CR 103.6).
   A game dealt from decklists *rests* there before turn 1 and nothing on the
   board can happen until every seat has declared, so these come first: declare
@@ -291,6 +310,19 @@ comma-separated list of card ids:
 Leave one out when the ability's own cost needs it and the engine refuses the
 call with its own count rather than silently doing nothing - "sacrifice needs
 1 card(s) chosen, 0 given" means exactly that: name the object.
+
+**Naming X for an activated ability.** Some activation costs carry a variable
+X too - Fiend Artisan's "{{X}}{{B/G}}, {{T}}, Sacrifice another creature:
+Search your library for a creature card with mana value X or less, put it
+onto the battlefield, then shuffle." `activate` takes `x_value` for this, the
+same as `cast` does:
+
+  activate(player_uid=..., card_id=..., ability_index=0,
+           sacrificing="<creature id>", x_value=2)
+
+Leave it out when the ability's own cost needs one and the call is refused,
+never silently activated for X=0 - a chosen X of 0 and no X chosen at all are
+not the same thing, and only the first is a real answer.
 
 ## Identify the matchup yourself
 

@@ -408,6 +408,13 @@ class ActivateRequest(BaseModel):
     ability_index: int = 0
     targets: list[str] | None = None
     mana_sources: list[UUID | ManaSource] | None = None
+    x_value: int | None = None
+    """CR 107.3a's X, announced as this activation begins (CR 602.2b) - the
+    activated-ability twin of `CastRequest.x_value`. Fiend Artisan's
+    `{X}{B/G}, {T}, Sacrifice another creature: Search ...` is the pool's
+    example: omitting this for an ability whose cost carries `{X}` is refused
+    with the engine's own `needs_x` answer (`affordances.ability_hints`,
+    `AbilityView.needs_x`) rather than silently activated for X=0."""
     sacrificing: list[UUID] | None = None
     """The objects an activation cost's own `[Sacrifice|Discard|Exile] a
     ...` piece needs named (CR 118.3) - Goblin Bombardment's own "Sacrifice
@@ -1188,6 +1195,16 @@ class ActionOutcome(BaseModel):
     dynamically-keyed fields get, extended to this genuinely per-action
     shape. A consumer that needs one action's exact detail keys should pin
     against that route's own example response, not against this component.
+
+    `notices` is the one `Outcome.detail` key declared here rather than left
+    to `extra="allow"`: unlike `cost`/`tapped`/`spell_id`/..., it is not
+    per-action - `commands.run_command` files it onto every command kind's
+    outcome generically (`commands._attach_notices`), so every route this
+    model serves can carry one. Each entry is one of `Game`'s 19 fail-closed
+    notice records (`{"kind": ..., **notice.model_dump(mode="json")}`, plus
+    this api's own `zone`/`controller` bookkeeping - see
+    `commands._new_notices`), already redacted for this response's own
+    viewer (`app.audit_outcome`) - not the engine's raw list.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -1196,6 +1213,7 @@ class ActionOutcome(BaseModel):
     reason: str | None = None
     paused: bool = False
     pending_decision: PendingDecisionView | None = None
+    notices: list[dict[str, Any]] = Field(default_factory=list)
     log_seq: int | None = None
 
 
@@ -1402,6 +1420,12 @@ class AdvanceResponse(GameStateView):
     paused: bool = False
     advanced_to: str | None = None
     suspend_upkeep: list[SuspendUpkeepEntry] | None = None
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    """`commands.run_command`'s notices for this `advance` (see
+    `ActionOutcome.notices`'s own docstring) - absent whenever there is
+    nothing to report: always on the paused branch (`commands.
+    _attach_notices` never runs against a `PAUSED` `RunResult`), and on a
+    completed one too when nothing failed closed."""
     log_seq: int | None = None
 
 
@@ -1413,6 +1437,8 @@ class StateBasedActionsResponse(GameStateView):
     paused: bool = False
     destroyed: list[str] | None = None
     changed: list[str] | None = None
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    """See `ActionOutcome.notices`."""
     log_seq: int | None = None
 
 
@@ -1427,6 +1453,8 @@ class ResolveTopResponse(GameStateView):
     reason: str | None = None
     allowed: bool | None = None
     paused: bool = False
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    """See `ActionOutcome.notices`."""
     log_seq: int | None = None
 
 
@@ -1464,6 +1492,8 @@ class PassPriorityResponse(BaseModel):
     """`magic_cards_model.machines.priority.PriorityOutcome`'s value -
     `"resolve_top"` or `"end_step"`."""
     settled_through: list[str] | None = None
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    """See `ActionOutcome.notices`."""
     log_seq: int | None = None
 
 

@@ -317,6 +317,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="color letter (W/U/B/R/G/C) for a mana ability that offers a choice",
     )
     activate.add_argument(
+        "--x",
+        type=int,
+        default=None,
+        help=(
+            "the chosen value of X (CR 602.2b), for an activation cost that "
+            "carries one - Fiend Artisan's own '{X}{B/G}, {T}, Sacrifice "
+            "another creature: Search ...'. Omitting this when the ability's "
+            "own cost needs it is refused with the engine's own reason, "
+            "'... needs X announced ...' - not a crash and not a silent "
+            "activation at X=0"
+        ),
+    )
+    activate.add_argument(
         "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
     )
     priority_flag(activate)
@@ -793,6 +806,8 @@ def run(argv: list[str] | None = None) -> int:
             body["discarding"] = _parse_ids(args.discarding)
         if args.exiling:
             body["exiling"] = _parse_ids(args.exiling)
+        if args.x is not None:
+            body["x_value"] = args.x
         if args.color:
             body["color"] = args.color
         if args.reasoning:

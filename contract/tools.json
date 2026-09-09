@@ -68,6 +68,13 @@
           "type_error": null
         },
         {
+          "default": null,
+          "has_default": true,
+          "name": "x_value",
+          "type": "int | None",
+          "type_error": null
+        },
+        {
           "default": false,
           "has_default": true,
           "name": "dry_run",
