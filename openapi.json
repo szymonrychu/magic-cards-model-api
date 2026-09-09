@@ -340,6 +340,7 @@
           "play_land",
           "turn_face_up",
           "suspend",
+          "companion",
           "foretell",
           "plot",
           "dredge",
