@@ -39,6 +39,52 @@ export function agentFrom(fields) {
   return { model, effort, max_thinking_tokens };
 }
 
+/** The first 8 hex chars of a `game_id` (a bare `uuid4().hex`, `app.py`'s
+ * own docstring) - the same prefix a human already sees in server logs and
+ * a game's own URL, so it is a stable, at-a-glance way to tell two rows
+ * apart that otherwise look identical (same opponent, same model/effort,
+ * even the same rendered "when"). `"-"` for a row with no id at all, which
+ * never happens for a real row but keeps this total rather than throwing. */
+export function shortGameId(gameId) {
+  return gameId ? String(gameId).slice(0, 8) : "-";
+}
+
+/** How long ago `iso` (a UTC ISO 8601 timestamp, or falsy/unparseable) was,
+ * relative to `nowMs` - `null` when there is nothing to show. `nowMs` is a
+ * parameter rather than read from the wall clock so this stays a pure,
+ * deterministic function: `ui/render/lobby.js` calls it with `Date.now()`,
+ * `tests/test_ui_lobby.py` calls it with a fixed instant.
+ *
+ * A negative age (the timestamp is technically in the future - clock skew
+ * between this browser and the server) reads the same as "just now" rather
+ * than a nonsensical negative duration. Past 30 days this stops answering
+ * "how long ago" at all and gives the plain date instead - by then that is
+ * the more useful thing to scan for. */
+export function relativeTime(iso, nowMs = Date.now()) {
+  if (!iso) return null;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const diffSec = Math.max(0, Math.round((nowMs - then) / 1000));
+  if (diffSec < 45) return "just now";
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHour = Math.round(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDay = Math.round(diffHour / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return new Date(then).toISOString().slice(0, 10);
+}
+
+/** The one timestamp a row has to show, whichever it is: `createdAt` for a
+ * row the server still lists (a plain column, see `decks_api.
+ * LobbyGameSummary.created_at`), or `endedAt` for a row only `mcm.games.v1`
+ * still remembers - `list_lobby_games` drops an archived game outright, so
+ * such a row never carries a `created_at` at all. `null` when neither is
+ * known. */
+export function rowTimestamp(row) {
+  return (row && (row.createdAt || row.endedAt)) || null;
+}
+
 /** A saved game the server's list no longer carries - one this browser
  * ended, which `DELETE /api/lobby/games/{id}` soft-deletes (`archived_at`)
  * rather than destroys, so its ledger is still there to review. Everything
@@ -58,6 +104,10 @@ function archivedRow(entry) {
     // recorded_ending`), and an ended game is not listed - `archived` is
     // already the reason its review may be opened.
     recordedEnding: null,
+    // Never known for an ended row - `list_lobby_games` drops it outright,
+    // so nothing here ever saw its `created_at`. `rowTimestamp` falls back
+    // to `endedAt` below for exactly this row.
+    createdAt: null,
     endedAt: entry.endedAt || null,
     model: entry.model || null,
     effort: entry.effort || null,
@@ -106,7 +156,12 @@ export function lobbyViewModel(games, saved) {
   const listed = new Set((games || []).map((g) => g.game_id));
   const ended = (saved || [])
     .filter((s) => s.endedAt && !listed.has(s.gameId))
-    .map((s) => archivedRow(s));
+    .map((s) => archivedRow(s))
+    // Newest-ended first, same direction as the live rows above them
+    // (`decks_api.list_lobby_games` now sorts `created_at` descending) -
+    // the server has nothing left to sort these by, so this is the one
+    // ordering `lobbyViewModel` does itself.
+    .sort((a, b) => (b.endedAt || "").localeCompare(a.endedAt || ""));
   return [
     ...(games || [])
     // `list_lobby_games` lists every lobby-booted game on the server, not
@@ -148,6 +203,11 @@ export function lobbyViewModel(games, saved) {
         // only thing that says its review will actually read rather than
         // 409.
         recordedEnding: g.recorded_ending === undefined ? null : g.recorded_ending,
+        // A plain column (`decks_api.LobbyGameSummary.created_at`) - the
+        // row's own "when", and (with the server's own newest-first sort)
+        // what lets a person actually find the game they were just playing
+        // instead of guessing between two otherwise-identical rows.
+        createdAt: g.created_at || null,
         endedAt: null,
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,

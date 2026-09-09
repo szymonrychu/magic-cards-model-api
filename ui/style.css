@@ -135,6 +135,15 @@ h3 { font-size: 14px; }
 #games-table th { color: var(--ink-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
 #games-table td:last-child { display: flex; gap: 6px; }
 #games-table tbody tr:hover { background: var(--bg-raised); }
+/* The short game id: a technical, secondary detail (same idiom as
+   `.review-refusal`'s monospace/faint treatment) - present for
+   disambiguation, not what a person scans the row for first. */
+#games-table .game-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); font-size: 12px; }
+/* The live game's state pill reads `ok` (green) and an unopenable one reads
+   `bad` (red) - `.pill.ok`/`.pill.bad` above already carry those colors,
+   reused rather than redefined, so the state cell reads differently from a
+   finished or ended row at a glance, exactly the way the connection pill
+   already does elsewhere on this page. */
 
 /* -------------------------------------------------------------- game ---- */
 

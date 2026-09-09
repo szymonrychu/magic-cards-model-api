@@ -75,6 +75,7 @@ GAMES = [
         "is_over": False,
         "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
         "seats": {"you": "u1"},
+        "created_at": "2026-09-08T12:00:00+00:00",
     }
 ]
 SAVED = [{"gameId": "g1", "uid": "u1", "aiUid": "u2"}]
@@ -93,6 +94,7 @@ def test_lobby_rows_join_server_games_with_saved_seats() -> None:
             "unloadable": None,
             "recordedEnding": None,
             "endedAt": None,
+            "createdAt": "2026-09-08T12:00:00+00:00",
             "model": "opus",
             "effort": "max",
             "myUid": "u1",
@@ -303,7 +305,7 @@ def test_lobby_table_renders_a_row_and_end_ends_the_game() -> None:
     )
     assert "GET /api/lobby/games?uids=u1%2Cu2" in result["fetchCalls"]
     assert result["rowText"][0] == "bot"
-    assert result["rowText"][3] == "playing"
+    assert result["rowText"][5] == "playing"
     assert "DELETE /api/lobby/games/g1?uid=u1" in result["fetchCalls"]
     assert result["rowCountAfter"] == 1
     assert len(result["savedAfter"]) == 1
@@ -833,3 +835,211 @@ def test_an_unopenable_game_with_no_recorded_ending_offers_no_review_button() ->
     result = _actions_for(GAMES_UNLOADABLE)
     assert result["labels"] == ["End"]
     assert result["shown"] == []
+
+
+
+# --------------------------------------------------------------------------
+# telling two games apart: a short game id, a relative timestamp, and
+# newest-first ordering (see magic_cards_model_api.decks_api.
+# list_lobby_games for the server half of the ordering fix)
+# --------------------------------------------------------------------------
+
+
+def test_short_game_id_is_the_first_eight_hex_chars() -> None:
+    """The lobby row's disambiguator is the same prefix a human already sees
+    in server logs and URLs - `game_id` is a bare `uuid4().hex`
+    (`app.py`'s own docstring), so the first 8 chars is a short, stable slice
+    of the real id, not a fabricated label."""
+    assert (
+        run_module("lobby_model.js", "m.shortGameId(id)", id="045634daabcffa11beef00112233445")
+        == "045634da"
+    )
+
+
+def test_short_game_id_handles_a_missing_id() -> None:
+    assert run_module("lobby_model.js", "m.shortGameId(id)", id=None) == "-"
+
+
+def _iso_ms_before(now_ms: int, delta_ms: int) -> str:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp((now_ms - delta_ms) / 1000, tz=UTC).isoformat()
+
+
+def test_relative_time_buckets() -> None:
+    """Pure and deterministic: `nowMs` is passed explicitly rather than read
+    from the wall clock, so this pins exact wording without being sensitive
+    to when the test happens to run."""
+    now = 1_800_000_000_000  # an arbitrary fixed instant, ms since epoch
+    assert run_module("lobby_model.js", "m.relativeTime(iso, now)", iso=None, now=now) is None
+    assert (
+        run_module("lobby_model.js", "m.relativeTime(iso, now)", iso="not-a-date", now=now)
+        is None
+    )
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.relativeTime(iso, now)",
+            iso=_iso_ms_before(now, 5_000),
+            now=now,
+        )
+        == "just now"
+    )
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.relativeTime(iso, now)",
+            iso=_iso_ms_before(now, 3 * 60_000),
+            now=now,
+        )
+        == "3m ago"
+    )
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.relativeTime(iso, now)",
+            iso=_iso_ms_before(now, 2 * 3_600_000),
+            now=now,
+        )
+        == "2h ago"
+    )
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.relativeTime(iso, now)",
+            iso=_iso_ms_before(now, 5 * 86_400_000),
+            now=now,
+        )
+        == "5d ago"
+    )
+    # Past the 30-day bucket, an absolute date rather than "40d ago" - by
+    # that point "how long ago" is no longer the useful question.
+    forty_days_iso = _iso_ms_before(now, 40 * 86_400_000)
+    expected_date = forty_days_iso[:10]
+    assert (
+        run_module("lobby_model.js", "m.relativeTime(iso, now)", iso=forty_days_iso, now=now)
+        == expected_date
+    )
+    # Clock skew (a timestamp that is technically in the future) must not
+    # read as a negative duration - it reads the same as "just now".
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.relativeTime(iso, now)",
+            iso=_iso_ms_before(now, -10_000),
+            now=now,
+        )
+        == "just now"
+    )
+
+
+def test_row_timestamp_prefers_created_at_falls_back_to_ended_at() -> None:
+    """The single "when" a row can show: `createdAt` for a live/listed row,
+    `endedAt` for one only `mcm.games.v1` still remembers (the server no
+    longer lists an archived game, so it never carries a `created_at`)."""
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.rowTimestamp(row)",
+            row={"createdAt": "2026-09-01T00:00:00Z", "endedAt": "2026-09-05T00:00:00Z"},
+        )
+        == "2026-09-01T00:00:00Z"
+    )
+    assert (
+        run_module(
+            "lobby_model.js",
+            "m.rowTimestamp(row)",
+            row={"createdAt": None, "endedAt": "2026-09-05T00:00:00Z"},
+        )
+        == "2026-09-05T00:00:00Z"
+    )
+    assert (
+        run_module(
+            "lobby_model.js", "m.rowTimestamp(row)", row={"createdAt": None, "endedAt": None}
+        )
+        is None
+    )
+
+
+def test_ended_rows_sort_newest_ended_first() -> None:
+    """Two browser-ended games this server no longer lists must still read
+    newest-first, same as the live rows above them - `lobbyViewModel` sorts
+    them by `endedAt` itself since the server has nothing left to sort."""
+    saved = [
+        {
+            "gameId": "old",
+            "uid": "u1",
+            "aiUid": "u2",
+            "opponent": "bot",
+            "endedAt": "2026-09-01T00:00:00Z",
+        },
+        {
+            "gameId": "new",
+            "uid": "u3",
+            "aiUid": "u4",
+            "opponent": "bot",
+            "endedAt": "2026-09-08T00:00:00Z",
+        },
+    ]
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, saved)", games=[], saved=saved)
+    assert [r["gameId"] for r in rows] == ["new", "old"]
+
+
+def test_lobby_row_carries_the_server_created_at() -> None:
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES, saved=SAVED)
+    assert rows[0]["createdAt"] == "2026-09-08T12:00:00+00:00"
+
+
+def test_the_games_table_shows_a_short_id_and_a_populated_started_cell() -> None:
+    """The row-level regression this whole defect traces to: two games
+    against the same opponent on the same decks used to render identically.
+    A short, stable id and a populated timestamp cell are what tell them
+    apart now."""
+    games_with_id = [{**GAMES[0], "game_id": "045634daabcffa11beef00112233445"}]
+    saved_for_id = [{"gameId": "045634daabcffa11beef00112233445", "uid": "u1", "aiUid": "u2"}]
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const table = document.createElement("table");
+          table.setAttribute("id", "games-table");
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          table.appendChild(tbody);
+          document.appendChild(table);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const cells = tbody.children[0].children;
+          const gameCell = cells[1];
+          const startedCell = cells[2];
+          const stateCell = cells[cells.length - 2];
+          return {
+            rowText: cells.map((td) => td.textContent),
+            gameTitle: gameCell.attrs.title || null,
+            startedTitle: startedCell.attrs.title || null,
+            stateClass: stateCell.className || null,
+          };
+        })()
+        """,
+        games=games_with_id,
+        saved=saved_for_id,
+    )
+    assert result["rowText"][1] == "045634da"
+    assert result["gameTitle"] == "045634daabcffa11beef00112233445"
+    assert result["rowText"][2] != "-"
+    assert result["startedTitle"] and "2026-09-08" in result["startedTitle"]
+    assert "state-playing" in (result["stateClass"] or "")

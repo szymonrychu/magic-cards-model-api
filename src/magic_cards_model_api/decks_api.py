@@ -286,7 +286,16 @@ def _recorded_ending(game_id: str) -> int | None:
 async def list_lobby_games(request: Request, uids: str | None = None) -> dict[str, Any]:
     """Every lobby-booted game (`store.ui_games()` - not filtered to
     `live_ui_games()`, so a finished-but-not-yet-ended game still shows up for
-    End game to clear), oldest first, for the lobby's game list.
+    End game to clear), newest first, for the lobby's game list.
+
+    Newest first, not the `created_at` ascending order this route used to
+    answer with: the game a player wants from this list is almost always the
+    one just played or still being played, and oldest-first put that game at
+    the *bottom*, past however many older ones came before it. That is the
+    condition the lobby UI defect traces to - the rows were indistinguishable
+    and the one just played was not even the top row - and `created_at` was
+    already a plain, indexable column the sort already keyed off, so this is
+    a `reverse=True`, not a new query.
 
     `uids` is a comma-separated list of seat uids the caller holds, across
     every game it has ever seen - each game's `seats` in the response is
@@ -387,7 +396,7 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
                 "recorded_ending": (None if unloadable is None else _recorded_ending(game_id)),
             }
         )
-    games.sort(key=lambda entry: entry["created_at"] or "")
+    games.sort(key=lambda entry: entry["created_at"] or "", reverse=True)
     return {"games": games}
 
 

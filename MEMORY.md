@@ -1419,3 +1419,29 @@ whoever works on the repo itself.
   opponent/turn/agent but no id or date, and `list_lobby_games` sorts
   oldest-first with locally-known ended games appended last, so the game
   just played is not the top row.
+
+- **2026-09-09 - the lobby's "no id-mixup bug" gap: rows had nothing to tell
+  two games apart by.** The click path was already proven innocent (see the
+  entry above); the actual defect was that a row carried opponent/turn/agent
+  and nothing that named *which* game it was, and `list_lobby_games` sorted
+  oldest-first with ended rows appended last - so the game someone just
+  played was neither distinguishable from an older one against the same
+  opponent/decks nor even the top row. Fixed on both sides: the server sort
+  is `reverse=True` on the same `created_at` key it already sorted by (no
+  new query, no N+1 - `LobbyGameSummary.created_at` was already a plain
+  column), and the client adds a short, stable id (`shortGameId` - the first
+  8 hex chars of the `uuid4().hex` game id, the same prefix a human already
+  sees in server logs and the game's own URL) and a relative "when"
+  (`relativeTime`, pure and deterministic - it takes `nowMs` as a parameter
+  rather than reading the wall clock, which is what keeps
+  `tests/test_ui_lobby.py` able to pin exact wording). `rowTimestamp` picks
+  `createdAt` for a listed row or `endedAt` for one only `mcm.games.v1`
+  remembers (an archived game is dropped by `list_lobby_games` outright, so
+  it never carries a `created_at`); `lobbyViewModel` sorts those
+  browser-only ended rows itself, newest-ended-first, since the server has
+  nothing left to sort them by. The state cell became a pill
+  (`pill state-<state>`, reusing the page's existing `.pill.ok`/`.pill.bad`
+  colors rather than inventing new ones) so the one row actually playable
+  right now reads differently from a finished, ended, or unopenable one -
+  `gameState(row)` was already computing that distinction and the row's
+  appearance was simply not using it.

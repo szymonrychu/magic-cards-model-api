@@ -71,7 +71,10 @@ def test_end_game_needs_a_seat_of_that_game(client: TestClient) -> None:
         )
 
 
-def test_created_at_is_stamped_and_the_listing_is_oldest_first(client: TestClient) -> None:
+def test_created_at_is_stamped_and_the_listing_is_newest_first(client: TestClient) -> None:
+    """The game a player most likely wants is almost always the one they just
+    started, not the oldest one still open - so the listing sorts newest
+    first (`decks_api.list_lobby_games`'s own `created_at` sort, reversed)."""
     first = create(client)
     second = create(client)
     try:
@@ -80,9 +83,9 @@ def test_created_at_is_stamped_and_the_listing_is_oldest_first(client: TestClien
         assert by_id[first["game_id"]]["created_at"] is not None
         assert by_id[second["game_id"]]["created_at"] is not None
         assert by_id[first["game_id"]]["created_at"] <= by_id[second["game_id"]]["created_at"]
-        # The listing itself is ordered by it, oldest first.
+        # The listing itself is ordered by it, newest first.
         ids_in_order = [g["game_id"] for g in listing]
-        assert ids_in_order.index(first["game_id"]) < ids_in_order.index(second["game_id"])
+        assert ids_in_order.index(second["game_id"]) < ids_in_order.index(first["game_id"])
     finally:
         client.delete(
             f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}

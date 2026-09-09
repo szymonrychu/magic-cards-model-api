@@ -30,6 +30,17 @@
 // deck picker also gains `#ai-model`/`#ai-effort`/`#ai-thinking`, read
 // through `agentFrom` into the `agent` field `POST /api/lobby/games` sends for
 // the AI player.
+//
+// Two rows against the same opponent on the same decks used to render
+// identically - opponent, turn, model/effort and nothing else - which is
+// what let a person click the wrong one. Every row now also carries a
+// short, stable game id (`shortGameId`) and a relative "when"
+// (`relativeTime`/`rowTimestamp`), and `list_lobby_games` lists newest
+// first rather than oldest first, so the game just played reads at the top
+// with something to actually tell it apart from an older one. The state
+// cell is a pill rather than plain text, so the one row that can actually
+// be acted on right now (`playing`) is visually distinct from a finished,
+// ended, or unopenable one.
 
 import { api } from "../api.js";
 import {
@@ -40,6 +51,9 @@ import {
   saveGames,
   dropSavedGame,
   upsertSavedGame,
+  shortGameId,
+  relativeTime,
+  rowTimestamp,
 } from "../lobby_model.js";
 import { apiBase, lobbyBase } from "../config.js";
 
@@ -283,12 +297,39 @@ function renderGamesTable(root, handlers, rows) {
     const tr = document.createElement("tr");
     const opponentTd = document.createElement("td");
     opponentTd.textContent = row.opponent || "(unknown)";
+    // A short, stable id (the first 8 hex chars of the `uuid4().hex` game
+    // id - the same prefix a human already sees in server logs and the
+    // game's own URL) and a relative "when". Two games against the same
+    // opponent on the same decks used to render identically; this is what
+    // tells them apart, and the full id/timestamp are in each cell's
+    // `title` for the rare case even that is not enough.
+    const gameTd = document.createElement("td");
+    gameTd.className = "game-id";
+    gameTd.textContent = shortGameId(row.gameId);
+    if (row.gameId) gameTd.setAttribute("title", row.gameId);
+    const startedTd = document.createElement("td");
+    const when = rowTimestamp(row);
+    startedTd.textContent = when ? relativeTime(when) : "-";
+    if (when) {
+      startedTd.setAttribute("title", `${row.archived ? "ended" : "started"} ${when}`);
+    }
     const turnTd = document.createElement("td");
     turnTd.textContent = `${row.turn ?? "-"} / ${row.phase || "-"}`;
     const agentTd = document.createElement("td");
     agentTd.textContent = row.model ? `${row.model} / ${row.effort || "high"}` : "-";
     const stateTd = document.createElement("td");
-    stateTd.textContent = gameState(row);
+    const state = gameState(row);
+    stateTd.textContent = state;
+    // A pill, not plain text - so the one row that can actually be acted on
+    // right now (`playing`) reads differently at a glance from a finished,
+    // ended, or unreadable one, the same idiom `render/panels.js` already
+    // uses for the AI-seat pill (`pill ${bad ? "bad " : ""}state-${state}`).
+    // `ok`/`bad` reuse the meanings those colors already carry elsewhere in
+    // this page (the connection pill): green for "this is live", red for
+    // "this is a problem". Pending/over/ended stay a plain, uncolored pill.
+    stateTd.className = `pill state-${state}${state === "playing" ? " ok" : ""}${
+      state === "unopenable" ? " bad" : ""
+    }`;
     // The engine's own refusal, where a human will actually read it. The
     // lobby is the only place this game is still visible at all, so if the
     // reason is not here it is nowhere.
@@ -345,7 +386,9 @@ function renderGamesTable(root, handlers, rows) {
       });
       actionsTd.appendChild(forgetBtn);
     }
-    for (const cell of [opponentTd, turnTd, agentTd, stateTd, actionsTd]) tr.appendChild(cell);
+    for (const cell of [opponentTd, gameTd, startedTd, turnTd, agentTd, stateTd, actionsTd]) {
+      tr.appendChild(cell);
+    }
     tbody.appendChild(tr);
   }
 }
