@@ -45,7 +45,15 @@
  * does not know - which is a bug in the caller, not a default to fall back
  * on silently. */
 export function surfaceForChoice(kind) {
-  if (kind === "hand_actions" || kind === "abilities" || kind === "mana_colour" || kind === "defender") return "popover";
+  if (
+    kind === "hand_actions" ||
+    kind === "abilities" ||
+    kind === "mana_ability" ||
+    kind === "mana_colour" ||
+    kind === "defender"
+  ) {
+    return "popover";
+  }
   if (kind === "announcement") return "ribbon";
   if (kind === "decision" || kind === "pregame" || kind === "combat" || kind === "game_over") return "prompt";
   return null;
@@ -63,7 +71,10 @@ export function surfaceForChoice(kind) {
  * A `"pin"` or `"attack"` plan is listed here as the popover it *would* use.
  * Whether one actually opens is the caller's own count of the options: a
  * land with one colour, or an attack with one defender, has nothing to ask
- * and acts immediately. */
+ * and acts immediately. A pin can ask twice - `"mana_ability"` first when
+ * the source has more than one mana ability, then `"mana_colour"` if the
+ * chosen one still offers a choice of colour - and both are the same
+ * popover over the same card, which is why the plan names only the second. */
 export function choiceForPlan(plan) {
   const kind = plan && plan.kind;
   if (kind === "menu") {
@@ -80,6 +91,22 @@ export function choiceForPlan(plan) {
 
 function item(key, label, sublabel) {
   return { key, label, sublabel: sublabel || "" };
+}
+
+/** One menu item for one ability, keyed `<prefix>:<its own index>`.
+ *
+ * An activated ability is printed "cost: effect", so its cost is usually the
+ * first thing its own text already says - and repeating it underneath is the
+ * ugliness the browser pass caught on Walking Ballista, whose menu read
+ * "Remove a +1/+1 counter from this creature: It deals 1 damage to any
+ * target." with "Remove a +1/+1 counter from this creature" a second time in
+ * dim type below it. The cost is kept as a sublabel only when the text does
+ * not already open with it. */
+function abilityItem(prefix, ability) {
+  const text = ability.text || "";
+  const cost = (ability.cost || "").trim();
+  const repeated = Boolean(cost) && text.trimStart().startsWith(cost);
+  return item(`${prefix}:${ability.index}`, text, repeated ? "" : cost);
 }
 
 /** The items a hand card's menu offers, in order: the ordinary thing first
@@ -100,24 +127,24 @@ export function handMenuItems(plan, card) {
 /** The items a permanent's menu offers: one per activated ability, keyed by
  * the ability's own index (not its position in this list - a permanent can
  * offer ability 0 and ability 2 with nothing offerable between them), then
- * Crew last for a Vehicle.
- *
- * An activated ability is printed "cost: effect", so its cost is usually the
- * first thing its own text already says - and repeating it underneath is the
- * ugliness the browser pass caught on Walking Ballista, whose menu read
- * "Remove a +1/+1 counter from this creature: It deals 1 damage to any
- * target." with "Remove a +1/+1 counter from this creature" a second time in
- * dim type below it. The cost is kept as a sublabel only when the text does
- * not already open with it. */
+ * Crew last for a Vehicle. */
 export function abilityMenuItems(plan) {
-  const items = (plan.abilities || []).map((ability) => {
-    const text = ability.text || "";
-    const cost = (ability.cost || "").trim();
-    const repeated = Boolean(cost) && text.trimStart().startsWith(cost);
-    return item(`activate:${ability.index}`, ability.text, repeated ? "" : cost);
-  });
+  const items = (plan.abilities || []).map((ability) => abilityItem("activate", ability));
   if (plan.vehicle) items.push(item("crew", "Crew"));
   return items;
+}
+
+/** One item per mana ability a source being pinned mid-cast could be tapped
+ * for, keyed by the ability's own index - what reaches the engine as
+ * `ManaSource.ability_index`.
+ *
+ * The label is the ability's whole printed text, restriction sentence
+ * included, because that sentence is the entire difference between the two:
+ * Eldrazi Temple's index 0 adds {C} and its index 1 adds {C}{C} that "may
+ * only be spent on Eldrazi spells", and a menu that showed anything shorter
+ * would offer the player two items it could not tell apart. */
+export function manaAbilityMenuItems(abilities) {
+  return (abilities || []).map((ability) => abilityItem("ability", ability));
 }
 
 /** One item per colour a pinned mana source could be tapped for. */

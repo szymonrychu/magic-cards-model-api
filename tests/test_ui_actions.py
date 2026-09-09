@@ -985,3 +985,68 @@ def test_target_slot_index_ignores_a_stale_out_of_range_focus() -> None:
         aff=BOLT_AFF,
     )
     assert result == 0
+
+
+# -- pinning WHICH mana ability (API2) --------------------------------------
+
+
+def test_a_pinned_ability_index_reaches_the_request_body() -> None:
+    """`pinSource` takes the chosen ability index as its fourth argument and
+    it survives all the way to `bodyFor`'s `mana_sources` as
+    `ManaSource.ability_index` - Eldrazi Temple's restricted {C}{C} is index
+    1, and without this the request could only ever name index 0."""
+    body = run_module(
+        "actions.js",
+        "m.bodyFor(m.pinSource(m.begin('cast', memnite, {}), 'et1', null, 1), "
+        "'alice', ['et1', 'm1'])",
+        memnite=MEMNITE,
+    )
+    assert body["mana_sources"] == [{"card_id": "et1", "ability_index": 1}, "m1"]
+
+
+def test_a_pinned_ability_index_and_colour_both_reach_the_request_body() -> None:
+    body = run_module(
+        "actions.js",
+        "m.bodyFor(m.pinSource(m.begin('cast', memnite, {}), 'f1', 'R', 1), 'alice', ['f1'])",
+        memnite=MEMNITE,
+    )
+    assert body["mana_sources"] == [{"card_id": "f1", "colors": ["R"], "ability_index": 1}]
+
+
+def test_a_pin_that_names_no_ability_keeps_todays_wire_shapes() -> None:
+    """The regression guard: a source pinned without an ability named - what
+    every one-mana-ability permanent still does - serializes exactly as it
+    did before `ability_index` existed, so the engine's `auto_tap` keeps
+    solving the common case."""
+    bodies = run_module(
+        "actions.js",
+        "[m.bodyFor(m.pinSource(m.begin('cast', memnite, {}), 'd1', null), 'alice', ['d1', 'm1']),"
+        " m.bodyFor(m.pinSource(m.begin('cast', memnite, {}), 'd1', 'R'), 'alice', ['d1'])]",
+        memnite=MEMNITE,
+    )
+    assert bodies[0]["mana_sources"] == ["d1", "m1"]
+    assert bodies[1]["mana_sources"] == [{"card_id": "d1", "colors": ["R"]}]
+
+
+def test_a_mana_abilitys_own_source_is_still_dropped_when_it_names_an_index() -> None:
+    """The `isManaAbility` filter in `bodyFor` reads `card_id` off whichever
+    shape a source came out as - a bare id, a coloured `ManaSource`, or now
+    one carrying `ability_index`."""
+    land = {
+        "id": "d1",
+        "name": "Cascade Bluffs",
+        "zone": "battlefield",
+        "controller": "alice",
+        "type_line": "Land",
+        "abilities": [
+            {"index": 0, "text": "{T}: Add {C}.", "is_mana_ability": True},
+            {"index": 1, "text": "{U/R}, {T}: Add {U}{U}.", "is_mana_ability": True},
+        ],
+    }
+    body = run_module(
+        "actions.js",
+        "m.bodyFor(m.pinSource(m.begin('activate', land, { abilityIndex: 1 }), 'd1', null, 1),"
+        " 'alice', ['d1', 'm1'])",
+        land=land,
+    )
+    assert body["mana_sources"] == ["m1"]

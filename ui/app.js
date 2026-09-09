@@ -18,7 +18,7 @@ import { loadSymbols } from "./symbols.js";
 import * as A from "./actions.js";
 import * as P from "./priority.js";
 import * as C from "./combat.js";
-import { untappedSources, colorOptions } from "./mana.js";
+import { untappedSources, colorOptions, manaAbilities } from "./mana.js";
 import * as M from "./menus.js";
 import { viewModel } from "./decisions.js";
 import { fill, canFill } from "./targeting.js";
@@ -446,8 +446,17 @@ function anchorFor(card, event) {
  * about the one that gets picked. `menus.js` decides what is offered, this
  * decides what happens - neither knows about the other's half. */
 function openCardMenu(card, event, items, run) {
+  return openCardMenuAt(anchorFor(card, event), card, items, run);
+}
+
+/** The same, against an element already resolved. A menu opened from
+ * *inside* another menu's `onSelect` cannot go back to the original click's
+ * `event`: that dispatch has finished, and a browser nulls `currentTarget`
+ * once it has. The caller resolves the anchor while the click is still live
+ * and hands the element on. */
+function openCardMenuAt(anchor, card, items, run) {
   return showPopover(
-    anchorFor(card, event),
+    anchor,
     items.map((item) => ({ ...item, onSelect: () => run(item.key) })),
     { title: card.name }
   );
@@ -550,42 +559,88 @@ async function beginActivate(card, index) {
   return refreshAffordance();
 }
 
-/** The index of `card`'s first mana ability - what `pinLand` asks
- * `colorOptions` about, rather than hardcoding index 0. A basic land parses
- * to exactly one ability at index 0, but a permanent with a printed ability
- * ahead of its intrinsic mana ability (or several mana abilities) does not,
- * and `planPermanentClick`'s own `{kind: "pin"}` guard already established
- * `card` has at least one `is_mana_ability` entry before this is ever
- * called. */
-function manaAbilityIndex(card) {
-  const index = (card.abilities || []).findIndex((a) => a.is_mana_ability);
-  return index < 0 ? 0 : index;
+/** What a mid-cast click on a mana source should do - the step after
+ * `planPermanentClick`'s own `{kind: "pin"}`, and pure for the same reason
+ * it is: `pinLand` below only acts on what this decides.
+ *
+ * `{kind: "unpin"}` (it was already pinned - the click takes it back) |
+ * `{kind: "ability", abilities}` (more than one mana ability, so *which one*
+ * has to be asked before anything else: Eldrazi Temple taps for {C}, or for
+ * {C}{C} that may only be spent on Eldrazi spells, and the two are not
+ * interchangeable) | `{kind: "colour", abilityIndex, colors}` (one ability,
+ * but it offers a choice of colour) | `{kind: "pin", abilityIndex, color}`
+ * (nothing left to ask - pin it now).
+ *
+ * `abilityIndex` in the two settled plans is what goes on the wire, and it
+ * is deliberately `null` whenever the source had only ONE mana ability:
+ * there was no choice to record, so the request keeps exactly the shape it
+ * has always had and the engine's `auto_tap` keeps solving it. A basic land
+ * therefore still pins on one click, with no menu of any kind. */
+export function planPin(card, action) {
+  if ((action.pinned || []).some((p) => p.card_id === card.id)) return { kind: "unpin" };
+  const abilities = manaAbilities(card);
+  if (abilities.length > 1) return { kind: "ability", abilities };
+  // `planPermanentClick`'s `{kind: "pin"}` guard already established there
+  // is at least one `is_mana_ability` entry; index 0 is the fallback for a
+  // caller that reached here another way.
+  return pinStep(card, abilities.length ? abilities[0].index : 0, false);
 }
 
-async function pinLand(card, event) {
-  const app = store.get();
-  const abilityIndex = manaAbilityIndex(card);
-  const colors = colorOptions(card, abilityIndex);
-  const pinnedAlready = app.action.pinned.some((p) => p.card_id === card.id);
-  if (pinnedAlready) {
-    store.set({ action: A.unpinSource(app.action, card.id) });
+/** The same step once the player has picked one of several mana abilities:
+ * the index IS named on the wire from here, because it is the choice the
+ * player just made. */
+export function planPinnedAbility(card, abilityIndex) {
+  return pinStep(card, abilityIndex, true);
+}
+
+function pinStep(card, index, named) {
+  const colors = colorOptions(card, index);
+  const abilityIndex = named ? index : null;
+  if (colors.length > 1) return { kind: "colour", abilityIndex, colors };
+  // No single colour to pin (`colorOptions` came back empty - a one-option
+  // ability reports `mana_options: null`, `affordances.py`'s own
+  // `ability_hints`) still pins *which* source, with no colour named, so
+  // `mana.js`'s `manaSources` leaves the colour to the engine's own
+  // `auto_tap` rather than forcing a colourless `"C"` choice onto a land
+  // that never produces colourless mana at all.
+  return { kind: "pin", abilityIndex, color: colors[0] ?? null };
+}
+
+/** Exported for `tests/test_ui_app.py` only, alongside `store`/`fire`/
+ * `tryTarget` above - the two-menu flow (which ability, then which colour)
+ * is only real once it has been driven through `showPopover` itself. */
+export async function pinLand(card, event) {
+  const plan = planPin(card, store.get().action);
+  if (plan.kind === "unpin") {
+    store.set((s) => ({ action: A.unpinSource(s.action, card.id) }));
     return previewAndMaybeFire();
   }
-  if (colors.length <= 1) {
-    // No single colour to pin (`colorOptions` came back empty - a one-option
-    // ability reports `mana_options: null`, `affordances.py`'s own
-    // `ability_hints`) still pins *which* source, with no colour named, so
-    // `mana.js`'s `manaSources` sends it as a bare id and the engine's own
-    // `auto_tap` picks the colour, rather than forcing a colourless `"C"`
-    // choice onto a land that never produces colourless mana at all.
-    store.set({ action: A.pinSource(app.action, card.id, colors[0] || null) });
-    return previewAndMaybeFire();
+  // Resolved once, here, while the click that opened this is still being
+  // dispatched - the ability menu's own `onSelect` runs after it is over.
+  const anchor = anchorFor(card, event);
+  if (plan.kind === "ability") {
+    return openCardMenuAt(anchor, card, M.manaAbilityMenuItems(plan.abilities), (key) => {
+      const index = Number(key.slice("ability:".length));
+      return settlePin(anchor, card, planPinnedAbility(card, index));
+    });
   }
-  openCardMenu(card, event, M.manaMenuItems(colors), (key) => {
-    const colour = key.slice("colour:".length);
-    store.set((s) => ({ action: A.pinSource(s.action, card.id, colour) }));
-    previewAndMaybeFire();
-  });
+  return settlePin(anchor, card, plan);
+}
+
+/** Act on a settled `planPin`/`planPinnedAbility` step: ask for the colour
+ * if the chosen ability offers one (a second popover over the same card),
+ * otherwise pin it. Both answers carry `plan.abilityIndex` through, so a
+ * choice of ability and a choice of colour reach the request together. */
+function settlePin(anchor, card, plan) {
+  if (plan.kind === "colour") {
+    return openCardMenuAt(anchor, card, M.manaMenuItems(plan.colors), (key) => {
+      const colour = key.slice("colour:".length);
+      store.set((s) => ({ action: A.pinSource(s.action, card.id, colour, plan.abilityIndex) }));
+      previewAndMaybeFire();
+    });
+  }
+  store.set((s) => ({ action: A.pinSource(s.action, card.id, plan.color, plan.abilityIndex) }));
+  return previewAndMaybeFire();
 }
 
 // Exported for `tests/test_ui_app.py` only, alongside `store` above - see

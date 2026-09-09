@@ -208,8 +208,12 @@ export function setShare(action, id, n) {
   return { ...action, shares: { ...action.shares, [id]: Number(n) } };
 }
 
-export function pinSource(action, id, color) {
-  return { ...action, pinned: pin(action.pinned, id, color) };
+/** `abilityIndex` is `null` for a source with a single mana ability (nothing
+ * to choose, so nothing is named and the request keeps its old shape) and
+ * the chosen index when the player picked among several - `mana.js`'s `pin`
+ * carries the rest. */
+export function pinSource(action, id, color, abilityIndex) {
+  return { ...action, pinned: pin(action.pinned, id, color, abilityIndex) };
 }
 
 export function unpinSource(action, id) {
