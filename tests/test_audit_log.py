@@ -146,6 +146,8 @@ def test_pass_priority_outcomes(client, game):
         # Nothing to settle: `precombat_main` grants priority (CR 500.3's two
         # exceptions are the untap and cleanup steps, and this is neither).
         "settled_through": [],
+        # No `notices` key: a plain pass on an empty stack never resolves
+        # anything, so `commands._new_notices` found nothing to attach.
     }
     assert state(client, game)["priority_holder"] == "bob"
 

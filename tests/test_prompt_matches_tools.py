@@ -58,6 +58,12 @@ NON_TOOL_VOCABULARY = {
     "recent_log",
     "omitted",
     "seq",
+    # the fail-closed notice list every action/pass tool can now carry
+    # (commands._attach_notices) and two of its own per-entry fields - answer
+    # shape, none of them a tool or a parameter
+    "notices",
+    "mode_number",
+    "source_name",
     # the MCP 2026-07-28 result-shape name, not a tool or a parameter
     "input_required",
     # local Python names in this module, no MCP meaning

@@ -364,6 +364,60 @@ def redact_snapshot(snapshot: dict[str, Any], viewer: str) -> dict[str, Any]:
 
 _HIDDEN_ZONES = {"hand", "library", "sideboard"}
 
+#: Every field across the 19 notice shapes that carries a card's own printed
+#: words rather than a bare number or id - `ModeNotice.mode_number` and this
+#: module's own `zone`/`controller` bookkeeping are deliberately not here,
+#: since neither names a card. `InterveningIfNotice.clause`,
+#: `CastConditionNotice.condition`, and `OpeningHandNotice.card_name`/`.text`
+#: are the three that are not plainly `text` - see each notice's own model in
+#: the engine (`machines/triggers.py`, `machines/opening_hand.py`).
+_NOTICE_TEXT_FIELDS = ("text", "clause", "condition", "card_name")
+
+
+def redact_notices(notices: list[dict[str, Any]], viewer: Viewer) -> list[dict[str, Any]]:
+    """`commands.run_command`'s new-notice records, as `viewer` may read
+    them - one entry at a time, since a single command can raise notices
+    about several different sources at once, each with its own zone and
+    controller.
+
+    Mirrors `redact_log_entry`'s own zone/owner guard just below
+    (`_HIDDEN_ZONES`, `player`/`controller`) rather than sharing it directly:
+    that guard runs only `isinstance(viewer, str)`, deliberately treating an
+    anonymous read as the debugger's own full eye (see `app.game_log`'s own
+    docstring) - correct for a snapshot nobody is hiding, wrong for a notice,
+    which can name a card in a hand nobody asked to have named. Every viewer
+    but `ADMIN` gets the same treatment here, anonymous included.
+
+    `zone`/`controller` are read off the notice itself, not looked up here:
+    `commands._new_notices` is the one place in the whole pipeline that still
+    holds a live `Game` next to a freshly-appended notice, and this function
+    - called again, later, against a notice already pulled back out of
+    storage for a `GET .../log` read - has no `Game` left to ask. A
+    `controller` of `None` (an unresolved source, or `OpeningHandNotice`'s
+    own shape, which carries none at all) never counts as "this viewer's
+    own", so a notice this function cannot positively clear is blanked for
+    everyone but `ADMIN` - the same fail-closed posture the engine's own
+    notice lists keep for a clause they could not read.
+    """
+    if viewer is ADMIN:
+        return notices
+    redacted: list[dict[str, Any]] = []
+    for notice in notices:
+        zone = notice.get("zone")
+        controller = notice.get("controller")
+        owns = controller is not None and controller == viewer
+        if zone in _HIDDEN_ZONES and not owns:
+            blanked = dict(notice)
+            blanked["source_id"] = None
+            blanked["source_name"] = "<hidden>"
+            for field_name in _NOTICE_TEXT_FIELDS:
+                if field_name in blanked:
+                    blanked[field_name] = "<hidden>"
+            redacted.append(blanked)
+        else:
+            redacted.append(notice)
+    return redacted
+
 
 def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     """One log entry, as `viewer` may read it.
@@ -439,6 +493,9 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
         entry["reasoning"] = None
         if entry.get("action") == PLAN_ACTION:
             entry["detail"] = {"player": detail_player} if detail_player else {}
+    detail_notices = (entry.get("detail") or {}).get("notices")
+    if detail_notices:
+        entry["detail"] = {**entry["detail"], "notices": redact_notices(detail_notices, viewer)}
     if isinstance(viewer, str):  # a real seat - not admin, not "nobody"
         if entry.get("snapshot"):
             entry["snapshot"] = redact_snapshot(entry["snapshot"], viewer)
