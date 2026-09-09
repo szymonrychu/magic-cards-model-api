@@ -237,6 +237,66 @@ def test_the_stall_banner_offers_a_pass_priority_button_for_the_ai_seat() -> Non
     assert calls["calls"] == ["claude"]
 
 
+def test_live_activity_hides_the_stall_banner_but_the_pill_still_speaks() -> None:
+    """The false accusation this whole fix exists for: the board sits
+    unchanged for 215s while the agent is genuinely mid-turn.
+    `renderAiStallBanner` must go quiet (`aiStallNotice` defers to the same
+    activity the pill already shows), and the human must not be left staring
+    at a blank topbar - `renderAiPanel` is unconditional, so the pill keeps
+    saying "making its play" the whole time. Once the activity record goes
+    stale, the banner speaks up again."""
+    result = run_module(
+        "render/panels.js",
+        FAKE_DOM
+        + """
+        (() => {
+          let now = 1_000_000;
+          Date.now = () => now;
+          const store = makeStore({
+            state: baseState({ priority_holder: "claude" }),
+            aiStatus: { player: "claude", state: "dispatched" },
+            aiUid: "ai-uid",
+            connection: "ok",
+          });
+          m.mountTopbar(document, store, {
+            onOpenZones: NOOP, onLeaveGame: NOOP, onReportProblem: NOOP,
+            onPassForAiSeat: NOOP,
+          });
+          const banner = document.querySelector("#ai-stall-banner");
+          const panel = document.querySelector("#ai-panel");
+
+          // A render at t0 to start the "unchanged since" clock (module-level
+          // in `renderAiStallBanner`) before time moves on.
+          store.set({});
+
+          now += 215_000;
+          store.set({
+            aiStatus: {
+              player: "claude", state: "dispatched",
+              activity: { state: "acting", seconds: 2, seq: 9 },
+            },
+          });
+          const whileLive = { hidden: banner.hidden, pillText: panel.textContent };
+
+          store.set({
+            aiStatus: {
+              player: "claude", state: "dispatched",
+              activity: { state: "acting", seconds: 1000, seq: 9 },
+            },
+          });
+          const onceStale = { hidden: banner.hidden, bannerText: banner.textContent };
+
+          return { whileLive, onceStale };
+        })()
+        """,
+    )
+    assert result["whileLive"]["hidden"] is True
+    assert "making its play" in result["whileLive"]["pillText"]
+    assert result["onceStale"]["hidden"] is False
+    assert "claude" in result["onceStale"]["bannerText"]
+    assert "215s" in result["onceStale"]["bannerText"]
+
+
 def test_the_loading_banner_shows_while_booting_and_clears_once_ready() -> None:
     """A kubernetes seat's own status moves `pending` (image pull,
     initContainers, the agent CLI's own boot) -> `thinking` (the driver's

@@ -42,6 +42,37 @@ export const AI_STALL_SECONDS = 45;
  *
  * An error the server already knows about beats the timer: there is no point
  * waiting 45 seconds to report something the driver reported at second one.
+ *
+ * A board can sit unchanged for minutes while a hard turn is genuinely being
+ * played out - reading cards, thinking, working through a plan - and the
+ * same status payload that says "priority hasn't moved" already carries
+ * `activity`. Accusing a seat the activity pill is actively showing as
+ * working ("AI (claude): making its play") is not merely ugly, it is false,
+ * and the data proving it false is already in hand. So: if
+ * `aiSeatActivityLabel` would put a live word on the pill right now, that is
+ * this seat genuinely being observed to act, and the timer below never even
+ * gets to look at `unchangedSeconds` - deliberately the exact same call the
+ * pill itself makes, not a second copy of its staleness math, so the two
+ * can never say two different things about the same payload. It already
+ * reads the payload's own `activity.seconds` rather than a clock of its own
+ * (see its own comment for why), so this defers to it rather than
+ * re-deriving that.
+ *
+ * A stale observation does not get this benefit: `aiSeatActivityLabel`
+ * stops vouching for one past `AI_ACTIVITY_STALE_SECONDS` (300s), so past
+ * that age this falls straight through to the ordinary timer below. That
+ * shared threshold was measured against real transcripts, not guessed, and
+ * reusing it here rather than picking a second number keeps "is this
+ * activity live" answered once. The browser polls this status roughly every
+ * 1.2s, so once a seat's last observation actually does cross into
+ * staleness, the human sees the truth within about a second either way -
+ * the 300s margin exists to cover the agent's own gaps between transcript
+ * lines (a single long tool call or model turn), not to cover polling lag,
+ * so there is no reason to shrink it for this caller.
+ *
+ * `last_error` and `state === "unreachable"` still win over all of this: a
+ * seat the server already knows is broken is reported immediately, whatever
+ * its last transcript line said.
  */
 export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace) {
   if (!state || !aiPlayer) return null;
@@ -52,6 +83,7 @@ export function aiStallNotice(state, aiPlayer, aiStatus, unchangedSeconds, grace
   if (aiStatus && aiStatus.state === "unreachable") {
     return `${aiPlayer}'s agent cannot be reached by the game server`;
   }
+  if (aiSeatActivityLabel(state, aiStatus)) return null;
   const limit = grace === undefined ? AI_STALL_SECONDS : grace;
   if (!(unchangedSeconds >= limit)) return null;
   return `${aiPlayer} has held priority for ${Math.floor(unchangedSeconds)}s without acting`;
