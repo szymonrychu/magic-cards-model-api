@@ -1133,3 +1133,63 @@ whoever works on the repo itself.
   needed the matching regeneration; `src/mtg_agent/driver/prompt.py` needed
   no wording change since its evoke/cast-option and sacrifice/discard/exile
   prose already independently describe the two features correctly.
+- **2026-09-09 - Fiend Artisan's X gap was the same shape as Goblin
+  Bombardment's, one layer over: `cast` carried `x_value` on every surface,
+  `activate` carried it nowhere, and the missing case was silent rather than
+  refused.** `ActivateRequest` had no `x_value` field at all (unlike
+  `sacrificing`/`discarding`/`exiling`, which the engine layer already
+  threaded through before their seat surfaces existed) - `Game.
+  begin_activating`/`Game.activate_ability` both already accepted
+  `x_value: int = 0` and fold it into the ability's own mana cost via
+  `ManaCost.with_x`, so this was never an engine gap either, only a request
+  shape this repo had not built yet. Added `ActivateRequest.x_value`,
+  threaded it through `engine_api.activate_ability` into both engine calls
+  (the same value to both, per `begin_activating`'s own docstring), and gave
+  `seat_cli.py activate` a `--x` flag and `mcp.py`'s `activate` tool an
+  `x_value` parameter, the same shape `seatkit-8` already added for
+  sacrifice/discard/exile. **Also made the missing case loud**: activating an
+  ability whose own cost carries `{X}` with no `x_value` named is now refused
+  with the engine's own reason (`"{X}" in ability.cost`, the same check
+  `affordances._needs_x`/`AbilityView.needs_x` already report to a seat ahead
+  of time) rather than silently running at X=0 - the reported seat mistook
+  this silent zero for its own misplay, fetching only Dryad Arbor (mana value
+  0) with Fiend Artisan's tutor instead of the bigger creature it actually
+  asked for. Off-battlefield activation gets the same treatment `exiling`
+  already has: `machines.keywords.off_zone_activation` takes no `x_value=` at
+  all, so `engine_api._activate_off_zone_ability` refuses it by name rather
+  than a bare `TypeError`. `PROTOCOL_VERSION` bumped to `seatkit-11`, not
+  `seatkit-10` - two other unmerged branches had already taken `seatkit-9`
+  and `seatkit-10`, so this skips past both rather than colliding with either
+  once they land; `protocol.py`, `seatkit.py`, `contract/tools.json`
+  (`mise run tools:export`), `openapi.json` (`mise run openapi:dump`) and
+  `src/mtg_agent/driver/prompt.py` all needed the matching update.
+- **2026-09-09 - a second, unrelated X defect in the same session: `cast`
+  read a non-modal spell's X too late for its own targeting to see it.**
+  Reported as Postmortem Lunge (`{X}{B/P}`, "Return target creature card with
+  mana value X ...") refusing every target above mana value 0 no matter what
+  `x_value` was sent. `engine_api._drive_cast` only called `Casting.
+  choose_modes(req.modes, x_value=req.x_value)` `if req.modes:` - the one
+  call that sets `Casting.x_value` - so a non-modal spell, which has no modes
+  to give, never had `x_value` set at all until `determine_cost` ran, several
+  lines *after* `choose_targets`. `Casting.targeting`'s own docstring already
+  says outright that a non-modal `{X}` spell's text is read "with X already
+  substituted... X is announced before targets, so it is always known here"
+  (CR 107.3a/601.2b/601.2c) - true of the engine when driven in that order,
+  false of how this repo was driving it. Not an engine gap: `../magic-cards-
+  model`'s own `tests/scenarios/test_postmortem_lunge.py` already passed,
+  because it calls `choose_modes`/`determine_cost` with `x_value` before
+  `choose_targets` directly. Fixed with one added branch - `elif req.x_value
+  is not None: casting.choose_modes([], x_value=req.x_value)` - calling the
+  same announcement a modal spell already uses, with an empty mode list,
+  purely to fix `x_value` before targets are chosen; `determine_cost`
+  downstream is untouched and still receives the same value. No request/
+  response shape changed (`CastRequest.x_value` already existed and was
+  already reaching this function; only the order it was consumed in was
+  wrong), so no `PROTOCOL_VERSION` bump - this is a bug fix, not a contract
+  change. A modal spell's own path (`if req.modes:`) is untouched; the new
+  branch only fires when there were no modes to announce, which is also why
+  `test_modal_x_cast.py`/`test_kozilek_command_ui_flow.py` needed no changes
+  to stay green. An activated ability never showed this symptom -
+  `Game.activate_ability` sets `x_value` and `targets` in one call, so there
+  is no two-phase window for the order to matter; the window exists only
+  because a `Casting` is built up over several separate calls.

@@ -408,6 +408,13 @@ class ActivateRequest(BaseModel):
     ability_index: int = 0
     targets: list[str] | None = None
     mana_sources: list[UUID | ManaSource] | None = None
+    x_value: int | None = None
+    """CR 107.3a's X, announced as this activation begins (CR 602.2b) - the
+    activated-ability twin of `CastRequest.x_value`. Fiend Artisan's
+    `{X}{B/G}, {T}, Sacrifice another creature: Search ...` is the pool's
+    example: omitting this for an ability whose cost carries `{X}` is refused
+    with the engine's own `needs_x` answer (`affordances.ability_hints`,
+    `AbilityView.needs_x`) rather than silently activated for X=0."""
     sacrificing: list[UUID] | None = None
     """The objects an activation cost's own `[Sacrifice|Discard|Exile] a
     ...` piece needs named (CR 118.3) - Goblin Bombardment's own "Sacrifice

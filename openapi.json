@@ -537,6 +537,17 @@
               }
             ],
             "title": "Targets"
+          },
+          "x_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Value"
           }
         },
         "required": [

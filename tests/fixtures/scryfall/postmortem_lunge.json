@@ -1,0 +1,132 @@
+{
+  "artist": "Daarken",
+  "artist_ids": [
+    "e607a0d4-fc12-4c01-9e3f-501f5269b9cb"
+  ],
+  "booster": true,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 245899,
+  "cmc": 1.0,
+  "collector_number": "70",
+  "color_identity": [
+    "B"
+  ],
+  "colors": [
+    "B"
+  ],
+  "digital": false,
+  "edhrec_rank": 18656,
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "foil": true,
+  "frame": "2003",
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo"
+  ],
+  "highres_image": true,
+  "id": "d5f8b46e-1ad3-4c6e-aa63-376f2d222d46",
+  "illustration_id": "7db40617-f70b-47fe-a456-bad2e8b351fc",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T11:15:11Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.webp?1783941311",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.jpg?1783941311",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.jpg?1783941311",
+    "crop": "https://cards.scryfall.io/crop/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.webp?1783941311",
+    "display": "https://cards.scryfall.io/display/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.webp?1783941311",
+    "grid": "https://cards.scryfall.io/grid/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.webp?1783941311",
+    "large": "https://cards.scryfall.io/large/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.jpg?1783941311",
+    "normal": "https://cards.scryfall.io/normal/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.jpg?1783941311",
+    "png": "https://cards.scryfall.io/png/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.png?1783941311",
+    "small": "https://cards.scryfall.io/small/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.jpg?1783941311",
+    "thumb": "https://cards.scryfall.io/thumb/front/d/5/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46.webp?1783941311"
+  },
+  "keywords": [],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "not_legal",
+    "brawl": "not_legal",
+    "commander": "legal",
+    "competitivebrawl": "not_legal",
+    "duel": "legal",
+    "future": "not_legal",
+    "gladiator": "not_legal",
+    "historic": "not_legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "not_legal",
+    "paupercommander": "not_legal",
+    "penny": "not_legal",
+    "pioneer": "not_legal",
+    "predh": "legal",
+    "premodern": "not_legal",
+    "standard": "not_legal",
+    "standardbrawl": "not_legal",
+    "timeless": "not_legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{X}{B/P}",
+  "mtgo_foil_id": 39973,
+  "mtgo_id": 39972,
+  "multiverse_ids": [
+    233054
+  ],
+  "name": "Postmortem Lunge",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "aacd1aae-1bf0-43e4-99f4-c6d738af812c",
+  "oracle_text": "({B/P} can be paid with either {B} or 2 life.)\nReturn target creature card with mana value X from your graveyard to the battlefield. It gains haste. Exile it at the beginning of the next end step.",
+  "oversized": false,
+  "penny_rank": 1921,
+  "prices": {
+    "eur": "0.56",
+    "eur_foil": "4.73",
+    "tix": "0.03",
+    "usd": "0.30",
+    "usd_etched": null,
+    "usd_foil": "5.98"
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aaacd1aae-1bf0-43e4-99f4-c6d738af812c&unique=prints",
+  "promo": false,
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/39972?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=245899&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F39568%3Fpage%3D1"
+  },
+  "rarity": "uncommon",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Postmortem+Lunge",
+    "gatherer": "https://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=233054&printed=false",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DPostmortem%2BLunge",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DPostmortem%2BLunge"
+  },
+  "released_at": "2011-05-13",
+  "reprint": false,
+  "reserved": false,
+  "rulings_uri": "https://api.scryfall.com/cards/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/nph?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/nph/70/postmortem-lunge?utm_source=api",
+  "set": "nph",
+  "set_id": "e8e356d8-6d01-4dab-aa07-d0999dc9359f",
+  "set_name": "New Phyrexia",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Anph&unique=prints",
+  "set_type": "expansion",
+  "set_uri": "https://api.scryfall.com/sets/e8e356d8-6d01-4dab-aa07-d0999dc9359f",
+  "story_spotlight": false,
+  "tcgplayer_id": 39568,
+  "textless": false,
+  "type_line": "Sorcery",
+  "uri": "https://api.scryfall.com/cards/d5f8b46e-1ad3-4c6e-aa63-376f2d222d46",
+  "variation": false,
+  "watermark": "phyrexian"
+}
