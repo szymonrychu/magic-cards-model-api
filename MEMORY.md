@@ -1445,3 +1445,34 @@ whoever works on the repo itself.
   right now reads differently from a finished, ended, or unopenable one -
   `gameState(row)` was already computing that distinction and the row's
   appearance was simply not using it.
+- **2026-09-09 - card art and mana-symbol SVGs are proxied through this api
+  now (`assets.py`); the browser no longer talks to Scryfall directly, and
+  the requirement was "no direct scryfall calls", not "no direct scryfall
+  calls from the game board".** Three sites reached the browser with a raw
+  `cards.scryfall.io`/`svgs.scryfall.io` URL, not one: `serialize.py`'s
+  `_card_view` (the board), `symbology.py`'s `get_symbology()` (mana pips),
+  and `scryfall.lookup_card()` as returned verbatim by `GET /api/cards`/
+  `GET /api/cards/{name}` - the third one only found by actually tracing
+  which browser code calls that route (`ui/render/review.js`'s
+  `loadCatalogue`, the review page's own card art), not by trusting the
+  two-site inventory a prior pass had already written down. `GET
+  /api/card-art?name=&size=` and `GET /api/symbol-svg?token=` are the new
+  routes (`assets.py`), and neither accepts a URL or anything shaped like
+  one: `name`+`size` (a three-value enum) and `token` are the whole query
+  surface, and the actual upstream URL fetched always comes from Scryfall's
+  own JSON response, never the request. `scryfall.fetch_asset_bytes` is a
+  second defense under that: it checks the resolved URL's host against
+  `ASSET_HOSTS` (`cards.scryfall.io`/`svgs.scryfall.io`) before opening a
+  socket and again after following any redirect, so even a redirect chain
+  cannot turn this into a fetch of an internal address. Cached on disk
+  beside the JSON cache (`scryfall.cache_dir() / "assets"`), keyed by a hash
+  of the upstream URL itself (immutable per URL - Scryfall's own version
+  query), not by the caller-facing name/token, so the cache stays correct
+  regardless of how many identifiers end up resolving to the same asset.
+  `fixtures/payloads/*.json` (the T2 corpus `magic-cards-frontend` pins by
+  sha) had to be regenerated (`mise run fixtures:payloads`) since the URLs
+  they capture changed shape - a real cross-repo consequence, noted rather
+  than silently absorbed. `seatkit.py`'s `_strip_card_weight` already drops
+  `image`/`small_image`/`art_crop` outright before an agent ever sees them,
+  and nothing in `seatkit.py`/`mcp.py` reads `symbology` at all - so this
+  needed no `PROTOCOL_VERSION` bump, checked rather than assumed.

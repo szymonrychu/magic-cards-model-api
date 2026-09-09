@@ -246,6 +246,10 @@ def test_the_board_view_shows_art_for_a_pooled_card_on_a_cold_cache(pool, cold_c
 
     card = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
 
-    assert card["image"].startswith("https://cards.scryfall.io")
-    assert card["small_image"].startswith("https://cards.scryfall.io")
+    # This api's own asset proxy, never Scryfall directly (see
+    # tests/test_asset_proxy.py) - the pool-vs-cache distinction this test
+    # exists to pin is unaffected: a link is present at all only because it
+    # was read out of the pool, cold cache and all.
+    assert card["image"].startswith("/api/card-art?name=")
+    assert card["small_image"].startswith("/api/card-art?name=")
     assert list(cold_cache.iterdir()) == [], "the links must come from the pool, not a warmed cache"

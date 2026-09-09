@@ -20,7 +20,7 @@ from magic_cards_model.machines.layers import Characteristics
 from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
 
-from . import scryfall
+from . import assets, scryfall
 from .affordances import cast_hints
 from .decisions import PendingDecision
 from .engine_api import list_abilities
@@ -466,6 +466,7 @@ def _play_permissions_view(
 
 def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) -> dict[str, Any]:
     image = images.get(state.card.name, {})
+    proxied = assets.proxy_image_links(state.card.name, image) if image else {}
     type_line, power, toughness = _current_characteristics(game, state)
     view = {
         "id": str(state.id),
@@ -494,9 +495,9 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "keywords": _keywords_of(game, state),
         "targets": _target_names(game, state.targets),
         "target_refs": _target_refs(game, state.targets),
-        "image": image.get("normal"),
-        "small_image": image.get("small"),
-        "art_crop": image.get("art_crop"),
+        "image": proxied.get("normal"),
+        "small_image": proxied.get("small"),
+        "art_crop": proxied.get("art_crop"),
         "abilities": list_abilities(game, state),
     }
     # CR 614.12a's "as this enters, choose ..." answer, recorded on the object

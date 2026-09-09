@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter
 
@@ -31,6 +32,15 @@ from . import scryfall
 router = APIRouter(prefix="/api", tags=["symbology"])
 
 CACHE_NAME = "_symbology.json"
+
+
+def symbol_proxy_url(token: str) -> str:
+    """This api's own URL for one mana symbol's SVG (`assets.symbol_svg`),
+    in place of the raw Scryfall `svg_uri` `load()` caches internally.
+    Defined here rather than in `assets.py` so that module can depend on
+    this one (it needs `load()` to resolve a token back to the real
+    upstream URL server-side) without the two importing each other."""
+    return f"/api/symbol-svg?token={quote(token, safe='')}"
 
 
 def _cache_path() -> Any:
@@ -78,7 +88,17 @@ def load() -> dict[str, dict[str, Any]]:
     return symbols
 
 
+def _proxied_view(token: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """One symbol entry with its Scryfall `svg` link rewritten to this api's
+    own proxy URL - never emits a `svgs.scryfall.io` URL to the browser."""
+    view = dict(entry)
+    if view.get("svg"):
+        view["svg"] = symbol_proxy_url(token)
+    return view
+
+
 @router.get("/symbology")
 def get_symbology() -> dict[str, Any]:
-    """`{"symbols": {"{R}": {"svg": ..., "text": ...}, ...}}`, for the UI."""
-    return {"symbols": load()}
+    """`{"symbols": {"{R}": {"svg": ..., "text": ...}, ...}}`, for the UI -
+    `svg` is this api's own `/api/symbol-svg` proxy URL, not Scryfall's."""
+    return {"symbols": {token: _proxied_view(token, entry) for token, entry in load().items()}}

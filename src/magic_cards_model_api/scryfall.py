@@ -35,6 +35,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import magic_cards_model
@@ -44,6 +45,15 @@ from pydantic import ValidationError
 BASE_URL = "https://api.scryfall.com"
 USER_AGENT = "magic-cards-model-api/0.1 (self-test harness)"
 MIN_REQUEST_INTERVAL = 0.1  # seconds between outgoing requests
+
+#: The only hosts an asset URL (`image_uris`/`svg_uri`, both taken verbatim
+#: from a Scryfall API response, never from a caller) is ever allowed to
+#: resolve to - checked before opening a socket AND again after following any
+#: redirect. This is what keeps `fetch_asset_bytes` from ever becoming an
+#: open forward proxy: nothing this module fetches, whatever a caller passes
+#: to the routes built on top of it, can land anywhere but Scryfall's own
+#: asset CDNs.
+ASSET_HOSTS = {"cards.scryfall.io", "svgs.scryfall.io"}
 
 _rate_lock = threading.Lock()
 _last_request = 0.0
@@ -206,6 +216,47 @@ def _get(path: str, params: dict[str, str]) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ScryfallError("Scryfall returned something that is not an object")
     return data
+
+
+def fetch_asset_bytes(url: str) -> bytes:
+    """The bytes at `url` - a card-art image or a mana-symbol SVG - rate-
+    limited the same way `_get` throttles the JSON API.
+
+    `url` must already be a full URL taken verbatim from a Scryfall API
+    response (`image_uris`, `symbology`'s `svg_uri`) - this function never
+    accepts, and the routes built on it never forward, a caller-supplied URL.
+    The host is checked against `ASSET_HOSTS` before any socket opens, and
+    checked again against the final URL after following redirects, so a
+    Scryfall response that somehow pointed elsewhere - or a redirect chain
+    that tried to - cannot turn this into a fetch of an arbitrary address.
+    """
+    host = urlsplit(url).hostname
+    if host not in ASSET_HOSTS:
+        raise ScryfallError(f"refusing to fetch an asset from disallowed host {host!r}")
+
+    global _last_request
+    with _rate_lock:
+        wait = MIN_REQUEST_INTERVAL - (time.monotonic() - _last_request)
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            response = httpx.get(
+                url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=15,
+                follow_redirects=True,
+            )
+        except httpx.HTTPError as exc:
+            raise ScryfallError(f"Scryfall asset request failed: {exc}") from exc
+        finally:
+            _last_request = time.monotonic()
+
+    final_host = response.url.host if response.url else None
+    if final_host not in ASSET_HOSTS:
+        raise ScryfallError(f"asset request redirected to disallowed host {final_host!r}")
+    if response.status_code >= 400:
+        raise ScryfallError(f"Scryfall asset request returned {response.status_code}")
+    return response.content
 
 
 def fetch_card(name: str) -> dict[str, Any]:

@@ -31,6 +31,7 @@ from . import (
     affordances,
     ai_seat_api,
     api_decks,
+    assets,
     audit,
     commands,
     decisions,
@@ -131,6 +132,7 @@ app.include_router(decks_api.router)
 app.include_router(api_decks.router)
 app.include_router(ai_seat_api.router)
 app.include_router(symbology.router)
+app.include_router(assets.router)
 
 
 # -- error mapping ---------------------------------------------------------
@@ -1169,14 +1171,26 @@ def card_names(q: str = "") -> dict[str, Any]:
     return {"suggestions": scryfall.autocomplete(q)}
 
 
+def _proxied_lookup(name: str) -> dict[str, Any]:
+    """`scryfall.lookup_card`, with `images` rewritten to this api's own
+    asset-proxy URLs (`assets.proxy_image_links`) before it reaches the
+    browser - this route is a direct browser call (`ui/render/review.js`'s
+    `loadCatalogue`), so a raw `images["normal"]` here would be exactly the
+    direct-to-Scryfall request the proxy exists to remove."""
+    result = scryfall.lookup_card(name)
+    if result.get("images"):
+        result["images"] = assets.proxy_image_links(result.get("name") or name, result["images"])
+    return result
+
+
 @app.get("/api/cards", response_model=CardLookupResponse, response_model_exclude_unset=True)
 def lookup_card_query(name: str) -> dict[str, Any]:
-    return scryfall.lookup_card(name)
+    return _proxied_lookup(name)
 
 
 @app.get("/api/cards/{name}", response_model=CardLookupResponse, response_model_exclude_unset=True)
 def lookup_card(name: str) -> dict[str, Any]:
-    return scryfall.lookup_card(name)
+    return _proxied_lookup(name)
 
 
 # -- setting the board up ---------------------------------------------------

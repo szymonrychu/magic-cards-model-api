@@ -17,6 +17,14 @@ def test_symbology_answers_with_a_symbols_map(client: TestClient) -> None:
     assert isinstance(body["symbols"], dict)
 
 
+def test_symbology_svg_links_are_this_apis_own_proxy_not_scryfall(client: TestClient) -> None:
+    """The browser never talks to Scryfall directly - see
+    `tests/test_asset_proxy.py` for the proxy route itself."""
+    body = client.get("/api/symbology").json()
+    entry = body["symbols"]["{R}"]
+    assert entry["svg"].startswith("/api/symbol-svg?token=")
+
+
 def test_the_old_ui_prefixed_symbology_route_is_gone(client: TestClient) -> None:
     """Proves the move happened rather than the route being merely
     duplicated at the new path - the same T5 precedent

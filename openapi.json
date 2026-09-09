@@ -9534,6 +9534,60 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/card-art": {
+      "get": {
+        "operationId": "card_art_api_card_art_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": true,
+            "schema": {
+              "enum": [
+                "normal",
+                "small",
+                "art_crop"
+              ],
+              "title": "Size",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Card Art",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
     "/api/card-names": {
       "get": {
         "operationId": "card_names_api_card_names_get",
@@ -12621,9 +12675,49 @@
         "summary": "Find Seat"
       }
     },
+    "/api/symbol-svg": {
+      "get": {
+        "operationId": "symbol_svg_api_symbol_svg_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Symbol Svg",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
     "/api/symbology": {
       "get": {
-        "description": "`{\"symbols\": {\"{R}\": {\"svg\": ..., \"text\": ...}, ...}}`, for the UI.",
+        "description": "`{\"symbols\": {\"{R}\": {\"svg\": ..., \"text\": ...}, ...}}`, for the UI -\n`svg` is this api's own `/api/symbol-svg` proxy URL, not Scryfall's.",
         "operationId": "get_symbology_api_symbology_get",
         "responses": {
           "200": {

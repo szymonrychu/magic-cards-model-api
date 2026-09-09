@@ -8,7 +8,10 @@ def test_lookup_lightning_bolt(client):
     assert result["modern_legal"] is True
     assert result["card"]["mana_cost"] == "{R}"
     assert "image" not in result or isinstance(result["images"], dict)
-    assert result["images"]["normal"].startswith("https://cards.scryfall.io")
+    # This api's own asset proxy, never Scryfall directly - see
+    # `tests/test_asset_proxy.py` for the full "no scryfall.io leak" and
+    # proxy-route coverage.
+    assert result["images"]["normal"].startswith("/api/card-art?name=")
 
 
 def test_lookup_validates_through_the_engine(client):
