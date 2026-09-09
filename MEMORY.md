@@ -7,6 +7,64 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-09 - CR 106.6 reached the wire, and a payment can now name which
+  mana ability it taps.** Two halves. Read-only: `ManaPoolView` gained
+  `restricted` and `spend_effects` (`serialize._mana_pool_view`), each entry
+  carrying the sentence *and* how much of `floating` is under it - the engine
+  keeps both as **subsets** of `floating` on purpose (CR 106.4a announces all
+  the mana that is there), so without the amounts two restricted `{C}`
+  serialised as `floating {"C": 2}` and were indistinguishable from two a
+  player could spend on anything. `RestrictionView` is deliberately two
+  fields, `text` + `understood`, and no `clauses`: publishing the engine's
+  `SpendClause` tuple would pin a parser-internal shape that is still moving.
+  `understood=False` is **published, never filtered** - an unread CR 106.6
+  sentence is fail-closed in the engine, so that mana pays for nothing at all
+  and a view that hid the flag would show a player a resource they do not
+  have. `AbilityView.restriction` is the same claim one step earlier, filled
+  in all three of `engine_api.list_abilities`' branches via
+  `affordances.ability_hints(..., source)`. No `visibility.redact_view` pass
+  was needed (the same question commit 3eadbd9 asked): a pool is public
+  (CR 106.4a) and `_redact_player` already leaves the whole block alone, and a
+  hand card's entry is dropped for every other viewer card-and-all.
+  `serialize.snapshot`'s audit pools and `commands.py`'s board fingerprint
+  were left alone on purpose (approved decision D3).
+
+  Writable: `ManaSource.ability_index`, and a third branch in
+  `engine_api.pay_with` that resolves the production from the **named**
+  ability and passes `tap_for_mana(restriction=...)` explicitly. That is
+  correctness, not tidiness. Left to itself `tap_for_mana` calls
+  `restriction_for_production`, which matches on what the mana turned out to
+  be, breaks a tie toward *unrestricted* on purpose, and - the live divergence
+  pinned by `test_the_named_abilitys_restriction_beats_what_inference_would_
+  have_said` - asks `ManaAbility.effective()` with **no board**, so Sunken
+  Citadel's two "the chosen color" abilities match nothing and come back
+  unrestricted however restricted they are. Worth recording: a sweep of all
+  747 engine printings found **no** card whose restricted and unrestricted
+  `{T}` mana abilities can produce the same mana, so the Cavern of Souls /
+  Delighted Halfling tie the plan described does not exist today - inference
+  agrees with the named ability on both. The board-blindness above is the real
+  divergence, and it is the one the mutation test pins.
+
+  Two things the api cannot ask the engine for: CR 106.7's "could produce"
+  survey and the controller's land types both live behind `Game`'s private
+  helpers, so `mana_from` leaves them unset and an ability that needs them is
+  refused with the engine's own CR 106.5 wording rather than guessed at.
+  Everything else `resolve` accepts (counters, imprint, CR 614.12a's chosen
+  colour) is plain `CardState` state and is passed. `tap_for_mana`
+  re-validates board-aware afterwards, so a disagreement is refused, never
+  quietly accepted.
+
+  Found and fixed on the way: `list_abilities`' intrinsic-mana fallback branch
+  iterated `parse_mana_abilities`, which returns bare `ManaAbility` objects,
+  and then asked each one for a `.mana` attribute it has never had - so
+  `mana_options` and `is_mana_ability` were silently empty for every ability
+  that branch has ever listed. It now iterates whole `ActivatedAbility`
+  objects (`_printed_mana_activations`), which also gives the branch the
+  `.effect` a CR 106.6 sentence is read out of and a real printed `.text`,
+  retiring `_mana_ability_text`. Nothing in the card pool reaches that branch,
+  so the test gets there by making `Game.activated_abilities` answer with
+  nothing for one permanent.
+
 - **2026-09-09 - split-card decklist matching (`Wear/Tear` etc.) was already
   general, from a prior session; the only real gap was `Fire Magic` missing
   from the pool entirely, and one bundled-deck assertion pinned the old
