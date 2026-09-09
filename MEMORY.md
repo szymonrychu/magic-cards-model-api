@@ -22,16 +22,28 @@ whoever works on the repo itself.
   reached at the same index, and an inferring reader resolves the pair toward
   *unrestricted*, which is the one answer that silently spends creature-only
   mana on a non-creature spell. Passing the restriction through is what keeps
-  the fail-closed side of the tie. (3) The audit snapshot pools were left
-  alone on purpose. They are a recorded historical answer, not a fixture
-  regenerated to match today's schema - rewriting them to carry the new
-  fields would have destroyed the very thing they are kept for. (4)
+  the fail-closed side of the tie. (3) `serialize.snapshot`'s `pools` were
+  left alone on purpose - they stay a flat colour-to-count dict and did
+  **not** grow `restricted`/`spend_effects` the way `ManaPoolView` did. That
+  snapshot is the audit log's recorded answer about a moment already passed,
+  read back by builds other than the one that wrote it; `ManaPoolView` is a
+  live view a seat acts on now. Widening the snapshot would have changed the
+  shape of rows already on disk for no reader that needs them. (4)
   `fixtures/payloads/*.json` is pinned **by SHA** from `magic-cards-frontend`.
   Running `mise run fixtures:payloads` is therefore a real cross-repo
   consequence, not a local artifact refresh: every regeneration moves the
   hash that repo asserts against, and the frontend has to be updated in the
   same wave or its own pin goes red. Regenerate it only when the payload
   shape genuinely moved, and say so when you do.
+
+  Operationally: the artifact task cannot run *beside* the tasks it
+  regenerates for, only after they merge. `openapi.json` is dumped from the
+  live app, so it can only show a field once that field's code is in the
+  tree, and the api's engine is a `path` dependency against the shared
+  `../magic-cards-model` checkout, not against any worktree - so an engine
+  change is invisible here until it is on engine `main`. Regenerating early
+  commits a half-finished schema that `test_openapi_drift.py` then holds
+  wrong in both directions.
 
 - **2026-09-09 - split-card decklist matching (`Wear/Tear` etc.) was already
   general, from a prior session; the only real gap was `Fire Magic` missing
