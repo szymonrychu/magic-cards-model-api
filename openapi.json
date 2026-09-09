@@ -904,20 +904,6 @@
             "title": "Step",
             "type": "string"
           },
-          "suspend_upkeep": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/SuspendUpkeepEntry"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Suspend Upkeep"
-          },
           "turn_number": {
             "anyOf": [
               {
@@ -7791,6 +7777,7 @@
         "type": "object"
       },
       "SetStepResponse": {
+        "description": "`PUT .../step`'s response - the harness teleport, always just the\nboard: it moves the raw turn marker (`engine_api.set_step`,\n`Game.advance_to`) rather than running `Game.advance`'s own\nbeginning-of-step turn-based actions and triggers, so there is nothing\nbeyond `GameStateView` for it to carry.",
         "properties": {
           "active_player": {
             "anyOf": [
@@ -7994,13 +7981,6 @@
             "title": "Step",
             "type": "string"
           },
-          "suspend_upkeep": {
-            "items": {
-              "$ref": "#/components/schemas/SuspendUpkeepEntry"
-            },
-            "title": "Suspend Upkeep",
-            "type": "array"
-          },
           "turn_number": {
             "anyOf": [
               {
@@ -8050,8 +8030,7 @@
           "drawn",
           "losers",
           "conceded",
-          "combat",
-          "suspend_upkeep"
+          "combat"
         ],
         "title": "SetStepResponse",
         "type": "object"
@@ -9008,41 +8987,6 @@
           "step"
         ],
         "title": "StepUpdate",
-        "type": "object"
-      },
-      "SuspendUpkeepEntry": {
-        "description": "One suspended card `engine_api.drive_suspend_upkeep` touched this\nupkeep - a time counter removed, and whether that was the last one.",
-        "properties": {
-          "card": {
-            "title": "Card",
-            "type": "string"
-          },
-          "card_id": {
-            "title": "Card Id",
-            "type": "string"
-          },
-          "cast_permission_granted": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cast Permission Granted"
-          },
-          "time_counters": {
-            "title": "Time Counters",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "card_id",
-          "card",
-          "time_counters"
-        ],
-        "title": "SuspendUpkeepEntry",
         "type": "object"
       },
       "TapCardResponse": {
@@ -12011,7 +11955,7 @@
     },
     "/api/games/{game_id}/step": {
       "put": {
-        "description": "Jump the turn marker to a named step. The harness's own way to stage a\nboard, and deliberately NOT a seat verb: no rule puts the turn marker\nanywhere, so there is no MCP tool and no `seat_cli` subcommand for this.\n\nGated all the same (T10): it moves the game's own turn marker and runs the\nsuspend upkeep below when it lands on `upkeep`, so a caller that names an\nagent seat owes the same stated reason it owes for an attack.",
+        "description": "Jump the turn marker to a named step. The harness's own way to stage a\nboard, and deliberately NOT a seat verb: no rule puts the turn marker\nanywhere, so there is no MCP tool and no `seat_cli` subcommand for this.\n\nGated all the same (T10): a caller that names an agent seat owes the same\nstated reason it owes for an attack, even though this only moves the\nturn marker (`Game.advance_to`) and runs none of `Game.advance`'s own\nbeginning-of-step turn-based actions or triggers - CR 702.62a's suspend\ncountdown among them, the same as a draw or a combat declaration.",
         "operationId": "set_step_api_games__game_id__step_put",
         "parameters": [
           {

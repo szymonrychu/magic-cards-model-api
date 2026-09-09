@@ -1238,9 +1238,11 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
     board, and deliberately NOT a seat verb: no rule puts the turn marker
     anywhere, so there is no MCP tool and no `seat_cli` subcommand for this.
 
-    Gated all the same (T10): it moves the game's own turn marker and runs the
-    suspend upkeep below when it lands on `upkeep`, so a caller that names an
-    agent seat owes the same stated reason it owes for an attack.
+    Gated all the same (T10): a caller that names an agent seat owes the same
+    stated reason it owes for an attack, even though this only moves the
+    turn marker (`Game.advance_to`) and runs none of `Game.advance`'s own
+    beginning-of-step turn-based actions or triggers - CR 702.62a's suspend
+    countdown among them, the same as a draw or a combat declaration.
     """
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
@@ -1252,26 +1254,16 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
             game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
         )
         engine_api.set_step(game, Step(req.step))
-        suspend_upkeep: list[dict[str, Any]] = []
-        if Step(req.step) is Step.UPKEEP and game.turn is not None and req.player:
-            # Same hand-driven trigger `advance` runs - a seat stepping
-            # straight to its own upkeep (rather than passing priority
-            # through to it) must not skip CR 702.62a's counter removal.
-            suspend_upkeep = engine_api.drive_suspend_upkeep(game, game.turn.active_player)
         audit.record(
             game_id,
             "step",
             player=req.player,
-            suspend_upkeep=suspend_upkeep,
             reasoning=req.reasoning,
             legal_actions_before=legal_before,
             **{"from": before, "to": req.step},
         )
         viewer = visibility.resolve_viewer(game_id, uid)
-        return {
-            **visibility.redact_view(state_view(game, game_id), viewer),
-            "suspend_upkeep": suspend_upkeep,
-        }
+        return visibility.redact_view(state_view(game, game_id), viewer)
 
 
 # -- the heart: legality questions ------------------------------------------
@@ -2176,14 +2168,12 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
         }
     assert result.game is not None and isinstance(result.outcome, dict)
     step_value = result.outcome["advanced_to"]
-    suspend_upkeep = result.outcome["suspend_upkeep"]
     notices = result.outcome.get("notices")
     seq = audit.record(
         game_id,
         "advance",
         player=req.player,
         allowed=True,
-        suspend_upkeep=suspend_upkeep,
         **({"notices": notices} if notices else {}),
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
@@ -2197,7 +2187,6 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     body = {
         **visibility.redact_view(state_view(result.game, game_id), viewer),
         "advanced_to": step_value,
-        "suspend_upkeep": suspend_upkeep,
         "allowed": True,
         "log_seq": seq,
     }

@@ -18,13 +18,11 @@ from magic_cards_model.machines import Casting, Step
 from magic_cards_model.machines.casting import (
     MarkedExile,
     PlayAction,
-    finish_suspend,
     play_permissions_on,
-    remove_suspend_time_counter,
 )
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
 from magic_cards_model.models import CardState, Color, Game, Zone
-from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
+from magic_cards_model.models.card_state import Counter, counter_state_based_actions
 from pydantic import ValidationError
 
 from .schemas import (
@@ -584,8 +582,10 @@ def _take_marked_exile(game: Game, action: MarkedExile, req: SpecialActionReques
 
 def suspend_card(game: Game, req: SpecialActionRequest) -> Outcome:
     """CR 116.2f/702.62a: exile a card from hand with N time counters, paying
-    its suspend cost. The free cast once the last counter is removed is
-    `drive_suspend_upkeep`'s job, not this one's."""
+    its suspend cost. The upkeep countdown and the free cast once the last
+    counter is removed are the engine's own triggered abilities now
+    (`machines/keywords._suspend_abilities`), put on the stack the same way
+    any other trigger is - not this function's job."""
     try:
         card = locate_hand_card(game, req.player, req.card_id, req.card)
         action = MarkedExile.suspend(game, card, req.player)
@@ -613,43 +613,6 @@ def foretell_card(game: Game, req: SpecialActionRequest) -> Outcome:
     except (KeyError, ValueError) as exc:
         return refused(exc)
     return _take_marked_exile(game, action, req)
-
-
-def drive_suspend_upkeep(game: Game, player: str) -> list[dict[str, Any]]:
-    """CR 702.62a's second and third abilities, hand-driven for `player`'s own
-    upkeep: nothing in `Game.advance`/`Game.advance_to` dispatches a per-card
-    upkeep trigger any more than it dispatches combat's own declarations (see
-    `machines.casting.remove_suspend_time_counter`'s docstring), so this is
-    called once from the `advance`/`step` endpoints whenever the turn marker
-    lands on `Step.UPKEEP`, the same hand-driven call a scenario test makes
-    for each upkeep it cares about.
-
-    For every card `player` owns that is suspended in exile (CR 702.62b):
-    removes one time counter, and - if that was the last one - grants the
-    CR 702.62a third-ability `PlayPermission` (`finish_suspend`) so a
-    following `cast_card` call picks it up automatically. Returns one entry
-    per suspended card touched, for the caller's own response/audit detail.
-    """
-    touched: list[dict[str, Any]] = []
-    for card in list(game.shared_zones.get(Zone.EXILE, [])):
-        if not isinstance(card, CardState):
-            continue
-        annotation = card.exile_annotation
-        if annotation is None or annotation.marker is not ExileMarker.SUSPENDED:
-            continue
-        if annotation.owner != player:
-            continue
-        remaining = remove_suspend_time_counter(game, card)
-        entry: dict[str, Any] = {
-            "card_id": str(card.id),
-            "card": card.name,
-            "time_counters": remaining,
-        }
-        if remaining == 0:
-            permission = finish_suspend(game, card)
-            entry["cast_permission_granted"] = permission is not None
-        touched.append(entry)
-    return touched
 
 
 # -- cycling (CR 702.29): an activated ability that functions only in hand --

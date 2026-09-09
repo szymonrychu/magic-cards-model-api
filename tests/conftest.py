@@ -10,6 +10,7 @@ os.environ["MCM_CACHE_DIR"] = str(Path(__file__).parent / "fixtures" / "scryfall
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from magic_cards_model.machines import Step  # noqa: E402
 
 from magic_cards_model_api import ai_seat, lobby  # noqa: E402
 from magic_cards_model_api.main import app  # noqa: E402
@@ -106,6 +107,58 @@ def find(cards: list[dict], name: str) -> dict:
     matches = [card for card in cards if card["name"] == name]
     assert matches, f"no {name} among {[card['name'] for card in cards]}"
     return matches[0]
+
+
+def force_turn_position(game_id: str, step: Step, active_player: str) -> None:
+    """Reach past the API into the live engine's own `Turn`/`PriorityMachine`
+    to position a game at `step` for `active_player`, without replaying the
+    turn machine to get there - legitimate test setup (the same "reach past
+    the API, straight into the live engine object" idiom `test_special_
+    actions.py`'s `_bump_turn` already used before this helper existed), and
+    never a substitute for driving the real transition into the step under
+    test, which every caller still does through the API afterwards.
+
+    `PriorityMachine` tracks its own `active_index`/`holder_index` rather
+    than reading `Turn`'s - `Game.advance` re-syncs it with `self.priority.
+    reset(self.turn.active_index)` on every real turn rollover, so this does
+    the same rather than only calling `sync_priority_with_step`, which
+    grants or withholds for the step now in progress but never moves whose
+    turn it resumes at (`PriorityMachine.grant`'s own docstring: "the seat
+    it resumes at is unchanged").
+    """
+    game = store.get(game_id)
+    assert game is not None and game.turn is not None and game.priority is not None
+    game.turn.step = step
+    game.turn.active_index = game.turn.players.index(active_player)
+    game.priority.reset(game.turn.active_index)
+    game.sync_priority_with_step()
+
+
+def resolve_whole_stack(client: TestClient, game_id: str) -> list[str]:
+    """Resolve every object on the stack, top down. Returns what resolved,
+    in order - the caller's own way to drain triggers (CR 702.62a's suspend
+    countdown among them, now a real triggered ability rather than a
+    response field reporting a hand-driven removal)."""
+    resolved: list[str] = []
+    while state(client, game_id)["stack"]:
+        body = client.post(f"/api/games/{game_id}/resolve-top").json()
+        resolved.append(body["resolved"])
+    return resolved
+
+
+def drain_suspend_upkeeps(client: TestClient, game_id: str, player: str, count: int) -> None:
+    """Walk `player` through `count` real upkeeps via `advance`, resolving
+    CR 702.62a's countdown trigger (and, on the last one, its own free-cast
+    grant) each time - the real path a suspended card's counters come off
+    now that nothing in this repo drives the removal by hand. `PUT .../step`
+    cannot stand in for this: it is a raw teleport that runs none of
+    `Game.advance`'s own beginning-of-step triggers."""
+    for _ in range(count):
+        force_turn_position(game_id, Step.UNTAP, player)
+        advanced = client.post(f"/api/games/{game_id}/advance", json={"player": player})
+        assert advanced.status_code == 200, advanced.text
+        assert advanced.json()["advanced_to"] == "upkeep", advanced.json()
+        resolve_whole_stack(client, game_id)
 
 
 def card_id(client: TestClient, game_id: str, name: str, player: str, zone: str) -> str:
