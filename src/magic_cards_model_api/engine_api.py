@@ -97,23 +97,154 @@ def find_card(game: Game, card_id: UUID) -> CardState:
     return state
 
 
-def mana_from(source: CardState) -> list[Color]:
-    """What tapping this source produces, straight off the parsed abilities."""
+def mana_ability_at(game: Game, source: CardState, ability_index: int) -> Any:
+    """`source`'s activated ability number `ability_index`, refused in words
+    when there is no such ability or it makes no mana.
+
+    The index space is `Game.activated_abilities`' own - the same one
+    `AbilityView.index` publishes, `ActivateRequest.ability_index` takes and
+    `machines.cost.tappable_mana_activations` reports. CR 613.5: those are the
+    permanent's *computed* abilities, so a permanent that has become a copy of
+    something offers the copy's abilities here, never the printed card's.
+    """
+    try:
+        abilities = list(game.activated_abilities(source))
+    except Exception as exc:  # the engine's own refusal to read this object
+        raise ValueError(f"{source.name} has no activated abilities to index into") from exc
+    if not 0 <= ability_index < len(abilities):
+        raise ValueError(
+            f"{source.name} has no ability {ability_index}: it has "
+            f"{len(abilities)} activated {'ability' if len(abilities) == 1 else 'abilities'}"
+        )
+    ability = abilities[ability_index]
+    if getattr(ability, "mana", None) is None:
+        raise ValueError(
+            f"{source.name}'s ability {ability_index} ({ability.text}) is not a mana ability "
+            "(CR 605.1a), so it cannot be named as a mana source"
+        )
+    return ability
+
+
+def mana_from(
+    source: CardState,
+    game: Game | None = None,
+    ability_index: int | None = None,
+) -> list[Color]:
+    """What tapping this source for `ability_index` produces, asked of the
+    engine's own `ManaAbility.resolve`.
+
+    Not `parse_mana_abilities(source.card)[0].produces()` any more, which was
+    wrong twice over: it read the **printed card** rather than the permanent's
+    computed abilities (CR 613.5 - a Forest that has become a copy of Sol Ring
+    taps for `{C}{C}`), and it always took the **first** ability, which is the
+    plain one on every source in this pool that prints a CR 106.6-restricted
+    second one.
+
+    `resolve` is the same call `Game.activate_ability`'s own mana fast path
+    makes, so every refusal here is the engine's own sentence rather than one
+    invented in this module - "this ability adds any colour; pass the colour
+    chosen" for a choice nobody made, "this ability's mana has no defined type
+    right now" for CR 106.5. That matters: a choice must never be *guessed* on
+    a player's behalf here, because guessing is exactly what naming the ability
+    was supposed to take out of the payment.
+
+    Three of the board narrowings `resolve` accepts are read off the permanent
+    itself and passed: its own counters, whether a card is imprinted on it, and
+    CR 614.12a's chosen colour ("as this enters, choose a color", read back by
+    Sunken Citadel's "the chosen color") - all three are plain state on the
+    `CardState`, the same three `machines.cost._mana_narrowings` reads for the
+    automatic path. The fourth is not reachable from this side of the seam:
+    CR 106.7's "could produce" survey and the controller's land types both live
+    behind `Game`'s own private helpers, so they are left unset, and an ability
+    that needs them narrows to nothing and is refused with CR 106.5's wording
+    rather than answered with a guess. `CostPayment.tap_for_mana` re-validates
+    the production against the real board afterwards either way, so a
+    disagreement is refused there, never quietly accepted.
+    """
+    if game is not None and ability_index is not None:
+        mana = mana_ability_at(game, source, ability_index).mana
+    else:
+        abilities = _mana_abilities_of(source, game)
+        if not abilities:
+            raise ValueError(f"{source.card.name} has no mana ability")
+        mana = abilities[0]
+    return mana.resolve(
+        frozenset(),
+        frozenset(source.counters.counts),
+        None,
+        game.card_imprinted_on(source.id) is not None if game is not None else False,
+        chosen_color=_chosen_color(source),
+    )
+
+
+def _chosen_color(source: CardState) -> Color | None:
+    """CR 614.12a's "as this enters, choose a color", recorded on the permanent
+    as it entered - what "the chosen color" points back at."""
+    from magic_cards_model.models.card_state import ChoiceKind
+
+    choice = source.choice
+    if choice is None or choice.kind is not ChoiceKind.COLOR or not choice.value:
+        return None
+    return Color(choice.value)
+
+
+def _mana_abilities_of(source: CardState, game: Game | None) -> list[Any]:
+    """Every mana ability this source has, computed where there is a game to
+    ask (CR 613.5) and read off the printed card where there is not."""
+    if game is not None:
+        try:
+            computed = list(game.activated_abilities(source))
+        except Exception:
+            computed = []
+        found = [ability.mana for ability in computed if getattr(ability, "mana", None) is not None]
+        if found:
+            return found
     from magic_cards_model.machines import parse_mana_abilities
 
-    abilities = parse_mana_abilities(source.card)
-    if not abilities:
-        raise ValueError(f"{source.card.name} has no mana ability")
-    return abilities[0].produces()
+    return list(parse_mana_abilities(source.card, source.up_face_name))
 
 
-def mana_colors(source: CardState, colors: list[str] | None) -> list[Color]:
+def mana_colors(
+    source: CardState,
+    colors: list[str] | None,
+    game: Game | None = None,
+    ability_index: int | None = None,
+) -> list[Color]:
+    """The colours a hand-picked source is being tapped for.
+
+    With `colors` named, those - parsed, and (when an `ability_index` names one
+    particular ability) checked against what that ability would actually make,
+    so a colour the named ability cannot produce is refused here rather than
+    silently satisfied by a different ability on the same card. Without them,
+    whatever the ability itself produces (`mana_from`).
+    """
     if not colors:
-        return mana_from(source)
+        return mana_from(source, game, ability_index)
     try:
-        return [Color(color.strip().upper()) for color in colors]
+        named = [Color(color.strip().upper()) for color in colors]
     except ValueError as exc:
         raise ValueError(f"unknown mana color in {colors}: use W, U, B, R, G or C") from exc
+    if game is None or ability_index is None:
+        return named
+    mana = mana_ability_at(game, source, ability_index).mana
+    # One colour for a choice ability (CR 605.1a's `color` argument takes
+    # exactly one); a repeated colour - `["C", "C"]` for Eldrazi Temple's
+    # `{C}{C}` - is that same one choice spelled out per mana. Anything else
+    # is handed to `resolve` with no choice at all, which raises the engine's
+    # own "pass the colour chosen".
+    chosen = named[0] if len(set(named)) == 1 else None
+    produced = mana.resolve(
+        frozenset(),
+        frozenset(source.counters.counts),
+        chosen,
+        game.card_imprinted_on(source.id) is not None,
+        chosen_color=_chosen_color(source),
+    )
+    if sorted(produced) != sorted(named):
+        made = "".join("{" + color.value + "}" for color in produced) or "no mana"
+        asked = "".join("{" + color.value + "}" for color in named)
+        raise ValueError(f"{source.name}'s ability {ability_index} adds {made}, not {asked}")
+    return produced
 
 
 def target_thing(game: Game, token: str) -> Any:
@@ -138,8 +269,32 @@ def pay_with(
     """Tap the given sources into the payment, then leave the rest to `pay()`.
 
     The sources are the mana abilities this app may activate on the player's
-    behalf - the caller is the player's agent here, not the rules. Two kinds
+    behalf - the caller is the player's agent here, not the rules. Three kinds
     of entry are told apart:
+
+    - a `ManaSource` naming an ability (`entry.ability_index`) is the most
+      specific of the three: the player has said *which* mana ability of that
+      source to tap it for, in the index space `AbilityView.index` publishes.
+      The production comes off that ability alone, and the CR 106.6 restriction
+      handed to `tap_for_mana` is **that ability's own**, passed explicitly.
+
+      Explicitly, not by inference, and that is a correctness point rather than
+      a tidiness one. Left to itself `tap_for_mana` re-derives the restriction
+      from what the mana turned out to be (`machines.cost.
+      restriction_for_production`), which asks which of the source's `{T}`
+      abilities could have produced exactly that - and deliberately breaks a
+      tie towards **unrestricted**, because a caller that named only mana
+      should not have its spending narrowed on a guess. It also asks
+      `ManaAbility.effective()` with no board at all, so an ability whose
+      production is board-defined (Sunken Citadel's "the chosen color") matches
+      nothing and comes back unrestricted however restricted it really is. A
+      caller that named the ability is not guessing, so it says which
+      restriction the mana carries and none of that runs.
+
+      A named ability that offers a choice of colour with no colour given is
+      refused in the engine's own words rather than picked for the player -
+      auto-picking would put the very inference this branch exists to bypass
+      straight back into the payment.
 
     - a `ManaSource` naming a colour (`entry.colors`) is a player's explicit
       choice - Sunbaked Canyon should make {R} and not {W} - and is tapped for
@@ -159,10 +314,24 @@ def pay_with(
       needs, and never invents a cost the player did not name - a source with
       an additional cost or an unhonourable CR 106.6 spend restriction is
       skipped by `auto_tap` itself even when explicitly named.
+
+    `ability_index=None` - absent, or explicitly null - is the second and third
+    shapes exactly as they always were: the branch below is only entered by an
+    entry that positively names an ability.
     """
+    from magic_cards_model.machines.cost import spend_restriction
+
     unpinned: list[CardState] = []
     for entry in sources:
-        if isinstance(entry, ManaSource) and entry.colors:
+        if isinstance(entry, ManaSource) and entry.ability_index is not None:
+            source = find_card(game, entry.card_id)
+            ability = mana_ability_at(game, source, entry.ability_index)
+            payment.tap_for_mana(
+                source,
+                mana_colors(source, entry.colors, game, entry.ability_index),
+                restriction=spend_restriction(ability.effect, source),
+            )
+        elif isinstance(entry, ManaSource) and entry.colors:
             source = find_card(game, entry.card_id)
             payment.tap_for_mana(source, mana_colors(source, entry.colors))
         else:
@@ -1178,22 +1347,6 @@ def set_step(game: Game, step: Step) -> None:
         game.turn.step = step  # raw setup: rewinding the turn marker on purpose
 
 
-def _mana_ability_text(ability: Any) -> str:
-    """A display line for an intrinsic mana ability, read off its parsed shape.
-
-    These abilities are reminder text on the card (a basic land's whole oracle
-    text is `({T}: Add {G}.)`), so there is no printed ability text to show.
-    """
-    if ability.any_color:
-        return "{T}: Add one mana of any colour"
-    if len(ability.options) == 1:
-        return "{T}: Add " + "".join("{" + color.value + "}" for color in ability.options[0])
-    options = " or ".join(
-        "{" + "".join(color.value for color in option) + "}" for option in ability.options
-    )
-    return "{T}: Add " + options
-
-
 def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
     """The activated abilities the engine would let a caller index into.
 
@@ -1203,11 +1356,11 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
     CR 305.6), so the normal loop below covers it directly - the `activate`
     endpoint no longer needs a separate mana-ability index range for it.
 
-    The `parse_mana_abilities` fallback loop still runs for the one shape that
-    is not covered by that: a card whose printed activated abilities are all
-    non-mana, so `Game.activated_abilities` never reaches the intrinsic
-    fallback, but which still carries a basic land type. Nothing in the pool
-    is shaped like that today.
+    The printed-mana fallback loop (`_printed_mana_activations`) still runs for
+    the one shape that is not covered by that: a card whose computed activated
+    abilities are all non-mana, so `Game.activated_abilities` never reaches the
+    intrinsic fallback, but which still carries a printed `{T}: Add ...` or a
+    basic land type. Nothing in the pool is shaped like that today.
 
     A card anywhere other than the battlefield reads a different pool
     entirely: `machines.keywords.off_zone_abilities`, the same one
@@ -1235,12 +1388,10 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 "index": entry.index,
                 "text": entry.ability.text,
                 "mana": False,
-                **ability_hints(entry.ability, ()),
+                **ability_hints(entry.ability, (), state),
             }
             for entry in off_zone_abilities(state.card)
         ]
-
-    from magic_cards_model.machines import parse_mana_abilities
 
     try:
         abilities = game.activated_abilities(state)
@@ -1273,18 +1424,18 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
                 # an empty target list for the one that targets is read by the
                 # engine as "I choose none" rather than "not chosen yet" - see
                 # `affordances.py`'s module docstring.
-                **ability_hints(ability, color_options),
+                **ability_hints(ability, color_options, state),
             }
         )
     if any(entry["mana"] for entry in listed):
         return listed
-    for offset, ability in enumerate(parse_mana_abilities(state.card)):
+    for offset, activation in enumerate(_printed_mana_activations(state)):
         # The one shape `mana_color_options` cannot answer: these abilities
-        # are parsed off the printed card and are NOT in
+        # are read off the printed card and are NOT in
         # `game.activated_abilities(state)` at all (see this function's own
         # docstring), so there is no index for the engine to look one up by.
         # The printed reading stays here, and only here.
-        parsed = getattr(ability, "mana", None)
+        parsed = activation.mana
         if parsed is not None and parsed.any_color:
             # CR 106.1b's five colours; `Color.COLORLESS` is not one of them
             # and "any color" never offers it.
@@ -1302,12 +1453,45 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
         listed.append(
             {
                 "index": len(abilities) + offset,
-                "text": _mana_ability_text(ability),
+                "text": activation.text,
                 "mana": True,
-                **ability_hints(ability, printed),
+                **ability_hints(activation, printed, state),
             }
         )
     return listed
+
+
+def _printed_mana_activations(state: CardState) -> list[Any]:
+    """This card's own `{T}`-cost mana abilities, read off the printed card -
+    `parse_mana_abilities`' answer, kept as whole `ActivatedAbility` objects
+    rather than the bare `ManaAbility` that function returns.
+
+    Same filter, same intrinsic-land fallback (CR 305.6), same up-face
+    narrowing - `parse_mana_abilities`' own docstring is the reference - but
+    the activation survives, and with it the two things a bare `ManaAbility`
+    cannot answer: its printed `text`, and the `effect` a CR 106.6 "Spend this
+    mana only ..." sentence is read out of. `list_abilities`' fallback branch
+    used to unpack the `ManaAbility` and then ask it for a `.mana` attribute it
+    has never had, so `mana_options` and `is_mana_ability` came out empty for
+    every ability this branch has ever listed.
+    """
+    from magic_cards_model.machines import intrinsic_land_ability, parse_abilities
+    from magic_cards_model.machines.abilities import ActivatedAbility
+    from magic_cards_model.machines.cost import CostKind
+
+    face = state.up_face_name
+    printed = [
+        ability
+        for ability in parse_abilities(state.card)
+        if isinstance(ability, ActivatedAbility)
+        and ability.mana is not None
+        and any(piece.kind is CostKind.TAP for piece in ability.costs)
+        and (face is None or ability.face == face)
+    ]
+    if printed:
+        return printed
+    intrinsic = intrinsic_land_ability(state.card, face)
+    return [intrinsic] if intrinsic is not None and intrinsic.mana is not None else []
 
 
 def move_card(
