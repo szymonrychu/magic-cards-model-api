@@ -160,7 +160,28 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-7"
+PROTOCOL_VERSION = "seatkit-10"
+#: `seatkit-10` (this repo's own numbering - picked deliberately past 8 and 9
+#: to avoid a confusing collision: an unmerged branch had already taken this
+#: constant to `seatkit-9` at the time this bump was written, and whichever
+#: side lands second should reconcile to one higher than the other, not
+#: retroactively fight over 8 or 9) is the T-something notice-plumbing wave:
+#: `pass_priority`/`act`/every other mutating tool now carries a `notices`
+#: key - `Game`'s own fail-closed notice records (19 lists,
+#: `models/game.py:1148-1306`) that a resolving spell or ability's clause was
+#: recognised but could not be read, attributed to the command that raised
+#: them (`magic_cards_model_api.commands._attach_notices`) and redacted per
+#: viewer (`visibility.redact_notices`). Before this bump a fail-closed
+#: clause - Sheoldred's Edict-shaped, and every other card on the same
+#: "recognised but unreadable" list - resolved doing nothing with no
+#: indication anywhere in a seat's own tool result that the refusal had ever
+#: happened; the engine already recorded why, this bump is what finally
+#: hands that record to whoever asked. An MCP process built before it reads
+#: a response missing `notices` entirely and silently treats every one of
+#: these refusals as an ordinary no-op, same as before - not a hard failure,
+#: but the exact silent-misbehaviour case this version check exists to turn
+#: loud instead.
+#:
 #: `seatkit-7` replaced the `my_state` tool with `battlefield_state`, which
 #: answers the same whole board when called with nothing but a uid and takes
 #: two options to narrow it: `sections` (a comma-separated list of the state

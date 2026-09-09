@@ -490,6 +490,142 @@ def _replay_copy(game: Game) -> Game:
     return game.model_copy(deep=True)
 
 
+#: `Game`'s own 18 fail-closed notice lists (`models/game.py:1148-1306`) - one
+#: per category of clause this engine recognised but could not read, each
+#: appended and never cleared. `continuous_effects.layer_notices` is the
+#: 19th and lives one level down (`ContinuousEffects`, not `Game` itself), so
+#: `_notice_snapshot`/`_new_notices` read it separately below rather than
+#: folding it into this tuple.
+_NOTICE_LIST_NAMES: tuple[str, ...] = (
+    "targeting_notices",
+    "intervening_if_notices",
+    "cast_condition_notices",
+    "mode_notices",
+    "cost_modifier_notices",
+    "anaphoric_clause_notices",
+    "imprint_notices",
+    "cast_from_hand_exile_notices",
+    "conditional_clause_notices",
+    "reflexive_clause_notices",
+    "unwired_choice_notices",
+    "suspend_redirect_notices",
+    "delayed_clause_notices",
+    "evasion_notices",
+    "undefined_power_notices",
+    "unmodeled_trigger_effect_notices",
+    "control_replacement_notices",
+    "opening_hand_notices",
+)
+
+#: The key `_new_notices` files a `continuous_effects.layer_notices` entry
+#: under - it has no `Game`-level list of its own name to borrow, so this is
+#: what the payload's `"kind"` and `_notice_snapshot`'s dict both call it.
+_LAYER_NOTICE_KIND = "layer_notices"
+
+
+def _notice_snapshot(game: Game) -> dict[str, int]:
+    """How many entries each of `game`'s 19 notice lists holds right now -
+    `run_command`'s "before" half of the diff `_new_notices` takes after a
+    command finishes."""
+    snapshot = {name: len(getattr(game, name)) for name in _NOTICE_LIST_NAMES}
+    snapshot[_LAYER_NOTICE_KIND] = len(game.continuous_effects.layer_notices)
+    return snapshot
+
+
+def _notice_source(game: Game, source_id: UUID | None) -> tuple[str | None, str | None]:
+    """The zone and controller a notice's own source card had, read from
+    `game` right now - `commands.run_command` is the one place in this whole
+    pipeline that still holds a live `Game` next to a freshly-appended
+    notice; `visibility.redact_log_entry` reads a persisted log entry back
+    out of storage later with no `Game` to ask, so this is captured once,
+    here, or never.
+
+    `source_id=None` - `OpeningHandNotice`'s own shape carries no `source_id`
+    at all, and a handful of the other eighteen lists type theirs
+    `UUID | None` too - has nothing to look up and fails closed: `(None,
+    None)` never equals a real viewer in `visibility.redact_notices`'s own
+    "is this viewer the owner" check, so a notice this function cannot
+    positively clear is blanked for everyone but `ADMIN`, the same posture
+    the engine's own notice lists keep for a clause they could not read.
+    """
+    if source_id is None:
+        return None, None
+    card = game.find_by_id(source_id)
+    if card is None:
+        return None, None
+    return card.zone.value, card.controller_or_owner
+
+
+def _new_notices(game: Game, before: dict[str, int]) -> list[dict[str, Any]]:
+    """Every notice appended to any of `game`'s 19 lists since `before` was
+    taken, as `{"kind": <the engine's own list name>, **notice.model_dump
+    (mode="json"), "zone": ..., "controller": ...}` - the engine's own record
+    passed straight through, plus the two bookkeeping keys `_notice_source`
+    computes and `visibility.redact_notices` reads later. No explanatory
+    sentence is authored here - what a notice *means* belongs in the MCP
+    tool docstring and `driver/prompt.py`, not in this data.
+
+    Generic across all 19 lists and every command kind: this never has to
+    change when a 20th notice list is added, and carries no per-handler
+    knowledge of what any single notice type means.
+    """
+    notices: list[dict[str, Any]] = []
+    for name in _NOTICE_LIST_NAMES:
+        items = getattr(game, name)
+        for item in items[before[name] :]:
+            payload = {"kind": name, **item.model_dump(mode="json")}
+            if name == "opening_hand_notices":
+                # `OpeningHandNotice` (`machines/opening_hand.py`) carries no
+                # `source_id` at all to look up - but CR 103.6's whole
+                # premise is a card in an opening HAND, so the zone is known
+                # even though this function has no way to name which
+                # player's. `controller=None` still fails this closed in
+                # `visibility.redact_notices`: no real viewer, `ADMIN`
+                # exempted by its own bypass, is ever `None`'s own controller.
+                zone, controller = "hand", None
+            else:
+                zone, controller = _notice_source(game, getattr(item, "source_id", None))
+            payload["zone"] = zone
+            payload["controller"] = controller
+            notices.append(payload)
+    for item in game.continuous_effects.layer_notices[before[_LAYER_NOTICE_KIND] :]:
+        payload = {"kind": _LAYER_NOTICE_KIND, **item.model_dump(mode="json")}
+        zone, controller = _notice_source(game, item.source_id)
+        payload["zone"] = zone
+        payload["controller"] = controller
+        notices.append(payload)
+    return notices
+
+
+def _attach_notices(outcome: Any, notices: list[dict[str, Any]]) -> None:
+    """File `notices` onto whatever a command handler returned, generically:
+    `engine_api.cast_card` and its siblings return an `Outcome` whose
+    `detail` gets splatted by `Outcome.body()` into both the direct response
+    and (via `app.audit_outcome`) the log row; `pass_priority`/`advance`/
+    `resolve_top`/`state_based_actions`/`concede`/`pregame_settle` return a
+    plain `dict` instead, so the same key lands there directly. Either way
+    this is the one place that has to know both shapes exist - every route
+    downstream just reads `detail.get("notices")` / `outcome.get("notices")`.
+
+    **Only set when `notices` is non-empty.** The engine's own notice lists
+    already prove a command that raised nothing is not the same claim as one
+    nobody checked (`Game.mode_notices == []` after a fully-read modal
+    spell, asserted right alongside the fail-closed case in
+    `test_modal_spells.py`) - an *absent* key here reads exactly as honestly
+    as a present, empty one, and costs nothing on every route this touches:
+    dozens of existing responses pin their exact shape without a `notices`
+    key at all, and `response_model_exclude_unset` already drops an unset
+    field for free, so there is no reason to add one everywhere just to
+    immediately throw it away.
+    """
+    if not notices:
+        return
+    if isinstance(outcome, engine_api.Outcome):
+        outcome.detail["notices"] = notices
+    elif isinstance(outcome, dict):
+        outcome["notices"] = notices
+
+
 def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> RunResult:
     """Run `command` against a fresh copy of `game`, replaying `tape` for
     every decision an earlier, paused attempt at this same command already
@@ -507,6 +643,16 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     the same way a caller feeding it a stale tape would be a bug), or a
     `PAUSED` one the moment a question has no scripted answer and no
     unconsumed tape entry.
+
+    **Every fail-closed notice this command's own handler caused is
+    attributed here**, generically, for every `kind` - not per handler. The
+    snapshot is taken right after `working` is minted (so it reads `game`'s
+    own starting counts, before this attempt touches anything) and diffed
+    once the handler returns; on `PAUSED` there is nothing to attribute yet
+    (`working` is thrown away, and a resumed attempt re-runs this same
+    command from `game` with a longer tape, so the eventual `COMPLETED`
+    diff already covers the whole command, pause included - see
+    `resume_command`'s own docstring). See `_new_notices`/`_attach_notices`.
     """
     handler = COMMAND_HANDLERS.get(command.kind)
     if handler is None:
@@ -515,12 +661,14 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     working = _replay_copy(game)
     working.decisions.pause_when_unanswered = True
     working.decisions.begin_replay(tape)
+    before_notices = _notice_snapshot(working)
     try:
         outcome = handler(working, command.payload)
     except DecisionPending as exc:
         return RunResult(status=RunStatus.PAUSED, pending=exc.pending, tape=tuple(tape))
 
     working.decisions.finish_replay()
+    _attach_notices(outcome, _new_notices(working, before_notices))
     return RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape))
 
 

@@ -341,9 +341,29 @@ def audit_outcome(
     (T9's same-transaction guarantee) - passing it through as `audit.
     record`'s `_fill_seq` fills that row instead of appending a second,
     orphaned one for the same action.
+
+    **`commands.run_command`'s notices ride `outcome.detail["notices"]`**
+    (`commands._attach_notices`), which `outcome.body()` already splats into
+    the raw response - this is the one generic place that (a) also logs
+    them, since `audit.record` is only ever given `**keys`, never
+    `outcome.detail` itself, and (b) redacts the *response* copy for
+    whichever player this route already trusts as its actor. None of the
+    routes this serves carry a `uid` - `keys.get("player")` is the same
+    self-declared identity `records.require_reasoning` and everything else
+    in this file already trusts for these routes, so redacting against it is
+    not a new trust boundary, only the first thing that needed one. The
+    persisted log keeps the *raw* notices regardless of viewer - `GET
+    .../log` redacts its own copy per-reader later, through
+    `visibility.redact_log_entry`.
     """
+    viewer = keys.get("player")
+    body = outcome.body()
+    notices = outcome.detail.get("notices")
+    if notices:
+        body = {**body, "notices": visibility.redact_notices(notices, viewer)}
     if dry_run:
-        return {**outcome.body(), "log_seq": None}
+        return {**body, "log_seq": None}
+    log_keys = {**keys, "notices": notices} if notices else keys
     seq = audit.record(
         game_id,
         action,
@@ -352,9 +372,9 @@ def audit_outcome(
         reasoning=reasoning,
         legal_actions_before=legal_actions_before,
         _fill_seq=seq_hint,
-        **keys,
+        **log_keys,
     )
-    return {**outcome.body(), "log_seq": seq}
+    return {**body, "log_seq": seq}
 
 
 def _pause_slot_guard(
@@ -1916,13 +1936,23 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
         _fill_seq=seq_hint,
         **audit_detail,
     )
-    return {
+    # Logged raw just above (`audit_detail["notices"]`, when this resolution
+    # raised any); the response's own copy is redacted for `req.player` -
+    # this route takes no `uid`, so that self-declared identity is the same
+    # trust boundary `audit_outcome`'s own docstring explains. Omitted
+    # entirely, like every other route, when there is nothing to attach -
+    # see `commands._attach_notices`'s own docstring for why.
+    body = {
         "allowed": True,
         "reason": None,
         "outcome": priority_outcome.value,
         "settled_through": settled,
         "log_seq": seq,
     }
+    notices = outcome_detail.get("notices")
+    if notices:
+        body["notices"] = visibility.redact_notices(notices, req.player)
+    return body
 
 
 @app.post(
@@ -1991,17 +2021,28 @@ def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[s
         game = game_or_404(game_id)
         return {**state_view(game, game_id), "allowed": None, "paused": True, "log_seq": seq}
     assert result.game is not None and isinstance(result.outcome, dict)
+    notices = result.outcome.get("notices")
     audit.record(
         game_id,
         "state_based_actions",
         player=req.player,
         destroyed=result.outcome["destroyed"],
         changed=result.outcome["changed"],
+        **({"notices": notices} if notices else {}),
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
         _fill_seq=seq_hint,
     )
-    return {**state_view(result.game, game_id), **result.outcome}
+    # Logged raw above (when there was anything to log); the response's own
+    # copy is redacted for this route's caller (`req.player` - no `uid` is
+    # taken here, the same trust boundary `audit_outcome`'s own docstring
+    # explains for the routes that go through it instead of this one). Left
+    # out of the response entirely when empty, like every other route - see
+    # `commands._attach_notices`'s own docstring.
+    outcome = result.outcome
+    if notices:
+        outcome = {**result.outcome, "notices": visibility.redact_notices(notices, req.player)}
+    return {**state_view(result.game, game_id), **outcome}
 
 
 @app.post(
@@ -2057,9 +2098,17 @@ def resolve_top(
         _fill_seq=seq_hint,
         **result.outcome,
     )
+    # Logged raw just above (`**result.outcome` already omits `notices`
+    # entirely when there is none - `commands._attach_notices`'s own
+    # docstring); the response's own copy is redacted for `viewer`, the same
+    # resolved identity `redact_view` already keys on.
+    outcome = result.outcome
+    raw_notices = result.outcome.get("notices")
+    if raw_notices:
+        outcome = {**result.outcome, "notices": visibility.redact_notices(raw_notices, viewer)}
     return {
         **visibility.redact_view(state_view(result.game, game_id), viewer),
-        **result.outcome,
+        **outcome,
         "log_seq": seq,
     }
 
@@ -2128,24 +2177,33 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     assert result.game is not None and isinstance(result.outcome, dict)
     step_value = result.outcome["advanced_to"]
     suspend_upkeep = result.outcome["suspend_upkeep"]
+    notices = result.outcome.get("notices")
     seq = audit.record(
         game_id,
         "advance",
         player=req.player,
         allowed=True,
         suspend_upkeep=suspend_upkeep,
+        **({"notices": notices} if notices else {}),
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
         _fill_seq=seq_hint,
         **{"from": before, "to": step_value},
     )
-    return {
+    # Logged raw just above (when there was anything to log); the response's
+    # own copy is redacted for `viewer`, the same resolved identity
+    # `redact_view` already keys on. Left out of the response entirely when
+    # empty - see `commands._attach_notices`'s own docstring.
+    body = {
         **visibility.redact_view(state_view(result.game, game_id), viewer),
         "advanced_to": step_value,
         "suspend_upkeep": suspend_upkeep,
         "allowed": True,
         "log_seq": seq,
     }
+    if notices:
+        body["notices"] = visibility.redact_notices(notices, viewer)
+    return body
 
 
 @app.post(

@@ -357,7 +357,7 @@
       },
       "ActionOutcome": {
         "additionalProperties": true,
-        "description": "The response shape of every action-mutating route\n(`app._respond`/`app.audit_outcome`) - `engine_api.Outcome.body()` plus\nthe audit log's own `log_seq`.\n\n`allowed` is `None` exactly when the action paused on an unanswered\ndecision (`paused=True`, `pending_decision` set) rather than completing\nor being refused outright. Fields beyond the five declared here are\naction-specific (`Outcome.detail` - e.g. `cost`, `tapped`, `spell_id`,\n`ability_id`, `card_id`, `attackers`, `mana_ability`, `ability`) and are\ndeliberately **not** enumerated as named fields: `engine_api.Outcome\n.detail` is untyped by design - each of its call sites across\n`engine_api.py` builds a different key set for a different action, and\nnaming them all here would either claim a field a given route's response\nnever actually carries, or force one implausibly wide union. This model\ninstead declares the fields every mutating route's response shares and\nlets the rest through as additional, unnamed properties\n(`extra=\"allow\"`) - the same honesty `serialize.state_view`'s own\ndynamically-keyed fields get, extended to this genuinely per-action\nshape. A consumer that needs one action's exact detail keys should pin\nagainst that route's own example response, not against this component.",
+        "description": "The response shape of every action-mutating route\n(`app._respond`/`app.audit_outcome`) - `engine_api.Outcome.body()` plus\nthe audit log's own `log_seq`.\n\n`allowed` is `None` exactly when the action paused on an unanswered\ndecision (`paused=True`, `pending_decision` set) rather than completing\nor being refused outright. Fields beyond the five declared here are\naction-specific (`Outcome.detail` - e.g. `cost`, `tapped`, `spell_id`,\n`ability_id`, `card_id`, `attackers`, `mana_ability`, `ability`) and are\ndeliberately **not** enumerated as named fields: `engine_api.Outcome\n.detail` is untyped by design - each of its call sites across\n`engine_api.py` builds a different key set for a different action, and\nnaming them all here would either claim a field a given route's response\nnever actually carries, or force one implausibly wide union. This model\ninstead declares the fields every mutating route's response shares and\nlets the rest through as additional, unnamed properties\n(`extra=\"allow\"`) - the same honesty `serialize.state_view`'s own\ndynamically-keyed fields get, extended to this genuinely per-action\nshape. A consumer that needs one action's exact detail keys should pin\nagainst that route's own example response, not against this component.\n\n`notices` is the one `Outcome.detail` key declared here rather than left\nto `extra=\"allow\"`: unlike `cost`/`tapped`/`spell_id`/..., it is not\nper-action - `commands.run_command` files it onto every command kind's\noutcome generically (`commands._attach_notices`), so every route this\nmodel serves can carry one. Each entry is one of `Game`'s 19 fail-closed\nnotice records (`{\"kind\": ..., **notice.model_dump(mode=\"json\")}`, plus\nthis api's own `zone`/`controller` bookkeeping - see\n`commands._new_notices`), already redacted for this response's own\nviewer (`app.audit_outcome`) - not the engine's raw list.",
         "properties": {
           "allowed": {
             "anyOf": [
@@ -380,6 +380,14 @@
               }
             ],
             "title": "Log Seq"
+          },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
           },
           "paused": {
             "default": false,
@@ -748,6 +756,14 @@
               "type": "string"
             },
             "title": "Losers",
+            "type": "array"
+          },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
             "type": "array"
           },
           "paused": {
@@ -5467,6 +5483,14 @@
             ],
             "title": "Log Seq"
           },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
           "outcome": {
             "anyOf": [
               {
@@ -7223,6 +7247,14 @@
             "title": "Losers",
             "type": "array"
           },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
           "paused": {
             "default": false,
             "title": "Paused",
@@ -8741,6 +8773,14 @@
               "type": "string"
             },
             "title": "Losers",
+            "type": "array"
+          },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
             "type": "array"
           },
           "paused": {
