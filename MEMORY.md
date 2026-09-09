@@ -1303,3 +1303,52 @@ whoever works on the repo itself.
   uid would be a guess. They stay reachable exactly as they are today (any
   browser holding a seat uid) and they will not appear on a second computer.
   Only games created after the cutover are cross-device.
+- **2026-09-09 - `store.archived()` is the one read that reports
+  `GameUnloadable` instead of raising it, and the review is rebuilt from the
+  ledger.** The same schema-3-vs-5 mismatch that took the listings down was
+  still 409ing `GET /api/games/{id}/review` - on a 191-action game somebody
+  had actually played to the end, whose entire recorded reasoning was
+  therefore unreachable, which is the exact thing the soft delete and the
+  plan-declaration seam exist to prevent. The engine's refusal is untouched
+  (no permissive decode, no migrated or mutated row, read path only); what
+  changed is that `archived()` now answers with `ArchivedGame(game=None,
+  unloadable=<the decoder's own words>)` and the other five columns beside
+  it, all of which were always plain columns. `review.build_review` then
+  rebuilds the head from the ledger: `players` from the newest frame's
+  `life` keys (the engine's own seat order) falling back to the `seats`
+  column, and the outcome from the `game_over` row and nothing else. It is
+  marked `reconstructed` with `unloadable` verbatim, and anything the
+  ledger cannot establish is `None` and named in `unestablished` - never
+  guessed, and in particular never inferred from a life total, which is the
+  inference `GAME_OVER_ACTION` was added to remove.
+
+  Both gates are unchanged and now shared (`app._post_game`, used by
+  `game_review` and `declare_reflection` alike): the credential check reads
+  the archived row's own `admin_key`/`seat_uids`, and "over or ended" falls
+  back to the ledger's `game_over` row only when there is no decodable
+  board to ask - its *absence* still refuses, so an undecodable game that
+  is still being played is refused exactly as before. `_entries_if_
+  undecodable` keeps the decodable path from loading a megabyte of ledger
+  just to answer the gate.
+
+  The lobby half needed a new fact, not a looser one: `is_over` stays
+  `False` for an undecodable row (it is what `MAX_LIVE_GAMES` counts, and
+  CR 104.1 is not judgeable on a board nobody can read), so
+  `LobbyGameSummary.recorded_ending` carries the `game_over` row's `seq`
+  for `unloadable` rows only - computed for no other row, because for those
+  `is_over` already answers it off the board and a ledger read per game per
+  1.2s poll is the N+1 the summary seam was cut to remove.
+  `ui/render/lobby.js`'s `reviewable` keys on it, so the review door is
+  offered exactly when the review will actually read, and withheld (rather
+  than offered and 409ing) when nothing establishes the game finished.
+
+  Checked and *not* found while there: no wrong-id bug in the Review
+  control. `renderGamesTable` binds `row` per iteration (`for (const row of
+  rows)`), the handler passes that same row's `gameId`/`myUid`, `open()`
+  puts them in the URL verbatim with no "current game" fallback, and the
+  table is only redrawn by an explicit `refreshGames` (the lobby table has
+  no poll), so no row can move under the pointer. What the lobby does lack
+  is any way to tell two games against the same AI apart: rows carry
+  opponent/turn/agent but no id or date, and `list_lobby_games` sorts
+  oldest-first with locally-known ended games appended last, so the game
+  just played is not the top row.

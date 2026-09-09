@@ -118,15 +118,32 @@ class ArchivedGame:
     authorises against are the ones the game was played with. `deleted_at`
     is `None` for a game that is still live, and a UTC ISO 8601 stamp for
     one that has been ended.
+
+    **`game` is optional, and `unloadable` is why.** This is the one read
+    whose caller must never be handed a `GameUnloadable` instead of an
+    answer: `GET .../review` is the only way left to reach the ledger of a
+    game that has been played, and a snapshot this build refuses to decode
+    (an engine `CURRENT_SCHEMA_VERSION` bump - see `GameUnloadable`) made
+    that ledger permanently unreachable, which is the exact opposite of what
+    the soft delete was built for. So the refusal is reported as *data*: an
+    `ArchivedGame` with `game=None` and `unloadable` carrying the decoder's
+    own words, beside every other field here, none of which was ever stored
+    inside the snapshot. Nothing about the engine's refusal is softened -
+    the snapshot is still not decoded, and no caller gets a `Game` built
+    from it.
     """
 
     game_id: str
-    game: Game
+    game: Game | None
+    """`None` only when `unloadable` is set."""
     admin_key: str | None
     seat_uids: dict[str, str]
     """uid -> username, as `seat_uids()` returns it for a live game."""
     created_at: str | None
     deleted_at: str | None
+    unloadable: str | None = None
+    """The decoder's own refusal (`GameUnloadable.reason`), verbatim, or
+    `None` for the ordinary case where `game` is there."""
 
 
 class _ReservationLedger:
@@ -341,6 +358,12 @@ class GameRepository(Protocol):
         review needs and nothing else: the final state, the credentials to
         authorise a reader against, and when (if ever) the game was ended.
         See `ArchivedGame`.
+
+        **Never raises `GameUnloadable`**, unlike `get()`. A snapshot this
+        build refuses to decode comes back as an `ArchivedGame` whose `game`
+        is `None` and whose `unloadable` carries the decoder's own words, so
+        the ledger of a game that was actually played stays reachable. See
+        `ArchivedGame` for why this one read is the exception.
         """
         ...
 
@@ -957,8 +980,20 @@ class InMemoryRepository:
             ended = self._archived.get(game_id)
             if ended is not None:
                 return ended
-            game = self._games.get(game_id)
-            if game is None:
+        # Through `get`, outside the lock (which is not reentrant), rather
+        # than off `self._games` directly: this class never decodes anything
+        # and so never refuses a snapshot of its own, but `archived()` is
+        # specified to report such a refusal rather than raise it, and the
+        # cheapest way to be sure this implementation upholds that is to
+        # read the game the same way every other caller does and answer the
+        # refusal here if one ever arrives.
+        unloadable: str | None = None
+        try:
+            game = self.get(game_id)
+        except GameUnloadable as exc:
+            game, unloadable = None, exc.reason
+        with self._lock:
+            if game is None and unloadable is None:
                 return None
             return ArchivedGame(
                 game_id=game_id,
@@ -967,6 +1002,7 @@ class InMemoryRepository:
                 seat_uids=dict(self._seats.get(game_id, {})),
                 created_at=self._created_at.get(game_id),
                 deleted_at=None,
+                unloadable=unloadable,
             )
 
     def _append_record_locked(self, game_id: str, payload: dict[str, Any]) -> int:

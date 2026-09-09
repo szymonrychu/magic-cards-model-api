@@ -3444,9 +3444,15 @@
             "type": "array"
           },
           "drawn": {
-            "default": false,
-            "title": "Drawn",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawn"
           },
           "ended_at": {
             "anyOf": [
@@ -3483,8 +3489,15 @@
             "type": "string"
           },
           "is_over": {
-            "title": "Is Over",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Over"
           },
           "players": {
             "items": {
@@ -3492,6 +3505,29 @@
             },
             "title": "Players",
             "type": "array"
+          },
+          "reconstructed": {
+            "default": false,
+            "title": "Reconstructed",
+            "type": "boolean"
+          },
+          "unestablished": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unestablished",
+            "type": "array"
+          },
+          "unloadable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unloadable"
           },
           "winner": {
             "anyOf": [
@@ -3507,8 +3543,7 @@
         },
         "required": [
           "game_id",
-          "players",
-          "is_over"
+          "players"
         ],
         "title": "GameReviewResponse",
         "type": "object"
@@ -4086,6 +4121,17 @@
             },
             "title": "Players",
             "type": "array"
+          },
+          "recorded_ending": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded Ending"
           },
           "seats": {
             "additionalProperties": {
@@ -11761,7 +11807,7 @@
     },
     "/api/games/{game_id}/review": {
       "get": {
-        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for.",
+        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct. See `_post_game` for\n  what stands in for `Game.is_over` when the board cannot be decoded -\n  and note that neither gate is loosened by that case: an undecodable\n  game with nothing recording an ending is refused exactly as a live one\n  is.\n\n**Never 409 for a snapshot this build cannot decode.** That is what\nstranded a 191-action game the day the engine's schema moved: the whole\nreview is built from the ledger's own frames, none of which needs the\nengine to decode anything, so it is rebuilt from them and marked\n`reconstructed` rather than refused. The engine's refusal is untouched -\nit rides along in `unloadable`, and no `Game` is decoded from that\nsnapshot anywhere.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for.",
         "operationId": "game_review_api_games__game_id__review_get",
         "parameters": [
           {

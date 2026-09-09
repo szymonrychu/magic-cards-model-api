@@ -47,7 +47,7 @@ from . import (
     symbology,
     visibility,
 )
-from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
+from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
     ActionOutcome,
@@ -1023,6 +1023,44 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
     return {"log": log, "last_seq": last_seq}
 
 
+def _gate_entries(archived: ArchivedGame) -> list[dict[str, Any]] | None:
+    """The ledger `_post_game` needs to answer this game, or `None` when it
+    can be answered without one.
+
+    Reading the ledger is not free - every row carries a full snapshot, and a
+    long game's is megabytes - so it is loaded for exactly one case: a board
+    this build cannot decode, on a game nothing has ended, where the
+    `game_over` row is the only remaining witness. A decodable board answers
+    from `Game.is_over` and an ended game from its own stamp, both as before.
+    `game_review` hands whatever this returns straight on to
+    `review.build_review`, so the gate never costs a second read.
+    """
+    if archived.unloadable is None or archived.deleted_at:
+        return None
+    return audit.entries(archived.game_id)
+
+
+def _post_game(archived: ArchivedGame, entries: list[dict[str, Any]] | None) -> bool:
+    """Whether this game is over (CR 104.1 - looked up in session: "A game
+    ends immediately when a player wins, when the game is a draw, or when the
+    game is restarted") or has been ended, which is the gate both
+    `game_review` and `declare_reflection` sit behind.
+
+    Unchanged for a game whose board this build can read: `Game.is_over`, or
+    the soft delete's own stamp. For one it cannot, `is_over` is a fact about
+    a board nobody here can look at, so the ledger's `game_over` row - written
+    when it happened, by the build that could read the board - stands in as
+    the witness. Its *absence* is not evidence of the opposite: a game with
+    no such row and no `deleted_at` is refused, which is the same answer this
+    gate gave before and the only one that cannot leak a live game's plans.
+    """
+    if archived.deleted_at:
+        return True
+    if archived.game is not None:
+        return archived.game.is_over
+    return review.ending_of(entries or []) is not None
+
+
 @app.get(
     "/api/games/{game_id}/review",
     response_model=GameReviewResponse,
@@ -1057,7 +1095,19 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
       the entire point after a game and would be handing one seat the
       other's plan during one. Refusing outright is the only version of this
       that cannot leak: a redacted mid-game review would be a second,
-      subtler copy of the same rule to keep correct.
+      subtler copy of the same rule to keep correct. See `_post_game` for
+      what stands in for `Game.is_over` when the board cannot be decoded -
+      and note that neither gate is loosened by that case: an undecodable
+      game with nothing recording an ending is refused exactly as a live one
+      is.
+
+    **Never 409 for a snapshot this build cannot decode.** That is what
+    stranded a 191-action game the day the engine's schema moved: the whole
+    review is built from the ledger's own frames, none of which needs the
+    engine to decode anything, so it is rebuilt from them and marked
+    `reconstructed` rather than refused. The engine's refusal is untouched -
+    it rides along in `unloadable`, and no `Game` is decoded from that
+    snapshot anywhere.
 
     A seat and the admin key see the same thing here. Post-game, so does
     everyone else who could be shown it - there is no hidden information
@@ -1074,7 +1124,8 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     )
     if not allowed:
         raise KeyError("that uid is no seat in this game")
-    if not (archived.game.is_over or archived.deleted_at):
+    entries = _gate_entries(archived)
+    if not _post_game(archived, entries):
         raise HTTPException(
             status_code=409,
             detail=(
@@ -1083,7 +1134,7 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
                 "over or has been ended"
             ),
         )
-    return review.build_review(archived, audit.entries(game_id))
+    return review.build_review(archived, entries if entries is not None else audit.entries(game_id))
 
 
 @app.delete(
@@ -2368,7 +2419,7 @@ def declare_reflection(game_id: str, req: ReflectionIn) -> dict[str, Any]:
         raise KeyError(f"no game {game_id}")
     if archived.seat_uids.get(req.uid) != req.player:
         raise KeyError("that uid is not that seat in this game")
-    if not (archived.game.is_over or archived.deleted_at):
+    if not _post_game(archived, _gate_entries(archived)):
         raise HTTPException(
             status_code=409,
             detail=(

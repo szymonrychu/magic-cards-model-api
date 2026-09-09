@@ -40,6 +40,7 @@ from magic_cards_model.models import Game, SchemaVersionMismatch
 from sqlalchemy import text
 from test_decks_api import LEGAL_DECK, LEGAL_DECK_B
 
+from magic_cards_model_api import audit
 from magic_cards_model_api.db import make_engine
 from magic_cards_model_api.decks import load_deck_into_game
 from magic_cards_model_api.repository import GameUnloadable, InMemoryRepository
@@ -77,7 +78,7 @@ def _schema_3_state() -> dict[str, Any]:
     return state
 
 
-def _engine_refusal() -> str:
+def engine_refusal() -> str:
     """The engine's own message for this fixture - never a message this test
     invented. Every assertion below about *what the api said* is checked
     against this string, so the api can only ever be reported as quoting the
@@ -151,7 +152,7 @@ def test_get_refuses_an_undecodable_row_in_the_engines_own_words(
     with pytest.raises(GameUnloadable) as caught:
         pg.get(stale)
     assert caught.value.game_id == stale
-    assert caught.value.reason == _engine_refusal()
+    assert caught.value.reason == engine_refusal()
 
 
 def test_live_ui_games_survives_an_undecodable_live_row_and_still_counts_it(
@@ -205,6 +206,59 @@ def test_delete_still_works_on_a_row_it_cannot_decode(pg: PostgresRepository) ->
     assert pg.live_ui_games() == []
 
 
+def test_archived_reports_an_undecodable_snapshot_instead_of_raising(
+    pg: PostgresRepository,
+) -> None:
+    """The read the post-game review is built on. `archived()` decodes the
+    same `state` column every other read does, so a stale row used to make
+    `GET .../review` 409 - and the reasoning of a game somebody played to
+    the end became permanently unreachable, which is the one thing the
+    review exists to prevent. It now reports the refusal as data
+    (`ArchivedGame.unloadable`, the engine's own words) and still hands back
+    every plain column beside it, none of which needs decoding."""
+    stale = _stale_row(pg, ui_game=True)
+    pg.register_seats(stale, {"uid-alice": "alice", "uid-bob": "bob"})
+
+    archived = pg.archived(stale)
+    assert archived is not None
+    assert archived.game is None
+    assert archived.unloadable == engine_refusal()
+    assert archived.game_id == stale
+    assert archived.seat_uids == {"uid-alice": "alice", "uid-bob": "bob"}
+    assert archived.admin_key is not None
+    assert archived.created_at is not None
+    assert archived.deleted_at is None
+
+
+def test_archived_still_reports_an_undecodable_snapshot_after_the_soft_delete(
+    pg: PostgresRepository,
+) -> None:
+    """End game is the documented way to get an undecodable game's slot
+    back, so "ended AND undecodable" is a state production reaches on
+    purpose - and it is exactly the state whose review must still read."""
+    stale = _stale_row(pg, ui_game=True)
+    pg.register_seats(stale, {"uid-alice": "alice"})
+    assert pg.delete(stale) is True
+
+    archived = pg.archived(stale)
+    assert archived is not None
+    assert archived.game is None
+    assert archived.unloadable == engine_refusal()
+    assert archived.deleted_at is not None
+    assert archived.seat_uids == {"uid-alice": "alice"}
+
+
+def test_archived_carries_no_refusal_for_a_row_it_can_decode(
+    pg: PostgresRepository,
+) -> None:
+    """The other half: nothing about the ordinary path changed."""
+    good = pg.create(_real_game())
+    archived = pg.archived(good)
+    assert archived is not None
+    assert archived.game is not None
+    assert archived.unloadable is None
+
+
 # --------------------------------------------------------------------------
 # The HTTP surface. Runs on the ordinary in-memory singleton with
 # `InMemoryRepository.get` refusing designated ids - patched on the *class*,
@@ -256,14 +310,14 @@ def test_listing_games_survives_one_that_cannot_be_decoded(
     second = client.post(
         "/api/games", json={"players": [{"username": "carol"}, {"username": "dave"}]}
     ).json()
-    unloadable[second["game_id"]] = _engine_refusal()
+    unloadable[second["game_id"]] = engine_refusal()
 
     response = client.get("/api/games")
     assert response.status_code == 200, response.text
     listed = {entry["game_id"]: entry for entry in response.json()["games"]}
     assert set(listed) == {first["game_id"], second["game_id"]}
     assert listed[first["game_id"]].get("unloadable") is None
-    assert listed[second["game_id"]]["unloadable"] == _engine_refusal()
+    assert listed[second["game_id"]]["unloadable"] == engine_refusal()
 
 
 def test_listing_survives_every_game_being_undecodable(
@@ -276,13 +330,13 @@ def test_listing_survives_every_game_being_undecodable(
         for _ in range(2)
     ]
     for game_id in ids:
-        unloadable[game_id] = _engine_refusal()
+        unloadable[game_id] = engine_refusal()
 
     response = client.get("/api/games")
     assert response.status_code == 200, response.text
     listed = response.json()["games"]
     assert sorted(entry["game_id"] for entry in listed) == sorted(ids)
-    assert all(entry["unloadable"] == _engine_refusal() for entry in listed)
+    assert all(entry["unloadable"] == engine_refusal() for entry in listed)
 
 
 def test_the_summary_route_flags_an_undecodable_game_rather_than_dropping_it(
@@ -291,13 +345,13 @@ def test_the_summary_route_flags_an_undecodable_game_rather_than_dropping_it(
     created = client.post(
         "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
     ).json()
-    unloadable[created["game_id"]] = _engine_refusal()
+    unloadable[created["game_id"]] = engine_refusal()
 
     response = client.get("/api/games/summary", params={"ids": created["game_id"]})
     assert response.status_code == 200, response.text
     summaries = response.json()["summaries"]
     assert [entry["game_id"] for entry in summaries] == [created["game_id"]]
-    assert summaries[0]["unloadable"] == _engine_refusal()
+    assert summaries[0]["unloadable"] == engine_refusal()
 
 
 def test_the_lobby_lists_a_game_it_cannot_decode_rather_than_vanishing_it(
@@ -305,7 +359,7 @@ def test_the_lobby_lists_a_game_it_cannot_decode_rather_than_vanishing_it(
 ) -> None:
     good = _lobby_game(client, "alice", "bob")
     bad = _lobby_game(client, "carol", "dave")
-    unloadable[bad["game_id"]] = _engine_refusal()
+    unloadable[bad["game_id"]] = engine_refusal()
     uids = ",".join([*good["seat_uids"].values(), *bad["seat_uids"].values()])
 
     response = client.get("/api/lobby/games", params={"uids": uids})
@@ -315,7 +369,10 @@ def test_the_lobby_lists_a_game_it_cannot_decode_rather_than_vanishing_it(
     assert listed[good["game_id"]].get("unloadable") is None
 
     entry = listed[bad["game_id"]]
-    assert entry["unloadable"] == _engine_refusal()
+    assert entry["unloadable"] == engine_refusal()
+    # Nothing in the ledger says this game ended, so nothing here claims it
+    # did - and the lobby offers no review door for it.
+    assert entry["recorded_ending"] is None
     # The seats are still named - a game the user played must not read as a
     # game with no players. None of this comes from the snapshot.
     assert sorted(entry["players"]) == ["carol", "dave"]
@@ -331,7 +388,7 @@ def test_a_new_lobby_game_can_still_be_started_beside_an_undecodable_one(
     """The half of the outage that broke creating: the lobby's own boot path
     counts every live ui game."""
     bad = _lobby_game(client, "alice", "bob")
-    unloadable[bad["game_id"]] = _engine_refusal()
+    unloadable[bad["game_id"]] = engine_refusal()
     fresh = _lobby_game(client, "carol", "dave")
     assert fresh["game_id"] != bad["game_id"]
 
@@ -342,12 +399,12 @@ def test_opening_an_undecodable_game_is_a_409_naming_the_mismatch(
     created = client.post(
         "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
     ).json()
-    unloadable[created["game_id"]] = _engine_refusal()
+    unloadable[created["game_id"]] = engine_refusal()
 
     response = client.get(f"/api/games/{created['game_id']}", params={"key": created["admin_key"]})
     assert response.status_code == 409, response.text
     body = response.json()
-    assert body["detail"] == _engine_refusal()
+    assert body["detail"] == engine_refusal()
     assert body["game_id"] == created["game_id"]
     assert body["unloadable"] is True
 
@@ -358,10 +415,52 @@ def test_an_undecodable_game_can_still_be_ended_from_the_lobby(
     """The escape hatch that makes counting an unloadable game against
     `MAX_LIVE_GAMES` recoverable rather than permanent."""
     bad = _lobby_game(client, "alice", "bob")
-    unloadable[bad["game_id"]] = _engine_refusal()
+    unloadable[bad["game_id"]] = engine_refusal()
     uid = next(iter(bad["seat_uids"].values()))
 
     response = client.delete(f"/api/lobby/games/{bad['game_id']}", params={"uid": uid})
     assert response.status_code == 200, response.text
     assert response.json()["deleted"] is True
     assert bad["game_id"] not in client.get("/api/lobby/games").json()["games"]
+
+
+def test_the_lobby_names_the_ledgers_record_of_an_undecodable_games_ending(
+    client: TestClient, unloadable: dict[str, str]
+) -> None:
+    """The row that a person who played a game to the end has to be able to
+    act on. `is_over` stays `False` for an undecodable row - CR 104.1 cannot
+    be judged on a board nobody can read, and that value is what
+    `MAX_LIVE_GAMES` counts - but the ledger's own `game_over` row is a
+    different kind of evidence: it was written when it happened, by the build
+    that could still read the board. Naming it is what lets the lobby offer
+    that game's review knowing `GET .../review` will answer it (rebuilt from
+    the same ledger) rather than 409."""
+    bad = _lobby_game(client, "alice", "bob")
+    game_id = bad["game_id"]
+    conceded = client.post(
+        f"/api/games/{game_id}/actions/concede",
+        json={"player": "alice", "uid": bad["seat_uids"]["alice"]},
+    )
+    assert conceded.status_code == 200, conceded.text
+    ending = [e for e in audit.entries(game_id) if e["action"] == audit.GAME_OVER_ACTION]
+    assert len(ending) == 1, "the game really did finish before the schema moved under it"
+
+    unloadable[game_id] = engine_refusal()
+    listed = {
+        entry["game_id"]: entry
+        for entry in client.get(
+            "/api/lobby/games", params={"uids": ",".join(bad["seat_uids"].values())}
+        ).json()["games"]
+    }
+    entry = listed[game_id]
+    assert entry["unloadable"] == engine_refusal()
+    assert entry["recorded_ending"] == ending[0]["seq"]
+    assert entry["is_over"] is False, (
+        "unchanged: `is_over` is a fact about a board this build cannot read, "
+        "and it is what the live-game cap counts"
+    )
+
+    # And the door it justifies actually opens.
+    review = client.get(f"/api/games/{game_id}/review", params={"uid": bad["seat_uids"]["alice"]})
+    assert review.status_code == 200, review.text
+    assert review.json()["reconstructed"] is True

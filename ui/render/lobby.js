@@ -247,8 +247,19 @@ function gameState(row) {
  * the other's plan while it is still being played. So the door is only ever
  * on a game the lobby already knows is finished - `is_over` from the server,
  * or a game this browser ended. `GET .../review`'s own 409 is the second
- * line of defence, never the only one. */
+ * line of defence, never the only one.
+ *
+ * A row this build cannot decode is the one case where `over` cannot answer
+ * it: `is_over` is a fact about a board nobody here can read, so the server
+ * leaves it `false` and says separately whether the *ledger* recorded this
+ * game ending (`recordedEnding`, the `game_over` row's own `seq`). That is
+ * what the review itself is rebuilt from, so it is exactly the right
+ * question to ask - the button is offered when the answer is yes and the
+ * page will read, and withheld when it is no and the route would refuse.
+ * Never offered on the strength of `unloadable` alone: an undecodable game
+ * that is still being played is still being played. */
 function reviewable(row) {
+  if (row.unloadable) return row.recordedEnding !== null && row.recordedEnding !== undefined;
   return Boolean(row.over || row.archived);
 }
 
@@ -311,7 +322,12 @@ function renderGamesTable(root, handlers, rows) {
       const reviewBtn = document.createElement("button");
       reviewBtn.textContent = "Show thinking";
       reviewBtn.className = "primary";
-      reviewBtn.title = "What the agent said it expected, and what happened next";
+      // What the reader is about to get, said before they click it: for a
+      // game whose board this build cannot decode, the whole page is rebuilt
+      // from the recorded ledger (`review.py`), and the page says so too.
+      reviewBtn.title = row.unloadable
+        ? "What the agent said it expected, and what happened next - rebuilt from the recorded ledger, because this build cannot decode this game's saved board"
+        : "What the agent said it expected, and what happened next";
       reviewBtn.addEventListener("click", () => {
         handlers.showReview({ gameId: row.gameId, uid: row.myUid });
       });

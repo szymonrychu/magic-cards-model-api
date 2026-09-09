@@ -22,8 +22,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi.testclient import TestClient
+from test_unloadable_games import engine_refusal
+from test_unloadable_games import unloadable as unloadable  # noqa: PLC0414 - a fixture, re-exported
 
-from magic_cards_model_api import audit
+from magic_cards_model_api import audit, review
+from magic_cards_model_api.repository import ArchivedGame
 
 PLAN: dict[str, Any] = {
     "board_read": "she is at 4 with no blockers and one card in hand",
@@ -424,3 +427,207 @@ def test_a_reflection_for_a_game_that_never_existed_is_a_404(client: TestClient)
         json={"player": "bob", "uid": "whatever", "text": "notes"},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# the snapshot this build cannot decode: the review is rebuilt from the ledger
+# ---------------------------------------------------------------------------
+#
+# Production, verbatim: a game played to the end at `schema_version=3`, a
+# build that decodes 5, and `GET .../review` answering 409 with the engine's
+# refusal. The refusal is right and stays - what was wrong is that 191
+# actions of recorded reasoning became unreachable because of it. Every row
+# of that ledger is a self-contained JSON frame written by `audit.record`,
+# and no part of reading one needs the engine to decode anything, so the
+# review is rebuilt from the ledger and says, in the payload, that it was.
+#
+# The refusal these tests inject is the real engine's own message for a real
+# schema-3 payload (`test_unloadable_games.engine_refusal`), raised through
+# the same seam a stale postgres row raises it through. The repository half -
+# `archived()` on a genuinely stale stored row, live and soft-deleted - is
+# pinned in `test_unloadable_games.py` against real postgres.
+
+
+def test_an_undecodable_finished_games_review_is_rebuilt_from_the_ledger(
+    client: TestClient, unloadable: dict[str, str]
+) -> None:
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        unloadable[game_id] = engine_refusal()
+
+        response = _review(client, game_id, key=info["admin_key"])
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        # Said out loud, so no reader mistakes this for a board that was read
+        # off a live final state.
+        assert body["reconstructed"] is True
+        assert body["unloadable"] == engine_refusal()
+
+        # The outcome comes from the `game_over` row - the ledger's own
+        # record of CR 104.1, written when it happened - never guessed.
+        assert body["is_over"] is True
+        assert body["winner"] == "bob"
+        assert body["drawn"] is False
+        assert body["unestablished"] == []
+        assert sorted(body["players"]) == ["alice", "bob"]
+
+        # And the whole point: the reasoning is all still there.
+        assert len(body["declarations"]) == 1
+        declaration = body["declarations"][0]
+        assert declaration["player"] == "bob"
+        assert declaration["plan"] == PLAN["plan"]
+        assert declaration["prediction"]["expecting"] == PLAN["prediction"]["expecting"]
+        assert "play_land" in [entry["action"] for entry in declaration["did"]]
+        assert declaration["did"][-1]["reasoning"] == "land first, then the attack"
+        assert "concede" in [entry["action"] for entry in declaration["opponent_did"]]
+
+        actions = [entry["action"] for entry in body["entries"]]
+        assert actions[0] == "create_game"
+        assert audit.GAME_OVER_ACTION in actions
+        assert all(entry["snapshot"] is not None for entry in body["entries"])
+        ending = [e for e in body["entries"] if e["action"] == audit.GAME_OVER_ACTION][-1]
+        assert body["ended_seq"] == ending["seq"]
+    finally:
+        unloadable.pop(game_id, None)
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_decodable_games_review_is_not_marked_reconstructed(client: TestClient) -> None:
+    """The marker means something only if it is absent from the ordinary
+    read - which still comes off the final state the engine holds."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        assert body["reconstructed"] is False
+        assert body["unloadable"] is None
+        assert body["unestablished"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_undecodable_game_with_no_recorded_ending_says_so_rather_than_guessing(
+    client: TestClient,
+) -> None:
+    """A game ended from the lobby before it finished, whose board this build
+    then could not decode: `deleted_at` is what makes it readable, and the
+    ledger has no `game_over` row, so whether anyone won is not something
+    this review can establish. It says so rather than inventing "the game is
+    over" out of the absence of evidence.
+
+    Against `review.build_review` itself, with the real ledger of a real
+    game and an `ArchivedGame` in exactly the shape `PostgresRepository.
+    archived` hands back for a stale, soft-deleted row (pinned against real
+    postgres in `test_unloadable_games.py`). `InMemoryRepository` holds live
+    `Game` objects and never decodes a stored snapshot, so its soft-delete
+    branch cannot produce this state at all - and faking it by patching the
+    engine's own version constant would be testing the fake."""
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    assert _declare(client, info).status_code == 200
+    ended = client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+    assert ended.status_code == 200, ended.text
+
+    entries = audit.entries(game_id)
+    assert entries and all(entry["action"] != audit.GAME_OVER_ACTION for entry in entries)
+    archived = ArchivedGame(
+        game_id=game_id,
+        game=None,
+        admin_key=info["admin_key"],
+        seat_uids={uid: player for player, uid in info["seat_uids"].items()},
+        created_at="2026-09-09T00:00:00+00:00",
+        deleted_at="2026-09-09T00:01:00+00:00",
+        unloadable=engine_refusal(),
+    )
+
+    body = review.build_review(archived, entries)
+    assert body["reconstructed"] is True
+    assert body["unloadable"] == engine_refusal()
+    assert body["ended_at"] is not None
+    assert body["is_over"] is None
+    assert body["winner"] is None
+    assert body["drawn"] is None
+    assert sorted(body["unestablished"]) == ["drawn", "is_over", "winner"]
+    assert body["ended_seq"] is None
+    assert sorted(body["players"]) == ["alice", "bob"]
+    assert body["declarations"][0]["plan"] == PLAN["plan"]
+
+
+def test_an_undecodable_live_games_review_is_still_refused(
+    client: TestClient, unloadable: dict[str, str]
+) -> None:
+    """The over-or-ended gate does not soften because the board cannot be
+    read. With no `game_over` row and no `deleted_at`, nothing establishes
+    that this game is finished - so the 409 stands, for the seat that wrote
+    the plan as much as for anyone else."""
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        assert _declare(client, info).status_code == 200
+        unloadable[game_id] = engine_refusal()
+
+        for params in (
+            {"key": info["admin_key"]},
+            {"uid": info["seat_uids"]["bob"]},
+            {"uid": info["seat_uids"]["alice"]},
+        ):
+            refused = _review(client, game_id, **params)
+            assert refused.status_code == 409, refused.text
+            assert "board_read" not in refused.text
+            assert PLAN["plan"] not in refused.text
+    finally:
+        unloadable.pop(game_id, None)
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_undecodable_finished_games_review_is_still_refused_to_a_stranger(
+    client: TestClient, unloadable: dict[str, str]
+) -> None:
+    """The credential gate is unchanged too: it reads the archived row's own
+    `admin_key`/`seat_uids` columns, neither of which ever needed the
+    snapshot."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        unloadable[game_id] = engine_refusal()
+        assert _review(client, game_id).status_code in (404, 422)
+        assert _review(client, game_id, uid="not-a-uid").status_code == 404
+        assert _review(client, game_id, key="not-the-admin-key").status_code == 404
+        assert _review(client, game_id, uid=info["seat_uids"]["alice"]).status_code == 200
+    finally:
+        unloadable.pop(game_id, None)
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_reflection_on_an_undecodable_finished_game_is_still_recorded(
+    client: TestClient, unloadable: dict[str, str]
+) -> None:
+    """`declare_reflection` reads the same archived row and enforces the same
+    post-game gate, so it has to survive the same refusal - and a seat filing
+    its write-up must not get a 500 for it."""
+    info = _played_out(client)
+    game_id = info["game_id"]
+    try:
+        unloadable[game_id] = engine_refusal()
+        filed = _reflect(client, info)
+        assert filed.status_code == 200, filed.text
+        assert filed.json()["recorded"] is True
+    finally:
+        unloadable.pop(game_id, None)
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_reflection_on_an_undecodable_live_game_is_still_refused(
+    client: TestClient, unloadable: dict[str, str]
+) -> None:
+    info = _agent_game(client)
+    game_id = info["game_id"]
+    try:
+        unloadable[game_id] = engine_refusal()
+        refused = _reflect(client, info)
+        assert refused.status_code == 409, refused.text
+    finally:
+        unloadable.pop(game_id, None)
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

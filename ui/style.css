@@ -1071,6 +1071,22 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .review-counts { color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .review-lede { color: var(--ink-dim); font-size: 13px; max-width: 72ch; margin: 4px 0 0; }
 .review-loading { color: var(--ink-dim); padding: 20px 0; }
+/* A review rebuilt from the ledger, because this build refuses the board
+   this game was saved with. Warn-coloured like `.review-error` and never
+   louder: nothing here failed, and every frame below it is as recorded as
+   any other review's - it is the head's result that came from the ledger
+   rather than from a final state, and the reader is told so. */
+.review-reconstructed {
+  border: 1px solid var(--warn);
+  background: rgba(232, 180, 76, 0.07);
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  max-width: 72ch;
+}
+.review-reconstructed strong { color: var(--warn); }
+.review-refusal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); }
 .review-error {
   border: 1px solid var(--warn);
   background: rgba(232, 180, 76, 0.07);

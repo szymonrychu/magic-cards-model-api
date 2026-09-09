@@ -426,11 +426,63 @@ function turnNode(group, you, catalogue, expectDeclarations) {
   return section;
 }
 
+/** How this game finished, or an admission that nothing recorded it.
+ *
+ * The last line is not a fallback for tidiness: a review the server marked
+ * `reconstructed` can carry `is_over: null`, meaning the board could not be
+ * decoded and no `game_over` row was ever written, so nothing establishes
+ * that anybody won. The payload deliberately refuses to invent that
+ * (`review.py`'s `unestablished`), and the page must not invent it either -
+ * "the game is over" is only ever said when something actually says so. */
 function resultLine(review) {
   if (review.drawn) return "the game was a draw";
   if (review.winner) return `${review.winner} won`;
   if (review.ended_at) return "the game was ended before it finished";
+  if (review.is_over === false || review.is_over === null || review.is_over === undefined) {
+    return "how this game ended is not recorded";
+  }
   return "the game is over";
+}
+
+/** The banner a review rebuilt from the ledger carries, or `null`.
+ *
+ * Every frame on this page was recorded when it happened either way - that
+ * is what makes the pairing evidence - so nothing here is weaker than usual.
+ * What is different is that the head's result did not come off a final
+ * board, because this build refuses to decode the one this game was saved
+ * with, and a reader is owed that in the engine's own words rather than in
+ * a paraphrase of them. */
+function reconstructedNode(review) {
+  if (!review || !review.reconstructed) return null;
+  const note = h("div", { class: "review-reconstructed" });
+  note.appendChild(
+    h(
+      "strong",
+      {},
+      "Rebuilt from the recorded ledger. "
+    )
+  );
+  note.appendChild(
+    h(
+      "span",
+      {},
+      "This build cannot decode the board this game was saved with, so everything below is ",
+      "the server's own append-only record of what happened, written as it happened, rather than ",
+      "a reading of a final state. The engine's reason: "
+    )
+  );
+  note.appendChild(h("span", { class: "review-refusal" }, text(review.unloadable || "")));
+  const missing = (review.unestablished || []).length;
+  if (missing) {
+    note.appendChild(
+      h(
+        "span",
+        {},
+        ` Not established from that record, and shown as unknown rather than guessed: ${(review.unestablished || []).join(", ")}.`
+      )
+    );
+  }
+  return note;
 }
 
 function headNode(review, handlers, onBack) {
@@ -440,6 +492,8 @@ function headNode(review, handlers, onBack) {
   head.appendChild(back);
   head.appendChild(h("h1", {}, (review.players || []).join(" vs ")));
   head.appendChild(h("div", { class: "review-result" }, resultLine(review)));
+  const rebuilt = reconstructedNode(review);
+  if (rebuilt) head.appendChild(rebuilt);
   // How much evidence there is, in the ledger's own units. A sceptic's first
   // question about a page like this is how much of the game it actually
   // covers, and the answer is "all of it" - so it is said in numbers.

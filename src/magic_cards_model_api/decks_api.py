@@ -40,7 +40,7 @@ from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
 from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
-from .repository import GameUnloadable
+from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
 from .store import known_players, new_seat_uids, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
@@ -241,10 +241,45 @@ class LobbyGameSummary(BaseModel):
     `serialize.unloadable_game_summary` for why that is the honest value and
     why it matches what `MAX_LIVE_GAMES` counts). The lobby renders it
     unopenable and offers End game, which is what actually clears it."""
+    recorded_ending: int | None = None
+    """The `seq` of this game's `game_over` row (`audit.GAME_OVER_ACTION`),
+    when the ledger holds one.
+
+    **Computed only for an `unloadable` row**, and `None` on every other one.
+    It is not a second opinion on `is_over`: for a row that decodes,
+    `is_over` already answers this off the board, and paying a ledger read
+    per game per 1.2s poll to answer it twice is exactly the N+1 the summary
+    seam was cut to remove. For a row that does not decode there is no board
+    to ask, and this is the only surviving record that the game reached CR
+    104.1 - which is what lets the lobby offer that game's review knowing the
+    review will actually read (`review.py` rebuilds it from the same ledger),
+    instead of either hiding a reachable review or offering a button that
+    409s. `None` here means "no ending is recorded", never "the game is still
+    going": nothing about an undecodable board is knowable, which is why
+    `is_over` stays `False` and the row still counts against
+    `MAX_LIVE_GAMES`."""
 
 
 class LobbyGamesResponse(BaseModel):
     games: list[LobbyGameSummary]
+
+
+def _recorded_ending(game_id: str) -> int | None:
+    """The `seq` of this game's newest `game_over` row, or `None` if the
+    ledger holds none - see `LobbyGameSummary.recorded_ending`.
+
+    The bounded read (`recent_records`), never the whole ledger: this is on a
+    listing route the browser polls, and a `game_over` row is written at the
+    end of a game with very little after it - an undecodable game refuses
+    every further action, so the only rows that can follow are the End that
+    clears it.
+    """
+    window = store.recent_records(game_id, RECENT_RECORDS_WINDOW)
+    for row in reversed(window):
+        if row["payload"].get("action") == audit.GAME_OVER_ACTION:
+            seq = row["seq"]
+            return int(seq)
+    return None
 
 
 @router.get("/games", response_model=LobbyGamesResponse, response_model_exclude_unset=True)
@@ -346,6 +381,10 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
                 "seats": seats,
                 "created_at": store.created_at(game_id),
                 "unloadable": unloadable,
+                # Only for the row that cannot be decoded - see
+                # `LobbyGameSummary.recorded_ending` for why this is not
+                # asked of every row.
+                "recorded_ending": (None if unloadable is None else _recorded_ending(game_id)),
             }
         )
     games.sort(key=lambda entry: entry["created_at"] or "")

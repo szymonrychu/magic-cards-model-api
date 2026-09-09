@@ -12,6 +12,8 @@ regression that only wired one of them.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ui_node import requires_node, run_module
 
 pytestmark = requires_node
@@ -89,6 +91,7 @@ def test_lobby_rows_join_server_games_with_saved_seats() -> None:
             "over": False,
             "archived": False,
             "unloadable": None,
+            "recordedEnding": None,
             "endedAt": None,
             "model": "opus",
             "effort": "max",
@@ -743,3 +746,90 @@ def test_the_lobby_asks_the_server_even_with_nothing_saved() -> None:
     assert result["opened"] == [{"game_id": "g1", "uid": "u1", "aiUid": "u2"}], (
         "Open must hand the game screen the server-supplied uid"
     )
+
+
+# The same row, for a game the ledger records as having ended
+# (`decks_api.LobbyGameSummary.recorded_ending`). The board is still
+# undecodable and still unopenable - but the review of it reads, rebuilt
+# from that same ledger, so the door to it must be here.
+GAMES_UNLOADABLE_ENDED = [{**GAMES_UNLOADABLE[0], "recorded_ending": 191}]
+
+
+def test_the_view_model_carries_the_ledgers_record_of_an_ending() -> None:
+    rows = run_module(
+        "lobby_model.js",
+        "m.lobbyViewModel(games, saved)",
+        games=GAMES_UNLOADABLE_ENDED,
+        saved=SAVED,
+    )
+    assert rows[0]["recordedEnding"] == 191
+    plain = run_module(
+        "lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES_UNLOADABLE, saved=SAVED
+    )
+    assert plain[0]["recordedEnding"] is None
+
+
+def _actions_for(games: list[dict[str, Any]]) -> dict[str, Any]:
+    return run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const shown = [];
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: (r) => shown.push(r) });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const cells = tbody.children[0].children;
+          const actions = cells[cells.length - 1];
+          const review = actions.children.find((b) => b.textContent === "Show thinking");
+          if (review) review.listeners.click();
+          return {
+            labels: actions.children.map((b) => b.textContent),
+            reviewTitle: review ? review.title || review.attrs.title || null : null,
+            shown,
+          };
+        })()
+        """,
+        games=games,
+        saved=SAVED,
+    )
+
+
+def test_an_unopenable_game_the_ledger_says_ended_still_offers_its_review() -> None:
+    """The defect this pins: a game somebody played to the end became
+    unreachable the day the engine's schema moved. The board is still
+    undecodable and Open is still withheld - but `GET .../review` rebuilds
+    the whole reading from the ledger, so hiding the door would be hiding a
+    page that works."""
+    result = _actions_for(GAMES_UNLOADABLE_ENDED)
+    assert result["labels"] == ["End", "Show thinking"], result["labels"]
+    assert result["shown"] == [{"gameId": "g1", "uid": "u1"}]
+    assert "ledger" in (result["reviewTitle"] or "").lower(), (
+        "the button must say what it will show - a reading rebuilt from the "
+        f"ledger, not a final board - got {result['reviewTitle']!r}"
+    )
+
+
+def test_an_unopenable_game_with_no_recorded_ending_offers_no_review_button() -> None:
+    """Nothing establishes that this game is finished: not the board (it
+    cannot be read) and not the ledger. A review of a game still being played
+    would hand one seat the other's plan, and the route refuses it - so there
+    is no button here to press, rather than one that 409s."""
+    result = _actions_for(GAMES_UNLOADABLE)
+    assert result["labels"] == ["End"]
+    assert result["shown"] == []

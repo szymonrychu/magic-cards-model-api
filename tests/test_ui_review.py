@@ -521,3 +521,95 @@ def test_back_returns_to_the_lobby() -> None:
     assert result["backs"] == 1
     assert result["reviewHidden"] is True
     assert result["lobbyHidden"] is False
+
+
+# ---------------------------------------------------------------------------
+# a review rebuilt from the ledger
+# ---------------------------------------------------------------------------
+
+#: The engine's own refusal, as `GET .../review` hands it back in
+#: `unloadable` for a game whose stored snapshot this build will not decode.
+UNLOADABLE = (
+    "Game snapshot was written at schema_version=3, but this build decodes "
+    "schema_version=5. Refusing to decode a mismatched snapshot."
+)
+
+RECONSTRUCTED = {
+    **REVIEW,
+    "reconstructed": True,
+    "unloadable": UNLOADABLE,
+    "unestablished": [],
+}
+
+
+def test_a_reconstructed_review_says_so_and_quotes_the_engines_refusal() -> None:
+    """The reading is the same reading - every frame on the page was recorded
+    when it happened - but a reader must not be left thinking this was read
+    off a final board, because it was not."""
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return {
+            headText: els.head.textContent,
+            notes: findAll(els.head, "review-reconstructed").length,
+            pairings: findAll(els.body, "pairing").length,
+          };
+        })()
+        """,
+        review=RECONSTRUCTED,
+        card=CARD_ANSWER,
+    )
+    assert result["notes"] == 1
+    assert "schema_version=3" in result["headText"], (
+        "the engine's own words, where the person reading the page can see them"
+    )
+    assert "claude won" in result["headText"], (
+        "the outcome the ledger recorded is still shown - it is the head that "
+        "gains a caveat, not the review that loses its result"
+    )
+    assert result["pairings"] == 1, "and the whole argument is still on the page"
+
+
+def test_an_unestablished_outcome_is_never_rendered_as_the_game_is_over() -> None:
+    """`is_over: null` means nothing established that this game finished.
+    Saying "the game is over" there would be the page inventing the one fact
+    the payload deliberately refused to invent."""
+    unknown = {
+        **RECONSTRUCTED,
+        "is_over": None,
+        "winner": None,
+        "drawn": None,
+        "ended_seq": None,
+        "unestablished": ["is_over", "winner", "drawn"],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return { headText: els.head.textContent };
+        })()
+        """,
+        review=unknown,
+        card=CARD_ANSWER,
+    )
+    assert "the game is over" not in result["headText"]
+    assert "not recorded" in result["headText"]

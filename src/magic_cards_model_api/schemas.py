@@ -1372,12 +1372,29 @@ class GameReviewResponse(BaseModel):
     ended_at: str | None = None
     """When the game was ended from the lobby or deleted, `None` for one that
     simply finished."""
-    is_over: bool
+    is_over: bool | None = None
+    """`None` only on a `reconstructed` review with no `game_over` row: with
+    no decodable board there is no `Game.is_over` to read, and the absence of
+    a recorded ending establishes nothing. Never guessed - see
+    `unestablished`."""
     winner: str | None = None
-    drawn: bool = False
+    drawn: bool | None = None
     ended_seq: int | None = None
     """The `game_over` row's own `seq`, `None` for a game that was ended
     before it finished."""
+    reconstructed: bool = False
+    """True when this review was rebuilt from the ledger because this build
+    cannot decode the game's stored snapshot (`review.py`). Everything a
+    reader sees is then a frame recorded when it happened, not a reading off
+    a final state - which is the honest description of it, and the reason it
+    is said in the payload rather than left to be inferred."""
+    unloadable: str | None = None
+    """On a `reconstructed` review, the engine's own refusal verbatim
+    (`repository.GameUnloadable.reason`); `None` otherwise."""
+    unestablished: list[str] = Field(default_factory=list)
+    """The names of the fields above that this review could not establish at
+    all, and which are therefore `None` rather than a value. Empty for every
+    review built from a decodable final state."""
     declarations: list[ReviewDeclaration] = Field(default_factory=list)
     entries: list[dict[str, Any]] = Field(default_factory=list)
     """The whole ledger, oldest first, each row carrying its own

@@ -54,6 +54,10 @@ function archivedRow(entry) {
     over: true,
     archived: true,
     unloadable: null,
+    // Only a listed row can carry one (`decks_api.LobbyGameSummary.
+    // recorded_ending`), and an ended game is not listed - `archived` is
+    // already the reason its review may be opened.
+    recordedEnding: null,
     endedAt: entry.endedAt || null,
     model: entry.model || null,
     effort: entry.effort || null,
@@ -137,6 +141,13 @@ export function lobbyViewModel(games, saved) {
         // built exactly like any other, from the same seats/agents fields,
         // and it is the renderer that withholds Open.
         unloadable: g.unloadable || null,
+        // The `seq` of this game's `game_over` row, for an undecodable row
+        // only - the server computes it for no other kind (see
+        // `decks_api.LobbyGameSummary.recorded_ending`). It is the only
+        // thing that can establish that such a game finished, and so the
+        // only thing that says its review will actually read rather than
+        // 409.
+        recordedEnding: g.recorded_ending === undefined ? null : g.recorded_ending,
         endedAt: null,
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,

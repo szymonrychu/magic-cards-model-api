@@ -720,6 +720,16 @@ class PostgresRepository:
         a game this process is still holding live comes back as the same
         object every other read hands out (in-place mutations included), the
         way the contract suite requires of every read on this class.
+
+        **The one read that reports `GameUnloadable` instead of raising it.**
+        Every other single-game read lets the refusal escape to `app.py`'s
+        409 handler, which is right for a board nobody can play; it is wrong
+        here, because this read is the last way into the ledger of a game
+        that was played to the end, and 409ing it makes that game's whole
+        recorded reasoning unreachable for good. The other five columns need
+        no decoding at all, so they are answered exactly as before and the
+        refusal rides along in `unloadable` - the snapshot itself is still
+        not decoded, and no `Game` is ever built from it.
         """
         if not _looks_like_id(game_id):
             return None
@@ -736,13 +746,20 @@ class PostgresRepository:
             ).first()
         if row is None:
             return None
+        game: Game | None
+        unloadable: str | None = None
+        try:
+            game = self._game_from_row(game_id, row.state, row.version)
+        except GameUnloadable as exc:
+            game, unloadable = None, exc.reason
         return ArchivedGame(
             game_id=game_id,
-            game=self._game_from_row(game_id, row.state, row.version),
+            game=game,
             admin_key=row.admin_key,
             seat_uids=dict(row.seats or {}),
             created_at=_utc_isoformat(row.created_at),
             deleted_at=_utc_isoformat(row.archived_at),
+            unloadable=unloadable,
         )
 
     def ids(self) -> list[str]:

@@ -31,6 +31,21 @@ route (`app.py`'s `game_review`: the game must be over or ended, and the
 caller must hold the admin key or one of that game's seat uids), not here -
 this module is a pure function over entries that has no way to know who is
 asking. Nothing may call it on a live game.
+
+**A final state this build cannot decode is not the end of the review.**
+When the engine's `CURRENT_SCHEMA_VERSION` moves past what a stored snapshot
+was written at, `Game._check_schema_version` refuses it - correctly, and
+that refusal is not softened anywhere in this repo. But the refusal is about
+*the board*, and almost nothing on this page comes from the board: the
+ledger's rows are self-contained frames written when they happened. So a
+review of such a game is rebuilt from the ledger, marked `reconstructed`
+with the engine's own refusal in `unloadable`, and every field that genuinely
+cannot be established without the board is `None` and named in
+`unestablished`. It never guesses one. In particular the outcome comes from
+the `game_over` row - which the decodable path already carries as its
+corroborating second witness, and which here is the only witness left - and
+a game with no such row is reported as an outcome nobody recorded, never as
+"the game is over".
 """
 
 from __future__ import annotations
@@ -47,33 +62,103 @@ from .repository import ArchivedGame
 _PAIRED_KEYS = ("seq", "ts", "turn", "step", "phase", "action", "reasoning", "detail")
 
 
+def ending_of(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The ledger's own record that this game ended (`audit.GAME_OVER_ACTION`,
+    written the moment `Game.is_over` first read true after a committed
+    command), or `None` if there is none.
+
+    Public because it is also the post-game gate's second witness: with a
+    board this build cannot decode there is no `Game.is_over` to ask, and
+    this row - recorded when it happened, by the build that could read the
+    board - is what establishes that the game is finished. Its absence
+    establishes nothing either way, which is why the routes treat it as
+    "not finished" and refuse.
+    """
+    return _last(entries, GAME_OVER_ACTION)
+
+
 def build_review(archived: ArchivedGame, entries: list[dict[str, Any]]) -> dict[str, Any]:
     """The review of one finished (or ended) game.
 
     `entries` is `audit.entries(game_id)` - the whole ledger, oldest first,
     unredacted. `archived` is `store.archived(game_id)`, which reads past
     the soft delete, so a game the lobby has ended still has a final board
-    and a result to head the review with.
+    and a result to head the review with - or, when this build cannot decode
+    that board, says so in `archived.unloadable` and this rebuilds the head
+    from the ledger instead (see the module docstring).
     """
     game = archived.game
-    ending = _last(entries, GAME_OVER_ACTION)
+    ending = ending_of(entries)
+    head: dict[str, Any]
+    if game is not None:
+        head = {
+            "players": [player.username for player in game.players],
+            "is_over": game.is_over,
+            # From the final state, with the `game_over` row as the
+            # corroborating second witness rather than the source: the state
+            # is what the engine actually holds, the row is what the ledger
+            # recorded at the moment it happened. They agree; if they ever
+            # did not, the state is the truth and the disagreement is the bug.
+            "winner": game.winner,
+            "drawn": game.drawn,
+            "reconstructed": False,
+            "unloadable": None,
+            "unestablished": [],
+        }
+    else:
+        head = _from_the_ledger(archived, entries, ending)
     return {
         "game_id": archived.game_id,
-        "players": [player.username for player in game.players],
         "created_at": archived.created_at,
         "ended_at": archived.deleted_at,
-        "is_over": game.is_over,
-        # From the final state, with the `game_over` row as the corroborating
-        # second witness rather than the source: the state is what the engine
-        # actually holds, the row is what the ledger recorded at the moment it
-        # happened. They agree; if they ever did not, the state is the truth
-        # and the disagreement is the bug.
-        "winner": game.winner,
-        "drawn": game.drawn,
         "ended_seq": ending["seq"] if ending is not None else None,
+        **head,
         "declarations": _declarations(entries),
         "entries": entries,
     }
+
+
+def _from_the_ledger(
+    archived: ArchivedGame,
+    entries: list[dict[str, Any]],
+    ending: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The head of a review whose final board this build refuses to decode:
+    every field it can establish from the ledger and the game's own plain
+    columns, and an honest `None` (named in `unestablished`) for every field
+    it cannot.
+
+    `players` comes from the newest frame that has life totals, which is the
+    engine's own player order as it stood when that row was written, and
+    falls back to the seat columns (`ArchivedGame.seat_uids`, the same
+    columns `store.known_players` reads for every listing route that has to
+    name an undecodable game's players). The outcome comes from the
+    `game_over` row and from nowhere else - never from a life total, which is
+    exactly the inference that row was added to stop a reader having to make.
+    """
+    detail = (ending or {}).get("detail") or {}
+    unestablished = [] if ending is not None else ["is_over", "winner", "drawn"]
+    return {
+        "players": _players_in(entries) or sorted(set(archived.seat_uids.values())),
+        "is_over": True if ending is not None else None,
+        "winner": detail.get("winner") if ending is not None else None,
+        "drawn": bool(detail.get("drawn")) if ending is not None else None,
+        "reconstructed": True,
+        "unloadable": archived.unloadable,
+        "unestablished": unestablished,
+    }
+
+
+def _players_in(entries: list[dict[str, Any]]) -> list[str]:
+    """The seats named by the newest frame that names any, in that frame's
+    own order - `serialize.snapshot` writes `life` keyed by username, walking
+    `game.players`, so this is the engine's own seating order and not a
+    re-sorted approximation of it."""
+    for entry in reversed(entries):
+        life = ((entry.get("snapshot") or {}).get("life")) or {}
+        if life:
+            return list(life)
+    return []
 
 
 def _declarations(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
