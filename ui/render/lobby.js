@@ -380,25 +380,40 @@ async function endGame(root, handlers, row) {
   await refreshGames(root, handlers);
 }
 
-/** Read `mcm.games.v1`, ask the server for every one of those games, and
- * render the joined rows - the "on mount and after Start/End" refresh the
- * lobby's game list gets. Every saved uid (both seats, not only this
- * browser's own) goes into the `uids` query so `list_lobby_games`'s own
- * filter includes this browser's seat in the `seats` it hands back for each
- * game (`lobbyViewModel` needs at least one seat present to know who "you"
- * are in that game). With nothing saved, this skips the network call
- * entirely and just renders an empty table. */
+/** Ask the server for the game list, join it with `mcm.games.v1`, and render
+ * the rows - the "on mount and after Start/End" refresh the lobby's game
+ * list gets.
+ *
+ * Every saved uid (both seats, not only this browser's own) goes into the
+ * `uids` query so `list_lobby_games`'s own filter includes this browser's
+ * seat in the `seats` it hands back for each game (`lobbyViewModel` needs at
+ * least one seat present to know who "you" are in that game).
+ *
+ * **The call happens even with nothing saved**, and this is the cross-device
+ * fix. It used to short-circuit to an empty table in that case, on the
+ * reasoning that the server could only ever answer about uids this browser
+ * presented - which was true, and is what pinned the list to the browser
+ * instead of to the person. It no longer holds: a request carrying the
+ * logged-in user's bearer token is answered with that user's own games and
+ * their full `seats` map, no `uids` needed. So a second computer, whose
+ * `localStorage` is empty, now sees and can open every game the person
+ * started on the first one.
+ *
+ * Nothing changes for the anonymous/dev path (`mise run dev`, the test
+ * server, a deployment with no OIDC configured): the server answers with
+ * `seats: {}` for games this caller holds nothing for, and `lobbyViewModel`
+ * drops exactly those rows - the same empty table as before, reached by
+ * asking rather than by assuming. */
 async function refreshGames(root, handlers) {
   const storage = currentStorage();
   const saved = loadSavedGames(storage);
   const uids = [...new Set(saved.flatMap((g) => [g.uid, g.aiUid]).filter(Boolean))];
-  if (!uids.length) {
-    renderGamesTable(root, handlers, []);
-    return;
-  }
+  const path = uids.length
+    ? `${lobbyBase()}/games?uids=${encodeURIComponent(uids.join(","))}`
+    : `${lobbyBase()}/games`;
   let games;
   try {
-    ({ games } = await api("GET", `${lobbyBase()}/games?uids=${encodeURIComponent(uids.join(","))}`));
+    ({ games } = await api("GET", path));
   } catch (e) {
     console.error(`could not load the game list: ${e.message}`);
     return;

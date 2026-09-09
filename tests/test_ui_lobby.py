@@ -217,7 +217,13 @@ def test_mount_lobby_populates_both_bundled_deck_selects() -> None:
         })()
         """,
     )
-    assert result["fetchCalls"] == ["/api/decks"]
+    # `/api/lobby/games` rides along because `mountLobby` also refreshes the
+    # games table, and it now asks the server even with `mcm.games.v1` empty
+    # (it used to short-circuit to an empty table, which is exactly why a
+    # second computer saw nothing - see `refreshGames`). The subject of this
+    # test is the two deck selects; the game-list call is asserted properly
+    # in `test_the_lobby_asks_the_server_even_with_nothing_saved` below.
+    assert result["fetchCalls"] == ["/api/decks", "/api/lobby/games"]
     expected = [
         {"value": "Modern Burn", "text": "Modern Burn"},
         {"value": "Modern Affinity", "text": "Modern Affinity"},
@@ -589,4 +595,151 @@ def test_an_unopenable_game_offers_end_but_never_open() -> None:
     assert result["state"] == "unopenable"
     assert result["title"] == GAMES_UNLOADABLE[0]["unloadable"], (
         "the reason must be readable in the lobby, not only in the payload"
+    )
+
+
+# ---------------------------------------------------------------------------
+# cross-device: the owner arrives on a second computer with empty storage
+# ---------------------------------------------------------------------------
+#
+# "User must be able to start a game on one computer and finish on the other."
+# The server half is `decks_api.list_lobby_games` handing the *owner* the full
+# `seats` map (`tests/test_lobby_cross_device.py`); this is the browser half.
+# A fresh browser has nothing in `mcm.games.v1`, so `saved` is empty and every
+# uid in the row comes from the server - which means `lobbyViewModel` can no
+# longer lean on a saved entry to know which of the two seats is the human's.
+
+#: One server row as the *owner* now receives it: both seats, no saved entry
+#: anywhere. "bot" is listed first on purpose - the human seat must be picked
+#: because it is the one with no agent, never because of key order.
+GAMES_OWNED = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": 3,
+        "phase": "precombat_main",
+        "is_over": False,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        "seats": {"bot": "u2", "you": "u1"},
+    }
+]
+
+
+def test_an_owned_row_with_nothing_saved_still_renders_and_is_playable() -> None:
+    """The defect, at the view-model level: a second computer holds no saved
+    entry for this game at all, so the row exists only because the server said
+    the logged-in user owns it. It must render (not be filtered out as "some
+    other browser's game") and must carry a real `myUid`, or Open is dead."""
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, [])", games=GAMES_OWNED)
+    assert len(rows) == 1
+    assert rows[0]["gameId"] == "g1"
+    assert rows[0]["myUid"] == "u1", "the human seat's uid, not the AI's"
+    assert rows[0]["aiUid"] == "u2"
+    assert rows[0]["opponent"] == "bot"
+    assert rows[0]["model"] == "opus"
+
+
+def test_the_human_seat_is_the_one_with_no_agent_not_the_first_key() -> None:
+    """How "my seat" is told from the AI's with nothing saved: the row already
+    carries `agents`, keyed by player name, so the seat that is *not* in it is
+    the human's. Key order is the server's dict iteration order and says
+    nothing - here the AI seat comes first, and picking it would put the
+    player in the bot's seat."""
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, [])", games=GAMES_OWNED)
+    assert rows[0]["myUid"] != "u2"
+    assert rows[0]["myUid"] == "u1"
+
+
+HUMAN_VS_HUMAN = [
+    {
+        "game_id": "g1",
+        "players": ["alice", "bob"],
+        "turn_number": 1,
+        "phase": "beginning",
+        "is_over": False,
+        # No AI seat at all: `agents` is empty, so "the seat with no agent"
+        # matches both. This must still produce a usable row rather than
+        # throw or hand back a null uid.
+        "agents": {},
+        "seats": {"alice": "u1", "bob": "u2"},
+    }
+]
+
+
+def test_a_human_vs_human_owned_row_still_gets_a_uid_and_no_ai_uid() -> None:
+    rows = run_module("lobby_model.js", "m.lobbyViewModel(games, [])", games=HUMAN_VS_HUMAN)
+    assert len(rows) == 1
+    assert rows[0]["myUid"] in ("u1", "u2")
+    assert rows[0]["opponent"] in ("alice", "bob")
+    assert rows[0]["aiUid"] is None, "there is no AI seat to (re)start in this game"
+
+
+def test_a_saved_uid_still_wins_over_the_no_agent_heuristic() -> None:
+    """The pre-existing rule is unchanged where a saved entry exists: this
+    browser's own `uid` names its seat, even if that seat happens to be the
+    AI's (a browser that started the game holds both uids)."""
+    rows = run_module(
+        "lobby_model.js",
+        "m.lobbyViewModel(games, saved)",
+        games=GAMES_OWNED,
+        saved=[{"gameId": "g1", "uid": "u2", "aiUid": "u1"}],
+    )
+    assert rows[0]["myUid"] == "u2"
+    assert rows[0]["aiUid"] == "u1"
+
+
+def test_the_lobby_asks_the_server_even_with_nothing_saved() -> None:
+    """`refreshGames` used to skip the network entirely when `mcm.games.v1`
+    was empty and render an empty table - which is precisely why a second
+    computer saw nothing. It must always ask, and with no `uids` parameter
+    when it holds none, so the server can answer from the bearer token."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const table = document.createElement("table");
+          table.setAttribute("id", "games-table");
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          table.appendChild(tbody);
+          document.appendChild(table);
+
+          const storageData = {};
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+
+          const fetchCalls = [];
+          globalThis.fetch = async (path, opts) => {
+            const method = (opts && opts.method) || "GET";
+            fetchCalls.push(`${method} ${path}`);
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+
+          const opened = [];
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: (t) => opened.push(t) });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+
+          const actionsCell = tbody.children[0].children[tbody.children[0].children.length - 1];
+          actionsCell.children[0].listeners.click();
+
+          return { fetchCalls, rowCount: tbody.children.length, opened };
+        })()
+        """,
+        games=GAMES_OWNED,
+    )
+    assert "GET /api/lobby/games" in result["fetchCalls"], (
+        "with nothing saved the lobby must still ask the server, and without "
+        f"a uids parameter - calls were {result['fetchCalls']}"
+    )
+    assert result["rowCount"] == 1, "the owner's row must render on a fresh browser"
+    assert result["opened"] == [{"game_id": "g1", "uid": "u1", "aiUid": "u2"}], (
+        "Open must hand the game screen the server-supplied uid"
     )

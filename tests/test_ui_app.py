@@ -1311,3 +1311,108 @@ def test_a_pass_that_never_reached_the_server_leaves_the_run_armed() -> None:
         """
     )
     assert result["run"] is not None, "a dropped request is not a refusal"
+
+
+# -- cross-device: a bookmarked game URL opened on a second computer --------
+#
+# "User must be able to start a game on one computer and finish on the other."
+# `bootTarget` above answers `uid: null` for a game URL this browser has never
+# saved - correct, since `mcm.games.v1` genuinely holds nothing - and until
+# now that was the end of it: the page rendered as a spectator with no seat
+# and the player could look at the board and not act. The seat is recoverable
+# though, and from the server rather than from storage: the logged-in owner
+# gets the full `seats` map for her own games from `GET /api/lobby/games`
+# (`decks_api.list_lobby_games`), so `main()` asks for it before deciding the
+# player has no seat. `seatFromServer` is that lookup, factored out of
+# `main()` for the same reason every other decision in this file is - so it
+# can be exercised with no DOM.
+
+
+def test_seat_from_server_recovers_the_owners_seat_with_nothing_saved() -> None:
+    """The bookmarked-URL case, end to end at the module level: empty
+    `localStorage`, and the server's own lobby listing is the only thing that
+    knows which uid belongs to this player. The human seat is the one with no
+    entry in `agents` - here the AI seat is listed first, so picking by key
+    order would seat the player as the bot."""
+    result = run_app(
+        """(async () => {
+          globalThis.fetch = async (path) => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              games: [
+                {
+                  game_id: "g1",
+                  players: ["you", "bot"],
+                  turn_number: 3,
+                  phase: "precombat_main",
+                  is_over: false,
+                  agents: { bot: { model: "opus", effort: "max", max_thinking_tokens: null } },
+                  seats: { bot: "u2", you: "u1" },
+                },
+              ],
+            }),
+          });
+          return await m.seatFromServer("g1");
+        })()"""
+    )
+    assert result == {"uid": "u1", "aiUid": "u2"}
+
+
+def test_seat_from_server_is_silent_when_the_game_is_not_the_callers() -> None:
+    """A game the server will not list for this caller - somebody else's, or
+    an anonymous deployment with no OIDC configured at all - resolves to no
+    seat rather than to an error. The page then renders exactly as it does
+    today: the board, as a spectator."""
+    result = run_app(
+        """(async () => {
+          globalThis.fetch = async () => ({
+            ok: true, status: 200, json: async () => ({ games: [] }),
+          });
+          return await m.seatFromServer("g1");
+        })()"""
+    )
+    assert result == {"uid": None, "aiUid": None}
+
+
+def test_seat_from_server_survives_a_failing_lookup() -> None:
+    """The lookup is a best-effort recovery, never a gate: a 500, an
+    unreachable server, or a deployment whose lobby route is not there at all
+    must leave the game page rendering, not throw on boot."""
+    result = run_app(
+        """(async () => {
+          globalThis.fetch = async () => { throw new Error("network is down"); };
+          return await m.seatFromServer("g1");
+        })()"""
+    )
+    assert result == {"uid": None, "aiUid": None}
+
+
+def test_seat_from_server_reads_a_human_vs_human_game_without_crashing() -> None:
+    """No AI seat means `agents` is empty and "the seat with no agent"
+    matches both. It must still hand back one usable uid and no `aiUid`,
+    rather than throw or answer null."""
+    result = run_app(
+        """(async () => {
+          globalThis.fetch = async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              games: [
+                {
+                  game_id: "g1",
+                  players: ["alice", "bob"],
+                  turn_number: 1,
+                  phase: "beginning",
+                  is_over: false,
+                  agents: {},
+                  seats: { alice: "u1", bob: "u2" },
+                },
+              ],
+            }),
+          });
+          return await m.seatFromServer("g1");
+        })()"""
+    )
+    assert result["uid"] in ("u1", "u2")
+    assert result["aiUid"] is None

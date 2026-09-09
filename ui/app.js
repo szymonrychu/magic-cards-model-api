@@ -28,7 +28,7 @@ import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
 import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./render/panels.js";
-import { loadSavedGames, saveGames, upsertSavedGame } from "./lobby_model.js";
+import { loadSavedGames, saveGames, upsertSavedGame, seatsFromRow } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
 const POLL_MS = 1200;
@@ -1084,6 +1084,40 @@ export function bootTarget(urlGameId, saved) {
   return { kind: "lobby" };
 }
 
+/** `{uid, aiUid}` for `gameId`, recovered from the server rather than from
+ * `mcm.games.v1` - `{uid: null, aiUid: null}` when the server will not
+ * answer for this game.
+ *
+ * This is what makes a bookmarked `/<uuid>/` URL open on a *second computer*.
+ * `bootTarget` answers `uid: null` for a game this browser has never saved,
+ * which is honest - `localStorage` really is empty - but it used to be the
+ * end of the story: the page rendered the board as a spectator with no seat
+ * to act from. The seat is recoverable, just not locally: `GET
+ * /api/lobby/games` hands the authenticated **owner** the full `seats` map
+ * for her own games (`decks_api.list_lobby_games`), so one request resolves
+ * it. `seatsFromRow` then picks the human's seat out of that map the same
+ * way the lobby's own table does - one rule for both, rather than two
+ * copies that can drift.
+ *
+ * Best-effort by construction, never a gate: a failure, a 401, an empty
+ * listing, or a game that is simply not this caller's all resolve to "no
+ * seat", leaving the page rendering exactly as it does today. A deployment
+ * with no OIDC configured therefore behaves identically to before - nothing
+ * is ever listed for an anonymous caller that it did not already hold a uid
+ * for, so this lookup finds nothing and changes nothing. */
+export async function seatFromServer(gameId) {
+  try {
+    const { games } = await api("GET", `${lobbyBase()}/games`);
+    const row = (games || []).find((g) => g.game_id === gameId);
+    if (!row) return { uid: null, aiUid: null };
+    const { myUid, aiUid } = seatsFromRow(row, null);
+    return { uid: myUid || null, aiUid: aiUid || null };
+  } catch (e) {
+    console.error(`could not resolve a seat for game ${gameId}: ${e.message}`);
+    return { uid: null, aiUid: null };
+  }
+}
+
 async function main() {
   await loadConfig();
   store.set({ symbols: await loadSymbols(api, apiBase()) });
@@ -1255,10 +1289,14 @@ async function main() {
   const urlGameId = gameIdFromBaseURI(document.baseURI);
   const target = bootTarget(urlGameId, saved);
   if (target.kind === "game") {
-    await startGame(
-      { game_id: target.gameId, uid: target.uid, aiUid: target.aiUid },
-      { navigate: false }
-    );
+    let { uid, aiUid } = target;
+    // Nothing saved for this game - a bookmark, a shared link, or the same
+    // person on a second computer. Ask the server whether it knows a seat
+    // for the logged-in user before settling for spectating; `startGame`
+    // then writes whatever came back into `mcm.games.v1`, so this costs one
+    // request on the first visit from a given browser and none after.
+    if (!uid) ({ uid, aiUid } = await seatFromServer(target.gameId));
+    await startGame({ game_id: target.gameId, uid, aiUid }, { navigate: false });
   }
   startPolling();
 }

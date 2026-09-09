@@ -148,6 +148,39 @@ spec:
             # as an option.
             - name: REQUIRE_POSTGRES
               value: "1"
+            # OIDC: who is asking. This is the other half of
+            # 55-oauth2-proxy.yaml's OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER -
+            # the proxy puts the realm-signed ID token on the upstream
+            # request as `Authorization: Bearer`, and these three are what
+            # let `oidc.py` VERIFY it instead of trusting it. Until this
+            # block existed `oidc_settings()` returned None, so every game
+            # was created with no owner and the lobby could only ever be
+            # keyed on the browser's own localStorage - the reported defect.
+            #
+            # All three values are public identifiers (a realm URL, its JWKS
+            # endpoint, a client id), never credentials: the client *secret*
+            # lives in the `magic-trainer-webui-proxy` Secret and is read
+            # only by the proxy. Nothing here may become a literal secret.
+            #
+            # The realm, the `magic-trainer-webui` confidential client and
+            # its audience mapper are created by terraform in the
+            # `infrastructure` repo's keycloak root module. This deployment
+            # only points at them; it creates nothing.
+            #
+            # JWKS is fetched from the realm's live endpoint (cached per URL
+            # by `oidc._remote_jwks_client`) rather than pinned as a literal
+            # via OIDC_JWKS_STATIC - that variable is `oidc.py`'s offline/
+            # test escape hatch, and pinning a key here would break the first
+            # time the realm rotates its signing keys.
+            - name: OIDC_ISSUER
+              value: "https://auth.szymonrichert.pl/realms/spellslinger"
+            - name: OIDC_JWKS_URL
+              value: "https://auth.szymonrichert.pl/realms/spellslinger/protocol/openid-connect/certs"
+            # The client the ID token is issued for. Checking `aud` is what
+            # stops a token minted for some *other* client in the same realm
+            # from being replayed here as an identity.
+            - name: OIDC_AUDIENCE
+              value: "magic-trainer-webui"
             # The five components below are shaped identically to
             # `25-migration-job.yaml`'s env block on purpose - same Secret,
             # same keys - so a reviewer can see at a glance both read the

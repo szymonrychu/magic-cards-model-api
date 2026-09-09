@@ -62,6 +62,41 @@ function archivedRow(entry) {
   };
 }
 
+/** Which seat of `game` (one server `LobbyGameSummary`) is this player's, and
+ * which is the AI's - `{me, myUid, aiUid}`, every field `null` for a row that
+ * carries no seats at all.
+ *
+ * Three sources, in order, and the order is the whole point:
+ *
+ * 1. `savedUid` - this browser's own entry in `mcm.games.v1`. If it names a
+ *    seat of this game, that is the seat, full stop: it is the one this
+ *    browser actually started or opened the game as, and it wins even when
+ *    it happens to be the AI's seat (a browser that started the game holds
+ *    both uids).
+ * 2. The seat with no entry in `game.agents`. This is what makes a *second
+ *    computer* work: it has nothing saved, and every uid in the row came
+ *    from the server because the logged-in user owns the game
+ *    (`decks_api.list_lobby_games` widens `seats` for the owner alone). The
+ *    row already says which seats are AI-driven, so the one that is not is
+ *    the human's.
+ * 3. Whichever key comes first. Reached only for a human-vs-human game,
+ *    where (2) matches both seats and there is nothing left to distinguish
+ *    them by - so pick one and stay usable rather than throw or answer
+ *    `null`. Such a game has no AI seat, so `aiUid` is correctly `null`.
+ *
+ * Key order is deliberately never a *signal* here: it is the server's own
+ * dict iteration order, and the AI seat can legally be listed first. */
+export function seatsFromRow(game, savedUid) {
+  const seats = (game && game.seats) || {};
+  const agents = (game && game.agents) || {};
+  const names = Object.keys(seats);
+  if (!names.length) return { me: null, myUid: null, aiUid: null };
+  const matched = savedUid ? names.find((name) => seats[name] === savedUid) : null;
+  const me = matched || names.find((name) => !agents[name]) || names[0];
+  const aiName = names.find((name) => name !== me && agents[name]) || null;
+  return { me, myUid: seats[me], aiUid: aiName ? seats[aiName] : null };
+}
+
 export function lobbyViewModel(games, saved) {
   const mine = new Map((saved || []).map((s) => [s.gameId, s]));
   const listed = new Set((games || []).map((g) => g.game_id));
@@ -71,28 +106,21 @@ export function lobbyViewModel(games, saved) {
   return [
     ...(games || [])
     // `list_lobby_games` lists every lobby-booted game on the server, not
-    // only this browser's own - its own `seats` filter (only uids in the
-    // caller's `?uids=` query) is what actually narrows it, so a game this
-    // browser neither saved nor holds a seat uid in must never render: an
-    // empty `seats` with no saved entry means neither is true, and the row
-    // would otherwise show this browser's own name as some other browser's
-    // "opponent".
+    // only this browser's own - a non-empty `seats` is what says "I hold a
+    // capability for this one", and it is now true in two ways rather than
+    // one: the uids this browser presented in `?uids=` (as before), OR every
+    // seat of a game the *logged-in user owns*, which the server hands the
+    // owner unasked. That second way is what lets a second computer, with an
+    // empty `mcm.games.v1`, see and open a game it has never touched.
+    //
+    // A row that is neither saved nor seated must still never render: it
+    // would show this browser's own name as some other browser's "opponent".
     .filter((g) => mine.has(g.game_id) || Object.keys(g.seats || {}).length > 0)
     .map((g) => {
       const seat = mine.get(g.game_id) || {};
-      // `seats` maps username -> uid. Prefer the username whose uid equals
-      // this saved entry's own `uid` (the seat this browser actually
-      // started or opened this game as) over "whichever key comes first" -
-      // object key order here is the server's own dict iteration order, and
-      // `refreshGames` sends *both* this browser's own uid and its aiUid in
-      // the `?uids=` query, so a server response can legally list the AI
-      // seat's username ahead of the human one in `seats`. Falling back to
-      // the first key only when there is no saved uid to match against
-      // (a game this browser holds a seat in by uid alone, never saved).
-      const me =
-        (seat.uid && Object.keys(g.seats || {}).find((name) => g.seats[name] === seat.uid)) ||
-        Object.keys(g.seats || {})[0] ||
-        null;
+      // Which of the two seats is this player's - saved uid first, then the
+      // seat with no agent, then key order. See `seatsFromRow`.
+      const { me, myUid, aiUid } = seatsFromRow(g, seat.uid);
       const opponent = (g.players || []).find((p) => p !== me) || (g.players || [])[1] || null;
       const agent = opponent && g.agents ? g.agents[opponent] : null;
       return {
@@ -112,8 +140,11 @@ export function lobbyViewModel(games, saved) {
         endedAt: null,
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,
-        myUid: seat.uid || (me ? g.seats[me] : null),
-        aiUid: seat.aiUid || null,
+        // The saved entry still wins where there is one; the server-supplied
+        // uid is what a browser with nothing saved falls back on, and is the
+        // only thing that makes such a row openable at all.
+        myUid: seat.uid || myUid || null,
+        aiUid: seat.aiUid || aiUid || null,
       };
     }),
     ...ended,

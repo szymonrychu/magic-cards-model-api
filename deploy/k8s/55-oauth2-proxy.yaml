@@ -108,14 +108,74 @@ spec:
               value: "true"
             - name: OAUTH2_PROXY_SESSION_COOKIE_MINIMAL
               value: "false"
-            # SET_XAUTHREQUEST + PASS_ACCESS_TOKEN are what let a future
-            # frontend turn its session cookie into a bearer token via
-            # /oauth2/auth plus the x-auth-request-access-token response
-            # header (the spellslinger-codex pattern) - nothing in this repo
-            # uses that yet, but the two flags cost nothing to carry now.
+            # SET_XAUTHREQUEST + PASS_ACCESS_TOKEN produce the
+            # `X-Auth-Request-*` **response** headers, including
+            # `X-Auth-Request-Access-Token` (which needs both flags - see
+            # oauth2-proxy v7.15.4 `pkg/apis/options/legacy_options.go`,
+            # `getXAuthRequestAccessTokenHeader`). That is the
+            # spellslinger-codex pattern: a frontend fetches /oauth2/auth and
+            # reads its own access token off the response. Kept, but NOT what
+            # this deployment uses - see PASS_AUTHORIZATION_HEADER below.
             - name: OAUTH2_PROXY_SET_XAUTHREQUEST
               value: "true"
             - name: OAUTH2_PROXY_PASS_ACCESS_TOKEN
+              value: "true"
+
+            # THIS is what makes OIDC ownership live, and it is the whole
+            # cross-device fix ("start a game on one computer and finish on
+            # the other"). Everything in `oidc.py`/`game_access.py` has been
+            # in the image since phase 2b and was completely inert, because
+            # no signed token ever reached the api: the proxy held the
+            # session and forwarded nothing the api could verify, so every
+            # game was created with `owner_user_id = None` and the lobby had
+            # nothing to key on but the browser's own localStorage.
+            #
+            # WHICH TOKEN, and why this flag rather than the two above.
+            # oauth2-proxy v7.15.4's own docs (docs/docs/configuration/
+            # overview.md): "--pass-authorization-header | bool | pass OIDC
+            # IDToken to upstream via Authorization Bearer header | false".
+            # Its source agrees and is unambiguous about which token -
+            # `getAuthorizationHeader()` builds
+            # `{Claim: "id_token", Prefix: "Bearer "}`, and
+            # `session_state.go` resolves `"id_token"` to `s.IDToken`. It is
+            # appended by `getRequestHeaders()`, so it lands on the UPSTREAM
+            # REQUEST - exactly where `oidc.current_user` reads it - unlike
+            # `--set-authorization-header`, which is the same token on the
+            # RESPONSE and is for nginx auth_request mode (which this estate
+            # forbids: no auth-url/auth-signin on any ingress here). There is
+            # no legacy flag at all that forwards the *access* token as a
+            # bearer; only alpha `injectRequestHeaders` YAML can, and that
+            # config is explicitly unstable upstream.
+            #
+            # The ID token is signed by the realm and verifiable against the
+            # realm's JWKS, and its `aud` is the client it was issued for
+            # (`magic-trainer-webui`) - which is what `OIDC_AUDIENCE` on
+            # 50-deployment.yaml checks. The api NEVER trusts this header on
+            # its own authority: `oidc.py` verifies the signature, issuer,
+            # expiry and audience locally on every request, so a forged
+            # `Authorization` header from anywhere is refused with 401.
+            # That is `docs/architecture.md`'s security rule, unbroken.
+            #
+            # Chosen over the /oauth2/auth + x-auth-request-access-token
+            # route because it needs ZERO browser change: the UI's existing
+            # `fetch` calls (ui/api.js) are already proxied through here, so
+            # they simply start arriving at the api with an identity. The
+            # other route would have put token fetching, caching and
+            # 30-minute-lifespan refresh into the browser for no gain.
+            #
+            # ORDERING WARNING: enabling this without `OIDC_ISSUER`/
+            # `OIDC_JWKS_URL` on mtg-stack 401s the entire play UI -
+            # `oidc.current_user` refuses a bearer token it has no issuer to
+            # check, deliberately, rather than silently treating it as
+            # anonymous. `tests/test_k8s_manifests.py::
+            # test_the_two_halves_ship_together` pins the two together.
+            #
+            # Machine clients are untouched: `seat_cli`, `seatkit`/`mcp.py`,
+            # the AI seat Jobs and the in-cluster driver all reach
+            # `mtg-stack:8000` directly and never pass through this proxy at
+            # all, so they keep authenticating with a seat uid and no bearer
+            # token, exactly as `game_access.py` already permits.
+            - name: OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER
               value: "true"
             - name: OAUTH2_PROXY_EMAIL_DOMAINS
               value: "*"

@@ -279,3 +279,95 @@ def test_the_in_cluster_api_service_is_unchanged_so_ai_seats_are_unaffected() ->
     service = by_name(docs, "Service", "mtg-stack")
     assert [p["port"] for p in service["spec"]["ports"]] == [8000]
     assert service["spec"]["selector"] == {"app": "mtg-stack"}
+
+
+# ------------------------------------------------- a real identity reaches the api --
+#
+# The activation half of OIDC ownership. `oidc.py`/`game_access.py` have been
+# in the image since phase 2b and were completely inert, because no bearer
+# token ever reached this process: the proxy held the session and forwarded
+# nothing signed, and `mtg-stack` carried no `OIDC_*` env, so
+# `oidc.oidc_settings()` answered `None` and every game was created unowned.
+# That is what made the lobby browser-local, and it is the reported defect
+# ("matches that players are seeing are pinned to the browser instances, not
+# username from keycloak").
+#
+# The route chosen is `--pass-authorization-header`: oauth2-proxy puts the
+# realm-signed **ID token** on the upstream request as `Authorization:
+# Bearer`, and `oidc.py` verifies that signature locally against the realm
+# JWKS. No `X-Forwarded-*` header is ever trusted on its own authority, and
+# the browser needs no change at all - see 55-oauth2-proxy.yaml's own comment
+# for the evidence and the alternative that was rejected.
+
+#: The realm terraform actually created (`infrastructure`'s keycloak root
+#: module: `keycloak_realm.spellslinger`, client `magic-trainer-webui`).
+ISSUER = "https://auth.szymonrichert.pl/realms/spellslinger"
+
+
+def _api_env() -> dict:
+    docs = rendered()
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    (game,) = deploy["spec"]["template"]["spec"]["containers"]
+    return {e["name"]: e for e in game["env"]}
+
+
+def _proxy_env() -> dict:
+    docs = rendered()
+    deploy = by_name(docs, "Deployment", "mtg-oauth2-proxy")
+    (main,) = [c for c in deploy["spec"]["template"]["spec"]["containers"] if c["name"] == "main"]
+    return {e["name"]: e for e in main["env"]}
+
+
+def test_the_proxy_forwards_a_signed_token_upstream_as_a_bearer() -> None:
+    """Without this the api sees no identity at all and every game is created
+    unowned - the whole reason ownership was dead code. Per oauth2-proxy
+    v7.15.4's own docs this flag "pass[es] OIDC IDToken to upstream via
+    Authorization Bearer header"; it is a *request* header on the proxied
+    path, which is exactly what `oidc.current_user` reads."""
+    env = _proxy_env()
+    assert env["OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER"]["value"] == "true"
+
+
+def test_the_api_is_configured_to_verify_that_token_against_the_realm_jwks() -> None:
+    """The binding rule from `docs/architecture.md`: "API services validate
+    bearer JWTs locally against the realm's JWKS. They never trust
+    `X-Forwarded-*` headers." A JWKS URL is what makes that possible, and
+    without it `oidc_settings()` stays `None` and the forwarded token is
+    refused rather than trusted."""
+    env = _api_env()
+    assert env["OIDC_ISSUER"]["value"] == ISSUER
+    assert env["OIDC_JWKS_URL"]["value"] == f"{ISSUER}/protocol/openid-connect/certs"
+    # The confidential client terraform created for this host. An ID token's
+    # `aud` is the client it was issued for, so this is checkable.
+    assert env["OIDC_AUDIENCE"]["value"] == "magic-trainer-webui"
+    # Never a static JWKS in production: that is `oidc.py`'s offline/test
+    # escape hatch, and pinning a key literal here would freeze it across a
+    # realm key rotation.
+    assert "OIDC_JWKS_STATIC" not in env
+
+
+def test_the_two_halves_ship_together() -> None:
+    """A proxy forwarding a bearer token to an api with no issuer configured
+    is not merely inert - `oidc.current_user` refuses such a request with 401
+    rather than treating it as anonymous (deliberately: an unprovable
+    identity is not waved through). So enabling the forwarding without the
+    verification config would 401 the entire play UI. The two must never be
+    applied one without the other."""
+    forwarding = _proxy_env().get("OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER", {}).get("value")
+    env = _api_env()
+    configured = "OIDC_ISSUER" in env and ("OIDC_JWKS_URL" in env or "OIDC_JWKS_STATIC" in env)
+    assert (forwarding == "true") == configured, (
+        "OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER and the api's OIDC_* config "
+        "are two halves of one change - shipping either alone 401s the UI"
+    )
+
+
+def test_no_oidc_secret_is_committed_as_a_literal() -> None:
+    """`OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL` are public identifiers -
+    a URL and a client id - and are literals on purpose. Nothing that is
+    actually a credential may join them: the client *secret* stays in the
+    `magic-trainer-webui-proxy` Secret, read only by the proxy."""
+    for name, entry in _api_env().items():
+        if "SECRET" in name or "PASSWORD" in name:
+            assert "value" not in entry, name
+    assert "OIDC_CLIENT_SECRET" not in _api_env()

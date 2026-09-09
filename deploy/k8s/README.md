@@ -851,3 +851,129 @@ all cleared by a cluster run recorded in
 - `kubeval` and `kubectl-validate` are still not installed here; no other
   manifest linter has run against the live cluster's admission controller
   beyond the restricted PSS label itself.
+
+## Identity: making a Keycloak login actually own a game
+
+Everything in the section above ends at the *edge*: oauth2-proxy decides who
+may reach the site. It said nothing about who anything **belongs to**. Until
+this change, no signed token ever reached `mtg-stack`, so `oidc.oidc_settings()`
+answered `None`, every game was created with `owner_user_id = None`, and the
+lobby's list of games could only ever be keyed on the browser's own
+`localStorage`. That is the reported defect: "matches that players are seeing
+are pinned to the browser instances, not username from keycloak".
+
+Two env changes close it, and they are **two halves of one change** - see the
+ordering warning below.
+
+### The token, and which one
+
+`55-oauth2-proxy.yaml` sets `OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER=true`.
+Per oauth2-proxy v7.15.4's own configuration reference, that flag will "pass
+OIDC IDToken to upstream via Authorization Bearer header" - a **request**
+header on the proxied path, which is exactly where `oidc.current_user` looks.
+Its source is unambiguous about which token: `getAuthorizationHeader()` in
+`pkg/apis/options/legacy_options.go` builds the header from
+`{Claim: "id_token", Prefix: "Bearer "}`, and `session_state.go` resolves
+`"id_token"` to the session's ID token.
+
+Two nearby flags are *not* what does this, and it is worth knowing why:
+
+| flag | token | request or response |
+|---|---|---|
+| `--pass-authorization-header` | ID token | upstream **request** - what we use |
+| `--set-authorization-header` | ID token | **response** - for nginx `auth_request`, which this estate forbids |
+| `--pass-access-token` | access token | request, as `X-Forwarded-Access-Token` |
+| `--set-xauthrequest` (+ the above) | access token | response, as `X-Auth-Request-Access-Token` |
+
+The last row is the "spellslinger-codex pattern": a frontend calls
+`/oauth2/auth` and reads its own access token off the response headers. It
+was rejected here because it needs the browser to fetch, cache and refresh a
+token with a 30-minute lifespan, for no gain - the chosen flag needs **zero
+UI change**, since the play UI's existing `fetch` calls already go through
+this proxy and simply start arriving with an identity attached. There is no
+legacy flag at all that forwards the *access* token as `Authorization:
+Bearer`; only oauth2-proxy's alpha YAML `injectRequestHeaders` can, and
+upstream reserves the right to break that config with no notice.
+
+### The api verifies it; it never trusts it
+
+`50-deployment.yaml` sets three variables on `mtg-stack`:
+
+```
+OIDC_ISSUER    https://auth.szymonrichert.pl/realms/spellslinger
+OIDC_JWKS_URL  https://auth.szymonrichert.pl/realms/spellslinger/protocol/openid-connect/certs
+OIDC_AUDIENCE  magic-trainer-webui
+```
+
+All three are public identifiers - a realm URL, its JWKS endpoint, a client
+id - never credentials. The client *secret* stays in the
+`magic-trainer-webui-proxy` Secret and is read only by the proxy.
+
+`oidc.py` verifies the forwarded token's **signature, issuer, expiry and
+audience locally against the realm's JWKS** on every request. This is the
+binding rule from `docs/architecture.md`: "API services validate bearer JWTs
+locally against the realm's JWKS. They never trust `X-Forwarded-*` headers."
+Nothing here trusts a header on its own authority - a forged `Authorization`
+header, from the proxy's position or anywhere else, is refused with a 401
+because it does not verify. JWKS is fetched live (and cached per URL) rather
+than pinned with `OIDC_JWKS_STATIC`; that variable is `oidc.py`'s offline/test
+escape hatch, and pinning a key would break the first time the realm rotates
+its signing keys.
+
+### Ordering: never apply one half without the other
+
+`oidc.current_user` refuses a bearer token it has no issuer to check -
+deliberately, so an unprovable identity is never silently downgraded to
+anonymous. So **enabling the forwarding while `mtg-stack` has no `OIDC_*`
+config 401s the entire play UI.** `tests/test_k8s_manifests.py::test_the_two_halves_ship_together`
+pins the two together so they cannot drift apart in this repo.
+
+`mise run k8s:deploy` applies both files in one pass, so the committed state
+is always consistent. The only window is the seconds during which
+`mtg-stack`'s `Recreate` rollout is between Pods while the proxy is already
+forwarding; it is self-healing. To avoid even that, apply in two steps:
+
+```sh
+# 1. Give the api its OIDC config first. Harmless on its own: no token is
+#    being forwarded yet, so nothing changes and every game stays unowned.
+kubectl -n mtg-engine set env deploy/mtg-stack \
+  OIDC_ISSUER=https://auth.szymonrichert.pl/realms/spellslinger \
+  OIDC_JWKS_URL=https://auth.szymonrichert.pl/realms/spellslinger/protocol/openid-connect/certs \
+  OIDC_AUDIENCE=magic-trainer-webui
+kubectl -n mtg-engine rollout status deploy/mtg-stack
+
+# 2. Then turn on the forwarding.
+kubectl -n mtg-engine set env deploy/mtg-oauth2-proxy \
+  OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER=true
+kubectl -n mtg-engine rollout status deploy/mtg-oauth2-proxy
+```
+
+A later `mise run k8s:deploy` converges on the same values from the committed
+manifests.
+
+### Prerequisite in the `infrastructure` repo
+
+The `spellslinger` realm, the `magic-trainer-webui` confidential client, its
+audience mapper, the `magic-trainer-webui` group and the two test users are
+created by terraform, in that repo's `keycloak/` root module. Nothing here
+creates any of it; this deployment only points at it. **That terraform must be
+applied before this change does anything**, and applying it is a merge to
+`main` in the terraform repo (its CI auto-applies).
+
+### What does *not* change
+
+- **Machine clients are untouched.** `seat_cli`, `seatkit`/`mcp.py`, the AI
+  seat Jobs and the in-cluster driver all reach
+  `mtg-stack.mtg-engine.svc.cluster.local:8000` directly and never pass
+  through the proxy at all. They carry no bearer token and authenticate with
+  a seat uid, which `game_access.py` permits independently of who owns a
+  game. `tests/test_user_separation.py` pins that.
+- **No ingress gains `auth-url`/`auth-signin`.** The binding rule holds; the
+  proxy stays an in-path reverse proxy.
+- **Games that already exist stay unowned.** Nothing backfills
+  `owner_user_id` on a row created before this. Those games remain visible to
+  any browser that still holds one of their seat uids, exactly as today, and
+  they will not appear on a second computer. Only games created *after* this
+  is live get an owner and become cross-device. To move an old game over,
+  open it once on the old browser and copy the URL - or just end it and start
+  a new one.

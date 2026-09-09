@@ -1230,3 +1230,76 @@ whoever works on the repo itself.
   exists because every listing route has to name a game's players without the
   `Game` - the `seats` and `decklists` columns need no decoding, and "the game
   you were playing, with nobody in it" is a worse answer than none.
+
+- **2026-09-09 - the lobby was pinned to the browser because ownership was
+  live code that nothing ever reached, and the fix is one oauth2-proxy flag
+  plus three env vars.** The owner's report ("matches that players are seeing
+  are pinned to the browser instances, not username from keycloak") looked
+  like a missing feature and was not one: `oidc.py`, `game_access.py`, and
+  `list_lobby_games`'s owner filter had all shipped in phase 2b and were
+  correct. They were simply unreachable - `mtg-stack` carried no `OIDC_*`
+  env, so `oidc_settings()` returned `None`, so no request could ever be
+  authenticated, so every game was created with `owner_user_id = None` and
+  the only thing the lobby could key on was `mcm.games.v1` in `localStorage`.
+  Diagnosing this by reading `decks_api.py` alone would have missed it
+  entirely; the evidence was in `deploy/k8s/50-deployment.yaml`'s env block,
+  which had no OIDC in it at all.
+
+- **2026-09-09 - `--pass-authorization-header` forwards the ID token, not the
+  access token, and that distinction is the whole hinge of the OIDC
+  cutover.** oauth2-proxy v7.15.4's `getAuthorizationHeader()`
+  (`pkg/apis/options/legacy_options.go`) builds `{Claim: "id_token", Prefix:
+  "Bearer "}`, and `session_state.go` resolves `"id_token"` to `s.IDToken` -
+  so both `--pass-authorization-header` (request) and
+  `--set-authorization-header` (response) carry the **ID** token. The access
+  token only ever gets its own header names, `X-Forwarded-Access-Token`
+  (`--pass-access-token`, request) and `X-Auth-Request-Access-Token`
+  (`--set-xauthrequest` **plus** `--pass-access-token`, response) - and there
+  is no legacy flag at all that puts the access token in `Authorization:
+  Bearer`. Only alpha `injectRequestHeaders` YAML can, and upstream reserves
+  the right to break that with no notice. Worth writing down because the
+  manifest's own pre-existing comment described the `/oauth2/auth` +
+  `x-auth-request-access-token` route ("the spellslinger-codex pattern") as
+  the intended future path; the request-header route is strictly simpler for
+  this app, because it needs **zero** browser change - the UI's existing
+  `fetch` calls already traverse the proxy, so they just start arriving with
+  an identity. It also avoids putting token caching and 30-minute-lifespan
+  refresh into the browser.
+
+- **2026-09-09 - the proxy flag and the api's `OIDC_*` env are two halves of
+  one change; shipping either alone 401s the whole play UI.** `oidc.
+  current_user` deliberately refuses a bearer token when the deployment has
+  no issuer configured to check it against, rather than silently downgrading
+  it to anonymous - a good rule that becomes a live outage the moment the
+  proxy starts forwarding a token to an api that cannot verify it. The
+  reverse direction is harmless (OIDC config with no token forwarded is
+  simply inert, every game unowned, identical to today), which is why the
+  README's two-step activation sets the api's env *first*.
+  `tests/test_k8s_manifests.py::test_the_two_halves_ship_together` asserts
+  the biconditional so the two cannot drift apart in the committed manifests.
+
+- **2026-09-09 - the owner is the one caller whose `seats` may be widened,
+  and "which seat is mine" then has to come from `agents`, not key order.**
+  `list_lobby_games` used to compute `seats` as "the uids you already
+  presented in `?uids=`", which is exactly right as a privacy rule and
+  exactly wrong for a second computer: a fresh browser presents none, so the
+  owner got her row back with `seats: {}` - visible, unopenable. Ownership is
+  a locally-verified signature and is strictly stronger evidence than holding
+  one of a game's uids, so it is the one identity that may be handed uids it
+  did not present; everyone else keeps the old rule verbatim, and an
+  *ownerless* game widens for nobody (which is what keeps `mise run dev`, the
+  test server, and every game already in production behaving exactly as
+  before). Once uids arrive unasked, though, the browser can no longer use
+  "the uid I saved" to tell its own seat from the AI's - so `seatsFromRow`
+  (`ui/lobby_model.js`) falls back to the seat with no entry in the row's
+  `agents` map, and only then to key order. Key order is the server's dict
+  iteration order and is never a signal: the AI seat can legally be listed
+  first, and picking it would seat the player as the bot.
+
+- **2026-09-09 - existing games are deliberately not backfilled.** Every game
+  in production predates this and has `owner_user_id = NULL`. No migration
+  sets one, because there is nothing honest to set it to - the api never saw
+  an identity when those games were created, and inferring one from a seat
+  uid would be a guess. They stay reachable exactly as they are today (any
+  browser holding a seat uid) and they will not appear on a second computer.
+  Only games created after the cutover are cross-device.

@@ -257,6 +257,9 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
     every game it has ever seen - each game's `seats` in the response is
     filtered down to only the uids from that list which are actually seats of
     that game, so a browser never learns a uid that is not already its own.
+    `uids` is optional and always was: a caller that presents none simply
+    holds no seat capability, which for an authenticated **owner** is now the
+    ordinary case rather than a dead end (below).
 
     OIDC-based user separation: a game this caller may not reach at all - an
     *owned* game (`game_access.py`) belonging to a different bearer token,
@@ -266,6 +269,19 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
     An unowned game (every game before this feature, and every game this
     deployment creates until an OIDC issuer is actually configured) is
     listed exactly as before - this route's one migration guarantee.
+
+    **The owner gets the whole `seats` map, and is the only caller who
+    does.** "User must be able to start a game on one computer and finish on
+    the other" is the owner's own requirement, and a second browser has an
+    empty `localStorage`: it can present no uid, so the `uids` filter would
+    hand back `seats: {}` and the row would list but not open. Ownership
+    already proves, by a locally-verified signature, that this caller is the
+    person who created the game - strictly stronger than holding one of its
+    uids - so it is the one identity that may be handed uids it did not
+    present. Everyone else keeps the old rule exactly, and an ownerless game
+    widens for nobody: the anonymous/dev path (`mise run dev`, the test
+    server, and every game already in production) is untouched.
+    `tests/test_lobby_cross_device.py` pins both halves.
 
     2b's T8 (map's S2): this used to build a full `serialize.state_view` per
     game just to pull `turn_number`/`step`/`winner`/`drawn` back out of it -
@@ -295,9 +311,21 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
         summary = summaries.get(game_id)
         if unloadable is None and (game is None or summary is None):
             continue
-        seats = {name: uid for uid, name in store.seat_uids(game_id).items() if uid in mine}
+        all_seats = {name: uid for uid, name in store.seat_uids(game_id).items()}
+        seats = {name: uid for name, uid in all_seats.items() if uid in mine}
         owner = store.owner_user_id(game_id)
-        if owner is not None and (user is None or user.sub != owner) and not seats:
+        if owner is not None and user is not None and user.sub == owner:
+            # The owner, and only the owner, gets every seat of her own game -
+            # this is what makes "start on one computer, finish on the other"
+            # work at all. A browser she has never used holds nothing in
+            # `localStorage`, so it sends no `uids` and `seats` above is empty;
+            # without this the row lists but cannot be opened, which is the
+            # defect. Nobody else is widened: a caller who is not the owner
+            # (another logged-in user, or an anonymous browser holding a uid)
+            # keeps the pre-existing guarantee that it never learns a uid it
+            # did not already present.
+            seats = all_seats
+        elif owner is not None and not seats:
             continue
         games.append(
             {
