@@ -72,6 +72,7 @@ here means answering a resumed command's question with the wrong id.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -88,9 +89,21 @@ from sqlalchemy.engine import Engine
 from .agent_settings import AgentSettings
 from .commands import Command
 from .db import games, make_engine, records
-from .repository import DEFAULT_RESERVATION_TTL_SECONDS, ArchivedGame, _ReservationLedger
+from .repository import (
+    DEFAULT_RESERVATION_TTL_SECONDS,
+    ArchivedGame,
+    GameUnloadable,
+    _ReservationLedger,
+)
 
 __all__ = ["PostgresRepository", "VersionConflict"]
+
+#: Every refusal to decode a stored snapshot is written here, at WARNING,
+#: before it is raised - once per (game, version), not once per read, so a
+#: 1.2s lobby poll against a stale row does not bury the log. Silence is
+#: the one outcome this must never have: a row that stops loading is a
+#: game somebody was playing.
+log = logging.getLogger(__name__)
 
 
 def _utc_isoformat(stamp: datetime | None) -> str | None:
@@ -257,6 +270,13 @@ class PostgresRepository:
         # own view. See the module docstring's "identity-preserving read
         # cache" section.
         self._cache: dict[str, tuple[Game, int]] = {}
+        # game_id -> (version, the decoder's own message) for a row this
+        # build refuses to parse - the cache's negative half, guarded by the
+        # same `_cache_lock` and keyed on `version` for the same reason, so
+        # a stale row is parsed (and logged) once rather than on every poll,
+        # and is retried the instant another writer moves its version. See
+        # `_game_from_row`.
+        self._undecodable: dict[str, tuple[int, str]] = {}
         self._cache_lock = threading.Lock()
         # game_id -> this process's mutation lock for that game. Process-
         # local, like `InMemoryRepository._locks` - not part of the
@@ -300,12 +320,49 @@ class PostgresRepository:
         cached object comes back, in-place mutations (a caller that never
         called `replace()`, exactly like a direct `InMemoryRepository` caller
         never has to) included. See the module docstring's "identity-
-        preserving read cache" section."""
+        preserving read cache" section.
+
+        **A row that will not decode raises `GameUnloadable`, and that is the
+        only place a decode failure is ever turned into one.** Every read on
+        this class comes through here, so one `try` covers `get`, `locked`,
+        `archived` and `_live_ui_game_ids` alike. The failure is cached the
+        same way a success is - keyed on `version`, so a row that is fixed by
+        another writer is retried the moment its version moves, and a stale
+        row that nothing touches is parsed once rather than on every tick of
+        a 1.2s lobby poll (a full `Game` payload is ~180KB; see `MEMORY.md`).
+        That cache is also what makes the WARNING fire once per (game,
+        version) instead of once per read.
+
+        `except Exception` and not `except SchemaVersionMismatch`: the schema
+        bump is the case this was written for, but "this row will not decode"
+        is the property callers actually need to survive, and a
+        `ValidationError` from a genuinely corrupt payload has to be just as
+        non-fatal to a listing. The engine's own message - whatever raised it
+        - is carried through verbatim as `reason` and is what every layer
+        above quotes; nothing here paraphrases it or decides what it meant.
+        """
         with self._cache_lock:
             cached = self._cache.get(game_id)
             if cached is not None and cached[1] == version:
                 return cached[0]
-            game = Game.model_validate(state)
+            failed = self._undecodable.get(game_id)
+            if failed is not None and failed[0] == version:
+                raise GameUnloadable(game_id, failed[1])
+            try:
+                game = Game.model_validate(state)
+            except Exception as exc:
+                reason = str(exc)
+                self._undecodable[game_id] = (version, reason)
+                self._cache.pop(game_id, None)
+                log.warning(
+                    "game %s (version %s) cannot be decoded by this build and will be "
+                    "skipped by every listing until it is: %s",
+                    game_id,
+                    version,
+                    reason,
+                )
+                raise GameUnloadable(game_id, reason) from exc
+            self._undecodable.pop(game_id, None)
             self._cache[game_id] = (game, version)
             return game
 
@@ -344,17 +401,36 @@ class PostgresRepository:
         postgres-backed store observably identical to `InMemoryRepository`
         for a caller in the same process, which the contract suite (built
         against `InMemoryRepository`'s shared-reference semantics) assumes.
+
+        **A row that will not decode counts as live, and never raises.**
+        Not raising is the whole point: this is the single count
+        `reserve_slot` makes, so one stale row used to break *creating* a
+        game as surely as listing one. Counting it is the deliberate half
+        - `is_over` (CR 104.1) is a fact about a board this build cannot
+        read, and treating an unreadable game as finished would be the
+        same silent default the engine refuses to make when it declines
+        the snapshot in the first place. The row is there, `archived_at`
+        is null, the lobby still lists it, and the slot it holds is real.
+        What keeps that from wedging the cap forever is that End game
+        works on an undecodable row exactly as it does on any other
+        (`lobby.reset_game`, and `delete()`'s own `UPDATE` decodes
+        nothing) - so the cap is always recoverable by the one deliberate
+        act that was always the way to recover it.
         """
         rows = conn.execute(
             select(games.c.id, games.c.state, games.c.version)
             .where(games.c.ui_game.is_(True), games.c.archived_at.is_(None))
             .order_by(games.c.ui_game_registered_at.asc())
         ).all()
-        return [
-            game_id
-            for game_id, state, version in rows
-            if not self._game_from_row(game_id, state, version).is_over
-        ]
+        live = []
+        for game_id, state, version in rows:
+            try:
+                over = self._game_from_row(game_id, state, version).is_over
+            except GameUnloadable:
+                over = False
+            if not over:
+                live.append(game_id)
+        return live
 
     def _cached_version(self, game_id: str) -> int:
         with self._cache_lock:
@@ -524,9 +600,12 @@ class PostgresRepository:
                     missing = True
                 else:
                     actual_version, actual_state = row
-                    current_game = Game.model_validate(actual_state)
-                    with self._cache_lock:
-                        self._cache[game_id] = (current_game, actual_version)
+                    # Through `_game_from_row`, not a bare `model_validate`:
+                    # it is the one decode point (so a winner's row this
+                    # build cannot read raises `GameUnloadable` here too,
+                    # rather than a bare `RuntimeError`), and it already
+                    # does the cache write this used to do by hand.
+                    current_game = self._game_from_row(game_id, actual_state, actual_version)
                     conflict = VersionConflict(
                         game_id, expected_version, actual_version, current_game
                     )
@@ -548,6 +627,9 @@ class PostgresRepository:
             raise conflict
         with self._cache_lock:
             self._cache[game_id] = (game, new_version)
+            # This process just wrote a state it can obviously decode, so
+            # any recorded refusal for this row is stale by construction.
+            self._undecodable.pop(game_id, None)
         return seq
 
     def append_record(self, game_id: str, payload: dict[str, Any]) -> int:
@@ -625,6 +707,7 @@ class PostgresRepository:
             )
         with self._cache_lock:
             self._cache.pop(game_id, None)
+            self._undecodable.pop(game_id, None)
             self._automatic_pregame.pop(game_id, None)
         with self._locks_lock:
             self._locks.pop(game_id, None)

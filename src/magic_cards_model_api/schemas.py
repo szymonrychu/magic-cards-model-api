@@ -1261,6 +1261,19 @@ class GameSummary(BaseModel):
     game_id: str
     players: list[str]
     step: str | None = None
+    unloadable: str | None = None
+    """Set only when this game's row exists but this build cannot decode the
+    snapshot in it - the decoder's own message, verbatim
+    (`repository.GameUnloadable.reason`), which for the case this field
+    exists for is the engine's `SchemaVersionMismatch` after
+    `Game.CURRENT_SCHEMA_VERSION` moved past what the row was written at.
+    `None` for every game that loaded normally.
+
+    Such a game is *listed*, not omitted: a game somebody played must not
+    read as a game that vanished. `players` still comes back (from the
+    seats/decklists columns, which need no decoding); `step`, which can only
+    come from the board, is `None`. Opening the game directly answers 409
+    with this same text."""
 
 
 class ListGamesResponse(BaseModel):
@@ -1279,6 +1292,12 @@ class GameSummaryScalars(BaseModel):
     active_player: str | None = None
     phase: str | None = None
     seat_count: int
+    unloadable: str | None = None
+    """`GameSummary.unloadable` on this row shape - see there. On such a row
+    every scalar that could only be read off the board is at its "unknown"
+    value: `turn_number`, `active_player` and `phase` are `None`, and
+    `is_over` is `False`, since a board this build cannot read is a board on
+    which CR 104.1 cannot be judged and must not be guessed at."""
 
 
 class GameSummariesResponse(BaseModel):

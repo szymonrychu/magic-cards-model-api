@@ -226,9 +226,14 @@ function currentStorage() {
 
 /** "pending" (still in CR 103.5/103.6's pregame - `booted_game`'s own boot
  * leaves a game resting at turn 0 until both seats clear it), "playing",
- * "over" (a winner or a draw), or "ended" (this browser ended it from the
- * lobby: soft-deleted server-side, unplayable, still reviewable). */
+ * "over" (a winner or a draw), "ended" (this browser ended it from the
+ * lobby: soft-deleted server-side, unplayable, still reviewable), or
+ * "unopenable" (the server has this game but says this build cannot decode
+ * its snapshot - `row.unloadable` carries the engine's own reason, which the
+ * cell's `title` shows). Checked first: it is a fact about whether the game
+ * can be read at all, so nothing below it - not even "over" - is knowable. */
 function gameState(row) {
+  if (row.unloadable) return "unopenable";
   if (row.archived) return "ended";
   if (row.over) return "over";
   if (row.turn === 0) return "pending";
@@ -273,20 +278,31 @@ function renderGamesTable(root, handlers, rows) {
     agentTd.textContent = row.model ? `${row.model} / ${row.effort || "high"}` : "-";
     const stateTd = document.createElement("td");
     stateTd.textContent = gameState(row);
+    // The engine's own refusal, where a human will actually read it. The
+    // lobby is the only place this game is still visible at all, so if the
+    // reason is not here it is nowhere.
+    if (row.unloadable) stateTd.setAttribute("title", row.unloadable);
     const actionsTd = document.createElement("td");
     if (!row.archived) {
-      const openBtn = document.createElement("button");
-      openBtn.textContent = "Open";
-      openBtn.addEventListener("click", () => {
-        handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
-      });
+      // No Open on a game the server cannot decode: it would fetch the board
+      // and get a 409 back (`app._game_unloadable`) every single time. End
+      // stays, and is the only thing that helps - it is also what gives the
+      // slot back, since the server counts such a row against
+      // `MAX_LIVE_GAMES` rather than assuming an unreadable game is over.
+      if (!row.unloadable) {
+        const openBtn = document.createElement("button");
+        openBtn.textContent = "Open";
+        openBtn.addEventListener("click", () => {
+          handlers.startGame({ game_id: row.gameId, uid: row.myUid, aiUid: row.aiUid });
+        });
+        actionsTd.appendChild(openBtn);
+      }
       const endBtn = document.createElement("button");
       endBtn.textContent = "End";
       endBtn.className = "danger";
       endBtn.addEventListener("click", () => {
         endGame(root, handlers, row).catch((e) => console.error(e));
       });
-      actionsTd.appendChild(openBtn);
       actionsTd.appendChild(endBtn);
     }
     // The review's door - only on a finished game, and only when the page

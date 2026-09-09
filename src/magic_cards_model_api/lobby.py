@@ -39,7 +39,8 @@ from __future__ import annotations
 from typing import Any
 
 from . import ai_pregame, ai_seat, audit
-from .store import store
+from .repository import GameUnloadable
+from .store import known_players, store
 
 DEFAULT_REASON = "ended from the lobby"
 
@@ -48,10 +49,27 @@ def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
     """Reset one game: stop its watcher, release its AI seats, delete it.
 
     Returns what was covered, for the audit entry and for the caller. Safe for
-    a game that is already gone - it simply reports nothing covered.
+    a game that is already gone - it simply reports nothing covered - and
+    safe for one this build cannot decode (`repository.GameUnloadable`),
+    which is the case that matters most: an undecodable live row counts
+    against `MAX_LIVE_GAMES` (`_live_ui_game_ids`), so a reset that refused
+    to run on one would leave the lobby with a slot nobody could ever free.
+    Everything this function does is readable without the board - the seats
+    and the watcher are held beside the game, not in it - and the players it
+    names come from `store.known_players` instead, so even the audit entry
+    for such a reset still says who was in it.
     """
-    game = store.get(game_id)
-    players = [player.username for player in game.players] if game is not None else []
+    unloadable: str | None = None
+    try:
+        game = store.get(game_id)
+    except GameUnloadable as exc:
+        game, unloadable = None, exc.reason
+    if game is not None:
+        players = [player.username for player in game.players]
+    elif unloadable is not None:
+        players = known_players(game_id)
+    else:
+        players = []
     seats = store.seat_uids(game_id)  # uid -> username
 
     watcher_stopped = ai_pregame.stop(game_id)
@@ -72,10 +90,15 @@ def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
         "watcher_stopped": watcher_stopped,
         "ai_seats_released": released,
     }
-    if game is not None:
+    if game is not None or unloadable is not None:
         # Recorded *before* the delete, so the entry still carries this game's
         # own snapshot: the last thing in its transcript is the state it was
-        # abandoned in.
+        # abandoned in. An undecodable game gets the entry too, with no
+        # snapshot to carry (`audit.record` reads the board through the same
+        # `store.get` and tolerates the same refusal) and `unloadable` saying
+        # why - a transcript that ends "this build stopped being able to read
+        # it, and then it was ended" is the true account of what happened to
+        # that game, and the one an operator reading back will need.
         audit.record(
             game_id,
             "game_reset",
@@ -84,6 +107,7 @@ def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
             seats_invalidated=len(seats),
             watcher_stopped=watcher_stopped,
             ai_seats_released=released,
+            **({"unloadable": unloadable} if unloadable is not None else {}),
         )
     covered["deleted"] = store.delete(game_id)
     return covered

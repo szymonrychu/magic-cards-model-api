@@ -59,7 +59,7 @@ from magic_cards_model.models import Game
 from .db import configured_database_url, database_url_from_env, make_engine
 from .repository import GameRepository, InMemoryRepository
 
-__all__ = ["GameRepository", "GameStore", "new_seat_uids", "store"]
+__all__ = ["GameRepository", "GameStore", "known_players", "new_seat_uids", "store"]
 
 GameStore = InMemoryRepository
 """Backward-compatible alias. Every existing `from .store import GameStore`
@@ -121,3 +121,22 @@ why nothing may rebind this name after import."""
 def new_seat_uids(game: Game) -> dict[str, str]:
     """A fresh secret uid for each of the game's players: uid -> username."""
     return {uuid4().hex: player.username for player in game.players}
+
+
+def known_players(game_id: str) -> list[str]:
+    """This game's player names, read only from columns that need no decoding.
+
+    `[p.username for p in game.players]` is the normal way to answer this
+    and needs the `Game`. Every listing route also has to answer it for a
+    game whose snapshot this build refuses to decode
+    (`repository.GameUnloadable`), where there is no `Game` to ask - and
+    "the game you were playing, with nobody in it" is a worse answer than
+    no entry at all, which is what this exists to avoid.
+
+    Both sources are registered at creation, beside the game and never from
+    it: `seat_uids` (uid -> username) by every create path there is, and
+    `decklists` (username -> text) by the lobby's. Sorted so a listing is
+    stable rather than dependent on dict order.
+    """
+    names = set(store.seat_uids(game_id).values()) | set(store.decklists(game_id))
+    return sorted(names)

@@ -165,6 +165,42 @@ class _ReservationLedger:
         return self._pending.pop(token, None) is not None
 
 
+class GameUnloadable(Exception):
+    """A game's row exists, but this build cannot turn the snapshot in it
+    back into a `Game`.
+
+    The case this exists for is an engine schema bump: `Game.
+    CURRENT_SCHEMA_VERSION` moves, and every row written under the previous
+    value is refused by `Game._check_schema_version` with
+    `SchemaVersionMismatch`. That refusal is the engine's to make and is not
+    softened anywhere in this repo - a snapshot whose behaviour was recorded
+    under a different engine version genuinely must not be replayed as
+    though it were current. What is wrong is only *where the refusal lands*:
+    it used to escape a batch read as a bare `RuntimeError`, so one stale row
+    500'd `GET /api/games`, `GET /api/lobby/games`, and (through
+    `reserve_slot`'s live-game count) `POST /api/lobby/games` for every game,
+    including the ones that decode perfectly.
+
+    So the repository converts it, at its single decode point, into this -
+    an exception of the api's own vocabulary that a batch read can catch per
+    row and a single-game read can let escape to `app.py`'s handler (409,
+    `reason` verbatim in the body). `reason` is always the underlying
+    decoder's own message, never a paraphrase: the engine says why, and
+    every layer above quotes it.
+
+    Deliberately not a `ValueError` (`app.py`'s `ValueError` handler answers
+    400, which would read as "your request was malformed" for a condition
+    the caller cannot do anything about) and deliberately not a `KeyError`
+    (404 would say the game does not exist, when it does - and would send a
+    seat off to start a new one instead of reporting the real cause).
+    """
+
+    def __init__(self, game_id: str, reason: str) -> None:
+        super().__init__(f"game {game_id} cannot be loaded: {reason}")
+        self.game_id = game_id
+        self.reason = reason
+
+
 @runtime_checkable
 class GameRepository(Protocol):
     """Everything the API needs from wherever games are held.
@@ -231,7 +267,25 @@ class GameRepository(Protocol):
         ...
 
     def get(self, game_id: str) -> Game | None:
-        """The game for this id, or `None` if there is none."""
+        """The game for this id, or `None` if there is none.
+
+        Raises `GameUnloadable` for a third case the `Game | None` return
+        cannot express and must never be collapsed into either half of it: a
+        row that exists but that this build cannot decode. `None` would say
+        the game is gone (and a caller would tell a player their game
+        vanished, or delete the seat's only handle on it); the underlying
+        `RuntimeError` escaping raw is what took `GET /api/games` down. An
+        implementation that holds live `Game` objects (`InMemoryRepository`)
+        never decodes and so never raises this; one that stores a snapshot
+        (`PostgresRepository`) can, on any row a schema bump left behind.
+
+        **Every caller that reads more than one game must catch it per
+        game**, skip that game, and say so in what it returns - see
+        `app.list_games`, `decks_api.list_lobby_games` and
+        `api_client.InProcessApiClient.game_summaries`. A caller reading one
+        named game lets it escape: `app.py`'s handler answers 409 with the
+        decoder's own words.
+        """
         ...
 
     def replace(self, game_id: str, game: Game, *, record: dict[str, Any] | None = None) -> int:
@@ -366,7 +420,9 @@ class GameRepository(Protocol):
     def locked(self, game_id: str) -> AbstractContextManager[Game]:
         """Hold this game's mutation lock for the duration of the `with`
         block, yielding the `Game`. Raises `KeyError` for an unknown game
-        before taking any lock.
+        before taking any lock, and `GameUnloadable` (see `get`) for one
+        whose stored snapshot this build cannot decode - a game nobody can
+        read is a game nobody may act on either.
 
         This is the transaction boundary: a request holds it for its whole
         mutating body, so two requests can never mutate the same game at

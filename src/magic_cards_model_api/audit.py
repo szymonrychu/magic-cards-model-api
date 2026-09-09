@@ -137,10 +137,20 @@ def record(
     `audit_outcome` and the `resolve-top`/`advance`/`pass-priority`
     endpoints) against a later read, rather than guessing from a blind retry.
     """
+    from .repository import GameUnloadable  # lazy, with `store` below
     from .serialize import snapshot  # lazy: keep module import light
     from .store import store  # lazy: audit imports nothing of the app at load
 
-    game = store.get(game_id)
+    # A game whose snapshot this build cannot decode still gets its entry -
+    # every board-derived field simply comes out `None`, exactly as it
+    # already does for a game that is gone. Raising here would take out the
+    # one call `lobby.reset_game` makes to write down that a stale game was
+    # ended, which is the entry an operator reading the ledger back most
+    # needs to find.
+    try:
+        game = store.get(game_id)
+    except GameUnloadable:
+        game = None
     turn = game.turn if game is not None else None
     step = turn.step if turn is not None else None
     payload = {

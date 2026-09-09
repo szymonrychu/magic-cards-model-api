@@ -22,7 +22,8 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from . import api_decks, serialize
-from .store import store
+from .repository import GameUnloadable
+from .store import known_players, store
 
 
 class ApiClient(Protocol):
@@ -57,7 +58,18 @@ class InProcessApiClient:
     def game_summaries(self, game_ids: list[str]) -> dict[str, dict[str, Any]]:
         summaries: dict[str, dict[str, Any]] = {}
         for game_id in game_ids:
-            game = store.get(game_id)
+            # Per game, never around the loop: one row this build cannot
+            # decode must cost exactly that row, not the whole answer. It
+            # is still answered for - with `unloadable` set - rather than
+            # dropped, matching `app.game_summaries_route`, which is the
+            # route this stands in for until the cut.
+            try:
+                game = store.get(game_id)
+            except GameUnloadable as exc:
+                summaries[game_id] = serialize.unloadable_game_summary(
+                    game_id, exc.reason, seat_count=len(known_players(game_id))
+                )
+                continue
             if game is None:
                 continue
             summaries[game_id] = serialize.game_summary(game, game_id)
