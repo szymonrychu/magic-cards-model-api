@@ -1193,3 +1193,40 @@ whoever works on the repo itself.
   `Game.activate_ability` sets `x_value` and `targets` in one call, so there
   is no two-phase window for the order to matter; the window exists only
   because a `Casting` is built up over several separate calls.
+
+- **2026-09-09 - An undecodable game counts against `MAX_LIVE_GAMES`, and End
+  game is what makes that safe.** The engine's `Game.CURRENT_SCHEMA_VERSION`
+  moved to 5 while production postgres still held rows written at 3;
+  `Game._check_schema_version` refused them with `SchemaVersionMismatch` (a
+  `RuntimeError`, deliberately, so pydantic will not rewrap it), and nothing
+  caught it. Because `_live_ui_game_ids` and every listing route decoded
+  *every* matching row unconditionally, two stale rows 500'd `GET /api/games`,
+  `GET /api/lobby/games` and - through `reserve_slot`'s live count - `POST
+  /api/lobby/games` as well, for every game including the ones that decoded
+  fine. The fix is resilience, not data: `PostgresRepository._game_from_row`
+  is the one decode point and now raises `repository.GameUnloadable` carrying
+  the decoder's own message; batch reads catch it per row and list the game
+  with `unloadable` set; a single-game read lets it reach `app._game_unloadable`
+  (409, the engine's words verbatim, `unloadable: true`). No migration, no
+  version-tolerant decoder, no archiving of the stale rows.
+
+  The deliberate half is the cap. `_live_ui_game_ids` **counts** a live row it
+  cannot decode: `is_over` (CR 104.1) is a fact about a board this build
+  cannot read, and calling an unreadable game finished would be the same
+  silent default the engine refuses to make when it declines the snapshot -
+  and it would let the cap be exceeded with no signal. Counting it risks the
+  opposite failure (a lobby wedged at the cap by rows nobody can open), which
+  is why `end_lobby_game`/`lobby.reset_game`/`audit.record` were all made to
+  tolerate the refusal: End game needs no board at all (the credential check
+  reads the seats and admin-key columns; the delete is an `UPDATE`), so the
+  slot is always recoverable by the one deliberate act that always was the way
+  to recover it. Get this pair wrong in either direction and you either block
+  new games forever or silently blow the cap.
+
+  Two smaller notes from the same pass. The failure is cached beside the
+  identity-preserving read cache (`_undecodable`, keyed on `version`), so a
+  ~180KB payload is not re-parsed on every 1.2s poll and the WARNING fires
+  once per (game, version) rather than once per read. And `store.known_players`
+  exists because every listing route has to name a game's players without the
+  `Game` - the `seats` and `decklists` columns need no decoding, and "the game
+  you were playing, with nobody in it" is a worse answer than none.

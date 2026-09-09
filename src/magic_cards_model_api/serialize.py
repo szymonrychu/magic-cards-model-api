@@ -772,6 +772,37 @@ def game_summary(game: Game, game_id: str) -> dict[str, Any]:
     }
 
 
+def unloadable_game_summary(game_id: str, reason: str, *, seat_count: int) -> dict[str, Any]:
+    """`game_summary`'s shape for a game whose snapshot this build cannot
+    decode (`repository.GameUnloadable`) - the same keys, with every scalar
+    that could only have come off the board at its unknown value, plus
+    `unloadable` carrying the decoder's own words.
+
+    A function beside `game_summary` rather than an inline dict at each
+    caller because two callers build this shape - `app.game_summaries_route`
+    and `api_client.InProcessApiClient.game_summaries`, the route and the
+    in-process seam standing in for it - and a lobby that saw two different
+    shapes depending on which side of the (pre-cut) boundary answered would
+    be a bug nobody would find until the cut.
+
+    `is_over` is `False`, not `None`: `schemas.GameSummaryScalars` types it
+    as a plain `bool`, and false is the honest value - CR 104.1 cannot be
+    judged on a board nobody can read, and the whole point of the engine's
+    refusal is that an unreadable state must not be guessed at. It is also
+    what `_live_ui_game_ids` counts, so the lobby list and the
+    `MAX_LIVE_GAMES` accounting say the same thing about the same game.
+    """
+    return {
+        "game_id": game_id,
+        "is_over": False,
+        "turn_number": None,
+        "active_player": None,
+        "phase": None,
+        "seat_count": seat_count,
+        "unloadable": reason,
+    }
+
+
 def state_view(game: Game, game_id: str) -> dict[str, Any]:
     """T1: this dict's shape is formalised as `schemas.GameStateView` - see
     that class and the "Response views" section it opens for the field-by-

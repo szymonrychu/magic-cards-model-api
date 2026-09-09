@@ -40,7 +40,8 @@ from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
 from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
-from .store import new_seat_uids, store
+from .repository import GameUnloadable
+from .store import known_players, new_seat_uids, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
 
@@ -225,6 +226,21 @@ class LobbyGameSummary(BaseModel):
     agents: dict[str, AgentSettings]
     seats: dict[str, str]
     created_at: str | None = None
+    unloadable: str | None = None
+    """Set only when this game's row exists but this build cannot decode the
+    snapshot in it (`repository.GameUnloadable`) - the decoder's own message,
+    verbatim, which for the case this exists for is the engine's
+    `SchemaVersionMismatch` after `Game.CURRENT_SCHEMA_VERSION` moved past
+    what the row was written at.
+
+    Such a game is listed rather than dropped, and listed *fully*: `players`,
+    `seats`, `agents` and `created_at` all come from columns that need no
+    decoding, so the row still reads as the game the human remembers
+    playing. Only `turn_number` and `phase`, which could have come from
+    nowhere but the board, are `None`, and `is_over` is `False` (see
+    `serialize.unloadable_game_summary` for why that is the honest value and
+    why it matches what `MAX_LIVE_GAMES` counts). The lobby renders it
+    unopenable and offers End game, which is what actually clears it."""
 
 
 class LobbyGamesResponse(BaseModel):
@@ -266,9 +282,18 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
     summaries = api_client.game_summaries(game_ids)
     games = []
     for game_id in game_ids:
-        game = store.get(game_id)
+        # Per game, and around the *only* call here that decodes anything:
+        # `ui_games`, `seat_uids`, `owner_user_id`, `agent_settings` and
+        # `created_at` are all plain columns. One row this build cannot read
+        # therefore costs exactly that row's board scalars and nothing else -
+        # before this, it took the whole lobby down with it.
+        unloadable: str | None = None
+        try:
+            game = store.get(game_id)
+        except GameUnloadable as exc:
+            game, unloadable = None, exc.reason
         summary = summaries.get(game_id)
-        if game is None or summary is None:
+        if unloadable is None and (game is None or summary is None):
             continue
         seats = {name: uid for uid, name in store.seat_uids(game_id).items() if uid in mine}
         owner = store.owner_user_id(game_id)
@@ -277,16 +302,22 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
         games.append(
             {
                 "game_id": game_id,
-                "players": [p.username for p in game.players],
-                "turn_number": summary["turn_number"],
-                "phase": summary["phase"],
-                "is_over": summary["is_over"],
+                # `known_players` for the undecodable case only: the seats
+                # and decklists columns still name everyone who sat down, so
+                # the row does not read as a game nobody played.
+                "players": (
+                    known_players(game_id) if game is None else [p.username for p in game.players]
+                ),
+                "turn_number": summary["turn_number"] if summary else None,
+                "phase": summary["phase"] if summary else None,
+                "is_over": bool(summary["is_over"]) if summary else False,
                 "agents": {
                     name: settings.model_dump()
                     for name, settings in store.agent_settings(game_id).items()
                 },
                 "seats": seats,
                 "created_at": store.created_at(game_id),
+                "unloadable": unloadable,
             }
         )
     games.sort(key=lambda entry: entry["created_at"] or "")
@@ -387,8 +418,23 @@ class EndGameResponse(BaseModel):
 def end_lobby_game(game_id: str, uid: str | None = None, key: str | None = None) -> dict[str, Any]:
     """End game: the only reset there is now. `uid` must be a seat uid of
     this game, or `key` this game's admin key - anything else is refused (404)
-    rather than letting an arbitrary caller end somebody else's game."""
-    if store.get(game_id) is None:
+    rather than letting an arbitrary caller end somebody else's game.
+
+    **A game this build cannot decode can still be ended, and that is not
+    incidental.** `_live_ui_game_ids` counts an undecodable live row against
+    `MAX_LIVE_GAMES` (see its own note on why), so this route is the one
+    thing standing between that decision and a lobby wedged forever. Nothing
+    below it needs the board: the credential check reads the seats and
+    admin-key columns, and `lobby.reset_game`'s delete is an `UPDATE`. So
+    the existence check refuses to be the thing that fails - a row that is
+    there but unreadable is *exactly* what this caller is asking to get rid
+    of.
+    """
+    try:
+        exists = store.get(game_id) is not None
+    except GameUnloadable:
+        exists = True
+    if not exists:
         raise KeyError(f"no game {game_id}")
     allowed = (uid is not None and store.player_for_uid(game_id, uid) is not None) or (
         key is not None and store.is_admin(game_id, key)

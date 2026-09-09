@@ -53,6 +53,7 @@ function archivedRow(entry) {
     phase: null,
     over: true,
     archived: true,
+    unloadable: null,
     endedAt: entry.endedAt || null,
     model: entry.model || null,
     effort: entry.effort || null,
@@ -101,6 +102,13 @@ export function lobbyViewModel(games, saved) {
         phase: g.phase,
         over: Boolean(g.is_over),
         archived: false,
+        // Why this game cannot be opened, in the engine's own words, or
+        // null. The server lists such a game deliberately rather than
+        // dropping it (`decks_api.LobbyGameSummary.unloadable`) - a game
+        // somebody played must not appear to have vanished - so the row is
+        // built exactly like any other, from the same seats/agents fields,
+        // and it is the renderer that withholds Open.
+        unloadable: g.unloadable || null,
         endedAt: null,
         model: agent ? agent.model : null,
         effort: agent ? agent.effort : null,

@@ -88,6 +88,7 @@ def test_lobby_rows_join_server_games_with_saved_seats() -> None:
             "phase": "precombat_main",
             "over": False,
             "archived": False,
+            "unloadable": None,
             "endedAt": None,
             "model": "opus",
             "effort": "max",
@@ -499,4 +500,93 @@ def test_a_finished_game_offers_show_thinking_and_a_live_one_does_not() -> None:
     )
     assert "Show thinking" not in live, (
         "a live game must never offer the review - it would hand one seat the other's plan mid-game"
+    )
+
+
+# A game the server lists but says this build cannot decode: `unloadable`
+# carries the engine's own refusal, and every board-derived scalar is at its
+# unknown value, exactly as `decks_api.LobbyGameSummary` describes.
+GAMES_UNLOADABLE = [
+    {
+        "game_id": "g1",
+        "players": ["you", "bot"],
+        "turn_number": None,
+        "phase": None,
+        "is_over": False,
+        "agents": {"bot": {"model": "opus", "effort": "max", "max_thinking_tokens": None}},
+        "seats": {"you": "u1"},
+        "unloadable": (
+            "Game snapshot was written at schema_version=3, but this build "
+            "decodes schema_version=5."
+        ),
+    }
+]
+
+
+def test_the_view_model_carries_the_reason_a_game_cannot_be_opened() -> None:
+    rows = run_module(
+        "lobby_model.js",
+        "m.lobbyViewModel(games, saved)",
+        games=GAMES_UNLOADABLE,
+        saved=SAVED,
+    )
+    assert len(rows) == 1
+    assert rows[0]["unloadable"] == GAMES_UNLOADABLE[0]["unloadable"]
+    assert rows[0]["gameId"] == "g1"
+    assert rows[0]["opponent"] == "bot", (
+        "a game that cannot be decoded must still name who was playing it"
+    )
+    loadable = run_module(
+        "lobby_model.js", "m.lobbyViewModel(games, saved)", games=GAMES, saved=SAVED
+    )
+    assert loadable[0]["unloadable"] is None
+
+
+def test_an_unopenable_game_offers_end_but_never_open() -> None:
+    """Open would only ever get a 409 back (`app._game_unloadable`), and the
+    one action that helps is End - which is also what frees the slot the row
+    still counts against (`_live_ui_game_ids`)."""
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + """
+        (async () => {
+          const tbody = document.createElement("tbody");
+          tbody.setAttribute("id", "games-tbody");
+          document.appendChild(tbody);
+          const storageData = { "mcm.games.v1": JSON.stringify(saved) };
+          globalThis.localStorage = {
+            getItem: (k) => (k in storageData ? storageData[k] : null),
+            setItem: (k, v) => { storageData[k] = v; },
+            removeItem: (k) => { delete storageData[k]; },
+          };
+          globalThis.fetch = async (path) => {
+            if (path.startsWith("/api/decks")) {
+              return { ok: true, status: 200, json: async () => ({ decks: [] }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ games }) };
+          };
+          const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+          m.mountLobby(document, store, { startGame: () => {}, showReview: () => {} });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const cells = tbody.children[0].children;
+          const actions = cells[cells.length - 1];
+          const stateCell = cells[cells.length - 2];
+          return {
+            labels: actions.children.map((b) => b.textContent),
+            state: stateCell.textContent,
+            title: stateCell.attrs.title || null,
+          };
+        })()
+        """,
+        games=GAMES_UNLOADABLE,
+        saved=SAVED,
+    )
+    assert result["labels"] == ["End"], (
+        "Open on a game this build cannot decode only ever answers 409 - offer End, "
+        f"got {result['labels']}"
+    )
+    assert result["state"] == "unopenable"
+    assert result["title"] == GAMES_UNLOADABLE[0]["unloadable"], (
+        "the reason must be readable in the lobby, not only in the payload"
     )

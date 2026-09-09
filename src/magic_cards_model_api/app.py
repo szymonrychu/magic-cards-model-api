@@ -47,7 +47,7 @@ from . import (
     symbology,
     visibility,
 )
-from .repository import RECENT_RECORDS_WINDOW
+from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
     ActionOutcome,
@@ -115,7 +115,7 @@ from .schemas import (
     TargetRequest,
 )
 from .serialize import state_view
-from .store import new_seat_uids, store
+from .store import known_players, new_seat_uids, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 # `FastAPI.__init__` has no `route_class` parameter of its own (it silently
@@ -224,6 +224,37 @@ def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
                 state_view(exc.current_game, exc.game_id), viewer
             ),
         },
+    )
+
+
+@app.exception_handler(GameUnloadable)
+def _game_unloadable(_: Request, exc: GameUnloadable) -> JSONResponse:
+    """409: this game's row is there, but this build cannot decode the
+    snapshot in it - see `repository.GameUnloadable`. The case it exists for
+    is an engine schema bump (`Game.CURRENT_SCHEMA_VERSION` moved past what
+    the row was written at) and the body carries the engine's own refusal
+    verbatim, because that refusal already says exactly what is wrong and
+    what the options are; nothing here paraphrases it.
+
+    409 rather than 500, which is what this used to be and is the whole
+    reason this handler exists: nothing about the request is malformed and
+    nothing here is unexpected. It is a conflict between the state that is
+    committed and the build being asked to read it - the same family as
+    `VersionConflict` and `PregameOverruled` above, which is why it answers
+    with their status.
+
+    Not 404 (`KeyError`'s): the game exists, and telling a seat it does not
+    would send it off to start a new one rather than report the real cause.
+    Not 400 (`ValueError`'s): the caller did nothing wrong and cannot fix
+    this by sending something else.
+
+    `unloadable: true` is a flag a client can key on without matching on
+    prose - `ui/render/lobby.js` marks the row unopenable from it - the same
+    convention `PregameOverruled`'s `overruled: True` already set.
+    """
+    return JSONResponse(
+        status_code=409,
+        content={"detail": exc.reason, "game_id": exc.game_id, "unloadable": True},
     )
 
 
@@ -867,12 +898,29 @@ async def game_summaries_route(ids: str, request: Request) -> dict[str, Any]:
     A game this caller may not reach (`game_access.can_access_game` -
     someone else's owned game) is skipped exactly the same way - not just
     unactionable, absent, so a caller cannot even learn *that much* about a
-    game that is not theirs by asking for its scalars directly."""
+    game that is not theirs by asking for its scalars directly.
+
+    A game this build cannot *decode* is the one case that is neither
+    answered nor silently skipped: `serialize.unloadable_game_summary` puts
+    it in the answer with `unloadable` set. Skipping it here would be worse
+    than useless - `decks_api.list_lobby_games` reads this route's result to
+    build the lobby, and a missing row there is exactly how a game the user
+    played would appear to have vanished."""
     game_ids = [i for i in ids.split(",") if i]
     summaries = []
     for game_id in game_ids:
-        game = store.get(game_id)
-        if game is None or not await game_access.can_access_game(request, game_id):
+        if not await game_access.can_access_game(request, game_id):
+            continue
+        try:
+            game = store.get(game_id)
+        except GameUnloadable as exc:
+            summaries.append(
+                serialize.unloadable_game_summary(
+                    game_id, exc.reason, seat_count=len(known_players(game_id))
+                )
+            )
+            continue
+        if game is None:
             continue
         summaries.append(serialize.game_summary(game, game_id))
     return {"summaries": summaries}
@@ -880,11 +928,32 @@ async def game_summaries_route(ids: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/games", response_model=ListGamesResponse, response_model_exclude_unset=True)
 async def list_games(request: Request) -> dict[str, Any]:
+    """Every game this caller may reach.
+
+    One row that will not decode must never take this whole route down -
+    the outage this shape exists for. `store.ids()` names the rows without
+    decoding any of them; the decode happens here, per game, and a game that
+    refuses is listed with `unloadable` carrying the decoder's own words
+    instead of being dropped (a game that vanishes from a list is a worse
+    lie than a game that says why it cannot be opened) and instead of
+    raising (which 500'd the listing for every *other* game as well).
+    """
     games = []
     for game_id in store.ids():
         if not await game_access.can_access_game(request, game_id):
             continue
-        game = game_or_404(game_id)
+        try:
+            game = game_or_404(game_id)
+        except GameUnloadable as exc:
+            games.append(
+                {
+                    "game_id": game_id,
+                    "players": known_players(game_id),
+                    "step": None,
+                    "unloadable": exc.reason,
+                }
+            )
+            continue
         games.append(
             {
                 "game_id": game_id,
