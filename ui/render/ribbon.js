@@ -41,7 +41,7 @@ import { clear, h } from "../dom.js";
 import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
 import { anchoredPosition } from "../menus.js";
-import { withSymbols } from "../symbols.js";
+import { withSymbols, restrictedManaRows } from "../symbols.js";
 import { needsExplicitFire, readyToFire, targetSlotIndex } from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
@@ -403,6 +403,46 @@ function renderColorChips(card, action, handlers, symbols) {
   );
 }
 
+/** The CR 106.6 restrictions on mana floating in your own pool, printed in
+ * full while a cost is being paid.
+ *
+ * The board's pool readout marks a restricted group and hangs the sentence on
+ * its `title`, which is right for a status line. It is not right here: a
+ * tooltip must not be the only place information needed to finish the task
+ * lives, and "which of these four mana may actually pay for this spell" is
+ * exactly that information at exactly the moment it is needed. So while the
+ * strip is up the whole sentence is a step of its own, beside the count and
+ * colour it applies to.
+ *
+ * Not a chip - nothing here is clickable. It reuses the `.tray-step` /
+ * `.chip-row` shape the rest of the strip is built from so it reads as one
+ * more line of the same panel. */
+function renderRestrictedMana(app) {
+  const state = app.state || {};
+  const seat = (state.players || []).find((p) => p.username === state.you);
+  const rows = restrictedManaRows(seat && seat.mana_pool);
+  if (!rows.length) return null;
+  return h(
+    "div",
+    { class: "tray-step restricted-mana" },
+    h("div", { class: "label" }, "Restricted mana in your pool"),
+    h(
+      "div",
+      { class: "chip-row" },
+      ...rows.map((row) =>
+        h(
+          "div",
+          { class: `restricted-note${row.understood ? "" : " unusable"}` },
+          h("span", { class: "n" }, String(row.count)),
+          withSymbols(app.symbols, `{${row.color}}`, true),
+          h("span", { class: "badge badge-restricted", title: row.sentence }, row.marker),
+          h("span", { class: "sentence" }, row.sentence)
+        )
+      )
+    )
+  );
+}
+
 function renderXInput(card, action, handlers) {
   const ability = action.abilityIndex !== null ? (card.abilities || [])[action.abilityIndex] : null;
   const needsX = ability ? Boolean(ability.needs_x) : Boolean(card.cast && card.cast.needs_x);
@@ -629,6 +669,12 @@ function renderCastingStrip(el, app, handlers) {
   if (card.mana_cost && !ability) head.appendChild(withSymbols(app.symbols, card.mana_cost));
   if (ability) head.appendChild(h("span", { class: "hint" }, ability.loyalty ? `${ability.loyalty.label} ` : "", withSymbols(app.symbols, ability.text)));
   el.appendChild(head);
+
+  // Directly under the header, above every choice the strip still wants: a
+  // restriction decides whether the mana in the pool can pay for this at all,
+  // so it is read before the modes, not after the Cast button.
+  const restrictedStep = renderRestrictedMana(app);
+  if (restrictedStep) el.appendChild(restrictedStep);
 
   const modeStep = renderModeChips(card, action, handlers, app.symbols);
   if (modeStep) el.appendChild(modeStep);

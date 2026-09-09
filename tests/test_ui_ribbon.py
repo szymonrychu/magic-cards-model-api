@@ -1027,3 +1027,114 @@ def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_
     assert off["toggles"] == 1, "clicking the tick reaches no handler"
     assert on["offered"] is True
     assert on["checked"] is True
+
+
+# ------------------------------ CR 106.6 restricted mana, mid-payment --------
+#
+# A restriction sentence on a hover title is no use at the one moment it
+# decides anything: NN/g's tooltip guidance is explicit that a tooltip must
+# not carry information required to complete the task, and "which of the four
+# mana in your pool may actually pay for this" is exactly that. So while an
+# announcement is in flight - the casting strip up, a cost being paid - the
+# sentence is a `.tray-step` of its own, printed in full, beside the mana it
+# is attached to.
+#
+# `mana_pool.restricted` is the engine's `ManaPool.restricted` as the API
+# publishes it (task API1's `ManaPoolView.restricted`): a list of
+# `{restriction: {text, understood}, amounts: {<color>: <count>}}`.
+
+ELDRAZI_ONLY = "Spend this mana only to cast Eldrazi spells."
+UNREAD_SENTENCE = "Spend this mana only in ways this engine could not parse."
+
+
+def _seats(pool: object) -> list[dict]:
+    return [
+        {"username": "alice", "life": 20, "mana_pool": pool},
+        {
+            "username": "bob",
+            "life": 20,
+            "mana_pool": {"floating": {}, "snow": {}, "restricted": []},
+        },
+    ]
+
+
+def _strip_with_pool(pool: object) -> dict:
+    return run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const action = {
+            kind: "cast", cardId: koz.id, card: koz, abilityIndex: null, keyword: null,
+            modes: [1, 2], xValue: 1, color: null, altCost: null,
+            choosing: [], convoke: [], delve: [], crewing: [], slots: [],
+            shares: {}, pinned: [], freeTargets: [], pendingTargets: [],
+            affordance: null, error: null, holdPriority: false, done: false,
+          };
+          const state = baseState({ hands: { alice: [koz] }, players: seats });
+          const store = makeStore(baseApp(state, { action }));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const strip = document.querySelector("#casting-strip");
+          // Every `.tray-step` in the strip, as text - so a test can tell a
+          // sentence that is actually rendered from one hiding in a `title`.
+          // This fake DOM keeps `class` on `.className` (that is what `h()`
+          // assigns), so a class test reads the string rather than the
+          // `classList` set, which nothing in this file populates.
+          const steps = [];
+          const walk = (node) => {
+            const classes = String(node.className || "").split(/\\s+/);
+            if (classes.includes("tray-step")) steps.push(node.textContent);
+            for (const c of node.children || []) walk(c);
+          };
+          walk(strip);
+          return { steps, text: strip.textContent, hidden: strip.hidden };
+        })()
+        """,
+        koz=KOZILEK,
+        seats=_seats(pool),
+    )
+
+
+def test_the_casting_tray_prints_a_restriction_sentence_in_full() -> None:
+    result = _strip_with_pool(
+        {
+            "floating": {"C": 3},
+            "snow": {},
+            "restricted": [
+                {"restriction": {"text": ELDRAZI_ONLY, "understood": True}, "amounts": {"C": 2}}
+            ],
+        }
+    )
+    assert result["hidden"] is False
+    step = [s for s in result["steps"] if ELDRAZI_ONLY in s]
+    assert step, f"the restriction sentence is not in any tray step: {result['steps']}"
+    # The count and the colour it applies to, beside the sentence - "2 of the
+    # 3 colourless in your pool", not just "some of it is restricted".
+    assert "2" in step[0]
+    assert "C" in step[0]
+
+
+def test_the_casting_tray_says_unusable_when_the_sentence_was_not_understood() -> None:
+    """`understood: false` means `ManaRestriction.allows` refuses everything -
+    the tray must not imply the mana is merely narrowed."""
+    result = _strip_with_pool(
+        {
+            "floating": {"U": 1},
+            "snow": {},
+            "restricted": [
+                {"restriction": {"text": UNREAD_SENTENCE, "understood": False}, "amounts": {"U": 1}}
+            ],
+        }
+    )
+    step = [s for s in result["steps"] if UNREAD_SENTENCE in s]
+    assert step, f"the unread sentence is not in any tray step: {result['steps']}"
+    assert "unusable" in step[0].lower()
+    assert "cannot be spent on anything" in step[0]
+
+
+def test_the_casting_tray_says_nothing_about_restrictions_when_there_are_none() -> None:
+    result = _strip_with_pool({"floating": {"C": 3}, "snow": {}, "restricted": []})
+    assert "Kozilek's Command" in result["text"]
+    assert "estricted" not in result["text"]
+    assert "unusable" not in result["text"].lower()

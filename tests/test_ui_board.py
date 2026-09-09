@@ -339,3 +339,48 @@ def test_summoning_sick_class_only_applies_on_the_battlefield() -> None:
         """,
     )
     assert result == {"battlefield": True, "graveyard": False}
+
+
+# ------------------------- the info row is the only mana-pool render site ----
+#
+# `infoRow` is where a seat's pool reaches the board, so it is where the
+# CR 106.6-restricted slice has to become visible. `manaPoolNodes`'s own
+# structure is pinned in `tests/test_ui_mana_pool.py`; this only proves the
+# board actually passes the whole pool through, restricted entries included,
+# rather than the `floating`/`snow` pair it used to be given.
+
+
+def test_the_info_row_renders_a_seats_restricted_mana_as_its_own_group() -> None:
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const only = "Spend this mana only to cast Eldrazi spells.";
+          const state = baseState();
+          state.players[0].mana_pool = {
+            floating: { C: 3 },
+            snow: {},
+            restricted: [{ restriction: { text: only, understood: true }, amounts: { C: 2 } }],
+          };
+          const store = makeStore(baseApp(state));
+          m.mountBoard(document, store, {
+            onHandCard: NOOP, onPlayer: NOOP, onStackObject: NOOP,
+            onPermission: NOOP, onPermanent: NOOP,
+          });
+          store.set({});
+          const pool = document.querySelector("#you-info").querySelector(".pool");
+          return pool.children.map((g) => ({
+            classes: [...g.classList.set].sort(),
+            title: g.attrs.title,
+          }));
+        })()
+        """,
+    )
+    assert result == [
+        {"classes": ["pool-group"], "title": "1 C"},
+        {
+            "classes": ["pool-group", "restricted"],
+            "title": "2 C - Spend this mana only to cast Eldrazi spells.",
+        },
+    ]

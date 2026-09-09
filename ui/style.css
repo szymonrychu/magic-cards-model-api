@@ -791,6 +791,42 @@ h3 { font-size: 14px; }
 .pool-group { display: inline-flex; align-items: center; gap: 1px; }
 .pool-group .n { font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* Mana under a CR 106.6 "Spend this mana only to ..." restriction is its own
+   group, and every part of what sets it apart survives greyscale: a rule
+   before it, a dashed box around it, and a marker glyph after the pip. WCAG
+   2.2 SC 1.4.1 (Level A) and the Game Accessibility Guidelines both rule out
+   a hue on its own, and a pool readout is exactly the place the temptation is
+   to just tint the pip. The amber is on top of those, never instead of them.
+
+   The restriction's own sentence is on the group's `title`; while a cost is
+   being paid the casting tray prints it in full instead (`.restricted-mana`
+   below), because a hover cannot be the only place it lives. */
+.pool-group.restricted {
+  margin-left: 5px;
+  padding: 0 4px 0 6px;
+  border-left: 1px solid var(--line-bright);
+  border-radius: 3px;
+  outline: 1px dashed var(--warn);
+  outline-offset: -1px;
+  color: var(--warn);
+}
+/* An unread restriction refuses everything, so the mana it is on is dead
+   weight in the pool: struck through, in the colour the rest of the UI uses
+   for "this failed", with its own glyph. */
+.pool-group.restricted.unusable {
+  outline-style: solid;
+  outline-color: var(--bad);
+  color: var(--bad);
+  text-decoration: line-through;
+}
+/* `.badge` is positioned for a card's corner; the pool's own marker sits in
+   the flow of its group instead, and keeps only the badge's shape. */
+.badge-restricted {
+  position: static;
+  padding: 0 2px;
+  text-shadow: none;
+}
+
 /* -------------------------------------------------------- side panel ---- */
 
 #side-panel {
@@ -931,6 +967,29 @@ h3 { font-size: 14px; }
   margin-bottom: 4px;
 }
 .tray-step.satisfied > .label::after { content: " ✓"; color: var(--good); }
+/* The casting tray's restriction step: one line per restricted slice of your
+   pool, with the printed sentence in full rather than on a hover. Not chips -
+   nothing in this step is clickable - so its rows stack down the 340px ribbon
+   instead of wrapping across it, and each keeps the marker glyph the board's
+   pool readout gave the same mana. */
+.restricted-mana > .chip-row { flex-direction: column; align-items: stretch; }
+.restricted-note {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px 5px;
+  font-size: 12px;
+  border-left: 2px solid var(--warn);
+  background: rgba(232, 180, 76, 0.08);
+}
+.restricted-note .n { font-weight: 700; font-variant-numeric: tabular-nums; }
+.restricted-note .sentence { flex: 1 1 100%; color: var(--ink-dim); }
+.restricted-note.unusable {
+  border-left-color: var(--bad);
+  background: rgba(242, 105, 95, 0.1);
+}
+.restricted-note.unusable .sentence { color: var(--bad); }
 .option {
   display: block;
   width: 100%;
