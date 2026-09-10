@@ -521,12 +521,29 @@ def test_install_press_guard_is_wired_from_app_main() -> None:
 
     What is asserted is the behaviour end to end: a `pointerdown` on the real
     `document` holds the real exported `store`'s fan-out, and the release
-    pays it off."""
+    pays it off.
+
+    Importing `app.js` at all needs `localStorage` on `globalThis` before the
+    `import` resolves - its own top-level `createStore({... stops:
+    P.loadStops(localStorage) ...})` runs at import time and reads it
+    immediately - the same stub `test_ui_app.py` uses for the same reason.
+    Whether the bare identifier `localStorage` even exists is a Node-version
+    fact, not something this test is about: on node v22.23.2 (confirmed
+    locally) referencing it throws `ReferenceError: localStorage is not
+    defined` straight out of the import, while a newer Node declares it (as
+    an experimental, unbacked global) so the same reference just evaluates
+    without throwing. Stubbing it here makes the import - and the assertion
+    that follows - work the same on any Node."""
     result = run_module(
         "store.js",
         PRESS_DOM
         + """
         process.on("unhandledRejection", () => {});
+        globalThis.localStorage = {
+          getItem: () => null,
+          setItem() {},
+          removeItem() {},
+        };
         globalThis.fetch = () => Promise.resolve({ ok: true, json: async () => ({}) });
         globalThis.location = { pathname: "/", search: "", href: "http://t/" };
         globalThis.history = { pushState() {}, replaceState() {} };
