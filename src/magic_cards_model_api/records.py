@@ -194,6 +194,122 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
     raise MissingPlan(player, turn.turn_number)
 
 
+class BoardMoved(Exception):
+    """Raised by `require_current_board` when a seat names a ledger position
+    (`expected_seq`) this game has already moved past.
+
+    **The board this seat decided against is gone, and nothing was done
+    about it.** That is a materially different thing from the engine
+    refusing a move on the rules, and until this existed the two arrived
+    looking identical: a seat that read the board, thought, and posted an
+    action the opponent had already invalidated got back `claude does not
+    have priority, you does` or `no pending decision for you` - a symptom of
+    the race, phrased as if the seat had misread the rules. A corpus of
+    those refusals cannot say how much of an agent's refusal rate is play
+    quality and how much is latency, which is the single most important
+    question about agent play there is.
+
+    `app.py`'s registered handler answers 409 - the same status
+    `VersionConflict`, `GameUnloadable` and `CommandDivergenceError` already
+    take for "the committed state and what you were working from disagree" -
+    with `stale: true` on the body and the ledger rows since `expected_seq`
+    attached, so the caller sees what moved without a second read.
+
+    **The `stale` boolean is the discriminator, never the message.** The
+    text below says what happened, in the engine-adjacent plain style the
+    rest of this api refuses in; it is for a person. A reader of the
+    ledger separating races from rules errors reads `detail["stale"]`, and
+    is never asked to pattern-match prose - engine wording is not a client
+    contract (MEMORY.md 2026-09-08, "a refused pass is two different
+    things").
+    """
+
+    def __init__(self, game_id: str, expected_seq: int, current_seq: int) -> None:
+        super().__init__(
+            f"the board moved: you decided against this game as it stood at log "
+            f"entry #{expected_seq}, and it has since moved on to #{current_seq}. "
+            "Nothing was done. Read what changed - the `since` entries on this "
+            "answer are exactly that - and decide again against the board as it "
+            "stands now."
+        )
+        self.game_id = game_id
+        self.expected_seq = expected_seq
+        self.current_seq = current_seq
+
+
+def require_current_board(
+    game_id: str,
+    action: str,
+    expected_seq: int | None,
+    *,
+    player: str | None = None,
+    reasoning: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Refuse `action` outright when `expected_seq` names a ledger position
+    this game has already moved past - `BoardMoved`, before the engine has
+    been asked anything at all.
+
+    Called first in every mutating route, ahead of `require_reasoning` and
+    `require_plan`: a seat that lost a race is owed the news that it lost
+    one, not a lecture about the plan it has not declared for a turn that
+    may no longer be its own. And ahead of the engine by construction,
+    which is the whole guarantee - a stale call must change nothing, so it
+    must never reach `commands.run_command`.
+
+    `expected_seq is None` returns immediately. That is the entire opt-out,
+    and it is what keeps every existing caller - the browser included -
+    behaving exactly as it did (`schemas.BoardRead`).
+
+    A game with no ledger at all (`last_seq` of 0) returns immediately too.
+    Every live game has at least its own `create_game` row, so a zero here
+    means the game is not there - and that is a 404 the route itself is
+    about to raise, with far more use to the caller than "the board moved
+    from #7 to #0" about a game that never existed.
+
+    **The refusal is recorded, once, as this action's own row**, with
+    `allowed: False` and the three keys that make it readable without
+    heuristics: `stale: True`, `moved_from` (what the seat named) and
+    `moved_to` (where the ledger actually is). `reason` carries the sentence
+    too, for the console line and for a person, but nothing machine-readable
+    depends on it.
+
+    No `legal_actions_before` rides on that row, deliberately: the
+    enumeration would be "what is legal on the board as it stands now",
+    while every other row's is "what was legal on the board this action was
+    decided against" - and the seat has just been told that board is gone.
+    Writing the current one under the same key would quietly change what the
+    key means for exactly the rows a race analysis reads most.
+
+    `dry_run` refuses the same way and writes nothing. A dry run is a probe
+    that changes nothing and is deliberately unlogged (`app.audit_outcome` -
+    one traced game's ledger grew to 2410 entries with 956 of them probe
+    noise); a probe naming a board that has moved must not be the thing that
+    starts logging them.
+    """
+    if expected_seq is None:
+        return
+    from . import audit
+
+    current = audit.last_seq(game_id)
+    if current == expected_seq or current == 0:
+        return
+    moved = BoardMoved(game_id, expected_seq, current)
+    if not dry_run:
+        audit.record(
+            game_id,
+            action,
+            player=player,
+            allowed=False,
+            reason=str(moved),
+            stale=True,
+            moved_from=expected_seq,
+            moved_to=current,
+            reasoning=reasoning,
+        )
+    raise moved
+
+
 @dataclass(frozen=True)
 class LegalActionsBefore:
     """An enumeration and the seat it belongs to, inseparably.

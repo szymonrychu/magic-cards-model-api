@@ -68,6 +68,49 @@ whoever works on the repo itself.
   leaves an artifact naming the corpus. `tests/driver/test_guides_revision.py`,
   `tests/driver/test_revision_stamping.py`.
 
+- **2026-09-10 - a stale action and a rules refusal are two different
+  things, and only a boolean can tell them apart.** A seat that read the
+  board, thought, and then acted on a board the opponent had already moved
+  got back `claude does not have priority, you does` or `no pending decision
+  for you` - the symptom of a lost race, phrased as if the seat had misread
+  the rules. The ledger could not separate the two, so "how much of an
+  agent's refusal rate is play quality and how much is latency" was
+  unanswerable. Every mutating route now takes an optional `expected_seq`
+  (`schemas.BoardRead`) naming the ledger position the seat decided against;
+  `records.require_current_board` compares it to `audit.last_seq` and
+  refuses with `records.BoardMoved` **before the engine runs**, writing one
+  row with `stale: true`, `moved_from` and `moved_to`. Four decisions worth
+  keeping:
+
+  (1) **Optional, and it stays optional.** `None` is "I name no board" and
+  is exactly the behaviour every existing caller - the browser above all -
+  already had. The regression guard is a test of its own, not a comment.
+
+  (2) **The boolean is the discriminator, never the message.** The refusal
+  text is for a person; nothing machine-readable keys on it. Same house rule
+  as the browser fix of 2026-09-08 ("a refused pass is two different
+  things"): ask the board, never pattern-match refusal text.
+
+  (3) **The handler re-uses `game_log` rather than reading the ledger a
+  second way.** The rows attached to the refusal as `since` are `GET
+  .../log?since=` for the same `uid` this request already carried on its
+  query string - so the redaction argument is that route's argument,
+  unchanged, and a caller can never be handed more on a refusal than it
+  could have fetched itself. Bounded at `moved_to`, which drops the
+  refusal's own row: the caller is holding that already.
+
+  (4) **The seat remembers its own watermark; no tool signature grew.**
+  `seatkit.Seat.last_seq` is set by every `recent_log` (the moment a seat is
+  *handed* a position), and `run_action` arms it for exactly one mutating
+  call (`send_expected_seq_once`). One-shot on purpose: the action itself
+  moves the ledger, so `run_action`'s auto-pass would be stale by
+  construction if the arming were sticky. On a stale refusal the seat
+  re-reads and re-sends **once** - never a loop, because a seat that loses
+  the race twice has a genuinely out-of-date decision and hiding that from
+  the corpus defeats the point. An MCP parameter for this was considered and
+  rejected: an agent reasoning about a sequence number spends a decision on
+  bookkeeping and gets it wrong. `tests/test_expected_seq.py`.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.

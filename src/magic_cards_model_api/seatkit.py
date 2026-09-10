@@ -665,6 +665,46 @@ class Seat:
         # unrelated default. A real `httpx.Client` already has this timeout
         # from the constructor; re-setting it is a no-op there.
         self.http.timeout = timeout.read if isinstance(timeout, httpx.Timeout) else timeout
+        #: P4: the newest ledger position this seat has actually been shown -
+        #: `recent_log`'s own `last_seq`, which every `run_action` answer
+        #: carries back to the caller. `None` until this seat has read the
+        #: log even once, which is the "name no board" default every caller
+        #: had before `expected_seq` existed.
+        #:
+        #: It lives on the `Seat` on purpose: an MCP action tool must not
+        #: grow a parameter for this. An agent reasoning about a sequence
+        #: number is an agent spending a decision on bookkeeping, and it
+        #: would get it wrong (the number it would reach for is whatever it
+        #: last saw in a transcript, not what it last read). The seat has the
+        #: fact already and hands it over without being asked.
+        self.last_seq: int | None = None
+        #: Armed by `send_expected_seq_once`, consumed by the very next
+        #: mutating `call_json`. One-shot rather than sticky, because the
+        #: action itself moves the ledger: `run_action`'s auto-pass, sent
+        #: after that action landed, would be stale by construction if this
+        #: stayed armed.
+        self._expect_seq_once: int | None = None
+
+    def send_expected_seq_once(self, seq: int | None) -> None:
+        """Arm the next mutating call this seat makes to name `seq` as the
+        board it was decided against (`schemas.BoardRead.expected_seq`).
+
+        Consumed by that one call and no other - see `_expect_seq_once`.
+        `None` disarms, which is what a seat that has never read the log
+        stays at."""
+        self._expect_seq_once = seq
+
+    def _with_expected_seq(self, method: str, body: dict[str, Any] | None) -> Any:
+        """`body` with the armed `expected_seq` folded in, and the arming
+        spent. A GET spends nothing: there is no mutating action on one to
+        name a board for."""
+        if method.upper() == "GET":
+            return body
+        seq = self._expect_seq_once
+        self._expect_seq_once = None
+        if seq is None:
+            return body
+        return {**(body or {}), "expected_seq": seq}
 
     def game_id(self) -> str:
         """The game to play: the one given, or the only live one."""
@@ -721,6 +761,7 @@ class Seat:
         missed and `run_action` read as a completed action. See this
         module's own defect writeup (2026-09-08) for the live reproduction.
         """
+        body = self._with_expected_seq(method, body)
         try:
             response = self.http.request(method, path, json=body, params={"uid": self.uid})
         except _AMBIGUOUS_TIMEOUTS as exc:
@@ -791,9 +832,17 @@ class Seat:
             )
         entries = [entry for entry in (payload.get("log") or []) if isinstance(entry, dict)]
         kept = entries[-limit:] if limit and len(entries) > limit else entries
+        last_seq = payload.get("last_seq", since)
+        # P4: this is the moment the seat is *handed* a ledger position, so
+        # this is where the watermark it will name on its next action is set.
+        # Only on a real read - `_log_unavailable`'s early returns above never
+        # reach here, so a failed log call leaves the previous watermark
+        # standing rather than pretending the seat has seen up to `since`.
+        if isinstance(last_seq, int):
+            self.last_seq = last_seq
         return {
             "entries": [log_headline(entry) for entry in kept],
-            "last_seq": payload.get("last_seq", since),
+            "last_seq": last_seq,
             "omitted": len(entries) - len(kept),
         }
 
@@ -1391,6 +1440,27 @@ def _paused(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("paused") is True
 
 
+def is_stale(outcome: Any) -> bool:
+    """Whether `outcome` is the server's own board-moved refusal
+    (`records.BoardMoved`, `app._board_moved`): this seat named a ledger
+    position the game had already moved past, and nothing was done.
+
+    **The boolean, never the text.** This reads `stale`, the key the refusal
+    carries precisely so no client has to match on prose - the house rule
+    from the browser fix of 2026-09-08 ("a refused pass is two different
+    things"): ask the board, never pattern-match refusal text, because
+    engine wording is not a client contract. A stale refusal is a lost race,
+    a rules refusal is a misread, and a run that treats the first as the
+    second dies on a board it could simply have re-read.
+
+    Distinct from `_refused` on purpose, even though a stale refusal also
+    carries `allowed: False`: this one is the single case where retrying the
+    identical action is the *right* move, which is what `run_action` does
+    with it - once.
+    """
+    return isinstance(outcome, dict) and outcome.get("stale") is True
+
+
 #: Marker `_call_watching_for_self_decision` returns in place of an outcome
 #: when it gave up on `perform` because a decision addressed to this same
 #: seat showed up first - see that function's docstring for why this is not
@@ -1525,14 +1595,44 @@ def run_action(
         the state the action left behind, this seat's legal actions in it,
         and the tail of what has actually happened (`recent_log` - see
         `Seat.recent_log`)."""
-        return {
+        answer = {
             **fields,
             "state": state,
             "available_actions": available_actions(seat, state),
             "recent_log": seat.recent_log(),
         }
+        if stale_retry:
+            # P4, and only when it happened: this action was refused as
+            # stale once and re-sent against a freshly read board. A reader
+            # of the answer (and of `recent_log`, which carries both rows)
+            # can see the race rather than wonder why there are two.
+            answer["stale_retry"] = True
+        return answer
 
+    # P4: name the board this action was decided against - the newest ledger
+    # position this seat has been handed (`Seat.last_seq`, set by every
+    # `recent_log` this function's own answers already carry). One-shot, so
+    # the auto-pass below - sent after this action has itself moved the
+    # ledger - names nothing and is never refused as stale.
+    seat.send_expected_seq_once(seat.last_seq)
     outcome, self_decision = _call_watching_for_self_decision(seat, perform)
+    stale_retry = False
+    if self_decision is None and is_stale(outcome):
+        # The board moved between this seat's read and this call - a lost
+        # race, not a misread. Ask the board what it actually is (the house
+        # rule from MEMORY.md 2026-09-08: never pattern-match refusal text),
+        # then send the same action once more against it.
+        #
+        # Once, and never a loop. A seat losing the race twice is a seat
+        # whose decision is genuinely out of date, and the honest thing to
+        # hand it back is the refusal - with `recent_log` alongside saying
+        # what moved - rather than a spin that hides how contended the board
+        # is from the very corpus this field exists to feed.
+        stale_retry = True
+        seat.recent_log()  # re-read: this is what moves `seat.last_seq` on
+        seat.send_expected_seq_once(seat.last_seq)
+        before = seat.fetch_state()
+        outcome, self_decision = _call_watching_for_self_decision(seat, perform)
     if self_decision is None and _paused(outcome):
         # `perform()` itself paused (`commands.py`) rather than a decision
         # surfacing mid-flight through the polling race above - see

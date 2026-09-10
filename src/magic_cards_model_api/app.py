@@ -206,6 +206,59 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
     )
 
 
+@app.exception_handler(records.BoardMoved)
+def _board_moved(request: Request, exc: records.BoardMoved) -> JSONResponse:
+    """409: this seat decided against a board that has since moved, and the
+    action was refused before the engine ran - see `records.BoardMoved`.
+
+    409 for the same reason `VersionConflict` and `CommandDivergenceError`
+    are: nothing about the request is malformed, and the caller cannot fix
+    it by sending something else - it has to re-read first. Not the 200
+    `allowed: False` an engine refusal takes, because this is not the engine
+    speaking; a status of its own is what lets a client tell the two apart
+    even before it looks at the body.
+
+    `allowed: False` and `reason` are there so `seatkit._normalise_non_2xx`
+    hands it on unchanged (a body carrying its own `allowed` is trusted as
+    already-refusal-shaped) and every existing caller reads it as the
+    refusal it is. `stale: True` is the discriminator - the same
+    key-you-can-branch-on convention `PregameOverruled`'s `overruled` and
+    `GameUnloadable`'s `unloadable` already set - and `moved_from`/
+    `moved_to` say by how much.
+
+    **`since` is the ledger, re-read through `GET .../log` itself** rather
+    than through a second, differently-redacted read of the same rows: the
+    same function, with the same `uid` this request already carried on its
+    query string (exactly how `_version_conflict` above resolves its own
+    viewer). A caller is therefore handed precisely what a log read of its
+    own would have given it and never a byte more - the redaction argument
+    for this body is `game_log`'s argument, unchanged - and it is handed it
+    without spending the round trip.
+    """
+    uid = request.query_params.get("uid")
+    since = game_log(exc.game_id, uid=uid, since=exc.expected_seq)
+    # Bounded at `current_seq`, the position the board had actually moved to
+    # when this call was refused - which excludes the refusal's own row,
+    # written a moment before this handler ran. "What moved while I was
+    # thinking" is the question; the caller is holding the answer to "what
+    # happened to my call" already.
+    moved = [entry for entry in since["log"] if entry["seq"] <= exc.current_seq]
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": str(exc),
+            "game_id": exc.game_id,
+            "allowed": False,
+            "reason": str(exc),
+            "stale": True,
+            "moved_from": exc.expected_seq,
+            "moved_to": exc.current_seq,
+            "since": moved,
+            "last_seq": exc.current_seq,
+        },
+    )
+
+
 @app.exception_handler(VersionConflict)
 def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
     """409: another writer's `replace()` committed a newer version first
@@ -1416,6 +1469,9 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
     beginning-of-step turn-based actions or triggers - CR 702.62a's suspend
     countdown among them, the same as a draw or a combat declaration.
     """
+    records.require_current_board(
+        game_id, "step", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
@@ -1452,6 +1508,14 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     `engine_api.dry_run_copy` - never through the pause/resume tape), so it
     always completes; a real cast can pause on any CR 601.2 choice this
     engine still asks interactively (`choose_targets`, `choose_a_mode`, ...)."""
+    records.require_current_board(
+        game_id,
+        "cast",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "cast", req)
@@ -1480,6 +1544,14 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
     comes off is picked up automatically by `actions/cast` - see `advance`."""
+    records.require_current_board(
+        game_id,
+        "suspend",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "suspend", req)
@@ -1505,6 +1577,14 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
 def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
+    records.require_current_board(
+        game_id,
+        "plot",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "plot", req)
@@ -1531,6 +1611,14 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
     later turn, for its printed foretell cost."""
+    records.require_current_board(
+        game_id,
+        "foretell",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "foretell", req)
@@ -1557,6 +1645,14 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
     the stack, same as `actions/activate` - resolve it with `resolve-top`."""
+    records.require_current_board(
+        game_id,
+        "cycle",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "cycle", req)
@@ -1821,6 +1917,9 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     # a rule rather than an oversight: CR 104.3a lets a player concede at any
     # time, so a gate that could refuse a concession would be a gate that can
     # trap a seat in a game it has already given up.
+    records.require_current_board(
+        game_id, "concede", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     result, _, legal_before, seq = _run_command(game_id, "concede", req)
     if result.status is commands.RunStatus.PAUSED:
@@ -1863,6 +1962,14 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     response_model_exclude_unset=True,
 )
 def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
+    records.require_current_board(
+        game_id,
+        "activate",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "activate_ability", req)
@@ -1891,6 +1998,14 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
     not mana, and crew is the Vehicle's ability rather than theirs."""
+    records.require_current_board(
+        game_id,
+        "crew",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "crew", req)
@@ -2049,6 +2164,19 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     stands right now, the same probe it always was - so it needs no `uid`
     gate any more than any other dry run does; only a real declaration does.
     """
+    # `AttackRequest` carries no `player` of its own (see `_answer_declaration`),
+    # so the row this gate may write is attributed to the seat `uid` actually
+    # opens - the same resolved identity `_answer_declaration` checks against
+    # the deciding player, never a name off the request body.
+    attacker_viewer = visibility.resolve_viewer(game_id, uid)
+    records.require_current_board(
+        game_id,
+        "attack",
+        req.expected_seq,
+        player=attacker_viewer if isinstance(attacker_viewer, str) else None,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     attackers_detail = [
         {"card": str(pair.card_id), "defender": pair.defender} for pair in req.attackers
     ]
@@ -2077,6 +2205,14 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     response_model_exclude_unset=True,
 )
 def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
+    records.require_current_board(
+        game_id,
+        "play_land",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "play_land", req)
@@ -2118,6 +2254,9 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     # always the same sentence, and `seatkit.pass_until` posts to this very
     # route for every pass a run makes - see `records.require_reasoning`.
     # The field is still accepted and still audited below.
+    records.require_current_board(
+        game_id, "pass_priority", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning, pass_shaped=True)
     # Exempt from `reasoning`, NOT from the plan: passing can perfectly well
     # be the first thing a seat does on its own turn, and "I had nothing to
@@ -2213,6 +2352,9 @@ def action_declare_blockers(
     game_id: str, req: DeclareBlockersRequest, uid: str | None = None
 ) -> dict[str, Any]:
     """Declare blockers (CR 509.1) - see `_answer_declaration`."""
+    records.require_current_board(
+        game_id, "declare_blockers", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     blocks_detail = [{"blocker": str(b.blocker), "blocked": str(b.blocked)} for b in req.blocks]
     pairs = [DeclaredPairRequest(creature=b.blocker, defender=str(b.blocked)) for b in req.blocks]
     return _answer_declaration(
@@ -2253,6 +2395,9 @@ def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[s
     describe a hole.
     """
     req = req or ActorRequest()
+    records.require_current_board(
+        game_id, "state_based_actions", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq_hint = _run_command(game_id, "state_based_actions", req)
@@ -2303,6 +2448,9 @@ def resolve_top(
     game_id: str, req: ActorRequest | None = None, uid: str | None = None
 ) -> dict[str, Any]:
     if req is not None:
+        records.require_current_board(
+            game_id, "resolve_top", req.expected_seq, player=req.player, reasoning=req.reasoning
+        )
         records.require_reasoning(game_id, req.player, req.reasoning)
         records.require_plan(game_id, req.player)
     result, _, legal_before, seq_hint = _run_command(game_id, "resolve_top", req or ActorRequest())
@@ -2382,6 +2530,9 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     `pending_decision`, answerable through `POST .../decide` or its
     `actions/attack`/`actions/declare-blockers` aliases.
     """
+    records.require_current_board(
+        game_id, "advance", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     try:
@@ -2609,6 +2760,9 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         )
         return {"accepted": False, "reason": reason, "log_seq": seq}
 
+    records.require_current_board(
+        game_id, "decide", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     game = game_or_404(game_id)
     legal_before: records.LegalActionsBefore | None = None
     player = visibility.resolve_viewer(game_id, uid)

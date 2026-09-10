@@ -80,7 +80,35 @@ class ManaPoolUpdate(BaseModel):
     """Replace the whole pool with this."""
 
 
-class StepUpdate(BaseModel):
+class BoardRead(BaseModel):
+    """P4: the ledger position a seat decided against, named by the seat.
+
+    **Optional, and it stays optional.** Every caller that existed before
+    this field - the browser above all - sends no `expected_seq` and is
+    refused on nothing new; `None` means "I am not naming a board", which is
+    exactly the behaviour this api always had.
+
+    When it *is* given, `records.require_current_board` compares it to
+    `audit.last_seq(game_id)` before anything else runs, and refuses the
+    call outright when the two differ. That refusal is written into the
+    ledger with `stale: true`, which is what makes the corpus answer the
+    question it could not answer before: how many of a seat's refusals were
+    races (it acted on a board that had already moved) and how many were
+    genuine misreads of the rules. The two used to be indistinguishable -
+    losing a race produced `claude does not have priority, you does`, prose
+    a reader can only guess at.
+
+    It is a *ledger* position and not a game version on purpose: `records
+    .seq` is the number every answer already hands a seat back
+    (`log_seq`, `GET .../log`'s `last_seq`, `seatkit.Seat.recent_log`), so
+    a seat names the board it read using the number it was already given,
+    with nothing new to track.
+    """
+
+    expected_seq: int | None = None
+
+
+class StepUpdate(BoardRead):
     step: str
     player: str | None = None
     """Who is moving the marker, for the log's who-did-what line."""
@@ -94,7 +122,7 @@ class StepUpdate(BaseModel):
     stated why is exactly what this gate exists to prevent."""
 
 
-class ActorRequest(BaseModel):
+class ActorRequest(BoardRead):
     """An optional body for endpoints that take no other input: just who is
     calling, so the audit log can attribute the action."""
 
@@ -254,7 +282,7 @@ class ManaSource(BaseModel):
     """
 
 
-class CastRequest(BaseModel):
+class CastRequest(BoardRead):
     player: str
     card_id: UUID | None = None
     card: str | None = None
@@ -395,7 +423,7 @@ class ConvokeChoice(BaseModel):
     symbol instead."""
 
 
-class CrewRequest(BaseModel):
+class CrewRequest(BoardRead):
     """CR 702.122a: "Crew N" means "Tap any number of other untapped
     creatures you control with total power N or greater: This permanent
     becomes an artifact creature until end of turn."
@@ -416,7 +444,7 @@ class CrewRequest(BaseModel):
     optional for a human one."""
 
 
-class CycleRequest(BaseModel):
+class CycleRequest(BoardRead):
     """CR 702.29a: "[Cost], Discard this card: Draw a card." An activated
     ability, but one `Game.begin_activating`/`activate_ability` cannot reach -
     they only ever activate a battlefield permanent's ability, and cycling
@@ -438,7 +466,7 @@ class CycleRequest(BaseModel):
     optional for a human one."""
 
 
-class SpecialActionRequest(BaseModel):
+class SpecialActionRequest(BoardRead):
     """A CR 116.2 special action that exiles a card from hand to cast later:
     suspend (CR 116.2f), plot (CR 116.2k), or foretell (CR 116.2h). All three
     share this shape - locate the card, pay its special-action cost, exile it
@@ -465,7 +493,7 @@ class TargetRequest(BaseModel):
     """A card id or a player name."""
 
 
-class ActivateRequest(BaseModel):
+class ActivateRequest(BoardRead):
     player: str
     card_id: UUID
     ability_index: int = 0
@@ -518,7 +546,7 @@ class AttackPair(BaseModel):
     """A player name or a planeswalker card id."""
 
 
-class AttackRequest(BaseModel):
+class AttackRequest(BoardRead):
     attackers: list[AttackPair] = Field(default_factory=list)
     """Empty is a legal answer, not a missing one: CR 508.1a's "if any" makes
     "declare nobody" a real attack declaration, the one an autopilot run
@@ -535,7 +563,7 @@ class AttackRequest(BaseModel):
     named on this request."""
 
 
-class PlayLandRequest(BaseModel):
+class PlayLandRequest(BoardRead):
     player: str
     card_id: UUID | None = None
     card: str | None = None
@@ -545,14 +573,14 @@ class PlayLandRequest(BaseModel):
     optional for a human one."""
 
 
-class PassPriorityRequest(BaseModel):
+class PassPriorityRequest(BoardRead):
     player: str
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
     optional for a human one."""
 
 
-class ConcedeRequest(BaseModel):
+class ConcedeRequest(BoardRead):
     """CR 104.3a: a player may concede at any time, and leaves the game
     immediately. No priority is required and nothing can refuse it, so unlike
     every other action request this one has no `dry_run` - there is nothing to
@@ -564,7 +592,7 @@ class ConcedeRequest(BaseModel):
     optional for a human one."""
 
 
-class AdvanceRequest(BaseModel):
+class AdvanceRequest(BoardRead):
     """Who is advancing the turn - required, unlike `ActorRequest`, because
     `Game.advance` now authorizes the call against the active player (or
     their controller, CR 723.5) rather than merely logging who asked."""
@@ -582,7 +610,7 @@ class BlockPair(BaseModel):
     """The attacking creature it blocks."""
 
 
-class DeclareBlockersRequest(BaseModel):
+class DeclareBlockersRequest(BoardRead):
     player: str
     blocks: list[BlockPair] = Field(default_factory=list)
     """(blocker, blocked) pairs, in the order damage should be assigned
@@ -617,7 +645,7 @@ class DeclaredPairRequest(BaseModel):
     defender: str
 
 
-class DecideRequest(BaseModel):
+class DecideRequest(BoardRead):
     player: str
     """Must be the pending decision's own player; anyone else is rejected."""
     card_ids: list[str] = Field(default_factory=list)

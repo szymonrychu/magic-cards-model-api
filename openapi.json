@@ -589,6 +589,17 @@
             ],
             "title": "Exiling"
           },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "mana_sources": {
             "anyOf": [
               {
@@ -677,6 +688,17 @@
       "ActorRequest": {
         "description": "An optional body for endpoints that take no other input: just who is\ncalling, so the audit log can attribute the action.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "anyOf": [
               {
@@ -740,6 +762,17 @@
       "AdvanceRequest": {
         "description": "Who is advancing the turn - required, unlike `ActorRequest`, because\n`Game.advance` now authorizes the call against the active player (or\ntheir controller, CR 723.5) rather than merely logging who asked.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -1333,6 +1366,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "reasoning": {
             "anyOf": [
@@ -2507,6 +2551,17 @@
             ],
             "title": "Exiling"
           },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "from_zone": {
             "default": "hand",
             "title": "From Zone",
@@ -2736,6 +2791,17 @@
       "ConcedeRequest": {
         "description": "CR 104.3a: a player may concede at any time, and leaves the game\nimmediately. No priority is required and nothing can refuse it, so unlike\nevery other action request this one has no `dry_run` - there is nothing to\nask permission for.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -2908,6 +2974,17 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -2967,6 +3044,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "mana_sources": {
             "anyOf": [
@@ -3077,6 +3165,17 @@
               }
             ],
             "title": "Energy Amount"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "generation": {
             "anyOf": [
@@ -3309,6 +3408,17 @@
             },
             "title": "Blocks",
             "type": "array"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",
@@ -5747,6 +5857,17 @@
       },
       "PassPriorityRequest": {
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -6473,6 +6594,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",
@@ -8446,6 +8578,17 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "mana_sources": {
             "anyOf": [
               {
@@ -9333,6 +9476,17 @@
       },
       "StepUpdate": {
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "anyOf": [
               {
