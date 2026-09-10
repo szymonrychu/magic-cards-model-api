@@ -1710,3 +1710,29 @@ whoever works on the repo itself.
   re-read the original click's `event.currentTarget` (that dispatch is over
   and the browser has nulled it), so `pinLand` resolves the anchor element
   once, up front, and hands it to both popovers.
+
+- **2026-09-10 - a click that registered looked exactly like one that was
+  lost, so an action's own `poll()` was replaced by a `refresh()` of its
+  own.** Three things were wrong at once in the action path and only
+  together did they produce the reported sluggishness: nothing anywhere
+  showed in-flight state, so the player had no signal for 0.4-2.4s; nothing
+  guarded a double submit, so the instinctive second click was a real second
+  request; and the `await poll()` every action path ended in was frequently a
+  silent no-op, because `poll()` returns immediately while `app.polling` is
+  set and late-game a background poll is in flight at every instant - which
+  then discarded its own reads through the `mutations` guard (correctly:
+  they predate the action). Net effect: up to a full `POLL_MS` of inert UI
+  after a click that had already succeeded. `send()` now carries both the
+  in-flight state (`store.busy`, `body.busy`, one seam for all nine action
+  paths) and a method+path+body double-submit guard that returns `null` -
+  which every caller already reads as "nothing was decided". The post-action
+  refresh is a fresh pair of reads rather than "await the in-flight poll,
+  then re-poll": awaiting it makes the player's feedback wait on the very
+  cycle that is already too slow, and against a held `/log` read it waits
+  forever (`tests/test_ui_app.py`'s stale-poll tests hold exactly that read
+  open, and would deadlock). Only the board half is awaited - `/log` is the
+  slow half and no part of "did my move happen" - and both halves are now
+  issued concurrently in `poll()` too, since they were never dependent. The
+  `mutations` guard is untouched and still governs both, `refresh()`
+  included; a `ticking` latch keeps the run's own `declareNoAttackers` from
+  recursing now that it no longer bounces off the `polling` flag.

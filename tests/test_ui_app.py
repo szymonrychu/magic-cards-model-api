@@ -28,6 +28,7 @@ that accidentally exercises a network path fails loudly rather than hanging.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -1849,3 +1850,291 @@ def test_a_source_that_adds_several_mana_of_one_colour_asks_only_which_colour() 
     number it cannot see."""
     plan = run_app("m.planPin(land, action)", land=SHANG_CHI, action=pinning_action())
     assert plan == {"kind": "colour", "abilityIndex": None, "colors": ["W", "U", "B", "R", "G"]}
+
+
+# -- a click that registers must say so before the server answers -----------
+#
+# T2, the second half of the reported sluggishness. The click that DOES
+# register gave the player nothing back for 0.4-2.4s: no spinner, no disable,
+# no double-submit guard, and a post-action `poll()` that was frequently a
+# silent no-op (it returns immediately whenever `app.polling` is set, and the
+# background poll holding that flag then discarded its own reads through the
+# `mutations` guard). Indistinguishable from a lost click, which is what
+# provoked the second one - and that second click was a genuine, unguarded
+# double submit.
+
+
+def _click_body() -> str:
+    """A fake DOM and a `fetch` stub with two gates.
+
+    `__holdPost` keeps every POST outstanding until `__releasePost()` - the
+    window a click spends waiting on the server, where the in-flight state
+    has to be visible and the second click has to be swallowed. `__holdLog`
+    does the same for `/log`, which is what a background poll sits in
+    (`_stale_poll_body` above, and `poll()`'s own comment on why one cycle
+    outlives `POLL_MS` late-game).
+
+    A POST moves the board, exactly as the server would: the board read
+    answers `bob` from then on, so a refresh that actually happened is
+    visible in the store and one that silently no-op'd is not."""
+    return """
+      globalThis.__calls = [];
+      globalThis.__toast = { textContent: "", hidden: true };
+      globalThis.__classes = new Set();
+      globalThis.document = {
+        body: {
+          classList: {
+            toggle: (name, on) => {
+              if (on) globalThis.__classes.add(name);
+              else globalThis.__classes.delete(name);
+            },
+          },
+          setAttribute: () => {},
+          removeAttribute: () => {},
+        },
+        querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+      };
+      const board = (holder) => ({
+        you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+        active_player: "bob", priority_holder: holder, battlefield: [],
+        hands: { alice: [] }, stack: [], combat: { attacks: [] },
+        winner: null, drawn: false, pregame: null,
+      });
+      globalThis.__board = board;
+      globalThis.__priority = "alice";
+      globalThis.__holdPost = false;
+      globalThis.__holdLog = false;
+      let releasePost;
+      let releaseLog;
+      const postGate = new Promise((r) => { releasePost = r; });
+      const logGate = new Promise((r) => { releaseLog = r; });
+      globalThis.__releasePost = () => releasePost();
+      globalThis.__releaseLog = () => releaseLog();
+      globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
+        globalThis.__calls.push({ method, path });
+        if (method === "POST") {
+          globalThis.__priority = "bob";
+          const answer = { ok: true, json: async () => ({ allowed: true }) };
+          return globalThis.__holdPost ? postGate.then(() => answer) : Promise.resolve(answer);
+        }
+        const log = { ok: true, json: async () => ({ log: [], last_seq: 1 }) };
+        if (path.includes("/log")) {
+          return globalThis.__holdLog ? logGate.then(() => log) : Promise.resolve(log);
+        }
+        return Promise.resolve({ ok: true, json: async () => board(globalThis.__priority) });
+      };
+      const seated = () => m.store.set({
+        gameId: "g1", uid: "u1", run: null, busy: 0,
+        stops: { mine: [], theirs: [], onStack: true },
+        state: globalThis.__board("alice"),
+        log: { entries: [], lastSeq: 0 },
+      });
+    """
+
+
+def test_an_action_shows_in_flight_state_before_the_server_answers() -> None:
+    """The whole point: the feedback is on the click, not on the round trip.
+    `send()` is the seam every mutating request in `app.js` goes through, so
+    marking in-flight there covers `playLand`, `fireSpecial`, `cycle`,
+    `advanceStep`, `decide`, `onPregame`, `concede`, `fire` and the pass
+    verbs at once rather than nine hand-wired spinners."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__holdPost = true;
+          const inFlight = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          const during = { busy: m.store.get().busy, marked: globalThis.__classes.has("busy") };
+          globalThis.__releasePost();
+          await inFlight;
+          const after = { busy: m.store.get().busy, marked: globalThis.__classes.has("busy") };
+          return { during, after };
+        })()
+        """
+    )
+    assert result["during"] == {"busy": 1, "marked": True}, (
+        "the click gave the player nothing back until the server answered"
+    )
+    assert result["after"] == {"busy": 0, "marked": False}
+
+
+def test_a_second_click_while_the_same_action_is_outstanding_sends_nothing() -> None:
+    """The reported symptom's own second half: the instinctive second click
+    on an unresponsive-looking control was a real, unguarded double submit."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__holdPost = true;
+          const first = m.declareNoBlockers();
+          const second = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          globalThis.__releasePost();
+          await Promise.all([first, second]);
+          return globalThis.__calls.filter(
+            (c) => c.method === "POST" && c.path.includes("declare-blockers")
+          ).length;
+        })()
+        """
+    )
+    assert result == 1, "the same action was submitted twice while one was outstanding"
+
+
+def test_the_same_action_can_be_sent_again_once_the_first_has_answered() -> None:
+    """The guard is per-request-in-flight, never a latch: a player who really
+    does want to declare no blockers twice in one game must be able to."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          await m.declareNoBlockers();
+          await m.declareNoBlockers();
+          return globalThis.__calls.filter(
+            (c) => c.method === "POST" && c.path.includes("declare-blockers")
+          ).length;
+        })()
+        """
+    )
+    assert result == 2
+
+
+def test_an_action_refreshes_the_board_even_with_a_poll_already_in_flight() -> None:
+    """`poll()` returns immediately when `app.polling` is set, so an action's
+    own `await poll()` was a silent no-op whenever a background poll was in
+    flight - and that background poll then discarded its own reads through
+    the `mutations` guard, leaving the board inert for up to a full tick
+    after a click that had already succeeded. The action's refresh has to be
+    a read of its own, not a request to a poll that is already busy."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__holdLog = true;
+          const inFlight = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          await m.declareNoBlockers();
+          const after = m.store.get().state.priority_holder;
+          globalThis.__releaseLog();
+          await inFlight;
+          return after;
+        })()
+        """
+    )
+    assert result == "bob", (
+        "the board still showed the pre-action world after the action had succeeded"
+    )
+
+
+def test_a_refresh_read_that_predates_a_later_action_is_still_discarded() -> None:
+    """The `mutations` guard is load-bearing (MEMORY.md, 2026-09-08) and the
+    action's own refresh is subject to it exactly as `poll()` is: a read that
+    spans another of this seat's requests describes a board that no longer
+    exists, whoever issued it."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          m.store.set({ state: globalThis.__board("carol") });
+          globalThis.__holdLog = true;
+          // The refresh's board read is answered while a *second* request of
+          // this seat's own is outstanding, so it must never be published.
+          const original = globalThis.fetch;
+          let releaseState;
+          const stateGate = new Promise((r) => { releaseState = r; });
+          globalThis.fetch = (path, opts) => {
+            const method = opts ? opts.method : "GET";
+            if (method === "GET" && !path.includes("/log")) {
+              return stateGate.then(() => original(path, opts));
+            }
+            return original(path, opts);
+          };
+          const acting = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          await m.send("POST", m.gamePath("actions/pass-priority"), { player: "alice" });
+          releaseState();
+          await acting;
+          return m.store.get().state.priority_holder;
+        })()
+        """
+    )
+    assert result == "carol", "a board read taken across a later action was published anyway"
+
+
+def test_poll_reads_the_board_and_the_log_concurrently() -> None:
+    """`app.js`'s own comment says one poll cycle already outgrows `POLL_MS`
+    late-game and names `/log` as the slow half. The two reads are
+    independent, so serialising them spends the sum of two latencies where
+    the maximum would do - and every extra millisecond there is a
+    millisecond the board is out of date after a click."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        let logIssued = false;
+        let openTheBoardRead;
+        const boardGate = new Promise((r) => { openTheBoardRead = r; });
+        globalThis.fetch = (path, opts) => {
+          const method = opts ? opts.method : "GET";
+          if (path.includes("/log")) {
+            logIssued = true;
+            openTheBoardRead();
+            return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 1 }) });
+          }
+          // The board read answers only once the log read has been issued -
+          // or, so a serial implementation fails rather than hangs, after a
+          // short wait. `__concurrent` records which of the two happened.
+          return Promise.race([boardGate, new Promise((r) => setTimeout(r, 250))]).then(() => ({
+            ok: true,
+            json: async () => {
+              globalThis.__concurrent = logIssued;
+              return {
+                you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+                active_player: "bob", priority_holder: "bob", battlefield: [],
+                hands: { alice: [] }, stack: [], combat: { attacks: [] },
+                winner: null, drawn: false, pregame: null,
+              };
+            },
+          }));
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: null, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return globalThis.__concurrent;
+        })()
+        """
+    )
+    assert result is True, "poll() waited for the board read before it issued the log read"
+
+
+def test_the_toast_never_intercepts_a_click() -> None:
+    """`.toast` is text-only - every call site passes a string - and it sits
+    `position: fixed` over the bottom centre of the viewport for 4000ms on
+    every refusal, which is exactly where `#my-hand` and `#you-info` are. Its
+    sibling `.card-preview` has carried `pointer-events: none` all along;
+    this brings the two into step.
+
+    A style rule has no behaviour to drive under Node, so this pins the
+    declaration in the stylesheet itself rather than claiming a red-green
+    cycle over a running page."""
+    css = (Path(__file__).resolve().parents[1] / "ui" / "style.css").read_text()
+    rule = re.search(r"^\.toast \{(.*?)^\}", css, re.MULTILINE | re.DOTALL)
+    assert rule is not None, ".toast rule not found in ui/style.css"
+    assert "pointer-events: none;" in rule.group(1)

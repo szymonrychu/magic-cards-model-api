@@ -75,6 +75,63 @@ button.danger.armed {
 button.ghost { background: transparent; }
 button.big { padding: 9px 22px; font-size: 15px; }
 
+/* ------------------------------------------------- a click in flight ---- */
+/*
+   `app.js`'s `send()` puts `.busy` on <body> the instant a request goes out
+   and takes it off when the answer lands, so everything below is on the
+   screen ~0.4-2.4s before the server says anything - which is the whole
+   point. A click that registered used to look exactly like a click that was
+   lost, and the second click that follows was, until now, a real double
+   submit (`send()` guards that too).
+
+   All of it hangs off one class on <body> rather than a spinner wired into
+   each of the nine action paths, and it needs no element `index.html` does
+   not already have. */
+
+body.busy { cursor: progress; }
+
+/* The controls the player is most likely to hit twice: everything in the
+   right-hand ribbon (priority, the casting strip, stops, decisions) and the
+   card menu. Inert rather than merely dimmed, so a second click cannot even
+   reach a handler. The topbar's Zones/Report/Lobby buttons are deliberately
+   left alone - they are not the action being waited on, and a page that
+   traps the player in it while a request is out is worse than a slow one. */
+body.busy #side-panel button,
+body.busy .popover button {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+/* A hairline sweep across the top of the viewport - the one bit of feedback
+   that is visible no matter which control was clicked or where the eye
+   happens to be. Along the very top edge on purpose: it overlaps neither the
+   board nor the ribbon, so nothing moves and nothing is covered. */
+body.busy::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 90;
+  pointer-events: none;
+  background-image: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: in-flight-sweep 0.9s linear infinite;
+}
+@keyframes in-flight-sweep {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.busy::after {
+    animation: none;
+    background-image: none;
+    background-color: var(--accent);
+  }
+}
+
 input, select, textarea {
   font: inherit;
   background: var(--bg-sunken);
@@ -881,13 +938,22 @@ h3 { font-size: 14px; }
 .refusal { color: var(--bad); }
 
 /* A short-lived message that appears near an action and fades - a refusal
-   or confirmation that does not need a whole `.notice` banner. */
+   or confirmation that does not need a whole `.notice` banner.
+
+   `pointer-events: none` because it is text and only ever text - every
+   caller passes a string - while it sits fixed over the bottom centre of the
+   viewport for 4000ms on every refusal, which is exactly where `#my-hand`
+   and `#you-info` are. Without this it swallows the clicks a player aims at
+   their own hand in the seconds right after a refusal: the worst possible
+   moment, since the refusal is what makes them click again. `.card-preview`
+   below has carried the same line all along for the same reason. */
 .toast {
   position: fixed;
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
   z-index: 70;
+  pointer-events: none;
   padding: 8px 16px;
   border-radius: 8px;
   background: var(--bg-raised);
