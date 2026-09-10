@@ -13,7 +13,7 @@
 // living twice (once for real, once reimplemented for a test).
 
 import { api, withUid } from "./api.js";
-import { createStore } from "./store.js";
+import { createStore, installPressGuard } from "./store.js";
 import { loadSymbols } from "./symbols.js";
 import * as A from "./actions.js";
 import * as P from "./priority.js";
@@ -23,7 +23,13 @@ import * as M from "./menus.js";
 import { viewModel } from "./decisions.js";
 import { fill, canFill } from "./targeting.js";
 import { mountBoard } from "./render/board.js";
-import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
+import {
+  mountRibbon,
+  showPopover,
+  hidePopover,
+  popoverIsOpenFor,
+  updatePopoverItems,
+} from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
@@ -76,8 +82,55 @@ export const store = createStore({
   // actions, and `send()` (every mutating request in this file goes through
   // it) is the one place it moves. See `poll()` for the defect it exists for.
   mutations: 0,
+  // How many of this seat's own mutating requests are outstanding *right
+  // now* - `mutations`' live half. Bumped by `send()` before the request and
+  // dropped in its `finally`, so it is non-zero for exactly as long as the
+  // player is waiting on the server. This is the in-flight state itself: the
+  // one thing the page can honestly say the instant a click lands, ~0.4-2.4s
+  // before the answer that would otherwise be the first sign the click was
+  // heard at all.
+  busy: 0,
   concedeArmed: false,
 });
+
+/** Whether a request is a SUBMISSION - something the player asked the server
+ * to do, and is now waiting on - rather than a read or a dry run this page
+ * makes on its own account.
+ *
+ * The distinction is what `busy` means, and it has to be this one. Both
+ * `refreshAffordance()` (a GET) and `previewAndMaybeFire()`'s probe (a POST
+ * that changes nothing, `dry_run: true`) go through `send()` and fire on
+ * every mode toggle, every pitch/convoke tick and every X change - so a
+ * `busy` that counted them dimmed the casting strip those very controls live
+ * in, for a whole round trip each, with nothing outstanding that the player
+ * had actually submitted. Feedback for a click the player did not make is
+ * not feedback.
+ *
+ * The double-submit guard is `inFlight` below and is deliberately NOT this
+ * test: it is keyed on the whole request, so it suppresses the identical
+ * resubmission whether or not it is a submission by this definition. */
+function isSubmission(method, body) {
+  return method !== "GET" && !(body && body.dry_run);
+}
+
+/** The in-flight state, on the page rather than only in the store: `body`
+ * carries `.busy` (and `aria-busy`) for as long as one of this seat's own
+ * submissions is outstanding, and `style.css` turns that into the progress
+ * cursor, the sweep, and the ribbon's action buttons dimming. Doing it
+ * on `body` is what makes it cost one line in `send()` instead of a spinner
+ * hand-wired into each of the nine action paths - and it needs no element
+ * that `ui/index.html` does not already have.
+ *
+ * Defensive about `document` on purpose: `tests/test_ui_app.py` imports this
+ * module under Node with no DOM at all, or with a fake that has nothing but
+ * `querySelector`. */
+function showInFlight(busy) {
+  const body = typeof document === "undefined" ? null : document.body;
+  if (!body) return;
+  if (body.classList) body.classList.toggle("busy", busy);
+  if (busy) body.setAttribute("aria-busy", "true");
+  else body.removeAttribute("aria-busy");
+}
 
 function you() {
   return store.get().state.you;
@@ -123,6 +176,11 @@ export function gameIdFromBaseURI(baseURI) {
   return null;
 }
 
+/** The requests this seat has outstanding, keyed by method+path+body - see
+ * `send()`. Module-level rather than in the store because nothing renders it:
+ * `busy` is the count the page shows, this is the identity the guard needs. */
+const inFlight = new Set();
+
 /**
  * The one place a transport failure - a rejected `fetch` (the network is
  * down, the server is unreachable), or a non-2xx `api()` cannot even parse a
@@ -139,18 +197,54 @@ export function gameIdFromBaseURI(baseURI) {
  * the previous `store.set` call unmade).
  */
 export async function send(method, path, body) {
+  // Double-submit protection, and the reason it lives here rather than in
+  // nine handlers: a request that is byte-for-byte a request already in
+  // flight is the same submission, not a second one. That is exactly the
+  // instinctive second click on a control that looked dead - the reported
+  // symptom - and until now nothing anywhere in the action path stopped it
+  // from reaching the engine twice.
+  //
+  // Keyed on the whole request, so it never blocks a *different* action
+  // taken while one is outstanding (cancelling a cast mid-probe, picking a
+  // second target), and it lifts the moment the first answer lands - it is a
+  // guard on the flight, never a latch on the button.
+  //
+  // A suppressed duplicate returns `null`, which every caller in this file
+  // already reads as "nothing was decided, say nothing" (the transport-
+  // failure case `api()`'s own `catch` below produces). No toast: the player
+  // clicked the thing they had already clicked, and the first click is still
+  // being answered.
+  const key = `${method} ${path} ${body === undefined ? "" : JSON.stringify(body)}`;
+  if (inFlight.has(key)) return null;
+  inFlight.add(key);
   // Bumped BEFORE the request, not after it: a board read that was answered
   // while this request was still in flight is just as much a picture of the
   // world before it as one answered before it was sent, and `poll()` has to
   // discard both. Every mutating request in this file goes through here, so
   // this is the only place the counter moves.
-  store.set((s) => ({ mutations: s.mutations + 1 }));
+  //
+  // `busy` moves with it for a submission, and this is the whole of the
+  // immediate feedback: it is set before `api()` is even called, so the page
+  // shows the click as heard on the click, not on the answer. A read or a
+  // probe still bumps `mutations` - a board read answered while one was
+  // outstanding is just as stale - but says nothing about what the player is
+  // waiting for, so it leaves `busy` alone (`isSubmission`).
+  const submission = isSubmission(method, body);
+  store.set((s) => ({ mutations: s.mutations + 1, busy: submission ? s.busy + 1 : s.busy }));
+  if (submission) showInFlight(true);
   try {
     return await api(method, path, body);
   } catch (err) {
     store.set({ connection: `error: ${err.message}` });
     toast(err.message);
     return null;
+  } finally {
+    inFlight.delete(key);
+    if (submission) {
+      const busy = store.get().busy - 1;
+      store.set({ busy });
+      showInFlight(busy > 0);
+    }
   }
 }
 
@@ -250,6 +344,53 @@ export function planPermanentClick(card, app, state) {
 
 // -------------------------------------------------------------- polling --
 
+/** A cycle's two reads, issued together rather than one after the other.
+ * They are independent - `/log` does not depend on the board read and never
+ * did - so awaiting them in sequence spent the sum of two latencies where
+ * the maximum will do. That is not a micro-optimisation here: the comment
+ * above is about a cycle that already outgrows `POLL_MS` late-game with
+ * `/log` as the slow half, and every millisecond of cycle is a millisecond
+ * the board can be out of date after a click.
+ *
+ * Both promises are handed back rather than awaited, because the post-action
+ * `refresh()` below wants only the board half of the pair to gate on. */
+function cycleReads(app) {
+  return {
+    seq: (boardReads += 1),
+    state: api("GET", withUid(gamePath(""), app.uid)),
+    log: api("GET", withUid(gamePath(`log?since=${app.log.lastSeq}`), app.uid)),
+  };
+}
+
+// Ordering the board reads against each other.
+//
+// `refresh()` deliberately sets no `polling` flag (see its own note), so a
+// background poll's board read and an action's own are routinely outstanding
+// together - one cycle runs 0.4-2.4s against a 1200ms tick. `mutations`
+// separates reads issued BEFORE one of this seat's requests from reads
+// issued after it, and that is all it can do: two reads issued after the
+// same request both pass it, and then whichever is ANSWERED last wins.
+// Answer order is not read order - nothing about HTTP promises it is - so
+// the older of the two can land second and put the board back a turn, and
+// hand `tickRun()` a world that has already moved.
+//
+// So every board read carries the ordinal it was issued with, and writes
+// only if nothing newer has been written already. Issue order is the order
+// used because it is the only one available: the board payload carries no
+// version of its own, and two reads issued in order do describe the server
+// at two points in that order. This sits under the `mutations` guard rather
+// than replacing any part of it.
+let boardReads = 0;
+let boardWritten = 0;
+
+/** Whether the board a read with ordinal `seq` came back with is still the
+ * newest one this seat has seen - and, when it is, records it as written. */
+function boardIsNewest(seq) {
+  if (seq <= boardWritten) return false;
+  boardWritten = seq;
+  return true;
+}
+
 /** One poll cycle: read the board, read the log, show both, let the run act.
  *
  * `mutations` is what keeps those four steps honest with each other. The two
@@ -283,8 +424,9 @@ export async function poll() {
   store.set({ polling: true });
   try {
     const mutationsBefore = app.mutations;
-    const state = await api("GET", withUid(gamePath(""), app.uid));
-    const log = await api("GET", withUid(gamePath(`log?since=${app.log.lastSeq}`), app.uid));
+    const since = app.log.lastSeq;
+    const reads = cycleReads(app);
+    const [state, log] = await Promise.all([reads.state, reads.log]);
     if (store.get().mutations !== mutationsBefore) {
       // One of this seat's own actions was issued while these two reads were
       // outstanding, so they describe a board that no longer exists. The
@@ -293,18 +435,136 @@ export async function poll() {
       store.set({ connection: "ok" });
       return;
     }
+    // The board half is written only if no read issued behind this one has
+    // already published its own (`boardIsNewest`); the log half has its own
+    // guard, below, and the two are independent.
+    const newest = boardIsNewest(reads.seq);
     store.set((s) => ({
-      state,
+      ...(newest ? { state } : {}),
       connection: "ok",
-      log: { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq },
+      // The log half is written only if nothing has advanced it since this
+      // cycle asked for `since` - the same guard `refresh()` carries, and now
+      // needed on both sides of the pair. `refresh()` sets no `polling` flag,
+      // so an action's log read and a background poll's log read are
+      // routinely outstanding together (`/log` runs 0.4-2.4s against a 1200ms
+      // tick); both asked from the same `since`, so whichever lands second is
+      // a second copy of entries already on the screen. `patchChildren`
+      // builds its `existing` map before it creates anything, so a key
+      // repeated inside one items list becomes a second node the next patch
+      // cannot see - the duplicated lines never go away. Dropping this half
+      // costs at most one tick of log, and the next cycle asks from the
+      // `lastSeq` the other read published.
+      log:
+        s.log.lastSeq === since
+          ? { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq }
+          : s.log,
     }));
     refreshDecisionTargets();
-    await tickRun();
+    await tickOnce();
   } catch (err) {
     store.set({ connection: `error: ${err.message}` });
   } finally {
     store.set({ polling: false });
   }
+}
+
+/** Set while a `refresh()` or a `poll()` is driving `tickRun`.
+ *
+ * `declareNoAttackers`/`declareNoBlockers` are called from inside `tickRun`
+ * and refresh like every other action, so without this the run's own
+ * auto-answer recurses without bound whenever the server keeps handing back
+ * the same unanswered decision. `poll()`'s `polling` flag used to bound that
+ * at one nested tick; this keeps the same bound now that an action no longer
+ * goes through `poll()` - and it covers the poll's own tick too, which the
+ * flag did not when it was only set around `refresh()`'s: a poll landing
+ * mid-tick would start a second one, and only `send()`'s `inFlight` dedupe
+ * kept the duplicate pass off the wire. */
+let ticking = false;
+
+/** `tickRun()`, unless one is already running - see `ticking`. */
+async function tickOnce() {
+  if (ticking) return;
+  ticking = true;
+  try {
+    await tickRun();
+  } finally {
+    ticking = false;
+  }
+}
+
+/** The board this seat's own action just produced, on the screen now rather
+ * than up to a full tick later.
+ *
+ * Every action path in this file used to end in `await poll()`, and that was
+ * frequently a silent no-op: `poll()` returns immediately whenever
+ * `app.polling` is set, and late-game a background poll is in flight at
+ * every instant (its own docstring above). The background poll then
+ * discarded its own reads through the `mutations` guard - correctly, they
+ * predate the action - so nothing was published by either, and the board sat
+ * showing the pre-action world for up to `POLL_MS` after a click that had
+ * already succeeded. That is what a player reads as a lost click, and it is
+ * what provokes the second one.
+ *
+ * So this is a read of its own rather than a request to a poll that is
+ * already busy. Two shapes were possible; this is the simpler one:
+ *
+ * - awaiting the in-flight poll and then re-polling makes the player's
+ *   feedback wait on the very cycle that is already too slow (and, against
+ *   a held `/log`, waits on it forever - `tests/test_ui_app.py`'s stale-poll
+ *   tests hold exactly that read open);
+ * - issuing a fresh pair of reads costs one extra board read per action and
+ *   answers as fast as the server can answer.
+ *
+ * Only the board half is awaited. `/log` is the slow half of a cycle and no
+ * part of "did my move happen" - it is issued alongside (`cycleReads`) and
+ * written whenever it lands, if it still applies.
+ *
+ * The `mutations` guard applies here exactly as it does to a poll, and for
+ * the same reason: a read of this seat's own is no more current than anyone
+ * else's once a later request of this seat's has gone out behind it. */
+async function refresh() {
+  const app = store.get();
+  if (!app.gameId) return;
+  const mutationsBefore = app.mutations;
+  const since = app.log.lastSeq;
+  const reads = cycleReads(app);
+  reads.log
+    .then((log) => {
+      const now = store.get();
+      // Discarded for the same reason a poll's reads are - and additionally
+      // when something else has already advanced the log past `since`, since
+      // appending the same entries twice would double them on the screen.
+      if (now.mutations !== mutationsBefore || now.log.lastSeq !== since) return;
+      store.set((s) => ({
+        log: { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq },
+      }));
+    })
+    // Nothing here is awaited, so this is the whole of this read's error
+    // handling - and it has to cover the write as well as the read, or a
+    // malformed payload becomes an unhandled rejection rather than the
+    // "error: ..." on the connection pill that `poll()` shows for exactly
+    // the same failure. The board itself is unaffected either way: the log
+    // is the half of the pair nothing acts on.
+    .catch((err) => store.set({ connection: `error: ${err.message}` }));
+  try {
+    const state = await reads.state;
+    if (store.get().mutations !== mutationsBefore) {
+      store.set({ connection: "ok" });
+      return;
+    }
+    // A poll's read issued behind this one may already have published a
+    // newer board - this read was answered late, not last.
+    if (!boardIsNewest(reads.seq)) {
+      store.set({ connection: "ok" });
+      return;
+    }
+    store.set({ state, connection: "ok" });
+    refreshDecisionTargets();
+  } catch (err) {
+    store.set({ connection: `error: ${err.message}` });
+    return;
+  }
+  await tickOnce();
 }
 
 /** S7 (2b's T8): the play UI's own half of the fix. One `GET
@@ -426,7 +686,7 @@ export async function fire() {
   if (onStack && !action.holdPriority && !store.get().stops.keepPriorityAfterCasting) {
     await passOnce();
   }
-  await poll();
+  await refresh();
 }
 
 /** The element a card-scoped menu anchors itself over: the card node that
@@ -455,21 +715,120 @@ function openCardMenu(card, event, items, run) {
  * once it has. The caller resolves the anchor while the click is still live
  * and hands the element on. */
 function openCardMenuAt(anchor, card, items, run) {
-  return showPopover(
-    anchor,
-    items.map((item) => ({ ...item, onSelect: () => run(item.key) })),
-    { title: card.name }
-  );
+  return showPopover(anchor, menuOptions(items, run), { title: card.name });
 }
 
-async function onHandCard(card, event) {
+/** `menus.js`'s `{key, label, sublabel}` descriptors, each given the thing
+ * this file does about it. Shared by the open and the enrichment's redraw so
+ * that a re-aimed option runs the same `run(key)` the original did. */
+function menuOptions(items, run) {
+  return items.map((item) => ({ ...item, onSelect: () => run(item.key) }));
+}
+
+/** The menu EVERY action click opens - one option or six. A click that acts
+ * (playing a land, casting, activating the one ability a permanent has) used
+ * to fire on the click itself; it opens this instead, and the one-option
+ * popover IS the confirm. Nothing else is drawn for it: no second component,
+ * and no Cancel item, because `showPopover` already leaves on Escape, on a
+ * click outside it, and on picking something.
+ *
+ * The menu comes from local state and is on screen before this function
+ * returns - a click has to feel immediate, so nothing here waits on a
+ * request. `enrichActionMenu` then asks the engine which of the options it
+ * can actually pay for and folds that into the menu already open.
+ *
+ * An empty `items` opens nothing at all rather than an empty box - the same
+ * silence a click with nothing to do gets.
+ *
+ * The anchor is resolved ONCE, here, while the click is still being
+ * dispatched, for the reason `pinLand` already does it: the enrichment
+ * redraws this menu long after that dispatch is over, and a browser has
+ * nulled `event.currentTarget` by then. */
+function openActionMenu(card, event, items, run) {
+  if (!items.length) return;
+  const anchor = actionAnchor(card, event);
+  openCardMenuAt(anchor, card, items, run);
+  return enrichActionMenu(anchor, card, items, run);
+}
+
+/** `anchorFor`, plus the one case where the clicked node is the wrong thing
+ * to anchor to: a card inside the zones popover.
+ *
+ * That popover is a `.modal` and an anchored menu is a `.popover`, and the
+ * modal is drawn on top of it (`style.css`) - so a confirm opened over one
+ * of the modal's own cards would sit under the scrim, dimmed and
+ * unclickable, and Escape would close the modal rather than the menu. The
+ * menu's geometry and stacking are deliberately not this file's to change,
+ * so the modal is closed instead: the player clicked a card to act on it,
+ * which is the end of browsing zones either way, and the confirm anchors
+ * over the board's own node for that card. There always is one - the board
+ * draws every graveyard and exile card in its zone ribbon and every play
+ * permission in `#permitted-row`, both keyed by card id (`dom.js`'s
+ * `patchChildren`) - and the clicked node itself is the fallback if there
+ * somehow is not, so the menu opens either way. */
+function actionAnchor(card, event) {
+  const clicked = event && event.currentTarget;
+  const modal = document.querySelector("#modal");
+  if (!clicked || !modal || modal.hidden || !modal.contains(clicked)) {
+    return anchorFor(card, event);
+  }
+  closeModal(document);
+  return document.querySelector(`[data-key="${card.id}"]`) || clicked;
+}
+
+/** Fold `GET .../legal-actions` into the menu that is already on screen: an
+ * option the engine reports it cannot pay for is disabled and captioned with
+ * the engine's own `unaffordable_reason` (`menus.js`'s `enrichItems` decides
+ * that; this only fetches and redraws).
+ *
+ * On the CLICK, never on the poll: per-card affordance work is banned from
+ * the 1.2s tick (it is a whole-board read per card there, and on-demand is
+ * the established pattern - `refreshAffordance` is the same shape). The read
+ * is `player`'s own hidden information, so it carries this tab's uid; it is
+ * deliberately NOT sent through `send()`, which counts mutations for
+ * `poll()`'s staleness check and toasts what it catches - this is a read,
+ * and a failed one has nothing to say to the player.
+ *
+ * Every failure is the same silent no-op: the dialog stays exactly as it
+ * opened. So is an answer that arrives after the player has left the dialog
+ * - reopening a menu under the cursor is worse than not enriching it. */
+async function enrichActionMenu(anchor, card, items, run) {
+  const app = store.get();
+  if (!app.gameId || !app.uid || !app.state) return;
+  let answer;
+  try {
+    answer = await api(
+      "GET",
+      withUid(gamePath(`legal-actions?player=${encodeURIComponent(you())}`), app.uid)
+    );
+  } catch {
+    return;
+  }
+  const enriched = M.enrichItems(items, (answer && answer.actions) || []);
+  if (enriched.every((item, i) => item === items[i])) return;
+  if (!popoverIsOpenFor(anchor)) return;
+  // Patched in place, never reopened: the answer can land while the player
+  // is mid-press on one of these options, and a browser dispatches the click
+  // to the nearest inclusive ancestor common to the mousedown and the mouseup
+  // target - so an option detached between the two eats the press outright.
+  // `updatePopoverItems` is the whole of that argument.
+  updatePopoverItems(anchor, menuOptions(enriched, run));
+}
+
+/** Exported for `tests/test_ui_app.py` only, alongside `store`/`pinLand`/
+ * `fire` - the confirm dialog is a property of the click ACTING, not of the
+ * plan, so proving "every action click opens it and no selection click does"
+ * means driving the real handler through the real `showPopover`. Not part of
+ * any render module's handler contract; `board.js` gets these through
+ * `main()`'s own handler object. */
+export async function onHandCard(card, event) {
   const app = store.get();
   const plan = planHandCardClick(card, app);
   if (plan.kind === "cancel") return cancel();
   if (plan.kind === "target") return tryTarget(plan.id);
-  if (plan.kind === "land") return playLand(card);
-  if (plan.kind === "cast") return beginCast(card);
-  return openCardMenu(card, event, M.handMenuItems(plan, card), (key) => {
+  // `land`, `cast` and `menu` all reach the same menu: `handMenuItems` gives
+  // the first two a single Play or Cast item, which is the confirm.
+  return openActionMenu(card, event, M.handMenuItems(plan, card), (key) => {
     if (key === "play") return playLand(card);
     if (key === "cast") return beginCast(card);
     if (key === "cycle") return cycle(card);
@@ -501,15 +860,26 @@ function beginCastFromPermission(card, fromZone) {
   return refreshAffordance();
 }
 
-function onPermission(permission) {
-  beginCastFromPermission(permission.card, permission.from_zone);
+/** Exported for `tests/test_ui_app.py` only, alongside `onHandCard`/
+ * `onPermanent` - see `onHandCard`.
+ *
+ * A play permission is an action click like any other: it begins a cast, so
+ * it opens the same one-option confirm rather than casting on the click that
+ * landed on the card. Three surfaces reach here and two of them are the
+ * board itself - `#permitted-row` and the zone ribbon (`render/board.js`) -
+ * with the zones popover the third (`render/panels.js`). */
+export function onPermission(permission, event) {
+  const card = permission.card;
+  return openActionMenu(card, event, M.permissionMenuItems(permission), (key) => {
+    if (key === "cast") return beginCastFromPermission(card, permission.from_zone);
+  });
 }
 
 async function playLand(card) {
   const res = await send("POST", gamePath("actions/play-land"), { player: you(), card_id: card.id });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
-  await poll();
+  await refresh();
 }
 
 async function fireSpecial(card, keyword) {
@@ -517,7 +887,7 @@ async function fireSpecial(card, keyword) {
   const res = await send("POST", gamePath(`actions/${keyword}`), { player: you(), card_id: card.id });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
-  await poll();
+  await refresh();
 }
 
 async function cycle(card) {
@@ -525,10 +895,11 @@ async function cycle(card) {
   const res = await send("POST", gamePath("actions/cycle"), { player: you(), card_id: card.id });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
-  await poll();
+  await refresh();
 }
 
-async function onPermanent(card, event) {
+/** Exported for `tests/test_ui_app.py` only - see `onHandCard` above. */
+export async function onPermanent(card, event) {
   const app = store.get();
   const state = app.state;
   const plan = planPermanentClick(card, app, state);
@@ -540,8 +911,10 @@ async function onPermanent(card, event) {
     if (plan.reason) toast(plan.reason);
     return;
   }
-  if (plan.kind === "activate") return beginActivate(card, plan.abilityIndex);
-  return openCardMenu(card, event, M.abilityMenuItems(plan), (key) => {
+  // `activate` and `menu` alike: `abilityMenuItems` reads the one ability an
+  // `activate` plan names off the card, so a one-ability permanent opens the
+  // same menu with one item in it rather than activating on the click.
+  return openActionMenu(card, event, M.abilityMenuItems(plan, card), (key) => {
     if (key === "crew") return beginCrew(card);
     if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
   });
@@ -743,7 +1116,7 @@ async function confirmAttack() {
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
-  await poll();
+  await refresh();
 }
 
 /** "No attack" - CR 508.1a's "if any" makes declaring nobody a real, legal
@@ -766,7 +1139,7 @@ export async function declareNoAttackers() {
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
-  await poll();
+  await refresh();
 }
 
 let pendingBlocker = null;
@@ -790,7 +1163,7 @@ async function confirmBlocks() {
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
-  await poll();
+  await refresh();
 }
 
 /** "No blocks" - `declareNoAttackers`'s sibling for CR 509.1a's own "if
@@ -808,7 +1181,7 @@ export async function declareNoBlockers() {
   if (res === null) return;
   if (res.allowed === false) return toast(res.reason);
   store.set({ combatDraft: {} });
-  await poll();
+  await refresh();
 }
 
 // ---- priority ------------------------------------------------------------
@@ -850,7 +1223,7 @@ async function advanceStep() {
   const res = await send("POST", withUid(gamePath("advance"), store.get().uid), { player: you() });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
-  await poll();
+  await refresh();
 }
 
 /** `pass` is one priority, given up, and the board comes back (CR 117.3d).
@@ -860,7 +1233,7 @@ async function onVerb(verb) {
   const app = store.get();
   if (verb === "pass") {
     await passOnce();
-    return poll();
+    return refresh();
   }
   store.set({ run: P.startRun(verb, app.state) });
   await tickRun();
@@ -879,7 +1252,7 @@ export async function tickRun() {
   // below, because that value is stale for the whole freeze (`commands.py`
   // rolls the committed game back to before the paused attempt), not just
   // for this one case. `declareNoAttackers` submits `{attackers: []}` and
-  // itself calls `poll()`, which is what picks the run back up (its own
+  // itself calls `refresh()`, which is what picks the run back up (its own
   // nested `tickRun` call): this is not a stop, so the run stays armed.
   if (P.ownUnansweredAttackDeclaration(app.state, app.stops)) {
     await declareNoAttackers();
@@ -955,7 +1328,7 @@ async function decide(answer) {
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
   store.set({ decisionDraft: {} });
-  await poll();
+  await refresh();
 }
 
 async function onPregame(path, body) {
@@ -963,7 +1336,7 @@ async function onPregame(path, body) {
   const res = await send("POST", withUid(gamePath(`pregame/${path}`), app.uid), body);
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
-  await poll();
+  await refresh();
 }
 
 function toast(text) {
@@ -1015,7 +1388,7 @@ async function reportProblem(text) {
   const res = await send("POST", gamePath("report"), { player: you(), text });
   if (res === null) return;
   if (res.allowed === false) toast(res.reason);
-  await poll();
+  await refresh();
 }
 
 async function passForAiSeat(aiPlayer) {
@@ -1023,7 +1396,7 @@ async function passForAiSeat(aiPlayer) {
   if (!aiPlayer || !app.aiUid) return;
   const res = await send("POST", gamePath("actions/pass-priority"), { player: aiPlayer });
   if (res !== null && res.allowed === false) toast(`pass for ${aiPlayer} refused: ${res.reason}`);
-  await poll();
+  await refresh();
 }
 
 /** "Lobby" in the topbar: back to the lobby, but the game itself is left
@@ -1174,6 +1547,9 @@ export async function seatFromServer(gameId) {
 }
 
 async function main() {
+  // Before anything mounts: no re-render may replace a button between the
+  // player's mousedown and the click it is about to become (`ui/store.js`).
+  installPressGuard(store);
   await loadConfig();
   store.set({ symbols: await loadSymbols(api, apiBase()) });
   // The post-game review, mounted before the lobby because the lobby's
@@ -1293,7 +1669,7 @@ async function main() {
       store.set({ concedeArmed: false });
       const res = await send("POST", gamePath("actions/concede"), { player: you() });
       if (res === null) return;
-      await poll();
+      await refresh();
     },
     onPregame,
     onAdvance: advanceStep,

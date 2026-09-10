@@ -987,6 +987,84 @@ def test_recent_records_is_empty_for_a_game_with_none(repo: GameRepository) -> N
 
 
 # ---------------------------------------------------------------------------
+# records_since / max_record_seq - the bounded read `GET .../log` resumes from
+# ---------------------------------------------------------------------------
+
+
+def test_records_since_returns_only_newer_rows_oldest_first(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    for n in range(5):
+        repo.append_record(game_id, {"action": f"a{n}"})
+
+    tail = repo.records_since(game_id, 3)
+
+    assert [row["seq"] for row in tail] == [4, 5]
+    assert [row["payload"]["action"] for row in tail] == ["a3", "a4"]
+
+
+def test_records_since_zero_is_the_whole_ledger(repo: GameRepository) -> None:
+    """`since=0` is what a first-ever poll sends, and it must mean "every
+    row" - the same answer `records()` gives."""
+    game_id = repo.create(_real_game())
+    for n in range(4):
+        repo.append_record(game_id, {"action": f"a{n}"})
+
+    assert repo.records_since(game_id, 0) == repo.records(game_id)
+
+
+def test_records_since_the_end_is_empty(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.append_record(game_id, {"action": "only"})
+
+    assert repo.records_since(game_id, 1) == []
+    assert repo.records_since(game_id, 99) == []
+
+
+def test_records_since_reads_only_the_tail(repo: GameRepository) -> None:
+    """The property the log route depends on: cost tracks the tail asked
+    for, never the ledger it sits at the end of."""
+    game_id = repo.create(_real_game())
+    sizes = []
+    for batch in range(4):
+        for n in range(50):
+            repo.append_record(game_id, {"action": f"b{batch}-{n}"})
+        sizes.append(len(repo.records_since(game_id, repo.max_record_seq(game_id) - 20)))
+
+    assert sizes == [20, 20, 20, 20]
+    assert len(repo.records(game_id)) == 200, "the ledger really did grow underneath it"
+
+
+def test_records_since_is_empty_for_a_game_with_none(repo: GameRepository) -> None:
+    assert repo.records_since("no-such-game", 0) == []
+
+
+def test_max_record_seq_is_the_highest_seq_recorded(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    assert repo.max_record_seq(game_id) == 0
+
+    for n in range(3):
+        assert repo.append_record(game_id, {"action": f"a{n}"}) == repo.max_record_seq(game_id)
+
+    assert repo.max_record_seq(game_id) == 3
+
+
+def test_max_record_seq_is_zero_for_a_game_with_none(repo: GameRepository) -> None:
+    assert repo.max_record_seq("no-such-game") == 0
+
+
+def test_max_record_seq_is_per_game(repo: GameRepository) -> None:
+    game_a = repo.create(_real_game())
+    game_b = repo.create(_real_game())
+    for n in range(3):
+        repo.append_record(game_a, {"action": f"a{n}"})
+    repo.append_record(game_b, {"action": "b0"})
+
+    assert repo.max_record_seq(game_a) == 3
+    assert repo.max_record_seq(game_b) == 1
+
+
+# ---------------------------------------------------------------------------
 # delete is soft: the row and its state survive for review
 # ---------------------------------------------------------------------------
 

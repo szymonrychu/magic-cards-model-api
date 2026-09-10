@@ -226,15 +226,43 @@ _UNRECORDED_DEFAULTS: dict[str, Any] = {
 }
 
 
+def _entry(row: dict[str, Any]) -> dict[str, Any]:
+    """One `records` row as a well-formed entry - the `_UNRECORDED_DEFAULTS`
+    fill-in every reader of this module depends on, in one place."""
+    return {**_UNRECORDED_DEFAULTS, **row["payload"], "seq": row["seq"]}
+
+
 def entries(game_id: str) -> list[dict[str, Any]]:
-    """Every entry recorded for this game, oldest first."""
+    """Every entry recorded for this game, oldest first.
+
+    The whole ledger, and priced like it: each row carries a full snapshot
+    and the acting seat's legal-action enumeration. This is right for a
+    review, which runs once when a game is over; a caller that only wants
+    what is new wants `entries_since` instead."""
     from .store import store  # lazy: audit imports nothing of the app at load
 
-    entries_: list[dict[str, Any]] = []
-    for row in store.records(game_id):
-        entry = {**_UNRECORDED_DEFAULTS, **row["payload"], "seq": row["seq"]}
-        entries_.append(entry)
-    return entries_
+    return [_entry(row) for row in store.records(game_id)]
+
+
+def entries_since(game_id: str, since: int) -> list[dict[str, Any]]:
+    """The entries recorded for this game after `seq` `since`, oldest first
+    - the whole ledger for `since=0`, and empty once the caller is level with
+    it. Reads only the rows it returns; see `GameRepository.records_since`."""
+    from .store import store  # lazy: audit imports nothing of the app at load
+
+    return [_entry(row) for row in store.records_since(game_id, since)]
+
+
+def last_seq(game_id: str) -> int:
+    """The `seq` of this game's newest entry, `0` when it has none.
+
+    The watermark a polling reader resumes from, answered without reading a
+    single payload - which is what lets `entries_since` skip the rows the
+    caller already has without also losing the ability to tell it where the
+    ledger has got to."""
+    from .store import store  # lazy: audit imports nothing of the app at load
+
+    return store.max_record_seq(game_id)
 
 
 def _loud_block(entry: dict[str, Any]) -> str:

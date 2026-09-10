@@ -28,6 +28,7 @@ that accidentally exercises a network path fails loudly rather than hanging.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -805,7 +806,13 @@ def base_state(**overrides: Any) -> dict:
 # -- planHandCardClick --------------------------------------------------------
 
 
-def test_a_land_with_nothing_else_plays_on_one_click() -> None:
+def test_a_land_with_nothing_else_still_plans_a_plain_land_play() -> None:
+    """T5 changed what the click *does*, not what it means: the plan is still
+    the bare `{kind: "land"}` it always was - no menu, no specials, nothing
+    to choose - and `onHandCard` turns that into a one-option confirm rather
+    than an immediate `playLand`. The surface half is
+    `test_playing_a_land_opens_a_one_option_confirm_and_fires_nothing_yet`
+    below; this stays the planner's own contract."""
     plan = run_app("m.planHandCardClick(land, app)", land=MOUNTAIN, app=base_app())
     assert plan == {"kind": "land"}
 
@@ -1631,8 +1638,11 @@ def _fake_dom_body() -> str:
           this.attrs = {};
           this.style = {};
           this.hidden = true;
+          // A real `<button>` has this property, so `dom.js`'s `h` assigns it
+          // rather than falling back to `setAttribute` - and `showPopover`'s
+          // own `optionButtons` reads it to skip a disabled option.
+          this.disabled = false;
           this.listeners = {};
-          this.textContent = "";
           this.classes = new Set();
           this.classList = {
             add: (c) => this.classes.add(c),
@@ -1643,7 +1653,15 @@ def _fake_dom_body() -> str:
         set className(v) { this.classes = new Set(String(v).split(/\\s+/).filter(Boolean)); }
         get className() { return [...this.classes].join(" "); }
         appendChild(c) { this.children.push(c); c.parentNode = this; return c; }
-        removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
+        // A real `removeChild` un-parents the child - which is the whole
+        // difference between a node that is still in the page and one the
+        // player's press has nothing left to land on, so the fake cannot
+        // leave a stale `parentNode` behind either.
+        removeChild(c) {
+          this.children = this.children.filter((x) => x !== c);
+          if (c.parentNode === this) c.parentNode = null;
+          return c;
+        }
         setAttribute(k, v) { this.attrs[k] = v; }
         addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
         removeEventListener() {}
@@ -1651,25 +1669,116 @@ def _fake_dom_body() -> str:
           if (node === this) return true;
           return this.children.some((c) => c.contains && c.contains(node));
         }
-        focus() {}
+        focus() { globalThis.document.activeElement = this; }
         getBoundingClientRect() {
           return { left: 10, top: 10, right: 60, bottom: 40, width: 50, height: 30 };
         }
         get firstChild() { return this.children[0] || null; }
         get childNodes() { return this.children; }
-        get label() { return this.children.map((c) => c.textContent || "").join(""); }
-        click() { for (const fn of this.listeners.click || []) fn({ target: this }); }
+        // Real `textContent`: reading it aggregates the subtree, and writing
+        // it REPLACES the subtree with one text node. `dom.js`'s `setText`
+        // writes it, so a fake that kept it as a plain property would take
+        // the write and go on rendering the old text - the harness lying
+        // about a redraw it was built to observe.
+        get textContent() {
+          return this.children
+            .map((c) => (c.textContent === undefined ? "" : c.textContent))
+            .join("");
+        }
+        set textContent(v) {
+          const text = v === null || v === undefined ? "" : String(v);
+          this.children = [];
+          if (text !== "") {
+            this.appendChild({ nodeType: 3, textContent: text, contains: () => false });
+          }
+        }
+        // The option's own label, sublabel excluded: its direct text, not
+        // the `.hint` span's - `deepText` below is the whole of what the
+        // player reads.
+        get label() {
+          return this.children.filter((c) => c.nodeType === 3).map((c) => c.textContent).join("");
+        }
+        // The whole rendered text, sublabel span included - what a player
+        // actually reads on the option.
+        get deepText() {
+          const walk = (n) =>
+            n.nodeType === 3 ? n.textContent : (n.children || []).map(walk).join("");
+          return walk(this);
+        }
+        // Whether this node is still reachable from something the page
+        // itself hands out - the popover, the toast, a node a test put in
+        // `__nodes`. A child that its parent has since dropped is detached
+        // even if the parent is not, which is exactly what `clear(el)` does
+        // to every option of a menu it is about to rebuild.
+        get attached() {
+          let node = this;
+          while (node.parentNode) {
+            if (!node.parentNode.children.includes(node)) return false;
+            node = node.parentNode;
+          }
+          return isRoot(node);
+        }
+        // Real dispatch, not "call this node's handlers". A browser sends
+        // `click` to the nearest inclusive ancestor common to the mousedown
+        // and the mouseup target, so a node detached between the two never
+        // sees the event at all and the press is silently eaten - the defect
+        // a fake that just invoked `this.listeners.click` could not observe,
+        // and the reason 46 tests missed it. From the node the event really
+        // lands on, it bubbles, as it does in a page.
+        click() {
+          let target = this;
+          while (target && !target.attached) target = target.parentNode || null;
+          if (!target) return;
+          for (let node = target; node; node = node.parentNode) {
+            for (const fn of node.listeners.click || []) fn({ target, currentTarget: node });
+          }
+        }
       }
       const popover = new El("div");
       globalThis.__popover = popover;
+      const toastEl = new El("div");
+      globalThis.__toast = toastEl;
+      // A test that needs the page to hold more than the popover and the
+      // toast - an open `#modal`, a board node a `[data-key]` lookup has to
+      // find - puts it here under its own selector. Everything else answers
+      // exactly what it always did.
+      globalThis.__nodes = {};
+      // The page's own roots: a node is "in the tree" exactly when walking
+      // its parents reaches one of these. Nothing else counts - an `anchor`
+      // a test built with `new El(...)` and never attached is as detached as
+      // a button a redraw has thrown away.
+      function isRoot(node) {
+        return (
+          node === popover ||
+          node === toastEl ||
+          Object.values(globalThis.__nodes).includes(node)
+        );
+      }
       globalThis.document = {
         createElement: (t) => new El(t),
         createTextNode: (s) => ({ nodeType: 3, textContent: s, contains: () => false }),
-        querySelector: (sel) => (sel === "#popover" ? popover : null),
+        querySelector: (sel) =>
+          globalThis.__nodes[sel] ||
+          (sel === "#popover" ? popover : sel === "#toast" ? toastEl : null),
         addEventListener() {},
         removeEventListener() {},
         activeElement: null,
-        body: null,
+        // `showInFlight` puts `.busy` here for as long as a request is out;
+        // `body.classList` is what `ui/style.css`'s in-flight rules hang off,
+        // so a test can read which of them would be in force.
+        body: {
+          classList: {
+            set: new Set(),
+            add: (c) => document.body.classList.set.add(c),
+            remove: (c) => document.body.classList.set.delete(c),
+            contains: (c) => document.body.classList.set.has(c),
+            toggle: (c, on) =>
+              on ? document.body.classList.set.add(c) : document.body.classList.set.delete(c),
+          },
+          setAttribute() {},
+          removeAttribute() {},
+          focus() { globalThis.document.activeElement = null; },
+        },
       };
       globalThis.window = {
         innerWidth: 1024,
@@ -1678,11 +1787,23 @@ def _fake_dom_body() -> str:
         removeEventListener() {},
       };
       globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
         const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
-        globalThis.__calls.push({ method: opts ? opts.method : "GET", path, body });
+        globalThis.__calls.push({ method, path, body });
+        // A test that needs one route to answer something in particular (or
+        // to answer late, or never) sets `__respond`; anything it declines
+        // gets the same bland success every call got before it existed.
+        const custom = globalThis.__respond && globalThis.__respond(method, path, body);
+        if (custom) return custom;
         return Promise.resolve({ ok: true, json: async () => ({ allowed: true, tapped: [] }) });
       };
       const options = () => globalThis.__popover.children.filter((c) => c.classes.has("option"));
+      // Let every already-resolved promise in the chain run. A click handler
+      // is not awaited by the DOM, so the flow it starts finishes on its own
+      // turns of the loop.
+      const settle = async (turns) => {
+        for (let i = 0; i < (turns || 30); i += 1) await new Promise((r) => setTimeout(r, 0));
+      };
     """
 
 
@@ -1849,3 +1970,1395 @@ def test_a_source_that_adds_several_mana_of_one_colour_asks_only_which_colour() 
     number it cannot see."""
     plan = run_app("m.planPin(land, action)", land=SHANG_CHI, action=pinning_action())
     assert plan == {"kind": "colour", "abilityIndex": None, "colors": ["W", "U", "B", "R", "G"]}
+
+
+# -- a click that registers must say so before the server answers -----------
+#
+# T2, the second half of the reported sluggishness. The click that DOES
+# register gave the player nothing back for 0.4-2.4s: no spinner, no disable,
+# no double-submit guard, and a post-action `poll()` that was frequently a
+# silent no-op (it returns immediately whenever `app.polling` is set, and the
+# background poll holding that flag then discarded its own reads through the
+# `mutations` guard). Indistinguishable from a lost click, which is what
+# provoked the second one - and that second click was a genuine, unguarded
+# double submit.
+
+
+def _click_body() -> str:
+    """A fake DOM and a `fetch` stub with two gates.
+
+    `__holdPost` keeps every POST outstanding until `__releasePost()` - the
+    window a click spends waiting on the server, where the in-flight state
+    has to be visible and the second click has to be swallowed. `__holdLog`
+    does the same for `/log`, which is what a background poll sits in
+    (`_stale_poll_body` above, and `poll()`'s own comment on why one cycle
+    outlives `POLL_MS` late-game).
+
+    A POST moves the board, exactly as the server would: the board read
+    answers `bob` from then on, so a refresh that actually happened is
+    visible in the store and one that silently no-op'd is not."""
+    return """
+      globalThis.__calls = [];
+      globalThis.__toast = { textContent: "", hidden: true };
+      globalThis.__classes = new Set();
+      globalThis.document = {
+        body: {
+          classList: {
+            toggle: (name, on) => {
+              if (on) globalThis.__classes.add(name);
+              else globalThis.__classes.delete(name);
+            },
+          },
+          setAttribute: () => {},
+          removeAttribute: () => {},
+        },
+        querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+      };
+      const board = (holder) => ({
+        you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+        active_player: "bob", priority_holder: holder, battlefield: [],
+        hands: { alice: [] }, stack: [], combat: { attacks: [] },
+        winner: null, drawn: false, pregame: null,
+      });
+      globalThis.__board = board;
+      globalThis.__priority = "alice";
+      globalThis.__holdPost = false;
+      globalThis.__holdLog = false;
+      let releasePost;
+      let releaseLog;
+      const postGate = new Promise((r) => { releasePost = r; });
+      const logGate = new Promise((r) => { releaseLog = r; });
+      globalThis.__releasePost = () => releasePost();
+      globalThis.__releaseLog = () => releaseLog();
+      globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
+        globalThis.__calls.push({ method, path });
+        if (method === "POST") {
+          globalThis.__priority = "bob";
+          const answer = { ok: true, json: async () => ({ allowed: true }) };
+          return globalThis.__holdPost ? postGate.then(() => answer) : Promise.resolve(answer);
+        }
+        const log = { ok: true, json: async () => ({ log: [], last_seq: 1 }) };
+        if (path.includes("/log")) {
+          return globalThis.__holdLog ? logGate.then(() => log) : Promise.resolve(log);
+        }
+        return Promise.resolve({ ok: true, json: async () => board(globalThis.__priority) });
+      };
+      const seated = () => m.store.set({
+        gameId: "g1", uid: "u1", run: null, busy: 0,
+        stops: { mine: [], theirs: [], onStack: true },
+        state: globalThis.__board("alice"),
+        log: { entries: [], lastSeq: 0 },
+      });
+    """
+
+
+def test_an_action_shows_in_flight_state_before_the_server_answers() -> None:
+    """The whole point: the feedback is on the click, not on the round trip.
+    `send()` is the seam every mutating request in `app.js` goes through, so
+    marking in-flight there covers `playLand`, `fireSpecial`, `cycle`,
+    `advanceStep`, `decide`, `onPregame`, `concede`, `fire` and the pass
+    verbs at once rather than nine hand-wired spinners."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__holdPost = true;
+          const inFlight = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          const during = { busy: m.store.get().busy, marked: globalThis.__classes.has("busy") };
+          globalThis.__releasePost();
+          await inFlight;
+          const after = { busy: m.store.get().busy, marked: globalThis.__classes.has("busy") };
+          return { during, after };
+        })()
+        """
+    )
+    assert result["during"] == {"busy": 1, "marked": True}, (
+        "the click gave the player nothing back until the server answered"
+    )
+    assert result["after"] == {"busy": 0, "marked": False}
+
+
+def test_a_second_click_while_the_same_action_is_outstanding_sends_nothing() -> None:
+    """The reported symptom's own second half: the instinctive second click
+    on an unresponsive-looking control was a real, unguarded double submit."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__holdPost = true;
+          const first = m.declareNoBlockers();
+          const second = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          globalThis.__releasePost();
+          await Promise.all([first, second]);
+          return globalThis.__calls.filter(
+            (c) => c.method === "POST" && c.path.includes("declare-blockers")
+          ).length;
+        })()
+        """
+    )
+    assert result == 1, "the same action was submitted twice while one was outstanding"
+
+
+def test_the_same_action_can_be_sent_again_once_the_first_has_answered() -> None:
+    """The guard is per-request-in-flight, never a latch: a player who really
+    does want to declare no blockers twice in one game must be able to."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          await m.declareNoBlockers();
+          await m.declareNoBlockers();
+          return globalThis.__calls.filter(
+            (c) => c.method === "POST" && c.path.includes("declare-blockers")
+          ).length;
+        })()
+        """
+    )
+    assert result == 2
+
+
+def test_an_action_refreshes_the_board_even_with_a_poll_already_in_flight() -> None:
+    """`poll()` returns immediately when `app.polling` is set, so an action's
+    own `await poll()` was a silent no-op whenever a background poll was in
+    flight - and that background poll then discarded its own reads through
+    the `mutations` guard, leaving the board inert for up to a full tick
+    after a click that had already succeeded. The action's refresh has to be
+    a read of its own, not a request to a poll that is already busy."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__holdLog = true;
+          const inFlight = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          await m.declareNoBlockers();
+          const after = m.store.get().state.priority_holder;
+          globalThis.__releaseLog();
+          await inFlight;
+          return after;
+        })()
+        """
+    )
+    assert result == "bob", (
+        "the board still showed the pre-action world after the action had succeeded"
+    )
+
+
+def test_the_older_of_two_concurrent_board_reads_never_lands_on_the_newer() -> None:
+    """`refresh()` sets no `polling` flag on purpose, so an action's own board
+    read and a background poll's are routinely outstanding together. The
+    `mutations` guard separates reads issued before one of this seat's
+    requests from reads issued after it, and cannot order two that were both
+    issued after the same one - both pass it, and whichever is ANSWERED last
+    wins, which is not the same thing as whichever is newest.
+
+    Here the action's read is issued first and answered last, and its board
+    is a turn behind the poll's. Publishing it puts the board backwards for a
+    tick, and hands `tickRun()` a world that has already moved - the same
+    failure the `mutations` guard exists to prevent, one layer down."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          const original = globalThis.fetch;
+          let releaseFirst;
+          const firstGate = new Promise((r) => { releaseFirst = r; });
+          let boards = 0;
+          globalThis.fetch = (path, opts) => {
+            const method = opts ? opts.method : "GET";
+            if (method === "GET" && !path.includes("/log")) {
+              boards += 1;
+              const which = boards;
+              const answer = {
+                ok: true,
+                json: async () => ({
+                  ...globalThis.__board("bob"),
+                  turn_number: which === 1 ? 4 : 5,
+                }),
+              };
+              // The first board read issued is the one held open, until the
+              // read issued behind it has already been answered and written.
+              return which === 1 ? firstGate.then(() => answer) : Promise.resolve(answer);
+            }
+            return original(path, opts);
+          };
+          const acting = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          const polling = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          const beforeRelease = m.store.get().state.turn_number;
+          releaseFirst();
+          await Promise.all([acting, polling]);
+          return { boards, beforeRelease, after: m.store.get().state.turn_number };
+        })()
+        """
+    )
+    assert result["boards"] == 2, f"the two reads never overlapped: {result}"
+    assert result["beforeRelease"] == 5, "the later read's board never landed"
+    assert result["after"] == 5, "a board read answered late put the board back a turn"
+
+
+def test_a_refresh_read_that_predates_a_later_action_is_still_discarded() -> None:
+    """The `mutations` guard is load-bearing (MEMORY.md, 2026-09-08) and the
+    action's own refresh is subject to it exactly as `poll()` is: a read that
+    spans another of this seat's requests describes a board that no longer
+    exists, whoever issued it."""
+    result = run_app(
+        _click_body()
+        + """
+        (async () => {
+          seated();
+          m.store.set({ state: globalThis.__board("carol") });
+          globalThis.__holdLog = true;
+          // The refresh's board read is answered while a *second* request of
+          // this seat's own is outstanding, so it must never be published.
+          const original = globalThis.fetch;
+          let releaseState;
+          const stateGate = new Promise((r) => { releaseState = r; });
+          globalThis.fetch = (path, opts) => {
+            const method = opts ? opts.method : "GET";
+            if (method === "GET" && !path.includes("/log")) {
+              return stateGate.then(() => original(path, opts));
+            }
+            return original(path, opts);
+          };
+          const acting = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          await m.send("POST", m.gamePath("actions/pass-priority"), { player: "alice" });
+          releaseState();
+          await acting;
+          return m.store.get().state.priority_holder;
+        })()
+        """
+    )
+    assert result == "carol", "a board read taken across a later action was published anyway"
+
+
+def test_poll_reads_the_board_and_the_log_concurrently() -> None:
+    """`app.js`'s own comment says one poll cycle already outgrows `POLL_MS`
+    late-game and names `/log` as the slow half. The two reads are
+    independent, so serialising them spends the sum of two latencies where
+    the maximum would do - and every extra millisecond there is a
+    millisecond the board is out of date after a click."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        let logIssued = false;
+        let openTheBoardRead;
+        const boardGate = new Promise((r) => { openTheBoardRead = r; });
+        globalThis.fetch = (path, opts) => {
+          const method = opts ? opts.method : "GET";
+          if (path.includes("/log")) {
+            logIssued = true;
+            openTheBoardRead();
+            return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 1 }) });
+          }
+          // The board read answers only once the log read has been issued -
+          // or, so a serial implementation fails rather than hangs, after a
+          // short wait. `__concurrent` records which of the two happened.
+          return Promise.race([boardGate, new Promise((r) => setTimeout(r, 250))]).then(() => ({
+            ok: true,
+            json: async () => {
+              globalThis.__concurrent = logIssued;
+              return {
+                you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+                active_player: "bob", priority_holder: "bob", battlefield: [],
+                hands: { alice: [] }, stack: [], combat: { attacks: [] },
+                winner: null, drawn: false, pregame: null,
+              };
+            },
+          }));
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: null, log: { entries: [], lastSeq: 0 },
+          });
+          await m.poll();
+          return globalThis.__concurrent;
+        })()
+        """
+    )
+    assert result is True, "poll() waited for the board read before it issued the log read"
+
+
+def test_a_polls_log_read_is_dropped_once_a_refresh_has_advanced_the_log() -> None:
+    """`refresh()` sets no `polling` flag, so an action's own log read and a
+    background poll's log read are routinely in flight together - `/log` runs
+    0.4-2.4s against a 1200ms tick. Both were issued with the same `since`,
+    so whichever lands second carries a second copy of the same entries.
+    `refresh()` has had the `lastSeq` guard for exactly that since it was
+    written; `poll()` had none, and `patchChildren` builds its `existing` map
+    before it creates anything - a key repeated inside one items list becomes
+    a second node that the next patch can no longer see, so the duplicated
+    lines stay on the screen for good."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "declare_blockers", turn_number: 4,
+          active_player: "bob", priority_holder: "bob", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        const ENTRIES = [{ seq: 1, text: "one" }, { seq: 2, text: "two" }];
+        let logCalls = 0;
+        let openTheActionsLog;
+        const actionsLog = new Promise((r) => { openTheActionsLog = r; });
+        let releaseThePollsLog;
+        const pollsLog = new Promise((r) => { releaseThePollsLog = r; });
+        globalThis.__releaseThePollsLog = () => releaseThePollsLog();
+        globalThis.fetch = (path, opts) => {
+          const method = opts ? opts.method : "GET";
+          if (method === "POST") {
+            return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+          }
+          if (path.includes("/log")) {
+            const since = Number(new URL(path, "http://t").searchParams.get("since"));
+            const log = ENTRIES.filter((e) => e.seq > since);
+            const payload = { log, last_seq: log.length ? log[log.length - 1].seq : since };
+            logCalls += 1;
+            // The action's own read is held until the poll behind it has
+            // issued its read - that is the whole window, and it is the
+            // ordinary one: the poll reads `lastSeq` while the earlier read
+            // that will advance it is still outstanding, so both ask for the
+            // same entries.
+            if (logCalls === 1) {
+              return actionsLog.then(() => ({ ok: true, json: async () => payload }));
+            }
+            openTheActionsLog();
+            return pollsLog.then(() => ({ ok: true, json: async () => payload }));
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          const acting = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          const polling = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          globalThis.__releaseThePollsLog();
+          await Promise.all([acting, polling]);
+          return m.store.get().log;
+        })()
+        """
+    )
+    assert [e["seq"] for e in result["entries"]] == [1, 2], (
+        f"the poll appended entries the action's own refresh had already written: {result}"
+    )
+    assert result["lastSeq"] == 2
+
+
+def test_nothing_the_player_can_click_is_made_inert_while_a_request_is_out() -> None:
+    """`pointer-events: none` on a control is the same lost click this whole
+    branch exists to remove, arrived at from the other side: a player whose
+    press lands on an inert button gets nothing, for the whole 0.4-2.4s.
+
+    It bought nothing either. The real double-submit guard is `send()`'s
+    `inFlight` set, keyed on method+path+body, which suppresses the identical
+    resubmission and nothing else; the CSS could not tell that apart from a
+    *different* action (cancelling a cast, un-picking a mode, picking a
+    second target), so it blocked both. The dimming stays - it is honest
+    feedback that a submission is out - and the popover drops out of the rule
+    entirely, because a menu opened after the submission is not part of it.
+
+    A stylesheet has no behaviour to drive under Node (`.popover button`
+    would still be clickable in every test in this file, which is exactly why
+    46 of them missed the defect), so this pins the declaration itself. The
+    behavioural half - that a read or a probe never marks the page busy in
+    the first place - is `test_a_read_and_a_probe_never_mark_the_page_busy`
+    below."""
+    css = (Path(__file__).resolve().parents[1] / "ui" / "style.css").read_text()
+    rules = re.findall(r"^(body\.busy[^{]*button[^{]*)\{(.*?)^\}", css, re.MULTILINE | re.DOTALL)
+    assert rules, "the in-flight feedback on the ribbon's buttons is gone entirely"
+    for selector, body in rules:
+        assert "pointer-events" not in body, f"{selector.strip()} makes a control inert"
+        assert ".popover" not in selector, "an open menu is never part of the request in flight"
+
+
+def test_the_toast_never_intercepts_a_click() -> None:
+    """`.toast` is text-only - every call site passes a string - and it sits
+    `position: fixed` over the bottom centre of the viewport for 4000ms on
+    every refusal, which is exactly where `#my-hand` and `#you-info` are. Its
+    sibling `.card-preview` has carried `pointer-events: none` all along;
+    this brings the two into step.
+
+    A style rule has no behaviour to drive under Node, so this pins the
+    declaration in the stylesheet itself rather than claiming a red-green
+    cycle over a running page."""
+    css = (Path(__file__).resolve().parents[1] / "ui" / "style.css").read_text()
+    rule = re.search(r"^\.toast \{(.*?)^\}", css, re.MULTILINE | re.DOTALL)
+    assert rule is not None, ".toast rule not found in ui/style.css"
+    assert "pointer-events: none;" in rule.group(1)
+
+
+# -- T5: every action click opens the confirm, and no selection click does ----
+#
+# The planners above say what a click *means*; this section drives the real
+# click handlers - `onHandCard`/`onPermanent`, through the real
+# `render/ribbon.js` `showPopover` against the same fake DOM the pin menus
+# use - and asserts what a click actually *opens*. Two halves, and they are
+# the whole point of the change:
+#
+#   * A click that ACTS opens the anchored picker first, single option and
+#     all, and fires nothing until that option is picked. The one-option
+#     popover IS the confirm: no second component, and no Cancel item, since
+#     `showPopover` already leaves on Escape, on a click away, and on a pick.
+#   * A click that SELECTS - a target, a mana source mid-cast, an attacker or
+#     blocker into the combat draft - is untouched and opens nothing. A
+#     confirm on a target pick would make a three-target spell a nine-click
+#     affair, and a basic land pinning with no menu at all is a standing
+#     commitment (`ui/app.js`'s own `planPin` note, MEMORY.md).
+#
+# The dialog is enriched from `GET .../legal-actions` in parallel: it opens
+# from local state on the click, and the engine's own `affordable` /
+# `unaffordable_reason` is folded into the menu already on screen when the
+# answer lands. Never on the poll - per-card affordance work is banned from
+# the 1.2s tick.
+
+OPPONENT_BEAR = {
+    "id": "ob1",
+    "name": "Grizzly Bears",
+    "type_line": "Creature - Bear",
+    "zone": "battlefield",
+    "controller": "bob",
+    "abilities": [],
+}
+
+
+def _click_state(**overrides: Any) -> dict:
+    return {
+        "you": "alice",
+        "players": [{"username": "alice"}, {"username": "bob"}],
+        "pending_decision": None,
+        "step": "precombat_main",
+        "active_player": "alice",
+        "priority_holder": "alice",
+        "battlefield": [],
+        "hands": {"alice": []},
+        "stack": [],
+        **overrides,
+    }
+
+
+def _click_setup() -> str:
+    """Seat this tab at alice's seat of game `g1` with nothing in flight."""
+    return """
+      m.store.set({
+        gameId: "g1", uid: "u1", state,
+        stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
+        action: null, combatDraft: {},
+      });
+      const anchor = new El("div");
+    """
+
+
+def _click(expression: str, **bindings: Any) -> Any:
+    body = _fake_dom_body() + "(async () => {" + _click_setup() + expression + "})()"
+    return run_app(body, **bindings)
+
+
+def test_playing_a_land_opens_a_one_option_confirm_and_fires_nothing_yet() -> None:
+    """`planHandCardClick` still answers `{kind: "land"}`; what used to be an
+    immediate `POST actions/play-land` is now one option in the same anchored
+    menu a cycling land has always opened, and the land is played when it is
+    picked."""
+    result = _click(
+        """
+          const clicked = m.onHandCard(land, { currentTarget: anchor });
+          const opened = {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            calls: globalThis.__calls.map((c) => `${c.method} ${c.path}`),
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [MOUNTAIN]}),
+        land=MOUNTAIN,
+    )
+    assert result["opened"]["hidden"] is False, "the click must open the confirm"
+    assert result["opened"]["labels"] == ["Play"]
+    opened_calls = result["opened"]["calls"]
+    assert not [c for c in opened_calls if c.startswith("POST")], opened_calls
+    plays = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/play-land" in c["path"]
+    ]
+    assert len(plays) == 1, result["calls"]
+    assert plays[0]["body"] == {"player": "alice", "card_id": "land1"}
+
+
+def test_casting_from_hand_opens_a_one_option_confirm_before_the_announcement() -> None:
+    """Kozilek's Command: the click used to begin the announcement outright.
+    It opens `Cast` first, and only picking it stages the announcement in the
+    ribbon (`store.action`)."""
+    result = _click(
+        """
+          const clicked = m.onHandCard(spell, { currentTarget: anchor });
+          const opened = {
+            labels: options().map((o) => o.label),
+            action: m.store.get().action,
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, action: m.store.get().action, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result["opened"]["labels"] == ["Cast"]
+    assert result["opened"]["action"] is None, "nothing may begin before the confirm is picked"
+    assert result["action"]["cardId"] == "kc"
+    assert result["action"]["kind"] == "cast"
+
+
+def test_a_single_ability_permanent_opens_a_confirm_naming_that_ability() -> None:
+    """`{kind: "activate", abilityIndex: 0}` used to reach `beginActivate`
+    directly. The confirm says which ability it is about - read off the card,
+    because the plan carries no list of its own - which is what an "are you
+    sure?" box could not have said."""
+    result = _click(
+        """
+          const clicked = m.onPermanent(pw, { currentTarget: anchor });
+          const opened = {
+            labels: options().map((o) => o.label),
+            calls: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, calls: globalThis.__calls };
+        """,
+        state=_click_state(battlefield=[ONE_ACTIVATED_ABILITY_PW]),
+        pw=ONE_ACTIVATED_ABILITY_PW,
+    )
+    assert result["opened"]["labels"] == ["+1: draw a card"]
+    assert result["opened"]["calls"] == 0, "nothing may be activated before the confirm is picked"
+    activations = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/activate" in c["path"]
+    ]
+    assert activations, result["calls"]
+    assert activations[0]["body"]["card_id"] == "pw1"
+    assert activations[0]["body"]["ability_index"] == 0
+
+
+def test_a_permanent_with_several_abilities_still_opens_the_menu_it_always_did() -> None:
+    result = _click(
+        """
+          await m.onPermanent(pw, { currentTarget: anchor });
+          return { labels: options().map((o) => o.label), hidden: globalThis.__popover.hidden };
+        """,
+        state=_click_state(battlefield=[TWO_ABILITY_PW]),
+        pw=TWO_ABILITY_PW,
+    )
+    assert result["hidden"] is False
+    assert result["labels"] == ["+1: draw a card", "-2: destroy target creature"]
+
+
+def test_a_vehicle_still_reaches_crew_through_its_own_menu() -> None:
+    """Crew, cycling and the special actions already routed to a menu and
+    keep doing so - the confirm changes the single-option clicks, not these."""
+    result = _click(
+        """
+          await m.onPermanent(vehicle, { currentTarget: anchor });
+          return { labels: options().map((o) => o.label) };
+        """,
+        state=_click_state(battlefield=[VEHICLE]),
+        vehicle=VEHICLE,
+    )
+    assert result["labels"] == ["Crew"]
+
+
+def test_a_card_with_no_available_action_stays_a_silent_no_op() -> None:
+    """The owner's explicit choice: no dialog explaining why nothing
+    happened. An opponent's permanent with nothing pending opens no menu,
+    says nothing, and asks the server nothing at all."""
+    result = _click(
+        """
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            toast: globalThis.__toast.textContent,
+            toastHidden: globalThis.__toast.hidden,
+            calls: globalThis.__calls,
+          };
+        """,
+        state=_click_state(battlefield=[OPPONENT_BEAR]),
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["toast"] == ""
+    assert result["toastHidden"] is True
+    assert result["calls"] == [], "a click with nothing to do must not even ask the engine"
+
+
+# -- the enrichment: the engine's own affordability, folded in on arrival -----
+
+
+UNAFFORDABLE = {
+    "kind": "cast",
+    "card_id": "kc",
+    "ability_index": None,
+    "affordable": "no",
+    "unaffordable_reason": "cannot pay {X}{C}{C}: 1 mana available",
+}
+
+
+def test_the_confirm_asks_the_engine_for_this_seats_legal_actions_on_the_click() -> None:
+    """On the click, never on the poll - per-card affordance work is banned
+    from the 1.2s tick. The read is uid-guarded to this seat, so the uid goes
+    with it."""
+    result = _click(
+        """
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return globalThis.__calls.map((c) => `${c.method} ${c.path}`);
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result == ["GET /api/games/g1/legal-actions?player=alice&uid=u1"]
+
+
+def test_an_unaffordable_option_is_disabled_and_carries_the_engines_own_reason() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return {
+            hidden: globalThis.__popover.hidden,
+            disabled: options().map((o) => o.disabled),
+            text: options().map((o) => o.deepText),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row=UNAFFORDABLE,
+    )
+    assert result["hidden"] is False, "the dialog stays open - the answer enriches it in place"
+    assert result["disabled"] == [True]
+    assert result["text"] == ["Cast cannot pay {X}{C}{C}: 1 mana available"]
+
+
+def test_a_disabled_option_does_nothing_when_it_is_clicked() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          options()[0].click();
+          await settle();
+          const posts = globalThis.__calls.filter((c) => c.method === "POST");
+          return { action: m.store.get().action, posts };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row=UNAFFORDABLE,
+    )
+    assert result["action"] is None
+    assert result["posts"] == []
+
+
+def test_the_dialog_opens_before_the_engine_answers_and_never_waits_on_it() -> None:
+    """The whole point of the surrounding work is that a click feels
+    immediate: the menu is built from local state and is on screen before the
+    request that enriches it has been answered - here, before it is answered
+    at all."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions") ? new Promise(() => {}) : null;
+          m.onHandCard(spell, { currentTarget: anchor });
+          const immediately = {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            disabled: options().map((o) => o.disabled),
+          };
+          await settle();
+          return {
+            immediately,
+            stillOpen: !globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result["immediately"] == {"hidden": False, "labels": ["Cast"], "disabled": [False]}
+    assert result["stillOpen"] is True
+    assert result["labels"] == ["Cast"]
+
+
+def test_a_failed_legal_actions_read_leaves_the_dialog_exactly_as_it_opened() -> None:
+    """A silent no-op, deliberately: the dialog simply stays as it opened,
+    rather than closing or announcing a failure the player cannot act on."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions") ? Promise.reject(new Error("network down")) : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            disabled: options().map((o) => o.disabled),
+            connection: m.store.get().connection,
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result["hidden"] is False
+    assert result["labels"] == ["Cast"]
+    assert result["disabled"] == [False]
+    assert result["connection"] == "idle", "a failed enrichment is not a connection failure"
+
+
+def test_an_answer_that_lands_after_the_dialog_closed_never_reopens_it() -> None:
+    """The player picked the option (or pressed Escape, or clicked away)
+    while the read was in flight. What comes back has nothing to enrich."""
+    result = _click(
+        """
+          let release;
+          const held = new Promise((r) => { release = r; });
+          globalThis.__respond = (method, path) => (path.includes("legal-actions") ? held : null);
+          m.onHandCard(land, { currentTarget: anchor });
+          options()[0].click();
+          await settle();
+          const afterPick = { hidden: globalThis.__popover.hidden, options: options().length };
+          release({ ok: true, json: async () => ({ actions: [] }) });
+          await settle();
+          return {
+            afterPick,
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            plays: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+        """,
+        state=_click_state(hands={"alice": [MOUNTAIN]}),
+        land=MOUNTAIN,
+    )
+    assert result["afterPick"] == {"hidden": True, "options": 0}
+    assert result["hidden"] is True, "a closed dialog must not be reopened under the cursor"
+    assert result["options"] == 0
+    assert result["plays"] == 1
+
+
+def test_an_answer_about_other_cards_leaves_every_option_enabled() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: rows }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return {
+            disabled: options().map((o) => o.disabled),
+            text: options().map((o) => o.deepText),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        rows=[{**UNAFFORDABLE, "card_id": "someone-else"}],
+    )
+    assert result["disabled"] == [False]
+    assert result["text"] == ["Cast"]
+
+
+UNAFFORDABLE_FORETELL_CARD = [
+    {
+        "kind": "cast",
+        "card_id": "f1",
+        "ability_index": None,
+        "affordable": "no",
+        "unaffordable_reason": "cannot pay {5}{U}{U}: 2 mana available",
+    }
+]
+
+
+def test_an_enrichment_landing_mid_press_does_not_eat_the_click() -> None:
+    """The defect that makes this whole path worth testing, and the reason
+    the fake DOM above models real dispatch.
+
+    The player presses Foretell on Alrund's Epiphany; while their finger is
+    still down, the `legal-actions` answer lands and greys Cast out. A
+    browser dispatches `click` to the nearest inclusive ancestor common to
+    the mousedown and the mouseup target - so an option detached between the
+    two never sees the press at all, and the player's Foretell is silently
+    lost. The enrichment therefore has to patch the menu that is on screen,
+    the way `dom.js`'s keyed reconciler patches the board, and never tear it
+    down and rebuild it.
+
+    The press is the node captured before the answer is released; the release
+    is the `click()` after it. Clicking only after the redraw had settled -
+    what this test used to do - would pass with the defect fully present."""
+    result = _click(
+        """
+          let release;
+          const held = new Promise((r) => { release = r; });
+          globalThis.__respond = (method, path) => (path.includes("legal-actions") ? held : null);
+          m.onHandCard(card, { currentTarget: anchor });
+          // Mousedown. From here on the browser is holding the press on this
+          // exact node, and nothing may take it out of the tree.
+          const pressed = options()[1];
+          release({ ok: true, json: async () => ({ actions: rows }) });
+          await settle();
+          const afterEnrichment = {
+            offered: options().map((o) => ({ label: o.label, disabled: o.disabled })),
+            stillInMenu: options().includes(pressed),
+            pressedIsDetached: !pressed.attached,
+            text: options().map((o) => o.deepText),
+          };
+          // Mouseup, and the click it becomes.
+          pressed.click();
+          await settle();
+          return { afterEnrichment, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [FORETELL_CARD]}),
+        card=FORETELL_CARD,
+        rows=UNAFFORDABLE_FORETELL_CARD,
+    )
+    assert result["afterEnrichment"]["stillInMenu"] is True, (
+        f"the enrichment replaced the option the player was pressing: {result['afterEnrichment']}"
+    )
+    assert result["afterEnrichment"]["pressedIsDetached"] is False
+    # The enrichment still has to have happened - a menu that is intact
+    # because nothing was folded into it proves nothing.
+    assert result["afterEnrichment"]["offered"] == [
+        {"label": "Cast", "disabled": True},
+        {"label": "Foretell", "disabled": False},
+    ]
+    assert result["afterEnrichment"]["text"] == [
+        "Cast cannot pay {5}{U}{U}: 2 mana available",
+        "Foretell {2}",
+    ]
+    foretells = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/foretell" in c["path"]
+    ]
+    assert len(foretells) == 1, result["calls"]
+    assert foretells[0]["body"] == {"player": "alice", "card_id": "f1"}
+
+
+def test_a_read_and_a_probe_never_mark_the_page_busy() -> None:
+    """`busy` has to mean "a submission this seat made is outstanding", not
+    "some request is". Both halves of that reach the casting strip: picking a
+    mode fires `refreshAffordance()` (a GET), and an action that is ready
+    fires a dry-run probe (a POST that changes nothing), and both go through
+    `send()`. While either was counted, `#casting-strip` - which lives inside
+    `#side-panel` - was dimmed and inert for the whole round trip, so the
+    player's next click on it (un-picking the mode they just picked) was
+    swallowed for 0.4-2.4s: this branch's own symptom, one panel over."""
+    read = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("affordances") ? new Promise(() => {}) : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          options()[0].click();
+          await settle();
+          return {
+            reads: globalThis.__calls.filter((c) => c.path.includes("affordances")).length,
+            busy: m.store.get().busy,
+            marked: document.body.classList.contains("busy"),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert read["reads"] == 1, "the affordance read never went out, so this proves nothing"
+    assert read["busy"] == 0, "an affordance read counted as a submission in flight"
+    assert read["marked"] is False, "an affordance read made the casting strip inert"
+
+    probe = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          m.store.set({ action: A.begin("cast", { id: "c1" }, {}) });
+          globalThis.__respond = (method) => (method === "POST" ? new Promise(() => {}) : null);
+          m.pinLand(mountain, { currentTarget: anchor });
+          await settle();
+          const posts = globalThis.__calls.filter((c) => c.method === "POST");
+          return {
+            probes: posts.filter((c) => c.body && c.body.dry_run).length,
+            submissions: posts.filter((c) => !(c.body && c.body.dry_run)).length,
+            busy: m.store.get().busy,
+            marked: document.body.classList.contains("busy"),
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(battlefield=[BASIC_MOUNTAIN]),
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert probe["probes"] == 1, "the dry-run probe never went out, so this proves nothing"
+    assert probe["submissions"] == 0
+    assert probe["busy"] == 0, "a dry run counted as a submission in flight"
+    assert probe["marked"] is False, "a dry run made the casting strip inert"
+
+
+THREE_ABILITY_PERMANENT = {
+    "id": "pw3",
+    "name": "Three-Ability Planeswalker",
+    "type_line": "Legendary Planeswalker",
+    "zone": "battlefield",
+    "controller": "alice",
+    "abilities": [
+        {"index": 0, "text": "+1: draw a card", "is_mana_ability": False},
+        {"index": 1, "text": "-2: destroy target creature", "is_mana_ability": False},
+        {"index": 2, "text": "-7: take an extra turn", "is_mana_ability": False},
+    ],
+}
+
+
+def test_an_enrichment_does_not_yank_focus_back_to_the_first_option() -> None:
+    """The keyboard half of the same defect, on the board case the review
+    found: a three-ability permanent whose middle ability the engine reports
+    as unaffordable. `showPopover` focuses the first enabled option as it
+    opens - right on an open, wrong on a redraw. A player who has arrow-keyed
+    down to the third ability and is about to press Enter must not be thrown
+    back up to the first because a background read happened to land, which
+    would activate an ability they never chose."""
+    result = _click(
+        """
+          let release;
+          const held = new Promise((r) => { release = r; });
+          globalThis.__respond = (method, path) => (path.includes("legal-actions") ? held : null);
+          m.onPermanent(pw, { currentTarget: anchor });
+          // The player arrow-keys down twice; `ribbon.js`'s `moveFocus` does
+          // exactly this to the option it lands on.
+          options()[2].focus();
+          release({ ok: true, json: async () => ({ actions: rows }) });
+          await settle();
+          const focused = document.activeElement;
+          return {
+            index: options().indexOf(focused),
+            label: focused && focused.label,
+            disabled: options().map((o) => o.disabled),
+          };
+        """,
+        state=_click_state(battlefield=[THREE_ABILITY_PERMANENT]),
+        pw=THREE_ABILITY_PERMANENT,
+        rows=[
+            {
+                "kind": "activate",
+                "card_id": "pw3",
+                "ability_index": 1,
+                "affordable": "no",
+                "unaffordable_reason": "not enough loyalty",
+            }
+        ],
+    )
+    assert result["index"] == 2, f"the enrichment moved the player's focus: {result}"
+    assert result["label"] == "-7: take an extra turn"
+    assert result["disabled"] == [False, True, False], "and it still enriched the menu"
+
+
+# -- the selection clicks, proved untouched ----------------------------------
+
+
+def test_picking_a_target_mid_cast_opens_no_confirm() -> None:
+    """`planHandCardClick`'s `{kind: "target"}` while an action is live. A
+    confirm here is exactly what the owner ruled out: three targets would
+    become nine clicks."""
+    result = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          let action = A.begin("cast", { id: "kc" }, {});
+          action = A.withAffordance(action, { understood: false, candidates: [] });
+          m.store.set({ action });
+          await m.onHandCard(target, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            slots: m.store.get().action.freeTargets || m.store.get().action.slots,
+            calls: globalThis.__calls,
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(hands={"alice": [KOZILEK, MEMNITE]}),
+        target=MEMNITE,
+    )
+    assert result["hidden"] is True, "a target pick must not open a menu"
+    assert result["options"] == 0
+    assert result["calls"] == [], "and must not ask the engine for legal actions either"
+    assert "mm" in json.dumps(result["slots"]), result["slots"]
+
+
+def test_picking_a_permanent_as_a_target_opens_no_confirm() -> None:
+    result = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          let action = A.begin("cast", { id: "kc" }, {});
+          action = A.withAffordance(action, { understood: false, candidates: [] });
+          m.store.set({ action });
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            calls: globalThis.__calls,
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(battlefield=[OPPONENT_BEAR]),
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["calls"] == []
+
+
+def test_a_choose_targets_decision_click_opens_no_confirm() -> None:
+    result = _click(
+        """
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            draft: m.store.get().decisionDraft,
+            posts: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+        """,
+        state=_click_state(
+            battlefield=[OPPONENT_BEAR],
+            pending_decision={"player": "alice", "kind": "choose_targets"},
+        ),
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["hidden"] is True
+    assert result["draft"]["targets"] == ["ob1"]
+
+
+def test_tapping_a_basic_land_for_mana_mid_cast_still_opens_nothing() -> None:
+    """The standing commitment: a basic land pins on one click, with no menu
+    of any kind. The confirm dialog does not reach the pin flow."""
+    result = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          m.store.set({ action: A.begin("cast", { id: "kc" }, {}) });
+          await m.onPermanent(mountain, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            pinned: m.store.get().action.pinned,
+            gets: globalThis.__calls.filter((c) => c.path.includes("legal-actions")).length,
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(battlefield=[BASIC_MOUNTAIN]),
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["hidden"] is True, "pinning a basic land must open no menu"
+    assert result["options"] == 0
+    assert result["pinned"] == [{"card_id": "b1", "color": None, "ability_index": None}]
+    assert result["gets"] == 0
+
+
+def test_toggling_an_attacker_into_the_red_zone_opens_no_confirm() -> None:
+    result = _click(
+        """
+          await m.onPermanent(bear, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            draft: m.store.get().combatDraft,
+            calls: globalThis.__calls,
+          };
+        """,
+        state=_click_state(step="declare_attackers", battlefield=[ATTACKING_CREATURE]),
+        bear=ATTACKING_CREATURE,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["draft"] == {"bears1": "bob"}
+    assert result["calls"] == []
+
+
+def test_toggling_a_blocker_into_the_draft_opens_no_confirm() -> None:
+    result = _click(
+        """
+          await m.onPermanent(mine, { currentTarget: anchor });
+          const afterFirst = {
+            hidden: globalThis.__popover.hidden,
+            toast: globalThis.__toast.textContent,
+          };
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            afterFirst,
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            draft: m.store.get().combatDraft,
+            calls: globalThis.__calls,
+          };
+        """,
+        state=_click_state(
+            step="declare_blockers",
+            active_player="bob",
+            battlefield=[ATTACKING_CREATURE, OPPONENT_BEAR],
+        ),
+        mine=ATTACKING_CREATURE,
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["afterFirst"]["hidden"] is True
+    assert "click the attacker" in result["afterFirst"]["toast"]
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    # `combat.js`'s draft is keyed blocker -> the attacker it blocks.
+    assert result["draft"] == {"bears1": "ob1"}
+    assert result["calls"] == []
+
+
+# -- a play permission is an action click too, and gets the same confirm -----
+#
+# A dynamic play permission (cascade's hit, suspend's own third ability -
+# `beginCastFromPermission` carries the rule number this repo verified for
+# it) is a card click that ACTS: it begins a cast out of exile or a
+# graveyard. It is wired to three surfaces, and two of them are the board
+# itself - `#permitted-row` (`render/board.js`'s `patchPermissions`) and the
+# zone ribbon under the battlefield - with the zones modal the third. So it
+# is not a special case of the modal; it is the same "one click, one thing to
+# do, and it happened" the confirm exists to stop, and it opens the same
+# one-option picker every other action click opens.
+
+
+EXILED_CASCADE_HIT = {
+    "id": "x1",
+    "name": "Tarmogoyf",
+    "type_line": "Creature - Lhurgoyf",
+    "zone": "exile",
+    "controller": "alice",
+    # Enough for `actions.js`'s `needsChoices` to say yes, so picking the
+    # confirm stages the announcement in the ribbon and fires nothing - the
+    # same shape the hand-cast confirm test uses.
+    "cast": {"mana_cost": "{1}{G}", "targeting": {"targets_anything": True}},
+}
+
+CASCADE_PERMISSION = {
+    "card": EXILED_CASCADE_HIT,
+    "granted_by": "Bloodbraid Elf",
+    "action": "cast",
+    "pays_mana_cost": False,
+    "from_zone": "exile",
+    "usable_now": True,
+    "why_not": None,
+}
+
+PERMISSION_UNAFFORDABLE = {
+    "kind": "cast",
+    "card_id": "x1",
+    "ability_index": None,
+    "affordable": "no",
+    "unaffordable_reason": "cannot pay {1}{G}: no untapped sources",
+}
+
+
+def _permission_state() -> dict:
+    return _click_state(
+        exile=[EXILED_CASCADE_HIT],
+        play_permissions={"alice": [CASCADE_PERMISSION]},
+    )
+
+
+def test_a_play_permission_opens_a_one_option_confirm_before_the_cast_begins() -> None:
+    """The click used to reach `beginCastFromPermission` outright - a cascade
+    hit was cast by the click that landed on it. It opens `Cast` first, and
+    only picking that stages the announcement, with the permission's own
+    `from_zone` carried onto the request."""
+    result = _click(
+        """
+          const clicked = m.onPermission(permission, { currentTarget: anchor });
+          const opened = {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            action: m.store.get().action,
+            posts: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, calls: globalThis.__calls };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+    )
+    assert result["opened"]["hidden"] is False, "the click must open the confirm"
+    assert result["opened"]["labels"] == ["Cast"]
+    assert result["opened"]["action"] is None, "nothing may begin before the confirm is picked"
+    assert result["opened"]["posts"] == 0
+    casts = [
+        c
+        for c in result["calls"]
+        if c["method"] == "POST" and "actions/cast" in c["path"] and not c["body"].get("dry_run")
+    ]
+    assert len(casts) == 1, result["calls"]
+    assert casts[0]["body"]["card_id"] == "x1"
+    # The permission's own zone, not the hand - `bodyFor` sends `from_zone`
+    # only when the action carries one.
+    assert casts[0]["body"]["from_zone"] == "exile"
+
+
+def test_the_permission_confirm_is_enriched_from_the_engines_own_legal_actions() -> None:
+    """The same enrichment every other action click gets: the read is keyed
+    `card_id` + `cast` + no ability index, which is exactly the row
+    `legal_actions` emits for a permission cast."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onPermission(permission, { currentTarget: anchor });
+          await settle();
+          return {
+            gets: globalThis.__calls.map((c) => `${c.method} ${c.path}`),
+            hidden: globalThis.__popover.hidden,
+            disabled: options().map((o) => o.disabled),
+            text: options().map((o) => o.deepText),
+          };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+        row=PERMISSION_UNAFFORDABLE,
+    )
+    assert result["gets"] == ["GET /api/games/g1/legal-actions?player=alice&uid=u1"]
+    assert result["hidden"] is False
+    assert result["disabled"] == [True]
+    assert result["text"] == ["Cast cannot pay {1}{G}: no untapped sources"]
+
+
+def _modal_dom() -> str:
+    """An open zones modal holding the clicked card, and the board's own node
+    for the same card - `#permitted-row` carries one for every permission,
+    keyed by card id (`dom.js`'s `patchChildren`)."""
+    return """
+      const modal = new El("div");
+      modal.hidden = false;
+      const inModal = new El("div");
+      modal.appendChild(inModal);
+      const onBoard = new El("div");
+      onBoard.dataset.key = "x1";
+      globalThis.__nodes["#modal"] = modal;
+      globalThis.__nodes['[data-key="x1"]'] = onBoard;
+      globalThis.__modal = modal;
+      globalThis.__inModal = inModal;
+      globalThis.__onBoard = onBoard;
+    """
+
+
+def test_a_permission_clicked_in_the_zones_modal_closes_it_and_anchors_on_the_board() -> None:
+    """`.modal` is drawn above `.popover` (z-index 60 over 50), and this
+    change may not touch either - so a confirm opened over one of the modal's
+    own cards would sit *under* the scrim, dimmed and unclickable. The modal
+    is closed first and the confirm anchored over the board's own node for
+    that card, which leaves it on top, over the card it is about, and with
+    Escape closing it rather than the modal that is no longer open."""
+    result = _click(
+        _modal_dom()
+        + """
+          await m.onPermission(permission, { currentTarget: inModal });
+          return {
+            modalHidden: globalThis.__modal.hidden,
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            anchoredOnBoard: globalThis.__onBoard.classes.has("menu-open"),
+            anchoredInModal: globalThis.__inModal.classes.has("menu-open"),
+          };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+    )
+    assert result["modalHidden"] is True, "the modal must not cover the confirm it opened"
+    assert result["hidden"] is False
+    assert result["labels"] == ["Cast"]
+    assert result["anchoredOnBoard"] is True
+    assert result["anchoredInModal"] is False
+
+
+def test_a_permission_clicked_on_the_board_leaves_a_closed_modal_alone() -> None:
+    """The board is the ordinary surface: nothing is closed, and the confirm
+    anchors over the node that was actually clicked rather than going looking
+    for another one with the same id."""
+    result = _click(
+        """
+          const modal = new El("div");
+          modal.hidden = true;
+          globalThis.__nodes["#modal"] = modal;
+          await m.onPermission(permission, { currentTarget: anchor });
+          return {
+            modalHidden: modal.hidden,
+            hidden: globalThis.__popover.hidden,
+            anchored: anchor.classes.has("menu-open"),
+          };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+    )
+    assert result["modalHidden"] is True
+    assert result["hidden"] is False
+    assert result["anchored"] is True
+
+
+def test_a_permanent_menu_opened_from_the_zones_modal_closes_it_too() -> None:
+    """Not a permission special case: any action menu opened from inside the
+    modal has the same problem, so the rule lives in the one place every
+    action click goes through."""
+    result = _click(
+        """
+          const modal = new El("div");
+          modal.hidden = false;
+          const inModal = new El("div");
+          modal.appendChild(inModal);
+          const onBoard = new El("div");
+          onBoard.dataset.key = "pw1";
+          globalThis.__nodes["#modal"] = modal;
+          globalThis.__nodes['[data-key="pw1"]'] = onBoard;
+          await m.onPermanent(pw, { currentTarget: inModal });
+          return {
+            modalHidden: modal.hidden,
+            labels: options().map((o) => o.label),
+            anchoredOnBoard: onBoard.classes.has("menu-open"),
+          };
+        """,
+        state=_click_state(battlefield=[ONE_ACTIVATED_ABILITY_PW]),
+        pw=ONE_ACTIVATED_ABILITY_PW,
+    )
+    assert result["modalHidden"] is True
+    assert result["labels"] == ["+1: draw a card"]
+    assert result["anchoredOnBoard"] is True

@@ -548,7 +548,26 @@ def _run_command(
         # Read *after* the guard: a stale slot it just cleared must not be
         # handed to `legal_actions_before` as if it were still standing.
         paused = store.paused_command(game_id)
-        legal_before = records.legal_actions_before(game, player, paused[2] if paused else None)
+        # Not for a dry run. The enumeration exists to be written into this
+        # action's `records` row and read back out of it by the one seat it
+        # was computed for (`visibility.redact_log_entry`); it is in no
+        # response body. A dry run writes no row at all - `_run_command`
+        # skips `store.replace`, `audit_outcome` returns before
+        # `audit.record` - so the whole thing was computed and dropped, once
+        # per probe, inside the lock every other seat's real action is
+        # queued behind. It is not a cheap thing to drop: a mana-candidate
+        # scan of the battlefield, cast/land/marked-exile/off-zone
+        # enumeration for every card in hand, graveyard and shared exile,
+        # then `computed_board()` for the full CR 613 layer stack with a
+        # per-permanent ability probe. The UI fires one dry run per
+        # candidate before every real cast. Nothing observable changes:
+        # `tests/test_dry_run_cost.py` records the ledger-consumer audit
+        # this rests on.
+        legal_before = (
+            None
+            if dry_run
+            else records.legal_actions_before(game, player, paused[2] if paused else None)
+        )
         result = commands.run_command(game, command)
         seq: int | None = None
         if dry_run:
@@ -1007,12 +1026,30 @@ def game_log(game_id: str, uid: str | None = None, since: int = 0) -> dict[str, 
 
     `since` is the last `seq` the caller already has; only newer entries
     come back, and `last_seq` says where to resume next time.
+
+    **`since` is a read bound, not a filter.** This route used to load the
+    whole ledger and drop everything at or below `since` in Python, which
+    made a poll cost the entire game's history - every row a full
+    `snapshot(game)` plus a `legal_actions_before` enumeration, 11,538 bytes
+    of it on the 28-permanent board `tests/test_action_answer_size.py`
+    measures - to hand back the one row that was new. It is now a `seq >
+    since` read (`audit.entries_since`), so nothing is fetched to be
+    discarded.
+
+    `last_seq` is deliberately *not* computed from those rows: a caught-up
+    poller matches none of them, and answering 0 (or its own `since` back)
+    would either send it to the start of the game on its next tick or freeze
+    its watermark. It comes from `audit.last_seq`, the index-served maximum,
+    and is taken from the rows only when they are newer still - a row
+    appended between the two reads is returned *and* counted, so a client
+    never resumes from a watermark past an entry it was not given.
     """
     game_or_404(game_id)  # 404 for an unknown game, like every other endpoint
     viewer = visibility.resolve_viewer(game_id, uid)
-    log = audit.entries(game_id)
-    last_seq = log[-1]["seq"] if log else 0
-    log = [entry for entry in log if entry["seq"] > since]
+    last_seq = audit.last_seq(game_id)
+    log = audit.entries_since(game_id, since) if last_seq > since else []
+    if log:
+        last_seq = log[-1]["seq"]
     if viewer is not visibility.ADMIN:
         # Every non-admin viewer, a `uid`-less one included - not only a real
         # seat. `redact_log_entry` applies the seat-shaped snapshot filtering

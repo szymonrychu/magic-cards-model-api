@@ -7,6 +7,104 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-10 - the log route reads what it returns, and a dry run
+  enumerates nothing.** Two server-side costs that both grew with the length of
+  a game.
+
+  (1) `GET /api/games/{id}/log` loaded the whole ledger (`audit.entries` ->
+  `store.records`, no predicate, no limit) and then dropped everything at or
+  below `since` in Python. Every row carries a full `snapshot(game)` plus a
+  `legal_actions_before` enumeration - 11,538 bytes on the 28-permanent board
+  `tests/test_action_answer_size.py` measures - so a poll cost the entire game's
+  history to hand back the one row that was new. It now reads
+  `records_since(game_id, since)` (postgres: a `seq > :since` range scan on the
+  existing `uq_records_game_id_seq`; in-memory: `bisect` then slice, so `mise
+  run test` exercises the bounded path rather than only `test:pg` doing so).
+  The trap worth remembering: `last_seq` must NOT be derived from the rows that
+  read returns. A caught-up poller matches none of them, and answering 0 sends
+  it back to the start of the game on its next tick while answering its own
+  `since` back freezes the watermark - neither fails loudly, `ui/app.js` just
+  quietly re-fetches or quietly stops. It comes from `max_record_seq` (index
+  only, no payloads), and is raised to the rows' own maximum when a row lands
+  between the two reads, so a client can never resume past an entry it was not
+  given. `tests/test_log_bounded_read.py`.
+
+  (2) A dry run no longer computes `legal_actions_before`. It was computed
+  inside the per-game lock for every mutating POST, dry runs included, and then
+  dropped: a dry run writes no `records` row at all (`_run_command` skips
+  `store.replace`, `audit_outcome` returns before `audit.record`), and the field
+  appears in no response body - it is hidden information only
+  `visibility.redact_log_entry` ever hands out, off a row that exists. Checked
+  before removing it, because this ledger feeds review and agent training:
+  `ui/review_model.js` reads `review.entries`' action/detail/reasoning/snapshot/
+  seq and never mentions the field or dry runs, and no dry-run row has ever
+  existed for any consumer to depend on. The UI fires one dry run per candidate
+  before every real cast, so this was the per-keystroke cost of the play
+  surface, serialised behind the lock every other seat waits on.
+  `tests/test_dry_run_cost.py`.
+- **2026-09-10 - every action click opens the anchored picker, and the
+  one-option popover IS the confirm.** A card click that had exactly one
+  thing to do used to fire it - `playLand` on a plain land, `beginCast` on a
+  plain spell, `beginActivate` on a permanent with one ability - so a misclick
+  in the hand row was a land drop. All three now open the same popover a
+  multi-ability permanent already opened, with one item in it. No separate
+  confirm component and no Cancel item: `showPopover` already leaves on
+  Escape, on a click away, and on a pick, and adding a Cancel would be a
+  second way to say the same thing. The planners are unchanged - `{kind:
+  "land"}` still means "a plain land play" - because what changed is what
+  the click *does*, not what it means; `menus.js`'s `handMenuItems`/
+  `abilityMenuItems` build the single item (the one ability of an `activate`
+  plan is read off the card, since the plan names no list of its own).
+
+  The line the change deliberately does NOT cross: a click that SELECTS is
+  untouched and opens nothing - picking a target, pinning a mana source
+  mid-cast (a basic land still pins on one click with no menu at all, the
+  standing commitment), and toggling an attacker or a blocker into the combat
+  draft. A confirm on a target pick would make a three-target spell a
+  nine-click affair. A card with nothing to do stays a silent no-op rather
+  than opening a dialog to explain itself. Both halves are pinned by tests
+  that drive the real handlers through the real `showPopover`
+  (`tests/test_ui_app.py`'s T5 section), not by the planners alone.
+
+  Enrichment is a second, parallel step and never a precondition: the menu is
+  built from local state and is on screen before `GET .../legal-actions`
+  (uid-guarded to this seat, ~1.1KB, ~2ms) is even answered. When the answer
+  lands, `menus.js`'s `enrichItems` matches each row to an item by `card_id` +
+  `kind` + `ability_index` and marks what the engine says it cannot pay for
+  with `disabled` plus the engine's own `unaffordable_reason` as the
+  sublabel - fields `showPopover` already supported and no caller had ever
+  set. Three details worth keeping: `"unknown"` affordability is not `"no"`
+  (a modal or X spell before its parameters are announced) and disables
+  nothing; an item matching several rows (evoke: one `cast` kind, printed
+  cost and alternative cost) is unaffordable only when EVERY row says so; and
+  a menu item with no matching row at all (Crew is not an `ActionKind`) is
+  left exactly as it opened. A failed read, or an answer that lands after the
+  player left the dialog, is a silent no-op - `ribbon.js`'s new
+  `popoverIsOpenFor(anchor)` is what makes the second case answerable, and
+  the anchor is resolved once on the click because the redraw happens long
+  after that dispatch nulled `event.currentTarget`. On the click only: the
+  1.2s poll's ban on per-card affordance work stands.
+
+  A dynamic play permission (cascade's hit, suspend's own third ability) is
+  an action click too, and was missed on the first pass: `onPermission` began
+  the cast on the click. It is not a zones-modal-only path - `render/
+  board.js` wires it to `#permitted-row` and to the zone ribbon on the board
+  itself - so it now opens the same one-option `Cast` confirm, captioned with
+  the source that granted it, keyed `{card_id, kind: "cast", ability_index:
+  null}` so the same enrichment finds it. Its `from_zone` still reaches the
+  request unchanged.
+
+  That is also what forced `actionAnchor`: the zones popover is a `.modal`
+  drawn ABOVE `.popover`, so a confirm opened over one of the modal's own
+  cards would sit under the scrim, dimmed and unclickable, with Escape
+  closing the modal instead of the menu. The menu's geometry and stacking are
+  frozen (see the anchored-menu note below), so the modal is closed instead
+  and the confirm anchored over the board's own node for that card - the zone
+  ribbon draws every graveyard/exile card and `#permitted-row` every
+  permission, both keyed by card id, and the clicked node is the fallback if
+  neither is there. Uniform for every action menu, not a permission special
+  case: an unearth ability clicked in the modal had the same problem.
+
 - **2026-09-10 - "any color" never includes `{C}`, so the tie this branch was
   justified by does not exist, and a chosen colour is a choice rather than a
   count.** Three corrections and one thing this repo cannot fix, all in the
@@ -1710,3 +1808,47 @@ whoever works on the repo itself.
   re-read the original click's `event.currentTarget` (that dispatch is over
   and the browser has nulled it), so `pinLand` resolves the anchor element
   once, up front, and hands it to both popovers.
+
+- **2026-09-10 - a click that registered looked exactly like one that was
+  lost, so an action's own `poll()` was replaced by a `refresh()` of its
+  own.** Three things were wrong at once in the action path and only
+  together did they produce the reported sluggishness: nothing anywhere
+  showed in-flight state, so the player had no signal for 0.4-2.4s; nothing
+  guarded a double submit, so the instinctive second click was a real second
+  request; and the `await poll()` every action path ended in was frequently a
+  silent no-op, because `poll()` returns immediately while `app.polling` is
+  set and late-game a background poll is in flight at every instant - which
+  then discarded its own reads through the `mutations` guard (correctly:
+  they predate the action). Net effect: up to a full `POLL_MS` of inert UI
+  after a click that had already succeeded. `send()` now carries both the
+  in-flight state (`store.busy`, `body.busy`, one seam for all nine action
+  paths) and a method+path+body double-submit guard that returns `null` -
+  which every caller already reads as "nothing was decided". The post-action
+  refresh is a fresh pair of reads rather than "await the in-flight poll,
+  then re-poll": awaiting it makes the player's feedback wait on the very
+  cycle that is already too slow, and against a held `/log` read it waits
+  forever (`tests/test_ui_app.py`'s stale-poll tests hold exactly that read
+  open, and would deadlock). Only the board half is awaited - `/log` is the
+  slow half and no part of "did my move happen" - and both halves are now
+  issued concurrently in `poll()` too, since they were never dependent. The
+  `mutations` guard is untouched and still governs both, `refresh()`
+  included; a `ticking` latch keeps the run's own `declareNoAttackers` from
+  recursing now that it no longer bounces off the `polling` flag.
+
+- **2026-09-10 - the store's listener fan-out is deferred while a press is in
+  flight, because a re-render between mousedown and mouseup detaches the very
+  button the browser is holding the press on and the click is eaten; the hold
+  is capped at 1s (`PRESS_CAP_MS`) since a `pointerup` can genuinely go
+  missing, and a touch or pen release waits for its synthetic click
+  (`TOUCH_CLICK_MS`, ~300ms later in a task of its own) rather than for the
+  next macrotask.**
+
+- **2026-09-10 - the same eaten click, one layer up: the `legal-actions`
+  enrichment now PATCHES the open menu (`updatePopoverItems`) instead of
+  reopening it, `busy` means "a submission is outstanding" rather than "any
+  `send()` is" so reads and dry-run probes stop inerting the casting strip,
+  `body.busy` no longer sets `pointer-events: none` on anything (`send()`'s
+  `inFlight` set is the only real double-submit guard), and every board read
+  carries an issue ordinal so the older of two concurrent reads cannot land
+  on the newer - `mutations` can only order reads against this seat's own
+  requests, never two reads against each other.**

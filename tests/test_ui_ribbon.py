@@ -64,7 +64,13 @@ class El {
     c.parentNode = this;
     return c;
   }
-  removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
+  // A real `removeChild` un-parents the child, which is the difference
+  // between a node still in the page and one a click has nothing to land on.
+  removeChild(c) {
+    this.children = this.children.filter((x) => x !== c);
+    if (c.parentNode === this) c.parentNode = null;
+    return c;
+  }
   setAttribute(k, v) { this.attrs[k] = v; if (k === "id") this.id = v; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   removeEventListener(type, fn) { if (this.listeners[type] === fn) delete this.listeners[type]; }
@@ -107,11 +113,34 @@ function findByText(node, tag, text) {
   return null;
 }
 
-// Invoke whatever `h()` wired to this element's "click" via
-// `addEventListener` - a no-op if nothing is listening (a disabled button,
-// or the element wasn't found at all).
+// Whether `node` is still reachable from `document` - a child its parent has
+// dropped is not, even though it still remembers its own listeners.
+function attached(node) {
+  let at = node;
+  while (at.parentNode) {
+    if (!at.parentNode.children.includes(at)) return false;
+    at = at.parentNode;
+  }
+  return at === globalThis.document;
+}
+
+// Dispatch a click the way a browser does, rather than calling this node's
+// handler: the event goes to the nearest inclusive ancestor still in the
+// tree - to nothing at all when there is none - and bubbles from there. A
+// fake that just invoked the listener could not tell a live button from one
+// a re-render had already replaced, which is exactly the defect the popover
+// and the press guard exist to prevent. A no-op if nothing is listening (a
+// disabled button, or an element that was not found at all).
 function click(el) {
-  if (el && el.listeners && el.listeners.click) el.listeners.click({ target: el });
+  if (!el) return;
+  let target = el;
+  while (target && !attached(target)) target = target.parentNode || null;
+  if (!target) return;
+  for (let node = target; node; node = node.parentNode) {
+    if (node.listeners && node.listeners.click) {
+      node.listeners.click({ target, currentTarget: node });
+    }
+  }
 }
 
 // The first `tag` element (depth-first) whose `dataset.field` equals `field`

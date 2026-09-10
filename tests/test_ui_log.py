@@ -241,3 +241,103 @@ def test_auto_scroll_pins_the_bottom_only_when_already_there() -> None:
     # time, before this script bumped scrollHeight again afterwards to stand
     # in for the browser's own post-layout growth.
     assert result["scrollTopAfterAtBottom"] == 100
+
+
+def test_an_unchanged_last_seq_neither_sorts_nor_patches_again() -> None:
+    """The poll loop notifies the store four times per 1.2s tick, and only one
+    of those notifications ever carries a new log entry. `mountLog` must do
+    nothing at all on the other three: no `[...entries].sort`, no
+    `patchChildren`, no auto-scroll write - which this counts directly by
+    wrapping `Array.prototype.sort` and `document.createTextNode` (the latter
+    being what `updateLine` calls for every entry it re-renders).
+
+    The first render's own counts are asserted non-zero too: a delta of zero
+    proves nothing unless the counters are known to see the real work.
+    """
+    result = run_module(
+        "render/log.js",
+        FAKE_DOM
+        + """
+        (() => {
+          boxed("log-box");
+          let sorts = 0;
+          const realSort = Array.prototype.sort;
+          Array.prototype.sort = function (...args) {
+            sorts += 1;
+            return realSort.apply(this, args);
+          };
+          let textNodes = 0;
+          const realCreateTextNode = document.createTextNode;
+          document.createTextNode = (s) => { textNodes += 1; return realCreateTextNode(s); };
+
+          const store = makeStore({ log: { entries: ENTRIES, lastSeq: 3 } });
+          m.mountLog(document, store);
+          store.set({});
+          const box = document.querySelector("#log-box");
+          const sortsFirst = sorts;
+          const textNodesFirst = textNodes;
+          const nodesFirst = [...box.children];
+          const textFirst = box.textContent;
+
+          // Three more notifications, nothing appended: `lastSeq` is still 3.
+          // The last one hands over a brand new `log` object with the same
+          // `lastSeq`, so the guard cannot be resting on object identity.
+          store.set({ connection: "ok" });
+          store.set({ polling: true });
+          store.set({ log: { entries: [...ENTRIES], lastSeq: 3 } });
+
+          Array.prototype.sort = realSort;
+          document.createTextNode = realCreateTextNode;
+          return {
+            sortsFirst,
+            textNodesFirst,
+            sortsAfter: sorts - sortsFirst,
+            textNodesAfter: textNodes - textNodesFirst,
+            count: box.children.length,
+            nodesUnchanged: box.children.every((c, i) => c === nodesFirst[i]),
+            textUnchanged: box.textContent === textFirst,
+          };
+        })()
+        """,
+    )
+    # The counters really do see the first render's work.
+    assert result["sortsFirst"] >= 1
+    assert result["textNodesFirst"] >= 3
+    # And nothing at all happens on the notifications that appended nothing.
+    assert result["sortsAfter"] == 0
+    assert result["textNodesAfter"] == 0
+    # The panel is left exactly as the first render left it.
+    assert result["count"] == 3
+    assert result["nodesUnchanged"] is True
+    assert result["textUnchanged"] is True
+
+
+def test_a_new_last_seq_still_renders_the_appended_entry() -> None:
+    """The other half of the guard: a notification that does carry a new
+    `lastSeq` renders as it always did, even when skipped notifications came
+    between it and the last render."""
+    result = run_module(
+        "render/log.js",
+        FAKE_DOM
+        + """
+        (() => {
+          boxed("log-box");
+          const store = makeStore({ log: { entries: ENTRIES, lastSeq: 3 } });
+          m.mountLog(document, store);
+          store.set({});
+          const box = document.querySelector("#log-box");
+          store.set({ connection: "ok" });
+          store.set({ polling: true });
+          store.set({ log: { entries: [...ENTRIES, passEntry(4, "bob")], lastSeq: 4 } });
+          return {
+            count: box.children.length,
+            keys: box.children.map((l) => l.dataset.key),
+            lastLineText: box.children[3].textContent,
+          };
+        })()
+        """,
+    )
+    assert result["count"] == 4
+    assert result["keys"] == ["1", "2", "3", "4"]
+    assert "#4" in result["lastLineText"]
+    assert "bob" in result["lastLineText"]

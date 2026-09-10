@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import threading
 import time
+from bisect import bisect_right
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
@@ -399,6 +400,37 @@ class GameRepository(Protocol):
         unknown game - this mirrors `audit.entries`'s old behaviour rather
         than raising, since `GET /api/games/{id}/log` reads this for a game
         that has already been checked to exist by its own 404."""
+        ...
+
+    def records_since(self, game_id: str, since: int) -> list[dict[str, Any]]:
+        """Every `records` row for `game_id` whose `seq` is greater than
+        `since`, oldest first, in the same shape `records()` returns them.
+        `since=0` is therefore the whole ledger, and a `since` at or past the
+        last row is empty. Empty for an unknown game, like `records()`.
+
+        The other bounded read, and the one `GET /api/games/{id}/log` serves
+        every poll from. `records()` was the wrong shape for it in exactly
+        the way `recent_records`'s docstring describes: the route already
+        discarded every row at or below `since` in Python, so a caller
+        resuming from the end of a long game paid for the whole game's
+        history - each row a full `snapshot(game)` plus a
+        `legal_actions_before` enumeration - to be handed nothing. No
+        implementation may load a row it will not return; postgres does it
+        with a `seq > :since` predicate on the same
+        `uq_records_game_id_seq` index `recent_records` uses.
+        """
+        ...
+
+    def max_record_seq(self, game_id: str) -> int:
+        """The highest `seq` recorded for `game_id`, `0` when it has no rows.
+
+        The `last_seq` half of that same log read, and the reason bounding
+        the read does not change what the route answers. `last_seq` is the
+        watermark a client resumes from, so it must stay the true latest seq
+        even when the bounded read comes back empty - which is precisely the
+        case where the rows themselves can no longer tell anyone what it is.
+        Answered from the index, never by counting rows.
+        """
         ...
 
     def recent_records(self, game_id: str, limit: int) -> list[dict[str, Any]]:
@@ -1042,6 +1074,27 @@ class InMemoryRepository:
             # neither implementation's cost grows with the ledger.
             window = self._records.get(game_id, [])[-limit:] if limit > 0 else []
             return [{**entry, "payload": dict(entry["payload"])} for entry in window]
+
+    def records_since(self, game_id: str, since: int) -> list[dict[str, Any]]:
+        with self._lock:
+            log = self._records.get(game_id, [])
+            # A binary search for the first row past `since`, then a slice of
+            # the tail - the in-memory twin of postgres's `WHERE seq >
+            # :since` served by the `(game_id, seq)` index, and bounded for
+            # the same reason. `mise run test` runs against this
+            # implementation, so the cheap path has to be the one the tests
+            # actually exercise. `bisect` rather than `log[since:]` because
+            # the arithmetic shortcut would silently return the wrong window
+            # the day `seq` stops being this list's own 1-based index; the
+            # sortedness it does rely on is `append`-order, which
+            # `_append_record_locked` guarantees.
+            tail = log[bisect_right(log, since, key=lambda row: row["seq"]) :]
+            return [{**entry, "payload": dict(entry["payload"])} for entry in tail]
+
+    def max_record_seq(self, game_id: str) -> int:
+        with self._lock:
+            log = self._records.get(game_id, [])
+            return int(log[-1]["seq"]) if log else 0
 
     def ids(self) -> list[str]:
         with self._lock:
