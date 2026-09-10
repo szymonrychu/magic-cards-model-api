@@ -1500,6 +1500,27 @@ CASCADE_BLUFFS = {
 }
 
 
+SHANG_CHI = {
+    "id": "sc",
+    "name": "Shang-Chi, Master of Kung Fu",
+    "type_line": "Legendary Creature - Human Warrior Hero",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {
+            "index": 0,
+            "text": (
+                "{T}: Add two mana of any one color. Spend this mana only to "
+                "activate abilities of creature sources."
+            ),
+            "is_mana_ability": True,
+            "mana_options": ["W", "U", "B", "R", "G"],
+        },
+    ],
+}
+
+
 def pinning_action(**overrides: Any) -> dict:
     return {"cardId": "spell1", "pinned": [], **overrides}
 
@@ -1813,3 +1834,18 @@ def test_clicking_a_pinned_source_again_takes_it_back_off_the_request() -> None:
     assert result["action"] is None
     probes = [c for c in result["calls"] if c["method"] == "POST" and c["body"].get("dry_run")]
     assert probes[-1]["body"]["mana_sources"] == ["et1", "b1"]
+
+
+def test_a_source_that_adds_several_mana_of_one_colour_asks_only_which_colour() -> None:
+    """Shang-Chi's `{T}: Add two mana of any one color.` is one ability and one
+    choice worth two mana. There is nothing to ask about *which* ability, so no
+    ability menu and no index on the wire; the colour menu is the whole
+    question, and the pin that comes out of it names that colour once.
+
+    The count is deliberately not the browser's business - it is nowhere in
+    `AbilityView`, and `engine_api._expanded_to_the_abilitys_own_count` fills
+    it in from the ability itself, so every client gets it right rather than
+    only this one. A UI that repeated the colour here would be guessing at a
+    number it cannot see."""
+    plan = run_app("m.planPin(land, action)", land=SHANG_CHI, action=pinning_action())
+    assert plan == {"kind": "colour", "abilityIndex": None, "colors": ["W", "U", "B", "R", "G"]}

@@ -220,6 +220,22 @@ def _chosen_color(source: CardState) -> Color | None:
     return Color(choice.value)
 
 
+def _sole_mana_ability(game: Game, source: CardState) -> Any | None:
+    """This source's one mana ability, or `None` where it has none or several.
+
+    CR 613.5: the permanent's *computed* abilities, the same index space
+    `mana_ability_at` reads. "Several" is `None` on purpose - with more than
+    one and no `ability_index` naming which, nothing here knows which the
+    player meant, and guessing is the thing this module refuses to do.
+    """
+    try:
+        abilities = list(game.activated_abilities(source))
+    except Exception:  # the engine's own refusal to read this object
+        return None
+    found = [ability.mana for ability in abilities if getattr(ability, "mana", None) is not None]
+    return found[0] if len(found) == 1 else None
+
+
 def _choice_argument(
     source: CardState,
     game: Game,
@@ -246,6 +262,39 @@ def _choice_argument(
     return named if _adds_any_color(source, game, mana) else None
 
 
+def _expanded_to_the_abilitys_own_count(
+    source: CardState,
+    game: Game,
+    named: list[Color],
+) -> list[Color]:
+    """One colour named for a source with exactly one mana ability, with that
+    ability's own count filled in: Shang-Chi's `{T}: Add two mana of any one
+    color.` taps for `{R}{R}`, not for the one `{R}` the caller wrote.
+
+    A colour is a *choice* (CR 605.1a's `color` argument), not a count - the
+    ability decides how much mana that choice buys. Without this, every source
+    whose ability adds more than one mana of a chosen colour is unpayable
+    through the `{card_id, colors}` shape, because `tap_for_mana` is handed one
+    mana the ability cannot produce on its own and refuses the whole tap.
+
+    Best-effort by design: anything this cannot answer confidently - several
+    mana abilities and no index naming one, a colour the ability refuses, an
+    ability that adds one mana - falls back to the colours as written, so
+    every refusal that shape already gave is the refusal it still gives, in
+    `tap_for_mana`'s own words.
+    """
+    if len(named) != 1:
+        return named
+    mana = _sole_mana_ability(game, source)
+    if mana is None:
+        return named
+    try:
+        produced = _resolve(source, game, mana, named[0])
+    except Exception:  # the engine's own refusal - `tap_for_mana` will repeat it
+        return named
+    return produced if len(produced) > 1 and set(produced) == {named[0]} else named
+
+
 def mana_colors(
     source: CardState,
     colors: list[str] | None,
@@ -256,12 +305,15 @@ def mana_colors(
 
     Without `colors`, whatever the named ability itself produces (`mana_from`).
 
-    With `colors` named, those are read as the *choice* the player made: one
-    colour however often it was written, or a real mixture of two different
-    ones (`_choice_argument`). When an `ability_index` names one particular
-    ability, the answer is checked against what that ability would actually
-    make, so a colour the named ability cannot produce is refused here rather
-    than silently satisfied by a different ability on the same card.
+    With `colors` named, those are read as the *choice* the player made, never
+    as an invoice for a particular number of mana: the ability's own count
+    decides how much a chosen colour buys (`_expanded_to_the_abilitys_own_
+    count`), and two different colours are the mixture limb of `ManaAbility.
+    resolve` rather than a collapsed nothing (`_choice_argument`). When an
+    `ability_index` names one particular ability, the answer is checked against
+    what that ability would actually make, so a colour the named ability cannot
+    produce is refused here rather than silently satisfied by a different
+    ability on the same card.
     """
     if not colors:
         if game is None or ability_index is None:  # unreachable: `pay_with` names both
@@ -274,9 +326,14 @@ def mana_colors(
     if game is None:
         return named
     if ability_index is None:
-        return named
+        return _expanded_to_the_abilitys_own_count(source, game, named)
     mana = mana_ability_at(game, source, ability_index).mana
     produced = _resolve(source, game, mana, _choice_argument(source, game, mana, named))
+    if len(named) == 1 and set(produced) == {named[0]}:
+        # The caller named a colour, and this is what that colour buys - one
+        # mana or several. Only a caller that spelled the production out per
+        # mana gets held to the count it wrote, below.
+        return produced
     if sorted(produced) != sorted(named):
         made = "".join("{" + color.value + "}" for color in produced) or "no mana"
         asked = "".join("{" + color.value + "}" for color in named)
@@ -370,7 +427,7 @@ def pay_with(
             )
         elif isinstance(entry, ManaSource) and entry.colors:
             source = find_card(game, entry.card_id)
-            payment.tap_for_mana(source, mana_colors(source, entry.colors))
+            payment.tap_for_mana(source, mana_colors(source, entry.colors, game))
         else:
             card_id = entry.card_id if isinstance(entry, ManaSource) else entry
             unpinned.append(find_card(game, card_id))

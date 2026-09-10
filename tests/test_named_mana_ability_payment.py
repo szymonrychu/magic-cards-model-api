@@ -418,6 +418,83 @@ def test_naming_sunken_citadels_restricted_ability_yields_restricted_mana(client
     assert plain["allowed"] is True, plain
 
 
+# -- one colour is a choice, not a count (CR 605.1a) ------------------------
+
+
+def test_a_single_colour_taps_an_any_one_color_ability_for_all_its_mana(client, game):
+    """Shang-Chi's `{T}: Add two mana of any one color.` is one choice worth
+    two mana, and a caller naming one colour has made that choice - it has not
+    asked for one mana. The ability's own count decides how much, so both wire
+    shapes tap it for `{R}{R}`.
+
+    The mana is CR 106.6-restricted to abilities of creature sources, so Sol
+    Ring is refused either way - but refused by the *restriction*, with both
+    red mana in the pool, rather than by this module deciding the source could
+    not be tapped at all.
+    """
+    add_card(client, game, "Shang-Chi, Master of Kung Fu", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    shang = battlefield_id(client, game, "Shang-Chi, Master of Kung Fu")
+    wake_up(client, game, shang)
+    index = mana_ability_index(client, game, "Shang-Chi, Master of Kung Fu", restricted=True)
+
+    unnamed = cast(client, game, "Sol Ring", [{"card_id": shang, "colors": ["R"]}], dry_run=True)
+    assert unnamed["allowed"] is False, unnamed
+    assert "'R': 2" in unnamed["reason"], unnamed
+
+    named = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": shang, "colors": ["R"], "ability_index": index}],
+        dry_run=True,
+    )
+    assert named["allowed"] is False, named
+    assert "'R': 2" in named["reason"], named
+
+
+def test_an_any_one_color_ability_pays_an_ability_of_a_creature_source(client, game):
+    """The other half: the two mana are real and they do pay for what the
+    restriction allows. Fiend Artisan's `{X}{B/G}, {T}, Sacrifice another
+    creature` is an ability of a creature source, and `{B}{B}` pays it with
+    X=1."""
+    add_card(client, game, "Shang-Chi, Master of Kung Fu", "alice", "battlefield")
+    add_card(client, game, "Fiend Artisan", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    board = state(client, game)["battlefield"]
+    shang = find(board, "Shang-Chi, Master of Kung Fu")["id"]
+    artisan = find(board, "Fiend Artisan")["id"]
+    bears = find(board, "Grizzly Bears")["id"]
+    for card_id in (shang, artisan, bears):
+        wake_up(client, game, card_id)
+
+    response = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": artisan,
+            "ability_index": 0,
+            "x_value": 1,
+            "sacrificing": [bears],
+            "mana_sources": [{"card_id": shang, "colors": ["B"]}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is True, response.json()
+
+
+def test_a_single_colour_still_has_to_be_one_the_ability_can_make(client, game):
+    """The expansion is not a licence: Eldrazi Temple's first ability adds
+    `{C}` and nothing else, so one named {R} is still refused in the engine's
+    own words rather than expanded into anything."""
+    add_card(client, game, "Eldrazi Temple", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    temple = battlefield_id(client, game, "Eldrazi Temple")
+
+    body = cast(client, game, "Sol Ring", [{"card_id": temple, "colors": ["R"]}])
+    assert body["allowed"] is False, body
+
+
 # -- a mixture is a mixture ("add two mana in any combination of colors") ---
 
 

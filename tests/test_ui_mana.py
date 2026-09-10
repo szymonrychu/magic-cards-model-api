@@ -226,3 +226,39 @@ def test_an_unnamed_ability_still_serializes_exactly_as_before() -> None:
 def test_pinning_the_same_source_again_replaces_its_ability_choice() -> None:
     result = run_module("mana.js", "m.pin(m.pin([], 'et1', null, 0), 'et1', null, 1)")
     assert result == [{"card_id": "et1", "color": None, "ability_index": 1}]
+
+
+ANY_ONE_COLOR = {
+    "id": "sc",
+    "controller": "alice",
+    "tapped": False,
+    "zone": "battlefield",
+    "abilities": [
+        {
+            "index": 0,
+            "text": "{T}: Add two mana of any one color.",
+            "is_mana_ability": True,
+            "mana_options": ["W", "U", "B", "R", "G"],
+        }
+    ],
+}
+
+
+def test_a_pin_names_the_chosen_colour_once_however_much_mana_it_buys():
+    """ "Add two mana of any one color" is one choice worth two mana, and the
+    pin carries the choice: `{card_id, colors: ["R"]}`, exactly the shape a
+    Mountain's pin has.
+
+    Not `["R", "R"]`. How much mana a chosen colour buys is the ability's own
+    business and is nowhere on `AbilityView` for the browser to read - the
+    server fills it in from the ability itself
+    (`engine_api._expanded_to_the_abilitys_own_count`), which is what makes
+    this work for the MCP and CLI seats too rather than only for this one.
+    Repeating the colour here would be the browser guessing at a count it
+    cannot see.
+    """
+    pinned = run_module("mana.js", "m.pin([], card.id, 'R', null)", card=ANY_ONE_COLOR)
+    assert pinned == [{"card_id": "sc", "color": "R", "ability_index": None}]
+    assert run_module("mana.js", "m.manaSources(pinned, [])", pinned=pinned) == [
+        {"card_id": "sc", "colors": ["R"]}
+    ]

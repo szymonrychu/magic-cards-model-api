@@ -59,7 +59,14 @@ export function manaSources(pinned, untapped) {
  * exactly as it solves any other untapped source - and one that named only a
  * colour is the `{card_id, colors}` `ManaSource` it always was. Only a pin
  * that named *which* ability grows `ability_index`, so nothing about the
- * common case changes shape. */
+ * common case changes shape.
+ *
+ * The colour goes out **once**, whatever the ability adds: it is the choice
+ * the player made (CR 605.1a's `color`), not a count. Shang-Chi's "add two
+ * mana of any one color" is pinned as `colors: ["R"]` and the server fills in
+ * the ability's own count (`engine_api._expanded_to_the_abilitys_own_count`),
+ * because that count is nowhere on `AbilityView` for this side to read and
+ * every other client would have to guess at it too. */
 function manaSource(p) {
   const index = p.ability_index ?? null;
   if (index === null) return p.color ? { card_id: p.card_id, colors: [p.color] } : p.card_id;
