@@ -7,6 +7,60 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-10 - "any color" never includes `{C}`, so the tie this branch was
+  justified by does not exist, and a chosen colour is a choice rather than a
+  count.** Three corrections and one thing this repo cannot fix, all in the
+  restricted-mana wire.
+
+  (1) The branch was argued for with "Cavern of Souls and Delighted Halfling
+  each pair an unrestricted `{T}: Add {C}.` with a restricted 'add one mana of
+  any color' whose production set includes `{C}`, so production-matching
+  inference resolves the tie toward unrestricted and gets those two cards
+  wrong". False. CR 106.1a: there are five colors of mana, white, blue, black,
+  red and green; CR 106.1b: there are six *types*, those five and colorless -
+  both looked up in the rules text this session. Colorless is a type of mana
+  that is not a color, so "any color" cannot make `{C}`, `{C}` names the plain
+  ability unambiguously, and inference was right about both cards all along.
+  The real case is **Sunken Citadel**, whose abilities both read "the chosen
+  color": `restriction_for_production` asks `ManaAbility.effective()` with no
+  board, "the chosen color" narrows to nothing without one, neither ability
+  matches, and mana that may only be spent on abilities of land sources comes
+  back carrying no restriction at all. The wrong justification was written
+  into this file, `ManaSource`'s docstring and the test module docstring; all
+  three now name Sunken Citadel, and the test that claims the divergence takes
+  both answers off one board (named index refused, the identical unnamed tap
+  allowed) instead of comparing two named indexes, which proved nothing about
+  inference.
+
+  (2) A colour on the wire is CR 605.1a's `color` argument - a *choice* - and
+  the ability decides how much mana that choice buys. Shang-Chi's "{T}: Add
+  two mana of any one color." was untappable from every client because
+  `{card_id, colors: ["R"]}` was handed to `tap_for_mana` as a one-mana
+  production the ability cannot make. `engine_api._expanded_to_the_abilitys_
+  own_count` fills the count in server-side, from the ability itself, for the
+  no-index shape as well as the named one. Deliberately not client-side: the
+  count is nowhere on `AbilityView`, so the browser would be guessing, and the
+  MCP and CLI seats would each have to guess the same way.
+
+  (3) Two *different* colours are a mixture, and `ManaAbility.resolve` has a
+  limb for it ("add two mana in any combination of colors"). The api used to
+  collapse them to "no choice at all" and hand back "pass the colour chosen"
+  to a player who had chosen twice; the sequence goes through whole now.
+  **It still cannot be paid with**, and that half is engine-side:
+  `CostPayment.tap_for_mana` re-validates a hand-picked production against
+  `effective()`'s options, and those enumerate one colour repeated
+  `any_color_count` times per colour, never a mixture - so Interdimensional
+  Web Watch resolves to `{W}{U}` and is then refused "cannot be tapped to add
+  {W}{U}". Pinned by a `strict=True` xfail in
+  `tests/test_named_mana_ability_payment.py` so it flips the moment the engine
+  enumerates mixed combinations.
+
+  (4) The `seatkit-13` note oversold its reach. `mcp.py` and `seat_cli.py`
+  build `mana_sources` from `sources_or_all`, which returns bare card ids
+  parsed out of a comma-separated string - no seat can name an ability, which
+  is why `contract/tools.json` is byte-identical across the bump. The note
+  says so now: a response-shape change, browser-only on the request side.
+
 - **2026-09-09 - the artifacts were generated against a partial engine, and
   "integrated" is a claim that has to be checked against the branch heads.**
   `magic-cards-model-integration` held engine `main` plus both engine branches
