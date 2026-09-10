@@ -168,9 +168,7 @@ def test_mana_abilities_skips_abilities_that_make_no_mana() -> None:
             {"index": 1, "text": "{T}: Add {G}.", "is_mana_ability": True},
         ],
     }
-    assert run_module(
-        "mana.js", "m.manaAbilities(card).map((a) => a.index)", card=creature
-    ) == [1]
+    assert run_module("mana.js", "m.manaAbilities(card).map((a) => a.index)", card=creature) == [1]
     assert run_module("mana.js", "m.manaAbilities(card)", card=GRIZZLY) == []
 
 
@@ -182,8 +180,12 @@ def test_colour_options_are_looked_up_by_the_abilitys_own_index() -> None:
     shifted = {
         "id": "s1",
         "abilities": [
-            {"index": 3, "text": "{T}: Add {R} or {W}.", "is_mana_ability": True,
-             "mana_options": [["R"], ["W"]]},
+            {
+                "index": 3,
+                "text": "{T}: Add {R} or {W}.",
+                "is_mana_ability": True,
+                "mana_options": [["R"], ["W"]],
+            },
         ],
     }
     assert run_module("mana.js", "m.colorOptions(card, 3)", card=shifted) == ["R", "W"]
