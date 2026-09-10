@@ -1000,6 +1000,16 @@ export function showPopover(anchorEl, items, opts) {
   if (first && typeof first.focus === "function") first.focus();
 }
 
+/** Whether the menu currently on screen is the one anchored over
+ * `anchorEl`. What an enrichment that arrived from the network asks before
+ * redrawing a menu: a dialog the player has already left - Escape, a click
+ * away, or picking something - must not be reopened under their cursor, and
+ * a menu that has since been opened over a *different* card is not this
+ * one's to redraw either. */
+export function popoverIsOpenFor(anchorEl) {
+  return Boolean(popoverEl && anchorEl && popoverAnchor === anchorEl);
+}
+
 export function hidePopover() {
   removeGlobalHandlers();
   if (popoverAnchor && popoverAnchor.classList) popoverAnchor.classList.remove("menu-open");

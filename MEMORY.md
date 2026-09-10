@@ -42,6 +42,48 @@ whoever works on the repo itself.
   before every real cast, so this was the per-keystroke cost of the play
   surface, serialised behind the lock every other seat waits on.
   `tests/test_dry_run_cost.py`.
+- **2026-09-10 - every action click opens the anchored picker, and the
+  one-option popover IS the confirm.** A card click that had exactly one
+  thing to do used to fire it - `playLand` on a plain land, `beginCast` on a
+  plain spell, `beginActivate` on a permanent with one ability - so a misclick
+  in the hand row was a land drop. All three now open the same popover a
+  multi-ability permanent already opened, with one item in it. No separate
+  confirm component and no Cancel item: `showPopover` already leaves on
+  Escape, on a click away, and on a pick, and adding a Cancel would be a
+  second way to say the same thing. The planners are unchanged - `{kind:
+  "land"}` still means "a plain land play" - because what changed is what
+  the click *does*, not what it means; `menus.js`'s `handMenuItems`/
+  `abilityMenuItems` build the single item (the one ability of an `activate`
+  plan is read off the card, since the plan names no list of its own).
+
+  The line the change deliberately does NOT cross: a click that SELECTS is
+  untouched and opens nothing - picking a target, pinning a mana source
+  mid-cast (a basic land still pins on one click with no menu at all, the
+  standing commitment), and toggling an attacker or a blocker into the combat
+  draft. A confirm on a target pick would make a three-target spell a
+  nine-click affair. A card with nothing to do stays a silent no-op rather
+  than opening a dialog to explain itself. Both halves are pinned by tests
+  that drive the real handlers through the real `showPopover`
+  (`tests/test_ui_app.py`'s T5 section), not by the planners alone.
+
+  Enrichment is a second, parallel step and never a precondition: the menu is
+  built from local state and is on screen before `GET .../legal-actions`
+  (uid-guarded to this seat, ~1.1KB, ~2ms) is even answered. When the answer
+  lands, `menus.js`'s `enrichItems` matches each row to an item by `card_id` +
+  `kind` + `ability_index` and marks what the engine says it cannot pay for
+  with `disabled` plus the engine's own `unaffordable_reason` as the
+  sublabel - fields `showPopover` already supported and no caller had ever
+  set. Three details worth keeping: `"unknown"` affordability is not `"no"`
+  (a modal or X spell before its parameters are announced) and disables
+  nothing; an item matching several rows (evoke: one `cast` kind, printed
+  cost and alternative cost) is unaffordable only when EVERY row says so; and
+  a menu item with no matching row at all (Crew is not an `ActionKind`) is
+  left exactly as it opened. A failed read, or an answer that lands after the
+  player left the dialog, is a silent no-op - `ribbon.js`'s new
+  `popoverIsOpenFor(anchor)` is what makes the second case answerable, and
+  the anchor is resolved once on the click because the redraw happens long
+  after that dispatch nulled `event.currentTarget`. On the click only: the
+  1.2s poll's ban on per-card affordance work stands.
 
 - **2026-09-10 - "any color" never includes `{C}`, so the tie this branch was
   justified by does not exist, and a chosen colour is a choice rather than a

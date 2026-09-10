@@ -23,7 +23,7 @@ import * as M from "./menus.js";
 import { viewModel } from "./decisions.js";
 import { fill, canFill } from "./targeting.js";
 import { mountBoard } from "./render/board.js";
-import { mountRibbon, showPopover, hidePopover } from "./render/ribbon.js";
+import { mountRibbon, showPopover, hidePopover, popoverIsOpenFor } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
@@ -641,14 +641,80 @@ function openCardMenuAt(anchor, card, items, run) {
   );
 }
 
-async function onHandCard(card, event) {
+/** The menu EVERY action click opens - one option or six. A click that acts
+ * (playing a land, casting, activating the one ability a permanent has) used
+ * to fire on the click itself; it opens this instead, and the one-option
+ * popover IS the confirm. Nothing else is drawn for it: no second component,
+ * and no Cancel item, because `showPopover` already leaves on Escape, on a
+ * click outside it, and on picking something.
+ *
+ * The menu comes from local state and is on screen before this function
+ * returns - a click has to feel immediate, so nothing here waits on a
+ * request. `enrichActionMenu` then asks the engine which of the options it
+ * can actually pay for and folds that into the menu already open.
+ *
+ * An empty `items` opens nothing at all rather than an empty box - the same
+ * silence a click with nothing to do gets.
+ *
+ * The anchor is resolved ONCE, here, while the click is still being
+ * dispatched, for the reason `pinLand` already does it: the enrichment
+ * redraws this menu long after that dispatch is over, and a browser has
+ * nulled `event.currentTarget` by then. */
+function openActionMenu(card, event, items, run) {
+  if (!items.length) return;
+  const anchor = anchorFor(card, event);
+  openCardMenuAt(anchor, card, items, run);
+  return enrichActionMenu(anchor, card, items, run);
+}
+
+/** Fold `GET .../legal-actions` into the menu that is already on screen: an
+ * option the engine reports it cannot pay for is disabled and captioned with
+ * the engine's own `unaffordable_reason` (`menus.js`'s `enrichItems` decides
+ * that; this only fetches and redraws).
+ *
+ * On the CLICK, never on the poll: per-card affordance work is banned from
+ * the 1.2s tick (it is a whole-board read per card there, and on-demand is
+ * the established pattern - `refreshAffordance` is the same shape). The read
+ * is `player`'s own hidden information, so it carries this tab's uid; it is
+ * deliberately NOT sent through `send()`, which counts mutations for
+ * `poll()`'s staleness check and toasts what it catches - this is a read,
+ * and a failed one has nothing to say to the player.
+ *
+ * Every failure is the same silent no-op: the dialog stays exactly as it
+ * opened. So is an answer that arrives after the player has left the dialog
+ * - reopening a menu under the cursor is worse than not enriching it. */
+async function enrichActionMenu(anchor, card, items, run) {
+  const app = store.get();
+  if (!app.gameId || !app.uid || !app.state) return;
+  let answer;
+  try {
+    answer = await api(
+      "GET",
+      withUid(gamePath(`legal-actions?player=${encodeURIComponent(you())}`), app.uid)
+    );
+  } catch {
+    return;
+  }
+  const enriched = M.enrichItems(items, (answer && answer.actions) || []);
+  if (enriched.every((item, i) => item === items[i])) return;
+  if (!popoverIsOpenFor(anchor)) return;
+  openCardMenuAt(anchor, card, enriched, run);
+}
+
+/** Exported for `tests/test_ui_app.py` only, alongside `store`/`pinLand`/
+ * `fire` - the confirm dialog is a property of the click ACTING, not of the
+ * plan, so proving "every action click opens it and no selection click does"
+ * means driving the real handler through the real `showPopover`. Not part of
+ * any render module's handler contract; `board.js` gets these through
+ * `main()`'s own handler object. */
+export async function onHandCard(card, event) {
   const app = store.get();
   const plan = planHandCardClick(card, app);
   if (plan.kind === "cancel") return cancel();
   if (plan.kind === "target") return tryTarget(plan.id);
-  if (plan.kind === "land") return playLand(card);
-  if (plan.kind === "cast") return beginCast(card);
-  return openCardMenu(card, event, M.handMenuItems(plan, card), (key) => {
+  // `land`, `cast` and `menu` all reach the same menu: `handMenuItems` gives
+  // the first two a single Play or Cast item, which is the confirm.
+  return openActionMenu(card, event, M.handMenuItems(plan, card), (key) => {
     if (key === "play") return playLand(card);
     if (key === "cast") return beginCast(card);
     if (key === "cycle") return cycle(card);
@@ -707,7 +773,8 @@ async function cycle(card) {
   await refresh();
 }
 
-async function onPermanent(card, event) {
+/** Exported for `tests/test_ui_app.py` only - see `onHandCard` above. */
+export async function onPermanent(card, event) {
   const app = store.get();
   const state = app.state;
   const plan = planPermanentClick(card, app, state);
@@ -719,8 +786,10 @@ async function onPermanent(card, event) {
     if (plan.reason) toast(plan.reason);
     return;
   }
-  if (plan.kind === "activate") return beginActivate(card, plan.abilityIndex);
-  return openCardMenu(card, event, M.abilityMenuItems(plan), (key) => {
+  // `activate` and `menu` alike: `abilityMenuItems` reads the one ability an
+  // `activate` plan names off the card, so a one-ability permanent opens the
+  // same menu with one item in it rather than activating on the click.
+  return openActionMenu(card, event, M.abilityMenuItems(plan, card), (key) => {
     if (key === "crew") return beginCrew(card);
     if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
   });

@@ -34,7 +34,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from conftest import add_card, find, state
 from ui_node import requires_node, run_module
+
+from magic_cards_model_api.store import store
 
 pytestmark = requires_node
 
@@ -87,16 +90,47 @@ def test_pinning_a_land_and_aiming_an_attacker_are_card_scoped():
     assert call('m.choiceForPlan({kind: "attack"})') == {"kind": "defender", "surface": "popover"}
 
 
-def test_beginning_a_cast_or_an_activation_stages_in_the_ribbon():
-    for kind in ("cast", "activate", "crew"):
-        assert call("m.choiceForPlan({kind: k})", k=kind) == {
-            "kind": "announcement",
-            "surface": "ribbon",
-        }
+def test_crew_picked_from_a_menu_stages_in_the_ribbon():
+    """Crew is not a plan a click produces - it is a key picked out of a
+    Vehicle's own menu - and what it begins is the in-flight announcement,
+    which is the ribbon panel's, not a menu's. The row survives the confirm
+    dialog unchanged: `cast` and `activate` open a confirm *first* and stage
+    in the ribbon only once it is picked."""
+    assert call('m.choiceForPlan({kind: "crew"})') == {
+        "kind": "announcement",
+        "surface": "ribbon",
+    }
 
 
-def test_a_click_that_acts_directly_opens_no_choice_at_all():
-    for kind in ("land", "target", "cancel", "block", "none"):
+def test_every_action_click_opens_a_confirm_and_a_selection_click_opens_nothing():
+    """T5, and the literal inverse of what this case used to assert. A click
+    that *acts* - playing a land, casting, activating the one ability a
+    permanent has - no longer fires on the click: it opens the same anchored
+    picker a multi-ability permanent already opened, with one option in it,
+    and that single-option popover IS the confirm.
+
+    A click that *selects* is untouched, and that is the other half of the
+    contract: picking a target, cancelling, toggling a blocker into the
+    combat draft and a click on a card with nothing to do all still open
+    nothing at all. A confirm on a target pick would make a three-target
+    spell a nine-click affair."""
+    acting = ["land", "cast", "activate"]
+    assert call("kinds.map((k) => m.choiceForPlan({kind: k}).surface)", kinds=acting) == [
+        "popover"
+    ] * 3
+    assert call('m.choiceForPlan({kind: "land"})') == {
+        "kind": "hand_actions",
+        "surface": "popover",
+    }
+    assert call('m.choiceForPlan({kind: "cast"})') == {
+        "kind": "hand_actions",
+        "surface": "popover",
+    }
+    assert call('m.choiceForPlan({kind: "activate"})') == {
+        "kind": "abilities",
+        "surface": "popover",
+    }
+    for kind in ("target", "cancel", "block", "none"):
         assert call("m.choiceForPlan({kind: k})", k=kind) is None
 
 
@@ -104,11 +138,25 @@ def test_a_click_that_acts_directly_opens_no_choice_at_all():
 
 
 def test_a_land_with_cycling_offers_play_first_then_cycle():
-    plan = {"kind": "menu", "isLand": True, "specials": [], "cycling": [{"cost": "{2}"}]}
-    card = {"id": "c1", "name": "Lonely Sandbar", "special_actions": {"cycling": [{"cost": "{2}"}]}}
+    # `index` is what `serialize._special_actions` actually prints on a
+    # cycling offer, and it is the `ability_index` the engine's own
+    # `activate_off_zone` row carries - so the item can name the row it is.
+    offer = {"index": 0, "keyword": "Cycling", "cost": "{2}"}
+    plan = {"kind": "menu", "isLand": True, "specials": [], "cycling": [offer]}
+    card = {"id": "c1", "name": "Lonely Sandbar", "special_actions": {"cycling": [offer]}}
     assert call("m.handMenuItems(plan, card)", plan=plan, card=card) == [
-        {"key": "play", "label": "Play", "sublabel": ""},
-        {"key": "cycle", "label": "Cycle", "sublabel": "{2}"},
+        {
+            "key": "play",
+            "label": "Play",
+            "sublabel": "",
+            "match": {"card_id": "c1", "kind": "play_land", "ability_index": None},
+        },
+        {
+            "key": "cycle",
+            "label": "Cycle",
+            "sublabel": "{2}",
+            "match": {"card_id": "c1", "kind": "activate_off_zone", "ability_index": 0},
+        },
     ]
 
 
@@ -116,8 +164,18 @@ def test_a_spell_with_a_special_action_offers_cast_first_then_the_special():
     plan = {"kind": "menu", "isLand": False, "specials": ["suspend"], "cycling": []}
     card = {"id": "c2", "name": "Rift Bolt", "special_actions": {"suspend": {"cost": "{R}"}}}
     assert call("m.handMenuItems(plan, card)", plan=plan, card=card) == [
-        {"key": "cast", "label": "Cast", "sublabel": ""},
-        {"key": "special:suspend", "label": "Suspend", "sublabel": "{R}"},
+        {
+            "key": "cast",
+            "label": "Cast",
+            "sublabel": "",
+            "match": {"card_id": "c2", "kind": "cast", "ability_index": None},
+        },
+        {
+            "key": "special:suspend",
+            "label": "Suspend",
+            "sublabel": "{R}",
+            "match": {"card_id": "c2", "kind": "suspend", "ability_index": None},
+        },
     ]
 
 
@@ -125,15 +183,29 @@ def test_ability_items_carry_their_index_and_a_vehicle_adds_crew_last():
     plan = {
         "kind": "menu",
         "abilities": [
-            {"index": 0, "text": "{T}: Add {G}.", "cost": "{T}"},
-            {"index": 2, "text": "{2}: Draw a card.", "cost": None},
+            {"index": 0, "text": "{T}: Add {G}.", "cost": "{T}", "is_mana_ability": True},
+            {"index": 2, "text": "{2}: Draw a card.", "cost": None, "is_mana_ability": False},
         ],
         "vehicle": True,
     }
-    assert call("m.abilityMenuItems(plan)", plan=plan) == [
-        {"key": "activate:0", "label": "{T}: Add {G}.", "sublabel": ""},
-        {"key": "activate:2", "label": "{2}: Draw a card.", "sublabel": ""},
-        {"key": "crew", "label": "Crew", "sublabel": ""},
+    card = {"id": "p1", "name": "Vehicle of Some Kind", "abilities": plan["abilities"]}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == [
+        {
+            "key": "activate:0",
+            "label": "{T}: Add {G}.",
+            "sublabel": "",
+            "match": {"card_id": "p1", "kind": "activate_mana", "ability_index": 0},
+        },
+        {
+            "key": "activate:2",
+            "label": "{2}: Draw a card.",
+            "sublabel": "",
+            "match": {"card_id": "p1", "kind": "activate", "ability_index": 2},
+        },
+        # Crew is the one item with no row in the engine's enumeration to
+        # match: `ActionKind` has no `crew`, so it is never enriched and
+        # never wrongly disabled.
+        {"key": "crew", "label": "Crew", "sublabel": "", "match": None},
     ]
 
 
@@ -154,22 +226,215 @@ def test_an_ability_does_not_repeat_a_cost_its_own_text_already_opens_with():
         ],
         "vehicle": False,
     }
-    assert call("m.abilityMenuItems(plan)", plan=plan) == [
-        {"key": "activate:1", "label": text, "sublabel": ""},
-        {"key": "activate:3", "label": "Draw a card.", "sublabel": "{2}, {T}"},
+    card = {"id": "wb", "name": "Walking Ballista", "abilities": plan["abilities"]}
+    assert call("m.abilityMenuItems(plan, card)", plan=plan, card=card) == [
+        {
+            "key": "activate:1",
+            "label": text,
+            "sublabel": "",
+            "match": {"card_id": "wb", "kind": "activate", "ability_index": 1},
+        },
+        {
+            "key": "activate:3",
+            "label": "Draw a card.",
+            "sublabel": "{2}, {T}",
+            "match": {"card_id": "wb", "kind": "activate", "ability_index": 3},
+        },
     ]
 
 
 def test_mana_and_defender_items():
+    """Neither of these is an action menu: pinning a mana source and aiming
+    an attacker are selections inside a flow that has already begun, so
+    neither carries a `match` and neither is ever enriched."""
     assert call('m.manaMenuItems(["R", "G"])') == [
-        {"key": "colour:R", "label": "Tap for {R}", "sublabel": ""},
-        {"key": "colour:G", "label": "Tap for {G}", "sublabel": ""},
+        {"key": "colour:R", "label": "Tap for {R}", "sublabel": "", "match": None},
+        {"key": "colour:G", "label": "Tap for {G}", "sublabel": "", "match": None},
     ]
     defenders = [{"id": "p1", "label": "claude"}, {"id": "pw", "label": "Jace"}]
     assert call("m.defenderMenuItems(defenders)", defenders=defenders) == [
-        {"key": "defender:p1", "label": "Attack claude", "sublabel": ""},
-        {"key": "defender:pw", "label": "Attack Jace", "sublabel": ""},
+        {"key": "defender:p1", "label": "Attack claude", "sublabel": "", "match": None},
+        {"key": "defender:pw", "label": "Attack Jace", "sublabel": "", "match": None},
     ]
+    abilities = [{"index": 0, "text": "{T}: Add {C}.", "cost": "{T}"}]
+    assert call("m.manaAbilityMenuItems(abilities)", abilities=abilities) == [
+        {"key": "ability:0", "label": "{T}: Add {C}.", "sublabel": "", "match": None},
+    ]
+
+
+# ---------------------------------------------- the one-option confirm ---
+
+
+def test_a_plain_land_click_offers_exactly_one_option_and_it_is_play():
+    """`planHandCardClick`'s `{kind: "land"}` used to reach `playLand`
+    directly. It builds the same one-item menu every other hand click builds
+    now - no separate confirm component, no Cancel item (`showPopover`
+    already leaves on Escape, on a click away, and on a pick)."""
+    card = {"id": "land1", "name": "Mountain", "type_line": "Basic Land - Mountain"}
+    assert call('m.handMenuItems({kind: "land"}, card)', card=card) == [
+        {
+            "key": "play",
+            "label": "Play",
+            "sublabel": "",
+            "match": {"card_id": "land1", "kind": "play_land", "ability_index": None},
+        },
+    ]
+
+
+def test_a_plain_cast_click_offers_exactly_one_option_and_it_is_cast():
+    card = {"id": "mm", "name": "Memnite", "type_line": "Artifact Creature"}
+    assert call('m.handMenuItems({kind: "cast"}, card)', card=card) == [
+        {
+            "key": "cast",
+            "label": "Cast",
+            "sublabel": "",
+            "match": {"card_id": "mm", "kind": "cast", "ability_index": None},
+        },
+    ]
+
+
+def test_a_one_ability_permanent_offers_that_ability_read_off_the_card():
+    """The `{kind: "activate", abilityIndex}` plan names no ability list of
+    its own - the one ability is read off the card here, so the confirm says
+    what it is about to do rather than "OK"."""
+    card = {
+        "id": "pw1",
+        "name": "Test Planeswalker",
+        "abilities": [{"index": 0, "text": "+1: draw a card", "is_mana_ability": False}],
+    }
+    assert call('m.abilityMenuItems({kind: "activate", abilityIndex: 0}, card)', card=card) == [
+        {
+            "key": "activate:0",
+            "label": "+1: draw a card",
+            "sublabel": "",
+            "match": {"card_id": "pw1", "kind": "activate", "ability_index": 0},
+        },
+    ]
+
+
+def test_a_one_ability_permanent_whose_ability_is_a_mana_ability_matches_activate_mana():
+    card = {
+        "id": "b1",
+        "name": "Mountain",
+        "abilities": [{"index": 0, "text": "{T}: Add {R}.", "is_mana_ability": True}],
+    }
+    items = call('m.abilityMenuItems({kind: "activate", abilityIndex: 0}, card)', card=card)
+    assert items[0]["match"] == {"card_id": "b1", "kind": "activate_mana", "ability_index": 0}
+
+
+# ------------------------------------------------------- enrichment ---
+#
+# `GET .../legal-actions` is asked for on the click, in parallel with the
+# menu opening, and folded into the menu that is already on screen. The
+# engine's own `affordable`/`unaffordable_reason` is what it carries: CR
+# 118.6 makes an unpayable cast a legal action, so the row is there either
+# way and the menu says which it is rather than hiding it.
+
+
+def action(**fields):
+    row = {
+        "kind": "cast",
+        "card_id": "mm",
+        "ability_index": None,
+        "affordable": "yes",
+        "unaffordable_reason": None,
+    }
+    row.update(fields)
+    return row
+
+
+ITEMS = [
+    {
+        "key": "cast",
+        "label": "Cast",
+        "sublabel": "",
+        "match": {"card_id": "mm", "kind": "cast", "ability_index": None},
+    },
+]
+
+
+def test_an_unaffordable_row_disables_its_item_and_prints_the_engines_own_reason():
+    rows = [action(affordable="no", unaffordable_reason="not enough mana: needs {R}{R}")]
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=rows) == [
+        {
+            "key": "cast",
+            "label": "Cast",
+            "sublabel": "not enough mana: needs {R}{R}",
+            "match": ITEMS[0]["match"],
+            "disabled": True,
+        },
+    ]
+
+
+def test_an_affordable_row_leaves_its_item_exactly_as_it_opened():
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=[action()]) == ITEMS
+
+
+def test_an_unknown_affordability_is_not_a_no_and_leaves_the_item_alone():
+    """A modal or X spell before its parameters are announced reports
+    `"unknown"`, which is a real, distinct answer - folding it into "no"
+    would grey out an option the player can in fact take."""
+    rows = [action(affordable="unknown", unaffordable_reason="X is not announced yet")]
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=rows) == ITEMS
+
+
+def test_a_row_for_another_card_or_another_ability_never_touches_this_item():
+    rows = [
+        action(card_id="other", affordable="no", unaffordable_reason="wrong card"),
+        action(kind="play_land", affordable="no", unaffordable_reason="wrong kind"),
+        action(
+            kind="activate",
+            ability_index=2,
+            affordable="no",
+            unaffordable_reason="wrong index",
+        ),
+    ]
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=rows) == ITEMS
+
+
+def test_an_item_the_enumeration_says_nothing_about_is_left_alone():
+    """Crew carries no `match` at all, and an empty answer says nothing
+    about anything - neither is evidence that an option is unavailable."""
+    items = ITEMS + [{"key": "crew", "label": "Crew", "sublabel": "", "match": None}]
+    assert call("m.enrichItems(items, rows)", items=items, rows=[]) == items
+
+
+def test_a_second_affordable_row_for_the_same_item_keeps_it_enabled():
+    """Evoke: one card, two `cast` rows - the printed cost unaffordable, the
+    alternative cost payable. The menu's single Cast item begins the
+    announcement where that alternative is chosen, so disabling it because
+    the *first* matching row said no would take away a cast the player can
+    actually make."""
+    rows = [
+        action(affordable="no", unaffordable_reason="not enough mana", alternative_cost=None),
+        action(affordable="yes", alternative_cost="Evoke"),
+    ]
+    assert call("m.enrichItems(items, rows)", items=ITEMS, rows=rows) == ITEMS
+
+
+def test_an_unaffordable_row_with_no_reason_keeps_the_sublabel_it_opened_with():
+    items = [{**ITEMS[0], "sublabel": "{2}{R}"}]
+    rows = [action(affordable="no", unaffordable_reason=None)]
+    assert call("m.enrichItems(items, rows)", items=items, rows=rows) == [
+        {**items[0], "disabled": True},
+    ]
+
+
+def test_enriching_never_reorders_or_drops_an_item():
+    items = [
+        {"key": "cast", "label": "Cast", "sublabel": "", "match": ITEMS[0]["match"]},
+        {
+            "key": "special:suspend",
+            "label": "Suspend",
+            "sublabel": "{R}",
+            "match": {"card_id": "mm", "kind": "suspend", "ability_index": None},
+        },
+        {"key": "crew", "label": "Crew", "sublabel": "", "match": None},
+    ]
+    rows = [action(kind="suspend", affordable="no", unaffordable_reason="no mana")]
+    got = call("m.enrichItems(items, rows)", items=items, rows=rows)
+    assert [i["key"] for i in got] == ["cast", "special:suspend", "crew"]
+    assert [bool(i.get("disabled")) for i in got] == [False, True, False]
 
 
 # -------------------------------------------------------------- geometry ---
@@ -303,11 +568,12 @@ def test_mana_ability_items_show_each_abilitys_own_text_keyed_by_its_index():
         },
     ]
     assert call("m.manaAbilityMenuItems(abilities)", abilities=abilities) == [
-        {"key": "ability:0", "label": "{T}: Add {C}.", "sublabel": ""},
+        {"key": "ability:0", "label": "{T}: Add {C}.", "sublabel": "", "match": None},
         {
             "key": "ability:1",
             "label": "{T}: Add {C}{C}. Spend this mana only to cast Eldrazi spells.",
             "sublabel": "",
+            "match": None,
         },
     ]
 
@@ -315,5 +581,99 @@ def test_mana_ability_items_show_each_abilitys_own_text_keyed_by_its_index():
 def test_a_mana_ability_whose_text_does_not_open_with_its_cost_keeps_it_dim():
     abilities = [{"index": 2, "text": "Add {G}{G}.", "cost": "{T}, Sacrifice this land"}]
     assert call("m.manaAbilityMenuItems(abilities)", abilities=abilities) == [
-        {"key": "ability:2", "label": "Add {G}{G}.", "sublabel": "{T}, Sacrifice this land"},
+        {
+            "key": "ability:2",
+            "label": "Add {G}{G}.",
+            "sublabel": "{T}, Sacrifice this land",
+            "match": None,
+        },
     ]
+
+
+# ------------------------- the enrichment, against the real endpoint ---
+#
+# Everything above hands `enrichItems` rows written by hand. The matching
+# rule (`card_id` + `kind` + `ability_index`) is only worth anything if those
+# three fields line up with what the two REAL surfaces emit - the board view
+# the menu is built from (`GET /api/games/{id}`) and the enumeration it is
+# enriched from (`GET /api/games/{id}/legal-actions`). A card id that is a
+# dashed uuid on one side and something else on the other would make every
+# match silently miss, and nothing in a hand-written row could catch it. So
+# these two build a real board through the real API and run the real
+# `menus.js` over both answers, unedited.
+
+
+def _seat_uid(game_id: str, player: str) -> str:
+    return {name: uid for uid, name in store.seat_uids(game_id).items()}[player]
+
+
+def _legal_actions(client, game_id: str, player: str = "alice") -> list[dict]:
+    response = client.get(
+        f"/api/games/{game_id}/legal-actions",
+        params={"player": player, "uid": _seat_uid(game_id, player)},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["actions"]
+
+
+def _cast_menu(card: dict, rows: list[dict]) -> list[dict]:
+    items = call('m.handMenuItems({kind: "cast"}, card)', card=card)
+    return call("m.enrichItems(items, rows)", items=items, rows=rows)
+
+
+def test_a_real_unpayable_cast_greys_out_the_real_menu_it_opened(client, game):
+    """Lightning Bolt in hand and not a land on the battlefield. The engine
+    still lists the cast - an unpayable cost does not make it illegal - and
+    the one-option confirm the click opened says why it will not work."""
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
+    rows = _legal_actions(client, game)
+
+    (cast_row,) = [r for r in rows if r["kind"] == "cast" and r["card_id"] == bolt["id"]]
+    assert cast_row["affordable"] == "no"
+
+    (item,) = _cast_menu(bolt, rows)
+    assert item["disabled"] is True
+    assert item["sublabel"] == cast_row["unaffordable_reason"]
+    assert item["sublabel"], "the engine's own reason is what the option prints"
+
+
+def test_a_real_payable_cast_leaves_the_real_menu_exactly_as_it_opened(client, game):
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
+    rows = _legal_actions(client, game)
+
+    (cast_row,) = [r for r in rows if r["kind"] == "cast" and r["card_id"] == bolt["id"]]
+    assert cast_row["affordable"] == "yes"
+
+    (item,) = _cast_menu(bolt, rows)
+    assert "disabled" not in item
+    assert item == {
+        "key": "cast",
+        "label": "Cast",
+        "sublabel": "",
+        "match": {"card_id": bolt["id"], "kind": "cast", "ability_index": None},
+    }
+
+
+def test_a_real_battlefield_abilitys_own_index_is_the_one_the_menu_matches_on(client, game):
+    """The other half of the matching rule: a permanent's ability menu keys
+    on the ability index the board view printed, and that is the number the
+    enumeration's `activate_mana` row carries for the same ability."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    mountain = find(state(client, game)["battlefield"], "Mountain")
+    rows = _legal_actions(client, game)
+
+    items = call('m.abilityMenuItems({kind: "activate", abilityIndex: 0}, card)', card=mountain)
+    (item,) = items
+    matching = [
+        r
+        for r in rows
+        if r["card_id"] == item["match"]["card_id"]
+        and r["kind"] == item["match"]["kind"]
+        and r["ability_index"] == item["match"]["ability_index"]
+    ]
+    assert len(matching) == 1, [r for r in rows if r["card_id"] == mountain["id"]]
+    assert matching[0]["kind"] == "activate_mana"
+    assert call("m.enrichItems(items, rows)", items=items, rows=rows) == items

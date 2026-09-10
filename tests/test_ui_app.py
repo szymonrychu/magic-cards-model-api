@@ -806,7 +806,13 @@ def base_state(**overrides: Any) -> dict:
 # -- planHandCardClick --------------------------------------------------------
 
 
-def test_a_land_with_nothing_else_plays_on_one_click() -> None:
+def test_a_land_with_nothing_else_still_plans_a_plain_land_play() -> None:
+    """T5 changed what the click *does*, not what it means: the plan is still
+    the bare `{kind: "land"}` it always was - no menu, no specials, nothing
+    to choose - and `onHandCard` turns that into a one-option confirm rather
+    than an immediate `playLand`. The surface half is
+    `test_playing_a_land_opens_a_one_option_confirm_and_fires_nothing_yet`
+    below; this stays the planner's own contract."""
     plan = run_app("m.planHandCardClick(land, app)", land=MOUNTAIN, app=base_app())
     assert plan == {"kind": "land"}
 
@@ -1632,6 +1638,10 @@ def _fake_dom_body() -> str:
           this.attrs = {};
           this.style = {};
           this.hidden = true;
+          // A real `<button>` has this property, so `dom.js`'s `h` assigns it
+          // rather than falling back to `setAttribute` - and `showPopover`'s
+          // own `optionButtons` reads it to skip a disabled option.
+          this.disabled = false;
           this.listeners = {};
           this.textContent = "";
           this.classes = new Set();
@@ -1659,14 +1669,23 @@ def _fake_dom_body() -> str:
         get firstChild() { return this.children[0] || null; }
         get childNodes() { return this.children; }
         get label() { return this.children.map((c) => c.textContent || "").join(""); }
+        // The whole rendered text, sublabel span included - what a player
+        // actually reads on the option.
+        get deepText() {
+          const walk = (n) =>
+            n.nodeType === 3 ? n.textContent : (n.children || []).map(walk).join("");
+          return walk(this);
+        }
         click() { for (const fn of this.listeners.click || []) fn({ target: this }); }
       }
       const popover = new El("div");
       globalThis.__popover = popover;
+      const toastEl = new El("div");
+      globalThis.__toast = toastEl;
       globalThis.document = {
         createElement: (t) => new El(t),
         createTextNode: (s) => ({ nodeType: 3, textContent: s, contains: () => false }),
-        querySelector: (sel) => (sel === "#popover" ? popover : null),
+        querySelector: (sel) => (sel === "#popover" ? popover : sel === "#toast" ? toastEl : null),
         addEventListener() {},
         removeEventListener() {},
         activeElement: null,
@@ -1679,11 +1698,23 @@ def _fake_dom_body() -> str:
         removeEventListener() {},
       };
       globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
         const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
-        globalThis.__calls.push({ method: opts ? opts.method : "GET", path, body });
+        globalThis.__calls.push({ method, path, body });
+        // A test that needs one route to answer something in particular (or
+        // to answer late, or never) sets `__respond`; anything it declines
+        // gets the same bland success every call got before it existed.
+        const custom = globalThis.__respond && globalThis.__respond(method, path, body);
+        if (custom) return custom;
         return Promise.resolve({ ok: true, json: async () => ({ allowed: true, tapped: [] }) });
       };
       const options = () => globalThis.__popover.children.filter((c) => c.classes.has("option"));
+      // Let every already-resolved promise in the chain run. A click handler
+      // is not awaited by the DOM, so the flow it starts finishes on its own
+      // turns of the loop.
+      const settle = async (turns) => {
+        for (let i = 0; i < (turns || 30); i += 1) await new Promise((r) => setTimeout(r, 0));
+      };
     """
 
 
@@ -2218,3 +2249,581 @@ def test_the_toast_never_intercepts_a_click() -> None:
     rule = re.search(r"^\.toast \{(.*?)^\}", css, re.MULTILINE | re.DOTALL)
     assert rule is not None, ".toast rule not found in ui/style.css"
     assert "pointer-events: none;" in rule.group(1)
+# -- T5: every action click opens the confirm, and no selection click does ----
+#
+# The planners above say what a click *means*; this section drives the real
+# click handlers - `onHandCard`/`onPermanent`, through the real
+# `render/ribbon.js` `showPopover` against the same fake DOM the pin menus
+# use - and asserts what a click actually *opens*. Two halves, and they are
+# the whole point of the change:
+#
+#   * A click that ACTS opens the anchored picker first, single option and
+#     all, and fires nothing until that option is picked. The one-option
+#     popover IS the confirm: no second component, and no Cancel item, since
+#     `showPopover` already leaves on Escape, on a click away, and on a pick.
+#   * A click that SELECTS - a target, a mana source mid-cast, an attacker or
+#     blocker into the combat draft - is untouched and opens nothing. A
+#     confirm on a target pick would make a three-target spell a nine-click
+#     affair, and a basic land pinning with no menu at all is a standing
+#     commitment (`ui/app.js`'s own `planPin` note, MEMORY.md).
+#
+# The dialog is enriched from `GET .../legal-actions` in parallel: it opens
+# from local state on the click, and the engine's own `affordable` /
+# `unaffordable_reason` is folded into the menu already on screen when the
+# answer lands. Never on the poll - per-card affordance work is banned from
+# the 1.2s tick.
+
+OPPONENT_BEAR = {
+    "id": "ob1",
+    "name": "Grizzly Bears",
+    "type_line": "Creature - Bear",
+    "zone": "battlefield",
+    "controller": "bob",
+    "abilities": [],
+}
+
+
+def _click_state(**overrides: Any) -> dict:
+    return {
+        "you": "alice",
+        "players": [{"username": "alice"}, {"username": "bob"}],
+        "pending_decision": None,
+        "step": "precombat_main",
+        "active_player": "alice",
+        "priority_holder": "alice",
+        "battlefield": [],
+        "hands": {"alice": []},
+        "stack": [],
+        **overrides,
+    }
+
+
+def _click_setup() -> str:
+    """Seat this tab at alice's seat of game `g1` with nothing in flight."""
+    return """
+      m.store.set({
+        gameId: "g1", uid: "u1", state,
+        stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
+        action: null, combatDraft: {},
+      });
+      const anchor = new El("div");
+    """
+
+
+def _click(expression: str, **bindings: Any) -> Any:
+    body = _fake_dom_body() + "(async () => {" + _click_setup() + expression + "})()"
+    return run_app(body, **bindings)
+
+
+def test_playing_a_land_opens_a_one_option_confirm_and_fires_nothing_yet() -> None:
+    """`planHandCardClick` still answers `{kind: "land"}`; what used to be an
+    immediate `POST actions/play-land` is now one option in the same anchored
+    menu a cycling land has always opened, and the land is played when it is
+    picked."""
+    result = _click(
+        """
+          const clicked = m.onHandCard(land, { currentTarget: anchor });
+          const opened = {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            calls: globalThis.__calls.map((c) => `${c.method} ${c.path}`),
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [MOUNTAIN]}),
+        land=MOUNTAIN,
+    )
+    assert result["opened"]["hidden"] is False, "the click must open the confirm"
+    assert result["opened"]["labels"] == ["Play"]
+    opened_calls = result["opened"]["calls"]
+    assert not [c for c in opened_calls if c.startswith("POST")], opened_calls
+    plays = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/play-land" in c["path"]
+    ]
+    assert len(plays) == 1, result["calls"]
+    assert plays[0]["body"] == {"player": "alice", "card_id": "land1"}
+
+
+def test_casting_from_hand_opens_a_one_option_confirm_before_the_announcement() -> None:
+    """Kozilek's Command: the click used to begin the announcement outright.
+    It opens `Cast` first, and only picking it stages the announcement in the
+    ribbon (`store.action`)."""
+    result = _click(
+        """
+          const clicked = m.onHandCard(spell, { currentTarget: anchor });
+          const opened = {
+            labels: options().map((o) => o.label),
+            action: m.store.get().action,
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, action: m.store.get().action, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result["opened"]["labels"] == ["Cast"]
+    assert result["opened"]["action"] is None, "nothing may begin before the confirm is picked"
+    assert result["action"]["cardId"] == "kc"
+    assert result["action"]["kind"] == "cast"
+
+
+def test_a_single_ability_permanent_opens_a_confirm_naming_that_ability() -> None:
+    """`{kind: "activate", abilityIndex: 0}` used to reach `beginActivate`
+    directly. The confirm says which ability it is about - read off the card,
+    because the plan carries no list of its own - which is what an "are you
+    sure?" box could not have said."""
+    result = _click(
+        """
+          const clicked = m.onPermanent(pw, { currentTarget: anchor });
+          const opened = {
+            labels: options().map((o) => o.label),
+            calls: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, calls: globalThis.__calls };
+        """,
+        state=_click_state(battlefield=[ONE_ACTIVATED_ABILITY_PW]),
+        pw=ONE_ACTIVATED_ABILITY_PW,
+    )
+    assert result["opened"]["labels"] == ["+1: draw a card"]
+    assert result["opened"]["calls"] == 0, "nothing may be activated before the confirm is picked"
+    activations = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/activate" in c["path"]
+    ]
+    assert activations, result["calls"]
+    assert activations[0]["body"]["card_id"] == "pw1"
+    assert activations[0]["body"]["ability_index"] == 0
+
+
+def test_a_permanent_with_several_abilities_still_opens_the_menu_it_always_did() -> None:
+    result = _click(
+        """
+          await m.onPermanent(pw, { currentTarget: anchor });
+          return { labels: options().map((o) => o.label), hidden: globalThis.__popover.hidden };
+        """,
+        state=_click_state(battlefield=[TWO_ABILITY_PW]),
+        pw=TWO_ABILITY_PW,
+    )
+    assert result["hidden"] is False
+    assert result["labels"] == ["+1: draw a card", "-2: destroy target creature"]
+
+
+def test_a_vehicle_still_reaches_crew_through_its_own_menu() -> None:
+    """Crew, cycling and the special actions already routed to a menu and
+    keep doing so - the confirm changes the single-option clicks, not these."""
+    result = _click(
+        """
+          await m.onPermanent(vehicle, { currentTarget: anchor });
+          return { labels: options().map((o) => o.label) };
+        """,
+        state=_click_state(battlefield=[VEHICLE]),
+        vehicle=VEHICLE,
+    )
+    assert result["labels"] == ["Crew"]
+
+
+def test_a_card_with_no_available_action_stays_a_silent_no_op() -> None:
+    """The owner's explicit choice: no dialog explaining why nothing
+    happened. An opponent's permanent with nothing pending opens no menu,
+    says nothing, and asks the server nothing at all."""
+    result = _click(
+        """
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            toast: globalThis.__toast.textContent,
+            toastHidden: globalThis.__toast.hidden,
+            calls: globalThis.__calls,
+          };
+        """,
+        state=_click_state(battlefield=[OPPONENT_BEAR]),
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["toast"] == ""
+    assert result["toastHidden"] is True
+    assert result["calls"] == [], "a click with nothing to do must not even ask the engine"
+
+
+# -- the enrichment: the engine's own affordability, folded in on arrival -----
+
+
+UNAFFORDABLE = {
+    "kind": "cast",
+    "card_id": "kc",
+    "ability_index": None,
+    "affordable": "no",
+    "unaffordable_reason": "cannot pay {X}{C}{C}: 1 mana available",
+}
+
+
+def test_the_confirm_asks_the_engine_for_this_seats_legal_actions_on_the_click() -> None:
+    """On the click, never on the poll - per-card affordance work is banned
+    from the 1.2s tick. The read is uid-guarded to this seat, so the uid goes
+    with it."""
+    result = _click(
+        """
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return globalThis.__calls.map((c) => `${c.method} ${c.path}`);
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result == ["GET /api/games/g1/legal-actions?player=alice&uid=u1"]
+
+
+def test_an_unaffordable_option_is_disabled_and_carries_the_engines_own_reason() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return {
+            hidden: globalThis.__popover.hidden,
+            disabled: options().map((o) => o.disabled),
+            text: options().map((o) => o.deepText),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row=UNAFFORDABLE,
+    )
+    assert result["hidden"] is False, "the dialog stays open - the answer enriches it in place"
+    assert result["disabled"] == [True]
+    assert result["text"] == ["Cast cannot pay {X}{C}{C}: 1 mana available"]
+
+
+def test_a_disabled_option_does_nothing_when_it_is_clicked() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          options()[0].click();
+          await settle();
+          const posts = globalThis.__calls.filter((c) => c.method === "POST");
+          return { action: m.store.get().action, posts };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        row=UNAFFORDABLE,
+    )
+    assert result["action"] is None
+    assert result["posts"] == []
+
+
+def test_the_dialog_opens_before_the_engine_answers_and_never_waits_on_it() -> None:
+    """The whole point of the surrounding work is that a click feels
+    immediate: the menu is built from local state and is on screen before the
+    request that enriches it has been answered - here, before it is answered
+    at all."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions") ? new Promise(() => {}) : null;
+          m.onHandCard(spell, { currentTarget: anchor });
+          const immediately = {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            disabled: options().map((o) => o.disabled),
+          };
+          await settle();
+          return {
+            immediately,
+            stillOpen: !globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result["immediately"] == {"hidden": False, "labels": ["Cast"], "disabled": [False]}
+    assert result["stillOpen"] is True
+    assert result["labels"] == ["Cast"]
+
+
+def test_a_failed_legal_actions_read_leaves_the_dialog_exactly_as_it_opened() -> None:
+    """A silent no-op, deliberately: the dialog simply stays as it opened,
+    rather than closing or announcing a failure the player cannot act on."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions") ? Promise.reject(new Error("network down")) : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            disabled: options().map((o) => o.disabled),
+            connection: m.store.get().connection,
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+    )
+    assert result["hidden"] is False
+    assert result["labels"] == ["Cast"]
+    assert result["disabled"] == [False]
+    assert result["connection"] == "idle", "a failed enrichment is not a connection failure"
+
+
+def test_an_answer_that_lands_after_the_dialog_closed_never_reopens_it() -> None:
+    """The player picked the option (or pressed Escape, or clicked away)
+    while the read was in flight. What comes back has nothing to enrich."""
+    result = _click(
+        """
+          let release;
+          const held = new Promise((r) => { release = r; });
+          globalThis.__respond = (method, path) => (path.includes("legal-actions") ? held : null);
+          m.onHandCard(land, { currentTarget: anchor });
+          options()[0].click();
+          await settle();
+          const afterPick = { hidden: globalThis.__popover.hidden, options: options().length };
+          release({ ok: true, json: async () => ({ actions: [] }) });
+          await settle();
+          return {
+            afterPick,
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            plays: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+        """,
+        state=_click_state(hands={"alice": [MOUNTAIN]}),
+        land=MOUNTAIN,
+    )
+    assert result["afterPick"] == {"hidden": True, "options": 0}
+    assert result["hidden"] is True, "a closed dialog must not be reopened under the cursor"
+    assert result["options"] == 0
+    assert result["plays"] == 1
+
+
+def test_an_answer_about_other_cards_leaves_every_option_enabled() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: rows }) })
+              : null;
+          await m.onHandCard(spell, { currentTarget: anchor });
+          await settle();
+          return {
+            disabled: options().map((o) => o.disabled),
+            text: options().map((o) => o.deepText),
+          };
+        """,
+        state=_click_state(hands={"alice": [KOZILEK]}),
+        spell=KOZILEK,
+        rows=[{**UNAFFORDABLE, "card_id": "someone-else"}],
+    )
+    assert result["disabled"] == [False]
+    assert result["text"] == ["Cast"]
+
+
+def test_the_redrawn_menu_is_still_live_and_its_other_options_still_fire() -> None:
+    """Enriching redraws the open menu rather than patching it, so the proof
+    that matters is that picking out of the redrawn one still does the thing:
+    Alrund's Epiphany's Cast greyed out for want of mana, its Foretell -
+    which the engine said nothing about - picked and fired."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: rows }) })
+              : null;
+          await m.onHandCard(card, { currentTarget: anchor });
+          await settle();
+          const offered = options().map((o) => ({ label: o.label, disabled: o.disabled }));
+          options()[1].click();
+          await settle();
+          return { offered, calls: globalThis.__calls };
+        """,
+        state=_click_state(hands={"alice": [FORETELL_CARD]}),
+        card=FORETELL_CARD,
+        rows=[
+            {
+                "kind": "cast",
+                "card_id": "f1",
+                "ability_index": None,
+                "affordable": "no",
+                "unaffordable_reason": "cannot pay {5}{U}{U}: 2 mana available",
+            }
+        ],
+    )
+    assert result["offered"] == [
+        {"label": "Cast", "disabled": True},
+        {"label": "Foretell", "disabled": False},
+    ]
+    foretells = [
+        c for c in result["calls"] if c["method"] == "POST" and "actions/foretell" in c["path"]
+    ]
+    assert len(foretells) == 1, result["calls"]
+    assert foretells[0]["body"] == {"player": "alice", "card_id": "f1"}
+
+
+# -- the selection clicks, proved untouched ----------------------------------
+
+
+def test_picking_a_target_mid_cast_opens_no_confirm() -> None:
+    """`planHandCardClick`'s `{kind: "target"}` while an action is live. A
+    confirm here is exactly what the owner ruled out: three targets would
+    become nine clicks."""
+    result = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          let action = A.begin("cast", { id: "kc" }, {});
+          action = A.withAffordance(action, { understood: false, candidates: [] });
+          m.store.set({ action });
+          await m.onHandCard(target, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            slots: m.store.get().action.freeTargets || m.store.get().action.slots,
+            calls: globalThis.__calls,
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(hands={"alice": [KOZILEK, MEMNITE]}),
+        target=MEMNITE,
+    )
+    assert result["hidden"] is True, "a target pick must not open a menu"
+    assert result["options"] == 0
+    assert result["calls"] == [], "and must not ask the engine for legal actions either"
+    assert "mm" in json.dumps(result["slots"]), result["slots"]
+
+
+def test_picking_a_permanent_as_a_target_opens_no_confirm() -> None:
+    result = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          let action = A.begin("cast", { id: "kc" }, {});
+          action = A.withAffordance(action, { understood: false, candidates: [] });
+          m.store.set({ action });
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            calls: globalThis.__calls,
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(battlefield=[OPPONENT_BEAR]),
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["calls"] == []
+
+
+def test_a_choose_targets_decision_click_opens_no_confirm() -> None:
+    result = _click(
+        """
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            draft: m.store.get().decisionDraft,
+            posts: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+        """,
+        state=_click_state(
+            battlefield=[OPPONENT_BEAR],
+            pending_decision={"player": "alice", "kind": "choose_targets"},
+        ),
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["hidden"] is True
+    assert result["draft"]["targets"] == ["ob1"]
+
+
+def test_tapping_a_basic_land_for_mana_mid_cast_still_opens_nothing() -> None:
+    """The standing commitment: a basic land pins on one click, with no menu
+    of any kind. The confirm dialog does not reach the pin flow."""
+    result = _click(
+        """
+          const A = await import(pathToFileURL(actionsPath).href);
+          m.store.set({ action: A.begin("cast", { id: "kc" }, {}) });
+          await m.onPermanent(mountain, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            pinned: m.store.get().action.pinned,
+            gets: globalThis.__calls.filter((c) => c.path.includes("legal-actions")).length,
+          };
+        """,
+        actionsPath=str(ACTIONS_JS),
+        state=_click_state(battlefield=[BASIC_MOUNTAIN]),
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["hidden"] is True, "pinning a basic land must open no menu"
+    assert result["options"] == 0
+    assert result["pinned"] == [{"card_id": "b1", "color": None, "ability_index": None}]
+    assert result["gets"] == 0
+
+
+def test_toggling_an_attacker_into_the_red_zone_opens_no_confirm() -> None:
+    result = _click(
+        """
+          await m.onPermanent(bear, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            draft: m.store.get().combatDraft,
+            calls: globalThis.__calls,
+          };
+        """,
+        state=_click_state(step="declare_attackers", battlefield=[ATTACKING_CREATURE]),
+        bear=ATTACKING_CREATURE,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["draft"] == {"bears1": "bob"}
+    assert result["calls"] == []
+
+
+def test_toggling_a_blocker_into_the_draft_opens_no_confirm() -> None:
+    result = _click(
+        """
+          await m.onPermanent(mine, { currentTarget: anchor });
+          const afterFirst = {
+            hidden: globalThis.__popover.hidden,
+            toast: globalThis.__toast.textContent,
+          };
+          await m.onPermanent(theirs, { currentTarget: anchor });
+          return {
+            afterFirst,
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            draft: m.store.get().combatDraft,
+            calls: globalThis.__calls,
+          };
+        """,
+        state=_click_state(
+            step="declare_blockers",
+            active_player="bob",
+            battlefield=[ATTACKING_CREATURE, OPPONENT_BEAR],
+        ),
+        mine=ATTACKING_CREATURE,
+        theirs=OPPONENT_BEAR,
+    )
+    assert result["afterFirst"]["hidden"] is True
+    assert "click the attacker" in result["afterFirst"]["toast"]
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    # `combat.js`'s draft is keyed blocker -> the attacker it blocks.
+    assert result["draft"] == {"bears1": "ob1"}
+    assert result["calls"] == []

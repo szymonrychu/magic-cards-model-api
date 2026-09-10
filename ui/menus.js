@@ -74,23 +74,62 @@ export function surfaceForChoice(kind) {
  * and acts immediately. A pin can ask twice - `"mana_ability"` first when
  * the source has more than one mana ability, then `"mana_colour"` if the
  * chosen one still offers a choice of colour - and both are the same
- * popover over the same card, which is why the plan names only the second. */
+ * popover over the same card, which is why the plan names only the second.
+ *
+ * **Every plan that ACTS opens a popover, single option and all** - playing
+ * a land, casting, and activating the one ability a permanent has used to
+ * fire on the click itself, and now open the same anchored picker a
+ * multi-ability permanent already opened. A one-item menu IS the confirm:
+ * there is no separate confirm component and no Cancel item, because
+ * `render/ribbon.js`'s `showPopover` already leaves on Escape, on a click
+ * away, and on picking something. What that item then begins - a cast or an
+ * activation staging in the ribbon (`"announcement"`, still what `"crew"`
+ * names, since crew is only ever picked out of a Vehicle's own menu) - is
+ * the step after this one, not what the click opened.
+ *
+ * A plan that SELECTS is deliberately still `null`: picking a target,
+ * cancelling, toggling a blocker into the combat draft. A confirm on a
+ * target pick would make a three-target spell a nine-click affair. So is
+ * `"none"` - a card with nothing to do stays a silent no-op rather than
+ * opening a dialog to say so. */
 export function choiceForPlan(plan) {
   const kind = plan && plan.kind;
   if (kind === "menu") {
     const which = Array.isArray(plan.abilities) ? "abilities" : "hand_actions";
     return { kind: which, surface: surfaceForChoice(which) };
   }
+  if (kind === "land" || kind === "cast") {
+    return { kind: "hand_actions", surface: surfaceForChoice("hand_actions") };
+  }
+  if (kind === "activate") return { kind: "abilities", surface: surfaceForChoice("abilities") };
   if (kind === "pin") return { kind: "mana_colour", surface: surfaceForChoice("mana_colour") };
   if (kind === "attack") return { kind: "defender", surface: surfaceForChoice("defender") };
-  if (kind === "cast" || kind === "activate" || kind === "crew") {
-    return { kind: "announcement", surface: surfaceForChoice("announcement") };
-  }
+  if (kind === "crew") return { kind: "announcement", surface: surfaceForChoice("announcement") };
   return null;
 }
 
-function item(key, label, sublabel) {
-  return { key, label, sublabel: sublabel || "" };
+/** One menu item. `match` is the row this item would be in the engine's own
+ * `GET .../legal-actions` answer - `{card_id, kind, ability_index}`, the
+ * three fields that identify an `Action` - or `null` for an item that has no
+ * such row (a colour to tap for, a defender to aim at, Crew, which is not an
+ * `ActionKind` at all). `enrichItems` is the only reader. */
+function item(key, label, sublabel, match) {
+  return { key, label, sublabel: sublabel || "", match: match || null };
+}
+
+/** The `Action` row a click on one of this card's activated abilities would
+ * take. A mana ability is a different `ActionKind` from an ordinary one
+ * (`activate_mana`, its own engine entry point), and the enumeration says so
+ * for every one of them - an item that claimed plain `activate` for a mana
+ * ability would silently match nothing. No Comprehensive Rules number is
+ * restated here; see this file's header. */
+function abilityMatch(cardId, ability) {
+  if (!cardId) return null;
+  return {
+    card_id: cardId,
+    kind: ability.is_mana_ability ? "activate_mana" : "activate",
+    ability_index: ability.index,
+  };
 }
 
 /** One menu item for one ability, keyed `<prefix>:<its own index>`.
@@ -102,36 +141,82 @@ function item(key, label, sublabel) {
  * target." with "Remove a +1/+1 counter from this creature" a second time in
  * dim type below it. The cost is kept as a sublabel only when the text does
  * not already open with it. */
-function abilityItem(prefix, ability) {
+function abilityItem(prefix, ability, match) {
   const text = ability.text || "";
   const cost = (ability.cost || "").trim();
   const repeated = Boolean(cost) && text.trimStart().startsWith(cost);
-  return item(`${prefix}:${ability.index}`, text, repeated ? "" : cost);
+  return item(`${prefix}:${ability.index}`, text, repeated ? "" : cost, match);
 }
 
 /** The items a hand card's menu offers, in order: the ordinary thing first
  * (play it, or cast it), then every special action, then cycling. `key` is
  * what `app.js` switches on - nothing here fires a request or touches the
- * DOM. */
+ * DOM.
+ *
+ * Also the whole menu for a plain `{kind: "land"}` or `{kind: "cast"}` plan,
+ * which carries no `specials`/`cycling` of its own: both loops run zero
+ * times and what comes back is the single Play or Cast item that IS the
+ * confirm for a click that used to fire straight away.
+ *
+ * Each special action's keyword is its own `ActionKind` in the engine's
+ * enumeration (`plot`, `foretell`, `suspend`), so the match needs no table.
+ * Cycling is an `activate_off_zone`, and its `ability_index` is the one the
+ * board view printed on the offer. */
 export function handMenuItems(plan, card) {
   const specialActions = (card && card.special_actions) || {};
-  const items = [plan.isLand ? item("play", "Play") : item("cast", "Cast")];
+  const cardId = card && card.id;
+  const match = (kind, abilityIndex) =>
+    cardId ? { card_id: cardId, kind, ability_index: abilityIndex ?? null } : null;
+  const isLand = plan.kind === "land" || Boolean(plan.isLand);
+  const items = [
+    isLand ? item("play", "Play", "", match("play_land")) : item("cast", "Cast", "", match("cast")),
+  ];
   for (const keyword of plan.specials || []) {
     const offer = specialActions[keyword] || {};
-    items.push(item(`special:${keyword}`, keyword[0].toUpperCase() + keyword.slice(1), offer.cost));
+    items.push(
+      item(
+        `special:${keyword}`,
+        keyword[0].toUpperCase() + keyword.slice(1),
+        offer.cost,
+        match(keyword)
+      )
+    );
   }
-  for (const offer of plan.cycling || []) items.push(item("cycle", "Cycle", offer.cost));
+  for (const offer of plan.cycling || []) {
+    items.push(item("cycle", "Cycle", offer.cost, match("activate_off_zone", offer.index)));
+  }
   return items;
 }
 
 /** The items a permanent's menu offers: one per activated ability, keyed by
  * the ability's own index (not its position in this list - a permanent can
  * offer ability 0 and ability 2 with nothing offerable between them), then
- * Crew last for a Vehicle. */
-export function abilityMenuItems(plan) {
-  const items = (plan.abilities || []).map((ability) => abilityItem("activate", ability));
+ * Crew last for a Vehicle.
+ *
+ * A one-ability permanent's plan is `{kind: "activate", abilityIndex}` and
+ * names no list at all, because the click it comes from used to activate
+ * immediately. The ability is read off `card` here so that click opens the
+ * same menu with one item in it - and the item says which ability it is
+ * about, which an "are you sure?" box could not. It is keyed by the plan's
+ * own `abilityIndex`, which is exactly the number `beginActivate` has always
+ * been handed. */
+export function abilityMenuItems(plan, card) {
+  const cardId = card && card.id;
+  const abilities = plan.kind === "activate" ? soleAbility(plan, card) : plan.abilities || [];
+  const items = abilities.map((ability) =>
+    abilityItem("activate", ability, abilityMatch(cardId, ability))
+  );
   if (plan.vehicle) items.push(item("crew", "Crew"));
   return items;
+}
+
+/** The one ability an `{kind: "activate", abilityIndex}` plan is about, as a
+ * one-entry list in `plan.abilities`' own shape - empty if the card does not
+ * carry it, so a menu with nothing in it opens nothing rather than an empty
+ * box. */
+function soleAbility(plan, card) {
+  const ability = ((card && card.abilities) || [])[plan.abilityIndex];
+  return ability ? [{ ...ability, index: plan.abilityIndex }] : [];
 }
 
 /** One item per mana ability a source being pinned mid-cast could be tapped
@@ -156,6 +241,53 @@ export function manaMenuItems(colors) {
  * and any planeswalker or battle they control. */
 export function defenderMenuItems(defenders) {
   return (defenders || []).map((defender) => item(`defender:${defender.id}`, `Attack ${defender.label}`));
+}
+
+/** Fold `GET .../legal-actions` into a menu that is ALREADY on screen: an
+ * option the engine reports it cannot pay for is disabled and captioned with
+ * the engine's own `unaffordable_reason`, and everything else comes back
+ * exactly as it went in (same items, same order, nothing dropped).
+ *
+ * A caption rather than a filter, and that is the engine's own choice
+ * restated here: an unpayable cost does not make an action illegal, so
+ * `legal-actions` lists it either way (`app.py`'s `get_legal_actions` and
+ * the `Affordability` model carry the rule number this repo verified for
+ * that). The menu keeps offering it and says why it will not work, instead
+ * of leaving the player to guess where the option went. No Comprehensive
+ * Rules number is restated in this file - see its header.
+ *
+ * Three answers, kept distinct. `"no"` is the only one that disables
+ * anything: `"unknown"` is a real, separate verdict (a modal or X spell
+ * before its parameters are announced) and folding it into `"no"` would grey
+ * out an option the player can in fact take. An item with no matching row at
+ * all - Crew, or an answer that simply does not mention it - is left alone
+ * for the same reason: silence is not a refusal.
+ *
+ * A single item can match several rows (evoke: one card, one `cast` kind,
+ * the printed cost and the alternative one). It is unaffordable only when
+ * EVERY matching row says so - the menu's one Cast item begins the
+ * announcement where that alternative cost is chosen. */
+export function enrichItems(items, actions) {
+  const rows = actions || [];
+  return (items || []).map((entry) => {
+    const matching = rows.filter((row) => matchesAction(entry.match, row));
+    if (!matching.length || matching.some((row) => row.affordable !== "no")) return entry;
+    const reason = matching.map((row) => row.unaffordable_reason).find(Boolean);
+    return { ...entry, disabled: true, sublabel: reason || entry.sublabel };
+  });
+}
+
+/** The three fields that identify one `Action`: which card, which entry
+ * point, and - for an activation - which ability. Everything else on the row
+ * (its rule, its cost, its target slots) describes the action rather than
+ * naming it. */
+function matchesAction(match, action) {
+  if (!match || !action) return false;
+  return (
+    match.card_id === action.card_id &&
+    match.kind === action.kind &&
+    (match.ability_index ?? null) === (action.ability_index ?? null)
+  );
 }
 
 function clamp(value, low, high) {
