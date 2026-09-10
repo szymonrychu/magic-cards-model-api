@@ -1,0 +1,137 @@
+{
+  "artist": "Myles Wohl",
+  "artist_ids": [
+    "d08c97ce-ffe1-46ca-a06c-27ed6a5baf42"
+  ],
+  "booster": false,
+  "border_color": "black",
+  "card_back_id": "0aeebaf5-8c7d-4636-9e82-8c27447861f7",
+  "cardmarket_id": 892276,
+  "cmc": 2.0,
+  "collector_number": "575",
+  "color_identity": [
+    "W"
+  ],
+  "colors": [
+    "W"
+  ],
+  "digital": false,
+  "edhrec_rank": 5245,
+  "finishes": [
+    "nonfoil"
+  ],
+  "flavor_text": "\"You wish to get up, brother? It is very simple! All you have to do is be worthy!\"\n\u2014Thor",
+  "foil": false,
+  "frame": "2015",
+  "frame_effects": [
+    "enchantment"
+  ],
+  "full_art": false,
+  "game_changer": false,
+  "games": [
+    "paper",
+    "mtgo",
+    "arena"
+  ],
+  "highres_image": true,
+  "id": "433eed50-81af-4a59-b624-57b6f5f1bb0f",
+  "illustration_id": "6cc67341-8664-4e16-a483-83e0e137ecb9",
+  "image_status": "highres_scan",
+  "image_updated_at": "2026-07-13T00:38:11Z",
+  "image_uris": {
+    "art": "https://cards.scryfall.io/art/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.webp?1783903091",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.jpg?1783903091",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.jpg?1783903091",
+    "crop": "https://cards.scryfall.io/crop/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.webp?1783903091",
+    "display": "https://cards.scryfall.io/display/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.webp?1783903091",
+    "grid": "https://cards.scryfall.io/grid/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.webp?1783903091",
+    "large": "https://cards.scryfall.io/large/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.jpg?1783903091",
+    "normal": "https://cards.scryfall.io/normal/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.jpg?1783903091",
+    "png": "https://cards.scryfall.io/png/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.png?1783903091",
+    "small": "https://cards.scryfall.io/small/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.jpg?1783903091",
+    "thumb": "https://cards.scryfall.io/thumb/front/4/3/433eed50-81af-4a59-b624-57b6f5f1bb0f.webp?1783903091"
+  },
+  "keywords": [
+    "Enchant"
+  ],
+  "lang": "en",
+  "layout": "normal",
+  "legalities": {
+    "alchemy": "legal",
+    "brawl": "legal",
+    "commander": "legal",
+    "competitivebrawl": "legal",
+    "duel": "legal",
+    "future": "legal",
+    "gladiator": "legal",
+    "historic": "legal",
+    "legacy": "legal",
+    "modern": "legal",
+    "oathbreaker": "legal",
+    "oldschool": "not_legal",
+    "pauper": "legal",
+    "paupercommander": "legal",
+    "penny": "legal",
+    "pioneer": "legal",
+    "predh": "legal",
+    "premodern": "legal",
+    "standard": "legal",
+    "standardbrawl": "legal",
+    "timeless": "legal",
+    "tlr": "legal",
+    "vintage": "legal"
+  },
+  "mana_cost": "{1}{W}",
+  "mtgo_id": 151175,
+  "multiverse_ids": [],
+  "name": "Pacifism",
+  "nonfoil": true,
+  "object": "card",
+  "oracle_id": "5f5e0b10-c8cf-450c-bfd3-bcb0528ec330",
+  "oracle_text": "Enchant creature\nEnchanted creature can't attack or block.",
+  "oversized": false,
+  "penny_rank": 5827,
+  "prices": {
+    "eur": "0.27",
+    "eur_foil": null,
+    "tix": "0.01",
+    "usd": "0.16",
+    "usd_etched": null,
+    "usd_foil": null
+  },
+  "prints_search_uri": "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A5f5e0b10-c8cf-450c-bfd3-bcb0528ec330&unique=prints",
+  "promo": false,
+  "promo_types": [
+    "universesbeyond"
+  ],
+  "purchase_uris": {
+    "cardhoarder": "https://www.cardhoarder.com/cards/151175?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall",
+    "cardmarket": "https://www.cardmarket.com/en/Magic/Products?idProduct=892276&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall",
+    "tcgplayer": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F697117%3Fpage%3D1"
+  },
+  "rarity": "common",
+  "related_uris": {
+    "edhrec": "https://edhrec.com/route/?cc=Pacifism",
+    "tcgplayer_infinite_articles": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Farticles&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Farticles%3FproductLineName%3Dmagic%26q%3DPacifism",
+    "tcgplayer_infinite_decks": "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&trafcat=tcgplayer.com%2Fsearch%2Fdecks&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fdecks%3FproductLineName%3Dmagic%26q%3DPacifism"
+  },
+  "released_at": "2026-06-26",
+  "reprint": true,
+  "reserved": false,
+  "resource_id": "DD79F267B90056EE9C138674874AC9D54115F093F8F1ECAD68C7D3377DB6511B",
+  "rulings_uri": "https://api.scryfall.com/cards/433eed50-81af-4a59-b624-57b6f5f1bb0f/rulings",
+  "scryfall_set_uri": "https://scryfall.com/sets/msc?utm_source=api",
+  "scryfall_uri": "https://scryfall.com/card/msc/575/pacifism?utm_source=api",
+  "set": "msc",
+  "set_id": "9d739461-c5ac-43a1-af41-3d5a585b5c8d",
+  "set_name": "Marvel Super Heroes Commander",
+  "set_search_uri": "https://api.scryfall.com/cards/search?order=set&q=e%3Amsc&unique=prints",
+  "set_type": "commander",
+  "set_uri": "https://api.scryfall.com/sets/9d739461-c5ac-43a1-af41-3d5a585b5c8d",
+  "story_spotlight": false,
+  "tcgplayer_id": 697117,
+  "textless": false,
+  "type_line": "Enchantment \u2014 Aura",
+  "uri": "https://api.scryfall.com/cards/433eed50-81af-4a59-b624-57b6f5f1bb0f",
+  "variation": false
+}

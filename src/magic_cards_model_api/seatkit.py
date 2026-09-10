@@ -160,7 +160,58 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-13"
+PROTOCOL_VERSION = "seatkit-14"
+#: `seatkit-14` is a **RESPONSE-ONLY** shape change: every answer that already
+#: carried `state` - `pass`, `pass_until` and every committing tool, through
+#: `mcp._tool_result` -> `mcp._action_answer` - now carries what a seat needs
+#: to *issue* its next action, not merely to choose one.
+#:
+#: (1) **`available_actions.actions[].targets`.** Every entry that targets and
+#: is not flatly unaffordable gains the legal candidates for each of its
+#: requirement slots: `{understood, slots: [{slot, count, candidates,
+#: truncated}], more_with}`, candidates as plain strings shaped
+#: `"<uuid> <name> (<zone>, <controller>)"` or `"<player> (player)"` - the
+#: exact spellings `targets` takes back, so a seat casts straight out of the
+#: answer it just read. `Action.target_slots` was only ever the *shape* of a
+#: requirement (the engine's own `TargetSlot` docstring points at
+#: `Game.legal_targets` for the objects), so before this a seat holding a
+#: legal, affordable, targeting action still had to spend a `battlefield_state`
+#: round trip - and so a whole inference cycle - to find out what it could
+#: name. `understood: false` carries no candidates and says why, never an
+#: empty list, which would read as "nothing is legal"; a row with
+#: `affordable: "no"` carries none either, which the new envelope key
+#: `available_actions.targets_note` states once rather than every row
+#: repeating.
+#:
+#: (2) **`board.battlefield_digest`.** One line per permanent, keyed by
+#: controller: id, name, power/toughness, tapped, counters, summoning
+#: sickness, what it is attached to, what it is attacking. `_action_answer`
+#: already received the whole board and threw it away; ~62 bytes a permanent
+#: is what it costs to stop doing that. `battlefield` STAYS in
+#: `omitted_sections` - the digest is a summary of the section, not the
+#: section - and a digest that will not fit its cap is replaced whole by a
+#: pointer at `battlefield_state`, never emitted partially.
+#:
+#: An MCP process built before this bump reads an answer whose action entries
+#: and `board` carry keys it does not know, and goes on making the extra round
+#: trip it was written to make - which is the silent, slower-than-necessary
+#: behaviour this check exists to turn loud instead.
+#:
+#: What did NOT change, said plainly: no tool gained, lost or renamed a
+#: parameter, so `contract/tools.json` is byte-identical across this bump.
+#: Deliberately not folded in either: a `focus`/`for_action` parameter to
+#: narrow which action's candidates come back. That shape was considered and
+#: rejected - a seat must already know what it is about to do in order to ask,
+#: which is exactly the question it was trying to answer.
+#:
+#: The api's own `GET .../legal-actions` grew `candidates=true` for this, and
+#: that half is opt-in on purpose: the walk costs ~106 ms on a 28-permanent
+#: board (`TargetRequirement.rejects` reaches `Game.characteristics_of`, and
+#: `Game.computed_board` is uncached in the engine by CR 613.5's own
+#: reasoning). A seat pays it once per action and saves a round trip;
+#: `ui/app.js`, which polls the same endpoint every 1.2s and already has the
+#: board on screen, does not ask and does not pay.
+#:
 #: `seatkit-13` is a **response** shape change: every mana source an action
 #: tool offers now says what it actually makes and what it is allowed to pay
 #: for. The engine's `Action` gained `produces`, `restriction` and
@@ -1188,7 +1239,17 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     try:
         response = seat.http.get(
             f"/api/games/{seat.game_id()}/legal-actions",
-            params={"uid": seat.uid, "player": seat.player},
+            params={
+                "uid": seat.uid,
+                "player": seat.player,
+                # Opt in to the per-action legal-target candidates
+                # (`app._attach_target_candidates`). A seat pays ~106 ms of
+                # server time for them on a 28-permanent board and saves a
+                # whole round trip - and so a whole inference cycle - per
+                # action; the browser, which does not set this, asks the same
+                # endpoint on a 1.2s poll and already has the board on screen.
+                "candidates": True,
+            },
         )
     except _AMBIGUOUS_TIMEOUTS as exc:
         return _actions_unavailable(state, f"the legal-actions call timed out: {exc}")
@@ -1206,6 +1267,23 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     return _actions_view(state, payload.get("actions") or [], None)
 
 
+#: What the envelope says once, rather than every row saying it twenty times.
+#: Two facts a reader of `actions` needs and cannot get from any single entry:
+#: that a `targets` block is ready to be handed straight back, and that a row
+#: without one is not a row with no legal targets. CR 118.6 keeps an unpayable
+#: cast in the list, and enumerating what it could point at would be bytes
+#: spent on a list the seat can do nothing with - so `affordable: "no"` rows
+#: carry no candidates, and that is a statement about affordability, never
+#: about the board.
+TARGETS_NOTE = (
+    "an action that targets carries `targets.slots[].candidates` - hand one straight back "
+    'as `targets`. A row with `affordable: "no"` is listed (CR 118.6: an unpayable cast is '
+    "still a legal one) but carries no candidates, because it cannot be taken yet - that is "
+    "NOT 'nothing is legal for it'. `targets.understood: false` means the engine could not "
+    "read the targeting phrase and will not guess; name targets yourself."
+)
+
+
 def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) -> dict[str, Any]:
     pending = state.get("pending_decision")
     kind = pending.get("kind") if pending is not None else None
@@ -1215,6 +1293,8 @@ def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) 
         "blockers_requested": kind == "declare_blockers",
         "pending_decision": pending,
     }
+    if any(isinstance(action, dict) and "targets" in action for action in actions):
+        view["targets_note"] = TARGETS_NOTE
     if error is not None:
         view["actions_error"] = error
     return view

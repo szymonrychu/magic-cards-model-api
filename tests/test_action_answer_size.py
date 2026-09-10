@@ -38,6 +38,8 @@ from fastapi.testclient import TestClient
 from test_cast_cost_choices import answer, text_of
 from test_mcp_input_required import call_tool, wired
 
+from magic_cards_model_api import affordances
+from magic_cards_model_api import mcp as mcp_module
 from magic_cards_model_api.mcp import build_server
 
 #: A board with something on it - fourteen permanents a side, eight cards in
@@ -71,10 +73,22 @@ GRAVE = [
 ]
 
 #: The bound one answer must stay under, in bytes. 25,000 tokens was the
-#: client's own ceiling and roughly 100,000 bytes of JSON; this is a fifth of
-#: that, on a board that is already busy, so an answer has to grow fivefold
-#: from here before a seat is anywhere near unable to read its own result.
-MAX_ANSWER_BYTES = 20_000
+#: client's own ceiling and roughly 100,000 bytes of JSON; this stays under
+#: half of it, so an answer still has to more than double from here before a
+#: seat is anywhere near unable to read its own result.
+#:
+#: Raised from 20,000 deliberately, and this is the reasoning: 20,000 was
+#: defensive padding chosen when the only question was "how small can this
+#: get", not a constraint anything actually needed. It is now spent on the
+#: two things that let a seat act out of one answer instead of three -
+#: `targets` candidates (`mcp.MAX_CANDIDATE_BYTES`, 12,000) and the
+#: battlefield digest (`mcp.MAX_DIGEST_BYTES`, 8,000). Those two caps plus
+#: the measured base of an already-busy board is ~33.5 KB, which
+#: `test_the_worst_case_an_answer_can_reach_still_fits` proves from the real
+#: numbers rather than from this comment. A round trip saved is a whole
+#: inference cycle saved; 25,000 bytes of headroom that no client was ever
+#: going to use is not worth one.
+MAX_ANSWER_BYTES = 45_000
 
 #: The zones an action answer must not re-serialise, by the key each occupies
 #: in a state view - `battlefield_state` serves all of them, with `sections` to
@@ -255,3 +269,55 @@ def test_every_action_tool_shares_the_same_narrowed_answer(client, game, monkeyp
         assert "state" not in payload, (name, list(payload))
         assert next(iter(payload)) == "outcome", (name, list(payload))
         assert "omitted_sections" in payload["board"], (name, payload["board"])
+
+
+# -- the caps, and the worst case they add up to ----------------------------
+#
+# Four numbers bound one answer, and each is a deliberate choice rather than a
+# round number. They are pinned here, together, because they only make sense
+# read against one another: the three inner caps have to leave the outer one
+# room on a board busier than any of them was measured on.
+
+
+def test_the_four_caps_are_where_the_reasoning_says_they_are():
+    """A cap moved without its comment moving is the failure this catches -
+    each of these carries the measurement that chose it at its definition."""
+    assert MAX_ANSWER_BYTES == 45_000
+    assert mcp_module.MAX_CANDIDATE_BYTES == 12_000
+    assert mcp_module.MAX_DIGEST_BYTES == 8_000
+    assert affordances.CANDIDATE_SLOT_CAP == 30
+
+
+def test_the_worst_case_an_answer_can_reach_still_fits(client, game, monkeypatch):
+    """Not a guess: the base is measured off this very board with both new
+    blocks emptied, and the two caps are then added at full value. An answer
+    physically cannot exceed that sum, because neither block can pass its own
+    cap - so if this holds, `MAX_ANSWER_BYTES` holds for every board."""
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    busy_board(client, game)
+    add_card(client, game, "Solitude", "alice", "hand")
+    add_card(client, game, "Savannah Lions", "alice", "hand")
+
+    caps = mcp_module.MAX_DIGEST_BYTES + mcp_module.MAX_CANDIDATE_BYTES
+    monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 0)
+    monkeypatch.setattr(mcp_module, "MAX_CANDIDATE_BYTES", 0)
+    base = len(text_of(cast_solitude(server, uids["alice"], reasoning="evoking")))
+
+    assert base + caps < MAX_ANSWER_BYTES, f"base {base} + caps {caps}"
+
+
+def test_a_real_enriched_answer_is_nowhere_near_the_cap(client, game, monkeypatch):
+    """The worst case above is arithmetic; this is the board. Nothing on a
+    normal, busy board comes close, which is what the headroom is for."""
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    busy_board(client, game)
+    add_card(client, game, "Solitude", "alice", "hand")
+    add_card(client, game, "Savannah Lions", "alice", "hand")
+
+    text = text_of(cast_solitude(server, uids["alice"], reasoning="evoking"))
+
+    assert len(text) < MAX_ANSWER_BYTES, f"{len(text)} bytes"
+    payload = json.loads(text)
+    assert payload["board"]["battlefield_digest"], "the digest must actually be in there"

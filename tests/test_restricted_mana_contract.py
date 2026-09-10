@@ -57,10 +57,19 @@ def test_ability_view_publishes_its_restriction() -> None:
     assert "restriction" in _properties("AbilityView")
 
 
+#: The component the engine's `Action` reaches the wire as. It is the
+#: subclass, not `Action` itself: `LegalActionsResponse` answers with
+#: `schemas.ActionWithTargets`, which inherits every field of `Action` and
+#: adds the api's own per-action legal-target candidates, so `Action` is no
+#: longer referenced by any route and FastAPI no longer names it. The claims
+#: below are about the fields that reach a client, which is this.
+ACTION_COMPONENT = "ActionWithTargets"
+
+
 def test_action_says_what_it_produces_and_what_binds_the_mana() -> None:
     """The engine's three new `Action` fields, reaching the wire through the
     api's own component for it."""
-    properties = _properties("Action")
+    properties = _properties(ACTION_COMPONENT)
     assert "produces" in properties
     assert "restriction" in properties
     assert "restriction_understood" in properties
@@ -77,4 +86,4 @@ def test_action_says_how_many_colours_a_caller_names() -> None:
     that carries only part of the wave is exactly the failure this file
     exists to catch.
     """
-    assert "color_choice_count" in _properties("Action")
+    assert "color_choice_count" in _properties(ACTION_COMPONENT)

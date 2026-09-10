@@ -7,6 +7,44 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-10 - an action answer now carries its own legal targets, and the
+  candidates are opt-in because the engine will not cache the board.** M1's
+  three findings, in the order they cost time.
+
+  (1) **Candidate enumeration is ~106 ms on a 28-permanent board**, on top of
+  the ~350 ms `machines.legal_actions` already spends there. The cause is not
+  this repo's: `TargetRequirement.rejects` reaches `Game.characteristics_of`,
+  which calls `Game.computed_board`, which is deliberately uncached in the
+  engine - CR 613.5 says continuous effects are applied "continually", so a
+  cached board would be a board that lies, and its docstring says as much. So
+  `GET .../legal-actions` grew `candidates=true` rather than folding them into
+  every answer: `seatkit.available_actions` sets it and pays once per action
+  to save a whole round trip, and `ui/app.js`, which polls the same endpoint
+  every 1.2s with the board already on screen, does not set it and pays
+  nothing. `tests/test_legal_actions_endpoint.py` pins both the added cost and
+  the single board walk per request.
+
+  (2) **`Action.target_slots` is a cast-only field.**
+  `legal_actions._cast_action` fills it; `_battlefield_ability_actions` does
+  not, so Karn, the Great Creator's `+1` ("up to one target noncreature
+  artifact") is enumerated with `target_slots: []`, exactly like his `-2`,
+  which targets nothing. Candidates therefore ride on casts only. This repo
+  deliberately does NOT re-derive an ability's targeting from printed text to
+  fill the gap - `/api/games/{id}/affordances/{card_id}` already answers that
+  per `ability_index`, and the real fix belongs in the engine's own `Action`.
+
+  (3) **Strings, not objects, and the reason is `json.dumps(indent=1)`**,
+  which puts every key of every dict on a line of its own. The same fourteen
+  candidates measured 2,384 bytes as `{id, kind, name, zone, controller}`
+  dicts and 982 as `"<uuid> <name> (<zone>, <controller>)"` strings, carrying
+  the identical five facts. The same reasoning shapes `board
+  .battlefield_digest`: ~62 bytes a permanent against the ~1,300 of a card
+  view. Both caps fail loud rather than short - a truncated slot keeps its
+  true `count`, and a digest that will not fit is replaced whole by a pointer
+  at `battlefield_state`, never emitted partially, because a seat that misses
+  a blocker because the digest ran out of room is the failure this exists to
+  avoid.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.

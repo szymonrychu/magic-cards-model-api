@@ -1698,14 +1698,69 @@ class OpeningHandFinishResponse(BaseModel):
     settled_through: list[str] | None = None
 
 
+class TargetSlotCandidates(BaseModel):
+    """The legal candidates for ONE of an announcement's targeting
+    requirements (`affordances.target_candidates`), by that requirement's own
+    index into `Action.target_slots` - so `slot` says which phrase these
+    answer, and the phrase itself is not repeated here.
+
+    `count` is the true total whatever the caps did to `candidates`: a seat
+    weighing a sweeper needs the number even when it does not need the names,
+    and a list that quietly shrank while its count shrank with it would be a
+    list that lies. `truncated` and the absence of `candidates` are the two
+    ways it can shrink - the per-slot cap (`affordances.CANDIDATE_SLOT_CAP`)
+    and the whole answer's candidate budget (`mcp.MAX_CANDIDATE_BYTES`).
+    """
+
+    slot: int
+    count: int
+    candidates: list[str] | None = None
+    """`"<uuid> <name> (<zone>, <controller>)"`, or `"<player> (player)"`.
+    Strings rather than objects on purpose - see `affordances.candidate_line`
+    for the byte measurement that decided it. Absent (never empty) when the
+    answer's candidate budget was spent before this entry."""
+    truncated: int | None = None
+    """How many legal candidates this slot has beyond the ones listed.
+    Absent, never `0`, when the list is complete."""
+
+
+class ActionTargets(BaseModel):
+    """What one action may legally name, per requirement slot.
+
+    `understood: false` carries NO slots and a `note` saying why, which is
+    `affordances.candidates`' existing contract kept intact: an empty
+    candidate list would read as "nothing on this board is legal", a
+    different and false statement, and `ui/app.js`'s `isPickingTargets`
+    already branches on exactly that difference.
+    """
+
+    understood: bool
+    slots: list[TargetSlotCandidates] | None = None
+    more_with: str | None = None
+    """Where the rest of the candidates are, present only when something was
+    cut."""
+    note: str | None = None
+    """Why there are no candidates, present only when `understood` is false."""
+
+
+class ActionWithTargets(Action):
+    """The engine's own `Action`, plus the candidates the api enumerates for
+    it (`app._attach_target_candidates`). A subclass rather than a re-shape:
+    every field of `Action` is passed through untouched and by inheritance,
+    so a field the engine adds arrives here without this file changing."""
+
+    targets: ActionTargets | None = None
+
+
 class LegalActionsResponse(BaseModel):
     """`GET .../legal-actions` (T11) - the engine's own `Action` model,
     reused as-is rather than re-shaped: `get_legal_actions` returns exactly
     `[action.model_dump(mode="json") for action in actions]`, and
     `records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as
-    `LogEntry.legal_actions_before`) is the identical dump."""
+    `LogEntry.legal_actions_before`) is the identical dump - now with the
+    legal candidates for each targeting action folded in alongside."""
 
-    actions: list[Action]
+    actions: list[ActionWithTargets]
 
 
 class CandidateView(BaseModel):

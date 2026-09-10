@@ -295,8 +295,17 @@ def cast_hints(state: CardState) -> dict[str, Any]:
     return hints
 
 
-def _all_targetables(game: Game) -> list[Any]:
-    """Every object a target could name, drawn from the public zones only."""
+def all_targetables(game: Game) -> list[Any]:
+    """Every object a target could name, drawn from the public zones only.
+
+    Public because it is the one piece of this module worth hoisting: a whole
+    `legal-actions` request enumerates candidates for every targeting action
+    it lists, and every one of them walks the same board. `app.
+    get_legal_actions` calls this once per request and hands the list down to
+    each `target_candidates` call - one walk, not one per action, which is
+    the same N-into-one shape T11 already applied a layer up at the HTTP
+    boundary.
+    """
     things: list[Any] = list(game.players)
     for zone in CANDIDATE_ZONES:
         for state in game.shared_zones.get(zone, []):
@@ -428,7 +437,7 @@ def candidates(
         return {**view, "candidates": []}
 
     found: list[dict[str, Any]] = []
-    for thing in _all_targetables(game):
+    for thing in all_targetables(game):
         if thing is state and state.zone is not Zone.STACK:
             # The object doing the targeting is not yet on the stack, so it is
             # not a candidate for its own "target other" clauses; `rejects`
@@ -443,6 +452,138 @@ def candidates(
         if slots:
             found.append({**_label(thing), "requirements": slots})
     return {**view, "candidates": found}
+
+
+#: How many candidates one target slot lists before it starts saying "and N
+#: more" instead of naming them. Measured: Lightning Bolt's "any target" on a
+#: 28-permanent board has 14 legal candidates, so 30 fits that and every other
+#: normal targeted spell whole - only a "target creature" on a board wider
+#: than any real one reaches it. The cap exists so a pathological board cannot
+#: make one answer unreadable, not to trim ordinary ones; a slot that does hit
+#: it keeps its true `count` and says what to call (`MORE_CANDIDATES_WITH`),
+#: because a seat weighing a sweeper needs the number even when it does not
+#: need the names.
+CANDIDATE_SLOT_CAP = 30
+
+#: What a truncated slot points at. There is no MCP tool that enumerates
+#: candidates on its own - deliberately, since asking one would mean the seat
+#: already knew which action it was about to take, which is the question it is
+#: trying to answer - so the pointer is at the board itself: every candidate
+#: is an object in a public zone (`CANDIDATE_ZONES`) or a player, and all of
+#: those are in `battlefield_state`.
+MORE_CANDIDATES_WITH = (
+    "battlefield_state - more candidates are legal than are listed here; `count` is the "
+    "true total, and every candidate is a permanent, a graveyard/exile card, a spell on "
+    "the stack, or a player, all of which that tool shows in full"
+)
+
+#: What is said instead of a candidate list when the parser could not read
+#: the targeting phrase at all. NOT an empty list, which would read as
+#: "nothing on this board is legal" - a different and false statement. Same
+#: contract `candidates` has kept since `ui/app.js` started branching on
+#: `understood` to choose between a free-entry box and a picker.
+UNREADABLE_TARGETING = (
+    "the engine could not parse this targeting phrase, so it will not guess at the "
+    "candidates - this is NOT 'nothing is legal'. Read the printed text and name "
+    "targets yourself; the engine still checks them (CR 601.2c)"
+)
+
+
+def candidate_line(thing: Any) -> str:
+    """One legal candidate as a single string.
+
+    A string rather than the `_label` object `candidates` returns, and the
+    difference is not cosmetic: an action answer is serialised with
+    `json.dumps(indent=1)`, which puts every key of every dict on a line of
+    its own. The same fourteen candidates measured 2,384 bytes as objects and
+    972 as strings - and the object's fields were `id`, `kind`, `name`,
+    `zone`, `controller`, every one of which is in the string below.
+
+    The id is the whole uuid, never a prefix: it is exactly what `cast`'s
+    `targets` parameter takes back, and a prefix would have to be resolved
+    against a board the answer carrying this deliberately does not include.
+    A player is named the way `targets` names one - by username - and says
+    `(player)` so it is never mistaken for a card whose id went missing.
+    """
+    if isinstance(thing, Player):
+        return f"{thing.username} (player)"
+    label = _label(thing)
+    controller = label.get("controller") or getattr(thing, "controller", None) or "?"
+    return f"{label['id']} {label['name']} ({label['zone']}, {controller})"
+
+
+def target_candidates(
+    game: Game,
+    state: CardState,
+    caster: str,
+    *,
+    ability_index: int | None = None,
+    targetables: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Every object this announcement could legally name, per requirement
+    slot, as strings - `candidates` narrowed to what a *seat* needs and
+    widened with the counts a seat needs to act on.
+
+    Same engine calls as `candidates`, and deliberately so: `TargetRequirement
+    .rejects` is the predicate `TargetingProfile._fill_slots` itself runs at
+    CR 601.2c, so this list can never disagree with the announcement that
+    follows it. The differences from `candidates` are all about who reads it:
+
+    - **per slot, not per candidate.** `candidates` answers "which slots can
+      this object fill", which is what a UI resolving a click needs;
+      a seat is filling one slot at a time and needs "what may go here", so
+      the inversion happens once, here, rather than in every reader.
+    - **strings** (`candidate_line`), for the byte reason spelled out there.
+    - **capped** at `CANDIDATE_SLOT_CAP` per slot, with the true `count` kept
+      whatever the cap did to the list.
+    - **no modes and no X.** CR 700.2c: a modal card's targeting is
+      unanswerable before its modes are chosen, and `targeting_profile`
+      already refuses on its own - which arrives here as `understood: False`
+      and a sentence saying so, never an empty list. This is asked before the
+      seat has announced anything, so there is nothing to substitute; the
+      browser's `/affordances` endpoint is where a half-announced spell is
+      re-asked with the modes and the X the player has picked so far.
+    """
+    try:
+        profile, _ = _profile_for(game, state, caster, ability_index, None, None)
+    except (IndexError, ValueError) as exc:
+        return {"understood": False, "note": f"{UNREADABLE_TARGETING} ({exc})"}
+    if not profile.understood:
+        return {"understood": False, "note": UNREADABLE_TARGETING}
+    if not profile.requirements:
+        return {"understood": True, "slots": []}
+
+    listed: list[list[str]] = [[] for _ in profile.requirements]
+    counts = [0] * len(profile.requirements)
+    for thing in all_targetables(game) if targetables is None else targetables:
+        if thing is state and state.zone is not Zone.STACK:
+            # Same exclusion `candidates` makes, for the same reason: the
+            # object doing the targeting is not on the stack yet, so it is
+            # not a candidate for its own "target other" clauses.
+            continue
+        line: str | None = None
+        for index, requirement in enumerate(profile.requirements):
+            if requirement.rejects(thing, caster, game, state.id) is not None:
+                continue
+            counts[index] += 1
+            if len(listed[index]) < CANDIDATE_SLOT_CAP:
+                if line is None:
+                    line = candidate_line(thing)
+                listed[index].append(line)
+
+    slots: list[dict[str, Any]] = []
+    truncated_anywhere = False
+    for index, lines in enumerate(listed):
+        slot: dict[str, Any] = {"slot": index, "count": counts[index], "candidates": lines}
+        dropped = counts[index] - len(lines)
+        if dropped:
+            slot["truncated"] = dropped
+            truncated_anywhere = True
+        slots.append(slot)
+    block: dict[str, Any] = {"understood": True, "slots": slots}
+    if truncated_anywhere:
+        block["more_with"] = MORE_CANDIDATES_WITH
+    return block
 
 
 def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[str, Any]]:

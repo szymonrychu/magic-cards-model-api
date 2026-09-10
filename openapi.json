@@ -84,8 +84,148 @@
         "title": "AbilityView",
         "type": "object"
       },
-      "Action": {
-        "description": "The arguments one engine entry point takes - a serializable call spec.\n\nBuilt so \"what a seat took\" and \"what else was legal at that moment\" are\nthe same type, directly comparable, and replayable from a log row long\nafter the `Game` that produced it is gone. Every reference to something in\nthe game is an id (`card_id`, `decision_candidates`, `attacker_id`) rather\nthan a live object - see the module docstring for why that is load-bearing\nrather than a style preference.",
+      "ActionKind": {
+        "description": "What kind of call spec this is - one entry point per engine action a\nseat (or `legal_actions`) can name.",
+        "enum": [
+          "cast",
+          "play_land",
+          "turn_face_up",
+          "suspend",
+          "companion",
+          "foretell",
+          "plot",
+          "dredge",
+          "activate",
+          "activate_mana",
+          "activate_off_zone",
+          "declare_attacker",
+          "declare_blocker",
+          "pass_priority",
+          "concede",
+          "answer_decision"
+        ],
+        "title": "ActionKind",
+        "type": "string"
+      },
+      "ActionOutcome": {
+        "additionalProperties": true,
+        "description": "The response shape of every action-mutating route\n(`app._respond`/`app.audit_outcome`) - `engine_api.Outcome.body()` plus\nthe audit log's own `log_seq`.\n\n`allowed` is `None` exactly when the action paused on an unanswered\ndecision (`paused=True`, `pending_decision` set) rather than completing\nor being refused outright. Fields beyond the five declared here are\naction-specific (`Outcome.detail` - e.g. `cost`, `tapped`, `spell_id`,\n`ability_id`, `card_id`, `attackers`, `mana_ability`, `ability`) and are\ndeliberately **not** enumerated as named fields: `engine_api.Outcome\n.detail` is untyped by design - each of its call sites across\n`engine_api.py` builds a different key set for a different action, and\nnaming them all here would either claim a field a given route's response\nnever actually carries, or force one implausibly wide union. This model\ninstead declares the fields every mutating route's response shares and\nlets the rest through as additional, unnamed properties\n(`extra=\"allow\"`) - the same honesty `serialize.state_view`'s own\ndynamically-keyed fields get, extended to this genuinely per-action\nshape. A consumer that needs one action's exact detail keys should pin\nagainst that route's own example response, not against this component.\n\n`notices` is the one `Outcome.detail` key declared here rather than left\nto `extra=\"allow\"`: unlike `cost`/`tapped`/`spell_id`/..., it is not\nper-action - `commands.run_command` files it onto every command kind's\noutcome generically (`commands._attach_notices`), so every route this\nmodel serves can carry one. Each entry is one of `Game`'s 19 fail-closed\nnotice records (`{\"kind\": ..., **notice.model_dump(mode=\"json\")}`, plus\nthis api's own `zone`/`controller` bookkeeping - see\n`commands._new_notices`), already redacted for this response's own\nviewer (`app.audit_outcome`) - not the engine's raw list.",
+        "properties": {
+          "allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed"
+          },
+          "log_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Seq"
+          },
+          "notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "pending_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingDecisionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "allowed"
+        ],
+        "title": "ActionOutcome",
+        "type": "object"
+      },
+      "ActionTargets": {
+        "description": "What one action may legally name, per requirement slot.\n\n`understood: false` carries NO slots and a `note` saying why, which is\n`affordances.candidates`' existing contract kept intact: an empty\ncandidate list would read as \"nothing on this board is legal\", a\ndifferent and false statement, and `ui/app.js`'s `isPickingTargets`\nalready branches on exactly that difference.",
+        "properties": {
+          "more_with": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "More With"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "slots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TargetSlotCandidates"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slots"
+          },
+          "understood": {
+            "title": "Understood",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "understood"
+        ],
+        "title": "ActionTargets",
+        "type": "object"
+      },
+      "ActionWithTargets": {
+        "description": "The engine's own `Action`, plus the candidates the api enumerates for\nit (`app._attach_target_candidates`). A subclass rather than a re-shape:\nevery field of `Action` is passed through untouched and by inheritance,\nso a field the engine adds arrives here without this file changing.",
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -333,6 +473,16 @@
             "title": "Target Slots",
             "type": "array"
           },
+          "targets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionTargets"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "unaffordable_reason": {
             "anyOf": [
               {
@@ -378,97 +528,7 @@
           "player",
           "rule"
         ],
-        "title": "Action",
-        "type": "object"
-      },
-      "ActionKind": {
-        "description": "What kind of call spec this is - one entry point per engine action a\nseat (or `legal_actions`) can name.",
-        "enum": [
-          "cast",
-          "play_land",
-          "turn_face_up",
-          "suspend",
-          "companion",
-          "foretell",
-          "plot",
-          "dredge",
-          "activate",
-          "activate_mana",
-          "activate_off_zone",
-          "declare_attacker",
-          "declare_blocker",
-          "pass_priority",
-          "concede",
-          "answer_decision"
-        ],
-        "title": "ActionKind",
-        "type": "string"
-      },
-      "ActionOutcome": {
-        "additionalProperties": true,
-        "description": "The response shape of every action-mutating route\n(`app._respond`/`app.audit_outcome`) - `engine_api.Outcome.body()` plus\nthe audit log's own `log_seq`.\n\n`allowed` is `None` exactly when the action paused on an unanswered\ndecision (`paused=True`, `pending_decision` set) rather than completing\nor being refused outright. Fields beyond the five declared here are\naction-specific (`Outcome.detail` - e.g. `cost`, `tapped`, `spell_id`,\n`ability_id`, `card_id`, `attackers`, `mana_ability`, `ability`) and are\ndeliberately **not** enumerated as named fields: `engine_api.Outcome\n.detail` is untyped by design - each of its call sites across\n`engine_api.py` builds a different key set for a different action, and\nnaming them all here would either claim a field a given route's response\nnever actually carries, or force one implausibly wide union. This model\ninstead declares the fields every mutating route's response shares and\nlets the rest through as additional, unnamed properties\n(`extra=\"allow\"`) - the same honesty `serialize.state_view`'s own\ndynamically-keyed fields get, extended to this genuinely per-action\nshape. A consumer that needs one action's exact detail keys should pin\nagainst that route's own example response, not against this component.\n\n`notices` is the one `Outcome.detail` key declared here rather than left\nto `extra=\"allow\"`: unlike `cost`/`tapped`/`spell_id`/..., it is not\nper-action - `commands.run_command` files it onto every command kind's\noutcome generically (`commands._attach_notices`), so every route this\nmodel serves can carry one. Each entry is one of `Game`'s 19 fail-closed\nnotice records (`{\"kind\": ..., **notice.model_dump(mode=\"json\")}`, plus\nthis api's own `zone`/`controller` bookkeeping - see\n`commands._new_notices`), already redacted for this response's own\nviewer (`app.audit_outcome`) - not the engine's raw list.",
-        "properties": {
-          "allowed": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Allowed"
-          },
-          "log_seq": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Log Seq"
-          },
-          "notices": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Notices",
-            "type": "array"
-          },
-          "paused": {
-            "default": false,
-            "title": "Paused",
-            "type": "boolean"
-          },
-          "pending_decision": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PendingDecisionView"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "required": [
-          "allowed"
-        ],
-        "title": "ActionOutcome",
+        "title": "ActionWithTargets",
         "type": "object"
       },
       "ActivateRequest": {
@@ -4129,11 +4189,11 @@
         "type": "string"
       },
       "LegalActionsResponse": {
-        "description": "`GET .../legal-actions` (T11) - the engine's own `Action` model,\nreused as-is rather than re-shaped: `get_legal_actions` returns exactly\n`[action.model_dump(mode=\"json\") for action in actions]`, and\n`records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as\n`LogEntry.legal_actions_before`) is the identical dump.",
+        "description": "`GET .../legal-actions` (T11) - the engine's own `Action` model,\nreused as-is rather than re-shaped: `get_legal_actions` returns exactly\n`[action.model_dump(mode=\"json\") for action in actions]`, and\n`records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as\n`LogEntry.legal_actions_before`) is the identical dump - now with the\nlegal candidates for each targeting action folded in alongside.",
         "properties": {
           "actions": {
             "items": {
-              "$ref": "#/components/schemas/Action"
+              "$ref": "#/components/schemas/ActionWithTargets"
             },
             "title": "Actions",
             "type": "array"
@@ -9536,6 +9596,50 @@
         "title": "TargetSlot",
         "type": "object"
       },
+      "TargetSlotCandidates": {
+        "description": "The legal candidates for ONE of an announcement's targeting\nrequirements (`affordances.target_candidates`), by that requirement's own\nindex into `Action.target_slots` - so `slot` says which phrase these\nanswer, and the phrase itself is not repeated here.\n\n`count` is the true total whatever the caps did to `candidates`: a seat\nweighing a sweeper needs the number even when it does not need the names,\nand a list that quietly shrank while its count shrank with it would be a\nlist that lies. `truncated` and the absence of `candidates` are the two\nways it can shrink - the per-slot cap (`affordances.CANDIDATE_SLOT_CAP`)\nand the whole answer's candidate budget (`mcp.MAX_CANDIDATE_BYTES`).",
+        "properties": {
+          "candidates": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "slot": {
+            "title": "Slot",
+            "type": "integer"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          }
+        },
+        "required": [
+          "slot",
+          "count"
+        ],
+        "title": "TargetSlotCandidates",
+        "type": "object"
+      },
       "TargetingProfileView": {
         "description": "What an announcement's targeting looks like right now\n(`affordances._profile_view`) - shared by `CardView.cast.targeting`,\nevery `AbilityView.targeting`, and `AffordancesResponse` itself.",
         "properties": {
@@ -11337,7 +11441,7 @@
     },
     "/api/games/{game_id}/legal-actions": {
       "get": {
-        "description": "Every action `player` could legally take right now\n(`machines.legal_actions.legal_actions`, Phase 1) - the api's own door\nonto the engine's enumeration surface, and what `seatkit.available_actions`\ncalls instead of brute-forcing one HTTP `dry_run` per candidate (T11).\n\nEach entry carries the engine's own `affordable` verdict\n(`\"yes\"`/`\"no\"`/`\"unknown\"`) alongside its legality - CR 118.6: an\nunpayable cast is still a legal one, so it is still listed, never dropped.\n`\"unknown\"` is a real, distinct answer (a modal or X spell before its\nparameters are announced) and is reported as such rather than folded into\n`\"no\"`, which is the whole reason this replaces the old probe: a dry run\ncan only ever say yes or no, never \"I cannot tell yet\".\n\nReads whichever decision is currently paused for this game straight off\nthe repository's own paused-command slot (`store.paused_command`, the\nsame source `serialize.state_view`'s own `pending_decision` reads from)\nand hands it to `legal_actions` as `pending` - when one is outstanding,\nthe answer is that decision's own legal answers and nothing else, for\nthe player it addresses only (`legal_actions`'s own module docstring).\n\n**`uid` must open `player`'s own seat, or be this game's admin key.**\nEvery action here is `player`'s own by construction - hand cards,\ncontrolled permanents, that player's own graveyard/exile cast options -\nand that is exactly why this is hidden information rather than why it is\nnot: the answer names each card in the seat's hand by id, its exact cost,\nthe zone it would be cast from, what it would target, and whether that\nseat can pay for it. `player` is a bare query parameter with nothing\nauthenticating it, so without this check naming the opponent was enough\nto read their hand out of the answer - while `GET /api/games/{game_id}`,\none route up, correctly hands the same caller `hands.<opponent> == []`.\n`visibility.py` is the rule that binds both: \"a caller that presents\nnothing must never see more than one that presents garbage, and neither\nmay see more than one that presents someone else's seat\".\n\n`get_affordances` needs no such guard and is not a precedent for\nskipping one: every candidate it names is an object in a public zone\n(CR 400.2) or a player, so there is nothing hidden in its answer to\nbegin with.\n\nRefused rather than answered empty, and this is the deliberate half of\nthe choice: `{\"actions\": []}` is a real answer this endpoint gives (a\nseat has nothing legal while a decision addressed to the *other* player\nstands - see `legal_actions`'s own docstring), so redacting to an empty\nlist would make \"you may not ask that\" indistinguishable from \"there is\nnothing you can do\", which is precisely the ambiguity\n`seatkit.available_actions` must be able to tell apart. The refusal is\nthe api's own existing shape for a credential that does not open what it\nnames - `ValueError` -> 400, the same as `pregame_settle`'s admin-key\ncheck - rather than a 403, which appears nowhere else in this api.",
+        "description": "Every action `player` could legally take right now\n(`machines.legal_actions.legal_actions`, Phase 1) - the api's own door\nonto the engine's enumeration surface, and what `seatkit.available_actions`\ncalls instead of brute-forcing one HTTP `dry_run` per candidate (T11).\n\nEach entry carries the engine's own `affordable` verdict\n(`\"yes\"`/`\"no\"`/`\"unknown\"`) alongside its legality - CR 118.6: an\nunpayable cast is still a legal one, so it is still listed, never dropped.\n`\"unknown\"` is a real, distinct answer (a modal or X spell before its\nparameters are announced) and is reported as such rather than folded into\n`\"no\"`, which is the whole reason this replaces the old probe: a dry run\ncan only ever say yes or no, never \"I cannot tell yet\".\n\nReads whichever decision is currently paused for this game straight off\nthe repository's own paused-command slot (`store.paused_command`, the\nsame source `serialize.state_view`'s own `pending_decision` reads from)\nand hands it to `legal_actions` as `pending` - when one is outstanding,\nthe answer is that decision's own legal answers and nothing else, for\nthe player it addresses only (`legal_actions`'s own module docstring).\n\n**`uid` must open `player`'s own seat, or be this game's admin key.**\nEvery action here is `player`'s own by construction - hand cards,\ncontrolled permanents, that player's own graveyard/exile cast options -\nand that is exactly why this is hidden information rather than why it is\nnot: the answer names each card in the seat's hand by id, its exact cost,\nthe zone it would be cast from, what it would target, and whether that\nseat can pay for it. `player` is a bare query parameter with nothing\nauthenticating it, so without this check naming the opponent was enough\nto read their hand out of the answer - while `GET /api/games/{game_id}`,\none route up, correctly hands the same caller `hands.<opponent> == []`.\n`visibility.py` is the rule that binds both: \"a caller that presents\nnothing must never see more than one that presents garbage, and neither\nmay see more than one that presents someone else's seat\".\n\n**`candidates=true` folds each targeting action's legal targets into its\nown entry** (`_attach_target_candidates`), so a seat can choose AND issue\nits next action out of one answer. Opt-in, and measured rather than\nguessed: on a 28-permanent board with three targeting spells in hand the\nenumeration costs ~106 ms on top of the ~350 ms the enumeration itself\nalready takes, because `TargetRequirement.rejects` reaches\n`Game.characteristics_of` and `Game.computed_board` is deliberately\nuncached in the engine (CR 613.5 - \"continually and automatically\nperformed\", so an anthem that left the battlefield a moment ago is\nalready not applying). That is a good trade for a seat, which pays it\nonce per action and saves a whole round trip - and so a whole inference\ncycle, seconds rather than milliseconds - and a bad one for the browser,\nwhich asks this on a 1.2s poll and already has the whole board on screen\nto pick targets from. So `seatkit.available_actions` passes it and\n`ui/app.js` does not, and the default is off: a caller that says nothing\npays nothing.\n\n`get_affordances` needs no such guard and is not a precedent for\nskipping one: every candidate it names is an object in a public zone\n(CR 400.2) or a player, so there is nothing hidden in its answer to\nbegin with.\n\nRefused rather than answered empty, and this is the deliberate half of\nthe choice: `{\"actions\": []}` is a real answer this endpoint gives (a\nseat has nothing legal while a decision addressed to the *other* player\nstands - see `legal_actions`'s own docstring), so redacting to an empty\nlist would make \"you may not ask that\" indistinguishable from \"there is\nnothing you can do\", which is precisely the ambiguity\n`seatkit.available_actions` must be able to tell apart. The refusal is\nthe api's own existing shape for a credential that does not open what it\nnames - `ValueError` -> 400, the same as `pregame_settle`'s admin-key\ncheck - rather than a 403, which appears nowhere else in this api.",
         "operationId": "get_legal_actions_api_games__game_id__legal_actions_get",
         "parameters": [
           {
@@ -11372,6 +11476,16 @@
                 }
               ],
               "title": "Uid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "candidates",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Candidates",
+              "type": "boolean"
             }
           }
         ],

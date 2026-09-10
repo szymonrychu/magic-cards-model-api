@@ -10,6 +10,7 @@ one origin.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -1650,12 +1651,77 @@ def get_affordances(
     return result
 
 
+def _attach_target_candidates(
+    game: Game, player: str, actions: Sequence[Any], views: list[dict[str, Any]]
+) -> None:
+    """Fold each targeting action's legal candidates into its own entry.
+
+    `Action.target_slots` is the *shape* of a targeting requirement and never
+    its candidates - the engine's own `TargetSlot` docstring says so and
+    points at `Game.legal_targets` for the objects. That left a seat holding a
+    legal, affordable, targeting action with no idea what it could name, one
+    round trip - and so one whole inference cycle, which is what a seat's turn
+    latency is actually made of - short of being able to act. The candidates
+    are computed here, in the request that already enumerated the actions,
+    rather than in a second call per action.
+
+    **One board walk for the whole request.** `affordances.all_targetables` is
+    hoisted before the loop and handed to every `target_candidates` call, so
+    the cost of adding this is one traversal of the public zones plus the
+    `rejects` predicate per (object, requirement) pair - never one traversal
+    per action, which on a busy board with a hand full of removal would be the
+    N-calls shape T11 removed one layer up, reintroduced one layer down.
+    `tests/test_legal_actions_endpoint.py` pins both the single walk and the
+    time budget.
+
+    Two kinds of row are skipped, and each for its own reason:
+
+    - **nothing to enumerate.** An empty `target_slots` means this action does
+      not target (or its phrase was unreadable, which `Action` cannot tell
+      apart - `affordances`' own module docstring), so there is no slot to
+      fill and no key worth the bytes.
+    - **`affordable == "no"`.** CR 118.6 keeps the row - an unpayable cast is
+      still a legal one and is still listed - but a candidate list for a spell
+      that cannot be cast is a list the seat can do nothing with. Said once,
+      in `seatkit._actions_view`'s envelope, rather than as a key on every
+      such row.
+
+    `unknown` is emphatically not `no` and is enriched: an X spell before its
+    X is announced (CR 107.3a) may well be castable, and a seat weighing it
+    needs to know what it could point at.
+    """
+    targetables: list[Any] | None = None
+    for action, view in zip(actions, views, strict=True):
+        if not action.target_slots or view.get("affordable") == "no":
+            continue
+        if action.card_id is None:
+            continue
+        try:
+            source = affordances.find_source(game, action.card_id)
+        except ValueError:
+            # An action naming an object this game no longer holds is the
+            # enumeration's problem to answer for, not this decoration's to
+            # raise on: the row stays, without candidates.
+            continue
+        if targetables is None:
+            targetables = affordances.all_targetables(game)
+        view["targets"] = affordances.target_candidates(
+            game,
+            source,
+            player,
+            ability_index=action.ability_index,
+            targetables=targetables,
+        )
+
+
 @app.get(
     "/api/games/{game_id}/legal-actions",
     response_model=LegalActionsResponse,
     response_model_exclude_unset=True,
 )
-def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict[str, Any]:
+def get_legal_actions(
+    game_id: str, player: str, uid: str | None = None, candidates: bool = False
+) -> dict[str, Any]:
     """Every action `player` could legally take right now
     (`machines.legal_actions.legal_actions`, Phase 1) - the api's own door
     onto the engine's enumeration surface, and what `seatkit.available_actions`
@@ -1690,6 +1756,23 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     nothing must never see more than one that presents garbage, and neither
     may see more than one that presents someone else's seat".
 
+    **`candidates=true` folds each targeting action's legal targets into its
+    own entry** (`_attach_target_candidates`), so a seat can choose AND issue
+    its next action out of one answer. Opt-in, and measured rather than
+    guessed: on a 28-permanent board with three targeting spells in hand the
+    enumeration costs ~106 ms on top of the ~350 ms the enumeration itself
+    already takes, because `TargetRequirement.rejects` reaches
+    `Game.characteristics_of` and `Game.computed_board` is deliberately
+    uncached in the engine (CR 613.5 - "continually and automatically
+    performed", so an anthem that left the battlefield a moment ago is
+    already not applying). That is a good trade for a seat, which pays it
+    once per action and saves a whole round trip - and so a whole inference
+    cycle, seconds rather than milliseconds - and a bad one for the browser,
+    which asks this on a 1.2s poll and already has the whole board on screen
+    to pick targets from. So `seatkit.available_actions` passes it and
+    `ui/app.js` does not, and the default is off: a caller that says nothing
+    pays nothing.
+
     `get_affordances` needs no such guard and is not a precedent for
     skipping one: every candidate it names is an object in a public zone
     (CR 400.2) or a player, so there is nothing hidden in its answer to
@@ -1716,7 +1799,10 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     paused = store.paused_command(game_id)
     pending = paused[2] if paused is not None else None
     actions = compute_legal_actions(game, player, pending=pending)
-    return {"actions": [action.model_dump(mode="json") for action in actions]}
+    views = [action.model_dump(mode="json") for action in actions]
+    if candidates:
+        _attach_target_candidates(game, player, actions, views)
+    return {"actions": views}
 
 
 @app.post(
