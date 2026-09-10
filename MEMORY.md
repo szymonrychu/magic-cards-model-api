@@ -125,6 +125,42 @@ whoever works on the repo itself.
   pregame without going through `_run_command`, and the refusal writes a
   ledger row a caller without the key has no business writing.
 
+- **2026-09-10 - an advisor credential is its own map, not a flag on
+  `seat_uids`.** The advisor uid (a credential that reads one human seat's game
+  and may not act on it) lives in a new `games.advisors` JSONB column, uid ->
+  `{"player": str, "agent": <AgentSettings wire dict or null>}`
+  (`repository.Advisor`, revision `b8d24f6c1a07`), and resolves through
+  `store.player_for_advisor_uid` - never through `store.player_for_uid`.
+
+  Reusing `seat_uids` is the obvious-looking move and it is wrong twice over.
+  `player_for_uid` is read by every existing caller as "this uid may act as
+  that player" (`declare_plan`, `whose_seat`, `game_access`'s own seat branch),
+  so an advisor uid in that map is a credential that acts, silently, everywhere
+  - the exact thing the whole feature exists to prevent. And the entry needs a
+  second field (which agent runs behind it), which a `uid -> username` map has
+  nowhere to put.
+
+  The trap that forced the shape of the entry itself: the settings could NOT go
+  in `agent_settings`, which is keyed by **username**. An advisor watching a
+  seat that is already an AI seat collides with that seat's own row, and two
+  advisors on one seat collide with each other - a JSONB object has one value
+  per key and no ordering to disambiguate them, so the collision is silent and
+  last-write-wins. Keying by uid and nesting `agent` inside the entry is what
+  keeps "which settings belong to which credential" answerable at all.
+
+  The read-only-ness is enforced in exactly one place, `game_access.
+  can_access_game`, and **before** the ownership question rather than after it:
+  an ownerless game (which is every game today) returns `True` from that check
+  immediately, so an advisor asked about one would be waved through before its
+  own rule was consulted. Its verdict is the only one in that module that
+  depends on what the request is doing - any GET, a POST to `/advice` or
+  `/report`, or a POST carrying `dry_run: true`; everything else is the same
+  404 every other denial gives. `visibility.resolve_viewer` resolves the uid to
+  the *human's username*, so `redact_view`/`redact_log_entry`/
+  `redact_pending_decision` needed no change at all and the advisor's view is
+  byte-identical to its human's by construction. `tests/
+  test_game_access_advisor.py`.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.

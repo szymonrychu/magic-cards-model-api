@@ -50,6 +50,9 @@ RECORDS_FK = "records_game_id_fkey"
 #: the state a database migrated before that column existed is stamped at.
 PAUSE_GENERATION_PREDECESSOR = "8f1c47a0b6d2"
 
+#: The revision that was head before `games.advisors` was added.
+ADVISORS_PREDECESSOR = "a2f6d9c31b57"
+
 
 @contextmanager
 def _scratch_database() -> Iterator[str]:
@@ -332,6 +335,49 @@ def test_upgrade_head_adds_archived_at_to_an_already_migrated_database() -> None
                     text("SELECT archived_at FROM games WHERE id = 'old'")
                 ).scalar_one()
             assert value is None, "a row that predates the column must still be live"
+        finally:
+            engine.dispose()
+
+
+def test_upgrade_head_adds_advisors_to_an_already_migrated_database() -> None:
+    """`games.advisors` (the advisor credential map) arrives on a database
+    that predates it, with a real empty object for every row that already
+    exists rather than a NULL.
+
+    `{}` rather than `NULL` for the same reason `seats`/`agent_settings`
+    carry `server_default="{}"`: "this game has no advisors" is the honest
+    answer for every game that predates the feature, and
+    `PostgresRepository.advisor_uids` must never have to distinguish "no
+    advisors" from "column not filled in". Its own revision rather than an
+    edit to a shipped one, for the reason this whole file exists: alembic
+    never re-runs a revision a database is already stamped with.
+    """
+    with _scratch_database() as url:
+        _alembic_to(url, ADVISORS_PREDECESSOR)
+        engine = create_engine(url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO games (id, state, version, created_at, admin_key) "
+                        "VALUES ('old', '{}'::jsonb, 0, now(), 'k')"
+                    )
+                )
+            before = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "advisors" not in before
+        finally:
+            engine.dispose()
+
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            columns = {column["name"] for column in inspect(engine).get_columns("games")}
+            assert "advisors" in columns
+            with engine.connect() as conn:
+                value = conn.execute(
+                    text("SELECT advisors FROM games WHERE id = 'old'")
+                ).scalar_one()
+            assert value == {}, "a row that predates the column must start with no advisors"
         finally:
             engine.dispose()
 

@@ -61,6 +61,25 @@ it into the response). A caller who is not entitled to a game must not be
 able to tell "not yours" apart from "never existed" - a 403 already leaks
 that much, so this never returns one.
 
+## The advisor credential, the one gate that is not about ownership
+
+An advisor uid (`repository.Advisor`, stored in its own `games.advisors`
+map) is a fourth kind of credential, and the only one whose verdict depends
+on what the request is *doing* rather than only on who is asking. It reads
+its human's game - `visibility.resolve_viewer` resolves it to that human's
+username, so its view is byte-identical to the seat's - and it may not act:
+`_advisor_may` lets through any GET, a POST to `/advice` or `/report`, and a
+POST carrying `dry_run: true`, and refuses everything else through the same
+404 as any other denial.
+
+That check runs *before* the ownership question, not after it, because the
+restriction is a property of the uid rather than of the game: an ownerless
+game (which is every game today) is otherwise reachable by anyone who knows
+its id, so an advisor asked about one would be waved through before its own
+rule was ever consulted. Enforcing it here, once, is also what makes it true
+of every mutating route at once - including ones written after this - rather
+than of the handful anybody remembered to guard.
+
 ## Where the gate actually runs
 
 `GameAccessRoute` is a `fastapi.routing.APIRoute` subclass that wraps every
@@ -100,9 +119,32 @@ from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 
 from . import oidc
-from .store import store
+from .store import player_for_advisor_uid, store
 
 __all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game"]
+
+#: The only POST paths an advisor credential may reach. Both are ways of
+#: *saying* something about a game rather than doing something to it:
+#: `/advice` is the advisor's own channel (its route body is a separate
+#: task; this gate is what will let it through when it lands) and `/report`
+#: files a problem into the log, which anyone watching a game must be able
+#: to do. Matched on the path's own tail so the same rule covers whichever
+#: router eventually owns them.
+ADVISOR_POST_SUFFIXES = ("/advice", "/report")
+
+
+async def _json_body(request: Request) -> dict[str, Any] | None:
+    """This request's JSON body as a dict, or `None` when it has none worth
+    reading - no body, not JSON, or JSON that is not an object. Never
+    raises. Starlette caches the bytes on first read, so asking here costs
+    the route's own later parse nothing."""
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return None
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
 
 
 async def _credentials(request: Request) -> tuple[str | None, str | None]:
@@ -116,33 +158,74 @@ async def _credentials(request: Request) -> tuple[str | None, str | None]:
     key = request.query_params.get("key")
     if uid is not None or key is not None:
         return uid, key
-    if request.method not in ("POST", "PUT", "PATCH"):
-        return uid, key
-    try:
-        body = await request.json()
-    except Exception:
-        return uid, key
-    if isinstance(body, dict):
+    body = await _json_body(request)
+    if body is not None:
         uid = uid or body.get("uid")
         key = key or body.get("key")
     return uid, key
 
 
+async def _advisor_may(request: Request) -> bool:
+    """Whether an advisor credential may make *this* request
+    (`repository.Advisor`).
+
+    Read-only, enforced here rather than trusted to the client holding the
+    uid - that is the whole point of the credential being its own kind:
+
+    - **Any GET** on a `{game_id}` route. An advisor sees exactly what its
+      human sees (`visibility.resolve_viewer` resolves it to that
+      username), so no read this gate lets through can show it anything the
+      seat could not already see. `HEAD` rides along, being a GET with the
+      body dropped - Starlette registers one for every GET route.
+    - **A POST to `/advice` or `/report`** (`ADVISOR_POST_SUFFIXES`) - the
+      two ways of saying something rather than doing something.
+    - **A POST carrying `dry_run: true`** - a question, not a move: the
+      action routes answer one against an isolated probe copy of the game
+      (`engine_api.dry_run_copy`) and commit nothing.
+
+    Everything else is refused, which is every mutating route at once
+    because this is asked before any of them runs.
+    """
+    if request.method in ("GET", "HEAD"):
+        return True
+    if request.method != "POST":
+        return False
+    if request.url.path.rstrip("/").endswith(ADVISOR_POST_SUFFIXES):
+        return True
+    body = await _json_body(request)
+    return body is not None and body.get("dry_run") is True
+
+
 async def can_access_game(request: Request, game_id: str) -> bool:
     """Whether `request` may reach `game_id` at all - see this module's
-    docstring for the three ways an owned game is reachable. `True` for an
-    unowned or unknown game: this function only ever narrows access for a
-    game that names an owner. Never raises for an *invalid* bearer token
+    docstring for the three ways an owned game is reachable, and
+    `_advisor_may` for the one credential whose answer also depends on what
+    the request is trying to do. `True` for an unowned or unknown game
+    presented with anything but an advisor uid: apart from that credential,
+    this function only ever narrows access for a game that names an owner.
+    Never raises for an *invalid* bearer token
     either - the same rule `authorize_game_access` documents in more detail,
     reused here so a filtered list can simply drop an entry the caller could
     not prove instead of failing the whole listing over one bad token."""
+    uid, key = await _credentials(request)
+    # The advisor gate comes first, and before the ownership question, on
+    # purpose: an advisor uid is read-only *whatever* the game's ownership
+    # is, and an unowned game (every game today) would otherwise return
+    # `True` above before this was ever asked. A uid that is a seat of this
+    # game is never treated as an advisor, so a seat is unaffected even if
+    # the same string were somehow registered as both.
+    if (
+        uid
+        and store.player_for_uid(game_id, uid) is None
+        and player_for_advisor_uid(game_id, uid) is not None
+    ):
+        return await _advisor_may(request)
     owner = store.owner_user_id(game_id)
     if owner is None:
         return True
     user = await run_in_threadpool(oidc.current_user, request)
     if user is not None and user.sub == owner:
         return True
-    uid, key = await _credentials(request)
     if uid and store.player_for_uid(game_id, uid) is not None:
         return True
     return bool(key) and store.is_admin(game_id, key)

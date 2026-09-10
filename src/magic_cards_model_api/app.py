@@ -117,7 +117,7 @@ from .schemas import (
     TargetRequest,
 )
 from .serialize import state_view
-from .store import known_players, new_seat_uids, store
+from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 # `FastAPI.__init__` has no `route_class` parameter of its own (it silently
@@ -948,15 +948,27 @@ def mint_seat(game_id: str, req: MintSeatRequest) -> dict[str, Any]:
 
 @app.get("/api/seats/{uid}", response_model=SeatLookupResponse, response_model_exclude_unset=True)
 def find_seat(uid: str) -> dict[str, Any]:
-    """Resolve a seat uid to its game and player with no game id known in
-    advance - 2b's T8 (map's "seat back door"), the lookup half.
-    `whose_seat` above already answers this once the caller knows the game;
-    this is the reverse direction `store.seat_uids` gave an in-process caller
-    for free. 404 on a uid no live game recognises."""
+    """Resolve a uid to its game, its player and what kind of credential it
+    is, with no game id known in advance - 2b's T8 (map's "seat back door"),
+    the lookup half. `whose_seat` above already answers this once the caller
+    knows the game; this is the reverse direction `store.seat_uids` gave an
+    in-process caller for free. 404 on a uid no live game recognises.
+
+    **`role` is why this also resolves advisors** (`repository.Advisor`).
+    One mcp process holds several uids and is handed no game pin with any of
+    them, so this route is the only place it can learn what a uid *is*
+    before using it - and an advisor driven as if it were a seat would spend
+    its whole life being refused by `game_access.py`, one action at a time,
+    with nothing to say why. `player` means the same thing for both: the
+    seat whose view that uid reads.
+    """
     for game_id in store.ids():
         player = store.player_for_uid(game_id, uid)
         if player is not None:
-            return {"game_id": game_id, "player": player}
+            return {"game_id": game_id, "player": player, "role": "seat"}
+        advised = player_for_advisor_uid(game_id, uid)
+        if advised is not None:
+            return {"game_id": game_id, "player": advised, "role": "advisor"}
     raise KeyError(f"no seat {uid!r}")
 
 
@@ -1838,7 +1850,10 @@ def get_legal_actions(
     the answer is that decision's own legal answers and nothing else, for
     the player it addresses only (`legal_actions`'s own module docstring).
 
-    **`uid` must open `player`'s own seat, or be this game's admin key.**
+    **`uid` must open `player`'s own seat, or be this game's admin key, or
+    be an advisor on that seat** (`repository.Advisor` - it resolves to the
+    same username through `visibility.resolve_viewer`, and an advisor is
+    allowed to know exactly what its human is allowed to know).
     Every action here is `player`'s own by construction - hand cards,
     controlled permanents, that player's own graveyard/exile cast options -
     and that is exactly why this is hidden information rather than why it is

@@ -31,7 +31,7 @@ limits, CR 103's start-of-game sequence) is enforced by the engine through
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -403,6 +403,14 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
 class SeatDetail(BaseModel):
     player: str
     uid: str
+    role: Literal["seat", "advisor"] = "seat"
+    """What kind of credential `uid` is, the same field and the same meaning
+    `schemas.SeatLookupResponse.role` carries. Defaulted, and left unset by
+    `game_seats` below, so this route's answer is byte-identical to what it
+    was: the lobby lists seats, and whether a game has advisors is not its
+    question to answer (that opt-in is a separate task). It is declared here
+    so the two seat-shaped responses this api has cannot drift into
+    disagreeing about how a role is spelled."""
     agent: AgentSettings | None = None
     """This seat's `AgentSettings`, if it is an AI seat - `None` for a human
     one, same as `NewUiGameResponse.agents`."""

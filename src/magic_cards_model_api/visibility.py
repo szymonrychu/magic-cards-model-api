@@ -10,9 +10,16 @@ Now the server is the only place the rule lives.
 
 `resolve_viewer` answers one of three ways:
 
-- a player's username - the seat this uid opens. Its own hand is visible,
-  the opponent's is not, and neither library nor sideboard is - not even
-  the viewer's own, matching the real game (nobody reads their own library).
+- a player's username - the seat this uid opens, or, for an advisor uid
+  (`repository.Advisor`), the human seat that advisor watches. Its own hand
+  is visible, the opponent's is not, and neither library nor sideboard is -
+  not even the viewer's own, matching the real game (nobody reads their own
+  library). **An advisor resolving to a username, rather than to a fourth
+  kind of viewer, is the whole design**: every function below then filters
+  for the human without knowing an advisor exists, so an advisor's view is
+  byte-identical to its human's by construction rather than by two code
+  paths agreeing. What an advisor may *do* is a different question, and one
+  this module never asks - `game_access.py` answers it.
 - `ADMIN` - the game's admin key (store.py), minted once at creation and
   handed only to whoever created the game. Full visibility, no redaction -
   the operator's own eye, the same trust level `audit.snapshot` already
@@ -28,7 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from .audit import PLAN_ACTION
-from .store import store
+from .store import player_for_advisor_uid, store
 
 
 class _Admin:
@@ -47,7 +54,10 @@ def resolve_viewer(game_id: str, uid: str | None) -> Viewer:
         return None
     if store.is_admin(game_id, uid):
         return ADMIN
-    return store.player_for_uid(game_id, uid)
+    player = store.player_for_uid(game_id, uid)
+    if player is not None:
+        return player
+    return player_for_advisor_uid(game_id, uid)
 
 
 def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:

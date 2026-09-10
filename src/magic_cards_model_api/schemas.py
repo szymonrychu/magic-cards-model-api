@@ -1432,6 +1432,13 @@ class SeatLookupResponse(BaseModel):
 
     game_id: str
     player: str
+    role: Literal["seat", "advisor"] = "seat"
+    """What kind of credential this uid is: a seat that plays `player`, or an
+    advisor that reads `player`'s view and may not act (`repository.Advisor`,
+    enforced by `game_access.py`). Defaulted to `"seat"` so a caller written
+    before advisors existed reads exactly what it always read; a client that
+    holds uids without a game pin - one mcp process serving several games -
+    needs it to know which of the two it is driving."""
 
 
 class GameSummary(BaseModel):

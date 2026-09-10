@@ -95,6 +95,14 @@ games = Table(
     # existed. Added by revision `f3a7c2e91b04`.
     Column("owner_user_id", String, nullable=True),
     Column("seats", JSONB, nullable=False, server_default="{}"),
+    # uid -> `{"player": str, "agent": <AgentSettings wire dict or null>}`:
+    # this game's advisor credentials (`repository.Advisor`). A separate map
+    # from `seats` because an advisor uid must never be mistakable for a
+    # seat uid - `game_access.py` refuses every mutating request presenting
+    # one - and the agent settings live *inside* each entry rather than in
+    # `agent_settings`, which is keyed by username and so cannot tell two
+    # credentials on one seat apart. Added by revision `b8d24f6c1a07`.
+    Column("advisors", JSONB, nullable=False, server_default="{}"),
     Column("decklists", JSONB, nullable=False, server_default="{}"),
     Column("agent_settings", JSONB, nullable=False, server_default="{}"),
     Column("ai_players", JSONB, nullable=False, server_default="[]"),
