@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from conftest import add_card, find, state
 from magic_cards_model.models.card_state import Choice, ChoiceKind
 
@@ -415,3 +416,108 @@ def test_naming_sunken_citadels_restricted_ability_yields_restricted_mana(client
 
     plain = cast(client, game, "Sol Ring", [{"card_id": citadel, "ability_index": 0}])
     assert plain["allowed"] is True, plain
+
+
+# -- a mixture is a mixture ("add two mana in any combination of colors") ---
+
+
+def test_two_distinct_colours_reach_an_any_combination_ability(client, game):
+    """Interdimensional Web Watch's `{T}: Add two mana in any combination of
+    colors.` is the one limb of `ManaAbility.resolve` that takes a *sequence*
+    of colours, and a payment naming two different ones is how a player asks
+    for it.
+
+    The pair used to be collapsed to "no choice at all" before it ever left
+    this repo - two distinct colours are not one choice, so the api handed
+    `resolve` a `None` and got back "this ability adds any colour; pass the
+    colour chosen" for a player who had chosen twice. It is handed over whole
+    now, and comes back as the `{W}{U}` the ability really makes, which is what
+    the refusal names. Where the payment stops from here is engine-side and is
+    pinned by the xfail below.
+    """
+    add_card(client, game, "Interdimensional Web Watch", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    watch = battlefield_id(client, game, "Interdimensional Web Watch")
+    index = mana_ability_index(client, game, "Interdimensional Web Watch", restricted=True)
+
+    body = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}],
+        dry_run=True,
+    )
+    assert body["allowed"] is False, body
+    assert "pass the colour chosen" not in body["reason"], body
+    assert "{W}{U}" in body["reason"], body
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "engine-side: `CostPayment.tap_for_mana` re-validates a hand-picked "
+        "production against `ManaAbility.effective()`'s options, and those "
+        "enumerate one colour repeated `any_color_count` times per colour - "
+        "never a mixture. So an `any_color_mixed` ability ('add two mana in "
+        "any combination of colors') can be resolved to {W}{U} but never "
+        "tapped for it. Nothing in this repo can close that; the api's own "
+        "half is the test above."
+    ),
+)
+def test_a_mixture_can_actually_be_tapped_for(client, game):
+    """The end-to-end half of the mixture: two different colours in the pool,
+    refused only by the CR 106.6 restriction they carry (Web Watch's mana pays
+    only for spells cast from exile, and Sol Ring is cast from hand)."""
+    add_card(client, game, "Interdimensional Web Watch", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    watch = battlefield_id(client, game, "Interdimensional Web Watch")
+    index = mana_ability_index(client, game, "Interdimensional Web Watch", restricted=True)
+
+    body = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}],
+        dry_run=True,
+    )
+    assert "'W': 1" in body["reason"] and "'U': 1" in body["reason"], body
+
+
+def test_a_mixture_is_refused_by_an_any_one_color_ability_in_the_engines_words(client, game):
+    """Shang-Chi adds two mana *of any one color*, so a mixture is mana the
+    card never offered - refused by `ManaAbility.resolve` itself, which is the
+    only place that reading lives."""
+    add_card(client, game, "Shang-Chi, Master of Kung Fu", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    shang = battlefield_id(client, game, "Shang-Chi, Master of Kung Fu")
+    wake_up(client, game, shang)
+    index = mana_ability_index(client, game, "Shang-Chi, Master of Kung Fu", restricted=True)
+
+    body = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": shang, "colors": ["W", "U"], "ability_index": index}],
+        dry_run=True,
+    )
+    assert body["allowed"] is False, body
+    assert "any one color" in body["reason"], body
+
+
+def test_a_mixture_named_on_a_choice_ability_is_refused_not_crashed(client, game):
+    """A dual land offers `{W}` or `{U}`, one mana, one choice - it is not an
+    "any combination" ability at all. Two distinct colours there is a request
+    it cannot answer, and the answer is a refusal in words, never a 500."""
+    add_card(client, game, "Hallowed Fountain", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    fountain = battlefield_id(client, game, "Hallowed Fountain")
+
+    body = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": fountain, "colors": ["W", "U"], "ability_index": 0}],
+        dry_run=True,
+    )
+    assert body["allowed"] is False, body
+    assert body["reason"], body

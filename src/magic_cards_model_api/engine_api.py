@@ -196,6 +196,19 @@ def _resolve(
     )
 
 
+def _adds_any_color(source: CardState, game: Game, mana: Any) -> bool:
+    """Whether this ability is on its "any colour" limb right now - the limb
+    whose `color` argument may be a *sequence*, one colour per mana."""
+    land_types, counters, imprinted = _narrowings(source, game)
+    _options, any_color = mana.effective(
+        land_types,
+        counters,
+        imprinted,
+        chosen_color=_chosen_color(source),
+    )
+    return bool(any_color)
+
+
 def _chosen_color(source: CardState) -> Color | None:
     """CR 614.12a's "as this enters, choose a color", recorded on the permanent
     as it entered - what "the chosen color" points back at."""
@@ -207,6 +220,32 @@ def _chosen_color(source: CardState) -> Color | None:
     return Color(choice.value)
 
 
+def _choice_argument(
+    source: CardState,
+    game: Game,
+    mana: Any,
+    named: list[Color],
+) -> Color | list[Color] | None:
+    """What the colours a caller named mean as CR 605.1a's `color` argument.
+
+    One colour, however many times it was written, is one choice: `["C", "C"]`
+    for Eldrazi Temple's `{C}{C}` is that same single choice spelled out per
+    mana. Two *different* colours are a real mixture, and `ManaAbility.resolve`
+    has a limb for exactly that - "add two mana in any combination of colors"
+    (Interdimensional Web Watch) takes a sequence, one colour per mana. It is
+    handed over whole, and the engine refuses it in its own words for an
+    ability that adds mana of any one colour instead.
+
+    An ability that is not on its any-colour limb at all takes a single colour
+    or nothing; a mixture named there is passed as no choice at all, which
+    raises the engine's own "pass the colour chosen" rather than reaching a
+    branch that would compare a list against one printed option.
+    """
+    if len(set(named)) == 1:
+        return named[0]
+    return named if _adds_any_color(source, game, mana) else None
+
+
 def mana_colors(
     source: CardState,
     colors: list[str] | None,
@@ -215,11 +254,14 @@ def mana_colors(
 ) -> list[Color]:
     """The colours a hand-picked source is being tapped for.
 
-    With `colors` named, those - parsed, and (when an `ability_index` names one
-    particular ability) checked against what that ability would actually make,
-    so a colour the named ability cannot produce is refused here rather than
-    silently satisfied by a different ability on the same card. Without them,
-    whatever the ability itself produces (`mana_from`).
+    Without `colors`, whatever the named ability itself produces (`mana_from`).
+
+    With `colors` named, those are read as the *choice* the player made: one
+    colour however often it was written, or a real mixture of two different
+    ones (`_choice_argument`). When an `ability_index` names one particular
+    ability, the answer is checked against what that ability would actually
+    make, so a colour the named ability cannot produce is refused here rather
+    than silently satisfied by a different ability on the same card.
     """
     if not colors:
         if game is None or ability_index is None:  # unreachable: `pay_with` names both
@@ -229,16 +271,12 @@ def mana_colors(
         named = [Color(color.strip().upper()) for color in colors]
     except ValueError as exc:
         raise ValueError(f"unknown mana color in {colors}: use W, U, B, R, G or C") from exc
-    if game is None or ability_index is None:
+    if game is None:
+        return named
+    if ability_index is None:
         return named
     mana = mana_ability_at(game, source, ability_index).mana
-    # One colour for a choice ability (CR 605.1a's `color` argument takes
-    # exactly one); a repeated colour - `["C", "C"]` for Eldrazi Temple's
-    # `{C}{C}` - is that same one choice spelled out per mana. Anything else
-    # is handed to `resolve` with no choice at all, which raises the engine's
-    # own "pass the colour chosen".
-    chosen = named[0] if len(set(named)) == 1 else None
-    produced = _resolve(source, game, mana, chosen)
+    produced = _resolve(source, game, mana, _choice_argument(source, game, mana, named))
     if sorted(produced) != sorted(named):
         made = "".join("{" + color.value + "}" for color in produced) or "no mana"
         asked = "".join("{" + color.value + "}" for color in named)
