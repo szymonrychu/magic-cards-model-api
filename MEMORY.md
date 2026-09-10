@@ -56,14 +56,19 @@ whoever works on the repo itself.
   be sent with `restriction=` **explicitly**; never left to
   `restriction_for_production` to infer from what the mana turned out to be.
   The plan expected the Cavern of Souls / Delighted Halfling tie to be the
-  case that proves it - both carrying a restricted second mana ability whose
-  colours overlap the first - and that is **not** what a sweep of all 747
-  engine printings found: no card in the pool has a restricted and an
+  case that proves it - both said to pair an unrestricted `{T}: Add {C}.` with
+  a restricted "add one mana of any color" whose production set includes `{C}`
+  - and **that premise is simply false**: "any color" is CR 106.1a's five
+  colours, and colorless is a type of mana that is not a color at all
+  (CR 106.1b, both looked up 2026-09-10), so `{C}` can only ever have come
+  from the plain ability and there is no tie to break. A sweep of all 747
+  engine printings agrees: no card in the pool has a restricted and an
   unrestricted `{T}` ability that can produce the same mana, so inference and
-  the named ability agree on both of those cards today. The real divergence is
-  board-blindness, and it is live: inference asks `ManaAbility.effective()`
-  with no board at all, so Sunken Citadel's two "the chosen color" abilities
-  match nothing and come back **unrestricted** however restricted they are.
+  the named ability give the same answer on both of those cards. The real
+  divergence is board-blindness, and it is live: inference asks
+  `ManaAbility.effective()` with no board at all, so Sunken Citadel's two "the
+  chosen color" abilities match nothing and come back **unrestricted** however
+  restricted they are.
   Passing the restriction through is what keeps the fail-closed side of that,
   and the tie-break toward unrestricted is what makes getting it wrong quiet. (3) `serialize.snapshot`'s `pools` were
   left alone on purpose - they stay a flat colour-to-count dict and did
@@ -135,11 +140,12 @@ whoever works on the repo itself.
   pinned by `test_the_named_abilitys_restriction_beats_what_inference_would_
   have_said` - asks `ManaAbility.effective()` with **no board**, so Sunken
   Citadel's two "the chosen color" abilities match nothing and come back
-  unrestricted however restricted they are. Worth recording: a sweep of all
-  747 engine printings found **no** card whose restricted and unrestricted
-  `{T}` mana abilities can produce the same mana, so the Cavern of Souls /
-  Delighted Halfling tie the plan described does not exist today - inference
-  agrees with the named ability on both. The board-blindness above is the real
+  unrestricted however restricted they are. Worth recording: the Cavern of
+  Souls / Delighted Halfling tie the plan described **does not exist** - "any
+  color" excludes colorless (CR 106.1a / CR 106.1b), so `{C}` names their
+  plain ability unambiguously - and a sweep of all 747 engine printings found
+  no other card whose restricted and unrestricted `{T}` mana abilities can
+  produce the same mana either. The board-blindness above is the real
   divergence, and it is the one the mutation test pins.
 
   Two things the api cannot ask the engine for: CR 106.7's "could produce"

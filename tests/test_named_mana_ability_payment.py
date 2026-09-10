@@ -4,18 +4,29 @@
 bare card id ("this source, engine picks the colour") and `{card_id, colors}`
 ("this source, this colour"). Both are fine for a land with one mana ability.
 They are not fine for a source that prints two - Eldrazi Temple, Cavern of
-Souls and Delighted Halfling each pair a plain `{T}: Add {C}.` with a second,
-CR 106.6-restricted ability - because nothing in the payload says which of the
-two the player meant.
+Souls, Delighted Halfling and Sunken Citadel each pair a plain `{T}: Add ...`
+with a second, CR 106.6-restricted one - because nothing in the payload says
+which of the two the player meant.
 
 `ManaSource.ability_index` says it, in the same index space `AbilityView.index`
 and `ActivateRequest.ability_index` already use, and `engine_api.pay_with`
 then hands `CostPayment.tap_for_mana` the restriction **explicitly** rather
 than letting it re-derive one from what the mana happens to be
-(`restriction_for_production`, which breaks a tie towards *unrestricted* on
-purpose: a caller that named its own mana should not have what it may pay for
-narrowed on a guess). A caller that named the ability is not guessing, so it
-says so.
+(`restriction_for_production`).
+
+That is a correctness point, and the case that proves it is **Sunken
+Citadel**, not the tie between a restricted and an unrestricted ability that
+could each have made the same mana. There is no such tie in this pool: "add
+one mana of any color" is CR 106.1a's five colours, and colorless is a type of
+mana that is not a color at all (CR 106.1b), so Cavern of Souls' and Delighted
+Halfling's `{C}` can only ever have come from their plain ability and
+inference gets both of them right. Sunken Citadel's two abilities both read
+"the chosen color" - `restriction_for_production` asks `ManaAbility.
+effective()` with no board, "the chosen color" narrows to nothing without one,
+neither ability matches, and mana that may only be spent on abilities of land
+sources is reported as carrying no restriction at all.
+`test_the_named_abilitys_restriction_beats_what_inference_would_have_said`
+below is that divergence, both answers taken off the same board.
 
 Backward compatibility is the other half and is not optional: a bare uuid and
 a `{card_id, colors}` entry with no index must hit exactly the branches they
@@ -197,44 +208,6 @@ def test_omitting_the_index_on_delighted_halfling_still_yields_the_plain_mana(cl
     assert body["allowed"] is True, body
 
 
-def test_the_named_abilitys_restriction_beats_what_inference_would_have_said(client, game):
-    """The test that fails the moment `restriction=` stops being passed
-    explicitly.
-
-    `restriction_for_production` re-derives the restriction by asking which of
-    the source's `{T}` abilities could have produced this mana - and it asks
-    `ManaAbility.effective()` with **no board at all**. Sunken Citadel's two
-    abilities both read "the chosen color", which board-blind narrows to
-    nothing, so the match set comes back empty and inference answers "no
-    restriction" for mana that is very much restricted.
-
-    Naming the ability sidesteps the whole derivation: the restriction is the
-    one printed on the ability the player named. Sol Ring is a spell, not an
-    ability of a land source, so the restricted {R}{R} must refuse it.
-    """
-    add_card(client, game, "Sunken Citadel", "alice", "battlefield")
-    add_card(client, game, "Sol Ring", "alice", "hand")
-    citadel = battlefield_id(client, game, "Sunken Citadel")
-    # CR 614.12a's answer, recorded on the permanent as it entered. `add_card`
-    # stages a board rather than playing a land, so no replacement effect ran
-    # to ask for it - set straight on the live engine object, the same
-    # reach-past-the-API test setup `conftest.force_turn_position` documents.
-    live = store.get(game).find_by_id(UUID(citadel))
-    live.choice = Choice(kind=ChoiceKind.COLOR, value="R")
-
-    named = cast(
-        client,
-        game,
-        "Sol Ring",
-        [{"card_id": citadel, "ability_index": 1}],
-        dry_run=True,
-    )
-    assert named["allowed"] is False, named
-
-    plain = cast(client, game, "Sol Ring", [{"card_id": citadel, "ability_index": 0}])
-    assert plain["allowed"] is True, plain
-
-
 def test_a_named_fixed_ability_needs_no_colours_at_all(client, game):
     """Eldrazi Temple's second ability adds `{C}{C}` and offers no choice, so
     naming it is enough - the production comes off the ability itself rather
@@ -349,3 +322,96 @@ def test_a_named_ability_pays_alongside_the_older_shapes(client, game):
         ],
     )
     assert body["allowed"] is True, body
+
+
+# -- the divergence the named ability actually exists to close --------------
+
+
+def mana_ability_index(client, game, name, *, restricted):
+    """The `AbilityView.index` of `name`'s restricted (or unrestricted) mana
+    ability, read off the board view rather than assumed - the same index
+    space `ManaSource.ability_index` takes."""
+    card = find(state(client, game)["battlefield"], name)
+    found = [
+        ability["index"]
+        for ability in card["abilities"]
+        if ability["is_mana_ability"] and (ability["restriction"] is not None) is restricted
+    ]
+    assert len(found) == 1, card["abilities"]
+    return found[0]
+
+
+def citadel_with_red_chosen(client, game):
+    """Sunken Citadel on the battlefield with CR 614.12a's colour answered.
+
+    `add_card` stages a board rather than playing a land, so no replacement
+    effect ran to ask "as it enters, choose a color" - set straight on the
+    live engine object, the same reach-past-the-API test setup
+    `conftest.force_turn_position` documents.
+    """
+    add_card(client, game, "Sunken Citadel", "alice", "battlefield")
+    citadel = battlefield_id(client, game, "Sunken Citadel")
+    live = store.get(game).find_by_id(UUID(citadel))
+    live.choice = Choice(kind=ChoiceKind.COLOR, value="R")
+    return citadel
+
+
+def test_the_named_abilitys_restriction_beats_what_inference_would_have_said(client, game):
+    """The one board where naming the ability and inferring it disagree, with
+    both answers taken from the same tap.
+
+    Left to itself `tap_for_mana` re-derives the CR 106.6 restriction from what
+    the mana turned out to be (`machines.cost.restriction_for_production`),
+    asking which of the source's `{T}` abilities could have produced it - and
+    it asks `ManaAbility.effective()` with **no board at all**. Both of Sunken
+    Citadel's abilities read "the chosen color", which board-blind narrows to
+    nothing, so neither matches, the match set comes back empty, and inference
+    answers "no restriction" for mana that is very much restricted.
+
+    So: the same two red mana, sent twice. Named, the restriction is the one
+    printed on the ability the player named, and Sol Ring - a spell, not an
+    ability of a land source - cannot be paid for with it. Unnamed, inference
+    sees no restriction and pays for Sol Ring quite happily. The second half is
+    today's engine-side behaviour rather than an aspiration, and it is exactly
+    why this branch passes `restriction=` explicitly instead of letting it be
+    guessed.
+    """
+    citadel = citadel_with_red_chosen(client, game)
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    restricted = mana_ability_index(client, game, "Sunken Citadel", restricted=True)
+
+    named = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": citadel, "ability_index": restricted}],
+        dry_run=True,
+    )
+    assert named["allowed"] is False, named
+    assert "'R': 2" in named["reason"], named
+
+    inferred = cast(client, game, "Sol Ring", [{"card_id": citadel, "colors": ["R", "R"]}])
+    assert inferred["allowed"] is True, inferred
+
+
+def test_naming_sunken_citadels_restricted_ability_yields_restricted_mana(client, game):
+    """The pair, on one board: index 1's two red mana may only be spent on
+    abilities of land sources, index 0's one red mana on anything. Sol Ring is
+    a spell, so the difference is the ability named and nothing else."""
+    citadel = citadel_with_red_chosen(client, game)
+    add_card(client, game, "Sol Ring", "alice", "hand")
+
+    restricted = cast(
+        client,
+        game,
+        "Sol Ring",
+        [{"card_id": citadel, "ability_index": 1}],
+        dry_run=True,
+    )
+    assert restricted["allowed"] is False, restricted
+    assert CITADEL_RESTRICTION in find(
+        state(client, game)["battlefield"], "Sunken Citadel"
+    )["abilities"][1]["restriction"]["text"]
+
+    plain = cast(client, game, "Sol Ring", [{"card_id": citadel, "ability_index": 0}])
+    assert plain["allowed"] is True, plain

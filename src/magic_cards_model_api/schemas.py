@@ -234,14 +234,20 @@ class ManaSource(BaseModel):
     Only a source that prints more than one needs it, and every such printing
     in this pool pairs a plain `{T}: Add ...` with a CR 106.6-restricted one:
     Eldrazi Temple's `{C}` against its `{C}{C}`, Cavern of Souls's and
-    Delighted Halfling's `{C}` against their one mana of any colour. Naming the
-    index is how a player says which of the two they meant, and it is what
-    lets `engine_api.pay_with` hand `CostPayment.tap_for_mana` that ability's
-    own restriction rather than let the engine re-derive one from what the mana
-    turned out to be - a derivation that breaks a tie towards *unrestricted* on
-    purpose (`machines.cost.restriction_for_production`), which is the right
-    answer for a caller that only named mana and the wrong one for a caller
-    that named the ability.
+    Delighted Halfling's `{C}` against their one mana of any colour, Sunken
+    Citadel's one mana of the chosen colour against two of it. Naming the index
+    is how a player says which of the two they meant, and it is what lets
+    `engine_api.pay_with` hand `CostPayment.tap_for_mana` that ability's own
+    restriction rather than let the engine re-derive one from what the mana
+    turned out to be (`machines.cost.restriction_for_production`).
+
+    Sunken Citadel is the pair where that matters, and it is the only one:
+    inference matches on production, so `{C}` tells Cavern's and Delighted
+    Halfling's two abilities apart on its own ("any color" is CR 106.1a's five
+    colours, and colorless is a type of mana that is not a color, CR 106.1b).
+    Both of Sunken Citadel's read "the chosen color", which
+    `restriction_for_production` resolves with no board at all - so neither
+    matches, and its restricted mana is reported as unrestricted.
 
     `None` - absent, or explicitly null - is exactly today's behaviour: the
     other two shapes of this model are untouched by this field's existence.
