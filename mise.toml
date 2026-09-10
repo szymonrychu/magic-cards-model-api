@@ -1,6 +1,14 @@
 [tools]
 python = "3.13"
 uv = "latest"
+# Pinned, not "latest": an unpinned node let CI (whatever the GitHub runner
+# happened to ship, v22.23.2 at the time) diverge from every developer's
+# local node and go red on a change that was green locally. 24.21.0 is the
+# current Active LTS release - new enough that the UI test suite (~43
+# `tests/test_ui_*.py` files driving `ui/*.js` for real under
+# `tests/ui_node.py::run_module`) passes on it, and an LTS line rather than
+# the Current release track this machine happens to have installed.
+node = "24.21.0"
 
 [env]
 _.python.venv = { path = ".venv", create = true }
