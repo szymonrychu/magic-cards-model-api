@@ -3126,6 +3126,14 @@ def pregame_settle(
     req = req or PregameSettleRequest()
     if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
+    # P4, and after the admin gate rather than before it (the one place this
+    # guard is not the very first thing a route does): the refusal writes a
+    # ledger row, and a caller who has not shown the admin key has no
+    # business writing one into a game they cannot otherwise touch. Both
+    # branches below are covered by this single call - `use_defaults=True`
+    # runs the whole pregame to completion in its own lock without going
+    # through `_run_command` at all, so it has no other guard anywhere.
+    records.require_current_board(game_id, "pregame_settle", req.expected_seq)
     viewer = visibility.resolve_viewer(game_id, uid)
     seq_hint: int | None = None
     if req.use_defaults:

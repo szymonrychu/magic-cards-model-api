@@ -775,9 +775,15 @@ class OpeningHandActionRequest(BaseModel):
     optional for a human one."""
 
 
-class PregameSettleRequest(BaseModel):
+class PregameSettleRequest(BoardRead):
     """Admin-only: run the whole pregame (CR 103.5's mulligan process, CR
-    103.6's opening-hand actions) forward, all at once, over every seat."""
+    103.6's opening-hand actions) forward, all at once, over every seat.
+
+    `BoardRead` for the same reason every other mutating request carries it:
+    this is a command like any other (`commands._run_pregame_settle`), it
+    reaches the same `records.legal_actions_before` sites, and an operator
+    settling a pregame against a board that has since moved is owed the news
+    that it moved rather than a settled game they did not ask for."""
 
     use_defaults: bool = False
     """`False` (the default): run as an ordinary command

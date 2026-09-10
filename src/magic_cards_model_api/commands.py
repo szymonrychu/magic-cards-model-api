@@ -134,8 +134,26 @@ class Command:
     def build(cls, kind: str, request: BaseModel) -> Command:
         """A `Command` from a live request object - `request.model_dump
         (mode="json")` is exactly the JSON-safe payload `from_json` expects
-        back, so a caller never hand-assembles `payload` itself."""
-        return cls(kind=kind, payload=request.model_dump(mode="json"))
+        back, so a caller never hand-assembles `payload` itself.
+
+        **`expected_seq` is dropped** (`schemas.BoardRead`). It says which
+        board the *caller* decided against; it is not part of what the
+        command is, and it has already done its whole job by the time this
+        runs - `records.require_current_board` ran before the route reached
+        the engine at all. Leaving it in `payload` would make it part of
+        `Command`'s identity, and `app._pause_slot_guard` decides whether an
+        arriving command is a retry of the standing pause or a competitor by
+        comparing exactly that: the same action re-posted on a `paused: true`
+        answer (seatkit's autopass does this on every one it reads) would
+        stop matching the pause it is retrying the moment the two sends
+        disagreed about the ledger position - which they always do, since the
+        first send is armed and the retry is not - and come back a 409 the
+        caller can do nothing with. It is also replayed (`pause_is_live`,
+        `resume_command`) against a board that has moved on by construction,
+        where a stored watermark could only ever be misleading."""
+        payload = request.model_dump(mode="json")
+        payload.pop("expected_seq", None)
+        return cls(kind=kind, payload=payload)
 
 
 def _run_cast(game: Game, payload: dict[str, Any]) -> Any:

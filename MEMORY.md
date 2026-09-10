@@ -111,6 +111,20 @@ whoever works on the repo itself.
   rejected: an agent reasoning about a sequence number spends a decision on
   bookkeeping and gets it wrong. `tests/test_expected_seq.py`.
 
+  (5) **`expected_seq` never reaches `Command.payload`.** It says which
+  board the caller decided against and has done its whole job before the
+  engine is asked anything, so `commands.Command.build` drops it. Leaving it
+  in made it part of `Command`'s identity, and `app._pause_slot_guard` uses
+  exactly that equality to tell a retry of the standing pause from a
+  competitor: the armed call that stored the pause and the unarmed re-post
+  that retries it (seatkit's autopass re-posts on every `paused: true` it
+  reads) disagreed about the ledger position, so the retry came back a 409
+  the caller could do nothing with. The admin-only `POST .../pregame/settle`
+  is on the guard too, after its admin gate rather than before it: it is a
+  command like any other, its `use_defaults=True` branch settles a whole
+  pregame without going through `_run_command`, and the refusal writes a
+  ledger row a caller without the key has no business writing.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.

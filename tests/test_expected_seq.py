@@ -305,6 +305,12 @@ MUTATING_ROUTES: list[tuple[str, str, str, dict[str, Any]]] = [
     ("resolve_top", "POST", "/api/games/{gid}/resolve-top", {"player": "alice"}),
     ("advance", "POST", "/api/games/{gid}/advance", {"player": "alice"}),
     ("decide", "POST", "/api/games/{gid}/decide", {"player": "alice"}),
+    # Admin-key only, and a mutating command like any other: it reaches the
+    # same `records.legal_actions_before` sites through `_run_command`. The
+    # parametrised tests below send this game's admin key on every row, which
+    # changes nothing for the seat routes (the board guard runs ahead of every
+    # viewer check) and is what lets this one past its own gate.
+    ("pregame_settle", "POST", "/api/games/{gid}/pregame/settle", {}),
 ]
 
 
@@ -317,7 +323,12 @@ def test_every_mutating_route_refuses_a_stale_expected_seq(
     stale = last_seq_of(client, game)
     add_card(client, game, "Forest", "bob", "battlefield")
 
-    response = client.request(method, path.format(gid=game), json={**body, "expected_seq": stale})
+    response = client.request(
+        method,
+        path.format(gid=game),
+        params={"uid": admin_key},
+        json={**body, "expected_seq": stale},
+    )
     assert response.status_code == 409, response.text
     answer = response.json()
     assert answer["stale"] is True
@@ -333,13 +344,18 @@ def test_every_mutating_route_refuses_a_stale_expected_seq(
     "action,method,path,body", MUTATING_ROUTES, ids=[row[0] for row in MUTATING_ROUTES]
 )
 def test_every_mutating_route_takes_a_current_expected_seq_without_refusing_on_it(
-    client, game, action: str, method: str, path: str, body: dict[str, Any]
+    client, game, admin_key, action: str, method: str, path: str, body: dict[str, Any]
 ) -> None:
     """The other half of the same guard: a *current* seq is never the reason
     a route refuses. Most of these bodies describe an illegal move and are
     refused on their own merits - what must never appear is `stale`."""
     current = last_seq_of(client, game)
-    response = client.request(method, path.format(gid=game), json={**body, "expected_seq": current})
+    response = client.request(
+        method,
+        path.format(gid=game),
+        params={"uid": admin_key},
+        json={**body, "expected_seq": current},
+    )
     assert response.status_code != 409 or "stale" not in response.json(), response.text
 
 
@@ -519,3 +535,117 @@ def test_the_retry_happens_exactly_once(client, game, monkeypatch) -> None:
     assert seatkit.is_stale(result["outcome"])
     assert result["stale_retry"] is True
     assert not state(client, game)["stack"], "nothing was cast"
+
+
+# ---------------------------------------------------------------------------
+# the admin-only pregame command, both of its branches
+# ---------------------------------------------------------------------------
+
+
+def settled_hands(client: TestClient, game_id: str) -> int:
+    return sum(len(cards) for cards in state(client, game_id)["hands"].values())
+
+
+def test_pregame_settle_with_use_defaults_refuses_a_stale_board_and_settles_nothing(
+    client, game, admin_key
+) -> None:
+    """`use_defaults=True` runs `commands.run_command_to_completion` in the
+    route's own lock rather than through `_run_command`, so its own guard is
+    the only thing standing between a stale operator call and a whole pregame
+    settled against a board that has moved."""
+    stale = last_seq_of(client, game)
+    add_card(client, game, "Forest", "bob", "battlefield")
+    moved_to = last_seq_of(client, game)
+
+    response = client.post(
+        f"/api/games/{game}/pregame/settle",
+        params={"uid": admin_key},
+        json={"use_defaults": True, "expected_seq": stale},
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["stale"] is True
+    assert body["allowed"] is False
+    assert body["moved_from"] == stale
+    assert body["moved_to"] == moved_to
+
+    rows = log_of(client, game, admin_key)
+    assert [row["action"] for row in rows if row["action"].startswith("pregame")] == [
+        "pregame_settle"
+    ], "the engine never ran: no `pregame_settled` row"
+    assert next(row for row in rows if row["action"] == "pregame_settle")["detail"]["stale"] is True
+
+
+def test_pregame_settle_without_expected_seq_settles_exactly_as_today(
+    client, game, admin_key
+) -> None:
+    """The regression guard for the operator caller that predates this
+    field: no `expected_seq` key, a board that has moved, and the settle runs
+    anyway."""
+    add_card(client, game, "Forest", "bob", "battlefield")
+    response = client.post(
+        f"/api/games/{game}/pregame/settle",
+        params={"uid": admin_key},
+        json={"use_defaults": True},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["pregame"] is None
+    assert any(row["action"] == "pregame_settled" for row in log_of(client, game, admin_key))
+
+
+def test_pregame_settle_with_a_current_expected_seq_settles(client, game, admin_key) -> None:
+    current = last_seq_of(client, game)
+    response = client.post(
+        f"/api/games/{game}/pregame/settle",
+        params={"uid": admin_key},
+        json={"use_defaults": True, "expected_seq": current},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["pregame"] is None
+
+
+# ---------------------------------------------------------------------------
+# `expected_seq` is not part of what a command IS
+# ---------------------------------------------------------------------------
+
+
+def test_an_armed_call_that_pauses_still_recognises_its_own_retry(client, game) -> None:
+    """The identical command re-posted on a `paused: true` answer is a retry,
+    not a competitor (`app._pause_slot_guard`) - and that must hold whether or
+    not the call that stored the pause happened to name a board.
+
+    `expected_seq` says which board the caller decided against. It is not part
+    of what the command *is*, so it must not reach `Command.payload`, where
+    the pause slot's own equality check would read two sends of the same
+    action as two different commands and answer the second with a 409 nobody
+    can do anything with.
+    """
+    add_card(client, game, "Flooded Strand", "alice", "battlefield")
+    add_card(client, game, "Steam Vents", "alice", "library")
+    add_card(client, game, "Island", "alice", "library")
+    board = state(client, game)
+    strand = find(board["battlefield"], "Flooded Strand")["id"]
+    activated = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={"player": "alice", "card_id": strand, "ability_index": 0},
+    )
+    assert activated.status_code == 200, activated.text
+    first = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    assert first.status_code == 200, first.text
+
+    # bob passes naming the board he read, and the fetch's CR 701.23a search
+    # pauses on him.
+    paused = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        json={"player": "bob", "expected_seq": last_seq_of(client, game)},
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["paused"] is True, paused.json()
+
+    # The same pass again, this time naming nothing - exactly what seatkit's
+    # autopass re-posts on every `paused: true` it reads.
+    retry = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert retry.status_code == 200, retry.text
+    retried = retry.json()
+    assert retried["paused"] is True, retried
+    assert retried["pending_decision"]["kind"] == "choose_cards", retried

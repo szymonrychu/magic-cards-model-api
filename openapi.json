@@ -6775,8 +6775,19 @@
         "type": "object"
       },
       "PregameSettleRequest": {
-        "description": "Admin-only: run the whole pregame (CR 103.5's mulligan process, CR\n103.6's opening-hand actions) forward, all at once, over every seat.",
+        "description": "Admin-only: run the whole pregame (CR 103.5's mulligan process, CR\n103.6's opening-hand actions) forward, all at once, over every seat.\n\n`BoardRead` for the same reason every other mutating request carries it:\nthis is a command like any other (`commands._run_pregame_settle`), it\nreaches the same `records.legal_actions_before` sites, and an operator\nsettling a pregame against a board that has since moved is owed the news\nthat it moved rather than a settled game they did not ask for.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "use_defaults": {
             "default": false,
             "title": "Use Defaults",
