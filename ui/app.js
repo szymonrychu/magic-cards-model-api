@@ -662,9 +662,34 @@ function openCardMenuAt(anchor, card, items, run) {
  * nulled `event.currentTarget` by then. */
 function openActionMenu(card, event, items, run) {
   if (!items.length) return;
-  const anchor = anchorFor(card, event);
+  const anchor = actionAnchor(card, event);
   openCardMenuAt(anchor, card, items, run);
   return enrichActionMenu(anchor, card, items, run);
+}
+
+/** `anchorFor`, plus the one case where the clicked node is the wrong thing
+ * to anchor to: a card inside the zones popover.
+ *
+ * That popover is a `.modal` and an anchored menu is a `.popover`, and the
+ * modal is drawn on top of it (`style.css`) - so a confirm opened over one
+ * of the modal's own cards would sit under the scrim, dimmed and
+ * unclickable, and Escape would close the modal rather than the menu. The
+ * menu's geometry and stacking are deliberately not this file's to change,
+ * so the modal is closed instead: the player clicked a card to act on it,
+ * which is the end of browsing zones either way, and the confirm anchors
+ * over the board's own node for that card. There always is one - the board
+ * draws every graveyard and exile card in its zone ribbon and every play
+ * permission in `#permitted-row`, both keyed by card id (`dom.js`'s
+ * `patchChildren`) - and the clicked node itself is the fallback if there
+ * somehow is not, so the menu opens either way. */
+function actionAnchor(card, event) {
+  const clicked = event && event.currentTarget;
+  const modal = document.querySelector("#modal");
+  if (!clicked || !modal || modal.hidden || !modal.contains(clicked)) {
+    return anchorFor(card, event);
+  }
+  closeModal(document);
+  return document.querySelector(`[data-key="${card.id}"]`) || clicked;
 }
 
 /** Fold `GET .../legal-actions` into the menu that is already on screen: an
@@ -746,8 +771,19 @@ function beginCastFromPermission(card, fromZone) {
   return refreshAffordance();
 }
 
-function onPermission(permission) {
-  beginCastFromPermission(permission.card, permission.from_zone);
+/** Exported for `tests/test_ui_app.py` only, alongside `onHandCard`/
+ * `onPermanent` - see `onHandCard`.
+ *
+ * A play permission is an action click like any other: it begins a cast, so
+ * it opens the same one-option confirm rather than casting on the click that
+ * landed on the card. Three surfaces reach here and two of them are the
+ * board itself - `#permitted-row` and the zone ribbon (`render/board.js`) -
+ * with the zones popover the third (`render/panels.js`). */
+export function onPermission(permission, event) {
+  const card = permission.card;
+  return openActionMenu(card, event, M.permissionMenuItems(permission), (key) => {
+    if (key === "cast") return beginCastFromPermission(card, permission.from_zone);
+  });
 }
 
 async function playLand(card) {

@@ -1682,10 +1682,17 @@ def _fake_dom_body() -> str:
       globalThis.__popover = popover;
       const toastEl = new El("div");
       globalThis.__toast = toastEl;
+      // A test that needs the page to hold more than the popover and the
+      // toast - an open `#modal`, a board node a `[data-key]` lookup has to
+      // find - puts it here under its own selector. Everything else answers
+      // exactly what it always did.
+      globalThis.__nodes = {};
       globalThis.document = {
         createElement: (t) => new El(t),
         createTextNode: (s) => ({ nodeType: 3, textContent: s, contains: () => false }),
-        querySelector: (sel) => (sel === "#popover" ? popover : sel === "#toast" ? toastEl : null),
+        querySelector: (sel) =>
+          globalThis.__nodes[sel] ||
+          (sel === "#popover" ? popover : sel === "#toast" ? toastEl : null),
         addEventListener() {},
         removeEventListener() {},
         activeElement: null,
@@ -2827,3 +2834,222 @@ def test_toggling_a_blocker_into_the_draft_opens_no_confirm() -> None:
     # `combat.js`'s draft is keyed blocker -> the attacker it blocks.
     assert result["draft"] == {"bears1": "ob1"}
     assert result["calls"] == []
+
+
+# -- a play permission is an action click too, and gets the same confirm -----
+#
+# A dynamic play permission (cascade's hit, suspend's own third ability -
+# `beginCastFromPermission` carries the rule number this repo verified for
+# it) is a card click that ACTS: it begins a cast out of exile or a
+# graveyard. It is wired to three surfaces, and two of them are the board
+# itself - `#permitted-row` (`render/board.js`'s `patchPermissions`) and the
+# zone ribbon under the battlefield - with the zones modal the third. So it
+# is not a special case of the modal; it is the same "one click, one thing to
+# do, and it happened" the confirm exists to stop, and it opens the same
+# one-option picker every other action click opens.
+
+
+EXILED_CASCADE_HIT = {
+    "id": "x1",
+    "name": "Tarmogoyf",
+    "type_line": "Creature - Lhurgoyf",
+    "zone": "exile",
+    "controller": "alice",
+    # Enough for `actions.js`'s `needsChoices` to say yes, so picking the
+    # confirm stages the announcement in the ribbon and fires nothing - the
+    # same shape the hand-cast confirm test uses.
+    "cast": {"mana_cost": "{1}{G}", "targeting": {"targets_anything": True}},
+}
+
+CASCADE_PERMISSION = {
+    "card": EXILED_CASCADE_HIT,
+    "granted_by": "Bloodbraid Elf",
+    "action": "cast",
+    "pays_mana_cost": False,
+    "from_zone": "exile",
+    "usable_now": True,
+    "why_not": None,
+}
+
+PERMISSION_UNAFFORDABLE = {
+    "kind": "cast",
+    "card_id": "x1",
+    "ability_index": None,
+    "affordable": "no",
+    "unaffordable_reason": "cannot pay {1}{G}: no untapped sources",
+}
+
+
+def _permission_state() -> dict:
+    return _click_state(
+        exile=[EXILED_CASCADE_HIT],
+        play_permissions={"alice": [CASCADE_PERMISSION]},
+    )
+
+
+def test_a_play_permission_opens_a_one_option_confirm_before_the_cast_begins() -> None:
+    """The click used to reach `beginCastFromPermission` outright - a cascade
+    hit was cast by the click that landed on it. It opens `Cast` first, and
+    only picking that stages the announcement, with the permission's own
+    `from_zone` carried onto the request."""
+    result = _click(
+        """
+          const clicked = m.onPermission(permission, { currentTarget: anchor });
+          const opened = {
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            action: m.store.get().action,
+            posts: globalThis.__calls.filter((c) => c.method === "POST").length,
+          };
+          await clicked;
+          options()[0].click();
+          await settle();
+          return { opened, calls: globalThis.__calls };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+    )
+    assert result["opened"]["hidden"] is False, "the click must open the confirm"
+    assert result["opened"]["labels"] == ["Cast"]
+    assert result["opened"]["action"] is None, "nothing may begin before the confirm is picked"
+    assert result["opened"]["posts"] == 0
+    casts = [
+        c
+        for c in result["calls"]
+        if c["method"] == "POST" and "actions/cast" in c["path"] and not c["body"].get("dry_run")
+    ]
+    assert len(casts) == 1, result["calls"]
+    assert casts[0]["body"]["card_id"] == "x1"
+    # The permission's own zone, not the hand - `bodyFor` sends `from_zone`
+    # only when the action carries one.
+    assert casts[0]["body"]["from_zone"] == "exile"
+
+
+def test_the_permission_confirm_is_enriched_from_the_engines_own_legal_actions() -> None:
+    """The same enrichment every other action click gets: the read is keyed
+    `card_id` + `cast` + no ability index, which is exactly the row
+    `legal_actions` emits for a permission cast."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) =>
+            path.includes("legal-actions")
+              ? Promise.resolve({ ok: true, json: async () => ({ actions: [row] }) })
+              : null;
+          await m.onPermission(permission, { currentTarget: anchor });
+          await settle();
+          return {
+            gets: globalThis.__calls.map((c) => `${c.method} ${c.path}`),
+            hidden: globalThis.__popover.hidden,
+            disabled: options().map((o) => o.disabled),
+            text: options().map((o) => o.deepText),
+          };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+        row=PERMISSION_UNAFFORDABLE,
+    )
+    assert result["gets"] == ["GET /api/games/g1/legal-actions?player=alice&uid=u1"]
+    assert result["hidden"] is False
+    assert result["disabled"] == [True]
+    assert result["text"] == ["Cast cannot pay {1}{G}: no untapped sources"]
+
+
+def _modal_dom() -> str:
+    """An open zones modal holding the clicked card, and the board's own node
+    for the same card - `#permitted-row` carries one for every permission,
+    keyed by card id (`dom.js`'s `patchChildren`)."""
+    return """
+      const modal = new El("div");
+      modal.hidden = false;
+      const inModal = new El("div");
+      modal.appendChild(inModal);
+      const onBoard = new El("div");
+      onBoard.dataset.key = "x1";
+      globalThis.__nodes["#modal"] = modal;
+      globalThis.__nodes['[data-key="x1"]'] = onBoard;
+      globalThis.__modal = modal;
+      globalThis.__inModal = inModal;
+      globalThis.__onBoard = onBoard;
+    """
+
+
+def test_a_permission_clicked_in_the_zones_modal_closes_it_and_anchors_on_the_board() -> None:
+    """`.modal` is drawn above `.popover` (z-index 60 over 50), and this
+    change may not touch either - so a confirm opened over one of the modal's
+    own cards would sit *under* the scrim, dimmed and unclickable. The modal
+    is closed first and the confirm anchored over the board's own node for
+    that card, which leaves it on top, over the card it is about, and with
+    Escape closing it rather than the modal that is no longer open."""
+    result = _click(
+        _modal_dom()
+        + """
+          await m.onPermission(permission, { currentTarget: inModal });
+          return {
+            modalHidden: globalThis.__modal.hidden,
+            hidden: globalThis.__popover.hidden,
+            labels: options().map((o) => o.label),
+            anchoredOnBoard: globalThis.__onBoard.classes.has("menu-open"),
+            anchoredInModal: globalThis.__inModal.classes.has("menu-open"),
+          };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+    )
+    assert result["modalHidden"] is True, "the modal must not cover the confirm it opened"
+    assert result["hidden"] is False
+    assert result["labels"] == ["Cast"]
+    assert result["anchoredOnBoard"] is True
+    assert result["anchoredInModal"] is False
+
+
+def test_a_permission_clicked_on_the_board_leaves_a_closed_modal_alone() -> None:
+    """The board is the ordinary surface: nothing is closed, and the confirm
+    anchors over the node that was actually clicked rather than going looking
+    for another one with the same id."""
+    result = _click(
+        """
+          const modal = new El("div");
+          modal.hidden = true;
+          globalThis.__nodes["#modal"] = modal;
+          await m.onPermission(permission, { currentTarget: anchor });
+          return {
+            modalHidden: modal.hidden,
+            hidden: globalThis.__popover.hidden,
+            anchored: anchor.classes.has("menu-open"),
+          };
+        """,
+        state=_permission_state(),
+        permission=CASCADE_PERMISSION,
+    )
+    assert result["modalHidden"] is True
+    assert result["hidden"] is False
+    assert result["anchored"] is True
+
+
+def test_a_permanent_menu_opened_from_the_zones_modal_closes_it_too() -> None:
+    """Not a permission special case: any action menu opened from inside the
+    modal has the same problem, so the rule lives in the one place every
+    action click goes through."""
+    result = _click(
+        """
+          const modal = new El("div");
+          modal.hidden = false;
+          const inModal = new El("div");
+          modal.appendChild(inModal);
+          const onBoard = new El("div");
+          onBoard.dataset.key = "pw1";
+          globalThis.__nodes["#modal"] = modal;
+          globalThis.__nodes['[data-key="pw1"]'] = onBoard;
+          await m.onPermanent(pw, { currentTarget: inModal });
+          return {
+            modalHidden: modal.hidden,
+            labels: options().map((o) => o.label),
+            anchoredOnBoard: onBoard.classes.has("menu-open"),
+          };
+        """,
+        state=_click_state(battlefield=[ONE_ACTIVATED_ABILITY_PW]),
+        pw=ONE_ACTIVATED_ABILITY_PW,
+    )
+    assert result["modalHidden"] is True
+    assert result["labels"] == ["+1: draw a card"]
+    assert result["anchoredOnBoard"] is True

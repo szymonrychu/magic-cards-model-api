@@ -85,6 +85,26 @@ whoever works on the repo itself.
   after that dispatch nulled `event.currentTarget`. On the click only: the
   1.2s poll's ban on per-card affordance work stands.
 
+  A dynamic play permission (cascade's hit, suspend's own third ability) is
+  an action click too, and was missed on the first pass: `onPermission` began
+  the cast on the click. It is not a zones-modal-only path - `render/
+  board.js` wires it to `#permitted-row` and to the zone ribbon on the board
+  itself - so it now opens the same one-option `Cast` confirm, captioned with
+  the source that granted it, keyed `{card_id, kind: "cast", ability_index:
+  null}` so the same enrichment finds it. Its `from_zone` still reaches the
+  request unchanged.
+
+  That is also what forced `actionAnchor`: the zones popover is a `.modal`
+  drawn ABOVE `.popover`, so a confirm opened over one of the modal's own
+  cards would sit under the scrim, dimmed and unclickable, with Escape
+  closing the modal instead of the menu. The menu's geometry and stacking are
+  frozen (see the anchored-menu note below), so the modal is closed instead
+  and the confirm anchored over the board's own node for that card - the zone
+  ribbon draws every graveyard/exile card and `#permitted-row` every
+  permission, both keyed by card id, and the clicked node is the fallback if
+  neither is there. Uniform for every action menu, not a permission special
+  case: an unearth ability clicked in the modal had the same problem.
+
 - **2026-09-10 - "any color" never includes `{C}`, so the tie this branch was
   justified by does not exist, and a chosen colour is a choice rather than a
   count.** Three corrections and one thing this repo cannot fix, all in the

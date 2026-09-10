@@ -77,9 +77,13 @@ export function surfaceForChoice(kind) {
  * popover over the same card, which is why the plan names only the second.
  *
  * **Every plan that ACTS opens a popover, single option and all** - playing
- * a land, casting, and activating the one ability a permanent has used to
- * fire on the click itself, and now open the same anchored picker a
- * multi-ability permanent already opened. A one-item menu IS the confirm:
+ * a land, casting, activating the one ability a permanent has, and using a
+ * dynamic play permission (`"permission"`: cascade's hit, suspend's own
+ * third ability - a cast begun out of exile or a graveyard, wired to the
+ * board's own `#permitted-row` and zone ribbon as much as to the zones
+ * modal) all used to fire on the click itself, and now open the same
+ * anchored picker a multi-ability permanent already opened. A one-item menu
+ * IS the confirm:
  * there is no separate confirm component and no Cancel item, because
  * `render/ribbon.js`'s `showPopover` already leaves on Escape, on a click
  * away, and on picking something. What that item then begins - a cast or an
@@ -102,6 +106,9 @@ export function choiceForPlan(plan) {
     return { kind: "hand_actions", surface: surfaceForChoice("hand_actions") };
   }
   if (kind === "activate") return { kind: "abilities", surface: surfaceForChoice("abilities") };
+  if (kind === "permission") {
+    return { kind: "hand_actions", surface: surfaceForChoice("hand_actions") };
+  }
   if (kind === "pin") return { kind: "mana_colour", surface: surfaceForChoice("mana_colour") };
   if (kind === "attack") return { kind: "defender", surface: surfaceForChoice("defender") };
   if (kind === "crew") return { kind: "announcement", surface: surfaceForChoice("announcement") };
@@ -186,6 +193,31 @@ export function handMenuItems(plan, card) {
     items.push(item("cycle", "Cycle", offer.cost, match("activate_off_zone", offer.index)));
   }
   return items;
+}
+
+/** The whole menu a dynamic play permission opens: one Cast item, which IS
+ * the confirm for a click that used to begin the cast outright.
+ *
+ * Captioned with the source that granted it - a card in exile can be there
+ * for several reasons at once, and "Cast / Bloodbraid Elf" says which one is
+ * offering this. The caption is what `enrichItems` replaces when the engine
+ * reports the cost cannot be paid, so an unaffordable option says why
+ * instead.
+ *
+ * The row it names is the one `legal_actions` emits for a permission cast:
+ * the card, plain `cast`, and no ability index. A permission that names no
+ * findable card matches nothing rather than half a row - the same `null` the
+ * Crew item carries.
+ *
+ * A permission granted as a land PLAY (an exiled land the granting effect
+ * lets you put onto the battlefield) is NOT a separate item here, because
+ * `app.js` has no request shape for it either - `actions/play-land` sends no
+ * `from_zone`. Nothing about that changes with this menu; it is the same one
+ * option the click already had. */
+export function permissionMenuItems(permission) {
+  const card = (permission && permission.card) || {};
+  const match = card.id ? { card_id: card.id, kind: "cast", ability_index: null } : null;
+  return [item("cast", "Cast", (permission && permission.granted_by) || "", match)];
 }
 
 /** The items a permanent's menu offers: one per activated ability, keyed by

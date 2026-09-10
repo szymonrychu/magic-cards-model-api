@@ -115,9 +115,10 @@ def test_every_action_click_opens_a_confirm_and_a_selection_click_opens_nothing(
     nothing at all. A confirm on a target pick would make a three-target
     spell a nine-click affair."""
     acting = ["land", "cast", "activate"]
-    assert call("kinds.map((k) => m.choiceForPlan({kind: k}).surface)", kinds=acting) == [
-        "popover"
-    ] * 3
+    assert (
+        call("kinds.map((k) => m.choiceForPlan({kind: k}).surface)", kinds=acting)
+        == ["popover"] * 3
+    )
     assert call('m.choiceForPlan({kind: "land"})') == {
         "kind": "hand_actions",
         "surface": "popover",
@@ -132,6 +133,18 @@ def test_every_action_click_opens_a_confirm_and_a_selection_click_opens_nothing(
     }
     for kind in ("target", "cancel", "block", "none"):
         assert call("m.choiceForPlan({kind: k})", k=kind) is None
+
+
+def test_a_play_permission_is_an_action_click_and_names_the_same_popover():
+    """A dynamic play permission (cascade's hit, suspend's own third ability)
+    begins a cast out of exile or a graveyard, so it ACTS - and it is wired
+    to the board itself (`#permitted-row`, the zone ribbon) as much as to the
+    zones modal. It gets the confirm every other action click gets, on the
+    surface a card-scoped choice already had."""
+    assert call('m.choiceForPlan({kind: "permission"})') == {
+        "kind": "hand_actions",
+        "surface": "popover",
+    }
 
 
 # ------------------------------------------------------------ menu items ---
@@ -176,6 +189,38 @@ def test_a_spell_with_a_special_action_offers_cast_first_then_the_special():
             "sublabel": "{R}",
             "match": {"card_id": "c2", "kind": "suspend", "ability_index": None},
         },
+    ]
+
+
+def test_a_permission_offers_one_cast_item_keyed_to_the_engines_own_row():
+    """One option, which IS the confirm - and it names the row
+    `legal_actions` emits for a permission cast: the card, plain `cast`, and
+    no ability index. So the same enrichment every other action menu gets
+    finds it."""
+    permission = {
+        "card": {"id": "x1", "name": "Tarmogoyf"},
+        "granted_by": "Bloodbraid Elf",
+        "from_zone": "exile",
+        "action": "cast",
+        "usable_now": True,
+    }
+    assert call("m.permissionMenuItems(permission)", permission=permission) == [
+        {
+            "key": "cast",
+            "label": "Cast",
+            "sublabel": "Bloodbraid Elf",
+            "match": {"card_id": "x1", "kind": "cast", "ability_index": None},
+        }
+    ]
+
+
+def test_a_permission_naming_no_card_still_builds_a_menu_that_enriches_nothing():
+    """`match: null` is "no row in the engine's answer identifies this", the
+    same answer Crew gets - never a match that would silently disable an
+    option because the id was missing."""
+    permission = {"card": {}, "from_zone": "graveyard"}
+    assert call("m.permissionMenuItems(permission)", permission=permission) == [
+        {"key": "cast", "label": "Cast", "sublabel": "", "match": None}
     ]
 
 
