@@ -362,6 +362,7 @@ export async function poll() {
   store.set({ polling: true });
   try {
     const mutationsBefore = app.mutations;
+    const since = app.log.lastSeq;
     const reads = cycleReads(app);
     const [state, log] = await Promise.all([reads.state, reads.log]);
     if (store.get().mutations !== mutationsBefore) {
@@ -375,7 +376,22 @@ export async function poll() {
     store.set((s) => ({
       state,
       connection: "ok",
-      log: { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq },
+      // The log half is written only if nothing has advanced it since this
+      // cycle asked for `since` - the same guard `refresh()` carries, and now
+      // needed on both sides of the pair. `refresh()` sets no `polling` flag,
+      // so an action's log read and a background poll's log read are
+      // routinely outstanding together (`/log` runs 0.4-2.4s against a 1200ms
+      // tick); both asked from the same `since`, so whichever lands second is
+      // a second copy of entries already on the screen. `patchChildren`
+      // builds its `existing` map before it creates anything, so a key
+      // repeated inside one items list becomes a second node the next patch
+      // cannot see - the duplicated lines never go away. Dropping this half
+      // costs at most one tick of log, and the next cycle asks from the
+      // `lastSeq` the other read published.
+      log:
+        s.log.lastSeq === since
+          ? { entries: [...s.log.entries, ...log.log].slice(-500), lastSeq: log.last_seq }
+          : s.log,
     }));
     refreshDecisionTargets();
     await tickRun();

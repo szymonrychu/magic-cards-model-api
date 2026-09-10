@@ -2124,6 +2124,86 @@ def test_poll_reads_the_board_and_the_log_concurrently() -> None:
     assert result is True, "poll() waited for the board read before it issued the log read"
 
 
+def test_a_polls_log_read_is_dropped_once_a_refresh_has_advanced_the_log() -> None:
+    """`refresh()` sets no `polling` flag, so an action's own log read and a
+    background poll's log read are routinely in flight together - `/log` runs
+    0.4-2.4s against a 1200ms tick. Both were issued with the same `since`,
+    so whichever lands second carries a second copy of the same entries.
+    `refresh()` has had the `lastSeq` guard for exactly that since it was
+    written; `poll()` had none, and `patchChildren` builds its `existing` map
+    before it creates anything - a key repeated inside one items list becomes
+    a second node that the next patch can no longer see, so the duplicated
+    lines stay on the screen for good."""
+    result = run_app(
+        """
+        globalThis.__toast = { textContent: "", hidden: true };
+        globalThis.document = {
+          body: {
+            classList: { toggle: () => {} },
+            setAttribute: () => {},
+            removeAttribute: () => {},
+          },
+          querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+        };
+        const board = {
+          you: "alice", pending_decision: null, step: "declare_blockers", turn_number: 4,
+          active_player: "bob", priority_holder: "bob", battlefield: [],
+          hands: { alice: [] }, stack: [], combat: { attacks: [] },
+          winner: null, drawn: false, pregame: null,
+        };
+        const ENTRIES = [{ seq: 1, text: "one" }, { seq: 2, text: "two" }];
+        let logCalls = 0;
+        let openTheActionsLog;
+        const actionsLog = new Promise((r) => { openTheActionsLog = r; });
+        let releaseThePollsLog;
+        const pollsLog = new Promise((r) => { releaseThePollsLog = r; });
+        globalThis.__releaseThePollsLog = () => releaseThePollsLog();
+        globalThis.fetch = (path, opts) => {
+          const method = opts ? opts.method : "GET";
+          if (method === "POST") {
+            return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+          }
+          if (path.includes("/log")) {
+            const since = Number(new URL(path, "http://t").searchParams.get("since"));
+            const log = ENTRIES.filter((e) => e.seq > since);
+            const payload = { log, last_seq: log.length ? log[log.length - 1].seq : since };
+            logCalls += 1;
+            // The action's own read is held until the poll behind it has
+            // issued its read - that is the whole window, and it is the
+            // ordinary one: the poll reads `lastSeq` while the earlier read
+            // that will advance it is still outstanding, so both ask for the
+            // same entries.
+            if (logCalls === 1) {
+              return actionsLog.then(() => ({ ok: true, json: async () => payload }));
+            }
+            openTheActionsLog();
+            return pollsLog.then(() => ({ ok: true, json: async () => payload }));
+          }
+          return Promise.resolve({ ok: true, json: async () => board });
+        };
+        (async () => {
+          m.store.set({
+            gameId: "g1", uid: "u1", run: null, busy: 0,
+            stops: { mine: [], theirs: [], onStack: true },
+            state: board, log: { entries: [], lastSeq: 0 },
+          });
+          const acting = m.declareNoBlockers();
+          await new Promise((r) => setTimeout(r, 0));
+          const polling = m.poll();
+          await new Promise((r) => setTimeout(r, 0));
+          globalThis.__releaseThePollsLog();
+          await Promise.all([acting, polling]);
+          return m.store.get().log;
+        })()
+        """
+    )
+    assert [e["seq"] for e in result["entries"]] == [1, 2], (
+        "the poll appended entries the action's own refresh had already written: "
+        f"{result}"
+    )
+    assert result["lastSeq"] == 2
+
+
 def test_the_toast_never_intercepts_a_click() -> None:
     """`.toast` is text-only - every call site passes a string - and it sits
     `position: fixed` over the bottom centre of the viewport for 4000ms on
