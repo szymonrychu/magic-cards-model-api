@@ -127,8 +127,8 @@ def mana_ability_at(game: Game, source: CardState, ability_index: int) -> Any:
 
 def mana_from(
     source: CardState,
-    game: Game | None = None,
-    ability_index: int | None = None,
+    game: Game,
+    ability_index: int,
 ) -> list[Color]:
     """What tapping this source for `ability_index` produces, asked of the
     engine's own `ManaAbility.resolve`.
@@ -148,12 +148,23 @@ def mana_from(
     a player's behalf here, because guessing is exactly what naming the ability
     was supposed to take out of the payment.
 
-    Three of the board narrowings `resolve` accepts are read off the permanent
-    itself and passed: its own counters, whether a card is imprinted on it, and
-    CR 614.12a's chosen colour ("as this enters, choose a color", read back by
-    Sunken Citadel's "the chosen color") - all three are plain state on the
-    `CardState`, the same three `machines.cost._mana_narrowings` reads for the
-    automatic path. The fourth is not reachable from this side of the seam:
+    Both arguments are required, and that is the whole shape of this function:
+    it answers for one named ability of one permanent in one game. There is no
+    "read it off the printed card instead" limb, because there is no caller
+    without a game - `pay_with`'s named-ability branch is the only one that
+    gets here, and it has both.
+    """
+    return _resolve(source, game, mana_ability_at(game, source, ability_index).mana, None)
+
+
+def _narrowings(source: CardState, game: Game) -> tuple[frozenset[str], frozenset[str], bool]:
+    """The board narrowings `ManaAbility.effective`/`.resolve` accept that
+    this side of the seam can answer honestly, in their positional order.
+
+    Three of them are plain state on the `CardState` - its own counters,
+    whether a card is imprinted on it, and CR 614.12a's chosen colour (passed
+    separately, as a keyword) - the same three `machines.cost._mana_narrowings`
+    reads for the automatic path. The fourth is not reachable from here:
     CR 106.7's "could produce" survey and the controller's land types both live
     behind `Game`'s own private helpers, so they are left unset, and an ability
     that needs them narrows to nothing and is refused with CR 106.5's wording
@@ -161,18 +172,26 @@ def mana_from(
     the production against the real board afterwards either way, so a
     disagreement is refused there, never quietly accepted.
     """
-    if game is not None and ability_index is not None:
-        mana = mana_ability_at(game, source, ability_index).mana
-    else:
-        abilities = _mana_abilities_of(source, game)
-        if not abilities:
-            raise ValueError(f"{source.card.name} has no mana ability")
-        mana = abilities[0]
-    return mana.resolve(
+    return (
         frozenset(),
         frozenset(source.counters.counts),
-        None,
-        game.card_imprinted_on(source.id) is not None if game is not None else False,
+        game.card_imprinted_on(source.id) is not None,
+    )
+
+
+def _resolve(
+    source: CardState,
+    game: Game,
+    mana: Any,
+    chosen: Color | list[Color] | None,
+) -> list[Color]:
+    """`ManaAbility.resolve` for `chosen`, with `_narrowings` filled in."""
+    land_types, counters, imprinted = _narrowings(source, game)
+    return mana.resolve(
+        land_types,
+        counters,
+        chosen,
+        imprinted,
         chosen_color=_chosen_color(source),
     )
 
@@ -186,22 +205,6 @@ def _chosen_color(source: CardState) -> Color | None:
     if choice is None or choice.kind is not ChoiceKind.COLOR or not choice.value:
         return None
     return Color(choice.value)
-
-
-def _mana_abilities_of(source: CardState, game: Game | None) -> list[Any]:
-    """Every mana ability this source has, computed where there is a game to
-    ask (CR 613.5) and read off the printed card where there is not."""
-    if game is not None:
-        try:
-            computed = list(game.activated_abilities(source))
-        except Exception:
-            computed = []
-        found = [ability.mana for ability in computed if getattr(ability, "mana", None) is not None]
-        if found:
-            return found
-    from magic_cards_model.machines import parse_mana_abilities
-
-    return list(parse_mana_abilities(source.card, source.up_face_name))
 
 
 def mana_colors(
@@ -219,6 +222,8 @@ def mana_colors(
     whatever the ability itself produces (`mana_from`).
     """
     if not colors:
+        if game is None or ability_index is None:  # unreachable: `pay_with` names both
+            raise ValueError(f"{source.name}: no colours and no ability named")
         return mana_from(source, game, ability_index)
     try:
         named = [Color(color.strip().upper()) for color in colors]
@@ -233,13 +238,7 @@ def mana_colors(
     # is handed to `resolve` with no choice at all, which raises the engine's
     # own "pass the colour chosen".
     chosen = named[0] if len(set(named)) == 1 else None
-    produced = mana.resolve(
-        frozenset(),
-        frozenset(source.counters.counts),
-        chosen,
-        game.card_imprinted_on(source.id) is not None,
-        chosen_color=_chosen_color(source),
-    )
+    produced = _resolve(source, game, mana, chosen)
     if sorted(produced) != sorted(named):
         made = "".join("{" + color.value + "}" for color in produced) or "no mana"
         asked = "".join("{" + color.value + "}" for color in named)
