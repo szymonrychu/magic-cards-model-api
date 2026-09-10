@@ -837,7 +837,6 @@ def test_an_unopenable_game_with_no_recorded_ending_offers_no_review_button() ->
     assert result["shown"] == []
 
 
-
 # --------------------------------------------------------------------------
 # telling two games apart: a short game id, a relative timestamp, and
 # newest-first ordering (see magic_cards_model_api.decks_api.
@@ -873,8 +872,7 @@ def test_relative_time_buckets() -> None:
     now = 1_800_000_000_000  # an arbitrary fixed instant, ms since epoch
     assert run_module("lobby_model.js", "m.relativeTime(iso, now)", iso=None, now=now) is None
     assert (
-        run_module("lobby_model.js", "m.relativeTime(iso, now)", iso="not-a-date", now=now)
-        is None
+        run_module("lobby_model.js", "m.relativeTime(iso, now)", iso="not-a-date", now=now) is None
     )
     assert (
         run_module(
