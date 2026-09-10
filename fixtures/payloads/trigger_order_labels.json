@@ -114,7 +114,9 @@
       "life": 20,
       "mana_pool": {
         "floating": {},
-        "snow": {}
+        "restricted": [],
+        "snow": {},
+        "spend_effects": []
       },
       "maximum_hand_size": 7,
       "sideboard_count": 0,
@@ -128,7 +130,9 @@
       "life": 20,
       "mana_pool": {
         "floating": {},
-        "snow": {}
+        "restricted": [],
+        "snow": {},
+        "spend_effects": []
       },
       "maximum_hand_size": 7,
       "sideboard_count": 0,

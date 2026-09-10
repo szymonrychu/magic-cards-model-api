@@ -12,6 +12,8 @@ by hand, the same way `agent_settings.py`'s cross-repo spellings already are
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api import app as app_module
@@ -39,3 +41,20 @@ def test_protocol_version_is_kept_in_sync_by_hand_between_api_and_seatkit() -> N
     the other - see `protocol.py`'s and `seatkit.py`'s own docstrings for
     why a hand-sync is the only option here."""
     assert protocol.PROTOCOL_VERSION == seatkit.PROTOCOL_VERSION
+
+
+def test_the_version_in_effect_has_a_changelog_entry() -> None:
+    """`seatkit.py` carries the changelog: every value this constant has ever
+    held is written up there, in its own paragraph, saying what shape moved
+    and what an MCP process built before the bump does when it meets the new
+    one. A bump that only edits the two literals leaves the next reader with
+    a version number and no record of why it moved, which is the whole reason
+    the convention exists - so pin the convention rather than trusting it."""
+    source = Path(seatkit.__file__).read_text()
+    version = protocol.PROTOCOL_VERSION
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    assert f"`{version}`" in changelog, (
+        f"{version} is in effect but has no changelog paragraph in seatkit.py - "
+        "see that module's own convention: each version says what shape changed "
+        "and how a process built before it misbehaves"
+    )

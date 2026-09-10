@@ -1416,3 +1416,436 @@ def test_seat_from_server_reads_a_human_vs_human_game_without_crashing() -> None
     )
     assert result["uid"] in ("u1", "u2")
     assert result["aiUid"] is None
+
+
+# -- planPin: WHICH mana ability to tap (API2) --------------------------------
+#
+# `planPermanentClick` already answers "this mid-cast click pins a mana
+# source" (`{kind: "pin"}`); `planPin` is the step after it, and it is where
+# a source with more than one mana ability gets to say which. Eldrazi Temple
+# taps for {C} (index 0) or for {C}{C} that may only be spent on Eldrazi
+# spells (index 1) - the second was unreachable while pinning always took the
+# first `is_mana_ability` entry it found.
+
+BASIC_MOUNTAIN = {
+    "id": "b1",
+    "name": "Mountain",
+    "type_line": "Basic Land - Mountain",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {"index": 0, "text": "{T}: Add {R}.", "is_mana_ability": True, "mana_options": None},
+    ],
+}
+
+DUAL_LAND = {
+    "id": "dl",
+    "name": "Steam Vents",
+    "type_line": "Land - Island Mountain",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {
+            "index": 0,
+            "text": "{T}: Add {U} or {R}.",
+            "is_mana_ability": True,
+            "mana_options": [["U"], ["R"]],
+        },
+    ],
+}
+
+ELDRAZI_TEMPLE = {
+    "id": "et1",
+    "name": "Eldrazi Temple",
+    "type_line": "Land",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {
+            "index": 0,
+            "text": "{T}: Add {C}.",
+            "cost": "{T}",
+            "is_mana_ability": True,
+            "mana_options": None,
+        },
+        {
+            "index": 1,
+            "text": "{T}: Add {C}{C}. Spend this mana only to cast Eldrazi spells.",
+            "cost": "{T}",
+            "is_mana_ability": True,
+            "mana_options": None,
+        },
+    ],
+}
+
+CASCADE_BLUFFS = {
+    "id": "cb",
+    "name": "Cascade Bluffs",
+    "type_line": "Land",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {"index": 0, "text": "{T}: Add {C}.", "is_mana_ability": True, "mana_options": None},
+        {
+            "index": 1,
+            "text": "{U/R}, {T}: Add {U}{U}, {U}{R}, or {R}{R}.",
+            "is_mana_ability": True,
+            "mana_options": [["U"], ["R"]],
+        },
+    ],
+}
+
+
+SHANG_CHI = {
+    "id": "sc",
+    "name": "Shang-Chi, Master of Kung Fu",
+    "type_line": "Legendary Creature - Human Warrior Hero",
+    "zone": "battlefield",
+    "controller": "alice",
+    "tapped": False,
+    "abilities": [
+        {
+            "index": 0,
+            "text": (
+                "{T}: Add two mana of any one color. Spend this mana only to "
+                "activate abilities of creature sources."
+            ),
+            "is_mana_ability": True,
+            "mana_options": ["W", "U", "B", "R", "G"],
+        },
+    ],
+}
+
+
+def pinning_action(**overrides: Any) -> dict:
+    return {"cardId": "spell1", "pinned": [], **overrides}
+
+
+def test_a_single_mana_ability_source_asks_nothing_extra() -> None:
+    """The hard requirement: a basic land keeps its one click. No ability
+    menu, no colour menu - it pins straight away, and it names no ability
+    index, so the wire shape stays the bare id it always was."""
+    plan = run_app("m.planPin(land, action)", land=BASIC_MOUNTAIN, action=pinning_action())
+    assert plan == {"kind": "pin", "abilityIndex": None, "color": None}
+
+
+def test_a_single_mana_ability_source_with_colours_still_goes_to_the_colour_menu() -> None:
+    """Unchanged behaviour for a shockland: one ability, so nothing to ask
+    about which - straight to the colour choice it always offered, and still
+    with no ability index named."""
+    plan = run_app("m.planPin(land, action)", land=DUAL_LAND, action=pinning_action())
+    assert plan == {"kind": "colour", "abilityIndex": None, "colors": ["U", "R"]}
+
+
+def test_a_source_with_two_mana_abilities_asks_which_one_first() -> None:
+    plan = run_app("m.planPin(land, action)", land=ELDRAZI_TEMPLE, action=pinning_action())
+    assert plan["kind"] == "ability"
+    assert [(a["index"], a["text"]) for a in plan["abilities"]] == [
+        (0, "{T}: Add {C}."),
+        (1, "{T}: Add {C}{C}. Spend this mana only to cast Eldrazi spells."),
+    ]
+
+
+def test_choosing_eldrazi_temples_restricted_ability_pins_index_one() -> None:
+    plan = run_app("m.planPinnedAbility(land, 1)", land=ELDRAZI_TEMPLE)
+    assert plan == {"kind": "pin", "abilityIndex": 1, "color": None}
+
+
+def test_a_chosen_ability_that_also_offers_colours_asks_for_both() -> None:
+    plan = run_app("m.planPinnedAbility(land, 1)", land=CASCADE_BLUFFS)
+    assert plan == {"kind": "colour", "abilityIndex": 1, "colors": ["U", "R"]}
+
+
+def test_clicking_an_already_pinned_source_unpins_it_rather_than_asking_again() -> None:
+    plan = run_app(
+        "m.planPin(land, action)",
+        land=ELDRAZI_TEMPLE,
+        action=pinning_action(pinned=[{"card_id": "et1", "color": None, "ability_index": 1}]),
+    )
+    assert plan == {"kind": "unpin"}
+
+
+def test_eldrazi_temples_second_ability_reaches_the_cast_request() -> None:
+    """The whole point, end to end: the mid-cast click plans a pin, the pin
+    plans an ability choice, choosing index 1 pins it, and the cast POST
+    carries `{card_id, ability_index: 1}` in `mana_sources` while the other
+    untapped source stays a bare id."""
+    result = run_app(
+        _fetch_stub_body()
+        + """
+        (async () => {
+          const A = await import(pathToFileURL(actionsPath).href);
+          const state = { you: "alice", battlefield: [temple, mountain] };
+          const casting = { action: A.begin("cast", { id: "c1" }, {}) };
+          const click = m.planPermanentClick(temple, casting, state);
+          const step = m.planPin(temple, { cardId: "c1", pinned: [] });
+          const chosen = m.planPinnedAbility(temple, step.abilities[1].index);
+          let action = A.begin("cast", { id: "c1" }, {});
+          action = A.pinSource(action, temple.id, chosen.color, chosen.abilityIndex);
+          m.store.set({
+            gameId: "g1", uid: "u1", state,
+            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
+            action,
+          });
+          await m.fire();
+          return { click, step: step.kind, chosen, calls: globalThis.__calls };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+        temple=ELDRAZI_TEMPLE,
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["click"] == {"kind": "pin"}
+    assert result["step"] == "ability"
+    assert result["chosen"] == {"kind": "pin", "abilityIndex": 1, "color": None}
+    casts = [c for c in result["calls"] if c["method"] == "POST" and "actions/cast" in c["path"]]
+    assert len(casts) == 1, result["calls"]
+    assert casts[0]["body"]["mana_sources"] == [{"card_id": "et1", "ability_index": 1}, "b1"]
+
+
+# -- the pin menus, driven through the real popover ---------------------------
+#
+# The planners above decide; `pinLand` acts, and the acting is the half that
+# has to open one anchored popover, then a second one from inside the first
+# `onSelect` - a flow no pure function can prove. `render/ribbon.js`'s
+# `showPopover` is the real surface here, running against a fake DOM small
+# enough to be obviously honest: elements that record their listeners, a
+# `#popover` for `showPopover` to find, and a `fetch` that records the
+# dry-run probe `previewAndMaybeFire` sends once the pin is made (a pinned
+# source means `needsExplicitFire`, so the probe is where the wire shape
+# shows up, and nothing is cast until the player presses Cast).
+
+
+def _fake_dom_body() -> str:
+    return """
+      globalThis.__calls = [];
+      class El {
+        constructor(tag) {
+          this.tagName = tag;
+          this.children = [];
+          this.dataset = {};
+          this.attrs = {};
+          this.style = {};
+          this.hidden = true;
+          this.listeners = {};
+          this.textContent = "";
+          this.classes = new Set();
+          this.classList = {
+            add: (c) => this.classes.add(c),
+            remove: (c) => this.classes.delete(c),
+            contains: (c) => this.classes.has(c),
+          };
+        }
+        set className(v) { this.classes = new Set(String(v).split(/\\s+/).filter(Boolean)); }
+        get className() { return [...this.classes].join(" "); }
+        appendChild(c) { this.children.push(c); c.parentNode = this; return c; }
+        removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; }
+        setAttribute(k, v) { this.attrs[k] = v; }
+        addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+        removeEventListener() {}
+        contains(node) {
+          if (node === this) return true;
+          return this.children.some((c) => c.contains && c.contains(node));
+        }
+        focus() {}
+        getBoundingClientRect() {
+          return { left: 10, top: 10, right: 60, bottom: 40, width: 50, height: 30 };
+        }
+        get firstChild() { return this.children[0] || null; }
+        get childNodes() { return this.children; }
+        get label() { return this.children.map((c) => c.textContent || "").join(""); }
+        click() { for (const fn of this.listeners.click || []) fn({ target: this }); }
+      }
+      const popover = new El("div");
+      globalThis.__popover = popover;
+      globalThis.document = {
+        createElement: (t) => new El(t),
+        createTextNode: (s) => ({ nodeType: 3, textContent: s, contains: () => false }),
+        querySelector: (sel) => (sel === "#popover" ? popover : null),
+        addEventListener() {},
+        removeEventListener() {},
+        activeElement: null,
+        body: null,
+      };
+      globalThis.window = {
+        innerWidth: 1024,
+        innerHeight: 768,
+        addEventListener() {},
+        removeEventListener() {},
+      };
+      globalThis.fetch = (path, opts) => {
+        const body = opts && opts.body ? JSON.parse(opts.body) : undefined;
+        globalThis.__calls.push({ method: opts ? opts.method : "GET", path, body });
+        return Promise.resolve({ ok: true, json: async () => ({ allowed: true, tapped: [] }) });
+      };
+      const options = () => globalThis.__popover.children.filter((c) => c.classes.has("option"));
+    """
+
+
+def _pin_setup(land: dict) -> str:
+    return """
+      const A = await import(pathToFileURL(actionsPath).href);
+      m.store.set({
+        gameId: "g1", uid: "u1",
+        state: { you: "alice", battlefield: [land, mountain] },
+        stops: { mine: [], theirs: [], onStack: true },
+        action: A.begin("cast", { id: "c1" }, {}),
+      });
+      const anchor = new El("div");
+    """
+
+
+def test_a_basic_land_pins_on_one_click_with_no_menu_at_all() -> None:
+    """The hard requirement, at the surface rather than in the planner: a
+    source with one mana ability opens nothing. No popover, no second click,
+    and the request still names it as a bare id."""
+    result = run_app(
+        _fake_dom_body()
+        + """
+        (async () => {"""
+        + _pin_setup(BASIC_MOUNTAIN)
+        + """
+          await m.pinLand(mountain, { currentTarget: anchor });
+          return {
+            popoverHidden: globalThis.__popover.hidden,
+            optionCount: options().length,
+            pinned: m.store.get().action.pinned,
+            calls: globalThis.__calls,
+          };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+        land=BASIC_MOUNTAIN,
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["popoverHidden"] is True, "a basic land must not open a menu"
+    assert result["optionCount"] == 0
+    assert result["pinned"] == [{"card_id": "b1", "color": None, "ability_index": None}]
+    probes = [c for c in result["calls"] if c["method"] == "POST"]
+    assert len(probes) == 1, result["calls"]
+    assert probes[0]["body"]["dry_run"] is True
+    assert probes[0]["body"]["mana_sources"] == ["b1"]
+
+
+def test_eldrazi_temple_offers_both_abilities_and_pins_the_restricted_one() -> None:
+    """Two mana abilities, so the menu asks which - each item showing the
+    ability's own text, restriction sentence and all - and choosing the
+    second sends `ability_index: 1`."""
+    result = run_app(
+        _fake_dom_body()
+        + """
+        (async () => {"""
+        + _pin_setup(ELDRAZI_TEMPLE)
+        + """
+          await m.pinLand(land, { currentTarget: anchor });
+          const offered = options().map((b) => b.label);
+          options()[1].click();
+          await new Promise((r) => setTimeout(r, 0));
+          return {
+            offered,
+            pinned: m.store.get().action.pinned,
+            calls: globalThis.__calls,
+          };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+        land=ELDRAZI_TEMPLE,
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["offered"] == [
+        "{T}: Add {C}.",
+        "{T}: Add {C}{C}. Spend this mana only to cast Eldrazi spells.",
+    ]
+    assert result["pinned"] == [{"card_id": "et1", "color": None, "ability_index": 1}]
+    probes = [c for c in result["calls"] if c["method"] == "POST"]
+    assert probes[-1]["body"]["mana_sources"] == [{"card_id": "et1", "ability_index": 1}, "b1"]
+
+
+def test_an_ability_that_also_offers_colours_asks_for_both_and_sends_both() -> None:
+    """Cascade Bluffs: its second ability is the one that filters, and it
+    still has a colour to choose afterwards. Both menus open, in that order,
+    and both answers reach the request."""
+    result = run_app(
+        _fake_dom_body()
+        + """
+        (async () => {"""
+        + _pin_setup(CASCADE_BLUFFS)
+        + """
+          await m.pinLand(land, { currentTarget: anchor });
+          const abilities = options().map((b) => b.label);
+          options()[1].click();
+          await new Promise((r) => setTimeout(r, 0));
+          const colours = options().map((b) => b.label);
+          options()[1].click();
+          await new Promise((r) => setTimeout(r, 0));
+          return {
+            abilities,
+            colours,
+            pinned: m.store.get().action.pinned,
+            calls: globalThis.__calls,
+          };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+        land=CASCADE_BLUFFS,
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["abilities"] == [
+        "{T}: Add {C}.",
+        "{U/R}, {T}: Add {U}{U}, {U}{R}, or {R}{R}.",
+    ]
+    assert result["colours"] == ["Tap for {U}", "Tap for {R}"]
+    assert result["pinned"] == [{"card_id": "cb", "color": "R", "ability_index": 1}]
+    probes = [c for c in result["calls"] if c["method"] == "POST"]
+    assert probes[-1]["body"]["mana_sources"] == [
+        {"card_id": "cb", "colors": ["R"], "ability_index": 1},
+        "b1",
+    ]
+
+
+def test_clicking_a_pinned_source_again_takes_it_back_off_the_request() -> None:
+    result = run_app(
+        _fake_dom_body()
+        + """
+        (async () => {"""
+        + _pin_setup(ELDRAZI_TEMPLE)
+        + """
+          await m.pinLand(land, { currentTarget: anchor });
+          options()[1].click();
+          await new Promise((r) => setTimeout(r, 0));
+          const pinnedBefore = m.store.get().action.pinned;
+          await m.pinLand(land, { currentTarget: anchor });
+          return { pinnedBefore, action: m.store.get().action, calls: globalThis.__calls };
+        })()
+        """,
+        actionsPath=str(ACTIONS_JS),
+        land=ELDRAZI_TEMPLE,
+        mountain=BASIC_MOUNTAIN,
+    )
+    assert result["pinnedBefore"] == [{"card_id": "et1", "color": None, "ability_index": 1}]
+    # Nothing is pinned any more, so `needsExplicitFire` no longer holds the
+    # cast back and it goes through - exactly what taking the last pin off
+    # already did before an ability could be named. The choice is gone with
+    # it: the sources are bare ids again.
+    assert result["action"] is None
+    probes = [c for c in result["calls"] if c["method"] == "POST" and c["body"].get("dry_run")]
+    assert probes[-1]["body"]["mana_sources"] == ["et1", "b1"]
+
+
+def test_a_source_that_adds_several_mana_of_one_colour_asks_only_which_colour() -> None:
+    """Shang-Chi's `{T}: Add two mana of any one color.` is one ability and one
+    choice worth two mana. There is nothing to ask about *which* ability, so no
+    ability menu and no index on the wire; the colour menu is the whole
+    question, and the pin that comes out of it names that colour once.
+
+    The count is deliberately not the browser's business - it is nowhere in
+    `AbilityView`, and `engine_api._expanded_to_the_abilitys_own_count` fills
+    it in from the ability itself, so every client gets it right rather than
+    only this one. A UI that repeated the colour here would be guessing at a
+    number it cannot see."""
+    plan = run_app("m.planPin(land, action)", land=SHANG_CHI, action=pinning_action())
+    assert plan == {"kind": "colour", "abilityIndex": None, "colors": ["W", "U", "B", "R", "G"]}

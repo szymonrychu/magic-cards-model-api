@@ -10,6 +10,7 @@
           "mana": true,
           "mana_options": null,
           "needs_x": false,
+          "restriction": null,
           "targeting": {
             "division": null,
             "maximum": 0,
@@ -53,6 +54,7 @@
           "mana": true,
           "mana_options": null,
           "needs_x": false,
+          "restriction": null,
           "targeting": {
             "division": null,
             "maximum": 0,
@@ -121,6 +123,7 @@
           "mana": true,
           "mana_options": null,
           "needs_x": false,
+          "restriction": null,
           "targeting": {
             "division": null,
             "maximum": 0,
@@ -843,7 +846,9 @@
       "life": 20,
       "mana_pool": {
         "floating": {},
-        "snow": {}
+        "restricted": [],
+        "snow": {},
+        "spend_effects": []
       },
       "maximum_hand_size": 7,
       "sideboard_count": 0,
@@ -857,7 +862,9 @@
       "life": 20,
       "mana_pool": {
         "floating": {},
-        "snow": {}
+        "restricted": [],
+        "snow": {},
+        "spend_effects": []
       },
       "maximum_hand_size": 7,
       "sideboard_count": 0,

@@ -19,6 +19,7 @@ from magic_cards_model.machines.keywords import cycling_abilities, cycling_activ
 from magic_cards_model.machines.layers import Characteristics
 from magic_cards_model.machines.turn import PHASE_OF
 from magic_cards_model.models import CardState, Game, Player, Supertype, Type, Zone
+from magic_cards_model.models.mana import ManaPool
 
 from . import assets, scryfall
 from .affordances import cast_hints
@@ -593,15 +594,55 @@ def _player_view(player: Player) -> dict[str, Any]:
         "username": player.username,
         "life": player.life,
         "counters": dict(player.counters.root),
-        "mana_pool": {
-            "floating": {color.value: count for color, count in player.mana_pool.floating.items()},
-            "snow": {color.value: count for color, count in player.mana_pool.snow.items()},
-        },
+        "mana_pool": _mana_pool_view(player.mana_pool),
         "hand_count": len(player.hand),
         "library_count": len(player.library),
         "graveyard_count": len(player.graveyard),
         "sideboard_count": len(player.sideboard),
         "maximum_hand_size": player.maximum_hand_size,
+    }
+
+
+def _mana_pool_view(pool: ManaPool) -> dict[str, Any]:
+    """One seat's mana pool (`ManaPoolView`), CR 106.6 tags included.
+
+    `restricted` and `spend_effects` are **subsets** of `floating`, not
+    alternatives to it. The engine keeps them that way on purpose - CR 106.4a
+    has the player announce all the mana that is there, and a restriction
+    narrows only what may be *done* with it - so this reports the whole
+    `floating` total exactly as it always did and says, beside it, how much of
+    that total is under each sentence. Reporting only the total was the defect:
+    two restricted `{C}` serialised as `floating {"C": 2}` and were
+    indistinguishable from two a player could spend on anything.
+
+    `understood` travels with each restriction rather than being filtered out
+    here. An unread CR 106.6 sentence is fail-closed in the engine, so that
+    mana pays for nothing at all; a view that omitted the flag would show a
+    player a resource they do not have.
+
+    Both keys are always present, empty lists included, so a client never has
+    to tell "no restrictions" from "this build does not report them".
+    """
+    return {
+        "floating": {color.value: count for color, count in pool.floating.items()},
+        "snow": {color.value: count for color, count in pool.snow.items()},
+        "restricted": [
+            {
+                "restriction": {
+                    "text": entry.restriction.text,
+                    "understood": entry.restriction.understood,
+                },
+                "amounts": {color.value: count for color, count in entry.amounts.items()},
+            }
+            for entry in pool.restricted
+        ],
+        "spend_effects": [
+            {
+                "text": entry.effect.text,
+                "amounts": {color.value: count for color, count in entry.amounts.items()},
+            }
+            for entry in pool.spend_effects
+        ],
     }
 
 

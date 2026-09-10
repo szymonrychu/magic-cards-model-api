@@ -277,3 +277,43 @@ def test_the_anchored_menu_is_viewport_fixed_never_document_absolute():
     assert "position: fixed" in block.group(1)
     assert "position: absolute" not in block.group(1)
     assert "overflow-y: auto" in block.group(1)
+
+
+# -- choosing WHICH mana ability (API2) -------------------------------------
+
+
+def test_choosing_which_mana_ability_is_also_a_card_scoped_popover():
+    """Pinning a source with more than one mana ability asks *which* one
+    before it asks which colour - a choice about a card, so the same
+    anchored popover the colour choice already uses."""
+    assert call('m.surfaceForChoice("mana_ability")') == "popover"
+
+
+def test_mana_ability_items_show_each_abilitys_own_text_keyed_by_its_index():
+    """Eldrazi Temple: the restricted {C}{C} has to be identifiable from the
+    menu, which means the item's label is the ability's whole printed text -
+    the restriction sentence included - and its key is the ability's own
+    index, the one that goes on the wire."""
+    abilities = [
+        {"index": 0, "text": "{T}: Add {C}.", "cost": "{T}"},
+        {
+            "index": 1,
+            "text": "{T}: Add {C}{C}. Spend this mana only to cast Eldrazi spells.",
+            "cost": "{T}",
+        },
+    ]
+    assert call("m.manaAbilityMenuItems(abilities)", abilities=abilities) == [
+        {"key": "ability:0", "label": "{T}: Add {C}.", "sublabel": ""},
+        {
+            "key": "ability:1",
+            "label": "{T}: Add {C}{C}. Spend this mana only to cast Eldrazi spells.",
+            "sublabel": "",
+        },
+    ]
+
+
+def test_a_mana_ability_whose_text_does_not_open_with_its_cost_keeps_it_dim():
+    abilities = [{"index": 2, "text": "Add {G}{G}.", "cost": "{T}, Sacrifice this land"}]
+    assert call("m.manaAbilityMenuItems(abilities)", abilities=abilities) == [
+        {"key": "ability:2", "label": "Add {G}{G}.", "sublabel": "{T}, Sacrifice this land"},
+    ]

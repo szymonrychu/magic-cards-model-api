@@ -160,7 +160,46 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-12"
+PROTOCOL_VERSION = "seatkit-13"
+#: `seatkit-13` is a **response** shape change: every mana source an action
+#: tool offers now says what it actually makes and what it is allowed to pay
+#: for. The engine's `Action` gained `produces`, `restriction` and
+#: `restriction_understood`, so `available_actions` (and the `mana_sources`
+#: block every action tool's answer carries) grew the same three fields, and
+#: the api's own `ManaSource` grew `ability_index` to name *which* mana
+#: ability of a multi-ability source is the one being described.
+#:
+#: `produces` is the printed production, not a board-resolved one - Cavern of
+#: Souls reads "{1}" plus one of any colour because that is what the printing
+#: says, and resolving it against the named creature type is the seat's job,
+#: not this wire's. `restriction` carries the engine's own words for what the
+#: mana may be spent on ("spend this mana only to cast a creature spell",
+#: Cavern's chosen-type clause, Sunken Citadel's land-ability clause), and
+#: `restriction_understood` says whether the engine parsed that clause or only
+#: saw that one was printed - fail-closed, so a seat is never told an unread
+#: restriction is absent.
+#:
+#: Before this a seat picking mana sources could not tell Delighted Halfling's
+#: unrestricted mana from Cavern of Souls' creature-only mana, nor see that a
+#: source it had just tapped was the reason its cast was refused: the tools
+#: handed back a list of tappable permanents and nothing about what tapping
+#: one would buy. An MCP process built before this bump reads an answer whose
+#: `mana_sources` entries carry keys it does not know - which is the whole of
+#: what this bump is, and the reason it is a **response** shape change and
+#: nothing else.
+#:
+#: What did *not* change, said plainly so the next reader does not have to
+#: check: the tool **request** shape is untouched, and `contract/tools.json`
+#: is byte-identical across this bump because of it. `mcp.py` and
+#: `seat_cli.py` both build `mana_sources` out of `sources_or_all`, which
+#: returns a list of bare card ids parsed from a comma-separated string, so a
+#: tool seat still cannot name an ability at all: on a two-mana-ability source
+#: it names the permanent and the api picks the ability, exactly as before.
+#: `ManaSource.ability_index` is reachable only through the HTTP API directly,
+#: which today means the browser UI. Teaching the tools to name one is a
+#: separate change to the request contract and its own bump - deliberately not
+#: folded in here.
+#:
 #: `seatkit-12` is two shape changes at once, both found by one stuck
 #: kubernetes seat that spent a whole turn failing to evoke Solitude.
 #:

@@ -92,6 +92,7 @@ from uuid import UUID
 
 from magic_cards_model.machines import AbilityOnStack
 from magic_cards_model.machines.casting import Casting
+from magic_cards_model.machines.cost import spend_restriction
 from magic_cards_model.machines.modes import modal_profile, substitute_x
 from magic_cards_model.machines.targeting import (
     TargetingProfile,
@@ -164,7 +165,11 @@ def _needs_x(cost: str | None) -> bool:
     return "{X}" in (cost or "")
 
 
-def ability_hints(ability: Any, color_options: tuple[Any, ...] | None = None) -> dict[str, Any]:
+def ability_hints(
+    ability: Any,
+    color_options: tuple[Any, ...] | None = None,
+    source: Any = None,
+) -> dict[str, Any]:
     """What activating this ability asks for, beyond the click.
 
     `ability` is one of `Game.activated_abilities`' entries - either a parsed
@@ -177,6 +182,14 @@ def ability_hints(ability: Any, color_options: tuple[Any, ...] | None = None) ->
     call `machines.legal_actions` builds `Action.color_options` from, passed
     in by `engine_api.list_abilities` rather than re-derived here. See
     `mana_options` below for why that matters and what it replaced.
+
+    `source` is the permanent (or card) the ability is read off, needed only
+    for `restriction` below: CR 106.6's sentence can point back at a choice
+    recorded on the object itself ("the chosen type", Cavern of Souls), and the
+    engine's `spend_restriction` takes the object rather than guessing. Every
+    one of `engine_api.list_abilities`' three branches passes it - a branch
+    that did not would publish `restriction: None` for an ability that has one,
+    which is the same lie as not publishing the field at all.
     """
     cost = getattr(ability, "cost", None)
     loyalty = getattr(ability, "loyalty", None)
@@ -227,6 +240,25 @@ def ability_hints(ability: Any, color_options: tuple[Any, ...] | None = None) ->
     # `engine_api.check_target` already asks `profile_for_text` for - the same
     # parse the engine itself runs at CR 602.2b announcement.
     hints["targeting"] = _profile_view(profile_for_text(effect))
+    # CR 106.6: "Some spells or abilities that produce mana restrict how that
+    # mana can be spent". Read off this ability's own effect text by the
+    # engine's `spend_restriction`, which is the same call `machines/cost.py`
+    # makes when the mana is actually produced - so the sentence a seat is
+    # shown here and the sentence enforced on the mana are one reading, not
+    # two.
+    #
+    # `understood` is published rather than filtered: `spend_restriction`
+    # answers `None` for an ability with no such sentence and a *clause-less*
+    # restriction for one it could not read, and those are not the same thing.
+    # The second fails closed - the mana is made, is announced (CR 106.4a) and
+    # pays for nothing - so a seat that is not told cannot tell why its cast
+    # was refused.
+    restriction = spend_restriction(effect, source)
+    hints["restriction"] = (
+        None
+        if restriction is None
+        else {"text": restriction.text, "understood": restriction.understood}
+    )
     return hints
 
 

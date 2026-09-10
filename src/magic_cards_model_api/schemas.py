@@ -226,6 +226,32 @@ class ManaSource(BaseModel):
     card_id: UUID
     colors: list[str] | None = None
     """Which colors to tap it for; defaults to the ability's own production."""
+    ability_index: int | None = None
+    """Which of this source's mana abilities to tap it for (CR 605.1a), in the
+    same index space `AbilityView.index` publishes and `ActivateRequest.
+    ability_index` takes - one space, one meaning, everywhere.
+
+    Only a source that prints more than one needs it, and every such printing
+    in this pool pairs a plain `{T}: Add ...` with a CR 106.6-restricted one:
+    Eldrazi Temple's `{C}` against its `{C}{C}`, Cavern of Souls's and
+    Delighted Halfling's `{C}` against their one mana of any colour, Sunken
+    Citadel's one mana of the chosen colour against two of it. Naming the index
+    is how a player says which of the two they meant, and it is what lets
+    `engine_api.pay_with` hand `CostPayment.tap_for_mana` that ability's own
+    restriction rather than let the engine re-derive one from what the mana
+    turned out to be (`machines.cost.restriction_for_production`).
+
+    Sunken Citadel is the pair where that matters, and it is the only one:
+    inference matches on production, so `{C}` tells Cavern's and Delighted
+    Halfling's two abilities apart on its own ("any color" is CR 106.1a's five
+    colours, and colorless is a type of mana that is not a color, CR 106.1b).
+    Both of Sunken Citadel's read "the chosen color", which
+    `restriction_for_production` resolves with no board at all - so neither
+    matches, and its restricted mana is reported as unrestricted.
+
+    `None` - absent, or explicitly null - is exactly today's behaviour: the
+    other two shapes of this model are untouched by this field's existence.
+    """
 
 
 class CastRequest(BaseModel):
@@ -874,6 +900,14 @@ class AbilityView(BaseModel):
     loyalty: LoyaltyHintView | None = None
     mana_options: list[str] | None = None
     targeting: TargetingProfileView
+    restriction: RestrictionView | None = None
+    """The CR 106.6 restriction the mana this ability makes would carry
+    (`machines.cost.spend_restriction` over the ability's own effect text),
+    or `None` for an ability that prints no such sentence.
+
+    The read-only half of `ManaPoolView.restricted`, one step earlier: a seat
+    deciding *which* ability to tap a two-ability source for needs to know what
+    the mana would be tied to before it taps, not after."""
 
 
 class OpeningHandOptionView(BaseModel):
@@ -1043,9 +1077,68 @@ class StackAbilityView(BaseModel):
 StackEntry = Annotated[StackSpellView | StackAbilityView, Field(discriminator="kind")]
 
 
+class RestrictionView(BaseModel):
+    """A CR 106.6 "Spend this mana only to ..." sentence, as a seat sees it.
+
+    `text` is the printed sentence verbatim, so a refusal quotes the card
+    rather than the parser's reading of it.
+
+    `understood` is whether the engine turned that sentence into anything it
+    can check. **False is not cosmetic and is never hidden**: an unread
+    restriction is fail-closed in the engine - the mana exists, is announced
+    (CR 106.4a), empties with the pool, and pays for nothing at all - so a view
+    that showed the mana without this flag would be telling the player they
+    have a resource they cannot spend.
+
+    Deliberately two fields and no third: the engine's own `SpendClause` tuple
+    is the parser's internal shape and is still being changed underneath, so
+    publishing it here would pin it.
+    """
+
+    text: str
+    understood: bool
+
+
+class RestrictedManaView(BaseModel):
+    """How much of a pool carries one particular CR 106.6 restriction
+    (`models.mana.RestrictedMana`).
+
+    `amounts` is a **subset** of `ManaPoolView.floating`, never a replacement
+    for it: CR 106.4a has the player announce all the mana that is there, and
+    the restriction narrows only what may be done with it. Without the amount
+    two restricted `{C}` and two plain `{C}` are one `floating {"C": 2}` and
+    nothing tells them apart.
+    """
+
+    restriction: RestrictionView
+    amounts: dict[str, int]
+
+
+class SpendEffectManaView(BaseModel):
+    """`RestrictedManaView`'s twin for CR 106.6's *other* clause - "have an
+    additional effect that affects the spell or ability that mana is spent on"
+    (`models.mana.SpendEffectMana`).
+
+    Its own list rather than a permissive restriction, because it narrows
+    nothing: the mana pays for whatever it could have paid for anyway, and the
+    sentence only says what happens to the spell it is spent on. So there is no
+    `understood` half to report - an unread one costs the player nothing.
+    """
+
+    text: str
+    amounts: dict[str, int]
+
+
 class ManaPoolView(BaseModel):
     floating: dict[str, int]
     snow: dict[str, int]
+    restricted: list[RestrictedManaView]
+    """The CR 106.6-restricted part of `floating`, one entry per distinct
+    restriction. Empty for a pool with nothing tagged - always present, so a
+    client never has to tell "none" from "this build does not report it"."""
+    spend_effects: list[SpendEffectManaView]
+    """The part of `floating` carrying CR 106.6's additional-effect clause,
+    one entry per distinct effect. Same always-present shape as `restricted`."""
 
 
 class PlayerView(BaseModel):

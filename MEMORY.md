@@ -7,6 +7,221 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-10 - "any color" never includes `{C}`, so the tie this branch was
+  justified by does not exist, and a chosen colour is a choice rather than a
+  count.** Three corrections and one thing this repo cannot fix, all in the
+  restricted-mana wire.
+
+  (1) The branch was argued for with "Cavern of Souls and Delighted Halfling
+  each pair an unrestricted `{T}: Add {C}.` with a restricted 'add one mana of
+  any color' whose production set includes `{C}`, so production-matching
+  inference resolves the tie toward unrestricted and gets those two cards
+  wrong". False. CR 106.1a: there are five colors of mana, white, blue, black,
+  red and green; CR 106.1b: there are six *types*, those five and colorless -
+  both looked up in the rules text this session. Colorless is a type of mana
+  that is not a color, so "any color" cannot make `{C}`, `{C}` names the plain
+  ability unambiguously, and inference was right about both cards all along.
+  The real case is **Sunken Citadel**, whose abilities both read "the chosen
+  color": `restriction_for_production` asks `ManaAbility.effective()` with no
+  board, "the chosen color" narrows to nothing without one, neither ability
+  matches, and mana that may only be spent on abilities of land sources comes
+  back carrying no restriction at all. The wrong justification was written
+  into this file, `ManaSource`'s docstring and the test module docstring; all
+  three now name Sunken Citadel, and the test that claims the divergence takes
+  both answers off one board (named index refused, the identical unnamed tap
+  allowed) instead of comparing two named indexes, which proved nothing about
+  inference.
+
+  (2) A colour on the wire is CR 605.1a's `color` argument - a *choice* - and
+  the ability decides how much mana that choice buys. Shang-Chi's "{T}: Add
+  two mana of any one color." was untappable from every client because
+  `{card_id, colors: ["R"]}` was handed to `tap_for_mana` as a one-mana
+  production the ability cannot make. `engine_api._expanded_to_the_abilitys_
+  own_count` fills the count in server-side, from the ability itself, for the
+  no-index shape as well as the named one. Deliberately not client-side: the
+  count is nowhere on `AbilityView`, so the browser would be guessing, and the
+  MCP and CLI seats would each have to guess the same way.
+
+  (3) Two *different* colours are a mixture, and `ManaAbility.resolve` has a
+  limb for it ("add two mana in any combination of colors"). The api used to
+  collapse them to "no choice at all" and hand back "pass the colour chosen"
+  to a player who had chosen twice; the sequence goes through whole now.
+  **It still cannot be paid with**, and that half is engine-side:
+  `CostPayment.tap_for_mana` re-validates a hand-picked production against
+  `effective()`'s options, and those enumerate one colour repeated
+  `any_color_count` times per colour, never a mixture - so Interdimensional
+  Web Watch resolves to `{W}{U}` and is then refused "cannot be tapped to add
+  {W}{U}". Pinned by a `strict=True` xfail in
+  `tests/test_named_mana_ability_payment.py` so it flips the moment the engine
+  enumerates mixed combinations.
+
+  (4) The `seatkit-13` note oversold its reach. `mcp.py` and `seat_cli.py`
+  build `mana_sources` from `sources_or_all`, which returns bare card ids
+  parsed out of a comma-separated string - no seat can name an ability, which
+  is why `contract/tools.json` is byte-identical across the bump. The note
+  says so now: a response-shape change, browser-only on the request side.
+
+- **2026-09-09 - the artifacts were generated against a partial engine, and
+  "integrated" is a claim that has to be checked against the branch heads.**
+  `magic-cards-model-integration` held engine `main` plus both engine branches
+  of this wave, and that was the base every generated artifact here was dumped
+  from - but it had taken `eng1-restriction-grammar` only as far as the commit
+  that was its head when the worktree was made. eng1 put three more on top
+  afterwards (the per-mana colour count, Smokebraider as the second printing of
+  "any combination of colors", and the schema 5 -> 6 bump), so the integration
+  branch did not merge cleanly with eng1's real head and could not land -
+  which mattered here because the same wave's ledger fix, the one that stops
+  eng1 and eng2 being red when merged separately, was sitting on that partial
+  base. Merged properly, engine-side, before regenerating anything.
+
+  Three conflicts, all of them two branches adding a field beside each other:
+  `Action` takes `color_choice_count` next to `produces`/`restriction`/
+  `restriction_understood`, `_battlefield_ability_actions` fills both onto each
+  of its two construction sites, and `docs/engine-coverage.md`'s CR 106.6 row
+  keeps the "read bar one documented fail-closed row" narrowing while taking
+  eng1's addition of Smokebraider to the read list. `KNOWN_UNREAD_RESTRICTIONS`
+  still names exactly Rosheen Meanderer, because Smokebraider arrives read.
+
+  The lesson for the artifact task, which is the one that owns generated files:
+  a `path` dependency and a green `test_openapi_drift.py` prove only that the
+  dump matches the code that is *installed*, never that the installed code is
+  the whole wave. Check the integration base against `git log <branch>..HEAD`
+  and `HEAD..<branch>` for **every** branch it claims to carry, not against the
+  commit it was branched from. `tests/test_restricted_mana_contract.py` is the
+  standing version of that check and now pins `Action.color_choice_count`
+  alongside the other eight fields: a regeneration against an engine carrying
+  only part of the wave goes red on the committed bytes.
+
+  Regenerating on the real base moved `openapi.json` by exactly one property
+  (`Action.color_choice_count`, `integer`, default `0`). `mise run
+  fixtures:payloads` and `mise run tools:export` both came back byte-identical
+  - the payloads because no fixture board activates a colour-choosing mana
+  ability, and `tools.json` because decision D6 is browser-only.
+
+- **2026-09-09 - restricted mana on the wire: four decisions that are not
+  obvious from the diff.** (1) `Action.produces` is the **printed**
+  production, deliberately not board-resolved. Cavern of Souls reports "{1}"
+  plus one mana of any colour because that is what the printing says;
+  resolving "any colour" against the creature type its controller actually
+  named is the reader's job, not this wire's. Resolving it here would have
+  meant the engine answering a question about a board state the seat can
+  already see, and it would have made the same action serialise differently
+  for two viewers of the same permanent. (2) `ManaSource.ability_index` must
+  be sent with `restriction=` **explicitly**; never left to
+  `restriction_for_production` to infer from what the mana turned out to be.
+  The plan expected the Cavern of Souls / Delighted Halfling tie to be the
+  case that proves it - both said to pair an unrestricted `{T}: Add {C}.` with
+  a restricted "add one mana of any color" whose production set includes `{C}`
+  - and **that premise is simply false**: "any color" is CR 106.1a's five
+  colours, and colorless is a type of mana that is not a color at all
+  (CR 106.1b, both looked up 2026-09-10), so `{C}` can only ever have come
+  from the plain ability and there is no tie to break. A sweep of all 747
+  engine printings agrees: no card in the pool has a restricted and an
+  unrestricted `{T}` ability that can produce the same mana, so inference and
+  the named ability give the same answer on both of those cards. The real
+  divergence is board-blindness, and it is live: inference asks
+  `ManaAbility.effective()` with no board at all, so Sunken Citadel's two "the
+  chosen color" abilities match nothing and come back **unrestricted** however
+  restricted they are.
+  Passing the restriction through is what keeps the fail-closed side of that,
+  and the tie-break toward unrestricted is what makes getting it wrong quiet. (3) `serialize.snapshot`'s `pools` were
+  left alone on purpose - they stay a flat colour-to-count dict and did
+  **not** grow `restricted`/`spend_effects` the way `ManaPoolView` did. That
+  snapshot is the audit log's recorded answer about a moment already passed,
+  read back by builds other than the one that wrote it; `ManaPoolView` is a
+  live view a seat acts on now. Widening the snapshot would have changed the
+  shape of rows already on disk for no reader that needs them. (4)
+  `fixtures/payloads/*.json` is pinned **by SHA** from `magic-cards-frontend`.
+  Running `mise run fixtures:payloads` is therefore a real cross-repo
+  consequence, not a local artifact refresh: every regeneration moves the
+  hash that repo asserts against, and the frontend has to be updated in the
+  same wave or its own pin goes red. Regenerate it only when the payload
+  shape genuinely moved, and say so when you do.
+
+  Operationally, the artifact task cannot run *beside* the tasks it
+  regenerates for, and the first attempt at it proved that by committing an
+  artifact with none of the new fields in it. `openapi.json` is dumped from
+  the live app, so it can only show a field once that field's code is in the
+  tree, and the api's engine is a `path` dependency on `../magic-cards-model`
+  - which in a workbench worktree is a **symlink to the shared checkout**, not
+  to any sibling worktree, so an engine change is invisible here until it is
+  on engine `main`. Regenerating before then commits a half-finished schema
+  that `test_openapi_drift.py` holds wrong in both directions: it passes,
+  because a stale-but-self-consistent dump matches the app that produced it.
+
+  The fix is to make the base real rather than to wait for it. This branch
+  merges its three sibling api branches into itself (it lands last, so their
+  commits arrive here first either way), and the engine side is a detached
+  worktree at `magic-cards-model-integration` holding engine `main` plus both
+  engine branches, with the `magic-cards-model` symlink repointed at it and
+  `uv sync --reinstall-package magic-cards-model` run so the venv's editable
+  `.pth` follows. Repointing the venv and reverting it afterwards proves
+  nothing, because nothing committed then holds the claim; that is what
+  `tests/test_restricted_mana_contract.py` is for. It asserts the eight fields
+  against the committed bytes of `openapi.json` - the assertion
+  `test_openapi_drift.py` structurally cannot make - so an artifact
+  regenerated against a base missing the change fails loudly instead of
+  passing quietly.
+
+- **2026-09-09 - CR 106.6 reached the wire, and a payment can now name which
+  mana ability it taps.** Two halves. Read-only: `ManaPoolView` gained
+  `restricted` and `spend_effects` (`serialize._mana_pool_view`), each entry
+  carrying the sentence *and* how much of `floating` is under it - the engine
+  keeps both as **subsets** of `floating` on purpose (CR 106.4a announces all
+  the mana that is there), so without the amounts two restricted `{C}`
+  serialised as `floating {"C": 2}` and were indistinguishable from two a
+  player could spend on anything. `RestrictionView` is deliberately two
+  fields, `text` + `understood`, and no `clauses`: publishing the engine's
+  `SpendClause` tuple would pin a parser-internal shape that is still moving.
+  `understood=False` is **published, never filtered** - an unread CR 106.6
+  sentence is fail-closed in the engine, so that mana pays for nothing at all
+  and a view that hid the flag would show a player a resource they do not
+  have. `AbilityView.restriction` is the same claim one step earlier, filled
+  in all three of `engine_api.list_abilities`' branches via
+  `affordances.ability_hints(..., source)`. No `visibility.redact_view` pass
+  was needed (the same question commit 3eadbd9 asked): a pool is public
+  (CR 106.4a) and `_redact_player` already leaves the whole block alone, and a
+  hand card's entry is dropped for every other viewer card-and-all.
+  `serialize.snapshot`'s audit pools and `commands.py`'s board fingerprint
+  were left alone on purpose (approved decision D3).
+
+  Writable: `ManaSource.ability_index`, and a third branch in
+  `engine_api.pay_with` that resolves the production from the **named**
+  ability and passes `tap_for_mana(restriction=...)` explicitly. That is
+  correctness, not tidiness. Left to itself `tap_for_mana` calls
+  `restriction_for_production`, which matches on what the mana turned out to
+  be, breaks a tie toward *unrestricted* on purpose, and - the live divergence
+  pinned by `test_the_named_abilitys_restriction_beats_what_inference_would_
+  have_said` - asks `ManaAbility.effective()` with **no board**, so Sunken
+  Citadel's two "the chosen color" abilities match nothing and come back
+  unrestricted however restricted they are. Worth recording: the Cavern of
+  Souls / Delighted Halfling tie the plan described **does not exist** - "any
+  color" excludes colorless (CR 106.1a / CR 106.1b), so `{C}` names their
+  plain ability unambiguously - and a sweep of all 747 engine printings found
+  no other card whose restricted and unrestricted `{T}` mana abilities can
+  produce the same mana either. The board-blindness above is the real
+  divergence, and it is the one the mutation test pins.
+
+  Two things the api cannot ask the engine for: CR 106.7's "could produce"
+  survey and the controller's land types both live behind `Game`'s private
+  helpers, so `mana_from` leaves them unset and an ability that needs them is
+  refused with the engine's own CR 106.5 wording rather than guessed at.
+  Everything else `resolve` accepts (counters, imprint, CR 614.12a's chosen
+  colour) is plain `CardState` state and is passed. `tap_for_mana`
+  re-validates board-aware afterwards, so a disagreement is refused, never
+  quietly accepted.
+
+  Found and fixed on the way: `list_abilities`' intrinsic-mana fallback branch
+  iterated `parse_mana_abilities`, which returns bare `ManaAbility` objects,
+  and then asked each one for a `.mana` attribute it has never had - so
+  `mana_options` and `is_mana_ability` were silently empty for every ability
+  that branch has ever listed. It now iterates whole `ActivatedAbility`
+  objects (`_printed_mana_activations`), which also gives the branch the
+  `.effect` a CR 106.6 sentence is read out of and a real printed `.text`,
+  retiring `_mana_ability_text`. Nothing in the card pool reaches that branch,
+  so the test gets there by making `Game.activated_abilities` answer with
+  nothing for one permanent.
+
 - **2026-09-09 - split-card decklist matching (`Wear/Tear` etc.) was already
   general, from a prior session; the only real gap was `Fire Magic` missing
   from the pool entirely, and one bundled-deck assertion pinned the old
@@ -1476,3 +1691,22 @@ whoever works on the repo itself.
   `image`/`small_image`/`art_crop` outright before an agent ever sees them,
   and nothing in `seatkit.py`/`mcp.py` reads `symbology` at all - so this
   needed no `PROTOCOL_VERSION` bump, checked rather than assumed.
+
+- **2026-09-09 - the play UI can now say WHICH mana ability a pinned source
+  taps, and `ability_index` is sent only when the player actually chose.**
+  Mid-cast, `pinLand` used to take `findIndex(a => a.is_mana_ability)` - the
+  first mana ability and nothing else - and then throw the index away
+  anyway, so Eldrazi Temple's restricted `{C}{C}` (its index 1) was
+  unreachable from the browser. `app.js` now plans the pin in two pure,
+  exported steps (`planPin`, then `planPinnedAbility` once a menu answered),
+  and a source with more than one mana ability gets an anchored popover of
+  its abilities, each labelled with its whole printed text so the restricted
+  one is identifiable. The deliberate asymmetry: a source with exactly ONE
+  mana ability names no index at all (`abilityIndex: null`), so `mana.js`'s
+  `manaSources` keeps emitting a bare id (or `{card_id, colors}`) and the
+  engine's `auto_tap` keeps solving the common case - adding a click, or an
+  index, to every basic land would have been the regression. Also fixed
+  while in there: a menu opened from inside another menu's `onSelect` cannot
+  re-read the original click's `event.currentTarget` (that dispatch is over
+  and the browser has nulled it), so `pinLand` resolves the anchor element
+  once, up front, and hands it to both popovers.
