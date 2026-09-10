@@ -3,7 +3,9 @@
 // always returns the current object; `set(patch)` merges a partial object -
 // or the result of `(state) => partial` when the patch needs to read the
 // state it's changing - and notifies every subscriber; `subscribe(fn)`
-// returns its own unsubscribe.
+// returns its own unsubscribe. The one wrinkle is `installPressGuard` below:
+// while the player is holding a button down, `set()` still merges but holds
+// the notification back until the click has landed.
 //
 // The state shape: `{gameId, uid, aiUid, you, state, log: {entries,
 // lastSeq}, action, decisionDraft, combatDraft, run, stops, symbols,
@@ -12,16 +14,162 @@
 export function createStore(initial) {
   let state = { ...initial };
   const listeners = new Set();
+  // The press guard - see `installPressGuard` below for the whole story and
+  // the DOM wiring. `pressing` is true from the moment a pointer or key goes
+  // down until the guard flushes; `dirty` records that at least one `set()`
+  // landed in that window and still owes the listeners a fan-out.
+  let pressing = false;
+  let dirty = false;
+  const notify = () => {
+    for (const fn of listeners) fn(state);
+  };
   return {
     get: () => state,
+    /**
+     * Merge `patch` (an object, or `(state) => object`) and notify.
+     *
+     * THE MERGE IS ALWAYS SYNCHRONOUS, AND MUST STAY THAT WAY. Only the
+     * listener fan-out is ever deferred. `poll()` (`ui/app.js`) reads
+     * `store.get()` straight back after its own `set()` to decide whether
+     * the board it just read predates one of this seat's own actions, and
+     * `send()` bumps `mutations` through this same `set()`; deferring the
+     * merge would put a stale board back on screen and let `tickRun()` act
+     * twice - the exact defect `MEMORY.md`'s 2026-09-08 `pass_until` entry
+     * records, which has its own regression tests in `tests/test_ui_app.py`.
+     * Defer the notification if you must. Never the merge.
+     */
     set(patch) {
       state = { ...state, ...(typeof patch === "function" ? patch(state) : patch) };
-      for (const fn of listeners) fn(state);
+      if (pressing) {
+        dirty = true;
+        return;
+      }
+      notify();
     },
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
+    /** A press has begun: hold the fan-out. `installPressGuard`'s only way
+     * in, and idempotent, so a second pointer or a key auto-repeating inside
+     * an existing press changes nothing. */
+    pressStart() {
+      pressing = true;
+    },
+    /** The press is over: resume fan-out, and pay off whatever `set()` calls
+     * happened during it as a single notification carrying the state as it
+     * finally stands. A press nothing arrived during notifies nobody - this
+     * settles a debt, it is not a heartbeat. */
+    pressEnd() {
+      if (!pressing) return;
+      pressing = false;
+      if (!dirty) return;
+      dirty = false;
+      notify();
+    },
+  };
+}
+
+// --------------------------------------------------------- press guard ----
+//
+// Every renderer under `ui/render/` rebuilds its box from scratch on every
+// notification - `clear(el)`, then a fresh `h(...)` tree - so the button
+// under the player's finger is a *different node* after any re-render. The
+// browser dispatches `mouseup`/`click` to the node the press started on, and
+// that node is now detached: the click is silently eaten, and the player sees
+// their press do nothing. `poll()` runs every 1.2s, so an unlucky click is
+// not a rare race - it is a coin flip on a busy board.
+//
+// The fix belongs here rather than in the renderers. Making each of them
+// reconcile by key would mean getting reconciliation right in every panel,
+// forever; holding the fan-out for the ~100ms a press lasts fixes it once,
+// in the one place every render is driven from, and costs nothing else: the
+// state itself is still merged synchronously (see `set()` above), so nothing
+// that *reads* the store is delayed by a press, only what redraws from it.
+
+/** How long a press may hold the fan-out before it is flushed regardless.
+ *
+ * A hard cap, and not optional. The release events below can genuinely go
+ * missing: another capturing handler can swallow a `pointerup`
+ * (`ui/render/ribbon.js`'s popover installs one), and switching tabs or
+ * apps mid-press can leave the page with a `pointerdown` that never gets its
+ * partner. Without the cap, one lost `pointerup` freezes rendering for the
+ * rest of the game - a far worse failure than the one this guard exists to
+ * prevent. A second is an order of magnitude longer than any real click and
+ * still well inside a poll interval. */
+export const PRESS_CAP_MS = 1000;
+
+/**
+ * Wire `store` to the page's presses: while one is in flight, no re-render
+ * happens. Called once, from `main()` (`ui/app.js`) - the whole point of it
+ * being one function is that listener registration does not get scattered
+ * across the render modules. Returns its own uninstall function.
+ *
+ * `root`/`view` default to the page's `document`/`window` and exist so
+ * `tests/test_ui_store.py` can drive the real shipped function against the
+ * fake DOM the render tests already use.
+ *
+ * The listeners capture (`true`) so that a handler stopping propagation
+ * cannot hide a press from this, and the flush is a `setTimeout(_, 0)` - a
+ * new macrotask, so `pointerup`, `mouseup` and `click` have all dispatched
+ * on the original node before anything is allowed to rebuild. Note that the
+ * pressing flag is cleared by the flush itself rather than by the release
+ * handler: a `set()` made by the click handler that is about to run would
+ * otherwise fan out synchronously, mid-click, which is the very thing being
+ * prevented.
+ */
+export function installPressGuard(store, root, view) {
+  const doc = root || (typeof document === "undefined" ? null : document);
+  const win = view || (typeof window === "undefined" ? null : window);
+  if (!doc || !doc.addEventListener) return () => {};
+
+  let releaseTimer = null;
+  let capTimer = null;
+
+  const flush = () => {
+    if (releaseTimer !== null) {
+      clearTimeout(releaseTimer);
+      releaseTimer = null;
+    }
+    if (capTimer !== null) {
+      clearTimeout(capTimer);
+      capTimer = null;
+    }
+    store.pressEnd();
+  };
+
+  const down = () => {
+    // `capTimer` is the record of "a press is already in flight". Not
+    // re-arming it is what keeps a key held down (which repeats `keydown`
+    // indefinitely) or a second finger from pushing the cap out forever.
+    if (capTimer !== null) return;
+    store.pressStart();
+    capTimer = setTimeout(flush, PRESS_CAP_MS);
+  };
+
+  const up = () => {
+    if (capTimer === null || releaseTimer !== null) return;
+    releaseTimer = setTimeout(flush, 0);
+  };
+
+  doc.addEventListener("pointerdown", down, true);
+  doc.addEventListener("keydown", down, true);
+  doc.addEventListener("pointerup", up, true);
+  doc.addEventListener("pointercancel", up, true);
+  doc.addEventListener("keyup", up, true);
+  // A window that loses focus mid-press never delivers the release event at
+  // all, so this is the third way out, alongside the release events and the
+  // cap.
+  if (win && win.addEventListener) win.addEventListener("blur", up);
+
+  return () => {
+    flush();
+    doc.removeEventListener("pointerdown", down, true);
+    doc.removeEventListener("keydown", down, true);
+    doc.removeEventListener("pointerup", up, true);
+    doc.removeEventListener("pointercancel", up, true);
+    doc.removeEventListener("keyup", up, true);
+    if (win && win.removeEventListener) win.removeEventListener("blur", up);
   };
 }
 

@@ -13,7 +13,7 @@
 // living twice (once for real, once reimplemented for a test).
 
 import { api, withUid } from "./api.js";
-import { createStore } from "./store.js";
+import { createStore, installPressGuard } from "./store.js";
 import { loadSymbols } from "./symbols.js";
 import * as A from "./actions.js";
 import * as P from "./priority.js";
@@ -1174,6 +1174,9 @@ export async function seatFromServer(gameId) {
 }
 
 async function main() {
+  // Before anything mounts: no re-render may replace a button between the
+  // player's mousedown and the click it is about to become (`ui/store.js`).
+  installPressGuard(store);
   await loadConfig();
   store.set({ symbols: await loadSymbols(api, apiBase()) });
   // The post-game review, mounted before the lobby because the lobby's
