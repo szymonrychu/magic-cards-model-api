@@ -20,8 +20,6 @@ node the shipped renderer produced.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from test_ui_ribbon import FAKE_DOM
 from ui_node import UI, requires_node, run_module
 
@@ -33,18 +31,30 @@ PANELS_URL = (UI / "render" / "panels.js").as_uri()
 # What the ribbon's fake DOM does not have, because nothing in `ribbon.js`
 # needed it: `document`/`window` listeners that a test can reach. The `El`
 # class already records per-element listeners by type; `document` is an `El`,
-# so it gets the same recorder spelled out explicitly (the third `capture`
-# argument is irrelevant to a fake with no real dispatch), and `window` - a
-# plain object in that fixture - gets one of its own. Plus the boxes
-# `mountTopbar` renders into, so step 7 can read `#turn-info` off the real
-# topbar rather than a restatement of it.
+# so it gets the same recorder spelled out explicitly - including the third
+# `capture` argument, which is load-bearing here (`ui/store.js` registers
+# every one of these capturing so that a handler stopping propagation cannot
+# hide a press from the guard) and so is recorded rather than dropped.
+# `window` - a plain object in that fixture - gets a recorder of its own.
+# Plus the boxes `mountTopbar` renders into, so step 7 can read `#turn-info`
+# off the real topbar rather than a restatement of it.
 PRESS_DOM = (
     FAKE_DOM
     + """
 document.listeners = {};
-document.addEventListener = (t, fn) => (document.listeners[t] = fn);
+document.captures = {};
+document.addEventListener = (t, fn, capture) => {
+  document.listeners[t] = fn;
+  // `Boolean(...)`, so "registered without a capture argument" comes back as
+  // false rather than as an `undefined` JSON would drop on the way out.
+  document.captures[t] = Boolean(capture);
+};
 globalThis.window.listeners = {};
-globalThis.window.addEventListener = (t, fn) => (window.listeners[t] = fn);
+globalThis.window.captures = {};
+globalThis.window.addEventListener = (t, fn, capture) => {
+  window.listeners[t] = fn;
+  window.captures[t] = Boolean(capture);
+};
 
 boxed("turn-info");
 boxed("phase-track");
@@ -173,7 +183,12 @@ def test_a_press_that_never_ends_still_flushes_on_the_one_second_cap() -> None:
     """The hard cap, and the mitigation for this design's one real risk: a
     `pointerup` swallowed by another capturing handler (`ribbon.js`'s popover
     installs one), or a tab switched away mid-press, must not freeze
-    rendering for the rest of the game."""
+    rendering for the rest of the game.
+
+    Driven off the exported `PRESS_CAP_MS` rather than a hardcoded 1000, so
+    the test is about the cap the shipped module actually applies - and the
+    export has the consumer it was missing. Both sides are asserted: still
+    holding at half the cap, flushed past it."""
     result = run_module(
         "store.js",
         PRESS_DOM
@@ -187,18 +202,185 @@ def test_a_press_that_never_ends_still_flushes_on_the_one_second_cap() -> None:
           store.set(baseApp(baseState({ turn_number: 4 })));
           const during = counter.renders;
 
-          // No pointerup at all. Past the cap, the flush must have fired.
-          await sleep(1200);
+          // No pointerup at all.
+          await sleep(m.PRESS_CAP_MS / 2);
+          const halfway = counter.renders;
+          await sleep(m.PRESS_CAP_MS / 2 + 200);
           const turnInfo = document.querySelector("#turn-info").textContent;
-          return { during, after: counter.renders, turnInfo };
+          return { during, halfway, after: counter.renders, turnInfo, cap: m.PRESS_CAP_MS };
         })()
         """,
         RIBBON_URL=RIBBON_URL,
         PANELS_URL=PANELS_URL,
     )
+    assert result["cap"] == 1000, "a cap this far from a real click's length wants re-arguing"
     assert result["during"] == 1
+    assert result["halfway"] == 1, "the cap fired early - a real press would have been cut short"
     assert result["after"] == 2
     assert "turn 4" in result["turnInfo"]
+
+
+def test_every_press_listener_is_registered_capturing() -> None:
+    """Capture is load-bearing, not a default: a handler that stops
+    propagation - `ribbon.js`'s popover installs one on `document` - would
+    otherwise hide the press from the guard entirely, and the guard would
+    silently protect nothing. `window`'s `blur` is the exception, and is
+    meant to be: focus events do not bubble, so there is nothing to capture
+    ahead of."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        (async () => {
+          const { store } = await mounted();
+          return { document: document.captures, window: window.captures };
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+    )
+    for event in ("pointerdown", "keydown", "pointerup", "pointercancel", "keyup", "click"):
+        assert result["document"][event] is True, f"{event} is not registered capturing"
+    assert result["window"] == {"blur": False}
+
+
+def test_a_touch_press_holds_until_the_synthetic_click_has_been_dispatched() -> None:
+    """The input path the guard still had the bug on. A mouse dispatches
+    `pointerup`, `mouseup` and `click` in one task, so flushing on the next
+    macrotask is safely after all three. Touch and pen do not: the synthetic
+    `click` follows the `pointerup` by around 300ms, in a task of its own, so
+    a flush scheduled on the release fans out first, the renderer rebuilds
+    the button under the finger, and the click is eaten by a detached node -
+    exactly the defect this guard exists to prevent, on the one input the
+    fix had not covered.
+
+    So a touch release is not the end of the press: the click is."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        (async () => {
+          const out = {};
+          for (const pointerType of ["touch", "pen"]) {
+            const { store, counter } = await mounted();
+            store.set(baseApp(baseState({ turn_number: 3 })));
+            const pressed = passButton();
+
+            document.listeners.pointerdown({ pointerType, target: pressed });
+            store.set(baseApp(baseState({ turn_number: 4 })));
+            document.listeners.pointerup({ pointerType, target: pressed });
+            // Where a mouse's click would already have happened, and where
+            // the flush used to land.
+            await sleep(30);
+            const afterRelease = { renders: counter.renders, sameNode: passButton() === pressed };
+
+            // The synthetic click, a third of a second later - on the node
+            // the finger went down on, which must still be the one on screen.
+            document.listeners.click({ target: pressed });
+            await sleep(30);
+            out[pointerType] = {
+              afterRelease,
+              after: counter.renders,
+              turnInfo: document.querySelector("#turn-info").textContent,
+            };
+          }
+          return out;
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+    )
+    for pointerType in ("touch", "pen"):
+        got = result[pointerType]
+        assert got["afterRelease"] == {"renders": 1, "sameNode": True}, (
+            f"{pointerType}: the button was rebuilt before its click was dispatched: {got}"
+        )
+        assert got["after"] == 2, f"{pointerType}: the deferred render never landed"
+        assert "turn 4" in got["turnInfo"]
+
+
+def test_a_touch_press_whose_click_never_comes_is_still_bounded() -> None:
+    """The other side of waiting for the click: a tap that produces none at
+    all - on nothing clickable, or one the browser simply drops - must not
+    hold rendering open until the press cap. It waits `TOUCH_CLICK_MS`, which
+    is the delay it is there to cover plus headroom, and then gives up."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        (async () => {
+          const { store, counter } = await mounted();
+          store.set(baseApp(baseState({ turn_number: 3 })));
+
+          document.listeners.pointerdown({ pointerType: "touch", target: passButton() });
+          store.set(baseApp(baseState({ turn_number: 4 })));
+          document.listeners.pointerup({ pointerType: "touch" });
+          await sleep(m.TOUCH_CLICK_MS / 2);
+          const waiting = counter.renders;
+          await sleep(m.TOUCH_CLICK_MS / 2 + 100);
+          return { waiting, after: counter.renders, wait: m.TOUCH_CLICK_MS, cap: m.PRESS_CAP_MS };
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+    )
+    assert result["waiting"] == 1, "the wait for the click was not honoured"
+    assert result["after"] == 2, "a touch press with no click never flushed"
+    assert result["wait"] < result["cap"], "waiting for a click may never outlast the press cap"
+
+
+def test_a_cancelled_touch_press_does_not_wait_for_a_click_that_cannot_come() -> None:
+    """`pointercancel` is the browser taking the pointer away - a scroll or a
+    gesture claimed it - and no click follows a cancelled press. Waiting the
+    full `TOUCH_CLICK_MS` for one would stall every render behind a page
+    scroll."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        (async () => {
+          const { store, counter } = await mounted();
+          store.set(baseApp(baseState({ turn_number: 3 })));
+          document.listeners.pointerdown({ pointerType: "touch", target: passButton() });
+          store.set(baseApp(baseState({ turn_number: 4 })));
+          document.listeners.pointercancel({ pointerType: "touch" });
+          await sleep(30);
+          return counter.renders;
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+    )
+    assert result == 2, "a cancelled touch press held the fan-out anyway"
+
+
+def test_a_mouse_click_after_the_flush_never_starts_a_press_of_its_own() -> None:
+    """The click listener the touch path needs is on `document` for every
+    input, so it has to be inert outside a touch or pen release: a mouse
+    click arrives after its own press has already flushed, and must not
+    re-open a window nothing will close."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        (async () => {
+          const { store, counter } = await mounted();
+          store.set(baseApp(baseState({ turn_number: 3 })));
+          const pressed = passButton();
+          document.listeners.pointerdown({ pointerType: "mouse", target: pressed });
+          document.listeners.pointerup({ pointerType: "mouse", target: pressed });
+          await sleep(30);
+          document.listeners.click({ target: pressed });
+          const afterClick = counter.renders;
+          store.set(baseApp(baseState({ turn_number: 4 })));
+          return { afterClick, immediately: counter.renders };
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+    )
+    assert result["afterClick"] == 1
+    assert result["immediately"] == 2, "a stray click left the store's fan-out held"
 
 
 def test_pointercancel_keyup_and_window_blur_all_end_a_press() -> None:
@@ -325,9 +507,51 @@ def test_a_press_with_no_state_change_flushes_nothing() -> None:
 
 
 def test_install_press_guard_is_wired_from_app_main() -> None:
-    """The wiring is one call from `main()`, not listener registration
-    scattered across render modules."""
-    app_js = Path(UI / "app.js").read_text()
-    assert "installPressGuard" in app_js
-    main_body = app_js.split("async function main() {", 1)[1]
-    assert "installPressGuard(store)" in main_body
+    """The wiring, proved by driving it rather than by reading it: a commented
+    -out call, or one made against some other store, passes a source search
+    and ships the bug.
+
+    `app.js` runs `main()` on import when the page has a `document` and a
+    `window`, so the module is imported here with a fake DOM already in place
+    (under a cache-busting query, since the module registry is per-URL). Only
+    the first line of `main()` is being tested - it installs the guard before
+    anything mounts - so everything after it is free to fail against a DOM
+    with no board, no lobby and no server; the rejection that produces is
+    swallowed deliberately, and would not be if this test cared about it.
+
+    What is asserted is the behaviour end to end: a `pointerdown` on the real
+    `document` holds the real exported `store`'s fan-out, and the release
+    pays it off."""
+    result = run_module(
+        "store.js",
+        PRESS_DOM
+        + """
+        process.on("unhandledRejection", () => {});
+        globalThis.fetch = () => Promise.resolve({ ok: true, json: async () => ({}) });
+        globalThis.location = { pathname: "/", search: "", href: "http://t/" };
+        globalThis.history = { pushState() {}, replaceState() {} };
+        (async () => {
+          const App = await import(APP_URL + "?boot=press-guard");
+          const seen = [];
+          App.store.subscribe((s) => seen.push(s.connection));
+          if (!document.listeners.pointerdown || !document.listeners.pointerup) {
+            return { installed: false, registered: Object.keys(document.listeners) };
+          }
+          document.listeners.pointerdown({ target: document.querySelector("#priority-box") });
+          App.store.set({ connection: "held" });
+          const during = seen.length;
+          document.listeners.pointerup({});
+          await sleep(30);
+          return { during, after: seen.length, last: seen[seen.length - 1] };
+        })()
+        """,
+        RIBBON_URL=RIBBON_URL,
+        PANELS_URL=PANELS_URL,
+        APP_URL=(UI / "app.js").as_uri(),
+    )
+    assert result.get("installed") is not False, (
+        f"main() registered no press listeners on the page's document: {result}"
+    )
+    assert result["during"] == 0, "a press did not hold the app store's fan-out"
+    assert result["after"] == 1, "the press ended and the deferred fan-out never landed"
+    assert result["last"] == "held"

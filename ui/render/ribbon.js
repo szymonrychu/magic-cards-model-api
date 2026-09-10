@@ -37,7 +37,7 @@
 // (declare attackers), 509.1 (declare blockers), 118.9 (alternative costs),
 // 117.3c (holding priority), 700.2 (modal spells).
 
-import { clear, h } from "../dom.js";
+import { clear, h, setText } from "../dom.js";
 import { flatten } from "../targeting.js";
 import { colorOptions } from "../mana.js";
 import { anchoredPosition } from "../menus.js";
@@ -897,8 +897,52 @@ function removeGlobalHandlers() {
   repositionHandler = null;
 }
 
+function allOptions(el) {
+  return (el.childNodes ? [...el.childNodes] : []).filter(
+    (n) => n.classList && n.classList.contains("option")
+  );
+}
+
 function optionButtons(el) {
-  return (el.childNodes ? [...el.childNodes] : []).filter((n) => n.classList && n.classList.contains("option") && !n.disabled);
+  return allOptions(el).filter((n) => !n.disabled);
+}
+
+/** Point an option button at `item` - the one place a `{label, sublabel,
+ * disabled, title, onSelect}` descriptor becomes what is on screen, used
+ * both to build the button and to re-aim one that is already up.
+ *
+ * The descriptor is held on the node rather than captured in the click
+ * handler's closure, so re-aiming really does change what the button does:
+ * a handler that closed over the item it was born with would keep firing the
+ * stale one after an enrichment. */
+function applyItem(el, item) {
+  el.__item = item;
+  el.disabled = Boolean(item.disabled);
+  el.setAttribute("title", item.title || "");
+  const children = el.childNodes ? [...el.childNodes] : [];
+  const label = children.find((n) => n.nodeType === 3);
+  const hint = children.find((n) => n.classList && n.classList.contains("hint"));
+  if (label) setText(label, item.label);
+  else el.appendChild(document.createTextNode(item.label));
+  const sublabel = item.sublabel ? ` ${item.sublabel}` : "";
+  if (sublabel && hint) setText(hint, sublabel);
+  else if (sublabel) el.appendChild(h("span", { class: "hint" }, sublabel));
+  else if (hint) el.removeChild(hint);
+}
+
+function optionNode(item) {
+  const el = h("button", {
+    class: "option",
+    type: "button",
+    onClick: () => {
+      const current = el.__item;
+      if (current.disabled) return;
+      hidePopover();
+      current.onSelect();
+    },
+  });
+  applyItem(el, item);
+  return el;
 }
 
 /** Move focus `step` options along from whichever one has it, wrapping - so
@@ -946,26 +990,7 @@ export function showPopover(anchorEl, items, opts) {
   clear(el);
   const title = (opts && opts.title) || "";
   if (title) el.appendChild(h("div", { class: "menu-title" }, title));
-  for (const item of items) {
-    el.appendChild(
-      h(
-        "button",
-        {
-          class: "option",
-          type: "button",
-          disabled: Boolean(item.disabled),
-          title: item.title || "",
-          onClick: () => {
-            if (item.disabled) return;
-            hidePopover();
-            item.onSelect();
-          },
-        },
-        item.label,
-        item.sublabel ? h("span", { class: "hint" }, ` ${item.sublabel}`) : null
-      )
-    );
-  }
+  for (const item of items) el.appendChild(optionNode(item));
   el.hidden = false;
   popoverEl = el;
   popoverAnchor = anchorEl;
@@ -1008,6 +1033,37 @@ export function showPopover(anchorEl, items, opts) {
  * one's to redraw either. */
 export function popoverIsOpenFor(anchorEl) {
   return Boolean(popoverEl && anchorEl && popoverAnchor === anchorEl);
+}
+
+/** Re-aim the menu that is ALREADY on screen at `items`, in place - the
+ * redraw half of `showPopover`, and deliberately not `showPopover` itself.
+ *
+ * Reopening the menu would `clear(el)` it, and a browser dispatches `click`
+ * to the nearest inclusive ancestor common to the mousedown and the mouseup
+ * target: an option detached between the two never sees the press, so an
+ * enrichment landing under the player's finger silently eats their click.
+ * Rebuilding also re-runs the opening `first.focus()`, which throws a player
+ * who has arrow-keyed down the list back to the top - and Enter then
+ * activates an ability they never chose. Patching every option node instead
+ * leaves both alone, and is the same thing `dom.js`'s keyed reconciler
+ * already does for the board.
+ *
+ * Only ever a redraw of the same options in the same order (`menus.js`'s
+ * `enrichItems` maps one item to one item, and `app.js` calls this with the
+ * list it opened the menu from), so a different length is not something this
+ * can patch: it leaves the menu exactly as it opened - the same silent no-op
+ * every other enrichment failure gets - rather than tearing it down. The
+ * return value says which happened.
+ *
+ * Re-placed afterwards because a sublabel arriving can make the menu taller,
+ * and a menu that has grown must still be anchored where it belongs. */
+export function updatePopoverItems(anchorEl, items) {
+  if (!popoverIsOpenFor(anchorEl)) return false;
+  const nodes = allOptions(popoverEl);
+  if (nodes.length !== items.length) return false;
+  items.forEach((item, i) => applyItem(nodes[i], item));
+  place();
+  return true;
 }
 
 export function hidePopover() {

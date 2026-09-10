@@ -99,6 +99,21 @@ export function createStore(initial) {
  * still well inside a poll interval. */
 export const PRESS_CAP_MS = 1000;
 
+/** How long after a touch or pen release the synthetic `click` for it may
+ * still be waited for.
+ *
+ * A mouse dispatches `pointerup`, `mouseup` and `click` in one task, so the
+ * release really is the end of the press there. Touch and pen do not: the
+ * click follows by around 300ms (the legacy tap delay, still on the slow
+ * path for any page a browser has not decided is fast-tap), in a task of its
+ * own - so a flush scheduled on the release fans out first and rebuilds the
+ * button under the finger, which is the whole defect this guard exists to
+ * prevent. 500ms covers that delay with headroom, and is well under
+ * `PRESS_CAP_MS` so a tap that produces no click at all - the browser turned
+ * it into a scroll, or it landed on nothing clickable - still gives up
+ * sooner than a press with no release does. */
+export const TOUCH_CLICK_MS = 500;
+
 /**
  * Wire `store` to the page's presses: while one is in flight, no re-render
  * happens. Called once, from `main()` (`ui/app.js`) - the whole point of it
@@ -112,7 +127,11 @@ export const PRESS_CAP_MS = 1000;
  * The listeners capture (`true`) so that a handler stopping propagation
  * cannot hide a press from this, and the flush is a `setTimeout(_, 0)` - a
  * new macrotask, so `pointerup`, `mouseup` and `click` have all dispatched
- * on the original node before anything is allowed to rebuild. Note that the
+ * on the original node before anything is allowed to rebuild. That holds for
+ * a mouse, which dispatches all three in one task; touch and pen dispatch
+ * their `click` a task and ~300ms later, so a release from either waits for
+ * the click itself rather than for the next macrotask (`TOUCH_CLICK_MS`).
+ * Note that the
  * pressing flag is cleared by the flush itself rather than by the release
  * handler: a `set()` made by the click handler that is about to run would
  * otherwise fan out synchronously, mid-click, which is the very thing being
@@ -125,6 +144,10 @@ export function installPressGuard(store, root, view) {
 
   let releaseTimer = null;
   let capTimer = null;
+  // Set by a touch or pen release, and cleared by the click it is waiting
+  // for: the press is over, but the event it becomes has not been dispatched
+  // yet, and the button must survive until it has.
+  let awaitingClick = false;
 
   const flush = () => {
     if (releaseTimer !== null) {
@@ -135,6 +158,7 @@ export function installPressGuard(store, root, view) {
       clearTimeout(capTimer);
       capTimer = null;
     }
+    awaitingClick = false;
     store.pressEnd();
   };
 
@@ -147,29 +171,57 @@ export function installPressGuard(store, root, view) {
     capTimer = setTimeout(flush, PRESS_CAP_MS);
   };
 
-  const up = () => {
-    if (capTimer === null || releaseTimer !== null) return;
+  /** A release. `delayed` says the click this press becomes is dispatched in
+   * a LATER task than the release itself - true for touch and pen, false for
+   * a mouse, and false for every release that produces no click at all
+   * (`pointercancel`, a key, the window losing focus). */
+  const release = (delayed) => {
+    if (capTimer === null || releaseTimer !== null || awaitingClick) return;
+    if (!delayed) {
+      releaseTimer = setTimeout(flush, 0);
+      return;
+    }
+    // The cap is re-armed rather than left as it was, for two reasons at
+    // once: it stays non-null, so this still reads as a press in flight, and
+    // it now bounds the wait for a click that may never come - a press held
+    // most of a second before release would otherwise have its cap expire
+    // before the click it is waiting for arrived.
+    awaitingClick = true;
+    clearTimeout(capTimer);
+    capTimer = setTimeout(flush, TOUCH_CLICK_MS);
+  };
+
+  const up = (e) => release(Boolean(e) && (e.pointerType === "touch" || e.pointerType === "pen"));
+  // No click follows a cancelled press, a key, or a window that lost focus.
+  const ended = () => release(false);
+  const clicked = () => {
+    if (!awaitingClick) return;
+    awaitingClick = false;
     releaseTimer = setTimeout(flush, 0);
   };
 
   doc.addEventListener("pointerdown", down, true);
   doc.addEventListener("keydown", down, true);
   doc.addEventListener("pointerup", up, true);
-  doc.addEventListener("pointercancel", up, true);
-  doc.addEventListener("keyup", up, true);
+  doc.addEventListener("pointercancel", ended, true);
+  doc.addEventListener("keyup", ended, true);
+  // Only ever consulted while a touch or pen release is waiting for it - a
+  // mouse press has flushed long before its own click reaches here.
+  doc.addEventListener("click", clicked, true);
   // A window that loses focus mid-press never delivers the release event at
   // all, so this is the third way out, alongside the release events and the
   // cap.
-  if (win && win.addEventListener) win.addEventListener("blur", up);
+  if (win && win.addEventListener) win.addEventListener("blur", ended);
 
   return () => {
     flush();
     doc.removeEventListener("pointerdown", down, true);
     doc.removeEventListener("keydown", down, true);
     doc.removeEventListener("pointerup", up, true);
-    doc.removeEventListener("pointercancel", up, true);
-    doc.removeEventListener("keyup", up, true);
-    if (win && win.removeEventListener) win.removeEventListener("blur", up);
+    doc.removeEventListener("pointercancel", ended, true);
+    doc.removeEventListener("keyup", ended, true);
+    doc.removeEventListener("click", clicked, true);
+    if (win && win.removeEventListener) win.removeEventListener("blur", ended);
   };
 }
 

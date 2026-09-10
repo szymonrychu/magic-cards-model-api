@@ -77,12 +77,13 @@ button.big { padding: 9px 22px; font-size: 15px; }
 
 /* ------------------------------------------------- a click in flight ---- */
 /*
-   `app.js`'s `send()` puts `.busy` on <body> the instant a request goes out
-   and takes it off when the answer lands, so everything below is on the
-   screen ~0.4-2.4s before the server says anything - which is the whole
-   point. A click that registered used to look exactly like a click that was
-   lost, and the second click that follows was, until now, a real double
-   submit (`send()` guards that too).
+   `app.js`'s `send()` puts `.busy` on <body> the instant a SUBMISSION goes
+   out - never a read or a dry-run probe, which the player did not ask for
+   and is not waiting on (`isSubmission`) - and takes it off when the answer
+   lands, so everything below is on the screen ~0.4-2.4s before the server
+   says anything, which is the whole point. A click that registered used to
+   look exactly like a click that was lost, and the second click that follows
+   was, until now, a real double submit (`send()` guards that too).
 
    All of it hangs off one class on <body> rather than a spinner wired into
    each of the nine action paths, and it needs no element `index.html` does
@@ -90,15 +91,23 @@ button.big { padding: 9px 22px; font-size: 15px; }
 
 body.busy { cursor: progress; }
 
-/* The controls the player is most likely to hit twice: everything in the
-   right-hand ribbon (priority, the casting strip, stops, decisions) and the
-   card menu. Inert rather than merely dimmed, so a second click cannot even
-   reach a handler. The topbar's Zones/Report/Lobby buttons are deliberately
-   left alone - they are not the action being waited on, and a page that
-   traps the player in it while a request is out is worse than a slow one. */
-body.busy #side-panel button,
-body.busy .popover button {
-  pointer-events: none;
+/* The controls whose submission is the one being waited on: the right-hand
+   ribbon (priority, the casting strip, stops, decisions). Dimmed, and
+   deliberately NOT inert - `pointer-events: none` here was the same lost
+   click this whole section exists to remove, approached from the other
+   side. It could not tell a second press on the button already submitted
+   from a *different* control the player is entitled to reach mid-flight
+   (cancelling a cast, un-picking a mode, picking a second target), so it
+   swallowed both for the whole round trip; the first of those is already
+   guarded, exactly and only, by `send()`'s `inFlight` set, keyed on
+   method+path+body.
+
+   An anchored `.popover` is not in this rule at all: a menu the player
+   opened after the submission went out is not part of it, and had no
+   business being greyed out by it. The topbar's Zones/Report/Lobby buttons
+   are left alone for the same reason they always were - a page that traps
+   the player in it while a request is out is worse than a slow one. */
+body.busy #side-panel button {
   opacity: 0.55;
 }
 

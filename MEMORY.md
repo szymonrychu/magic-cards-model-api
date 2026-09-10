@@ -1834,3 +1834,21 @@ whoever works on the repo itself.
   `mutations` guard is untouched and still governs both, `refresh()`
   included; a `ticking` latch keeps the run's own `declareNoAttackers` from
   recursing now that it no longer bounces off the `polling` flag.
+
+- **2026-09-10 - the store's listener fan-out is deferred while a press is in
+  flight, because a re-render between mousedown and mouseup detaches the very
+  button the browser is holding the press on and the click is eaten; the hold
+  is capped at 1s (`PRESS_CAP_MS`) since a `pointerup` can genuinely go
+  missing, and a touch or pen release waits for its synthetic click
+  (`TOUCH_CLICK_MS`, ~300ms later in a task of its own) rather than for the
+  next macrotask.**
+
+- **2026-09-10 - the same eaten click, one layer up: the `legal-actions`
+  enrichment now PATCHES the open menu (`updatePopoverItems`) instead of
+  reopening it, `busy` means "a submission is outstanding" rather than "any
+  `send()` is" so reads and dry-run probes stop inerting the casting strip,
+  `body.busy` no longer sets `pointer-events: none` on anything (`send()`'s
+  `inFlight` set is the only real double-submit guard), and every board read
+  carries an issue ordinal so the older of two concurrent reads cannot land
+  on the newer - `mutations` can only order reads against this seat's own
+  requests, never two reads against each other.**
