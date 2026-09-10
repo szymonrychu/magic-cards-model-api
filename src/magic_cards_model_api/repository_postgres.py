@@ -684,6 +684,37 @@ class PostgresRepository:
             ).all()
         return [_record_row(row) for row in reversed(rows)]
 
+    def records_since(self, game_id: str, since: int) -> list[dict[str, Any]]:
+        """`WHERE seq > :since ORDER BY seq ASC`, no `LIMIT` needed.
+
+        Bounded by the predicate rather than by a row count:
+        `uq_records_game_id_seq` indexes `(game_id, seq)`, so this is a range
+        scan that starts at `since` and reads only what it returns, however
+        many turns of history sit below it. The route this serves discards
+        everything at or below `since` anyway - it just used to discard it
+        after postgres had already read and shipped every one of those rows,
+        snapshot and legal-action enumeration included.
+        """
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(records.c.seq, records.c.payload, records.c.created_at)
+                .where(records.c.game_id == game_id, records.c.seq > since)
+                .order_by(records.c.seq.asc())
+            ).all()
+        return [_record_row(row) for row in rows]
+
+    def max_record_seq(self, game_id: str) -> int:
+        """`max(seq)`, 0 for a game with no rows - the same index-served
+        lookup `_next_seq` makes, without the advisory lock, since nothing
+        here is about to write."""
+        with self._engine.connect() as conn:
+            current = conn.execute(
+                select(func.coalesce(func.max(records.c.seq), 0)).where(
+                    records.c.game_id == game_id
+                )
+            ).scalar_one()
+        return int(current)
+
     def delete(self, game_id: str) -> bool:
         """The soft delete: stamp `archived_at` rather than issue a
         `DELETE`, so the board, hands and final state survive for a

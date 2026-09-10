@@ -7,6 +7,42 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-10 - the log route reads what it returns, and a dry run
+  enumerates nothing.** Two server-side costs that both grew with the length of
+  a game.
+
+  (1) `GET /api/games/{id}/log` loaded the whole ledger (`audit.entries` ->
+  `store.records`, no predicate, no limit) and then dropped everything at or
+  below `since` in Python. Every row carries a full `snapshot(game)` plus a
+  `legal_actions_before` enumeration - 11,538 bytes on the 28-permanent board
+  `tests/test_action_answer_size.py` measures - so a poll cost the entire game's
+  history to hand back the one row that was new. It now reads
+  `records_since(game_id, since)` (postgres: a `seq > :since` range scan on the
+  existing `uq_records_game_id_seq`; in-memory: `bisect` then slice, so `mise
+  run test` exercises the bounded path rather than only `test:pg` doing so).
+  The trap worth remembering: `last_seq` must NOT be derived from the rows that
+  read returns. A caught-up poller matches none of them, and answering 0 sends
+  it back to the start of the game on its next tick while answering its own
+  `since` back freezes the watermark - neither fails loudly, `ui/app.js` just
+  quietly re-fetches or quietly stops. It comes from `max_record_seq` (index
+  only, no payloads), and is raised to the rows' own maximum when a row lands
+  between the two reads, so a client can never resume past an entry it was not
+  given. `tests/test_log_bounded_read.py`.
+
+  (2) A dry run no longer computes `legal_actions_before`. It was computed
+  inside the per-game lock for every mutating POST, dry runs included, and then
+  dropped: a dry run writes no `records` row at all (`_run_command` skips
+  `store.replace`, `audit_outcome` returns before `audit.record`), and the field
+  appears in no response body - it is hidden information only
+  `visibility.redact_log_entry` ever hands out, off a row that exists. Checked
+  before removing it, because this ledger feeds review and agent training:
+  `ui/review_model.js` reads `review.entries`' action/detail/reasoning/snapshot/
+  seq and never mentions the field or dry runs, and no dry-run row has ever
+  existed for any consumer to depend on. The UI fires one dry run per candidate
+  before every real cast, so this was the per-keystroke cost of the play
+  surface, serialised behind the lock every other seat waits on.
+  `tests/test_dry_run_cost.py`.
+
 - **2026-09-10 - "any color" never includes `{C}`, so the tie this branch was
   justified by does not exist, and a chosen colour is a choice rather than a
   count.** Three corrections and one thing this repo cannot fix, all in the
