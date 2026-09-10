@@ -261,6 +261,82 @@ ANSWER_FIELD_FOR_KIND: dict[DecisionKind, str] = {
 }
 assert set(ANSWER_FIELD_FOR_KIND) == set(DecisionKind)
 
+#: Which **tool parameter** a seat actually types to answer a `kind`, and
+#: which tool that parameter belongs to. Together these two tables are what
+#: every pending decision's `answer_with`/`answer_field` is built out of, so
+#: a seat is never left deriving "which argument answers a `scry`?" from
+#: prose.
+#:
+#: Deliberately *not* derived from `ANSWER_FIELD_FOR_KIND` above, and the two
+#: cannot be collapsed into one: that table names the engine-facing
+#: `machines.decisions.Answer` field the coerced value is handed back on,
+#: this one names the argument the caller writes, and they disagree on ten
+#: of the eighteen kinds.
+#:
+#: | kind | `ANSWER_FIELD_FOR_KIND` | `TOOL_FIELD_FOR_KIND` |
+#: |---|---|---|
+#: | `scry`/`surveil` | `split` | `moved` (plus the optional `top_order`) |
+#: | `choose_a_quality`/`choose_a_mode` | `text` | `choice` |
+#: | `pay_energy_amount`/`pay_life_amount` | `amount` | `energy_amount`/`life_amount` |
+#: | `put_on_top_or_bottom` | `accept` | `top` |
+#: | `order_triggers` | `card_ids` | `order` |
+#: | `declare_attackers`/`declare_blockers` | `pairs` | `attackers`/`blocks`, on **another tool** |
+#:
+#: The last row is the sharpest of them: the MCP `decide` tool has no `pairs`
+#: parameter at all. CR 508.1/CR 509.1's declarations pause on the same tape
+#: as every other kind and are answered through `POST .../decide` at the HTTP
+#: layer, but from the tool surface they are reached only through their own
+#: `declare_attackers`/`declare_blockers` tools - so those two rows have to
+#: name a different tool as well as a different argument, which no derivation
+#: from the engine-facing table could ever produce.
+#:
+#: That divergence is exactly why this ships as *data on the decision* rather
+#: than as prose a seat reasons over: a seat guessing the parameter from the
+#: kind gets ten of eighteen wrong, and it gets them wrong in the worst
+#: possible way - `accept` and `card_ids` are real parameters of `decide`, so
+#: the guess is accepted by the tool and refused by the route, which is the
+#: measured "this decision needs a yes/no answer ('accept')" refusal.
+TOOL_FIELD_FOR_KIND: dict[DecisionKind, str] = {
+    DecisionKind.MAY: "accept",
+    DecisionKind.PAY_LIFE: "accept",
+    DecisionKind.PAY_ENERGY: "accept",
+    DecisionKind.PAY_MANA: "accept",
+    DecisionKind.MULLIGAN: "accept",
+    DecisionKind.OPENING_HAND_ACTION: "accept",
+    DecisionKind.PUT_ON_TOP_OR_BOTTOM: "top",
+    DecisionKind.PAY_ENERGY_AMOUNT: "energy_amount",
+    DecisionKind.PAY_LIFE_AMOUNT: "life_amount",
+    DecisionKind.CHOOSE_CARDS: "card_ids",
+    DecisionKind.ORDER_TRIGGERS: "order",
+    DecisionKind.SCRY: "moved",
+    DecisionKind.SURVEIL: "moved",
+    DecisionKind.CHOOSE_TARGETS: "targets",
+    DecisionKind.CHOOSE_A_QUALITY: "choice",
+    DecisionKind.CHOOSE_A_MODE: "choice",
+    DecisionKind.DECLARE_ATTACKERS: "attackers",
+    DecisionKind.DECLARE_BLOCKERS: "blocks",
+}
+assert set(TOOL_FIELD_FOR_KIND) == set(DecisionKind), (
+    "TOOL_FIELD_FOR_KIND must cover every DecisionKind: a kind with no entry "
+    "here ships a pending decision that cannot say how to answer itself, "
+    "which puts the seat back to reading decide()'s docstring - see "
+    "test_decision_kinds.py's drift guard on this table"
+)
+
+#: Which tool `TOOL_FIELD_FOR_KIND`'s parameter belongs to. `decide` for
+#: every kind but the two combat declarations - see that table's own note.
+TOOL_FOR_KIND: dict[DecisionKind, str] = {
+    kind: (
+        "declare_attackers"
+        if kind is DecisionKind.DECLARE_ATTACKERS
+        else "declare_blockers"
+        if kind is DecisionKind.DECLARE_BLOCKERS
+        else "decide"
+    )
+    for kind in DecisionKind
+}
+assert set(TOOL_FOR_KIND) == set(DecisionKind)
+
 
 def _target_view(ref: TargetRef) -> dict[str, str]:
     """One candidate or chosen target, shaped for JSON.
@@ -443,6 +519,123 @@ class PendingDecision:
             ),
         )
 
+    def _answer_argument(self, kind: DecisionKind) -> str:
+        """The one argument that answers this question, written out - the
+        value half of `answer_with`'s `<field>=<value>`.
+
+        Concrete wherever the decision itself makes it concrete: a `may`
+        whose yes branch is illegal (`affirmative_is_legal` false) can only
+        be answered `false`, so that is what the template says. Everywhere a
+        real choice remains, the value is an angle-bracket placeholder that
+        names *where the candidates are* - `pending_decision.cards`,
+        `.targets`, `.options` - because those lists are already on this
+        same block. Quoted where the tool parameter is a string and bare
+        where it is an `int` or a `bool`, so the template is the shape the
+        call actually takes rather than something a seat must retype.
+        """
+        if kind in (
+            DecisionKind.MAY,
+            DecisionKind.PAY_LIFE,
+            DecisionKind.PAY_ENERGY,
+            DecisionKind.PAY_MANA,
+            DecisionKind.OPENING_HAND_ACTION,
+        ):
+            # CR 608.2d's "you may": yes is the answer worth spelling out,
+            # and where yes is not legal at all (too little life, energy or
+            # floating mana) no is the *only* answer, so the template says so
+            # rather than offering a choice the route would refuse.
+            return "true" if self.affirmative_is_legal else "false"
+        if kind is DecisionKind.MULLIGAN:
+            # CR 103.5. Not defaulted either way: unlike a "you may", neither
+            # branch here is the one the question is nudging towards.
+            return "<true to take a mulligan, false to keep this hand>"
+        if kind is DecisionKind.PUT_ON_TOP_OR_BOTTOM:
+            return "<true for the top of the library, false for the bottom>"
+        if kind in (DecisionKind.PAY_ENERGY_AMOUNT, DecisionKind.PAY_LIFE_AMOUNT):
+            # `amount` is the ceiling the payer actually has (CR 118.3,
+            # CR 119.4); 0 is always legal and always the decline.
+            return f"<an integer from 0 to {self.amount}>"
+        if kind is DecisionKind.CHOOSE_CARDS:
+            if self.amount == 1:
+                return '"<one of pending_decision.cards>"'
+            if self.exact:
+                return f'"<exactly {self.amount} of pending_decision.cards, comma-separated>"'
+            # CR 107.1c / CR 701.23b: any count from zero up, and the empty
+            # answer is the decline rather than a missing answer.
+            return (
+                f'"<up to {self.amount} of pending_decision.cards, comma-separated; '
+                f'empty declines>"'
+            )
+        if kind is DecisionKind.ORDER_TRIGGERS:
+            # CR 603.3b: a permutation of exactly what was offered, bottom of
+            # the stack first.
+            return (
+                '"<every id in pending_decision.cards, comma-separated, bottom of the stack first>"'
+            )
+        if kind in (DecisionKind.SCRY, DecisionKind.SURVEIL):
+            # The engine stamps where the two halves actually go, because the
+            # `SCRY` kind is reused for any look-then-split and the keyword's
+            # own pair is then wrong (see `moved_label`'s own note). Only
+            # when nothing was stamped does the keyword's rule stand in -
+            # CR 701.22a's bottom for a scry, CR 701.25a's graveyard for a
+            # surveil - which is exactly the fallback every client already
+            # makes, said out loud here rather than left to be inferred.
+            moved = self.moved_label or (
+                "the bottom of your library" if kind is DecisionKind.SCRY else "your graveyard"
+            )
+            return f'"<any of pending_decision.cards, comma-separated; these go to {moved}>"'
+        if kind is DecisionKind.CHOOSE_TARGETS:
+            floor = self.target_minimum or 0
+            ceiling = self.target_maximum
+            if ceiling is None:
+                span = "ids"
+            elif floor and floor == ceiling:
+                span = f"exactly {ceiling}"
+            elif floor:
+                span = f"{floor} to {ceiling}"
+            else:
+                span = f"up to {ceiling}"
+            return f'"<{span} of pending_decision.targets, by id or player name>"'
+        if kind in (DecisionKind.CHOOSE_A_QUALITY, DecisionKind.CHOOSE_A_MODE):
+            if self.options:
+                return '"<one of pending_decision.options>"'
+            # CR 614.12a's open universe - a card name or a creature type,
+            # which is why `options` is empty rather than enumerated.
+            return '"<a card name or a creature type>"'
+        if kind is DecisionKind.DECLARE_ATTACKERS:
+            # CR 508.1. Single-quoted so the JSON list inside stays readable.
+            return (
+                '\'[{"card": "<your creature id>", '
+                '"defender": "<a defending player or planeswalker id>"}]\''
+            )
+        # CR 509.1, the only kind left.
+        return '\'[{"blocker": "<your creature id>", "blocked": "<an attacker id>"}]\''
+
+    def answer_with(self) -> str:
+        """This decision, as the call that answers it - paste-ready, naming
+        this question's own `generation`.
+
+        The whole point of the field: `kind` -> parameter was documented only
+        in the MCP `decide` tool's own ~200-line docstring, so answering cost
+        a seat a read and a derivation before it could say anything at all,
+        and ten of the eighteen kinds do not answer on the parameter their
+        engine-side field name suggests (`TOOL_FIELD_FOR_KIND`).
+
+        `generation` rides along on every `decide` template because echoing
+        it is what turns "no pending decision for you" - the flat refusal a
+        stale read earns - into the diagnostic that names both generations
+        and says the resolution has moved on (`app.py`'s `decide`). The two
+        combat declarations get no `generation`: `declare_attackers`/
+        `declare_blockers` take no such parameter, and a template must never
+        name an argument its tool does not have.
+        """
+        kind = DecisionKind(self.kind)
+        tool = TOOL_FOR_KIND[kind]
+        call = f"{TOOL_FIELD_FOR_KIND[kind]}={self._answer_argument(kind)}"
+        if tool == "decide":
+            call = f"{call}, generation={self.generation}"
+        return f"{tool}({call})"
+
     def to_view(self) -> dict[str, Any]:
         return {
             "generation": self.generation,
@@ -462,6 +655,13 @@ class PendingDecision:
             "card_labels": list(self.card_labels),
             "exact": self.exact,
             "default_cards": None if self.default_cards is None else list(self.default_cards),
+            # The two fields that make this block answerable in one call
+            # rather than in one call plus a docstring read - see
+            # `answer_with` and `TOOL_FIELD_FOR_KIND`. Last in the dict on
+            # purpose: everything above is what the question *is*, and these
+            # two are what to do about it.
+            "answer_field": TOOL_FIELD_FOR_KIND[DecisionKind(self.kind)],
+            "answer_with": self.answer_with(),
         }
 
 

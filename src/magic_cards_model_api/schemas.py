@@ -1215,6 +1215,19 @@ class PendingDecisionView(BaseModel):
     """Only for the deciding player - the full view of exactly the ids
     `cards` names, resolved from zones `redact_view` otherwise strips
     entirely (`visibility.redact_pending_decision`)."""
+    answer_field: str | None = None
+    """Which single MCP tool parameter carries this kind's answer
+    (`decisions.TOOL_FIELD_FOR_KIND`) - `accept` for a `may`, `card_ids` for
+    a `choose_cards`, `choice` for a mode, `moved` for a scry."""
+    answer_with: str | None = None
+    """The call that answers this exact question, paste-ready, naming this
+    decision's own `generation` (`decisions.PendingDecision.answer_with`).
+
+    Emitted rather than derived because the mapping from `kind` to parameter
+    disagrees with the engine-facing field name on ten of the eighteen
+    kinds, and lived only in the MCP `decide` tool's own docstring before
+    this - see `decisions.TOOL_FIELD_FOR_KIND`'s note for the table of
+    divergences and the refusal it was costing."""
 
 
 class CombatAttackView(BaseModel):

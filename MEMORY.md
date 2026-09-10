@@ -1890,3 +1890,20 @@ whoever works on the repo itself.
   carries an issue ordinal so the older of two concurrent reads cannot land
   on the newer - `mutations` can only order reads against this seat's own
   requests, never two reads against each other.**
+
+- **2026-09-10 - a pending decision now says how to answer itself
+  (`answer_field`, `answer_with`), and the answer has to be emitted as data
+  rather than derived from `ANSWER_FIELD_FOR_KIND`: that table names the
+  engine `Answer` field and the new `TOOL_FIELD_FOR_KIND` names the MCP tool
+  parameter, and they disagree on ten of the eighteen kinds (`split` vs
+  `moved`, `text` vs `choice`, `amount` vs `energy_amount`/`life_amount`,
+  `accept` vs `top`, `card_ids` vs `order`, and `pairs` vs
+  `attackers`/`blocks` on a different tool entirely, since `decide` has no
+  `pairs` parameter). Both tables carry the same `set(...) == set(DecisionKind)`
+  guard. The MCP `decide` tool also gained `generation` - the enforcement and
+  its refusal text had existed at `app.py`'s `decide` since the field was
+  added, and `seat_cli --generation` with it, so the only thing missing was a
+  tool parameter to reach it: a stale read was earning the flat "no pending
+  decision for you" (11 measured) instead of the diagnostic naming both
+  generations. `seatkit-14` covers both halves - additive on the request,
+  additive on the response.**

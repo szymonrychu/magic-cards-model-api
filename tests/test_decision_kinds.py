@@ -65,6 +65,8 @@ marked `# pragma: no cover - unreachable`, for the same reason
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 
 from conftest import add_card, find, life_of, state
@@ -1763,3 +1765,387 @@ def test_the_mcp_tool_answers_pay_life(monkeypatch) -> None:
             http.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
     finally:
         http.close()
+
+
+# -- M2: every pending decision says how to answer it, in one call ----------
+#
+# The two gaps this section pins were both measured in the live cluster's
+# `records` table, as refusals a seat hit while holding a perfectly readable
+# `pending_decision`:
+#
+#   - "this decision needs a yes/no answer ('accept')" (`decisions.bool_answer`,
+#     2 occurrences) - the seat had the question but not the mapping from its
+#     `kind` to the parameter that answers it, which lived only in `decide`'s
+#     ~200-line docstring;
+#   - "no pending decision for you" (`app.py`'s `decide`, 11 occurrences) - a
+#     stale read answered against a question that had already been replaced.
+#     `DecideRequest.generation` has always had the far better diagnostic for
+#     that, and the MCP tool simply had no parameter to send it with.
+#
+# `answer_with`/`answer_field` close the first and `decide(generation=...)`
+# closes the second. Both are drift-guarded here, off the same exhaustiveness
+# tables `decisions.py` asserts at import time.
+
+
+def _tool_contract() -> dict[str, set[str]]:
+    """Every MCP tool in `contract/tools.json`, by name, with its real
+    parameter names - the artifact `mise run tools:export` writes from
+    `mcp.py`'s own `@server.tool()` registrations.
+
+    Checking `answer_with` against this rather than against a list retyped
+    here is the point: a template that names a parameter the tool does not
+    take is exactly the "how" thinking this feature exists to remove, and it
+    would be worse than no template at all.
+    """
+    contract = Path(__file__).resolve().parent.parent / "contract" / "tools.json"
+    data = json.loads(contract.read_text())
+    return {tool["name"]: {param["name"] for param in tool["parameters"]} for tool in data["tools"]}
+
+
+_KWARG = re.compile(r"(\w+)=(true|false|-?\d+|\"[^\"]*\"|'[^']*'|<[^>]*>)")
+
+
+def parse_answer_with(answer_with: str) -> tuple[str, dict[str, Any]]:
+    """One `answer_with` template, split into the tool name and the keyword
+    arguments it names - as a seat pasting it would send them.
+
+    Values are decoded the way the tool's own signature would take them:
+    `true`/`false` to `bool`, a bare integer to `int`, a quoted span to the
+    string inside the quotes (placeholder text included - a template for a
+    kind whose answer is a choice cannot be concrete, and that is fine; what
+    must be concrete is the *parameter name* and the generation)."""
+    tool, _, rest = answer_with.partition("(")
+    assert rest.endswith(")"), f"not a call template: {answer_with!r}"
+    kwargs: dict[str, Any] = {}
+    for name, raw in _KWARG.findall(rest[:-1]):
+        if raw == "true":
+            kwargs[name] = True
+        elif raw == "false":
+            kwargs[name] = False
+        elif raw[0] in "\"'":
+            kwargs[name] = raw[1:-1]
+        elif raw[0] == "<":
+            # An angle-bracket placeholder for a choice the decision cannot
+            # make for the seat - a bare one where the parameter is an `int`
+            # or a `bool`, so the template is the shape of the real call.
+            kwargs[name] = raw
+        else:
+            kwargs[name] = int(raw)
+    return tool, kwargs
+
+
+def a_pending_decision(kind: Any, **overrides: Any) -> decisions.PendingDecision:
+    """A `PendingDecision` of `kind`, filled in enough to be viewable.
+
+    Built directly rather than played out of a real board on purpose: this is
+    the *template* surface, which is a pure function of the decision's own
+    fields, and there is no board state that could make a `kind` map to a
+    different parameter. The behaviour that does need a real board - a `may`
+    answered by pasting its own template, a stale generation refused by the
+    route - is driven end to end below, through the live API.
+    """
+    fields: dict[str, Any] = {
+        "player": "alice",
+        "kind": kind.value,
+        "prompt": "a question",
+        "source": "Some Card",
+        "amount": 1,
+        "cards": ("11111111-1111-1111-1111-111111111111",),
+        "generation": 7,
+    }
+    fields.update(overrides)
+    return decisions.PendingDecision(**fields)
+
+
+def test_the_tool_field_table_covers_every_decision_kind():
+    """`decisions.TOOL_FIELD_FOR_KIND` is the second exhaustiveness guard on
+    this surface, beside `ANSWER_FIELD_FOR_KIND`: a `DecisionKind` added to
+    the engine with no entry here would ship a pending decision that cannot
+    say how to answer itself, which is the whole gap this table closes.
+
+    `decisions.py` asserts the same equality at import time; this test is
+    what names the missing kind out loud when it fails."""
+    from magic_cards_model.machines.decisions import DecisionKind
+
+    missing = set(DecisionKind) - set(decisions.TOOL_FIELD_FOR_KIND)
+    assert not missing, (
+        f"DecisionKind(s) {sorted(k.value for k in missing)} have no entry in "
+        f"decisions.TOOL_FIELD_FOR_KIND, so a seat asked one of them gets a "
+        f"pending_decision with no answer_with template and is back to reading "
+        f"decide()'s docstring to work out which parameter answers it."
+    )
+    assert set(decisions.TOOL_FOR_KIND) == set(DecisionKind)
+
+
+def test_the_two_field_tables_genuinely_differ():
+    """The reason this is emitted as data rather than derived from
+    `ANSWER_FIELD_FOR_KIND`: the two tables disagree on real kinds.
+
+    `ANSWER_FIELD_FOR_KIND` names the engine `Answer` field (`split`, `text`,
+    `pairs`, `amount`, and `accept` even for a top/bottom choice); the MCP
+    tool takes `moved`/`top_order`, `choice`, `energy_amount`/`life_amount`,
+    `top`, and does not take `pairs` at all - it routes the two combat
+    declarations to their own tools. Deriving one from the other would send
+    a seat to a parameter that does not exist."""
+    differing = {
+        kind.value
+        for kind in decisions.TOOL_FIELD_FOR_KIND
+        if decisions.TOOL_FIELD_FOR_KIND[kind] != decisions.ANSWER_FIELD_FOR_KIND[kind]
+    }
+    # Pinned by name, not just counted: `decisions.py`'s own table of
+    # divergences is prose next to the data, and prose drifts. If a kind
+    # joins or leaves this set, that comment needs the same edit.
+    assert differing == {
+        "scry",
+        "surveil",
+        "choose_a_quality",
+        "choose_a_mode",
+        "pay_energy_amount",
+        "pay_life_amount",
+        "put_on_top_or_bottom",
+        "order_triggers",
+        "declare_attackers",
+        "declare_blockers",
+    }
+    assert {kind: "decide" for kind in decisions.TOOL_FOR_KIND} != decisions.TOOL_FOR_KIND
+
+
+def test_answer_with_names_this_kinds_real_tool_parameter():
+    """A test per `DecisionKind`, driven off the exhaustiveness table so a
+    new kind fails loudly rather than quietly shipping a template-less
+    decision.
+
+    For each kind: the view carries `answer_field` and `answer_with`, the
+    field is the one `TOOL_FIELD_FOR_KIND` names, the template calls the tool
+    `TOOL_FOR_KIND` names, that tool really exists in `contract/tools.json`,
+    and *every* keyword the template names is a real parameter of it."""
+    from magic_cards_model.machines.decisions import DecisionKind
+
+    tools = _tool_contract()
+    for kind in DecisionKind:
+        view = a_pending_decision(kind).to_view()
+        field = decisions.TOOL_FIELD_FOR_KIND[kind]
+        expected_tool = decisions.TOOL_FOR_KIND[kind]
+        assert view["answer_field"] == field, kind
+        tool, kwargs = parse_answer_with(view["answer_with"])
+        assert tool == expected_tool, (kind, view["answer_with"])
+        assert tool in tools, (kind, tool)
+        assert field in kwargs, (kind, view["answer_with"])
+        unknown = set(kwargs) - tools[tool]
+        assert not unknown, (
+            f"{kind.value}'s answer_with names {sorted(unknown)}, which "
+            f"{tool}() does not take (contract/tools.json)"
+        )
+
+
+def test_answer_with_names_this_decisions_own_generation():
+    """The template is paste-ready for *this* question, not a generic one:
+    it carries the generation the seat just read, so pasting it is also
+    opting into the stale-answer check."""
+    from magic_cards_model.machines.decisions import DecisionKind
+
+    for kind in DecisionKind:
+        view = a_pending_decision(kind, generation=41).to_view()
+        _, kwargs = parse_answer_with(view["answer_with"])
+        if decisions.TOOL_FOR_KIND[kind] == "decide":
+            assert kwargs.get("generation") == 41, (kind, view["answer_with"])
+        else:
+            # `declare_attackers`/`declare_blockers` take no `generation` -
+            # they are the two kinds `decide` cannot answer from the tool
+            # surface at all, so the template must not invent a parameter.
+            assert "generation" not in kwargs, (kind, view["answer_with"])
+
+
+def test_a_may_decisions_template_names_accept_so_the_measured_refusal_is_unreachable(client, game):
+    """The specific measured failure, prevented.
+
+    `decisions.bool_answer` refuses a `may` answered without `accept` with
+    "this decision needs a yes/no answer ('accept')" - 2 live occurrences in
+    the cluster's records table, a seat holding the question and guessing at
+    the parameter. A seat that pastes `answer_with` sends `accept`, so it
+    cannot reach that branch: this drives the real Malevolent Rumble `may`
+    through the live API, answering it with nothing but the template's own
+    keywords."""
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+
+    resolved = cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+    assert resolved["paused"] is True
+    pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert pending["kind"] == "may"
+    assert pending["answer_field"] == "accept"
+
+    tool, kwargs = parse_answer_with(pending["answer_with"])
+    assert tool == "decide"
+    assert isinstance(kwargs["accept"], bool)
+    assert kwargs["generation"] == pending["generation"]
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", **kwargs},
+    )
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["accepted"] is True, body
+    assert "needs a yes/no answer" not in json.dumps(body)
+
+
+def test_the_next_questions_template_carries_the_new_generation(client, game):
+    """Answering one question hands the seat the next one, and the next one's
+    template names the *new* generation - which is what makes pasting it
+    safe. This is the two-decision chain (`may`, then `choose_cards`) the
+    generation counter exists for."""
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+
+    cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+    first = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    _, kwargs = parse_answer_with(first["answer_with"])
+
+    body = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", **kwargs},
+    ).json()
+    following = body["pending_decision"]
+    assert following["kind"] == "choose_cards"
+    assert following["answer_field"] == "card_ids"
+    assert following["generation"] > first["generation"]
+    _, next_kwargs = parse_answer_with(following["answer_with"])
+    assert next_kwargs["generation"] == following["generation"]
+
+
+def test_an_action_answers_lifted_pending_decision_carries_the_template(client, game):
+    """The lifted, top-level `pending_decision` an action's own answer
+    carries (`mcp._action_answer`, and the `input_required` result built off
+    it) is the copy an agent actually reads - so it must carry the template
+    too, not only the state view."""
+    from magic_cards_model_api import mcp
+
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+    cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+    view = wait_for_pending(client, game, uids["alice"])
+
+    answer = mcp._action_answer({"outcome": {"accepted": True}, "state": view})
+    lifted = answer["pending_decision"]
+    assert lifted["answer_field"] == "accept"
+    assert lifted["answer_with"].startswith("decide(")
+
+
+def test_the_opponents_redacted_view_carries_no_template(client, game):
+    """CR 101.4a's shrink is unchanged: a seat that is not the deciding one
+    still sees `{player, kind, prompt}` and nothing else - the template is a
+    tool for the seat being asked, not a wider payload for everyone."""
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+    cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+
+    seen = state(client, game, uid=uids["bob"])["pending_decision"]
+    assert set(seen) == {"player", "kind", "prompt"}
+
+
+# -- generation, on the MCP decide tool -------------------------------------
+
+
+def _mcp_decide(seats: Any, **kwargs: Any) -> str:
+    import asyncio
+
+    from magic_cards_model_api import mcp
+
+    server = mcp.build_server(seats)
+    result = asyncio.run(server.call_tool("decide", kwargs))
+    # A call that leaves a decision still standing for this seat comes back
+    # as MCP 2026-07-28's `input_required` shape, which carries its JSON in
+    # `request_state` rather than in `content` (`mcp._tool_result`). Both are
+    # the same text; this helper is about the tool's answer, not its wire
+    # shape, so it reads whichever one is there.
+    if hasattr(result, "request_state"):
+        return str(result.request_state)
+    return str(result.content[0].text)
+
+
+def test_generation_reaches_the_route_from_the_mcp_tool(client, game, monkeypatch):
+    """`DecideRequest.generation` has been enforced server-side since it was
+    added, and `seat_cli` has exposed `--generation` for as long - the MCP
+    tool simply had no such parameter, so the diagnostic was unreachable from
+    the one surface agents actually call. Sending the *right* generation is
+    accepted."""
+    import httpx
+
+    from magic_cards_model_api.seatkit import Seats
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+    cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+    pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+
+    seats = Seats(api="http://testserver", game_id=game)
+
+    # A generation that has never existed, so the only way the route can
+    # name it back is if the tool's own parameter carried it there.
+    impossible = pending["generation"] + 99
+    refused = _mcp_decide(
+        seats,
+        player_uid=uids["alice"],
+        accept=True,
+        generation=impossible,
+        hold_priority=True,
+    )
+    assert f"that answer names generation {impossible}" in refused, refused
+
+    # And the real one goes through: the `may` is accepted and the
+    # `choose_cards` that follows it becomes the standing question.
+    text = _mcp_decide(
+        seats,
+        player_uid=uids["alice"],
+        accept=True,
+        generation=pending["generation"],
+        hold_priority=True,
+    )
+    payload = json.loads(text)
+    # `outcome` is `None` here on purpose - `seatkit.run_action` reports that
+    # when the action paused again on a decision it could not see through,
+    # which is exactly what accepting this `may` does (the follow-up
+    # `choose_cards`). The proof the answer landed is that follow-up.
+    assert payload["pending_decision"]["kind"] == "choose_cards", text
+    assert payload["pending_decision"]["generation"] > pending["generation"]
+
+
+def test_a_stale_generation_from_the_mcp_tool_is_refused_by_generation(client, game, monkeypatch):
+    """The 11 measured "no pending decision for you" refusals, converted into
+    the diagnostic one.
+
+    The `may` is answered first, which replaces the standing question with
+    the `choose_cards` that follows it and bumps the generation. Answering
+    against the generation the seat first read is now refused *by name* -
+    "that answer names generation N, but this game's standing question is
+    generation M" - instead of a refusal that says nothing about why."""
+    import httpx
+
+    from magic_cards_model_api.seatkit import Seats
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    staged = stage_malevolent_rumble(client, game)
+    uids = seats_for(client, game)
+    cast_and_resolve(game, "alice", staged["rumble"], staged["forests"])
+    stale = wait_for_pending(client, game, uids["alice"])["pending_decision"]["generation"]
+
+    client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True, "generation": stale},
+    )
+
+    seats = Seats(api="http://testserver", game_id=game)
+    text = _mcp_decide(
+        seats,
+        player_uid=uids["alice"],
+        card_ids=staged["wall"],
+        generation=stale,
+        hold_priority=True,
+    )
+    assert f"that answer names generation {stale}" in text, text
+    assert "no pending decision for you" not in text

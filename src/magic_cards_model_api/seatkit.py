@@ -161,10 +161,10 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #:
 #: Bump this alongside any change to a tool's request/response shape.
 PROTOCOL_VERSION = "seatkit-14"
-#: `seatkit-14` is a **RESPONSE-ONLY** shape change: every answer that already
-#: carried `state` - `pass`, `pass_until` and every committing tool, through
-#: `mcp._tool_result` -> `mcp._action_answer` - now carries what a seat needs
-#: to *issue* its next action, not merely to choose one.
+#: `seatkit-14` is an **additive request** change and a **response** shape
+#: change, and every half of it is one thing: handing a seat everything it
+#: needs to *issue* its next action, not merely to choose one, in the answer
+#: it has already been given.
 #:
 #: (1) **`available_actions.actions[].targets`.** Every entry that targets and
 #: is not flatly unaffordable gains the legal candidates for each of its
@@ -192,17 +192,44 @@ PROTOCOL_VERSION = "seatkit-14"
 #: section - and a digest that will not fit its cap is replaced whole by a
 #: pointer at `battlefield_state`, never emitted partially.
 #:
-#: An MCP process built before this bump reads an answer whose action entries
-#: and `board` carry keys it does not know, and goes on making the extra round
-#: trip it was written to make - which is the silent, slower-than-necessary
-#: behaviour this check exists to turn loud instead.
+#: (3) **Request, additive: `decide` gained `generation`.** Nothing else about
+#: the call moved, and omitting it behaves exactly as before -
+#: `DecideRequest.generation` has been `None`-means-skip since it was added,
+#: `app.py`'s `decide` has enforced it with the right refusal text for as
+#: long, and `seat_cli.py` has exposed `--generation` for as long. Only the
+#: MCP tool had no parameter to send it with, so a diagnostic that already
+#: existed server-side was unreachable from the one surface agents actually
+#: call: a stale read earned the flat "no pending decision for you" (11
+#: measured occurrences in the cluster's records table) instead of the
+#: refusal that names both generations and says the resolution moved on.
 #:
-#: What did NOT change, said plainly: no tool gained, lost or renamed a
-#: parameter, so `contract/tools.json` is byte-identical across this bump.
-#: Deliberately not folded in either: a `focus`/`for_action` parameter to
-#: narrow which action's candidates come back. That shape was considered and
-#: rejected - a seat must already know what it is about to do in order to ask,
-#: which is exactly the question it was trying to answer.
+#: (4) **`pending_decision.answer_field` / `.answer_with`.** Every
+#: `pending_decision` block - the state view's, the one an action's own answer
+#: lifts to the top level, and the one an `input_required` result carries -
+#: gained both keys. `answer_field` names the single tool parameter that
+#: carries this kind's answer; `answer_with` is the whole call, paste-ready,
+#: already carrying this question's own generation. The mapping they encode
+#: (`decisions.TOOL_FIELD_FOR_KIND`/`TOOL_FOR_KIND`) disagrees with the
+#: engine-facing field name on ten of the eighteen kinds and lived only in
+#: `decide`'s own ~200-line docstring before this, which is exactly the
+#: "how" thinking a seat had to do before it could answer at all - and where
+#: it guessed wrong, the guess was a real parameter of `decide` accepted by
+#: the tool and refused by the route ("this decision needs a yes/no answer
+#: ('accept')", 2 measured occurrences).
+#:
+#: An MCP process built before this bump neither sends `generation` nor knows
+#: the new keys: it reads an answer whose action entries, `board` and
+#: `pending_decision` carry keys it does not know, and goes on making the
+#: extra round trip it was written to make - which is the silent,
+#: slower-than-necessary behaviour this check exists to turn loud instead.
+#:
+#: What did NOT change, said plainly: `generation` on `decide` is the only
+#: parameter this bump touches anywhere - additive, optional, and the sole
+#: reason `contract/tools.json` moves at all. No tool lost or renamed a
+#: parameter. Deliberately not folded in either: a `focus`/`for_action`
+#: parameter to narrow which action's candidates come back. That shape was
+#: considered and rejected - a seat must already know what it is about to do
+#: in order to ask, which is exactly the question it was trying to answer.
 #:
 #: The api's own `GET .../legal-actions` grew `candidates=true` for this, and
 #: that half is opt-in on purpose: the walk costs ~106 ms on a 28-permanent

@@ -6240,6 +6240,28 @@
             ],
             "title": "Amount"
           },
+          "answer_field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Field"
+          },
+          "answer_with": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer With"
+          },
           "card_details": {
             "anyOf": [
               {

@@ -1505,12 +1505,24 @@ def build_server(seats: Seats) -> MCPServer:
         choice: str = "",
         top: bool | None = None,
         order: str = "",
+        generation: int | None = None,
         hold_priority: bool = False,
         reasoning: str = "",
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `battlefield_state`'s
         `pending_decision` field says what is being asked, by `kind`.
+
+        **Read `pending_decision.answer_with` and paste it.** Every pending
+        decision carries the call that answers it, already filled in with
+        this question's own `generation` and naming the one parameter that
+        carries the answer (`pending_decision.answer_field`) - so the mapping
+        below is a reference for *what to choose*, never a lookup you have to
+        run before you can answer at all. A `may` arrives with
+        `answer_with: "decide(accept=true, generation=7)"`; a `choose_cards`
+        with `answer_with: "decide(card_ids=\"<one of pending_decision.cards>\",
+        generation=12)"`. Fill in the angle-bracket placeholder, keep the
+        parameter name and the generation, send it.
 
         - `choose_cards` (the cleanup discard, a "discard N" effect, a
           "reveal the top N, choose among them" effect - and **every
@@ -1702,6 +1714,17 @@ def build_server(seats: Seats) -> MCPServer:
           `pending_decision.prompt`, which numbers each source positionally
           against `cards`: entry N of the prompt is entry N of `cards`.
 
+        `generation` is `pending_decision.generation`, echoed back to say
+        WHICH question this answer is for - `answer_with` already carries it,
+        so pasting the template opts you in. One resolution can ask two
+        decisions in a row (a fetchland's search, then the shockland's "pay 2
+        life"), and accepting the first replaces the standing question with
+        the second immediately. Without the generation, an answer assembled
+        from the earlier read is either applied to the wrong question or
+        refused with a flat "no pending decision for you" that says nothing
+        about why; with it, the refusal names both generations and tells you
+        to re-read. Omit it only if you have no read to name.
+
         `may`, `pay_life`, `scry`, and `surveil` were not answerable through
         this tool before this wave: the request simply parked until its
         timeout and the engine's documented default was taken instead,
@@ -1758,6 +1781,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["top"] = top
         if order:
             body["order"] = _parse_ids(order)
+        if generation is not None:
+            body["generation"] = generation
         if reasoning:
             body["reasoning"] = reasoning
 
