@@ -37,7 +37,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-import pytest
 from conftest import add_card, find, state
 from magic_cards_model.models.card_state import Choice, ChoiceKind
 
@@ -47,10 +46,22 @@ HALFLING_RESTRICTION = (
     "Spend this mana only to cast a legendary spell, and that spell can't be countered."
 )
 CITADEL_RESTRICTION = "Spend this mana only to activate abilities of land sources."
+WEB_WATCH_RESTRICTION = "Spend this mana only to cast spells from exile."
 
 
 def battlefield_id(client, game, name):
     return find(state(client, game)["battlefield"], name)["id"]
+
+
+def _bump_turn(game_id):
+    """Move the turn counter forward, directly on the engine's own `Turn`
+    object - the same "reach past the API, straight into the live engine
+    object" idiom `test_special_actions.py`'s `_bump_turn` already uses, so
+    foretell's "a later turn" (CR 702.170d's own equivalent) is legitimate
+    setup rather than re-driving a whole turn through pass-priority."""
+    game = store.get(game_id)
+    assert game is not None and game.turn is not None
+    game.turn.turn_number += 1
 
 
 def cast(client, game, card, sources, **extra):
@@ -410,9 +421,12 @@ def test_naming_sunken_citadels_restricted_ability_yields_restricted_mana(client
         dry_run=True,
     )
     assert restricted["allowed"] is False, restricted
-    assert CITADEL_RESTRICTION in find(
-        state(client, game)["battlefield"], "Sunken Citadel"
-    )["abilities"][1]["restriction"]["text"]
+    assert (
+        CITADEL_RESTRICTION
+        in find(state(client, game)["battlefield"], "Sunken Citadel")["abilities"][1][
+            "restriction"
+        ]["text"]
+    )
 
     plain = cast(client, game, "Sol Ring", [{"card_id": citadel, "ability_index": 0}])
     assert plain["allowed"] is True, plain
@@ -508,9 +522,72 @@ def test_two_distinct_colours_reach_an_any_combination_ability(client, game):
     this repo - two distinct colours are not one choice, so the api handed
     `resolve` a `None` and got back "this ability adds any colour; pass the
     colour chosen" for a player who had chosen twice. It is handed over whole
-    now, and comes back as the `{W}{U}` the ability really makes, which is what
-    the refusal names. Where the payment stops from here is engine-side and is
-    pinned by the xfail below.
+    now, and comes back as the `{W}{U}` the ability really makes.
+
+    `ManaAbility.offers` (engine-side) then has to let a hand-picked `{W}{U}`
+    production actually be tapped for, not just resolved - so the dry-run
+    check that used to stop at "pass the colour chosen" now drives a real
+    cast: Ornithopter costs `{0}`, so nothing is spent and the whole mixture
+    survives, untouched, into the pool the state view reports. That is the
+    genuine two-colour mixture this test exists to prove, not two mana of one
+    colour standing in for it.
+
+    Sol Ring, cast right after from the same hand with no further mana
+    named, then reuses that already-floating pool and is refused - not
+    because the tap failed (it did not; the mixture is sitting right there),
+    but because CR 106.6's own tag on it says "spend this mana only to cast
+    spells from exile", and Sol Ring is being cast from hand. The refusal
+    text is the engine's own restriction sentence, not a tap-stage message.
+    """
+    add_card(client, game, "Interdimensional Web Watch", "alice", "battlefield")
+    add_card(client, game, "Ornithopter", "alice", "hand")
+    watch = battlefield_id(client, game, "Interdimensional Web Watch")
+    index = mana_ability_index(client, game, "Interdimensional Web Watch", restricted=True)
+
+    tapped = cast(
+        client,
+        game,
+        "Ornithopter",
+        [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}],
+    )
+    assert tapped["allowed"] is True, tapped
+    while state(client, game)["stack"]:
+        client.post(f"/api/games/{game}/resolve-top")
+
+    pool = next(p for p in state(client, game)["players"] if p["username"] == "alice")["mana_pool"]
+    assert pool["floating"] == {"W": 1, "U": 1}, pool
+    assert pool["restricted"] == [
+        {
+            "restriction": {"text": WEB_WATCH_RESTRICTION, "understood": True},
+            "amounts": {"W": 1, "U": 1},
+        }
+    ], pool
+
+    add_card(client, game, "Sol Ring", "alice", "hand")
+    refused = cast(client, game, "Sol Ring", [])
+    assert refused["allowed"] is False, refused
+    assert WEB_WATCH_RESTRICTION in refused["reason"], refused
+    assert "Sol Ring" in refused["reason"], refused
+
+    unspent = next(p for p in state(client, game)["players"] if p["username"] == "alice")[
+        "mana_pool"
+    ]
+    assert unspent["floating"] == {"W": 1, "U": 1}, unspent
+
+
+def test_a_mixture_can_actually_be_tapped_for(client, game):
+    """The end-to-end half of the mixture: two different colours actually
+    land in the pool, refused only by the CR 106.6 restriction they carry
+    (Web Watch's mana pays only for spells cast from exile, and Sol Ring is
+    cast from hand).
+
+    `CostPayment.tap_for_mana` used to re-validate a hand-picked production
+    against `ManaAbility.effective()`'s options, and those enumerated one
+    colour repeated `any_color_count` times per colour - never a mixture - so
+    an `any_color_mixed` ability could be resolved to `{W}{U}` but never
+    tapped for it. `ManaAbility.offers` closed that: the tap this test drives
+    now actually happens, and the refusal below is the mana's own spend
+    restriction, not a rejection of the tap itself.
     """
     add_card(client, game, "Interdimensional Web Watch", "alice", "battlefield")
     add_card(client, game, "Sol Ring", "alice", "hand")
@@ -524,40 +601,56 @@ def test_two_distinct_colours_reach_an_any_combination_ability(client, game):
         [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}],
         dry_run=True,
     )
-    assert body["allowed"] is False, body
-    assert "pass the colour chosen" not in body["reason"], body
-    assert "{W}{U}" in body["reason"], body
+    assert "'W': 1" in body["reason"] and "'U': 1" in body["reason"], body
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "engine-side: `CostPayment.tap_for_mana` re-validates a hand-picked "
-        "production against `ManaAbility.effective()`'s options, and those "
-        "enumerate one colour repeated `any_color_count` times per colour - "
-        "never a mixture. So an `any_color_mixed` ability ('add two mana in "
-        "any combination of colors') can be resolved to {W}{U} but never "
-        "tapped for it. Nothing in this repo can close that; the api's own "
-        "half is the test above."
-    ),
-)
-def test_a_mixture_can_actually_be_tapped_for(client, game):
-    """The end-to-end half of the mixture: two different colours in the pool,
-    refused only by the CR 106.6 restriction they carry (Web Watch's mana pays
-    only for spells cast from exile, and Sol Ring is cast from hand)."""
+def test_a_mixture_from_an_any_combination_ability_pays_for_a_spell_cast_from_exile(client, game):
+    """The whole point of Interdimensional Web Watch's card: mana restricted
+    to "spells from exile" actually paying for one, generic mana included -
+    the restriction names a zone, not a colour, so a `{W}{U}` mixture pays a
+    `{4}{G}{G}` cost's generic portion exactly as any other mana would.
+
+    Lupine Harbingers is foretold (its own `{2}` cost, from Forest), the turn
+    is bumped past "the turn it was foretold" (CR 702.143's own equivalent of
+    plot's CR 702.170d), and it is cast from exile with `keyword: "Foretell"`
+    for its real `{4}{G}{G}` cost - two of that cost's four generic mana come
+    from Web Watch's `{W}{U}`, the rest from Forest. Cast from exile, that
+    mixture is allowed to pay for it; `test_two_distinct_colours_reach_an_
+    any_combination_ability` above already pins the refusal when the same
+    mana is asked to pay for a spell cast from hand instead.
+    """
     add_card(client, game, "Interdimensional Web Watch", "alice", "battlefield")
-    add_card(client, game, "Sol Ring", "alice", "hand")
+    add_card(client, game, "Lupine Harbingers", "alice", "hand")
+    for _ in range(6):
+        add_card(client, game, "Forest", "alice", "battlefield")
     watch = battlefield_id(client, game, "Interdimensional Web Watch")
     index = mana_ability_index(client, game, "Interdimensional Web Watch", restricted=True)
+    forests = [c["id"] for c in state(client, game)["battlefield"] if c["name"] == "Forest"]
 
-    body = cast(
-        client,
-        game,
-        "Sol Ring",
-        [{"card_id": watch, "colors": ["W", "U"], "ability_index": index}],
-        dry_run=True,
-    )
-    assert "'W': 1" in body["reason"] and "'U': 1" in body["reason"], body
+    foretold = client.post(
+        f"/api/games/{game}/actions/foretell",
+        json={"player": "alice", "card": "Lupine Harbingers", "mana_sources": forests[:2]},
+    ).json()
+    assert foretold["allowed"] is True, foretold
+
+    _bump_turn(game)
+    exiled = find(state(client, game)["exile"], "Lupine Harbingers")
+
+    cast_from_exile = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": exiled["id"],
+            "from_zone": "exile",
+            "keyword": "Foretell",
+            "mana_sources": [
+                {"card_id": watch, "colors": ["W", "U"], "ability_index": index},
+                *forests[2:],
+            ],
+        },
+    ).json()
+    assert cast_from_exile["allowed"] is True, cast_from_exile
+    assert cast_from_exile["cost"] == "{4}{G}{G}", cast_from_exile
 
 
 def test_a_mixture_is_refused_by_an_any_one_color_ability_in_the_engines_words(client, game):
