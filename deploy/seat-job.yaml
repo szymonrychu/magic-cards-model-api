@@ -1,6 +1,6 @@
 # One AI seat's Kubernetes Job, as a complete manifest with a closed set of
-# nine placeholders. `k8s_seats.build_job` reads this file (path from
-# `SEAT_JOB_TEMPLATE_PATH`, default this path), substitutes the nine
+# placeholders. `k8s_seats.build_job` reads this file (path from
+# `SEAT_JOB_TEMPLATE_PATH`, default this path), substitutes the
 # `__X__` tokens below with this seat's per-render values, then sets
 # `metadata.name`, `metadata.namespace`, the three labels
 # (`app.kubernetes.io/name`, `mtg/game-id`, `mtg/seat-uid`) and the
@@ -8,7 +8,10 @@
 # mapping entry (never embedded inside a larger string), so substitution is
 # a plain per-node dict/list walk with no YAML-escaping to get wrong.
 #
-# The nine placeholders (M10 of docs/2b-plan.md's phase-2b plan):
+# The placeholders (`SEAT_JOB_PLACEHOLDERS`, the closed set both directions
+# of `tests/test_k8s_seats.py` pin this file against - M10 of
+# docs/2b-plan.md's phase-2b plan, plus the two images and the guides ref
+# added since):
 #   __GAME_ID__              - the game this seat belongs to
 #   __SEAT_UID__              - this seat's uid
 #   __PLAYER__                - which player in the game this seat plays
@@ -16,10 +19,12 @@
 #   __MCP_URL__                - the mcp service's URL (M2: stateless HTTP)
 #   __ASSIGNMENT_JSON__        - the driver's self-dispatch payload
 #   __MODEL__ / __EFFORT__ / __MAX_THINKING_TOKENS__ - this seat's AgentSettings
+#   __AGENT_IMAGE__ / __API_IMAGE__ - the pushed images this deploy pinned
+#   __GUIDES_REF__             - which deck-guides revision to check out
 #
 # Everything else in this file is deliberately NOT a placeholder - it is
-# deploy-time configuration (images, secrets, the memory PVC name, the
-# guides repo, the job deadline/ttl, the spellslinger URL) that used to be
+# deploy-time configuration (secrets, the memory PVC name, the guides repo
+# URL, the job deadline/ttl, the spellslinger URL) that used to be
 # read from `K8sSettings`/env and is now baked into this committed file, the
 # same way `deploy/k8s/*.yaml` already bakes its own. One known gap this
 # leaves, accepted for this task (see T9's report):
@@ -114,15 +119,31 @@ spec:
         - -euc
         - 'test -n "${GH_PAT}" || { echo "GH_PAT is empty" >&2; exit 1; }
 
-          git config --global --add safe.directory /guides
+          dir="${GUIDES_DIR:-/guides}"
 
-          find /guides -mindepth 1 -delete
+          ref="${GUIDES_REF:-main}"
 
-          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git" /guides
+          git config --global --add safe.directory "$dir"
 
-          git -C /guides remote set-url origin https://github.com/szymonrychu/mtg-decks.git
+          find "$dir" -mindepth 1 -delete
 
-          ! grep -rq "x-access-token" /guides/.git/config
+          git -c init.defaultBranch=main init -q "$dir"
+
+          git -C "$dir" remote add origin "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git"
+
+          git -C "$dir" fetch --depth 1 origin "$ref"
+
+          git -C "$dir" checkout -q --detach FETCH_HEAD
+
+          git -C "$dir" remote set-url origin https://github.com/szymonrychu/mtg-decks.git
+
+          rm -f "$dir/.git/FETCH_HEAD"
+
+          ! grep -rq "x-access-token" "$dir/.git/config"
+
+          git -C "$dir" rev-parse HEAD > "$dir/.guides-revision"
+
+          echo "guides $ref at $(cat "$dir/.guides-revision")"
 
           '
         env:
@@ -131,6 +152,16 @@ spec:
             secretKeyRef:
               name: mtg-decks-git
               key: GH_PAT
+        # Which revision of the corpus this seat plays against. `main` - the
+        # latest guides - is the default and stays the default: play wants
+        # current guides, and only an evaluation harness, which needs two
+        # runs to have read the same corpus, sets this to a fixed branch,
+        # tag or commit sha. Whatever it resolves to is written to
+        # `/guides/.guides-revision` above, where the driver reads it back
+        # (`mtg_agent/driver/revision.py`) and stamps it into the briefing
+        # and the game's plan file.
+        - name: GUIDES_REF
+          value: __GUIDES_REF__
         - name: GIT_TERMINAL_PROMPT
           value: '0'
         - name: HOME

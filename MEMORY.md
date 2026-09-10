@@ -45,6 +45,29 @@ whoever works on the repo itself.
   a blocker because the digest ran out of room is the failure this exists to
   avoid.
 
+- **2026-09-10 - the guides corpus revision is stamped into every game, and
+  `GUIDES_REF` is a knob, not a pin.** The deck guides live in a third repo
+  (`github.com/szymonrychu/mtg-decks`) and used to reach a seat Job through a
+  bare `git clone --depth 1` of `main` with no record of what it got, so two
+  seats scheduled minutes apart could read different guides and no artifact
+  said so. The `guides` initContainer now fetches `GUIDES_REF` (default
+  `main`) and writes `git rev-parse HEAD` to `/guides/.guides-revision`; the
+  driver reads that back and puts the revision in the agent's briefing and in
+  the header of the per-game plan file.
+
+  Three things worth remembering. (1) The default stays `main` on purpose -
+  play wants current guides; only an evaluation harness pins a ref. (2)
+  Compose has no stamp file (the guides are a bind mount, not a clone), so
+  `mtg_agent/driver/revision.py` falls back to reading the checkout's own
+  `.git` - by hand, not by shelling out, because the driver image has no git
+  binary and the bind-mounted checkout belongs to another uid, where `git
+  rev-parse` refuses on `safe.directory` before printing anything. (3) The
+  driver seeds the plan file with its header rather than asking the agent to
+  write the revision, because a fact the agent is merely told to copy is one
+  it can get wrong - and a game that ends before the agent writes a plan still
+  leaves an artifact naming the corpus. `tests/driver/test_guides_revision.py`,
+  `tests/driver/test_revision_stamping.py`.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.

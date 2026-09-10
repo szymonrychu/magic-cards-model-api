@@ -23,6 +23,7 @@ from magic_cards_model_api.k8s_seats import (
     job_name,
     render_seat_job_template,
 )
+from mtg_agent.driver.revision import GUIDES_REVISION_FILE
 
 ENV = {
     "AGENT_NAMESPACE": "mtg-engine",
@@ -34,10 +35,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 TEMPLATE_PATH = REPO_ROOT / "deploy" / "seat-job.yaml"
 
-#: A leftover placeholder can survive even if it isn't one of the nine
-#: (a typo, a stray token) - this pattern is deliberately broader than
+#: A leftover placeholder can survive even if it isn't one of the closed
+#: set (a typo, a stray token) - this pattern is deliberately broader than
 #: `SEAT_JOB_PLACEHOLDERS` so a test asserting "nothing survives" actually
-#: catches that case instead of only checking the nine it already expects
+#: catches that case instead of only checking the ones it already expects
 #: to be gone.
 _PLACEHOLDER_PATTERN = re.compile(r"__[A-Z_]+__")
 
@@ -62,7 +63,7 @@ def test_job_name_is_short_and_stable() -> None:
 # ---- render_seat_job_template: pure substitution over parsed YAML ---------
 
 
-def test_render_substitutes_only_the_nine_placeholders() -> None:
+def test_render_substitutes_only_the_closed_placeholder_set() -> None:
     template = {
         "a": "__GAME_ID__",
         "b": ["__SEAT_UID__", "unchanged", 3],
@@ -121,7 +122,7 @@ def test_rendered_job_validates_as_a_batch_v1_job() -> None:
     assert container_names == ["agent", "driver"]
 
 
-def test_the_nine_substituted_values_appear_where_expected() -> None:
+def test_the_substituted_values_appear_where_expected() -> None:
     job = _build(model="opus", effort="max", max_thinking_tokens=4096)
     meta = job["metadata"]
     assert meta["name"] == job_name("g1", "u1")
@@ -918,3 +919,160 @@ def test_the_seat_job_images_come_from_settings_not_the_template() -> None:
     pod = job["spec"]["template"]["spec"]
     images = [c["image"] for c in pod["initContainers"]] + [c["image"] for c in pod["containers"]]
     assert set(images) == {"reg.example/agent:v9", "reg.example/api:v9"}, images
+
+
+# ---- the guides corpus revision (P3) ---------------------------------------
+#
+# The k8s guides initContainer used to `git clone --depth 1` whatever `main`
+# happened to be, with no pin and no record of what it got - two seats
+# scheduled minutes apart could read different guides and nothing said so.
+# It now takes an optional `GUIDES_REF` (default `main`) and stamps the
+# revision it checked out into the guides volume, where the driver reads it.
+# The default stays `main` on purpose: play wants current guides, only an
+# evaluation harness wants a fixed ref.
+
+
+def _guides_init_container(job: dict) -> dict:
+    return next(
+        c for c in job["spec"]["template"]["spec"]["initContainers"] if c["name"] == "guides"
+    )
+
+
+def test_every_placeholder_in_the_committed_template_is_in_the_closed_set() -> None:
+    """`SEAT_JOB_PLACEHOLDERS` completeness, both directions: a token in the
+    template that nobody substitutes reaches the cluster verbatim, and a
+    name in the set that no longer appears in the template is a stale entry
+    that stops meaning anything."""
+    template = yaml.safe_load(TEMPLATE_PATH.read_text())
+    in_template = set(_leftover_placeholders(template))
+    assert in_template == set(SEAT_JOB_PLACEHOLDERS)
+
+
+def test_guides_ref_is_a_placeholder_and_defaults_to_main() -> None:
+    assert "__GUIDES_REF__" in SEAT_JOB_PLACEHOLDERS
+    assert K8sSettings.from_env({}).guides_ref == "main"
+    assert K8sSettings.from_env({**ENV, "GUIDES_REF": "  "}).guides_ref == "main"
+    assert K8sSettings.from_env({**ENV, "GUIDES_REF": "v2"}).guides_ref == "v2"
+
+
+def test_the_guides_init_container_carries_the_ref_it_was_configured_with() -> None:
+    default_env = {e["name"]: e.get("value") for e in _guides_init_container(_build())["env"]}
+    assert default_env["GUIDES_REF"] == "main"
+
+    pinned = _build({**ENV, "GUIDES_REF": "0f0f0f0f"})
+    pinned_env = {e["name"]: e.get("value") for e in _guides_init_container(pinned)["env"]}
+    assert pinned_env["GUIDES_REF"] == "0f0f0f0f"
+
+
+def _origin_repo(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """A real two-commit git repo standing in for github.com/szymonrychu/
+    mtg-decks, reachable at the production clone URL.
+
+    The initContainer's script is run verbatim - token URL, `remote set-url`
+    scrub and all - and the only thing bent to fit a test is where that URL
+    points: a `url.<local>.insteadOf` in a throwaway `$HOME/.gitconfig`
+    rewrites the real https URL to this local repo. Overriding the URL with
+    an env var of its own would have left the token handling, which is the
+    part with a security consequence, untested.
+    """
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    run = lambda *args: subprocess.run(  # noqa: E731
+        ["git", "-C", str(origin), *args], check=True, capture_output=True
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    run("config", "user.email", "t@example.invalid")
+    run("config", "user.name", "test")
+    (origin / "README.md").write_text("first\n")
+    run("add", "-A")
+    run("commit", "-qm", "first")
+    (origin / "README.md").write_text("second\n")
+    run("add", "-A")
+    run("commit", "-qm", "second")
+    run("branch", "pinned", "HEAD~1")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text(
+        '[url "file://'
+        + str(origin)
+        + '"]\n\tinsteadOf = https://x-access-token:test-token@github.com/szymonrychu/mtg-decks.git\n'
+    )
+    env = {
+        "HOME": str(home),
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "GH_PAT": "test-token",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    return origin, env
+
+
+def _rev(repo: Path, ref: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _run_guides_script(job: dict, tmp_path: Path, origin_env: dict[str, str]) -> Path:
+    container = _guides_init_container(job)
+    command = container["command"]
+    assert command[:2] == ["/bin/sh", "-euc"]
+    env = {e["name"]: e.get("value") or "" for e in container["env"]}
+    env.update(origin_env)
+    guides = tmp_path / "guides"
+    guides.mkdir(exist_ok=True)
+    env["GUIDES_DIR"] = str(guides)
+    subprocess.run(["/bin/sh", "-euc", command[2]], env=env, check=True, capture_output=True)
+    return guides
+
+
+def test_the_guides_script_checks_out_main_by_default_and_stamps_its_revision(
+    tmp_path: Path,
+) -> None:
+    origin, env = _origin_repo(tmp_path)
+    guides = _run_guides_script(_build(), tmp_path, env)
+    assert (guides / "README.md").read_text() == "second\n"
+    assert (guides / ".guides-revision").read_text().strip() == _rev(origin, "main")
+
+
+def test_the_guides_script_honours_an_explicit_guides_ref(tmp_path: Path) -> None:
+    origin, env = _origin_repo(tmp_path)
+    guides = _run_guides_script(_build({**ENV, "GUIDES_REF": "pinned"}), tmp_path, env)
+    assert (guides / "README.md").read_text() == "first\n"
+    assert (guides / ".guides-revision").read_text().strip() == _rev(origin, "pinned")
+
+
+def test_the_guides_script_honours_a_bare_commit_sha_as_the_ref(tmp_path: Path) -> None:
+    """A harness pins a sha, not only a branch or a tag - `fetch <ref>` takes
+    all three, which `clone --branch` (what this replaced) did not."""
+    origin, env = _origin_repo(tmp_path)
+    sha = _rev(origin, "main~1")
+    guides = _run_guides_script(_build({**ENV, "GUIDES_REF": sha}), tmp_path, env)
+    assert (guides / ".guides-revision").read_text().strip() == sha
+
+
+def test_the_guides_script_leaves_no_token_behind_in_the_checkout(tmp_path: Path) -> None:
+    _, env = _origin_repo(tmp_path)
+    guides = _run_guides_script(_build(), tmp_path, env)
+    leaked = [
+        path
+        for path in guides.rglob("*")
+        if path.is_file() and "x-access-token" in path.read_bytes().decode("utf-8", "replace")
+    ]
+    assert leaked == []
+
+
+def test_the_driver_reads_the_revision_stamp_from_the_guides_volume() -> None:
+    """The stamp is only useful if the driver container can open it: same
+    volume, mounted at the same path the driver's `GUIDES_ROOT` names."""
+    job = _build()
+    pod = job["spec"]["template"]["spec"]
+    driver = next(c for c in pod["containers"] if c["name"] == "driver")
+    driver_env = {e["name"]: e.get("value") for e in driver["env"]}
+    mounts = {m["name"]: m for m in driver["volumeMounts"]}
+    assert driver_env["GUIDES_ROOT"] == mounts["guides"]["mountPath"] == "/guides"
+    assert GUIDES_REVISION_FILE in _guides_init_container(job)["command"][2]

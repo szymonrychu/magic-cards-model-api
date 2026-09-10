@@ -30,7 +30,15 @@ from pydantic import BaseModel
 
 from .config import DriverSettings
 from .guides import GuideLibrary, parse_decklist
-from .prompt import Assignment, reflection_turn, render_current_game, turn_zero
+from .prompt import (
+    Assignment,
+    plan_header,
+    plan_path,
+    reflection_turn,
+    render_current_game,
+    turn_zero,
+)
+from .revision import guides_revision
 
 log = logging.getLogger("driver")
 
@@ -162,6 +170,18 @@ def build_app(
             pending=False,
             turnActive=False,
         )
+
+    def seed_plan_file(assignment: Assignment) -> None:
+        """Write the plan file's header, so the game's own artifact names the
+        guides revision it was played against whatever the agent does next.
+
+        Never overwrites: a redispatch of the same seat (an agent container
+        that restarted mid-match) must not throw away the plan the agent has
+        already written."""
+        path = plan_path(settings.memory_root, assignment)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(plan_header(assignment))
 
     def game_state(game_id: str, uid: str) -> dict:
         with make_client(settings.game_api) as client:
@@ -471,6 +491,11 @@ def build_app(
 
         decklist = parse_decklist(seat_decklist(body.game_id, body.uid, body.player))
         guide, score = library.identify(decklist)
+        # Read per dispatch, not once at startup: a compose driver is a
+        # long-lived container over a bind-mounted checkout the operator can
+        # pull under it between two games, and the revision that matters is
+        # the one this game was played against.
+        revision = guides_revision(settings.guides_root)
         assignment = Assignment(
             game_id=body.game_id,
             uid=body.uid,
@@ -480,6 +505,7 @@ def build_app(
             decklist=decklist,
             guide=guide,
             match_score=score,
+            guides_revision=revision,
             agent=body.agent,
         )
 
@@ -491,6 +517,10 @@ def build_app(
         # operators to read.
         briefing = render_current_game(assignment, settings.memory_root)
         current_game_path.write_text(briefing)
+        # After the briefing, never before: `memory_index` lists every `*.md`
+        # under the deck's memory directory as "what you have already
+        # learned", and this game's own plan file is not a past game's note.
+        seed_plan_file(assignment)
 
         text = turn_zero(assignment, current_game_path, briefing)
         with lock:

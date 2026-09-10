@@ -15,9 +15,9 @@ are the whole backstop now, not a second line behind an owner-Pod GC.
 
 `build_job` is a **renderer**, not a constructor: the Job body it returns is
 read from a complete manifest at `settings.job_template_path` (env
-`SEAT_JOB_TEMPLATE_PATH`, default `deploy/seat-job.yaml`) with nine
-placeholders substituted (`render_seat_job_template`, and see that file's own
-header comment for the full list and rationale) - `metadata.name`,
+`SEAT_JOB_TEMPLATE_PATH`, default `deploy/seat-job.yaml`) with the
+`SEAT_JOB_PLACEHOLDERS` substituted (`render_seat_job_template`, and see that
+file's own header comment for the full list and rationale) - `metadata.name`,
 `metadata.namespace`, the three labels and the annotations are set in code
 afterward. This api no longer hardcodes the wrapper's 14 env names, the
 driver's 10, or either one's console-script/module path: the template is the
@@ -88,6 +88,16 @@ class K8sSettings:
     #: has something syntactically valid; a real cluster always sets both.
     agent_image: str = "harbor.szymonrichert.pl/containers/magic-cards-model-agent:latest"
     api_image: str = "harbor.szymonrichert.pl/containers/magic-cards-model-api:latest"
+    #: Which revision of the deck-guides corpus
+    #: (`github.com/szymonrychu/mtg-decks`) every seat Job checks out - any
+    #: branch, tag or commit sha its `guides` initContainer can fetch. A
+    #: stamp and a knob, deliberately not a pin: `main` (the latest guides)
+    #: stays the default because play wants current guides, and only an
+    #: evaluation harness - which needs two runs to have read the same
+    #: corpus - sets it to something fixed. Whatever it resolves to is
+    #: recorded in the guides volume and ends up in the agent's briefing and
+    #: in the game's plan file (`mtg_agent/driver/revision.py`).
+    guides_ref: str = "main"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> K8sSettings:
@@ -106,6 +116,7 @@ class K8sSettings:
             api_image=value(
                 "API_IMAGE", "harbor.szymonrichert.pl/containers/magic-cards-model-api:latest"
             ),
+            guides_ref=value("GUIDES_REF", "main"),
         )
 
 
@@ -135,6 +146,9 @@ SEAT_JOB_PLACEHOLDERS = (
     #: cluster ended up asking for a tag that never existed.
     "__AGENT_IMAGE__",
     "__API_IMAGE__",
+    #: Which deck-guides revision the `guides` initContainer checks out
+    #: (`K8sSettings.guides_ref`, default `main`).
+    "__GUIDES_REF__",
 )
 
 
@@ -148,6 +162,7 @@ def _seat_job_values(
     agent: AgentSettings,
     agent_image: str,
     api_image: str,
+    guides_ref: str,
 ) -> dict[str, str]:
     assignment = {
         "uid": uid,
@@ -170,6 +185,7 @@ def _seat_job_values(
         ),
         "__AGENT_IMAGE__": agent_image,
         "__API_IMAGE__": api_image,
+        "__GUIDES_REF__": guides_ref,
     }
 
 
@@ -204,7 +220,7 @@ def build_job(
     A renderer, not a constructor (phase 2b T9): the shape of the Job -
     every env name, the wrapper's console-script path, the driver's module
     path, the mcp-config initContainer - lives in the template file, not
-    here. This function only supplies the nine per-seat values
+    here. This function only supplies the per-seat values
     (`SEAT_JOB_PLACEHOLDERS`) the template can't know in advance, then sets
     the identity fields that are this api's own to set: `metadata.name`,
     `metadata.namespace` (kept in code, not baked into the template, so it
@@ -223,6 +239,7 @@ def build_job(
         agent=agent,
         agent_image=settings.agent_image,
         api_image=settings.api_image,
+        guides_ref=settings.guides_ref,
     )
     template = _load_seat_job_template(settings.job_template_path)
     job = render_seat_job_template(template, values)

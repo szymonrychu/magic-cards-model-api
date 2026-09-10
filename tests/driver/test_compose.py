@@ -222,3 +222,14 @@ def test_no_committed_file_carries_a_credentialed_uri() -> None:
         if uri.search(line)
     ]
     assert offenders == [], f"a credentialed URI is committed: {offenders}"
+
+
+def test_the_driver_reads_the_guides_revision_from_the_checkout_it_mounts(compose):
+    """Compose has no `.guides-revision` stamp - the kubernetes initContainer
+    writes that one - so the driver derives the revision from the bind-
+    mounted checkout's own `.git`. That only works while the path it reads
+    (`GUIDES_ROOT`) is the path the checkout is mounted at."""
+    driver = compose["services"]["driver"]
+    env = {e.split("=", 1)[0]: e.split("=", 1)[1] for e in driver["environment"]}
+    guides = [str(v) for v in driver["volumes"] if "/guides" in str(v)]
+    assert guides == [f"${{MTG_DECKS:?set MTG_DECKS in .env}}:{env['GUIDES_ROOT']}:ro"]

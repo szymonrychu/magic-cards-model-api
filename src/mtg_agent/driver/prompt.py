@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .guides import DeckGuide
+from .revision import UNKNOWN_REVISION
 
 UNKNOWN_DECK = "unknown-deck"
 
@@ -31,6 +32,12 @@ class Assignment:
     decklist: dict[str, int]
     guide: DeckGuide | None
     match_score: float
+    guides_revision: str = UNKNOWN_REVISION
+    """Which revision of the deck-guides corpus this seat was handed
+    (`revision.guides_revision` over the driver's `GUIDES_ROOT`). The corpus
+    moves under a running lobby, so a game whose artifacts do not name it
+    cannot be reproduced or compared against another game."""
+
     agent: dict | None = None
     """The chosen model/effort/thinking budget (`AgentSettings.to_wire()`,
     camelCase - see `contract/agent-settings.schema.json`), carried through
@@ -60,6 +67,28 @@ def plan_path(memory_root: Path, assignment: Assignment) -> Path:
     return Path(memory_root) / assignment.deck_slug / "games" / f"{assignment.game_id}.md"
 
 
+def plan_header(assignment: Assignment) -> str:
+    """The header the driver seeds the plan file with, before the agent has
+    written a word of it.
+
+    Written by the driver rather than asked of the agent on purpose: the
+    guides revision is the driver's own knowledge, and a fact the agent is
+    merely told to copy is one it can get wrong or forget. Seeding the file
+    means every game leaves behind an artifact naming the corpus it was
+    played against, even if the agent never gets as far as writing a plan.
+    """
+    return "\n".join(
+        [
+            f"# {assignment.deck_slug} - game {assignment.game_id}",
+            "",
+            f"- seat: {assignment.player} vs {assignment.opponent}",
+            f"- deck guides revision: `{assignment.guides_revision}`",
+            "",
+            "",
+        ]
+    )
+
+
 def _decklist_block(decklist: dict[str, int]) -> str:
     return "\n".join(f"{count} {name}" for name, count in sorted(decklist.items()))
 
@@ -74,6 +103,8 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         f"- you are: **{assignment.player}**",
         f"- your opponent's seat: **{assignment.opponent}**",
         f"- game server: {assignment.api_base}",
+        f"- deck guides revision: `{assignment.guides_revision}` "
+        "(which revision of the guides corpus you are being handed)",
         "",
         "## Your deck",
         "",
@@ -121,7 +152,9 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         "## Your plan file for this game",
         "",
         f"`{plan_path(memory_root, assignment)}` - yours to write once, near the start "
-        "of the game. Keep it short; you will finish it after the game.",
+        "of the game. It already exists, with a header naming this game and the guides "
+        "revision above: keep that header and write under it. Keep it short; you will "
+        "finish it after the game.",
         "",
     ]
     return "\n".join(lines)

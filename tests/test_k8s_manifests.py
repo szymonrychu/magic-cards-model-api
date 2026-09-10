@@ -371,3 +371,14 @@ def test_no_oidc_secret_is_committed_as_a_literal() -> None:
         if "SECRET" in name or "PASSWORD" in name:
             assert "value" not in entry, name
     assert "OIDC_CLIENT_SECRET" not in _api_env()
+
+
+def test_the_api_publishes_a_guides_ref_defaulting_to_main() -> None:
+    """The knob an evaluation harness turns, and the reason it is a knob and
+    not a pin: every seat Job's `guides` initContainer checks out this ref,
+    and `main` (latest guides) is what play wants. Only a harness that needs
+    two runs to read the same corpus sets it to a fixed revision."""
+    docs = rendered()
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["GUIDES_REF"]["value"] == "main"
