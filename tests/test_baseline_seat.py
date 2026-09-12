@@ -776,17 +776,48 @@ class CountingSeam:
         self.calls.append("state")
         return self.inner.game_state(game_id, uid)
 
-    def legal_actions(self, game_id, player, uid):
+    def legal_actions(self, game_id, player, uid, *, candidates=False):
         self.calls.append("legal_actions")
-        return self.inner.legal_actions(game_id, player, uid)
+        return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
 
     def affordances(self, game_id, card_id, player, uid):
+        # Not on `SeatApiClient` any more (see `api_client.py`): a seat reads
+        # its candidates off the enumeration. Kept here, and kept counting,
+        # so the test that pins "no second round trip per cast" would still
+        # SEE the call if the policy ever reached for one again - a fake that
+        # dropped the method would fail with an AttributeError somewhere else
+        # instead of with the round-trip count that is the actual claim.
         self.calls.append("affordances")
-        return self.inner.affordances(game_id, card_id, player, uid)
+        response = self.inner.http.get(
+            f"/api/games/{game_id}/affordances/{card_id}",
+            params={"player": player, "uid": uid},
+        )
+        return dict(response.json())
 
     def act(self, game_id, path, body, uid):
         self.calls.append(f"act:{path}")
         return self.inner.act(game_id, path, body, uid)
+
+
+def test_a_cast_names_its_targets_out_of_the_enumeration_it_already_read(client, game):
+    """No second round trip per cast. `GET .../legal-actions?candidates=true`
+    carries each targeting action's legal candidates (`app.
+    _attach_target_candidates`), which is the whole reason that parameter
+    exists - a seat chooses AND issues its next action out of one answer. A
+    baseline that went back for `GET .../affordances/{card_id}` paid an extra
+    round trip, and so an extra inference cycle's worth of latency in a
+    gauntlet, for a list it was already holding."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    seam = CountingSeam(api(client))
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+
+    move = seat.step()
+
+    assert move.label == "cast_spell", move
+    assert move.body["targets"] == ["bob"], move
+    assert seam.calls == ["state", "legal_actions", "act:actions/cast"], seam.calls
+    assert not [call for call in seam.calls if call.startswith("affordances")], seam.calls
 
 
 def test_it_asks_for_nothing_it_cannot_act_on(client, game):

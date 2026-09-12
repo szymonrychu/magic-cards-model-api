@@ -370,7 +370,9 @@ attack when the attacker survives the profitable block or when the race is
 lethal; block only to prevent lethal; answer every other question with the
 engine's own `machines/decisions.default_answer`. No randomness and no memory,
 so two runs of one seed produce the same games and any difference between arms
-belongs to the arm.
+belongs to the arm. It asks that endpoint with `candidates=true` and names a
+spell's targets out of the row it is about to act on, so a targeted cast is
+one round trip rather than two.
 
 It lives here and not in the engine on purpose. CR 118.6 makes an unpayable
 action a *legal* one, so the enumeration deliberately offers moves nobody

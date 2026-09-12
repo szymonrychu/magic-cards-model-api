@@ -63,16 +63,29 @@ through is survivable - and stop there, because a chump block that changes
 no outcome is a creature spent for nothing.
 
 **Both declarations read their candidate pairs off the board, not off the
-enumeration, and this is a gap rather than a preference.**
-`machines.legal_actions._attacker_actions`/`_blocker_actions` gate on
-`game.turn.step`, but while the matching decision *stands* the committed board
-is still a step behind - the `advance` that asked the question paused before
-committing it - so `GET .../legal-actions` offers nothing but "declare
-nobody" at the one moment the api will accept a declaration. Candidates are
-therefore built here the way `ui/combat.js` already builds them ("nothing here
-enforces a rule"), and the engine's own refusal is what actually decides:
-`BaselineSeat` drops one pair at a time from a refused declaration until it is
-accepted, which bottoms out at the always-legal empty answer.
+enumeration. That is an engine gap, named precisely here because "out of
+scope" is not a description of one.**
+`machines.legal_actions.decision_answers` does special-case
+`DECLARE_ATTACKERS`/`DECLARE_BLOCKERS` and calls `_attacker_actions`/
+`_blocker_actions` for the pairs, so the wiring exists - but both of those
+return `[]` unless `game.turn.step` is already `Step.DECLARE_ATTACKERS`/
+`DECLARE_BLOCKERS`, and while the matching decision stands it is not:
+`advance` pauses to *ask* before it commits the step transition, so a standing
+`declare_attackers` question is asked on a board still in
+`beginning_of_combat`, and a standing `declare_blockers` one on a board still
+in `declare_attackers`. Re-measured against engine `4ad120c`: at the one
+moment the api will accept a declaration, `GET .../legal-actions` answers
+exactly `[answer_decision: declare_nobody]` and no pairs. **What would close
+it**, either half being enough: the step predicate in those two functions
+accepts the pending decision's own kind as an alternative to the committed
+step (`decision_answers` already knows the kind and already holds the
+`Game`), or `Game.advance` commits the step before it pauses to ask. Both are
+engine changes in `magic-cards-model`; neither is expressible from this repo.
+Until one lands, candidates are built here the way `ui/combat.js` already
+builds them ("nothing here enforces a rule"), and the engine's own refusal is
+what actually decides: `BaselineSeat` drops one pair at a time from a refused
+declaration until it is accepted, which bottoms out at the always-legal empty
+answer.
 
 ## Why it cannot stall
 
@@ -852,7 +865,7 @@ class BaselineSeat:
             self.narrowing = 0
         if not has_turn(state, self.player):
             return None
-        actions = self.client.legal_actions(self.game_id, self.player, self.uid)
+        actions = self.client.legal_actions(self.game_id, self.player, self.uid, candidates=True)
         move = self._pick(state, actions)
         if move is None:
             return None
@@ -920,11 +933,16 @@ class BaselineSeat:
         """Name targets for a cast that requires them (CR 601.2c), or `None`
         when the board cannot fill every requirement this announcement makes.
 
-        The enumeration reports a requirement's *shape* (`target_slots`) and
-        never its candidates - walking the board against each requirement is
-        the expensive half of `affordances.py` and lives behind its own
-        endpoint - so this is the one place the policy asks a second question
-        of the api. It takes `minimum` targets per requirement, which is
+        **No second question of the api.** `step` asks for its enumeration
+        with `candidates=True`, so each targeting row arrived carrying its own
+        legal candidates (`app._attach_target_candidates`) alongside the
+        requirement *shape* `target_slots` reports - one answer, chosen from
+        and acted on. A row with `target_slots` and no `targets` block is a
+        row this board cannot fill (an unreadable targeting phrase, or a
+        candidate list the answer's budget cut), and declining it in-process
+        is exactly what keeps a refusal out of the ledger.
+
+        It takes `minimum` targets per requirement, which is
         `default_answer`'s own CR 601.2c answer, preferring the opponent: a
         control that picked its targets cleverly would stop being a control.
         """
@@ -937,59 +955,88 @@ class BaselineSeat:
         wanted = sum(int(slot.get("minimum") or 0) for slot in slots)
         if not wanted:
             return move
-        offered = self.client.affordances(
-            self.game_id, str(move.body["card_id"]), self.player, self.uid
-        )
-        chosen = choose_targets(state, slots, offered.get("candidates") or [], self.player)
+        offered = (action or {}).get("targets") or {}
+        chosen = choose_targets(state, slots, offered.get("slots") or [], self.player)
         if len(chosen) < wanted:
             return None
         return Move(move.label, move.path, {**move.body, "targets": chosen}, key=move.key)
 
 
+def candidate_of(line: str) -> dict[str, str]:
+    """One `affordances.candidate_line` string, back as the three facts a
+    choice is made on: `id`, `kind`, `controller`.
+
+    The wire carries a candidate as a string rather than an object for a
+    measured reason (`affordances.candidate_line`: the same fourteen
+    candidates cost 2,384 bytes as dicts and 972 as strings), so reading one
+    is this end's half of that trade. Two shapes, both from that function:
+    `"<username> (player)"`, and `"<uuid> <name> (<zone>, <controller>)"`.
+
+    Split from the right, because the *name* is the part that can carry
+    brackets of its own - "Erase (Not the Urza's Legacy One)" is a real
+    printing - while the trailing `(...)` this function reads is appended by
+    `candidate_line` itself and is always last.
+    """
+    head, _, tail = line.rpartition(" (")
+    parenthetical = tail[:-1] if tail.endswith(")") else tail
+    if not head:
+        # Nothing this end recognises - no trailing bracket at all. Kept as
+        # an id rather than dropped: the engine still judges it at CR 601.2c,
+        # and inventing a refusal here would be this seat guessing at a rule.
+        return {"id": line, "kind": "card", "controller": ""}
+    if parenthetical == "player":
+        return {"id": head, "kind": "player", "controller": head}
+    _zone, _, controller = parenthetical.rpartition(", ")
+    card_id, _, _name = head.partition(" ")
+    return {"id": card_id, "kind": "card", "controller": controller}
+
+
 def choose_targets(
     state: dict[str, Any],
     slots: Sequence[dict[str, Any]],
-    candidates: Sequence[dict[str, Any]],
+    offered: Sequence[dict[str, Any]],
     player: str,
 ) -> list[str]:
     """The least-committal legal announcement: `minimum` targets per
     requirement, each the opponent where the opponent is legal for that slot,
     and never the same object twice.
 
-    `candidates` is `GET .../affordances/{card_id}`'s own list, each entry
-    carrying the indices of the requirements it satisfies -
-    `TargetRequirement.rejects` is what filled it, so a choice made from here
-    can never disagree with the announcement that follows.
+    `offered` is the enumeration's own per-slot candidate list -
+    `schemas.ActionTargets.slots`, as `GET .../legal-actions?candidates=true`
+    folded it into this very action's row. `TargetRequirement.rejects` is
+    what filled it, the same predicate `TargetingProfile._fill_slots` runs at
+    CR 601.2c, so a choice made from here can never disagree with the
+    announcement that follows. Each entry's `slot` is its index into `slots`
+    (`Action.target_slots`), which is what pairs a candidate list with the
+    `minimum` it has to satisfy.
     """
     opponents = {
         str(entry.get("username"))
         for entry in state.get("players") or ()
         if entry.get("username") != player
     }
+    by_slot = {int(entry.get("slot") or 0): entry for entry in offered}
     chosen: list[str] = []
     taken: set[str] = set()
     for index, slot in enumerate(slots):
         wanted = int(slot.get("minimum") or 0)
-        pool = [
-            candidate
-            for candidate in candidates
-            if index in (candidate.get("requirements") or [])
-            and str(candidate.get("id")) not in taken
-        ]
+        lines = by_slot.get(index, {}).get("candidates") or ()
+        pool = [candidate_of(str(line)) for line in lines]
+        pool = [candidate for candidate in pool if candidate["id"] not in taken]
         # The opponent first (a face, then anything they control), then
         # whatever is left, in the order the engine offered it.
         pool.sort(
             key=lambda candidate: (
                 0
-                if candidate.get("kind") == "player" and str(candidate.get("id")) in opponents
+                if candidate["kind"] == "player" and candidate["id"] in opponents
                 else 1
-                if candidate.get("controller") in opponents
+                if candidate["controller"] in opponents
                 else 2
             )
         )
         for candidate in pool[:wanted]:
-            chosen.append(str(candidate.get("id")))
-            taken.add(str(candidate.get("id")))
+            chosen.append(candidate["id"])
+            taken.add(candidate["id"])
     return chosen
 
 

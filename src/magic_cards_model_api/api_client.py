@@ -91,16 +91,18 @@ class SeatApiClient(Protocol):
     unpayable action legal, so `affordable` rather than absence is what says
     it cannot be paid for) - plus this seat's own filtered board view for the
     two judgements the enumeration does not make (whether an attacker
-    survives a block, whether a hit is lethal), plus one way to act, plus the
-    candidate list for a target.
+    survives a block, whether a hit is lethal), plus one way to act.
 
-    That last one is a fourth call rather than a fifth field on the
-    enumeration for the api's own stated reason: `Action.target_slots`
-    carries a requirement's *shape*, and walking every object on the board
-    against every requirement is "the expensive half of `affordances.py`"
-    (its own docstring), served on demand instead of on a poll. Guessing a
-    target off the board rather than asking would put refusals in the ledger
-    that the scorecard would then report as rules errors nobody made.
+    Three calls, and the candidate list for a target is *not* a fourth: it
+    rides on the enumeration itself, which is what `legal_actions`'
+    `candidates` flag asks for (`app._attach_target_candidates`). There is no
+    `affordances` method here on purpose - a seat that went back to `GET
+    .../affordances/{card_id}` per cast paid a second round trip, and so a
+    whole extra inference cycle of latency, for a list the answer it was
+    already holding carried. Guessing a target off the board rather than
+    reading the enumeration's own list is the other thing this seam refuses
+    to make possible: it would put refusals in the ledger that the scorecard
+    would then report as rules errors nobody made.
 
     The protocol exists so the policy depends on a seam and not on `httpx`:
     the test suite drives it against the in-process app through the same
@@ -114,21 +116,25 @@ class SeatApiClient(Protocol):
         already redacted by the server."""
         ...
 
-    def legal_actions(self, game_id: str, player: str, uid: str) -> list[dict[str, Any]]:
+    def legal_actions(
+        self, game_id: str, player: str, uid: str, *, candidates: bool = False
+    ) -> list[dict[str, Any]]:
         """`GET /api/games/{id}/legal-actions?player=...&uid=...`'s `actions`
         - one `models.action.Action` per legal move, `model_dump(mode="json")`
         -ed. Empty means "nothing is legal"; a call that could not be made at
         all raises rather than answering empty, because the two must never
-        look alike (see `seatkit.available_actions` for the same rule)."""
-        ...
+        look alike (see `seatkit.available_actions` for the same rule).
 
-    def affordances(self, game_id: str, card_id: str, player: str, uid: str) -> dict[str, Any]:
-        """`GET /api/games/{id}/affordances/{card_id}?player=...` - what
-        announcing this card asks for, and every object on the board that
-        could legally fill each requirement (`affordances.candidates`, built
-        from the engine's own `TargetRequirement.rejects`). Nothing in the
-        answer is hidden information: every candidate is in a public zone
-        (CR 400.2) or is a player."""
+        `candidates=True` adds `?candidates=true`, which folds each targeting
+        action's own legal candidates into its row as `targets`
+        (`schemas.ActionTargets`, built from the engine's own
+        `TargetRequirement.rejects`, so it cannot disagree with the
+        announcement that follows). That is how a seat names a target: out of
+        the answer it already has, in one round trip rather than two. Nothing
+        in it is hidden information - every candidate is an object in a
+        public zone (CR 400.2) or a player - and it costs the board walk
+        `affordances.py` charges for, which is why it is opt-in rather than
+        always on (`app.get_legal_actions`)."""
         ...
 
     def act(self, game_id: str, path: str, body: dict[str, Any], uid: str) -> dict[str, Any]:
@@ -195,10 +201,17 @@ class HttpSeatApiClient:
             )
         return dict(response.json())
 
-    def legal_actions(self, game_id: str, player: str, uid: str) -> list[dict[str, Any]]:
-        response = self.http.get(
-            f"/api/games/{game_id}/legal-actions", params={"uid": uid, "player": player}
-        )
+    def legal_actions(
+        self, game_id: str, player: str, uid: str, *, candidates: bool = False
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"uid": uid, "player": player}
+        if candidates:
+            # Only when asked: the default answer must stay the cheap one,
+            # and a query parameter this api does not know is not an error
+            # it reports (`candidates: bool = False`), so sending it
+            # unconditionally would hide a version skew rather than show it.
+            params["candidates"] = "true"
+        response = self.http.get(f"/api/games/{game_id}/legal-actions", params=params)
         if response.status_code != 200:
             # Never an empty list: "you may not ask that" and "there is
             # nothing you can do" are different answers and a policy that
@@ -207,17 +220,6 @@ class HttpSeatApiClient:
                 f"legal-actions read failed: HTTP {response.status_code} {response.text}"
             )
         return list(response.json().get("actions") or [])
-
-    def affordances(self, game_id: str, card_id: str, player: str, uid: str) -> dict[str, Any]:
-        response = self.http.get(
-            f"/api/games/{game_id}/affordances/{card_id}",
-            params={"player": player, "uid": uid},
-        )
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"affordances read failed: HTTP {response.status_code} {response.text}"
-            )
-        return dict(response.json())
 
     def act(self, game_id: str, path: str, body: dict[str, Any], uid: str) -> dict[str, Any]:
         response = self.http.post(

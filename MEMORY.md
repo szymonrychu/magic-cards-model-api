@@ -7,6 +7,43 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-12 - two audit gaps: a public component vanished from
+  `openapi.json`, and the baseline paid a round trip this branch existed to
+  remove.**
+
+  (1) **A subclass replaces a component's name, it does not extend it.**
+  Retyping `LegalActionsResponse.actions` to `list[ActionWithTargets]` was
+  meant to add candidates and did - but FastAPI names a component only where a
+  route references one, and with the subclass as the only reference the
+  engine's own `Action` stopped being emitted into `#/components/schemas`
+  altogether. `tests/test_openapi_drift.py` passed straight through it,
+  because its `REQUEST_MODEL_COMPONENTS`/`RESPONSE_MODEL_COMPONENTS`
+  allowlists are hand-written and nobody had listed `Action`. Both halves are
+  fixed: `actions: list[ActionWithTargets | Action]` names both (and is the
+  truth about the answer - `candidates=false` rows are plain engine `Action`s,
+  `candidates=true` adds a *required* `targets` block, which is what keeps the
+  two branches distinguishable), and the drift guard now derives its baseline
+  from `git show origin/main:openapi.json` instead of from a list, so any
+  component that leaves the contract is red with its own name in the message.
+  Hand-listing what must not break cannot cover what nobody thought to list;
+  deriving it from the artifact can. CI's checkout needed `fetch-depth: 0`
+  for that baseline ref to exist at all.
+
+  (2) **The candidate list was never only on `/affordances`.** The baseline's
+  per-cast second call is gone: `step` asks `legal-actions` with
+  `candidates=True` and `_fill_targets` reads the `targets` block off the very
+  row it is about to act on, so a targeted cast costs three calls (state,
+  enumeration, act) rather than four - and a `_pick` loop that declines
+  several casts in a row now costs zero extra calls rather than one apiece.
+  `SeatApiClient` lost its `affordances` method entirely, so the shortcut
+  cannot come back by accident, and
+  `test_a_cast_names_its_targets_out_of_the_enumeration_it_already_read` pins
+  the call list. Reading the candidates means parsing
+  `affordances.candidate_line`'s string form (`baseline_seat.candidate_of`),
+  split from the RIGHT: a card name can carry brackets of its own ("Erase (Not
+  the Urza's Legacy One)"), while the appended `(<zone>, <controller>)` is
+  always last.
+
 - **2026-09-12 - the advisor panel took the bottom-right corner, and the log
   moved into an overlay of its own rather than into `#modal`.** Three things
   this cost, worth not rediscovering.
@@ -208,8 +245,15 @@ whoever works on the repo itself.
   baseline therefore reads its own candidate pairs off the board - exactly what
   `ui/combat.js` already does, with its own "nothing here enforces a rule"
   note - and narrows a refused declaration one pair at a time until the engine
-  accepts, bottoming out at the always-legal empty answer. Fixing the step gate
-  is an engine change and was out of scope for this pass.
+  accepts, bottoming out at the always-legal empty answer. Still true at engine
+  `4ad120c`, re-measured 2026-09-12 - and what would close it is now written
+  down in `baseline_seat.py`'s own module docstring rather than left as "out
+  of scope": `decision_answers` already routes both kinds to
+  `_attacker_actions`/`_blocker_actions`, so the only thing in the way is
+  those two functions' `game.turn.step` predicate. Either it learns to accept
+  the pending decision's own kind as an alternative to the committed step, or
+  `Game.advance` commits the step before it pauses to ask. Both are engine
+  changes; neither is expressible from this repo.
 
   (2) **A legal cast is not a targetable one, and the difference cost 547 rows
   in one game.** `legal_actions` lists a cast whether or not the board offers a
@@ -218,9 +262,18 @@ whoever works on the repo itself.
   refused at announcement, and offered again on the next priority. The refused
   set did not save it: the opponent's own move changes the board every round,
   which correctly clears the memory of the refusal. The seat now names its
-  targets (via `GET .../affordances/{card_id}`, the only place the candidate
-  list lives) *before* acting, and declines in-process when it cannot fill
-  every requirement. Refusal rate fell from 87% to 0 on the same matchup.
+  targets *before* acting, and declines in-process when it cannot fill every
+  requirement. Refusal rate fell from 87% to 0 on the same matchup.
+
+  This entry used to call `GET .../affordances/{card_id}` "the only place the
+  candidate list lives", and that was never true: the first commit of this
+  same branch put the list on `GET .../legal-actions?candidates=true`
+  (`app._attach_target_candidates`), which is where the seat reads it from as
+  of 2026-09-12 - see that day's entry. The affordances endpoint is the
+  *browser's* door onto the same enumeration, and the one that can re-ask a
+  half-announced spell with the modes and the X the player has picked; it is
+  not the only place the list lives, and a seat using it was paying a round
+  trip for an answer it already held.
 
   (3) **`GET /api/games` is not "the games I booted".** With `DATABASE_URL`
   set it lists every live game in the database, including ones an earlier
