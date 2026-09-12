@@ -738,6 +738,35 @@ def test_a_cast_whose_targets_cannot_be_filled_is_skipped_not_attempted(client, 
     assert seat.refusals == 0, "nothing was attempted, so nothing was refused"
 
 
+def test_a_cast_that_must_name_a_creature_reads_the_id_out_of_the_candidate_line(client, game):
+    """The other shape a candidate arrives in. The enumeration carries a
+    candidate as a *string* rather than an object - measured, see
+    `affordances.candidate_line` - so a card candidate reaches this seat as
+    `"<uuid> <name> (<zone>, <controller>)"` and `baseline_seat.candidate_of`
+    is what turns it back into the id the announcement takes. Galvanic
+    Discharge chooses target creature, so there is no player face to fall
+    back on: naming the right object is the whole test, and it is the
+    opponent's creature rather than this seat's own.
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Galvanic Discharge", "alice", "hand")
+    mine = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    theirs = battlefield_creature(client, game, "Grizzly Bears", "bob")
+    seam = CountingSeam(api(client))
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+
+    move = seat.step()
+
+    assert move.label == "cast_spell", move
+    assert move.body["targets"] == [theirs], (move, {"mine": mine, "theirs": theirs})
+    assert seam.calls == ["state", "legal_actions", "act:actions/cast"], seam.calls
+    board = state(client, game)
+    assert [card["name"] for card in board["stack"]] == ["Galvanic Discharge"]
+    # The stack view renders a card target by name (the two Grizzly Bears are
+    # indistinguishable there), so the id claim above is the precise one - the
+    # engine accepted that id at CR 601.2c, which is the part that matters.
+
+
 def test_a_cast_whose_targets_can_be_filled_names_the_opponent(client, game):
     """The other half: an "any target" spell always has a legal target - the
     opponent's face - and the greedy policy takes it."""
