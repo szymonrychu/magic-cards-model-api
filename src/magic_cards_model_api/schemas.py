@@ -1622,13 +1622,13 @@ class ReviewAdvice(BaseModel):
 
     Nothing here grades the advice either, for the same reason
     `ReviewDeclaration` grades no prediction: whether it was *good* is a
-    judgement, not an outcome. What is reported is one of three things (the
-    third splitting in two): approved and followed; approved and then
-    refused by the engine (`did` is `None` - a refusal is a failed attempt,
-    never the outcome); or never approved, in which case the seat either did
-    something else (`did` is that row) or did nothing before the next piece
-    of advice (`did` is `None` too, distinguished from the refused case only
-    by `approved` being `False`).
+    judgement, not an outcome. What is reported is one of four things:
+    approved and followed; approved, attempted, and refused by the engine
+    (`did` is `None` - a refusal is a failed attempt, never the outcome -
+    but `refused` carries the row and the engine's own verbatim reason, so
+    nothing is lost); never approved and the seat did something else (`did`
+    is that row); or never approved and the seat did nothing before the next
+    piece of advice (`did` is `None`, `refused` is empty).
     """
 
     seq: int
@@ -1665,6 +1665,15 @@ class ReviewAdvice(BaseModel):
     followed: bool = False
     """Whether `did` actually matches the proposal - same action kind for
     `path`, and the same card where `body` names one."""
+    refused: list[ReviewEntry] = Field(default_factory=list)
+    """Every row by this seat, in the same window, that the engine refused -
+    carrying its verbatim `reason` inside each row's own `detail`, exactly as
+    `GET .../log` shows it. `did` never covers this: a refusal is a failed
+    attempt, not "what happened", but the reason it failed is not thrown
+    away either - "you approved this and the engine refused it because X" is
+    the single most instructive line this page can show. Ordinarily zero or
+    one row; not assumed to be at most one, since nothing stops a seat
+    retrying a refused attempt more than once."""
 
 
 class GameReviewResponse(BaseModel):

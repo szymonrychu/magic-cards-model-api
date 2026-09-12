@@ -387,21 +387,41 @@ function declarationContext(declared) {
 
 // ------------------------------------------------------------------ advice --
 
+/** One row of `advice.refused`, drawn like `frameNode`'s own refusal box -
+ * what was attempted, and the engine's verbatim reason. This is the single
+ * most instructive line the review can show: the engine's whole reason for
+ * existing is saying out loud why a refused action is illegal, and dropping
+ * that line here (in favour of a blank "nothing happened") would be keeping
+ * the least useful half. */
+function adviceRefusalNode(frame) {
+  return h(
+    "div",
+    { class: "advice-refusal" },
+    h("span", { class: "seq" }, seqLabel(frame.seq)),
+    h("span", { class: "what" }, frame.label),
+    " - the engine refused it: ",
+    h("span", { class: "refusal" }, frame.reason || "(no reason given)")
+  );
+}
+
 /** One piece of mtg-buddy advice: what it proposed, why, whether the human
- * approved it, and what actually happened - three distinguishable outcomes,
+ * approved it, and what actually happened - four distinguishable outcomes,
  * never a verdict on whether the advice was *good* (`review.py`'s stand on
  * that, restated for the same reason as the declaration pairing above).
  *
  * - **approved and followed** - `did` is drawn as a normal `frameNode`, so
  *   the reader sees the same evidence (reasoning, refusal if any, board) any
  *   other row gets.
- * - **approved but then refused** - `did` is `None` (a refusal is a failed
- *   attempt, never handed back as "what happened"), so this reads as the
- *   "approved" tag over the empty-outcome line; the distinction from the
- *   next case is the tag, not the line.
- * - **ignored** - the tag reads "ignored", and `did` is either a real frame
- *   (the human did something else) or the same empty-outcome line (the
- *   human did nothing before the next piece of advice).
+ * - **approved, attempted, and refused by the engine** - `did` is `None` (a
+ *   refusal is a failed attempt, never handed back as "what happened"), but
+ *   `advice.refused` is not empty, so an `adviceRefusalNode` renders the
+ *   engine's own words in place of the empty-outcome line. This is the
+ *   fourth outcome, and it is never left as an ambiguous blank.
+ * - **ignored, something else instead** - the tag reads "never approved",
+ *   and `did` is a real frame.
+ * - **ignored, nothing at all** - `did` is `None` and `advice.refused` is
+ *   also empty, so the honest empty-outcome line is what renders; this is
+ *   the only case that reaches it now.
  */
 function adviceNode(advice, you, catalogue) {
   const el = h("div", { class: "advice" });
@@ -428,9 +448,12 @@ function adviceNode(advice, you, catalogue) {
         : "never approved"
     )
   );
+  for (const refused of advice.refused || []) {
+    el.appendChild(adviceRefusalNode(refused));
+  }
   if (advice.did) {
     el.appendChild(frameNode(advice.did, you, catalogue));
-  } else {
+  } else if (!(advice.refused && advice.refused.length)) {
     el.appendChild(
       h(
         "div",

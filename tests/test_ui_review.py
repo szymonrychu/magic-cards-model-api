@@ -608,6 +608,20 @@ IGNORED_DID_ROW = {
     "player": "claude",
 }
 
+REFUSAL_REASON = "claude cannot play a land: 1 of the 1 they may play this turn already used"
+
+REFUSED_ROW = {
+    "seq": 204,
+    "ts": "2026-09-08T20:05:45+00:00",
+    "turn": 4,
+    "step": "precombat_main",
+    "phase": "precombat_main",
+    "action": "play_land",
+    "reasoning": None,
+    "detail": {"player": "claude", "card_id": "c1", "allowed": False, "reason": REFUSAL_REASON},
+    "player": "claude",
+}
+
 
 def advice_item(seq: int, **over: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
@@ -627,6 +641,7 @@ def advice_item(seq: int, **over: Any) -> dict[str, Any]:
         "approved_seq": None,
         "did": None,
         "followed": False,
+        "refused": [],
     }
     row.update(over)
     return row
@@ -727,6 +742,52 @@ def test_advice_approved_but_refused_is_distinct_from_advice_ignored() -> None:
     assert len(ignored_result["emptyText"]) == 1
     assert refused_result["emptyText"] == ignored_result["emptyText"], (
         "the same honest line either way - only the tag says which outcome this is"
+    )
+
+
+def test_advice_approved_and_refused_shows_the_engines_own_reason() -> None:
+    """The fourth outcome, visibly distinct from the ambiguous blank above:
+    when `advice.refused` actually carries a row, the engine's own verbatim
+    words render in its place rather than the generic empty-outcome line."""
+    review = _advice_review(
+        advice_item(
+            200,
+            approved=True,
+            approved_seq=201,
+            did=None,
+            followed=False,
+            refused=[REFUSED_ROW],
+        ),
+    )
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return {
+            tagText: findAll(els.body, "advice-tag").map((el) => el.textContent),
+            refusalText: findAll(els.body, "advice-refusal").map((el) => el.textContent),
+            emptyOutcomes: findAll(els.body, "advice-outcome-empty").length,
+          };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+    assert result["tagText"] == ["approved at #201"]
+    assert len(result["refusalText"]) == 1
+    assert REFUSAL_REASON in result["refusalText"][0]
+    assert "play_land" in result["refusalText"][0]
+    assert result["emptyOutcomes"] == 0, (
+        "the refusal replaces the ambiguous blank - both must never render together"
     )
 
 

@@ -2163,3 +2163,27 @@ whoever works on the repo itself.
   inside a declaration's own `did`/`opponent_did` list like any other row by
   that seat (test: `test_advice_rows_do_not_disturb_the_declaration_
   windows`).
+
+  **Follow-up the same day**: `did` excluding a refused row was right, but
+  the refusal itself must not be thrown away - this engine's whole reason
+  for existing is saying out loud *why* a refused action is illegal, and
+  that reason is the single most instructive line a retrospective can show.
+  Added `refused` alongside `did` (never touching `did`'s own meaning): every
+  row by the advised seat in the same window that the engine refused,
+  reason verbatim, never assumed to be at most one (a seat can retry). Now a
+  fourth, visibly distinct outcome: approved, attempted, and refused with the
+  engine's own words - rendered in `ui/render/review.js` in place of the
+  ambiguous empty-outcome line, which now renders only when `refused` is
+  also empty. Mirrored line-for-line in `ui/review_model.js`'s `deriveAdvice`
+  fallback (`refusedInWindow`) and in `reshapeServerAdvice`.
+
+  **Visibility, confirmed rather than assumed**: `GET .../review` has no
+  per-seat redaction of any kind - the whole `build_review` result, `advice`
+  included, goes to whichever seat uid or the admin key asks, once the game
+  is over. An advice row's `summary`/`reasoning`/`body` can name cards that
+  were in the human seat's own hand at the time, and the opponent reads them
+  post-game exactly as the advised seat does - the same rule `declarations`
+  already lived under. Stated explicitly in `app.game_review`'s own
+  docstring and proven by `test_the_opponent_reads_the_same_advice_the_
+  human_seat_does`, rather than left as an unstated consequence of reusing
+  the same route.

@@ -197,6 +197,7 @@ def advice_item(seq: int, player: str = "bob", **over: Any) -> dict[str, Any]:
         "approved_seq": None,
         "did": None,
         "followed": False,
+        "refused": [],
     }
     row.update(over)
     return row
@@ -675,12 +676,39 @@ def test_an_advice_approved_row_is_a_low_weight_frame_labelled_by_advice_seq() -
 def test_advice_of_prefers_the_servers_own_computed_list() -> None:
     rows = [advice_row(2)]
     rev = review(rows, [])
-    rev["advice"] = [advice_item(2, approved=True, approved_seq=3, followed=True)]
+    rev["advice"] = [
+        advice_item(
+            2,
+            approved=True,
+            approved_seq=3,
+            followed=True,
+            refused=[
+                {
+                    "seq": 4,
+                    "ts": "2026-09-08T20:04:00+00:00",
+                    "turn": 1,
+                    "step": "precombat_main",
+                    "phase": "precombat_main",
+                    "action": "play_land",
+                    "reasoning": None,
+                    "detail": {
+                        "player": "bob",
+                        "card_id": "c1",
+                        "allowed": False,
+                        "reason": "no land drop left",
+                    },
+                    "player": "bob",
+                }
+            ],
+        )
+    ]
     items = call("m.adviceOf(rev)", rev=rev)
     assert len(items) == 1
     assert items[0]["approved"] is True
     assert items[0]["approvedSeq"] == 3
     assert items[0]["followed"] is True
+    assert len(items[0]["refused"]) == 1
+    assert items[0]["refused"][0]["reason"] == "no land drop left"
 
 
 def test_advice_of_falls_back_to_deriving_from_raw_entries() -> None:
@@ -701,6 +729,7 @@ def test_advice_of_falls_back_to_deriving_from_raw_entries() -> None:
     assert item["approvedSeq"] == 3
     assert item["did"]["seq"] == 4
     assert item["followed"] is True
+    assert item["refused"] == []
 
 
 def test_advice_of_derives_approved_and_followed() -> None:
@@ -713,12 +742,15 @@ def test_advice_of_derives_approved_and_followed() -> None:
     assert item["approved"] is True
     assert item["did"]["action"] == "play_land"
     assert item["followed"] is True
+    assert item["refused"] == []
 
 
 def test_advice_of_derives_approved_but_refused_distinct_from_ignored() -> None:
     """A refusal is never `did` - `did` is `None` here, and only the
     `approved` flag tells this apart from a piece of advice nobody ever
-    approved at all."""
+    approved at all. The refusal is not dropped, though - it is carried in
+    `refused`, reason verbatim, since it is the single most instructive line
+    a retrospective can contain."""
     rows = [
         advice_row(2, body={"card_id": "c1"}),
         approval_row(3, advice_seq=2),
@@ -737,6 +769,31 @@ def test_advice_of_derives_approved_but_refused_distinct_from_ignored() -> None:
     assert item["approved"] is True
     assert item["did"] is None
     assert item["followed"] is False
+    assert len(item["refused"]) == 1
+    assert item["refused"][0]["seq"] == 4
+    assert item["refused"][0]["action"] == "play_land"
+    assert item["refused"][0]["reason"] == "no land drop left"
+    assert item["refused"][0]["refused"] is True
+
+
+def test_advice_of_derives_more_than_one_refusal_in_the_same_window() -> None:
+    rows = [
+        advice_row(2, body={"card_id": "c1"}),
+        entry(
+            3,
+            "play_land",
+            detail={"player": "bob", "card_id": "c1", "allowed": False, "reason": "first no"},
+        ),
+        entry(
+            4,
+            "play_land",
+            detail={"player": "bob", "card_id": "c1", "allowed": False, "reason": "second no"},
+        ),
+    ]
+    item = call("m.adviceOf(rev)[0]", rev=review(rows, []))
+    assert item["did"] is None
+    assert [r["seq"] for r in item["refused"]] == [3, 4]
+    assert [r["reason"] for r in item["refused"]] == ["first no", "second no"]
 
 
 def test_advice_of_derives_ignored_did_something_else() -> None:

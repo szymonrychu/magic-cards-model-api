@@ -1238,7 +1238,14 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     A seat and the admin key see the same thing here. Post-game, so does
     everyone else who could be shown it - there is no hidden information
     left to protect and pretending otherwise would make the review useless
-    to the person it is for.
+    to the person it is for. This is a deliberate decision, stated explicitly
+    because it is easy to make by accident otherwise: `review.build_review`'s
+    `advice` stream (`review.ReviewAdvice`) carries the mtg-buddy advisor's
+    `summary`/`reasoning`/`body` for a human seat, which can name cards that
+    were in that seat's own hand at the time it was proposed - and there is
+    no redaction of it here, same as `declarations`. The opponent reads it
+    once the game is over, exactly as the advised seat does (see `test_review
+    .py`'s `test_the_opponent_reads_the_same_advice_the_human_seat_does`).
     """
     archived = store.archived(game_id)
     if archived is None:

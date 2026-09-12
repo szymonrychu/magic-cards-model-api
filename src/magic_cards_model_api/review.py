@@ -251,13 +251,25 @@ def _advice(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     **Deliberately not scored** - see the module docstring's stand on
     `_declarations`, which is the same stand here: whether a piece of advice
     was *good* is a judgement, not an outcome, and it stays off this page.
-    What is reported, plainly, is one of three things (the fourth being a
-    split of the third): the proposal was approved and the seat's next real
-    move matched it; it was approved and then refused by the engine (`did` is
-    `None` - a refusal is a failed attempt, not "what happened", so it is
-    never handed back as the outcome); or it was never approved, in which
-    case the seat either did something else (`did` is that row) or did
-    nothing at all before the next piece of advice (`did` is `None`).
+    What is reported, plainly, is one of four things: the proposal was
+    approved and the seat's next real move matched it; it was approved,
+    attempted, and the engine refused it - `did` stays `None` (a refusal is a
+    failed attempt, not "what happened", so it is never handed back as the
+    outcome), but the refusal itself, and the engine's own verbatim reason,
+    is not lost: it is carried in `refused`, which is the single most
+    instructive line this page can show (this engine's whole reason for
+    existing is that it says out loud why a refused action is illegal); or it
+    was never approved, in which case the seat either did something else
+    (`did` is that row) or did nothing at all before the next piece of advice
+    (`did` is `None`, `refused` is empty).
+
+    `refused` is every row by this seat in the same window that the engine
+    refused (`detail["allowed"] is False`) - ordinarily zero or one, but
+    never assumed to be at most one, since nothing stops a seat retrying a
+    refused attempt more than once before either succeeding or giving up.
+    `did` is unaffected by this - it is still the first *non*-refused row, so
+    a window with a refusal followed by a real move still reports both: the
+    refusal in `refused`, and the move in `did`.
 
     `reasoning` is read off the entry's own top-level field first, falling
     back to `detail["reasoning"]` - the write side may land it either way
@@ -286,6 +298,7 @@ def _advice(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 boundary = later_index
                 break
         did_row = _first_real_action(entries, index + 1, boundary, player)
+        refused_rows = _refused_in_window(entries, index + 1, boundary, player)
         result.append(
             {
                 "seq": seq,
@@ -304,6 +317,7 @@ def _advice(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "approved_seq": approved_row["seq"] if approved_row is not None else None,
                 "did": _paired(did_row) if did_row is not None else None,
                 "followed": _advice_followed(detail.get("path"), detail.get("body"), did_row),
+                "refused": [_paired(refused_row) for refused_row in refused_rows],
             }
         )
     return result
@@ -316,7 +330,7 @@ def _first_real_action(
     not an `advice`/`advice_approved` marker (neither mutates the game), and
     never a row the engine refused - a refusal is a failed attempt, not a
     thing that happened, and is deliberately never handed back as `did` (see
-    `_advice`)."""
+    `_advice`, and `_refused_in_window` for where a refusal *is* reported)."""
     for candidate in entries[start:end]:
         if candidate["action"] in (ADVICE_ACTION, ADVICE_APPROVED_ACTION):
             continue
@@ -326,6 +340,25 @@ def _first_real_action(
             continue
         return candidate
     return None
+
+
+def _refused_in_window(
+    entries: list[dict[str, Any]], start: int, end: int, player: str | None
+) -> list[dict[str, Any]]:
+    """Every row in `entries[start:end]` that is `player`'s own attempt and
+    that the engine refused - the evidence `_first_real_action` deliberately
+    excludes from `did`. Carries the engine's verbatim `reason` (inside each
+    row's own `detail`, exactly as `GET .../log` and the console line already
+    show it) rather than dropping it, since "you approved this and the
+    engine refused it because X" is the single most instructive line a
+    retrospective can contain."""
+    return [
+        candidate
+        for candidate in entries[start:end]
+        if candidate["action"] not in (ADVICE_ACTION, ADVICE_APPROVED_ACTION)
+        and _actor(candidate) == player
+        and (candidate.get("detail") or {}).get("allowed") is False
+    ]
 
 
 def _kind_of_path(path: str | None) -> str | None:

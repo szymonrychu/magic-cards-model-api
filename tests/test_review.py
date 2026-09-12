@@ -725,6 +725,7 @@ def test_advice_approved_and_followed_is_shown_as_such(client: TestClient) -> No
         assert row["did"] is not None
         assert row["did"]["action"] == "play_land"
         assert row["followed"] is True
+        assert row["refused"] == [], "nothing was refused in this window"
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -736,7 +737,12 @@ def test_advice_approved_but_then_refused_is_not_the_same_as_ignored(
     not "what happened" - so this reads as `approved` with `did: None`, and
     that combination is what distinguishes it from a piece of advice nobody
     ever approved at all (`test_advice_that_was_ignored_and_nothing_followed`
-    below), which is `did: None` too but with `approved: False`."""
+    below), which is `did: None` too but with `approved: False`.
+
+    The refusal is not simply dropped, though: it is the single most
+    instructive line a retrospective can contain, since this engine's whole
+    reason for existing is saying out loud why a refused action is illegal -
+    so it is carried in `refused`, reason verbatim."""
     info = _agent_game(client, active="bob")
     game_id = info["game_id"]
     try:
@@ -767,6 +773,8 @@ def test_advice_approved_but_then_refused_is_not_the_same_as_ignored(
         )
         assert refused.status_code == 200, refused.text
         assert refused.json()["allowed"] is False, refused.text
+        refusal_reason = refused.json()["reason"]
+        assert refusal_reason
 
         conceded = client.post(
             f"/api/games/{game_id}/actions/concede",
@@ -780,6 +788,11 @@ def test_advice_approved_but_then_refused_is_not_the_same_as_ignored(
         assert row["approved_seq"] == approved_seq
         assert row["did"] is None
         assert row["followed"] is False
+        assert len(row["refused"]) == 1
+        refused_row = row["refused"][0]
+        assert refused_row["action"] == "play_land"
+        assert refused_row["player"] == "bob"
+        assert refused_row["detail"]["reason"] == refusal_reason
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -813,6 +826,7 @@ def test_advice_that_was_ignored_in_favour_of_something_else(client: TestClient)
         assert row["did"] is not None
         assert row["did"]["action"] == "pass_priority"
         assert row["followed"] is False
+        assert row["refused"] == []
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -839,6 +853,57 @@ def test_advice_that_was_ignored_and_nothing_followed(client: TestClient) -> Non
         assert row["approved_seq"] is None
         assert row["did"] is None
         assert row["followed"] is False
+        assert row["refused"] == []
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_advice_can_be_refused_more_than_once_before_something_finally_works(
+    client: TestClient,
+) -> None:
+    """`refused` is never assumed to hold at most one row - a seat retrying a
+    refused attempt is real, and every one of those attempts belongs in the
+    retrospective, not just the last."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    try:
+        assert _declare(client, info).status_code == 200
+        forest = _card_id(client, game_id, "Forest", "bob")
+        mountain = _card_id(client, game_id, "Mountain", "bob")
+
+        first = client.post(
+            f"/api/games/{game_id}/actions/play-land",
+            json={"player": "bob", "card_id": forest, "reasoning": "land for the turn"},
+        )
+        assert first.status_code == 200 and first.json()["allowed"] is True, first.text
+
+        advice_seq = _advise(
+            client, game_id, body={"card_id": mountain}, summary="play the Mountain"
+        )
+
+        refused_once = client.post(
+            f"/api/games/{game_id}/actions/play-land",
+            json={"player": "bob", "card_id": mountain, "reasoning": "trying anyway"},
+        )
+        assert refused_once.status_code == 200 and refused_once.json()["allowed"] is False
+
+        refused_twice = client.post(
+            f"/api/games/{game_id}/actions/play-land",
+            json={"player": "bob", "card_id": mountain, "reasoning": "trying again"},
+        )
+        assert refused_twice.status_code == 200 and refused_twice.json()["allowed"] is False
+
+        conceded = client.post(
+            f"/api/games/{game_id}/actions/concede",
+            json={"player": "alice", "reasoning": "no way back"},
+        )
+        assert conceded.status_code == 200, conceded.text
+
+        body = _review(client, game_id, key=info["admin_key"]).json()
+        row = _advice_row(body, advice_seq)
+        assert row["did"] is None
+        assert len(row["refused"]) == 2
+        assert [r["seq"] for r in row["refused"]] == sorted(r["seq"] for r in row["refused"])
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -886,4 +951,41 @@ def test_advice_rows_do_not_disturb_the_declaration_windows(client: TestClient) 
         assert body["advice"][0]["seq"] == advice_seq
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_the_opponent_reads_the_same_advice_the_human_seat_does(client: TestClient) -> None:
+    """`game_review` has no per-seat redaction of any kind post-game - it
+    hands `build_review`'s result to whichever seat or admin key asks,
+    unfiltered, exactly as it already does for `declarations` (`test_a_seat_
+    may_read_the_finished_games_review` above proves the same thing for a
+    plan). This is a decision on the record, not a side effect: an advice
+    row's `summary`, `reasoning` and `body` can name cards that were in the
+    human seat's own hand at the time, and once the game is over, the
+    opponent reads them exactly as the advised seat does."""
+    info = _agent_game(client, active="bob")
+    game_id = info["game_id"]
+    try:
+        assert _declare(client, info).status_code == 200
+        card_id = _card_id(client, game_id, "Forest", "bob")
+        advice_seq = _advise(
+            client,
+            game_id,
+            body={"card_id": card_id},
+            summary="play the Forest",
+            reasoning="this keeps the curve on track",
+        )
+        conceded = client.post(
+            f"/api/games/{game_id}/actions/concede",
+            json={"player": "alice", "reasoning": "no way back"},
+        )
+        assert conceded.status_code == 200, conceded.text
+
+        for player in ("bob", "alice"):
+            response = _review(client, game_id, uid=info["seat_uids"][player])
+            assert response.status_code == 200, response.text
+            row = _advice_row(response.json(), advice_seq)
+            assert row["summary"] == "play the Forest"
+            assert row["reasoning"] == "this keeps the curve on track"
+            assert row["body"] == {"card_id": card_id}
+    finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

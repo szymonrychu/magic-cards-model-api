@@ -426,7 +426,8 @@ function adviceFollowed(path, body, didRow) {
 /** The first row in `entries[start, end)` that is a real move by `player`:
  * never an `advice`/`advice_approved` marker (neither mutates the game), and
  * never a row the engine refused - a refusal is a failed attempt, not a
- * thing that happened, and is deliberately never handed back as `did`. */
+ * thing that happened, and is deliberately never handed back as `did` (see
+ * `refusedInWindow` for where a refusal *is* reported). */
 function firstRealAction(entries, start, end, player) {
   for (let index = start; index < end; index += 1) {
     const candidate = entries[index];
@@ -436,6 +437,25 @@ function firstRealAction(entries, start, end, player) {
     return candidate;
   }
   return null;
+}
+
+/** Every row in `entries[start, end)` that is `player`'s own attempt and
+ * that the engine refused - the evidence `firstRealAction` deliberately
+ * excludes from `did`. Carries the engine's verbatim reason (`frameOf`'s own
+ * `reason`/`refused` fields), since "you approved this and the engine
+ * refused it because X" is the single most instructive line a retrospective
+ * can contain - never assumed to be at most one row, since nothing stops a
+ * seat retrying a refused attempt more than once. */
+function refusedInWindow(entries, start, end, player) {
+  const refused = [];
+  for (let index = start; index < end; index += 1) {
+    const candidate = entries[index];
+    if (candidate.action === ADVICE_ACTION || candidate.action === ADVICE_APPROVED_ACTION) continue;
+    if ((candidate.detail || {}).player !== player) continue;
+    if ((candidate.detail || {}).allowed !== false) continue;
+    refused.push(candidate);
+  }
+  return refused;
 }
 
 /** Every `ADVICE_ACTION` row in `entries`, paired with whether it was
@@ -461,6 +481,7 @@ function deriveAdvice(entries) {
       }
     }
     const didRow = firstRealAction(entries, index + 1, boundary, player);
+    const refusedRows = refusedInWindow(entries, index + 1, boundary, player);
     result.push({
       seq,
       ts: row.ts,
@@ -478,6 +499,7 @@ function deriveAdvice(entries) {
       approvedSeq: approvedRow ? approvedRow.seq : null,
       did: didRow ? frameOf(didRow) : null,
       followed: adviceFollowed(detail.path, detail.body, didRow),
+      refused: refusedRows.map(frameOf),
     });
   });
   return result;
@@ -505,6 +527,7 @@ function reshapeServerAdvice(item) {
     approvedSeq: item.approved_seq === undefined ? null : item.approved_seq,
     did: item.did ? frameOf(item.did) : null,
     followed: !!item.followed,
+    refused: (item.refused || []).map(frameOf),
   };
 }
 
@@ -543,6 +566,7 @@ function adviceFromRow(row) {
     approvedSeq: null,
     did: null,
     followed: false,
+    refused: [],
   };
 }
 
