@@ -402,7 +402,21 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
 
 class SeatDetail(BaseModel):
     player: str
-    uid: str
+    uid: str | None = None
+    """This seat's own credential - present only on the entry matching the
+    caller's own `uid` query parameter, or on every entry for the game's
+    admin key. `None` for every other seat, and for a caller presenting
+    nothing.
+
+    A seat uid *is* the authority to act as that seat, for the life of the
+    game, with no reference to who is logged in (`game_access.py`'s module
+    docstring). Handing every one of them to any caller who knew the
+    `game_id` therefore made this read a way to *obtain* an acting
+    credential - which is exactly how the mtg-buddy advisor, a uid the
+    server refuses to let act, could have got hold of its human's seat uid
+    and acted as the human instead. Scoped the same way `decklist` below
+    already was.
+    """
     role: Literal["seat", "advisor"] = "seat"
     """What kind of credential `uid` is, the same field and the same meaning
     `schemas.SeatLookupResponse.role` carries. Defaulted, and left unset by
@@ -449,18 +463,37 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
     way `visibility._redact_player` redacted it on the old route: present
     only for the seat whose own `uid` the caller presents, absent for every
     other entry and for a caller with no `uid` or an unrecognised one.
+
+    **`uid` is scoped exactly the same way**, and for a stronger reason: a
+    seat uid is not a label, it is the authority to act as that seat
+    (`SeatDetail.uid`). Handing every seat's uid to every caller made this
+    permitted read a credential vending machine - the advisor credential,
+    whose entire design is a uid that may read and may not act, could ask
+    this route for its human's seat uid and then act as the human, with
+    `game_access.py`'s gate never consulted. The `uid` echoed inside the
+    `ai_seat` liveness block is redacted with it: it was the same secret,
+    spelled twice, and nothing reads it (`ui/store.js` reads `state`,
+    `mechanism`, `activity` and the error fields, never `uid`).
+
+    The admin key is the one credential answered in full. It is the
+    operator's own - `visibility.ADMIN`, already trusted with the whole
+    board - and a harness holding it drives both seats by design.
     """
     if store.get(game_id) is None:
         raise KeyError(f"no game {game_id}")
     agents = store.agent_settings(game_id)
     decklists = store.decklists(game_id)
+    operator = bool(uid) and store.is_admin(game_id, uid)
     seats = []
     for seat_uid, player in store.seat_uids(game_id).items():
         status = ai_seat.registry.status(seat_uid)
+        own = operator or (uid is not None and uid == seat_uid)
+        if status is not None and not own and "uid" in status:
+            status = {**status, "uid": None}
         seats.append(
             {
                 "player": player,
-                "uid": seat_uid,
+                "uid": seat_uid if own else None,
                 # `.model_dump()`, not the bare `AgentSettings` instance: T1's
                 # own lesson (`MEMORY.md`) - `response_model_exclude_unset=
                 # True` tracks each *response* instance's own
@@ -475,7 +508,11 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
                 "agent": agents[player].model_dump() if player in agents else None,
                 "ai_seat": status
                 if status is not None
-                else {"uid": seat_uid, "mechanism": None, "state": "not_started"},
+                else {"uid": seat_uid if own else None, "mechanism": None, "state": "not_started"},
+                # `own`'s narrower half deliberately: `decklist` stays exactly
+                # as scoped as it was documented to be ("never present with no
+                # `uid`, or one that opens no seat"), and widening it to the
+                # admin key is not this task's call to make.
                 "decklist": decklists.get(player) if uid is not None and uid == seat_uid else None,
             }
         )
