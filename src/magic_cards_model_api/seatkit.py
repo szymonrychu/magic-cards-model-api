@@ -217,6 +217,33 @@ PROTOCOL_VERSION = "seatkit-14"
 #: the tool and refused by the route ("this decision needs a yes/no answer
 #: ('accept')", 2 measured occurrences).
 #:
+#: (5) **`available_actions.actions[].pays_with`.** The engine's `Action`
+#: gained `pays_with` (`machines/cost.plan_mana_payment` in the engine, at
+#: `4ad120c`): the tap plan `auto_tap` would actually execute for that cast,
+#: one entry per source it would tap - `card_id`, `name`, `ability_index`,
+#: `adds`, and `restriction` when that source's mana carries a CR 106.6
+#: sentence. Present only on a `cast` action that owes mana and that the
+#: engine has already said is payable (`affordable: "yes"`); absent
+#: everywhere else, including on a payable cost the seat's own floating mana
+#: already covers, where the honest answer is that nothing gets tapped.
+#: Purely informational and never a request shape: nothing here asks a
+#: caller to name mana sources back, and `mana_sources` is unchanged by this
+#: entry - a seat spends its own reasoning on *which* of its sources a cast
+#: eats ("this Bolt takes the Cavern of Souls I wanted for the
+#: counterspell"), not on the mechanics of paying, which the engine already
+#: does either way. The field reached `GET .../legal-actions` for free
+#: (`schemas.ActionWithTargets` subclasses the engine's `Action` and passes
+#: every field through untouched) and `mcp._compact_actions`/`_without_empty`
+#: already dropped an empty list the same way they drop every other
+#: empty/null key - so no code moved to carry it, and this paragraph is what
+#: makes that fact into the standing contract rather than an accident an
+#: unrelated refactor could quietly undo. An MCP process built before this
+#: bump reads an answer whose `cast` entries carry a key it does not know and
+#: goes on choosing mana sources the only way it ever could - by leaving
+#: `mana_sources` empty and letting the engine pick - so the silent
+#: misbehaviour this check exists to catch is a seat missing a reasoning cue
+#: it did not know to look for, not a broken call.
+#:
 #: An MCP process built before this bump neither sends `generation` nor knows
 #: the new keys: it reads an answer whose action entries, `board` and
 #: `pending_decision` carry keys it does not know, and goes on making the
