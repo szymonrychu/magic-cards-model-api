@@ -2648,11 +2648,31 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     response_model=ReportProblemResponse,
     response_model_exclude_unset=True,
 )
-def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
-    """A player files a problem report straight into the game log."""
+def report_problem(
+    game_id: str, req: ReportProblemRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """A player files a problem report straight into the game log.
+
+    **Attributed to the credential, never to `req.player`.** This is one of
+    the two POSTs an advisor uid may make (`game_access.
+    ADVISOR_POST_SUFFIXES`), and a row keyed on a plain request field let
+    any caller write into the log in another seat's name - an advisor of
+    alice filing "bob is cheating, signed bob" and the ledger agreeing. A
+    seat uid resolves to its own seat; an advisor uid resolves to the human
+    it watches, which is the one seat it is entitled to speak about.
+
+    `req.player` is still honoured for the admin key, which opens no seat
+    and so resolves to nobody: that is the operator filing on a seat's
+    behalf, and the only caller the field was ever really for.
+    """
     game = game_or_404(game_id)
-    game.player(req.player)
-    audit.record(game_id, "report_problem", player=req.player, text=req.text)
+    player = (
+        game_access.seat_for_uid(game_id, uid)
+        or (player_for_advisor_uid(game_id, uid) if uid else None)
+        or req.player
+    )
+    game.player(player)  # 400 for a player who is not in this game at all
+    audit.record(game_id, "report_problem", player=player, text=req.text)
     return {"recorded": True}
 
 

@@ -12280,7 +12280,7 @@
     },
     "/api/games/{game_id}/report": {
       "post": {
-        "description": "A player files a problem report straight into the game log.",
+        "description": "A player files a problem report straight into the game log.\n\n**Attributed to the credential, never to `req.player`.** This is one of\nthe two POSTs an advisor uid may make (`game_access.\nADVISOR_POST_SUFFIXES`), and a row keyed on a plain request field let\nany caller write into the log in another seat's name - an advisor of\nalice filing \"bob is cheating, signed bob\" and the ledger agreeing. A\nseat uid resolves to its own seat; an advisor uid resolves to the human\nit watches, which is the one seat it is entitled to speak about.\n\n`req.player` is still honoured for the admin key, which opens no seat\nand so resolves to nobody: that is the operator filing on a seat's\nbehalf, and the only caller the field was ever really for.",
         "operationId": "report_problem_api_games__game_id__report_post",
         "parameters": [
           {
@@ -12290,6 +12290,22 @@
             "schema": {
               "title": "Game Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
             }
           }
         ],

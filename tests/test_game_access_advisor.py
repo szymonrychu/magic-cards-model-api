@@ -846,3 +846,67 @@ def test_the_pregame_routes_still_accept_the_admin_key_with_the_gate_stood_down(
 
     assert response.status_code == 400, response.text
     assert "mulligan process is not under way" in response.text, response.text
+
+
+# ---------------------------------------------------------------------------
+# /report: a row is attributed to the credential, not to the request body
+# ---------------------------------------------------------------------------
+
+
+def test_a_report_is_attributed_to_the_credential_that_filed_it(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    """`/report` is one of the two POSTs an advisor may make, and
+    `report_problem` attributed its ledger row to `req.player` - a plain
+    request field. So an advisor of alice (or any seat) could file a row into
+    the log in *bob's* name, and nothing downstream would say otherwise. The
+    row is attributed to whoever the credential resolves to now; for an
+    advisor uid that is the human it watches."""
+    uid = advisor_uid(game, "alice")
+
+    response = client.post(
+        f"/api/games/{game}/report",
+        params={"uid": uid},
+        json={"player": "bob", "text": "bob is cheating, signed bob"},
+    )
+
+    assert response.status_code == 200, response.text
+    log = client.get(f"/api/games/{game}/log", params={"uid": admin_key}).json()["log"]
+    row = next(entry for entry in log if entry["action"] == "report_problem")
+    assert row["detail"]["player"] == "alice", row
+
+
+def test_a_seats_own_report_is_attributed_to_that_seat(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    uid = seat_uid(game, "bob")
+
+    response = client.post(
+        f"/api/games/{game}/report",
+        params={"uid": uid},
+        json={"player": "alice", "text": "the engine let me block with a tapped creature"},
+    )
+
+    assert response.status_code == 200, response.text
+    log = client.get(f"/api/games/{game}/log", params={"uid": admin_key}).json()["log"]
+    row = next(entry for entry in log if entry["action"] == "report_problem")
+    assert row["detail"]["player"] == "bob", row
+
+
+def test_the_admin_key_still_files_a_report_for_the_player_it_names(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    """The admin key opens no seat, so there is no resolved player to
+    attribute to and the body's own `player` is all there is - the operator
+    filing on a seat's behalf, which is what that field is left on the
+    request for."""
+    response = client.post(
+        f"/api/games/{game}/report",
+        params={"key": admin_key},
+        json={"player": "bob", "text": "filed by the operator"},
+    )
+
+    assert response.status_code == 200, response.text
+    log = client.get(f"/api/games/{game}/log", params={"uid": admin_key}).json()["log"]
+    row = next(entry for entry in log if entry["action"] == "report_problem")
+    assert row["detail"]["player"] == "bob", row
