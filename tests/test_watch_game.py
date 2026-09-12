@@ -5,6 +5,12 @@ the server) used to raise a bare `KeyError: 'log'` instead of a named edge,
 because the log fetch indexed `["log"]" straight off the response with no
 regard for what actually came back.
 
+Four more bare indexings survived that fix, all reachable on the same case:
+the `--game` unset default path (`latest_game`, which bypassed `_get_json`
+entirely and was called outside the loop's `try`), a `log` whose value is not
+a list, a log row that is not an entry, and a dict row with no `action`. Each
+has its own test below.
+
 Every test drives `watch_game.watch` against an `httpx.MockTransport` rather
 than a real server, so the whole edge set - old and new - runs in-process and
 fast.
@@ -175,3 +181,124 @@ def test_watcher_error_also_covers_a_non_404_non_200_response() -> None:
     assert result["edge"] == "watcher_error"
     assert result["status"] == 500
     assert result["body"] == {"detail": "boom"}
+
+
+def test_the_default_cli_path_with_no_game_named_reaches_a_named_edge_too() -> None:
+    """`--game` unset is the usage the module docstring itself shows, and it
+    was the one path with no named edge at all: `latest_game` indexed
+    `client.get("/api/games").json()["games"]` with no `_get_json` between
+    it and the response, and it is called OUTSIDE the loop's `try`. So a
+    vanished game on the default path raised `KeyError: 'games'` - the bare
+    indexing this module's own `WatchFailure` docstring says it exists to
+    prevent, on exactly the case the edge was added for."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "game not found"})
+
+    result = watch_game.watch(
+        "http://game",
+        None,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "game_gone"
+    assert result["status"] == 404
+    assert result["body"] == {"detail": "game not found"}
+    assert result["game"] is None, "no game was ever resolved, so none is named"
+
+
+def test_a_game_listing_of_the_wrong_shape_is_a_named_edge_not_a_keyerror() -> None:
+    """The same fetch, the other way it surprises: a 200 whose body does not
+    carry `games` at all."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    result = watch_game.watch(
+        "http://game",
+        None,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "watcher_error"
+    assert result["status"] == 200
+    assert result["body"] == {"unexpected": "shape"}
+
+
+def test_a_log_that_is_not_a_list_is_a_named_edge_not_a_typeerror() -> None:
+    """`_get_json`'s docstring promises "never a bare `KeyError`/`TypeError`
+    from indexing an unexpected shape", and it validated only that the key
+    was PRESENT. `entries[since:]` on a non-list is the `TypeError` half."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return httpx.Response(200, json={"log": {"0": {"action": "pass"}}})
+        return _state(turn=1)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "watcher_error"
+    assert result["status"] == 200
+    assert result["body"] == {"log": {"0": {"action": "pass"}}}
+
+
+def test_a_log_row_that_is_not_an_entry_is_a_named_edge_not_a_keyerror() -> None:
+    """`e["action"]` at the report scan and again in the `stalled` tail. In
+    the gauntlet a row without one degraded to
+    `watcher_failed {"error": "'action'"}` through the blanket except in
+    `scripts/eval_gauntlet.py` - the unreadable outcome these named edges
+    were added to replace."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return httpx.Response(200, json={"log": ["not an entry at all"]})
+        return _state(turn=1)
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=5,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "watcher_error"
+    assert result["status"] == 200
+    assert result["body"] == {"log": ["not an entry at all"]}
+
+
+def test_a_log_row_with_no_action_still_watches_rather_than_crashing() -> None:
+    """A dict row missing `action` is not a broken log - it is simply not a
+    problem report and has no verb to show in a `stalled` tail. Both reads
+    tolerate it, and the watch runs on to its real edge."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/log"):
+            return _log([{"seq": 1}, {"action": "pass", "seq": 2}])
+        return _state(turn=2, step="main1", priority_holder="bob")
+
+    result = watch_game.watch(
+        "http://game",
+        GAME,
+        0,
+        max_seconds=5,
+        stall_seconds=0.05,
+        poll=0.01,
+        transport=transport(handler),
+    )
+    assert result["edge"] == "stalled"
+    assert result["tail"] == [None, "pass"]

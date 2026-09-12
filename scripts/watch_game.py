@@ -27,13 +27,6 @@ from typing import Any
 import httpx
 
 
-def latest_game(client: httpx.Client) -> str:
-    games = client.get("/api/games").json()["games"]
-    if not games:
-        raise SystemExit("watch_game: no game on the server")
-    return str(games[-1]["game_id"])
-
-
 class WatchFailure(Exception):
     """A response `watch` did not get to interpret as game state.
 
@@ -69,10 +62,23 @@ class WatchFailure(Exception):
         self.body = body
 
 
-def _get_json(client: httpx.Client, url: str, *, key: str | None = None) -> Any:
+def _get_json(
+    client: httpx.Client,
+    url: str,
+    *,
+    key: str | None = None,
+    expect: type | tuple[type, ...] | None = None,
+) -> Any:
     """GET `url` and return its body (or `body[key]` when `key` is given),
     or raise `WatchFailure` naming exactly what was wrong - never a bare
-    `KeyError`/`TypeError` from indexing an unexpected shape."""
+    `KeyError`/`TypeError` from indexing an unexpected shape.
+
+    `expect` is the type the extracted value has to be, and it is the other
+    half of that promise: validating only that the key is PRESENT left
+    `entries[since:]` to raise the `TypeError` this docstring says cannot
+    happen. Pass it wherever the caller is about to index or iterate what
+    comes back.
+    """
     response = client.get(url)
     try:
         body: Any = response.json()
@@ -86,7 +92,43 @@ def _get_json(client: httpx.Client, url: str, *, key: str | None = None) -> Any:
         or (key is not None and key not in body)
     ):
         raise WatchFailure("watcher_error", response.status_code, body)
-    return body[key] if key is not None else body
+    value = body[key] if key is not None else body
+    if expect is not None and not isinstance(value, expect):
+        raise WatchFailure("watcher_error", response.status_code, body)
+    return value
+
+
+def latest_game(client: httpx.Client) -> str:
+    """The newest game on the server - the `--game` unset default the module
+    docstring's own usage line shows.
+
+    Through `_get_json` like every other fetch, and called inside the
+    caller's `try`: this used to index `.json()["games"]` directly, from
+    outside it, so the default CLI path answered a vanished game with
+    `KeyError: 'games'` - the bare indexing `WatchFailure` exists to prevent,
+    on the very case `game_gone` was added for.
+    """
+    games = _get_json(client, "/api/games", key="games", expect=list)
+    if not games:
+        raise SystemExit("watch_game: no game on the server")
+    newest = games[-1]
+    if not isinstance(newest, dict) or "game_id" not in newest:
+        raise WatchFailure("watcher_error", 200, {"games": games})
+    return str(newest["game_id"])
+
+
+def _log_entries(client: httpx.Client, game_id: str) -> list[dict[str, Any]]:
+    """This game's ledger, validated far enough that reading `action` off a
+    row cannot raise. A row that is not a dict at all is a shape this watcher
+    cannot interpret, so it becomes `watcher_error` carrying the real body
+    rather than a `KeyError` the gauntlet's blanket except would report as
+    `watcher_failed {"error": "'action'"}`. A dict row with no `action` is
+    NOT an error: it is simply not a problem report, and has no verb to show
+    in a `stalled` tail."""
+    entries = _get_json(client, f"/api/games/{game_id}/log", key="log", expect=list)
+    if not all(isinstance(entry, dict) for entry in entries):
+        raise WatchFailure("watcher_error", 200, {"log": entries})
+    return entries
 
 
 def watch(
@@ -99,14 +141,19 @@ def watch(
     transport: httpx.BaseTransport | None = None,
 ) -> dict[str, Any]:
     with httpx.Client(base_url=api, timeout=30.0, transport=transport) as client:
-        gid = game or latest_game(client)
+        try:
+            gid = game or latest_game(client)
+        except WatchFailure as exc:
+            # `game` rather than `gid`: nothing was resolved, so there is no
+            # game id to name, and `None` says exactly that.
+            return {"edge": exc.edge, "game": game, "status": exc.status, "body": exc.body}
         deadline = time.monotonic() + max_seconds
         last_len, last_change = since, time.monotonic()
         while True:
             try:
-                entries = _get_json(client, f"/api/games/{gid}/log", key="log")
+                entries = _log_entries(client, gid)
                 fresh = entries[since:]
-                reports = [e for e in fresh if e["action"] == "report_problem"]
+                reports = [e for e in fresh if e.get("action") == "report_problem"]
                 if reports:
                     return {"edge": "report", "game": gid, "seq": len(entries), "reports": reports}
                 state = _get_json(client, f"/api/games/{gid}")
@@ -130,7 +177,7 @@ def watch(
                     "game": gid,
                     "seq": len(entries),
                     "quiet_seconds": round(now - last_change),
-                    "tail": [e["action"] for e in entries[-5:]],
+                    "tail": [e.get("action") for e in entries[-5:]],
                     "turn": state.get("turn"),
                     "step": state.get("step"),
                     "priority_holder": state.get("priority_holder"),
