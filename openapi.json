@@ -3100,6 +3100,17 @@
             ],
             "title": "Shares"
           },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
+          },
           "tapping": {
             "anyOf": [
               {

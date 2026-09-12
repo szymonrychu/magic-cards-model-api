@@ -40,6 +40,36 @@ whoever works on the repo itself.
   `test_a_family_briefing_keeps_the_watch_for_on_every_row_of_every_branch`
   is that, and the squeezed-budget tests are now named for what they are.
 
+- **2026-09-12 - a cast can name its half, and the value is the engine's
+  own string.** `CastRequest.spell_face` takes exactly what
+  `Action.spell_face` said on the row being taken - post `GET
+  .../legal-actions`'s `"Tear"` straight back - and `engine_api._drive_cast`
+  hands it to `Casting.cast_as_split_half` first, ahead of every step that
+  reads it (`base_cost`, `targeting`, `determine_cost`). That round trip is
+  the non-obvious part and it is deliberate: the field is named after the
+  engine's own field rather than given a parallel api vocabulary, because a
+  seat that has to convert what it read before it can send it is a seat that
+  will convert it wrong, and there is no second place to look the spelling up.
+  Absent still means the front half - every caller written before this sends
+  nothing.
+
+  Before this the api was advertising an action it could not perform: the
+  engine enumerated Wear // Tear as two `cast` rows and the api cast Wear for
+  both of them. `baseline_seat._plain_cast`'s skip of `spell_face` rows was
+  the workaround, and it stays - now as a stated policy choice (a face is an
+  announcement like a mode or an X) rather than a capability gap, because
+  `Action.target_slots` is still face-blind engine-side and the Adventure half
+  is refused.
+
+  CR 715.3's Adventure is **refused**, not announced:
+  `Casting.cast_as_adventure` charges the right cost and stamps `face_played`,
+  but `Casting.targeting` reads the whole printing for every layout except a
+  split card, so Stomp is announced with no target requirement at all -
+  measured, a target is refused with "too many targets: 1 chosen where the
+  spell takes at most 0" and a targetless Stomp resolves dealing no damage.
+  `engine_api.adventure_face_refusal` says so in words and names where the fix
+  belongs. Open it up when the engine reads the announced face.
+
 - **2026-09-12 - two audit gaps: a public component vanished from
   `openapi.json`, and the baseline paid a round trip this branch existed to
   remove.**

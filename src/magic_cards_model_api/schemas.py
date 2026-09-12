@@ -446,6 +446,46 @@ class CastRequest(BoardRead):
     card: str | None = None
     """Card name, used when no card_id is given: first match in from_zone."""
     from_zone: str = "hand"
+    spell_face: str | None = None
+    """Which half of a split card this cast announces (CR 709.3), by that
+    half's own printed name - `"Tear"` for Wear // Tear's back half.
+
+    **The value is the engine's own.** It is exactly the string the engine put
+    in `Action.spell_face` on the row this cast is taking, so a seat hands back
+    what it was offered, unmodified and untransformed - post `GET
+    .../legal-actions`'s `"Tear"` straight into this field. That round trip is
+    the whole point of naming the field after the engine's own: a caller that
+    had to convert what it read into some parallel vocabulary of this api's
+    invention is a caller that will convert it wrong, and there is no second
+    place to look up the spelling.
+
+    `None` - absent, or explicitly null - is the card's plain front-face cast,
+    which is what every caller written before this field existed sends and
+    what a single-faced card only ever has. CR 709.3a: "Only the chosen half is
+    evaluated to see if it can be cast", so the announced half is what decides
+    the cost paid (`Casting.base_cost` reads that face's own `mana_cost`, not
+    the combined `{1}{R} // {W}` the printing carries, CR 709.4b) and what the
+    spell may target (CR 709.3b: "While on the stack, only the characteristics
+    of the half being cast exist") - Tear takes an enchantment where Wear takes
+    an artifact.
+
+    Three refusals, all in the engine's own words, none of them a silent
+    fallback to the front half:
+
+    - a face this card does not print ("Wear has no half called Naturalize");
+    - a face named on a card that has no halves to choose between
+      ("Lightning Bolt is not a split card (CR 709)");
+    - the Adventure half of an adventurer card (CR 715.3). The engine can
+      charge it (`Casting.cast_as_adventure`) but cannot yet *announce* it:
+      CR 715.3a evaluates only the Adventure's alternative characteristics to
+      see if it can be cast, while `Casting.targeting` reads the whole printing
+      for every layout except a split card, so Stomp would be announced with no
+      target requirement at all and resolve dealing no damage. Refused here
+      rather than cast wrong - see `engine_api.adventure_face_refusal`.
+
+    Casting *both* halves of a split card with fuse (CR 702.102) is a different
+    announcement again (`Casting.cast_fused`), and this api does not offer it
+    yet: this field always names exactly one half."""
     targets: list[str] | None = None
     """Card ids or player names."""
     modes: list[int] | None = None

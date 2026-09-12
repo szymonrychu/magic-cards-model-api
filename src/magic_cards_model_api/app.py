@@ -1571,6 +1571,7 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
         player=req.player,
         card=req.card or str(req.card_id),
         from_zone=req.from_zone,
+        spell_face=req.spell_face,
         targets=req.targets,
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,

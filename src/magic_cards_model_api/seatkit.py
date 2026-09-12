@@ -160,7 +160,47 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-14"
+PROTOCOL_VERSION = "seatkit-15"
+#: `seatkit-15` is an **additive request** change: `cast` gained `spell_face`,
+#: the half of a split card this cast announces (CR 709.3).
+#:
+#: The engine has always enumerated a split card as TWO `cast` actions, one
+#: per half, each carrying `Action.spell_face` and its own cost - and this api
+#: could not act on either of them. `CastRequest` had no face field and
+#: `engine_api._drive_cast` never called `Casting.cast_as_split_half`, so
+#: every cast of Wear // Tear resolved as Wear whatever row the seat thought
+#: it was taking. A seat handed "cast Tear" in `available_actions` followed
+#: its instructions and got the front half, or a refusal it could not
+#: diagnose; `baseline_seat._plain_cast` skipped every `spell_face` row for
+#: exactly that reason. The api was advertising an action it could not
+#: perform, which is the same defect class as prose describing a field that
+#: does not exist, except here the api itself was the liar.
+#:
+#: The value is the engine's own string, unmodified: what `Action.spell_face`
+#: says is what `spell_face` takes, so a seat posts back what it read. That
+#: round trip is the reason the field is named after the engine's own field
+#: rather than given a parallel vocabulary of this api's invention - there is
+#: no second place to look the spelling up.
+#:
+#: An MCP process built before this bump has no `spell_face` parameter to
+#: forward however clearly the prompt tells it to announce one, so the silent
+#: misbehaviour would be the old one: a seat casting the front half while
+#: believing it cast the back. That is what turning this into the PROTOCOL
+#: MISMATCH sentence prevents - same reasoning as `seatkit-8` and
+#: `seatkit-12`, both of which closed a "the tool has no parameter for it"
+#: gap on this same tool.
+#:
+#: What did NOT change: `spell_face` is the only parameter this bump touches
+#: anywhere, additive and optional, and absent still means the plain front
+#: face on every card. No response shape moved. Deliberately not folded in:
+#: fuse (CR 702.102, casting both halves as one spell, `Casting.cast_fused`),
+#: which is a second announcement with its own field and its own tests, and
+#: CR 715.3's Adventure, which this api refuses with a reason rather than
+#: announces - the engine's `Casting.targeting` reads the whole printing for
+#: every layout except a split card, so an Adventure that targets would be
+#: announced with no target requirement at all (see
+#: `engine_api.adventure_face_refusal`).
+#:
 #: `seatkit-14` is an **additive request** change and a **response** shape
 #: change, and every half of it is one thing: handing a seat everything it
 #: needs to *issue* its next action, not merely to choose one, in the answer

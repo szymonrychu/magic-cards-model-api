@@ -314,6 +314,24 @@ def _plain_cast(action: dict[str, Any]) -> bool:
     CR 715.3), a mode (CR 700.2), an X (CR 107.3a), a splice (CR 702.47) -
     and announcing one badly is a refusal, which the scorecard would then
     report as a rules error the agent never made.
+
+    `spell_face` stays on that list now that `CastRequest.spell_face` exists
+    and the api can genuinely cast a split card's back half: the skip is this
+    policy's own choice, not the capability gap it used to be, and
+    `tests/test_cast_spell_face.py` pins both halves of that sentence by
+    posting the very row this passes over. Two live facts keep the choice the
+    right one. The engine's `Action.target_slots` is still face-blind
+    (`legal_actions._cast_action` derives it from `Game._announcement_profile`,
+    which takes no face), so both of a split card's rows report the FRONT
+    half's phrase - "target artifact" on the Tear row - and `_fill_targets`
+    reads exactly that, plus the candidates the api enriched it with from the
+    same face-blind profile: this policy would announce an artifact for a
+    spell that destroys enchantments and earn a refusal in the ledger. And an
+    adventurer card's Adventure row (CR 715.3) is refused outright by the api,
+    for the reason `engine_api.adventure_face_refusal` spells out; nothing on
+    an enumerated row tells these two layouts apart without going back to the
+    card. Take face rows here when the engine reads the announced face into
+    `target_slots`, and not before.
     """
     return (
         action.get("from_zone") == "hand"

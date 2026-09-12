@@ -881,6 +881,7 @@ def build_server(seats: Seats) -> MCPServer:
     def cast(
         player_uid: str,
         card: str,
+        spell_face: str = "",
         targets: str = "",
         mana_sources: str = "",
         modes: str = "",
@@ -906,6 +907,27 @@ def build_server(seats: Seats) -> MCPServer:
                 engine taps only what the cost needs). Set `dry_run` to true to ask
                 "could I cast this?" without changing anything (a dry run never
                 blocks).
+
+        **A split card is two casts, and `spell_face` is how you say which.**
+                Wear // Tear is offered to you as TWO `cast` entries in
+                `available_actions`, one per half, each carrying its own
+                `spell_face` and its own cost - because CR 709.3 makes the half a
+                choice you announce "before putting it onto the stack", and
+                CR 709.3b gives the spell on the stack "only the characteristics of
+                the half being cast". Pass back the `spell_face` string from the row
+                you picked, exactly as you read it (`spell_face="Tear"`): it is the
+                engine's own spelling of that half's name and nothing here
+                transforms it. Leave it empty for the front half, which is every
+                ordinary, single-faced card. Tear takes an enchantment and costs
+                {W} where Wear takes an artifact and costs {1}{R}, so sending the
+                wrong one is refused on the target rather than silently cast.
+
+                An adventurer card (CR 715) is enumerated the same way - the
+                creature as a faceless row, its Adventure as a `spell_face` one -
+                but the Adventure row is refused for now, with a reason saying why:
+                CR 715.3a evaluates only the Adventure's alternative
+                characteristics, and this engine does not read them for targeting
+                yet. Cast the creature half (no `spell_face`) meanwhile.
 
                 A card sitting in your graveyard or exile is castable too, but only
                 under a *named* permission (CR 601.3: "a player can begin to cast a
@@ -1035,6 +1057,12 @@ def build_server(seats: Seats) -> MCPServer:
             body["card_id"] = card.strip()
         else:
             body["card"] = card
+        if spell_face.strip():
+            # CR 709.3's announcement, carried verbatim: the value a seat read
+            # off `Action.spell_face` is the value `CastRequest.spell_face`
+            # takes, with only the MCP wire's empty-string default stripped off
+            # (every string parameter on this server spells "absent" that way).
+            body["spell_face"] = spell_face.strip()
         if targets:
             body["targets"] = _parse_ids(targets)
         sources = seat.sources_or_all(mana_sources, state)

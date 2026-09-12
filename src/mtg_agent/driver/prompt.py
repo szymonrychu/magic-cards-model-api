@@ -559,6 +559,16 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   `battlefield_state` names every keyword it currently offers and what that
   keyword would cost.
 
+  **A split card is two casts.** Wear // Tear arrives as two `cast` rows in
+  the actions you are offered, one per half, each with its own cost and its own
+  `spell_face` - the half is a choice you announce before the spell is on the
+  stack, and on the stack it has only the chosen half's characteristics. Send
+  the row's `spell_face` back exactly as you read it
+  (`cast(card="Wear // Tear", spell_face="Tear", targets="<an enchantment>")`)
+  and leave it out for the front half, which is every ordinary card. An
+  adventurer card is enumerated the same way, and its Adventure row is refused
+  for now with a reason saying why - cast the creature half meanwhile.
+
   Any of those - and `pass` and `pass_until` too, since a pass is exactly
   where a spell or ability on the stack resolves - can hand back a `notices`
   list alongside the ordinary result. Each entry means the engine recognised
