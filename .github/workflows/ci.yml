@@ -7,9 +7,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Local suite takes ~196s; this leaves generous headroom for a colder CI
-    # runner plus checkout and mise install.
-    timeout-minutes: 20
+    # Local suite takes ~211s and this job runs it twice (in-memory, then
+    # postgres); 35 minutes leaves generous headroom for a colder CI runner
+    # plus checkout and mise install on top of both passes.
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: magic-cards-model-api
