@@ -79,7 +79,11 @@ class NewUiPlayer(RequestModel):
 
     Creation-time only, by design: a buddy is minted here, with its own uid,
     and from then on it is restarted and stopped through the same
-    `ai-seat/start|stop` routes a seat uses. There is no mid-game toggle."""
+    `ai-seat/start|stop` routes a seat uses. There is no mid-game toggle.
+
+    **Only with `ai: false`.** A buddy advises a human; an AI seat acts
+    through its own seat uid and never reads the advice ledger, so the pair
+    is refused rather than minting an advisor nothing would read."""
     buddy_agent: AgentSettings | None = None
     """How the buddy runs. Only with `buddy: true`; absent, the server's
     defaults apply, exactly as for `agent`.
@@ -151,6 +155,17 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
             raise ValueError(f"{player.username}: agent settings are only for an ai seat")
         if player.buddy_agent is not None and not player.buddy:
             raise ValueError(f"{player.username}: buddy agent settings are only for a buddy")
+        if player.buddy and player.ai:
+            # A buddy advises a human. An AI seat acts through its own seat
+            # uid and never reads the advice ledger, so an advisor minted
+            # here would propose into a stream with no reader - and in
+            # kubernetes mode it would cost a second full Job (agent plus
+            # driver) to do it. `docs/ai_buddy_brief.md` opens by telling the
+            # advisor it sits beside a human; this is what makes that true.
+            raise ValueError(
+                f"{player.username}: a buddy advises a human seat - an ai seat plays "
+                "through its own uid and never reads the advice its buddy would write"
+            )
     agents = {
         player.username: player.agent or AgentSettings.default(os.environ)
         for player in req.players

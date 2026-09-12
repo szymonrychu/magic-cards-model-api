@@ -11078,7 +11078,7 @@
     },
     "/api/games/{game_id}": {
       "delete": {
-        "description": "Delete a game outright. `uid` must be a seat uid of this game, or `key`\nthis game's admin key - the same guard `decks_api.end_lobby_game` uses,\nmirrored here because this route deletes *any* game (not only a\nlobby-booted one) and `GET /api/ui/games` publishes every lobby-booted\ngame's id with no credential required to read the list itself; without\nthis check, reading the list would be enough to delete a game nobody\nhanded the caller a seat or an admin key for.",
+        "description": "Delete a game outright. `uid` must be a seat uid of this game, or `key`\nthis game's admin key - the same guard `decks_api.end_lobby_game` uses,\nmirrored here because this route deletes *any* game (not only a\nlobby-booted one) and `GET /api/ui/games` publishes every lobby-booted\ngame's id with no credential required to read the list itself; without\nthis check, reading the list would be enough to delete a game nobody\nhanded the caller a seat or an admin key for.\n\nThe deletion itself is `lobby.reset_game`, the same release End game\nruns, under this route's own audit action - see `lobby.py` for why\ndeleting without releasing left a watcher polling, a seat process alive,\na registry answering for uids of a game that no longer existed, and (in\n`wrapper` mode) a driver that 409s every later dispatch for the life of\nits container.",
         "operationId": "delete_game_api_games__game_id__delete",
         "parameters": [
           {

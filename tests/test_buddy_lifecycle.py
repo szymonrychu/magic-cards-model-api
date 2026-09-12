@@ -152,6 +152,59 @@ def test_buddy_agent_settings_without_a_buddy_are_refused(client: TestClient) ->
     assert "buddy" in response.text
 
 
+def test_a_buddy_on_an_ai_seat_is_refused(client: TestClient) -> None:
+    """A buddy is a second pair of eyes for a HUMAN - `docs/ai_buddy_brief.md`
+    opens by saying it sits beside one, and nothing else made that true. An
+    AI seat acts through its own seat uid and never reads the advice ledger,
+    so `{"ai": true, "buddy": true}` minted an advisor uid whose proposals
+    nothing would ever read and, in kubernetes mode, scheduled a second full
+    Job (agent plus driver, 250m/1Gi) to write them.
+
+    Refused for the same reason and in the same pass as the two settings
+    checks beside it, and the message says why rather than only that it is
+    not allowed."""
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {
+                    "username": "bot",
+                    "decklist_text": LEGAL_DECK,
+                    "ai": True,
+                    "buddy": True,
+                },
+                {"username": "you", "decklist_text": LEGAL_DECK_B, "ai": False},
+            ]
+        },
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "bot" in detail
+    assert "buddy" in detail
+    assert "human" in detail, f"the refusal never says why a buddy needs a human seat: {detail!r}"
+
+
+def test_a_buddy_on_an_ai_seat_mints_no_advisor_and_starts_nothing(
+    client: TestClient, spawnable: None, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """The refusal is before any of the work: no game, so no advisor uid and
+    nothing started for one."""
+    before = set(store.ids())
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {"username": "bot", "decklist_text": LEGAL_DECK, "ai": True, "buddy": True},
+                {"username": "you", "decklist_text": LEGAL_DECK_B, "ai": False},
+            ]
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert set(store.ids()) == before, "a refused boot still created a game"
+    assert fresh_registry._runners == {}, "a refused boot still started something"
+    assert fresh_registry._dispatched == {}, "a refused boot still dispatched something"
+
+
 def test_the_buddy_is_started_beside_the_ai_seats(
     client: TestClient, spawnable: None, fresh_registry: ai_seat.AiSeatRegistry
 ) -> None:
