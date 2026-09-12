@@ -15,7 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from mtg_agent.driver.guides import Decklist, GuideLibrary, parse_decklist
+from mtg_agent.driver.guides import (
+    Decklist,
+    GuideLibrary,
+    load_signature,
+    parse_decklist,
+    slugify,
+)
 
 # Private because nothing outside the module should pick a rung of the trim
 # ladder - but the ORDER the rungs are taken in is exactly what
@@ -26,6 +32,7 @@ from mtg_agent.driver.matchup_card import (
     CARD_TARGET_BYTES,
     WATCH_FOR_CAP,
     _rendering,
+    generic_keep_rule,
     load_boarding_plan,
     render_matchup_card,
     signature_index,
@@ -981,6 +988,190 @@ def test_a_malformed_boarding_plan_degrades_without_raising(tmp_path):
     card = render_matchup_card(guide, parse_decklist(guide.decklist.read_text()))
     assert card.tells == []
     assert "no boarding plan" in card.text.lower()
+
+
+# ---- a third repo's schema, read through ONE parser -----------------------
+#
+# `signature_index` used to parse `archetype.json` a SECOND time, and more
+# weakly than `guides.load_signature` did: no `isinstance` guard at either
+# level, so `{"signature": 5}` raised here while `load_signature` survived
+# it, and `{"cards": 5}` raised in both. Two readers of one third-repo schema,
+# differently hardened, is the underlying defect - the weaker one drifts
+# again the moment the schema moves. So the index now consumes
+# `load_signature`'s already-validated result, and these tests are what keeps
+# the two from separating.
+
+
+def _corpus_with(tmp_path, **files: str) -> GuideLibrary:
+    """The vendored slice's archetype files, plus `files` as extra decks -
+    each one an `archetype.json` body written verbatim, however malformed."""
+    root = tmp_path / "guides"
+    for source in sorted((FIXTURE_GUIDES / "decks").iterdir()):
+        if not (source / "archetype.json").is_file():
+            continue
+        deck = root / "decks" / source.name
+        deck.mkdir(parents=True)
+        (deck / "archetype.json").write_text((source / "archetype.json").read_text())
+        (deck / "decklist.txt").write_text("4 Lightning Bolt\n")
+    for slug, body in files.items():
+        deck = root / "decks" / slug
+        deck.mkdir(parents=True, exist_ok=True)
+        (deck / "decklist.txt").write_text("4 Lightning Bolt\n")
+        (deck / "archetype.json").write_text(body)
+    return GuideLibrary(root)
+
+
+MALFORMED_ARCHETYPES = {
+    # Reproduced: `TypeError: 'int' object is not iterable`, out of
+    # `signature_index`'s own `for group in data.get("signature")`. The
+    # corresponding `load_signature` call SURVIVED this one, which is exactly
+    # how a second, weaker parser hides.
+    "zz-scalar-signature": '{"archetype": "zz a", "signature": 5}',
+    # Reproduced in BOTH readers.
+    "zz-scalar-cards": '{"archetype": "zz b", "signature": [{"cards": 5, "min": 1}]}',
+    "zz-mapping-cards": '{"archetype": "zz c", "signature": [{"cards": {"a": 1}, "min": 1}]}',
+    "zz-no-min": '{"archetype": "zz d", "signature": [{"cards": ["Ragavan"]}]}',
+    "zz-not-json": "{ not json at all",
+}
+
+
+def test_signature_index_survives_every_malformed_shape_in_the_corpus(tmp_path):
+    """One malformed sibling must cost that archetype its row in the tells
+    table and nothing else. It used to raise out of the loop instead, which
+    took the whole card - and therefore the whole dispatch - with it."""
+    library = _corpus_with(tmp_path, **MALFORMED_ARCHETYPES)
+    guide = library.get("dimir-frog")
+    index = signature_index(guide)
+    assert index, "the well-formed siblings still have their signature cards"
+    for slug in MALFORMED_ARCHETYPES:
+        assert slug not in index
+    assert all(isinstance(cards, tuple) and cards for cards in index.values())
+
+
+def test_signature_index_reads_the_corpus_through_load_signature(tmp_path):
+    """The unification, asserted rather than assumed: every key the index
+    carries is backed by a signature `load_signature` accepted, and every
+    file `load_signature` accepted has a key. A reader that disagreed with
+    `load_signature` about which files are usable is the defect itself.
+    """
+    library = _corpus_with(tmp_path, **MALFORMED_ARCHETYPES)
+    guide = library.get("dimir-frog")
+    index = signature_index(guide)
+
+    expected: dict[str, tuple[str, ...]] = {}
+    for path in guide.sibling_archetype_files():
+        signature = load_signature(path)
+        if signature is None:
+            continue
+        cards = tuple(card for clause in signature.signature for card in clause.cards)
+        for key in (slugify(path.parent.name), slugify(signature.name)):
+            expected.setdefault(key, cards)
+    assert index == expected
+    # And the cards really are the signature's own, in the file's order -
+    # not a re-derivation that happens to agree on the key set.
+    frog = load_signature(guide.root / "archetype.json")
+    assert index[slugify(frog.name)] == tuple(c for cl in frog.signature for c in cl.cards)
+
+
+# ---- a malformed boarding plan degrades too --------------------------------
+#
+# The plan is read out of the same third repo on the same bind mount, and the
+# card's readers had the same ad-hoc-coercion problem: `.get("x", {}).get(...)`
+# where `.get("x") or {}` was already the idiom 24 lines away, `float()` over
+# whatever the file happened to hold, and a bare `[:3]` over a value that is
+# a list only by convention.
+
+
+def _plan_card(tmp_path, plan: object):
+    """A guide whose boarding plan is `plan`, rendered. Returns the card."""
+    root = tmp_path / "guides" / "decks" / "brewed"
+    d3 = root / "analysis" / "r1" / "domain3-matchup-threat"
+    d3.mkdir(parents=True)
+    (root / "decklist.txt").write_text("4 Lightning Bolt\n20 Mountain\n")
+    (d3 / "boarding-plan.json").write_text(json.dumps(plan))
+    guide = GuideLibrary(tmp_path / "guides").get("brewed")
+    return render_matchup_card(guide, parse_decklist(guide.decklist.read_text()))
+
+
+def test_a_null_play_plan_does_not_raise_out_of_the_keep_rule():
+    """Reproduced: `AttributeError: 'NoneType' object has no attribute
+    'get'`. `m.get("play_plan", {})` returns the stored `None` rather than
+    the default, which is the whole difference between it and the
+    `m.get("play_plan") or {}` the module already used elsewhere."""
+    assert generic_keep_rule({"matchups": [{"name": "x", "play_plan": None}]}) == ("", 0, 0)
+
+
+def test_a_non_numeric_meta_share_does_not_raise_out_of_the_keep_rule():
+    """Reproduced: `ValueError: could not convert string to float: '20%'`.
+    A share the file writes as a percentage string is a plausible thing for
+    a hand-edited plan to hold, and it is a tie-break weight - not a reason
+    to refuse the whole card."""
+    keep, count, total = generic_keep_rule(
+        {"matchups": [{"name": "x", "play_plan": {"keep": "two lands"}, "meta_share": "20%"}]}
+    )
+    assert (keep, count, total) == ("two lands", 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("label", "plan"),
+    [
+        # Reproduced: `KeyError: slice(None, 3, None)` - `[:3]` over a
+        # mapping, which subscripts rather than slices.
+        ("deck_tech cards is a mapping", {"deck_tech": [{"name": "n", "cards": {"a": 1}}]}),
+        (
+            "a tech line's matchups is a mapping",
+            {"deck_tech": [{"name": "n", "lines": [{"mode": "m", "matchups": {"a": 1}}]}]},
+        ),
+        ("deck_tech is a scalar", {"deck_tech": 5}),
+        ("deck_tech is a mapping", {"deck_tech": {"name": "n"}}),
+        ("a tech row's lines is a scalar", {"deck_tech": [{"name": "n", "lines": 5}]}),
+        ("gaps is a scalar", {"gaps": 5}),
+        ("matchups is a mapping", {"matchups": {"name": "x"}}),
+        # Reproduced: `TypeError: unhashable type: 'list'` - section 3 keys a
+        # dict on the raw `name`, while the tells table had already coerced
+        # the same field with `str()`. Two readers of one field again.
+        ("a matchup name is a list", {"matchups": [{"name": ["a", "b"], "meta_share": 1.0}]}),
+        ("a matchup name is a mapping", {"matchups": [{"name": {"a": 1}, "meta_share": 1.0}]}),
+        ("a matchup meta_share is a string", {"matchups": [{"name": "x", "meta_share": "20%"}]}),
+        ("a matchup play block is a list", {"matchups": [{"name": "x", "play": ["in"]}]}),
+        ("a matchup play_plan is a list", {"matchups": [{"name": "x", "play_plan": []}]}),
+        ("opponent_plan is a scalar", {"matchups": [{"name": "x", "opponent_plan": 5}]}),
+        (
+            "key_cards is a mapping",
+            {"matchups": [{"name": "x", "opponent_plan": {"key_cards": {}}}]},
+        ),
+        ("the whole plan is a list", []),
+    ],
+)
+def test_a_malformed_boarding_plan_field_degrades_rather_than_raising(tmp_path, label, plan):
+    """Every shape reproduced against the real renderer. The card is allowed
+    to say less; it is not allowed to raise, because the only caller is
+    `/dispatch` and a raise there costs both seats the game."""
+    card = _plan_card(tmp_path, plan)
+    assert card.text.startswith("## Matchup card")
+    assert card.byte_size <= CARD_HARD_CAP_BYTES, label
+
+
+def test_a_matchup_whose_name_is_a_list_keeps_its_row_and_its_detail(tmp_path):
+    """Not merely "does not raise": the row survives, filed under the one
+    spelling both readers agree on, so the tells table and section 3 still
+    describe the same matchup."""
+    card = _plan_card(
+        tmp_path,
+        {
+            "matchups": [
+                {
+                    "name": ["boros", "energy"],
+                    "meta_share": 12.0,
+                    "stance": "race",
+                    "play_plan": {"keep": "two lands and a bolt"},
+                }
+            ]
+        },
+    )
+    assert len(card.tells) == 1
+    assert card.tells[0].archetype == "unknown"
+    assert "two lands and a bolt" in card.text
 
 
 def test_a_plan_with_no_matchups_still_renders_the_deck_section(tmp_path):

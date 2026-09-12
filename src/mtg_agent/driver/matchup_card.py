@@ -54,7 +54,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .guides import UNKNOWN_ARCHETYPE, DeckGuide, Decklist, held_faces, holds, slugify
+from .guides import (
+    UNKNOWN_ARCHETYPE,
+    DeckGuide,
+    Decklist,
+    held_faces,
+    holds,
+    load_signature,
+    slugify,
+)
 
 #: What a caller hands the card: the parsed 75 the server dealt. A bare
 #: one-board mapping is accepted for the caller that only has one (see
@@ -257,6 +265,82 @@ def load_boarding_plan(guide: DeckGuide | None) -> dict | None:
     return plan if isinstance(plan, dict) else None
 
 
+# ---- reading a plan out of a repo that moves on its own schedule ---------
+#
+# Everything below reads `boarding-plan.json` from the same read-only bind
+# mount `archetype.json` comes off, at a ref nothing here pins. So no field
+# it names is known to hold the type it is written with, and the card's only
+# caller is `/dispatch` - where a raise costs BOTH seats the game before
+# either of them has played a card.
+#
+# These four are the whole vocabulary for reading it, and they are total:
+# every one of them answers for any input at all. The alternative is what
+# was here before - `.get("x", {}).get(...)` on one line and the safe
+# `.get("x") or {}` twenty-four lines later, `float()` over whatever the file
+# happened to hold, a bare `[:3]` over a value that is a list only by
+# convention - which is not a policy, just the shape each site happened to
+# take.
+
+
+def _mapping(value: object) -> Mapping:
+    """A nested block, or an empty one. `value` is what the file holds, which
+    may be `null` - and `.get(key, {})` returns a stored `None` rather than
+    the default, which is the difference that raised."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _rows(value: object) -> list[dict]:
+    """A list of blocks, keeping only the entries that are blocks."""
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _strings(value: object) -> list[str]:
+    """A list of names. Only a list: a mapping is subscripted rather than
+    sliced, so `(value or [])[:3]` over one is a `KeyError` naming the slice
+    itself."""
+    return (
+        [text for text in (_text(item) for item in value) if text]
+        if isinstance(value, list)
+        else []
+    )
+
+
+def _text(value: object) -> str:
+    """A field read as prose. A list or a mapping is not prose, so it reads as
+    absent rather than as its `repr` - and, being a string either way, it can
+    be used as a dictionary key without caring what the file held."""
+    if isinstance(value, str):
+        return value
+    if value is None or isinstance(value, bool | Mapping | list):
+        return ""
+    return str(value)
+
+
+def _number(value: object) -> float:
+    """A share or a count. A plan hand-edited to `"20%"` has a share that is
+    unreadable, not a plan that is unrenderable - and the only thing the
+    number does here is order rows and tie-break a keep."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0.0
+    try:
+        return float(value)
+    except ValueError:
+        return 0.0
+
+
+def _display(matchup: Mapping) -> str:
+    """The archetype name a matchup row calls itself, read the ONE way.
+
+    Both the tells table and section 3 key on this field, and they used to
+    read it differently: the table coerced it with `str()` while section 3
+    built `{m.get("name"): m}` on the raw value - so a name that was a list
+    raised `TypeError: unhashable type` there, and a row with no name at all
+    quietly lost its detail because the table had already turned it into
+    `unknown` and the index was keyed on `None`.
+    """
+    return _text(matchup.get("name")) or UNKNOWN_ARCHETYPE
+
+
 def signature_index(guide: DeckGuide | None) -> dict[str, tuple[str, ...]]:
     """Canonical archetype key -> that archetype's signature cards.
 
@@ -266,28 +350,30 @@ def signature_index(guide: DeckGuide | None) -> dict[str, tuple[str, ...]]:
     affinity"`, and `pinnacle affinity` is what every plan in the corpus
     writes. Keying on the directory alone silently loses a third of the
     table's tells.
+
+    Read through `guides.load_signature`, never parsed here. This used to be
+    a second reader of `archetype.json` - the same third-repo schema, its own
+    `json.loads`, and weaker checks than the first: no `isinstance` at either
+    level, so `{"signature": 5}` raised out of THIS function while
+    `load_signature` shrugged it off, and each reader had its own opinion of
+    which files were usable. A second reader that is weaker than the first
+    will drift from it again, so there is one reader and this asks it.
     """
     if guide is None:
         return {}
     index: dict[str, tuple[str, ...]] = {}
     for path in guide.sibling_archetype_files():
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError):
+        signature = load_signature(path)
+        if signature is None:
             continue
-        if not isinstance(data, dict):
-            continue
-        cards: list[str] = []
-        for group in data.get("signature") or []:
-            if isinstance(group, dict):
-                cards += [str(c) for c in group.get("cards") or []]
+        cards = tuple(card for clause in signature.signature for card in clause.cards)
         if not cards:
             continue
-        keys = {slugify(path.parent.name)}
-        if isinstance(data.get("archetype"), str):
-            keys.add(slugify(data["archetype"]))
-        for key in keys:
-            index.setdefault(key, tuple(cards))
+        # `signature.name` is the file's own name for itself, already fallen
+        # back to the directory name when the file does not give a usable
+        # one - so both keys come out of the one validated result.
+        for key in (slugify(path.parent.name), slugify(signature.name)):
+            index.setdefault(key, cards)
     return index
 
 
@@ -303,7 +389,7 @@ def generic_keep_rule(plan: dict) -> tuple[str, int, int]:
     so the same plan always renders the same rule.
     """
     keeps = [
-        (str(m.get("play_plan", {}).get("keep") or "").strip(), float(m.get("meta_share") or 0.0))
+        (_text(_mapping(m.get("play_plan")).get("keep")).strip(), _number(m.get("meta_share")))
         for m in _matchups(plan)
     ]
     keeps = [(text, share) for text, share in keeps if text]
@@ -318,28 +404,27 @@ def generic_keep_rule(plan: dict) -> tuple[str, int, int]:
 
 
 def _matchups(plan: dict) -> list[dict]:
-    raw = plan.get("matchups")
-    return [m for m in raw if isinstance(m, dict)] if isinstance(raw, list) else []
+    return _rows(plan.get("matchups"))
 
 
 def _tells(plan: dict, index: dict[str, tuple[str, ...]], trim: _Trim) -> list[Tell]:
     tells = []
     for matchup in _matchups(plan):
-        display = str(matchup.get("name") or UNKNOWN_ARCHETYPE)
+        display = _display(matchup)
         archetype = slugify(display)
-        play_plan = matchup.get("play_plan") or {}
+        play_plan = _mapping(matchup.get("play_plan"))
         tells.append(
             Tell(
                 archetype=archetype,
                 display=display,
-                meta_share=float(matchup.get("meta_share") or 0.0),
-                stance=str(matchup.get("stance") or "-"),
-                posture=str(play_plan.get("posture") or "-"),
+                meta_share=_number(matchup.get("meta_share")),
+                stance=_text(matchup.get("stance")) or "-",
+                posture=_text(play_plan.get("posture")) or "-",
                 # Empty, not merely short, when the rung has given up the
                 # column: a `Tell` must never carry prose the card does not
                 # show, or a caller reading it back overstates the card.
                 watch_for=(
-                    _clip(str(play_plan.get("watch_for") or ""), trim.watch_cap)
+                    _clip(_text(play_plan.get("watch_for")), trim.watch_cap)
                     if trim.watch_column
                     else ""
                 ),
@@ -411,7 +496,7 @@ def _missing(matchups: list[dict], decklist: Held) -> list[str]:
     absent = set()
     for matchup in matchups:
         for side in ("play", "draw"):
-            block = matchup.get(side) or {}
+            block = _mapping(matchup.get(side))
             for key in ("in", "out"):
                 for _, name in _swap_names(block.get(key)):
                     if not holds(held, name):
@@ -485,31 +570,32 @@ def _deck_section(plan: dict) -> list[str]:
             "own, in section 3).",
             "",
         ]
-    tech = [row for row in (plan.get("deck_tech") or []) if isinstance(row, dict)]
-    gaps = [gap for gap in (plan.get("gaps") or []) if isinstance(gap, dict)]
-    tech_lines = [
-        [line for line in (row.get("lines") or []) if isinstance(line, dict)] for row in tech
-    ]
+    tech = _rows(plan.get("deck_tech"))
+    gaps = _rows(plan.get("gaps"))
+    tech_lines = [_rows(row.get("lines")) for row in tech]
     # A gap is the only place the plan admits it has no answer, so it counts
     # double and is rendered at double the room.
     body = sum(len(rows) for rows in tech_lines) + len(tech) + 2 * len(gaps)
     room = max(_DECK_SECTION_CHARS // body, _DECK_LINE_FLOOR) if body else 0
     for row, rows in zip(tech, tech_lines, strict=True):
-        cards = ", ".join(str(c) for c in (row.get("cards") or [])[:3])
-        head = f"- **{row.get('name')}**" + (f" ({cards})" if cards else "")
-        lines.append(f"{head} - {_clip(str(row.get('quirk') or ''), room)}".rstrip(" -"))
+        cards = ", ".join(_strings(row.get("cards"))[:3])
+        head = f"- **{_text(row.get('name')) or UNKNOWN_ARCHETYPE}**" + (
+            f" ({cards})" if cards else ""
+        )
+        lines.append(f"{head} - {_clip(_text(row.get('quirk')), room)}".rstrip(" -"))
         for line in rows:
-            against = ", ".join(str(m) for m in (line.get("matchups") or [])[:2])
-            head = f"  - {_clip(str(line.get('mode') or ''), 34)}" + (
+            against = ", ".join(_strings(line.get("matchups"))[:2])
+            head = f"  - {_clip(_text(line.get('mode')), 34)}" + (
                 f" vs {against}" if against else ""
             )
-            lines.append(f"{head}: {_clip(str(line.get('why') or ''), room)}".rstrip(": "))
+            lines.append(f"{head}: {_clip(_text(line.get('why')), room)}".rstrip(": "))
     if tech:
         lines.append("")
     if gaps:
         lines.append("**Known holes in this plan** - the plan says so itself:")
         for gap in gaps:
-            lines.append(f"- vs {gap.get('matchup')}: {_clip(str(gap.get('why') or ''), 2 * room)}")
+            matchup = _text(gap.get("matchup")) or UNKNOWN_ARCHETYPE
+            lines.append(f"- vs {matchup}: {_clip(_text(gap.get('why')), 2 * room)}")
         lines.append("")
     return lines
 
@@ -601,7 +687,7 @@ def _top_three_section(
 ) -> list[str]:
     if not matchups:
         return []
-    by_display = {m.get("name"): m for m in matchups}
+    by_display = {_display(m): m for m in matchups}
     lines = [
         "### 3. The three archetypes that are most of the field",
         "",
@@ -612,43 +698,42 @@ def _top_three_section(
     survives_cap = (60, 45, 30, 0)[detail]
     keys_cap = (3, 3, 2, 2)[detail]
     for rank, tell in enumerate(tells, start=1):
-        matchup = by_display.get(tell.display) or {}
-        play_plan = matchup.get("play_plan") or {}
-        opponent = matchup.get("opponent_plan") or {}
+        matchup = _mapping(by_display.get(tell.display))
+        play_plan = _mapping(matchup.get("play_plan"))
+        opponent = _mapping(matchup.get("opponent_plan"))
         lines.append(f"#### {rank}. `{tell.archetype}` - {_pct(tell.meta_share)} of the field")
         lines.append(
             f"- stance **{tell.stance}**: "
-            f"{_clip(str(matchup.get('stance_rationale') or ''), rationale_cap)}"
+            f"{_clip(_text(matchup.get('stance_rationale')), rationale_cap)}"
         )
-        lines.append(f"- keep: {_clip(str(play_plan.get('keep') or '-'), keep_cap)}")
+        lines.append(f"- keep: {_clip(_text(play_plan.get('keep')) or '-', keep_cap)}")
         lines.append(
-            f"- goldfish for: {_clip(str(play_plan.get('goldfish_for') or '-'), keep_cap)}"
+            f"- goldfish for: {_clip(_text(play_plan.get('goldfish_for')) or '-', keep_cap)}"
         )
-        lines.append(f"- watch for: {_clip(str(play_plan.get('watch_for') or '-'), watch_cap)}")
+        lines.append(f"- watch for: {_clip(_text(play_plan.get('watch_for')) or '-', watch_cap)}")
         keys = [
-            str(k.get("card"))
-            for k in (opponent.get("key_cards") or [])
-            if isinstance(k, dict) and k.get("card")
+            card
+            for card in (_text(k.get("card")) for k in _rows(opponent.get("key_cards")))
+            if card
         ]
-        their_plan = f"- their plan is to **{opponent.get('posture') or '-'}**: " + _clip(
-            str(opponent.get("posture_why") or ""), rationale_cap
+        posture = _text(opponent.get("posture")) or "-"
+        their_plan = f"- their plan is to **{posture}**: " + _clip(
+            _text(opponent.get("posture_why")), rationale_cap
         )
         if keys:
             their_plan += f" Their cards that matter: {', '.join(keys[:keys_cap])}."
         lines.append(their_plan)
-        survives = [
-            s for s in (matchup.get("survives_opposing_board") or []) if isinstance(s, dict)
-        ]
+        survives = _rows(matchup.get("survives_opposing_board"))
         if survives:
             rendered = []
             for entry in survives[:keys_cap]:
-                text = f"{entry.get('card')} ({entry.get('verdict')})"
+                text = f"{_text(entry.get('card'))} ({_text(entry.get('verdict'))})"
                 if survives_cap:
-                    text += f" - {_clip(str(entry.get('why') or ''), survives_cap)}"
+                    text += f" - {_clip(_text(entry.get('why')), survives_cap)}"
                 rendered.append(text)
             lines.append("- your cards against their board: " + "; ".join(rendered))
         for side, label in (("play", "on the play"), ("draw", "on the draw")):
-            block = matchup.get(side) or {}
+            block = _mapping(matchup.get(side))
             lines.append(
                 f"- {label}: in {_swap(block.get('in'), decklist)} "
                 f"/ out {_swap(block.get('out'), decklist)}"
