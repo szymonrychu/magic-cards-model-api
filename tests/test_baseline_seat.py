@@ -358,6 +358,95 @@ def test_blocks_no_more_than_lethal_demands(client, game):
     assert len(move.body["blocks"]) == 1
 
 
+# -- the narrowing a refused declaration walks down --------------------------
+
+
+def test_the_attack_narrowing_is_monotonic_and_bottoms_out_empty(client, game):
+    """`drop` is the only thing between a refused declaration and an
+    unbounded re-post loop, so the sequence it generates has to be a descent
+    that ENDS.
+
+    The arithmetic was `chosen[: len(chosen) - drop]`, which is a negative
+    slice the moment `drop` passes `len(chosen)`: with two pairs, `drop == 3`
+    asked for `chosen[:-1]` and put a pair BACK. The answers oscillated
+    `2, 1, 0, 1, 0, ...` instead of bottoming out, so a seat narrowing past
+    the end re-offered a declaration it had already had refused.
+    """
+    first = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    second = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    into_declare_attackers(client, game, "alice")
+    board, actions = look(client, game, "alice")
+
+    sizes = [
+        len(baseline_seat.attack_declaration(board, actions, "alice", drop=drop))
+        for drop in range(6)
+    ]
+
+    assert sizes[0] == 2, (sizes, first, second)
+    assert sizes == sorted(sizes, reverse=True), sizes
+    assert sizes[2:] == [0, 0, 0, 0], sizes
+
+
+def test_the_block_narrowing_is_monotonic_and_bottoms_out_empty(client, game):
+    """The same arithmetic, the same defect, on the other declaration."""
+    first = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    second = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    battlefield_creature(client, game, "Grizzly Bears", "bob")
+    battlefield_creature(client, game, "Savannah Lions", "bob")
+    set_life(client, game, "bob", 2)
+    into_declare_blockers(
+        client,
+        game,
+        "alice",
+        [{"card_id": first, "defender": "bob"}, {"card_id": second, "defender": "bob"}],
+    )
+    board, actions = look(client, game, "bob")
+
+    sizes = [
+        len(baseline_seat.block_declaration(board, actions, "bob", drop=drop)) for drop in range(6)
+    ]
+
+    assert sizes[0] == 2, sizes
+    assert sizes == sorted(sizes, reverse=True), sizes
+    assert sizes[2:] == [0, 0, 0, 0], sizes
+
+
+def test_a_refused_declaration_is_narrowed_and_then_dropped_not_re_posted(client, game):
+    """The empty declaration is a fixed point, and that is what made the
+    narrowing unbounded rather than merely imprecise.
+
+    A blocking requirement (CR 509.1a) is the obvious way for the engine to
+    refuse the empty answer, and `drop` cannot answer it: every further step
+    re-posts the identical empty body, which the old docstring called "the
+    narrowing always terminates". Bounded now - one post per distinct answer
+    and no more, and then the seat has nothing left to say, which is what
+    lets `play_out`'s stall guard see an idle round at all.
+    """
+    first = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    second = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    battlefield_creature(client, game, "Grizzly Bears", "bob")
+    set_life(client, game, "bob", 2)
+    into_declare_blockers(
+        client,
+        game,
+        "alice",
+        [{"card_id": first, "defender": "bob"}, {"card_id": second, "defender": "bob"}],
+    )
+    seam = RefusingSeam(api(client))
+    seat = baseline_seat.BaselineSeat(seam, game, "bob", seats_for(game)["bob"])
+
+    posted = []
+    for _ in range(8):
+        move = seat.step()
+        if move is None:
+            break
+        posted.append(move.body["blocks"])
+
+    assert [len(blocks) for blocks in posted] == [1, 0], posted
+    assert seat.step() is None, "a declaration with nothing left to narrow is not re-posted"
+    assert seat.advanced is False
+
+
 # -- decisions, on the engine's own default_answer terms ----------------------
 
 
@@ -667,6 +756,153 @@ def test_the_stall_guard_ends_a_game_the_policy_cannot_finish(client, game, monk
     assert outcome["over"] is True, outcome
     assert outcome["ended_by"] == "stall_guard", outcome
     assert state(client, game)["winner"] is not None
+
+
+class RefusingSeam:
+    """A `SeatApiClient` whose every *action* comes back refused, and whose
+    reads are the real app's.
+
+    A legitimate test double here (this is the api repo, not the engine - see
+    `CountingSeam` for the same note). The reads it passes straight through
+    are what make the refusals interesting: the board they describe is real
+    and, because a refused action changes nothing, unchanged from one round
+    to the next - which is exactly the board a stall happens on.
+
+    `actions/concede` is the one path it lets through, because a concession
+    is not one of the policy's moves: it is `play_out`'s own backstop, and a
+    double that refused it would be asserting nothing about the guard.
+    """
+
+    def __init__(self, inner: HttpSeatApiClient) -> None:
+        self.inner = inner
+        self.attempts: list[str] = []
+
+    def game_state(self, game_id, uid):
+        return self.inner.game_state(game_id, uid)
+
+    def legal_actions(self, game_id, player, uid, *, candidates=False):
+        return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
+
+    def act(self, game_id, path, body, uid):
+        self.attempts.append(path)
+        if path == "actions/concede":
+            return self.inner.act(game_id, path, body, uid)
+        return {"allowed": False, "error": "refused by RefusingSeam"}
+
+
+def test_a_refused_move_is_not_progress(client, game):
+    """The hole finding 1 lived in. `step` returns the move it made whether
+    the api ACCEPTED or REFUSED it, and `play_out` read that return value as
+    "this seat acted" - so `idle_rounds` reset every round for as long as a
+    seat kept attempting anything, and the concession backstop could never
+    fire.
+
+    Progress is what the guard has to count, and a refusal is progress only
+    the first time: it narrows what this seat has left to try against this
+    board. Once there is nothing left, the round is idle and says so.
+    """
+    add_card(client, game, "Forest", "alice", "hand")
+    accepted = baseline_seat.BaselineSeat(api(client), game, "alice", seats_for(game)["alice"])
+
+    assert accepted.step() is not None
+    assert accepted.advanced is True, "a move the api took is progress"
+
+    seam = RefusingSeam(api(client))
+    refused = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+
+    move = refused.step()
+
+    assert move is not None, "the policy still had something to try"
+    assert refused.refusals == 1
+    assert refused.advanced is True, "the first refusal taught this seat something"
+    assert refused.step() is None, "and then there is nothing left to try"
+    assert refused.advanced is False, "which is an idle round, whatever was attempted before"
+
+
+def test_a_seat_whose_every_move_is_refused_still_reaches_an_end_state(client, game):
+    """The guarantee this module's own prose makes, on the path the suite did
+    not cover.
+
+    `test_the_stall_guard_ends_a_game_the_policy_cannot_finish` drives a seat
+    with nothing to SAY (`choose_move` forced to `None`), which is the easy
+    half. The half that shipped broken is a seat that keeps ATTEMPTING things
+    and has every one of them refused: `acted` was true every round, the
+    guard never fired, and the run spun until `max_steps` - 100,000 in the
+    gauntlet - and was reported as a `timeout`, which is the unfinished game
+    the scorecard exists to count.
+    """
+    add_card(client, game, "Forest", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    seam = RefusingSeam(api(client))
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+
+    outcome = baseline_seat.play_out(seats, max_steps=300)
+
+    assert outcome["over"] is True, outcome
+    assert outcome["ended_by"] == "stall_guard", outcome
+    assert outcome["steps"] < 300, outcome
+    assert state(client, game)["winner"] is not None
+    assert "actions/concede" in seam.attempts, seam.attempts
+
+
+def test_a_refused_move_that_no_enumerated_row_backs_is_not_re_posted(client, game):
+    """`pass_priority`, `advance`, `decide` and the two pregame declarations
+    all carry `key == ""`, so a refusal of one could not be remembered by
+    key. What the code did instead was drop `self.signature`, which forced
+    the next round to re-derive from scratch - and re-deriving produced the
+    identical move, having thrown away this board's refusal memory on the
+    way.
+
+    Two posts of one byte-identical body against a board that has not moved
+    is the loop. There is one post now, and then nothing to say.
+    """
+    seam = RefusingSeam(api(client))
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+
+    first = seat.step()
+
+    assert first is not None and first.label == "pass_priority", first
+    assert seat.step() is None, "the same refused pass is not posted a second time"
+    assert seam.attempts == ["actions/pass-priority"], seam.attempts
+
+
+def test_play_out_checks_the_stop_flag_before_every_seat(client, game):
+    """`scripts/eval_gauntlet.py` runs this loop in a thread and joins it
+    after the watcher's edge fires, so how promptly the loop notices
+    `should_stop` is how long that join has to wait. Checked once per round,
+    a two-seat round could not return until every seat had taken another turn
+    of up to the seam's own 30s http timeout - which is how a `--serial` run
+    came to abandon a live driver and start the next game alongside it.
+    """
+    flag = {"stop": False}
+
+    class ArmOnAct:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def game_state(self, game_id, uid):
+            return self.inner.game_state(game_id, uid)
+
+        def legal_actions(self, game_id, player, uid, *, candidates=False):
+            return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
+
+        def act(self, game_id, path, body, uid):
+            flag["stop"] = True
+            return self.inner.act(game_id, path, body, uid)
+
+    seam = ArmOnAct(api(client))
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+
+    outcome = baseline_seat.play_out(seats, max_steps=50, should_stop=lambda: flag["stop"])
+
+    assert outcome["ended_by"] == "stopped", outcome
+    assert outcome["steps"] == 1, outcome
 
 
 def test_play_out_stops_when_the_watcher_says_so(client, game):

@@ -87,11 +87,14 @@ what actually decides: `BaselineSeat` drops one pair at a time from a refused
 declaration until it is accepted, which bottoms out at the always-legal empty
 answer.
 
-## Why it cannot stall
+## Why it cannot stall, and what that claim is worth
 
 A stalling baseline is worse than no baseline: it manufactures the very
-unfinished games the scorecard exists to count. Five things stand between
-this policy and a stall.
+unfinished games the scorecard exists to count. **This section was wrong
+once** - it listed five defences and two of them did not hold, and a 10-seed
+run then finished 3 games and reported 7 timeouts. What is written here is
+what the code does; where the guarantee is conditional, the condition is
+named rather than rounded up.
 
 - Every branch above ends in an action whenever one is legal at all -
   `pass_priority` and `concede` are always in the enumeration when this seat
@@ -100,18 +103,49 @@ this policy and a stall.
 - Every decision kind the api can answer has a branch in `decide_body`
   (`test_every_answerable_decision_kind_has_a_default_body` pins that), so a
   question can never stand unanswered.
-- A refused action is remembered and not offered again until the board has
-  actually moved (`seatkit.board_signature`), so a refusal can never become
-  a loop.
+- **No answer is posted twice against a board that has not moved.** A refused
+  enumerated row is remembered by `action_key` and not offered again; a
+  refused *answer* - a pass, a decision, a combat declaration, anything whose
+  `Move.key` is `""` because no single row backs it - is remembered by
+  `answer_fingerprint`. Both are forgotten when the board moves
+  (`seatkit.board_signature`), because a refusal is a fact about a board.
+  Only the first half of this existed: a `key == ""` refusal dropped the
+  board signature instead, which re-derived the identical move AND threw the
+  refusal memory away, and that was an unbounded loop of byte-identical
+  posts.
 - A cast whose targets this board cannot fill is declined *before* it is
   attempted (`BaselineSeat._pick`), because the board-moved rule above cannot
   save it: the opponent's own move changes the board every round and correctly
   clears the memory of the refusal. A live gauntlet put 547 identical "too few
   targets" rows in one game before this existed.
-- And `play_out` carries a backstop: a run where every seat has nothing to
-  say for `stall_rounds` consecutive rounds ends with a concession
-  (CR 104.3a, legal at any time). That is a real ending, recorded as one,
-  and it shows up in the scorecard as a loss rather than as a silent hang.
+- A refused combat declaration is narrowed one pair at a time down to the
+  empty answer, and the sequence is monotonically non-increasing and pins
+  there (`attack_declaration`). It used to grow a pair back once `drop`
+  passed the number of pairs, and the empty answer was a fixed point it
+  re-posted forever if the engine refused it - which a CR 508.1d attacking or
+  CR 509.1a blocking requirement can. Narrowing has no answer to a
+  requirement; what happens instead is the point below.
+- And `play_out` carries the backstop: a round in which no seat *advanced* -
+  no accepted move, and no refusal that was new against this board
+  (`BaselineSeat.advanced`) - is an idle round, and `stall_rounds`
+  consecutive idle rounds end the game with a concession (CR 104.3a, legal at
+  any time; `app._run_command` exempts it from the pause-slot guard so a
+  question standing for the other seat cannot block it). That is a real
+  ending, recorded as one, and it shows up in the scorecard as a loss rather
+  than as a silent hang. `play_out` checks that the concession was accepted
+  and reports `stall_guard_refused` if it was not, rather than spinning out
+  the rest of `max_steps`. Reading "this seat attempted something" as
+  progress, which is what `step`'s return value says, is what kept this guard
+  from ever firing.
+
+**The one case this does not cover**, stated rather than glossed: a board
+that keeps *changing* without the game getting anywhere clears every seat's
+refusal memory each round, so each round can hold a genuinely new refusal and
+no round is idle. A refused action changes nothing, so a changing board means
+some seat's move was accepted - i.e. the engine moved the game - and the
+games this control plays are finite. `max_steps` is the outer bound on that
+argument being wrong, and it is reported as `bound`: a defect in this module,
+never a game the scorecard may count as a loss.
 
 ## What it deliberately does not do
 
@@ -128,6 +162,7 @@ gives CR 601.2c.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
@@ -221,6 +256,27 @@ def action_key(action: dict[str, Any]) -> str:
             "decision_option",
         )
     )
+
+
+def answer_fingerprint(move: Move) -> str:
+    """A stable identity for one whole answer this seat posts.
+
+    `action_key` identifies an enumerated *row*, and most moves have one -
+    but `pass_priority`, `advance`, `decide` and the two pregame declarations
+    do not (`Move.key` is `""`), and neither does a combat declaration, which
+    is one answer built out of many rows. Those are exactly the moves a
+    refusal could not be remembered for, so the loop they made was: post,
+    refused, re-derive, post the identical body again, forever.
+
+    This is what a refusal is remembered by instead - the path plus the body
+    that went with it, minus `reasoning`, which is prose this seat chooses
+    and never part of what the api ruled on. Two posts that would be
+    byte-identical on the wire share a fingerprint; anything the policy
+    actually changed (a narrowed declaration, a different card, different
+    targets) does not.
+    """
+    body = {name: value for name, value in move.body.items() if name != "reasoning"}
+    return f"{move.path}|{json.dumps(body, sort_keys=True, default=str)}"
 
 
 def mana_value(action: dict[str, Any]) -> int:
@@ -407,9 +463,19 @@ def attack_declaration(
 
     `drop` removes that many pairs from the end, in id order: the narrowing
     `BaselineSeat` applies after the engine has refused a declaration, since
-    the engine's refusal is about the whole answer rather than one pair. At
-    `drop >= len(pairs)` this is the empty declaration, which CR 508.1a's
-    "if any" makes always legal - so the narrowing always terminates.
+    the engine's refusal is about the whole answer rather than one pair. The
+    sequence it generates is monotonically non-increasing and pins at the
+    empty declaration: `drop >= len(chosen)` is `[]`, and every larger `drop`
+    is `[]` again.
+
+    **That is termination of the sequence, not a guarantee the engine accepts
+    where it lands.** The empty declaration is legal in the ordinary case
+    (CR 508.1a's "if any"), but an attacking requirement - "attacks each
+    combat if able", CR 508.1d - can refuse it, and narrowing has no answer
+    to a requirement: shrinking moves away from it. `BaselineSeat` therefore
+    treats an answer it has already had refused against an unchanged board as
+    nothing left to say, and `play_out`'s stall guard is what ends such a
+    game (see this module's "Why it cannot stall").
     """
     enumerated = {
         str(action.get("card_id")): str(action.get("defender") or "")
@@ -445,7 +511,11 @@ def attack_declaration(
         for card_id, card in sorted(candidates.items())
         if lethal_race or survives_every_profitable_block(card)
     ]
-    return chosen[: len(chosen) - drop] if drop else chosen
+    # `max(..., 0)`, never a bare `len(chosen) - drop`: that is a negative
+    # slice once `drop` passes `len(chosen)`, and a negative slice puts pairs
+    # BACK - with two pairs, `drop == 3` answered `chosen[:-1]`, so the
+    # sequence oscillated instead of bottoming out.
+    return chosen[: max(len(chosen) - drop, 0)]
 
 
 def block_declaration(
@@ -464,8 +534,11 @@ def block_declaration(
     getting through drops below this seat's life total the rest stay home -
     a chump block that changes no outcome is a creature spent for nothing.
 
-    `drop` narrows a refused declaration exactly as it does for attacking,
-    and bottoms out at the always-legal empty answer.
+    `drop` narrows a refused declaration exactly as it does for attacking -
+    monotonically non-increasing, pinned at `[]` once it passes the number of
+    blocks chosen, and with the same caveat: a blocking requirement
+    (CR 509.1a) can refuse the empty answer, and no amount of narrowing
+    answers a requirement. See `attack_declaration`.
     """
     enumerated: dict[str, list[str]] = {}
     for action in actions:
@@ -513,7 +586,7 @@ def block_declaration(
         blocks.append({"blocker": best, "blocked": attacker_id})
         used.add(best)
         damage -= power
-    return blocks[: len(blocks) - drop] if drop else blocks
+    return blocks[: max(len(blocks) - drop, 0)]
 
 
 # -- answering questions the engine's own way --------------------------------
@@ -831,11 +904,13 @@ def _pass(player: str) -> Move:
 class BaselineSeat:
     """One seat played by `choose_move`, over a `SeatApiClient`.
 
-    Holds two pieces of state, and neither is game state: the enumerated
-    actions the api has already refused against the board as it stands right
-    now, and how far a refused combat declaration has been narrowed. The
-    board moving (`seatkit.board_signature`) forgets both, because a refusal
-    is a fact about a board rather than about an action.
+    Holds three pieces of state, and none of it is game state: the
+    enumerated actions the api has already refused against the board as it
+    stands right now, every whole answer it has refused against that same
+    board (`answer_fingerprint` - the moves that have no enumerated row to
+    be remembered by), and how far a refused combat declaration has been
+    narrowed. The board moving (`seatkit.board_signature`) forgets all three,
+    because a refusal is a fact about a board rather than about an action.
     """
 
     client: SeatApiClient
@@ -843,10 +918,18 @@ class BaselineSeat:
     player: str
     uid: str
     refused: set[str] = field(default_factory=set)
+    refused_answers: set[str] = field(default_factory=set)
     narrowing: int = 0
     signature: Any = None
     moves: int = 0
     refusals: int = 0
+    advanced: bool = False
+    """Whether the most recent `step` got anywhere: a move the api accepted,
+    or a refusal that was new against this board and so narrowed what is
+    left to try. `play_out`'s stall guard counts a round idle when no seat
+    advanced, which is what makes it able to fire at all - reading `step`'s
+    return value instead counted a refused move as a round of play, and a
+    seat that keeps attempting refused moves never let the guard fire."""
 
     def step(self, state: dict[str, Any] | None = None) -> Move | None:
         """Read, choose, act - once. Returns the move made, or `None` when
@@ -856,12 +939,14 @@ class BaselineSeat:
         `play_out` reads it to check whether the game is over, and reading it
         a second time here doubled every round's cost for nothing.
         """
+        self.advanced = False
         if state is None:
             state = self.client.game_state(self.game_id, self.uid)
         current = board_signature(state)
         if current != self.signature:
             self.signature = current
             self.refused.clear()
+            self.refused_answers.clear()
             self.narrowing = 0
         if not has_turn(state, self.player):
             return None
@@ -873,21 +958,31 @@ class BaselineSeat:
         self.moves += 1
         if outcome.get("allowed") is False:
             self.refusals += 1
+            fingerprint = answer_fingerprint(move)
+            # New against this board, so this refusal narrowed what is left
+            # to try and the round was not idle. A refusal of something
+            # already refused is the loop, and `_pick` is what stops it
+            # happening at all - this is the belt to that brace.
+            self.advanced = fingerprint not in self.refused_answers
+            self.refused_answers.add(fingerprint)
             if move.label in ("attack", "block"):
                 # A declaration is refused as a whole (CR 508.1a/509.1a are
                 # checked over the whole answer by `Game.declare_attackers`/
                 # `declare_blockers`), so there is no row to blame - the
-                # answer shrinks by one pair instead, and bottoms out at the
-                # always-legal empty declaration.
+                # answer shrinks by one pair instead, down to the empty
+                # declaration, which is where the sequence pins.
                 self.narrowing += 1
             elif move.key:
                 self.refused.add(move.key)
-            else:
-                # A move with no enumerated row behind it (a pregame
-                # declaration, a concession) cannot be remembered by key, so
-                # the board's own signature is dropped instead: the next read
-                # re-derives everything rather than repeating this one blind.
-                self.signature = None
+            # A move with no enumerated row behind it (a pregame
+            # declaration, a combat declaration, a pass) is remembered by
+            # `answer_fingerprint` above and nothing else. Dropping
+            # `self.signature` is what this used to do instead, and it made
+            # the loop worse rather than better: the next read re-derived
+            # from scratch AND threw away this board's refusal memory, so it
+            # produced the identical move again.
+        else:
+            self.advanced = True
         return move
 
     def concede(self) -> dict[str, Any]:
@@ -915,16 +1010,28 @@ class BaselineSeat:
         last refusal. `refused` is the same set a real refusal feeds, so one
         pass through this loop cannot revisit a card it has already declined.
         """
-        for _ in range(len(actions) + 1):
+        for _ in range(len(actions) + self.narrowing + 2):
             move = choose_move(
                 state, actions, self.player, refused=self.refused, narrowing=self.narrowing
             )
             if move is None:
                 return None
             filled = self._fill_targets(state, actions, move)
-            if filled is not None:
+            if filled is None:
+                self.refused.add(move.key)
+                continue
+            if answer_fingerprint(filled) not in self.refused_answers:
                 return filled
-            self.refused.add(move.key)
+            # This exact answer has already been refused against this board,
+            # so posting it again could only be refused again. A move with an
+            # enumerated row behind it steps to the next row; one without -
+            # a pass, a decision, a combat declaration narrowed to the empty
+            # answer - has nothing to step to, and this seat says so rather
+            # than spin. `play_out`'s stall guard is what ends a game that
+            # reaches here (see this module's "Why it cannot stall").
+            if not filled.key:
+                return None
+            self.refused.add(filled.key)
         return None  # pragma: no cover - the loop is bounded by the pool it draws from
 
     def _fill_targets(
@@ -1056,14 +1163,21 @@ def play_out(
 
     Returns what happened: `over`, `winner`, `drawn`, `steps`, and
     `ended_by` - `"play"` when the engine ended the game itself,
-    `"stall_guard"` when a seat had to concede because nothing had a move for
-    `stall_rounds` rounds, `"stopped"` when `should_stop` said to, `"bound"`
-    when none of those happened inside `max_steps` (which is a defect in this
-    module, and is reported as one rather than hidden).
+    `"stall_guard"` when a seat had to concede because no seat got anywhere
+    for `stall_rounds` rounds, `"stopped"` when `should_stop` said to,
+    `"stall_guard_refused"` when the guard's own concession was refused (see
+    below), `"bound"` when none of those happened inside `max_steps` (which
+    is a defect in this module, and is reported as one rather than hidden).
 
     The guard is deliberately a concession rather than a silent stop: a game
     that ends is a game the scorecard can count, and a game the baseline could
     not play is a loss it should be seen to take.
+
+    **A round is idle when no seat advanced**, which is not the same as no
+    seat having attempted anything: a move the api refused is only progress
+    the first time, because it narrows what that seat has left to try against
+    this board (`BaselineSeat.advanced`). Counting an attempt as progress is
+    what kept this guard from ever firing.
 
     Three knobs, all for the mixed game the gauntlet actually runs - one
     baseline against an agent seat nothing here drives:
@@ -1085,14 +1199,25 @@ def play_out(
     idle_rounds = 0
     conceded = False
     while steps < max_steps:
-        if should_stop is not None and should_stop():
-            return _outcome(_read(seats), steps, "stopped")
         acted = False
         for seat in seats:
+            # Asked before every seat rather than once a round: this loop
+            # runs in a thread `scripts/eval_gauntlet.py` joins as soon as
+            # the watcher's edge fires, and a round of two seats each taking
+            # up to the seam's own 30s http timeout is how long that join
+            # waited. See `eval_gauntlet.play_one`.
+            if should_stop is not None and should_stop():
+                return _outcome(_read(seats), steps, "stopped")
             state = seat.client.game_state(seat.game_id, seat.uid)
             if state.get("winner") or state.get("drawn"):
                 return _outcome(state, steps, "stall_guard" if conceded else "play")
-            if seat.step(state) is not None:
+            seat.step(state)
+            # `seat.advanced`, never `step`'s return value: `step` hands back
+            # the move it made whether the api ACCEPTED or REFUSED it, so
+            # reading that counted a refusal as a round of play and reset
+            # `idle_rounds` for as long as any seat kept attempting anything.
+            # The guard could not fire, and the run spun to `max_steps`.
+            if seat.advanced:
                 acted = True
             steps += 1
             if steps >= max_steps:
@@ -1102,8 +1227,17 @@ def play_out(
             state = _read(seats)
             active = state.get("active_player")
             quitter = next((seat for seat in seats if seat.player == active), seats[0])
-            quitter.concede()
+            outcome = quitter.concede()
             conceded = True
+            if outcome.get("allowed") is False:
+                # The one thing this guard rests on, checked rather than
+                # assumed. CR 104.3a makes a concession legal at any time and
+                # `app._run_command` exempts it from the pause-slot guard for
+                # exactly that reason, so this is not expected - and a guard
+                # that fired, was refused, and then span out the remaining
+                # `max_steps` reporting `bound` would hide the one failure
+                # that matters here.
+                return _outcome(_read(seats), steps, "stall_guard_refused")
             idle_rounds = 0
         elif not acted and poll:
             time.sleep(poll)
