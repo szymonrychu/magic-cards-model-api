@@ -20,6 +20,18 @@ Now the server is the only place the rule lives.
   byte-identical to its human's by construction rather than by two code
   paths agreeing. What an advisor may *do* is a different question, and one
   this module never asks - `game_access.py` answers it.
+
+  **This function is for visibility only.** Nothing that decides *who is
+  acting* may call it, precisely because of the resolution above: an
+  advisor uid resolves to its human here, so "does this uid open the seat
+  this request names" comes back `True` for a credential whose entire
+  point is that it may not act. `app.decide`, `app._answer_declaration`
+  and `app._pregame_seat` each asked it that question and each therefore
+  waved an advisor through, leaving `game_access.py`'s gate as the only
+  thing refusing. They call `game_access.seat_for_uid` now - the
+  authorization twin, which never resolves an advisor - and that is what
+  makes the sentence above ("one this module never asks") true rather than
+  merely intended.
 - `ADMIN` - the game's admin key (store.py), minted once at creation and
   handed only to whoever created the game. Full visibility, no redaction -
   the operator's own eye, the same trust level `audit.snapshot` already

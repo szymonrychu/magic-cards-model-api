@@ -2109,8 +2109,12 @@ def _answer_declaration(
             f"{expected_kind.value!r} - answer that one first (POST .../decide, "
             f"or the matching action)"
         )
-    viewer = visibility.resolve_viewer(game_id, uid)
-    if viewer != engine_decision.player or not isinstance(viewer, str):
+    # The acting seat, not the viewing one - see `decide` above and
+    # `game_access.seat_for_uid`. The admin key is refused here as it always
+    # was (it opens no seat, and CR 608.2d's "the player announces" is about
+    # a player), and an advisor uid now is too.
+    viewer = game_access.seat_for_uid(game_id, uid)
+    if viewer != engine_decision.player:
         # No enumeration on this branch, deliberately: the caller has just
         # been told this is not their decision, and "what else the deciding
         # seat could have done" is that seat's own hidden information.
@@ -2780,8 +2784,13 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
     )
     game = game_or_404(game_id)
     legal_before: records.LegalActionsBefore | None = None
-    player = visibility.resolve_viewer(game_id, uid)
-    if player != req.player or not isinstance(player, str):
+    # `game_access.seat_for_uid`, never `visibility.resolve_viewer`: this is
+    # an authorization question ("who is acting"), and `resolve_viewer`
+    # answers the visibility one ("what may this uid see"), which resolves an
+    # advisor uid to the human it watches. Asking the read filter who is
+    # acting is what let an advisor credential answer its human's decisions.
+    player = game_access.seat_for_uid(game_id, uid)
+    if player != req.player:
         # Refused before anything is enumerated: `req.player` is a request
         # field, and enumerating a seat the caller has merely *named* is
         # what put another seat's hidden information into a row the caller
@@ -2990,10 +2999,9 @@ def _pregame_seat(game_id: str, uid: str | None, player: str) -> None:
     trust level `visibility.ADMIN` already grants the full board - which is
     what lets a harness or a boot script drive a seat it owns.
     """
-    viewer = visibility.resolve_viewer(game_id, uid)
-    if viewer is visibility.ADMIN:
+    if uid and store.is_admin(game_id, uid):
         return
-    if viewer != player:
+    if game_access.seat_for_uid(game_id, uid) != player:
         raise ValueError(f"that uid does not open {player}'s seat")
 
 
@@ -3139,7 +3147,7 @@ def pregame_settle(
     over the other's.
     """
     req = req or PregameSettleRequest()
-    if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
+    if not (uid and store.is_admin(game_id, uid)):
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
     # P4, and after the admin gate rather than before it (the one place this
     # guard is not the very first thing a route does): the refusal writes a

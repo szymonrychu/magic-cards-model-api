@@ -121,16 +121,86 @@ from starlette.concurrency import run_in_threadpool
 from . import oidc
 from .store import player_for_advisor_uid, store
 
-__all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game"]
+__all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game", "seat_for_uid"]
 
-#: The only POST paths an advisor credential may reach. Both are ways of
+#: The only POST routes an advisor credential may reach. Both are ways of
 #: *saying* something about a game rather than doing something to it:
 #: `/advice` is the advisor's own channel (its route body is a separate
 #: task; this gate is what will let it through when it lands) and `/report`
 #: files a problem into the log, which anyone watching a game must be able
-#: to do. Matched on the path's own tail so the same rule covers whichever
-#: router eventually owns them.
+#: to do. Matched on the tail of the **matched route template**
+#: (`_route_template`) so the same rule covers whichever router eventually
+#: owns them - never on the caller's own spelling of the path, which is the
+#: trap the first mutating route ending in a `{param}` would otherwise have
+#: walked into.
 ADVISOR_POST_SUFFIXES = ("/advice", "/report")
+
+#: Every POST route whose own request model declares `dry_run` - i.e. every
+#: route that can actually *honour* a probe (`engine_api.dry_run_copy`).
+#:
+#: This list exists because the body cannot be trusted to say what the route
+#: will do with it. Only these shapes declare the field; every other request
+#: model is a plain `BaseModel` whose `model_config` is empty, so pydantic
+#: **discards** an unexpected `dry_run` key rather than rejecting it, and the
+#: route then commits for real - a gate that read `dry_run` off the raw body
+#: was therefore reading a field most routes throw away. On `POST .../seats`
+#: that was privilege escalation rather than a stray mutation: `app.
+#: mint_seat` takes no uid, checks nothing beyond this gate, and hands back a
+#: fresh *unrestricted* seat credential, so one extra key let an advisor
+#: upgrade itself out of its own restriction. `schemas.py` now also sets
+#: `extra="forbid"` on the request models, which turns a `dry_run` a route
+#: cannot honour into a 422 instead of a silent commit - the two defences are
+#: independent on purpose, because `POST .../cards/{card_id}/tap` takes a
+#: raw `dict[str, bool]` that no `model_config` can ever protect.
+#:
+#: Asserted against `openapi.json` by
+#: `tests/test_game_access_advisor.py::
+#: test_the_dry_run_allowlist_matches_the_routes_that_declare_the_field`, so
+#: it cannot drift when a shape gains or loses the field.
+DRY_RUN_ROUTES = frozenset(
+    {
+        "/api/games/{game_id}/actions/activate",
+        "/api/games/{game_id}/actions/attack",
+        "/api/games/{game_id}/actions/cast",
+        "/api/games/{game_id}/actions/crew",
+        "/api/games/{game_id}/actions/cycle",
+        "/api/games/{game_id}/actions/foretell",
+        "/api/games/{game_id}/actions/play-land",
+        "/api/games/{game_id}/actions/plot",
+        "/api/games/{game_id}/actions/suspend",
+    }
+)
+
+#: The methods that can change a game, and so the ones the positive rule
+#: below applies to. `GET`/`HEAD`/`OPTIONS` are reads and keep the migration
+#: story an ownerless game has always had.
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def seat_for_uid(game_id: str, uid: str | None) -> str | None:
+    """The seat `uid` opens in `game_id`, or `None`. **Never an advisor, and
+    never the admin key.**
+
+    The authorization twin of `visibility.resolve_viewer`, and named apart
+    from it because the two answer different questions that were being asked
+    with one function. `resolve_viewer` answers *what may this uid see*, and
+    it resolves an advisor uid to the human seat it watches on purpose -
+    that is what makes an advisor's view byte-identical to its human's by
+    construction rather than by two code paths agreeing. Four routes then
+    used the same answer to decide *who is acting*
+    (`app.decide`, `app._answer_declaration`, `app._pregame_seat`), and
+    widening the viewer widened them too: an advisor uid started satisfying
+    "this uid opens the seat this request names", which left this module's
+    gate as the only thing between a read-only credential and a real move.
+
+    Every acting-seat check calls this instead, so the two questions cannot
+    be confused again. `app.declare_plan` and the archived-game check were
+    already doing it correctly through `store.player_for_uid` directly; this
+    is the same answer with a name that says which question it is.
+    """
+    if not uid:
+        return None
+    return store.player_for_uid(game_id, uid)
 
 
 async def _json_body(request: Request) -> dict[str, Any] | None:
@@ -165,6 +235,23 @@ async def _credentials(request: Request) -> tuple[str | None, str | None]:
     return uid, key
 
 
+def _route_template(request: Request) -> str | None:
+    """The template of the route this request matched -
+    `/api/games/{game_id}/actions/cast`, never the caller's own
+    `/api/games/abc123/actions/cast` - or `None` when nothing matched.
+
+    FastAPI puts the matched `APIRoute` in the scope
+    (`fastapi.routing.APIRoute.matches`), and `GameAccessRoute` runs inside
+    that route's own handler, so by the time this is asked the scope always
+    carries one in the app. It can be absent when `can_access_game` is
+    asked directly about a hypothetical path (the tests do this for
+    `/advice`, whose route body is a later task), and every caller here
+    treats that as "no declared shape to consult" and fails closed.
+    """
+    path = getattr(request.scope.get("route"), "path", None)
+    return path if isinstance(path, str) else None
+
+
 async def _advisor_may(request: Request) -> bool:
     """Whether an advisor credential may make *this* request
     (`repository.Advisor`).
@@ -179,9 +266,17 @@ async def _advisor_may(request: Request) -> bool:
       body dropped - Starlette registers one for every GET route.
     - **A POST to `/advice` or `/report`** (`ADVISOR_POST_SUFFIXES`) - the
       two ways of saying something rather than doing something.
-    - **A POST carrying `dry_run: true`** - a question, not a move: the
-      action routes answer one against an isolated probe copy of the game
+    - **A POST carrying `dry_run: true` to a route that declares a `dry_run`
+      field** (`DRY_RUN_ROUTES`) - a question, not a move: those routes
+      answer one against an isolated probe copy of the game
       (`engine_api.dry_run_copy`) and commit nothing.
+
+    Both of those are decided off the **matched route template**, never off
+    the raw request path or the raw body. The route is what determines what
+    the request will actually *do*; the body is the caller's own claim about
+    it, and on every shape that does not declare `dry_run` that claim was
+    simply discarded by pydantic while this gate believed it - see
+    `DRY_RUN_ROUTES`.
 
     Everything else is refused, which is every mutating route at once
     because this is asked before any of them runs.
@@ -190,8 +285,13 @@ async def _advisor_may(request: Request) -> bool:
         return True
     if request.method != "POST":
         return False
-    if request.url.path.rstrip("/").endswith(ADVISOR_POST_SUFFIXES):
+    template = _route_template(request)
+    if template is None:
+        return False
+    if template.rstrip("/").endswith(ADVISOR_POST_SUFFIXES):
         return True
+    if template not in DRY_RUN_ROUTES:
+        return False
     body = await _json_body(request)
     return body is not None and body.get("dry_run") is True
 
