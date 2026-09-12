@@ -18,6 +18,10 @@ from typing import Any
 
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
+from magic_cards_model.models import Zone
+
+from magic_cards_model_api import affordances as affordances_module
+from magic_cards_model_api.store import store
 
 
 def affordances(
@@ -346,3 +350,53 @@ def test_an_any_color_ability_reports_the_narrowed_set_the_engine_hands_it(clien
         "ability_hints re-derived the colours from the printed text instead of "
         "reporting the engine's own answer"
     )
+
+
+# ---------------------------------------------------------------------------
+# a face-down card is not named, wherever it is named from
+# ---------------------------------------------------------------------------
+
+
+def test_a_candidate_label_does_not_print_a_face_down_cards_name(
+    client: TestClient, game: str
+) -> None:
+    """`_label` returned `thing.name` unconditionally, which is the printed
+    name of the card - including a card that is face down.
+
+    CR 708.2 (and CR 707.2 for a copy) is the rule: a face-down permanent
+    has no name, and `visibility._redact_facedown_card` already exists for
+    exactly this on the state view. `_label` is the other place a card's
+    identity leaves this process, and `candidate_line` and `candidates`
+    both go through it - newly reachable from `GET .../legal-actions
+    ?candidates=true`, which walks the battlefield, graveyards and exile
+    (`all_targetables`). Whether any current `TargetRequirement` actually
+    accepts a face-down object is beside the point: the rule belongs inside
+    the one function that turns an object into a name, so it is right
+    however this is reached.
+    """
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.card.name == "Grizzly Bears"
+    )
+    bears.face_up = False
+
+    label = affordances_module._label(bears)
+    line = affordances_module.candidate_line(bears)
+
+    assert label["name"] == "a face-down card", label
+    assert label["id"] == str(bears.id), label
+    assert label["zone"] == "battlefield", label
+    assert label["controller"] == "bob", label
+    assert "Grizzly Bears" not in line, line
+    assert str(bears.id) in line, line
+
+
+def test_a_face_up_candidate_is_still_named(client: TestClient, game: str) -> None:
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    live = store.get(game)
+    bears = next(
+        state for state in live.shared_zones[Zone.BATTLEFIELD] if state.card.name == "Grizzly Bears"
+    )
+
+    assert affordances_module._label(bears)["name"] == "Grizzly Bears"

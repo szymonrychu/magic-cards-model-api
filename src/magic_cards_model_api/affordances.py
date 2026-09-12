@@ -324,6 +324,26 @@ def all_targetables(game: Game) -> list[Any]:
 
 
 def _label(thing: Any) -> dict[str, Any]:
+    """One targetable object as `{id, kind, name, zone}`, plus `controller`
+    for a card.
+
+    **The face-up rule lives here**, once, rather than in each of the four
+    callers - `candidates`, `candidate_line`, `object_costs` and the
+    cost-component list all name objects through this. A face-down object
+    has no name to print (CR 708.2 for a permanent turned face down, and
+    `visibility._redact_facedown_card` is the same rule already applied to
+    the state view), and `all_targetables` walks the battlefield,
+    graveyards and exile - every zone a face-down card can sit in - so this
+    is reachable the moment a requirement accepts one. Whether any current
+    `TargetRequirement` does is beside the point: the rule belongs in the
+    one function that turns an object into a name.
+
+    Hidden from *everyone*, its own controller included, because this
+    function has no viewer to ask - and failing closed is the right way
+    round for a name that must not be guessable. The id is untouched: it is
+    what a target is named by, and knowing an object is there is public
+    (CR 400.2).
+    """
     if isinstance(thing, Player):
         return {"id": thing.username, "kind": "player", "name": thing.username, "zone": None}
     if isinstance(thing, AbilityOnStack):
@@ -336,7 +356,7 @@ def _label(thing: Any) -> dict[str, Any]:
     return {
         "id": str(thing.id),
         "kind": "card",
-        "name": thing.name,
+        "name": thing.name if getattr(thing, "face_up", True) else "a face-down card",
         "zone": thing.zone.value,
         "controller": thing.controller,
     }
