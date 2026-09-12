@@ -160,7 +160,40 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-15"
+PROTOCOL_VERSION = "seatkit-16"
+#: `seatkit-16` is a **response** shape change: `wait_for_priority` answers an
+#: advisor uid with `available_actions` on a real wake.
+#:
+#: An opponent seat has always been handed the engine's legal-action list -
+#: target candidates and `pays_with` included - on its `pass`/`pass_until`
+#: answers. An advise seat is refused `pass_until` (driving the game is not
+#: advising it), so `wait_for_priority` is the answer that wakes it, and that
+#: answer carried the whole board and no list. The buddy, the seat that thinks
+#: at every decision point its human holds, was left to reason out legality
+#: the engine would simply have told it. Now `mcp.wait_for_priority` adds the
+#: list, shaped by the action answers' own `_compact_actions` (same candidate
+#: and `pays_with` budgets, same stated truncation), when the seat is an
+#: advisor AND a wake condition holds. An idle `nothing new yet` answer fetches
+#: nothing, and a seat uid's wait is unchanged.
+#:
+#: Why a bump rather than a fold, against the precedent above: the widening
+#: entry below declined one because no shape moved and nothing was unsendable,
+#: and the response fields folded into an earlier version shipped in the same
+#: build, with no build in between to describe. Neither holds here. A key is
+#: added to an existing tool's answer, this build's advisor prose now says the
+#: legal plays arrive on the wake and names no other way to look them up, and
+#: the MCP server is a separate process spawned once and never reloaded. A
+#: stale seatkit-15 MCP process serving a buddy that runs this prose would
+#: answer every wake without the list, silently, leaving the advisor told to
+#: choose from a list it never receives. That is the stale-process case the
+#: PROTOCOL MISMATCH sentence exists to make loud, the same reasoning that
+#: bumped seatkit-13 for a response-only change.
+#:
+#: What did NOT change: no request parameter anywhere, no api route (the
+#: `legal-actions?candidates=true` read already existed), nothing an advisor
+#: can use to move the game - the list is one more GET on a path that is
+#: already a GET, and `pass_until` stays refused.
+#:
 #: `seatkit-15` is an **additive request** change: `cast` gained `spell_face`,
 #: the half of a split card this cast announces (CR 709.3).
 #:

@@ -2912,3 +2912,22 @@ whoever works on the repo itself.
   Lesson: a computed field is not delivered until something reads it, and the
   cheap check is to flip the fixture value and see whether any assertion
   moves.
+- **2026-09-13 - an MCP advisor's wake carries `available_actions`, gated on
+  advise AND a real wake, and that was a bump to `seatkit-16`.** The buddy is
+  refused `pass_until`, so `wait_for_priority` is the answer that wakes it, and
+  it carried the board and no list while an opponent seat got the list on every
+  `pass`/`pass_until`. `mcp.wait_for_priority` now adds it through the action
+  answers' own `_compact_actions` only when `seat.advise` and the wake reason is
+  not `NOTHING_NEW_YET` - an idle poll never pays the ~106 ms read, and a seat
+  uid's wait is unchanged (its list already rides its actions, so adding it
+  there is pure redundant cost). Measured on `test_action_answer_size.py`'s busy
+  board: +7,911 bytes, 59,470 in all - but the wake answer was ALREADY 51,255
+  bytes before, over `MAX_ANSWER_BYTES` (45,000), which bounds action answers
+  only; the whole state view is what that tool is for and an advisor test pins
+  it whole, so the list is bounded by the existing candidate and `pays_with`
+  caps (proved by starving both) rather than by narrowing the board. Bumped
+  rather than folded because the MCP server is its own once-spawned process and
+  this build's advisor prose promises the list: a stale `seatkit-15` process
+  would silently answer without it, which is the case PROTOCOL MISMATCH exists
+  for. The fetch is one GET on a path that was already a GET; no POST path was
+  added and `pass_until` stays refused.

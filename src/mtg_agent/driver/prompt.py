@@ -993,8 +993,17 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   board as your human may see it - the battlefield, both hands as they are
   visible to them, both graveyards, exile and the command zone - and
   `recent_log` merged into it, the tail of what both seats have actually done
-  since, allowed and refused, in the game's own words. So your steady state
-  is that one call, then either a dry run or a proposal. Nothing in between.
+  since, allowed and refused, in the game's own words.
+
+  **When it wakes you, it also hands you your human's legal plays** under
+  `available_actions`: the engine's own list of everything they can legally
+  do right now. Every play that targets carries its legal target
+  `candidates`, spelled exactly as `targets` takes them back, and every cast
+  carries `pays_with`, the mana sources the engine would tap for it. Choose
+  from that list rather than working out legality yourself - there is no
+  other lookup to make. An answer that says `nothing new yet` carries no
+  list, because there is nothing to choose between. So your steady state is
+  that one call, then either a dry run or a proposal. Nothing in between.
 - **Do NOT call `battlefield_state`.** Your wake loop's own answer already
   carries the board, zones included, so a second call asks for what you are
   already holding and costs you a whole turn of thinking on a board that may

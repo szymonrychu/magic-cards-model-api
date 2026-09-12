@@ -1448,3 +1448,119 @@ def test_an_advisors_mcp_wait_carries_the_state_and_the_log(
             f"the advisor's MCP wait no longer carries `{section}`, so "
             "`battlefield_state` stops being an escape hatch and becomes a read it needs"
         )
+
+
+# ---------------------------------------------------------------------------
+# the advisor's wake carries the legal-action list, and moves nothing
+# ---------------------------------------------------------------------------
+#
+# An opponent seat is handed `available_actions` on every `pass`/`pass_until`
+# answer. An advise seat is refused `pass_until` (it would be driving the
+# game), so `wait_for_priority` is the answer that wakes it - and that answer
+# carried the whole board and no action list, leaving the most
+# inference-hungry seat in the system to reason out legality the engine would
+# simply have told it. These pin the list onto a real wake, keep it off an
+# idle one, and prove fetching it moves nothing.
+
+
+def legal_action_reads(sent: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    return [(method, url) for method, url in sent if "/legal-actions" in url]
+
+
+def test_an_advisors_mcp_wake_carries_the_legal_actions_with_their_targets(
+    client: TestClient, game: str, wired: None, sent: list[tuple[str, str]]
+) -> None:
+    """alice has priority with a Mountain and a Lightning Bolt: a real wake.
+    Her buddy's answer carries the engine's own enumeration, and the Bolt's
+    entry names its legal targets as the strings `cast` takes back."""
+    uid = advisor_uid(game)
+    bolt_id, _ = stock_a_bolt(client, game)
+    server = mcp_server(game)
+
+    answer = json.loads(tool_text(server, "wait_for_priority", {"player_uid": uid}))
+
+    assert answer["wake_reason"] != seatkit.NOTHING_NEW_YET, answer["wake_reason"]
+    actions = answer["available_actions"]["actions"]
+    bolt = next(
+        action
+        for action in actions
+        if action["kind"] == "cast" and action.get("card_id") == bolt_id
+    )
+    candidates = [c for slot in bolt["targets"]["slots"] for c in slot.get("candidates") or []]
+    assert "bob (player)" in candidates, bolt["targets"]
+    assert len(legal_action_reads(sent)) == 1, sent
+
+
+def test_an_idle_advisor_wait_neither_fetches_nor_carries_the_legal_actions(
+    client: TestClient,
+    game: str,
+    wired: None,
+    sent: list[tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bob's buddy, while alice holds priority: nothing to wake for, so the
+    bounded wait times out on an unchanged board. That answer must not pay
+    ~106 ms of server time and a large block for a list nobody can use - an
+    idle poll is the common case, and it would pay it every time."""
+    monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.05)
+    uid = advisor_uid(game, player="bob")
+    stock_a_bolt(client, game)
+    server = mcp_server(game)
+    sent.clear()
+
+    answer = json.loads(
+        tool_text(server, "wait_for_priority", {"player_uid": uid, "max_seconds": 0.2})
+    )
+
+    assert answer["wake_reason"] == seatkit.NOTHING_NEW_YET, answer["wake_reason"]
+    assert "available_actions" not in answer, list(answer)
+    assert legal_action_reads(sent) == [], sent
+
+
+def test_an_opponent_seats_wait_still_fetches_no_legal_actions(
+    client: TestClient, game: str, wired: None, sent: list[tuple[str, str]]
+) -> None:
+    """Scoped to advise seats: a seat already gets the list on `pass`/
+    `pass_until`, which is where its prose sends it, so paying for it again on
+    a wait it only uses to look would be the redundant cost."""
+    advisor_uid(game)
+    stock_a_bolt(client, game)
+    server = mcp_server(game)
+
+    answer = json.loads(
+        tool_text(server, "wait_for_priority", {"player_uid": seat_uid(game, "alice")})
+    )
+
+    assert answer["wake_reason"] != seatkit.NOTHING_NEW_YET, answer["wake_reason"]
+    assert "available_actions" not in answer, list(answer)
+    assert legal_action_reads(sent) == [], sent
+
+
+def test_an_advisor_woken_with_the_legal_actions_still_cannot_move_the_game(
+    client: TestClient, game: str, wired: None, sent: list[tuple[str, str]]
+) -> None:
+    """The board, not a status code. Wake the buddy repeatedly on a live
+    priority window, then try the one auto-pass tool an advisor is refused:
+    the whole admin view of the game, every zone and the turn position
+    included, and the ledger are exactly as they were, and nothing but reads
+    went on the wire."""
+    uid = advisor_uid(game)
+    stock_a_bolt(client, game)
+    server = mcp_server(game)
+    before = state(client, game)
+    ledger = len(audit.entries(game))
+    sent.clear()
+
+    for _ in range(3):
+        woken = json.loads(tool_text(server, "wait_for_priority", {"player_uid": uid}))
+        assert woken["available_actions"]["actions"], woken["available_actions"]
+    refused = tool_text(
+        server,
+        "pass_until",
+        {"player_uid": uid, "step": "end_step", "reasoning": "skip ahead"},
+    )
+
+    assert seatkit.ADVISE_NO_PASS_UNTIL in refused, refused
+    assert state(client, game) == before
+    assert len(audit.entries(game)) == ledger
+    assert [method for method, _ in sent if method != "GET"] == [], sent

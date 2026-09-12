@@ -749,6 +749,14 @@ def build_server(seats: Seats) -> MCPServer:
                 same way right after it runs, so you normally do not need this
                 separately - it exists for "I have done nothing yet, is it my
                 turn", and for the wait itself when the answer is "not yet".
+
+        **An advisor uid also gets `available_actions` on a real wake** - the
+                same compacted list, target `candidates` and `pays_with`
+                included, that a seat gets on `pass`/`pass_until`. An advisor is
+                refused `pass_until`, so this is the answer that wakes it. It
+                is fetched only when a wake condition holds: an answer saying
+                `nothing new yet` carries no list. A seat's own wait carries
+                none either - its list rides the actions it takes.
         """
         seat = resolve(player_uid)
         if seat is None:
@@ -756,6 +764,16 @@ def build_server(seats: Seats) -> MCPServer:
         woken = seatkit.block_until_wake(seat, before=None, max_seconds=max_seconds)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
+        if seat.advise and woken["wake_reason"] != seatkit.NOTHING_NEW_YET:
+            # The advisor's legal plays, on the one answer that wakes it
+            # (`pass_until` is refused to an advise seat). A GET, like every
+            # other read here, and only on a real wake: an idle poll would pay
+            # ~106 ms of server time for a list nobody can use. Shaped by the
+            # action answers' own `_compact_actions`, so it spends the same
+            # candidate and `pays_with` budgets and says so when it runs out.
+            woken["state"]["available_actions"] = _compact_actions(
+                seatkit.available_actions(seat, woken["state"])
+            )
         return _tool_result(seat, woken["state"], ctx.protocol_version if ctx is not None else None)
 
     @server.tool()

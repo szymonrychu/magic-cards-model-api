@@ -1165,3 +1165,22 @@ def test_a_buddy_with_no_settings_runs_as_opus(client: TestClient) -> None:
     advisor = store.advisor_uids(created["game_id"])[uid]
     assert advisor.agent is not None
     assert advisor.agent.model == "opus"
+
+
+def test_the_advisor_wrapper_prose_says_its_legal_plays_arrive_on_the_wake() -> None:
+    """`mcp.wait_for_priority` hands an advise seat `available_actions` on a
+    real wake (`test_advise_mode.
+    test_an_advisors_mcp_wake_carries_the_legal_actions_with_their_targets`),
+    target candidates and mana plan included. The prose has to say so where
+    the wake loop is introduced, and must not send the advisor to look its
+    legal plays up any other way - that lookup is the inference the list
+    exists to save."""
+    collapsed = _collapsed_advisor_turn_zero()
+    start = collapsed.index("`wait_for_priority(player_uid, max_seconds=20)`")
+    loop = collapsed[start : collapsed.index("Do NOT call `battlefield_state`", start)]
+    for fact in ("available_actions", "candidates", "pays_with"):
+        assert fact in loop, f"the advisor's wake-loop bullet never names `{fact}`"
+    assert "legal-actions" not in collapsed, (
+        "the advisor prose points at the legal-actions endpoint, a second way to "
+        "look up what its own wake answer already carries"
+    )

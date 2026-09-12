@@ -321,3 +321,88 @@ def test_a_real_enriched_answer_is_nowhere_near_the_cap(client, game, monkeypatc
     assert len(text) < MAX_ANSWER_BYTES, f"{len(text)} bytes"
     payload = json.loads(text)
     assert payload["board"]["battlefield_digest"], "the digest must actually be in there"
+
+
+# -- an advisor's wake answer, which now carries the action list too --------
+#
+# `wait_for_priority` is not an action answer: it hands back the whole state
+# view, which is what that tool exists to give, and
+# `test_advise_mode.test_an_advisors_mcp_wait_carries_the_state_and_the_log`
+# pins it whole for an advisor. `MAX_ANSWER_BYTES` above bounds action answers
+# only, and on this board the advisor's wake answer was already 51,255 bytes
+# before it carried any action list - over that cap before this change.
+#
+# For an advise seat a real wake now also carries `available_actions` (the one
+# answer that wakes an advisor, since `pass_until` is refused to it): +7,911
+# bytes on this board, 59,470 in all. That list is shaped by the SAME
+# `mcp._compact_actions` the action answers use - empty keys dropped,
+# `MAX_CANDIDATE_BYTES` and `MAX_PAYS_WITH_BYTES` spent in list order, a
+# trimmed entry saying so in `more_with`/`name` - so its growth is bounded by
+# those two caps rather than by a second budget, which the test below proves.
+
+
+def advisor_on_the_busy_board(client: TestClient, game: str, monkeypatch) -> Any:
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    seats, _ = wired(client, monkeypatch, game)
+    busy_board(client, game)
+    add_card(client, game, "Solitude", "alice", "hand")
+    add_card(client, game, "Savannah Lions", "alice", "hand")
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    return build_server(seats)
+
+
+def advisor_wake(server: Any) -> str:
+    return text_of(call_tool(server, "wait_for_priority", {"player_uid": "buddy-uid"}))
+
+
+def test_an_advisors_wake_answer_carries_a_compacted_action_list_on_the_busy_board(
+    client, game, monkeypatch
+):
+    """The measured cost, and proof the list went through the action answers'
+    own compaction rather than arriving as the raw `ActionView` dump - while
+    the board beside it stays the whole state view it always was."""
+    payload = json.loads(advisor_wake(advisor_on_the_busy_board(client, game, monkeypatch)))
+
+    actions = payload["available_actions"]["actions"]
+    assert actions, payload["available_actions"]
+    for action in actions:
+        assert not [key for key, value in action.items() if value in (None, [], {})], action
+    assert any(
+        slot.get("candidates")
+        for action in actions
+        for slot in (action.get("targets") or {}).get("slots") or []
+    ), "no action on the busy board carries its target candidates"
+    for key in BULK_KEYS:
+        assert key in payload, f"carrying the action list narrowed the wake's `{key}` away"
+    assert "omitted_sections" not in payload
+
+
+def test_an_advisors_wake_list_grows_only_inside_the_action_answers_own_caps(
+    client, game, monkeypatch
+):
+    """Not a guess, the same arithmetic the action answer's worst case uses:
+    the same wake on the same board, once with both budgets emptied and once
+    with them at full value. Everything the second answer carries beyond the
+    first is candidate names and `pays_with` names, so it can never exceed
+    the two caps added together - and the starved answer says out loud that
+    its candidates were cut rather than handing over less and staying quiet."""
+    server = advisor_on_the_busy_board(client, game, monkeypatch)
+    full = len(advisor_wake(server))
+
+    caps = mcp_module.MAX_CANDIDATE_BYTES + mcp_module.MAX_PAYS_WITH_BYTES
+    monkeypatch.setattr(mcp_module, "MAX_CANDIDATE_BYTES", 0)
+    monkeypatch.setattr(mcp_module, "MAX_PAYS_WITH_BYTES", 0)
+    starved_text = advisor_wake(server)
+    starved = json.loads(starved_text)["available_actions"]["actions"]
+
+    trimmed = [
+        action
+        for action in starved
+        if (action.get("targets") or {}).get("more_with") == mcp_module._BUDGET_SPENT_WITH
+    ]
+    assert trimmed, "a spent candidate budget went unannounced on the advisor's wake"
+    for action in trimmed:
+        assert all("count" in slot for slot in action["targets"]["slots"]), action
+    assert full - len(starved_text) <= caps, f"full {full} - starved {len(starved_text)}"
