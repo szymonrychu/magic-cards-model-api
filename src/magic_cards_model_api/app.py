@@ -2795,7 +2795,7 @@ def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[s
     legal_before = records.legal_actions_before(
         game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
     )
-    summary = records.advice_summary(game, req.method, req.path, req.body)
+    summary = records.advice_summary(game, req.method, req.path, req.body, legal_before)
     based_on_seq = audit.last_seq(game_id)
     seq = audit.record(
         game_id,

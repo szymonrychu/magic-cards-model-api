@@ -410,15 +410,182 @@ def _names(game: Game, tokens: Any) -> list[str]:
     return [_named(game, token) for token in tokens] if isinstance(tokens, list) else []
 
 
+def _path_tail(path: str) -> str:
+    return path.rstrip("/").rsplit("/", 1)[-1]
+
+
 def _action_name(path: str) -> str:
     """The action a proposal's `path` names, in words - `".../actions/play-
     land"` reads `"play land"`. Derived from the path rather than taken as a
     field, for the same reason the summary as a whole is."""
-    tail = path.rstrip("/").rsplit("/", 1)[-1]
-    return tail.replace("-", " ") or "act"
+    return _path_tail(path).replace("-", " ") or "act"
 
 
-def advice_summary(game: Game, method: str, path: str, body: dict[str, Any]) -> str:
+#: The one action path whose tail is not its own `models.action.ActionKind`'s
+#: name. Every other path matches by name once the hyphen is normalised
+#: (`actions/cast` -> `cast`, `actions/play-land` -> `play_land`), and
+#: `actions/activate` matches `activate`, `activate_mana` and
+#: `activate_off_zone` alike by prefix - one permanent's mana ability and its
+#: other activated ability are both reachable through that one route, and
+#: `ability_index` below is what tells them apart.
+#:
+#: `actions/crew` needs no entry and gets none: `legal_actions` does not
+#: enumerate crew at all (CR 702.122a's ability has no `{T}` of its own and is
+#: not one of the Vehicle's `activated_abilities`), and its cost is the
+#: creatures tapped for it, which `_COST_KEYS`'s `crewing` already names in
+#: full. An entry that matched nothing would only make the printed-cost
+#: fallback fire on a cost the Vehicle's printing has nothing to do with.
+_PATH_KINDS: dict[str, tuple[str, ...]] = {
+    # CR 702.29b: cycling "can be activated only if the card is in a player's
+    # hand", so the engine enumerates it as an off-zone activation while the
+    # api gives it a route of its own.
+    "cycle": ("activate_off_zone",),
+}
+
+#: The only path whose cost the card's *printed* mana cost can stand in for,
+#: which is what `_printed_cost` is allowed to do. CR 601.2f on a cast's total
+#: cost: "Usually this is just the mana cost." Nothing else is: an
+#: activation's cost is its ability's, a crew's is the creatures, a special
+#: action's is that action's own - quoting a printing there would name a
+#: number the proposal never pays.
+_PRINTED_COST_PATHS = frozenset({"cast"})
+
+#: The body fields that tell two otherwise identical actions on the same card
+#: apart - which ability of a permanent, which cast option, out of which zone.
+#: Named identically on the request shapes (`schemas.ActivateRequest.
+#: ability_index`, `CastRequest.keyword`/`.from_zone`/`.alternative_cost`) and
+#: on `models.action.Action`, so one list serves both sides of the comparison.
+_DISCRIMINATING_FIELDS = ("ability_index", "keyword", "from_zone", "alternative_cost")
+
+
+def _kind_matches(kind: str, path: str) -> bool:
+    """Whether an `Action` of `kind` could be what the route at `path` takes -
+    see `_PATH_KINDS` for the two paths that do not simply spell their own
+    kind."""
+    tail = _path_tail(path).replace("-", "_")
+    if tail in _PATH_KINDS:
+        return kind in _PATH_KINDS[tail]
+    return kind == tail or kind.startswith(f"{tail}_")
+
+
+def _agreement(action: dict[str, Any], body: dict[str, Any]) -> int | None:
+    """How well `action` (one `legal_actions` row, `model_dump`-ed) matches
+    what `body` asked for: a count of the discriminating fields that actually
+    agreed, or `None` when one of them outright contradicts - which rules the
+    action out rather than ranking it lower.
+
+    A count rather than a boolean because a body is allowed to be silent: a
+    cast that names no `keyword` is the printed-mana-cost cast, and scoring
+    "both absent" as agreement is what makes it beat the evoke row for the
+    same card without having to declare that the silence *means* `None`."""
+    agreed = 0
+    for field in _DISCRIMINATING_FIELDS:
+        want, have = body.get(field), action.get(field)
+        if field == "alternative_cost" and isinstance(want, int):
+            # An index into `GET .../affordances/{card_id}`'s own list
+            # (`CastRequest.alternative_cost` takes either), which names
+            # nothing this row carries - no information, not a contradiction.
+            continue
+        if want is None:
+            agreed += 1 if have is None else 0
+            continue
+        if have is None or str(have).casefold() != str(want).casefold():
+            return None
+        agreed += 1
+    return agreed
+
+
+def _proposed_action(
+    path: str, body: dict[str, Any], legal_before: LegalActionsBefore | None
+) -> dict[str, Any] | None:
+    """The row of `legal_before` this proposal is proposing, or `None` when
+    nothing in it matches - including when the proposal names no card at all
+    (`decide`, `pass-priority`, a whole attack declaration), which is every
+    action whose cost is not a property of one named object.
+
+    Matched rather than recomputed so the cost in the summary is the engine's
+    own determined total for *this* action (CR 601.2f's total cost, with the
+    increases and reductions it names and CR 118.9's alternative costs
+    already applied), which a card's printed mana cost is not: Mind Stone
+    prints `{2}` and its second ability costs
+    `{1}, {T}, Sacrifice this artifact`. `legal_before` is the enumeration
+    the recording route has already computed for its own row, so this costs
+    no second pass over the engine."""
+    card = str(body.get("card_id") or "")
+    if not card or legal_before is None:
+        return None
+    best: tuple[int, dict[str, Any]] | None = None
+    for action in legal_before.actions:
+        if not _kind_matches(str(action.get("kind") or ""), path):
+            continue
+        if str(action.get("card_id") or "") != card:
+            continue
+        score = _agreement(action, body)
+        if score is not None and (best is None or score > best[0]):
+            best = (score, action)
+    return best[1] if best is not None else None
+
+
+def _printed_cost(game: Game, path: str, body: dict[str, Any]) -> str | None:
+    """The printed mana cost of the card `body` names, for a cast no
+    currently-legal action matches.
+
+    That happens for real, and it is not a defect: an advisor reads a board
+    and records a moment later (a proposal is deliberately allowed to be born
+    stale - see `app.record_advice`), and it may well propose the cast that
+    becomes legal once the human has untapped or paid something else. A human
+    still needs a price in front of them, so the printing stands in - said out
+    loud as printed, because it is not a total the engine agreed to.
+
+    Only for a cast (`_PRINTED_COST_PATHS`), because a cast is the only action
+    whose cost the printing usually *is*."""
+    if _path_tail(path).replace("-", "_") not in _PRINTED_COST_PATHS:
+        return None
+    try:
+        card = game.find_by_id(UUID(str(body.get("card_id"))))
+    except Exception:
+        card = None
+    if card is None:
+        return None
+    return (card.card.mana_cost or "").strip() or None
+
+
+def _cost_clause(
+    game: Game, path: str, body: dict[str, Any], legal_before: LegalActionsBefore | None
+) -> str | None:
+    """`"for {1}{R}, sacrifice a creature"` - what this proposal would cost,
+    or `None` when it costs nothing at all: CR 305.1's land play pays nothing
+    ("the player simply puts the land onto the battlefield"), and a land
+    prints no mana cost either, so the line says nothing about cost rather
+    than inventing a `{0}`."""
+    action = _proposed_action(path, body, legal_before)
+    if action is not None:
+        cost = str(action.get("cost") or "").strip()
+        return f"for {cost}" if cost else None
+    printed = _printed_cost(game, path, body)
+    return f"for {printed} (printed)" if printed else None
+
+
+def _source_names(game: Game, sources: Any) -> list[str]:
+    """The mana sources `body["mana_sources"]` names, by card name. Takes
+    both shapes the request allows (`list[UUID | schemas.ManaSource]`), since
+    naming a source's colour or ability index does not change which permanent
+    it is."""
+    if not isinstance(sources, list):
+        return []
+    return [
+        _named(game, source.get("card_id") if isinstance(source, dict) else source)
+        for source in sources
+    ]
+
+
+def advice_summary(
+    game: Game,
+    method: str,
+    path: str,
+    body: dict[str, Any],
+    legal_before: LegalActionsBefore | None = None,
+) -> str:
     """One line saying what this proposal would actually do, card names and
     targets resolved against `game` - see this section's own comment for why
     the advisor never gets to write it.
@@ -429,6 +596,14 @@ def advice_summary(game: Game, method: str, path: str, body: dict[str, Any]) -> 
     noise (`expected_seq`, `reasoning`) than the thing being proposed. The
     exact body is recorded alongside this, in full, so nothing is lost by
     this line being short.
+
+    `legal_before` is the enumeration the recording route has already
+    computed for the same row (`legal_actions_before`), passed in so the cost
+    this line quotes is the engine's own determined total for the action being
+    proposed rather than the printed mana cost of the card it names - see
+    `_proposed_action`. Omitted, the line still renders; only the cost falls
+    back to the printing (`_printed_cost`), which is the same fallback a
+    proposal no legal action matches already gets.
     """
     player = str(body.get("player") or "?")
     parts = [f"{player}: {_action_name(path)}"]
@@ -446,6 +621,9 @@ def advice_summary(game: Game, method: str, path: str, body: dict[str, Any]) -> 
         parts.append("modes " + ", ".join(str(mode) for mode in body["modes"]))
     if isinstance(body.get("x_value"), int):
         parts.append(f"X={body['x_value']}")
+    cost = _cost_clause(game, path, body, legal_before)
+    if cost:
+        parts.append(cost)
 
     targets = _names(game, body.get("targets"))
     if targets:
@@ -489,9 +667,9 @@ def advice_summary(game: Game, method: str, path: str, body: dict[str, Any]) -> 
         named = _names(game, body.get(key))
         if named:
             parts.append(f"{preposition} " + ", ".join(named))
-    sources = body.get("mana_sources")
-    if isinstance(sources, list) and sources:
-        parts.append(f"paying with {len(sources)} source(s)")
+    sources = _source_names(game, body.get("mana_sources"))
+    if sources:
+        parts.append("paying with " + ", ".join(sources))
 
     # `decide`'s own answers (`schemas.DecideRequest`) - one kind per field,
     # so whichever one the body carries is the answer being proposed.

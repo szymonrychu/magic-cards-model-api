@@ -636,6 +636,190 @@ def test_the_summary_is_derived_by_the_server_from_the_body(client: TestClient, 
     assert "made up" not in summary, "the agent's own summary reached the ledger"
 
 
+def summary_of(client: TestClient, game_id: str, uid: str, tail: str, body: dict[str, Any]) -> str:
+    """Record one proposal of `body` against `tail` and hand back the line
+    the server derived for it."""
+    record_advice(
+        client, game_id, uid, path=f"/api/games/{game_id}/{tail}", body=body, validated=True
+    )
+    return advice_rows(game_id)[-1]["detail"]["summary"]
+
+
+def test_the_summary_says_what_the_proposed_action_costs(client: TestClient, game: str) -> None:
+    """The `summary` is specified as "card names resolved from ids, targets,
+    cost" - and the cost half is the half a human approving a proposal cannot
+    do without. The number of mana sources is not a cost, so the sources are
+    named too."""
+    uid = advisor_uid(game, "alice")
+    mountain = card_id(client, game, "Mountain", "alice", "battlefield")
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/cast",
+        {
+            "player": "alice",
+            "card_id": bolt,
+            "targets": ["bob"],
+            "mana_sources": [mountain],
+        },
+    )
+
+    assert "Lightning Bolt" in summary, summary
+    assert "for {R}" in summary, summary
+    assert "paying with Mountain" in summary, summary
+    assert "source(s)" not in summary, f"the sources are named, not counted: {summary}"
+
+
+def test_the_cost_is_the_engines_own_total_not_the_cards_printed_mana_cost(
+    client: TestClient, game: str
+) -> None:
+    """Mind Stone prints `{2}`; its second ability costs `{1}, {T}, Sacrifice
+    this artifact`. Reading the printed mana cost off the card would say
+    `{2}` for an activation that never pays it - so the cost is read off the
+    engine's own enumeration of what is legal right now, which is where cost
+    increases, reductions and alternative costs are already worked out."""
+    uid = advisor_uid(game, "alice")
+    stone = card_id(client, game, "Mind Stone", "alice", "battlefield")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/activate",
+        {"player": "alice", "card_id": stone, "ability_index": 1},
+    )
+
+    assert "for {1}, {T}, Sacrifice this artifact" in summary, summary
+    assert "for {2}" not in summary, f"that is the printing, not the ability: {summary}"
+
+
+def test_the_cost_tells_two_abilities_of_one_permanent_apart(client: TestClient, game: str) -> None:
+    """Mind Stone's ability 0 is a bare `{T}` mana ability. Same card, same
+    path, different `ability_index` - and therefore a different cost."""
+    uid = advisor_uid(game, "alice")
+    stone = card_id(client, game, "Mind Stone", "alice", "battlefield")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/activate",
+        {"player": "alice", "card_id": stone, "ability_index": 0},
+    )
+
+    assert "for {T}" in summary, summary
+    assert "Sacrifice" not in summary, f"that is the other ability: {summary}"
+
+
+def test_an_unmatched_proposal_still_says_the_printed_cost_and_says_it_is_printed(
+    client: TestClient, game: str
+) -> None:
+    """A proposal may name an action that is not legal *yet* - the advisor
+    reads a board, and a command can land between reading it and recording.
+    The human still has to see a price, so the card's own printed mana cost
+    stands in, labelled as printed rather than passed off as a total the
+    engine agreed to."""
+    uid = advisor_uid(game, "alice")
+    pacifism = card_id(client, game, "Pacifism", "alice", "graveyard")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/cast",
+        {"player": "alice", "card_id": pacifism, "from_zone": "graveyard"},
+    )
+
+    assert "for {1}{W} (printed)" in summary, summary
+
+
+def test_a_costless_proposal_invents_no_cost(client: TestClient, game: str) -> None:
+    """CR 305.1's land play pays nothing at all ("the player simply puts the
+    land onto the battlefield", so `Action.cost` is `None`), and a land prints
+    no mana cost - so the line says nothing about cost rather than `{0}` or a
+    printed blank."""
+    uid = advisor_uid(game, "alice")
+    forest = card_id(client, game, "Forest", "alice", "hand")
+
+    summary = summary_of(
+        client, game, uid, "actions/play-land", {"player": "alice", "card_id": forest}
+    )
+
+    assert summary == "alice: play land Forest", summary
+
+
+def test_the_path_picks_the_cost_of_the_action_it_names_not_another_on_the_same_card(
+    client: TestClient, game: str
+) -> None:
+    """Lupine Harbingers in hand is two legal things at once: a `{3}{G}` cast
+    and CR 702.143a's foretell special action, which "may pay {2} and exile a
+    card with foretell from their hand face down". Same card, same player,
+    two costs - so the route the proposal is addressed to is what decides
+    which one the line quotes."""
+    uid = advisor_uid(game, "alice")
+    harbingers = card_id(client, game, "Lupine Harbingers", "alice", "hand")
+    body = {"player": "alice", "card_id": harbingers}
+
+    foretold = summary_of(client, game, uid, "actions/foretell", body)
+    cast = summary_of(client, game, uid, "actions/cast", body)
+
+    assert "for {2}" in foretold, foretold
+    assert "for {3}{G}" in cast, cast
+
+
+def test_a_crew_proposal_quotes_no_printed_cost_because_the_creatures_are_the_cost(
+    client: TestClient, game: str
+) -> None:
+    """Smuggler's Copter prints `{2}`, and crewing it never pays that: CR
+    702.122a's crew cost is the creatures tapped for it, which the line
+    already names. A printing quoted here would be a number the proposal does
+    not pay, which is the whole failure the cost half exists to avoid - so no
+    cost clause at all."""
+    uid = advisor_uid(game, "alice")
+    copter = card_id(client, game, "Smuggler's Copter", "alice", "battlefield")
+    lions = card_id(client, game, "Savannah Lions", "alice", "battlefield")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/crew",
+        {"player": "alice", "card_id": copter, "crewing": [lions]},
+    )
+
+    assert summary == "alice: crew Smuggler's Copter, crewing with Savannah Lions", summary
+
+
+def test_a_cycling_proposal_reads_the_cycling_cost(client: TestClient, game: str) -> None:
+    """`actions/cycle` has a route of its own, while the engine enumerates
+    cycling as an off-zone activation (CR 702.29b: it "can be activated only
+    if the card is in a player's hand") - so the path-to-kind mapping is what
+    finds it, and the cost is the cycling ability's, not Angelsong's printed
+    `{1}{W}`."""
+    uid = advisor_uid(game, "alice")
+    angelsong = card_id(client, game, "Angelsong", "alice", "hand")
+
+    summary = summary_of(
+        client, game, uid, "actions/cycle", {"player": "alice", "card_id": angelsong}
+    )
+
+    assert "for {2}, Discard this card" in summary, summary
+    assert "{1}{W}" not in summary, f"that is the printing, not the cycling cost: {summary}"
+
+
+def test_a_decide_answer_is_summarised_without_a_cost(client: TestClient, game: str) -> None:
+    """`decide` names no card and pays nothing; the cost lookup must not
+    attach one (nor raise looking for it)."""
+    uid = advisor_uid(game, "alice")
+
+    summary = summary_of(client, game, uid, "decide", {"player": "alice", "accept": True})
+
+    assert summary == "alice: decide yes", summary
+
+
 def test_advice_carries_the_legal_actions_the_retrospective_will_want(
     client: TestClient, game: str
 ) -> None:

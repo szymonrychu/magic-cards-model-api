@@ -77,6 +77,34 @@ whoever works on the repo itself.
   nothing if that record fails: an unrecorded approval is, in the ledger the
   retrospective reads, indistinguishable from a play the human thought of
   themselves.
+- **2026-09-12 - an advice `summary`'s cost comes from the action the engine
+  enumerated, never from the card's printing - and only a cast may fall back
+  to the printing at all.** The cost half of `records.advice_summary`.
+
+  A proposal's body is machine-shaped, so the line a human approves has to
+  spell out the price. Reading `card.card.mana_cost` off the named card is the
+  obvious way and the wrong one: Mind Stone prints `{2}` and its second
+  ability costs `{1}, {T}, Sacrifice this artifact`, Lupine Harbingers is
+  simultaneously a `{3}{G}` cast and a `{2}` foretell (CR 702.143a), and
+  CR 601.2f's increases and reductions never reach a printing at all. So
+  `_proposed_action` matches the body against the `legal_actions_before` row
+  the route has already computed for the same ledger entry - free, and it is
+  the engine's own determined total - keyed on the path's own
+  `models.action.ActionKind` plus `ability_index`/`keyword`/`from_zone`/
+  `alternative_cost` agreement.
+
+  Two things that surprised: `legal_actions` does **not** enumerate crew at
+  all (CR 702.122a's ability has no `{T}` of its own), and cycling comes back
+  as `activate_off_zone` with `keyword: "Cycling"` even though the api gives
+  it an `actions/cycle` route - hence `records._PATH_KINDS`. Crew therefore
+  gets no cost clause rather than a mapping that matches nothing, because the
+  printed-cost fallback would then have quoted the Vehicle's `{2}` for an
+  ability that never pays it. That fallback is restricted to `actions/cast`
+  (`_PRINTED_COST_PATHS`) for exactly that reason - CR 601.2f, "usually this
+  is just the mana cost", is true of a cast and of nothing else - and says
+  `(printed)` out loud when it fires, because a proposal may legitimately name
+  a play that is not legal yet.
+
 - **2026-09-12 - advise mode: the dangerous half is the 5 request shapes with
   no `dry_run`, not the 7 with one.** B2's whole hazard, written down because
   it is not visible from either side on its own.
