@@ -1148,12 +1148,24 @@ def test_the_advisor_reads_back_its_own_advice(client: TestClient, game: str) ->
 
 
 def test_the_protocol_version_is_unchanged_and_documents_advise_mode() -> None:
-    """Wave 1 and wave 2 ship as one protocol version: the changelog entry is
-    extended, never bumped to 15."""
-    assert protocol.PROTOCOL_VERSION == seatkit.PROTOCOL_VERSION == "seatkit-14"
+    """Wave 1 and wave 2 ship as one protocol version: advise mode EXTENDS the
+    `seatkit-14` entry and never takes a bump of its own.
+
+    That claim used to be pinned as "the constant still reads `seatkit-14`",
+    which measured the subject only for as long as 14 happened to be the
+    newest version. `seatkit-15` (`cast` gained `spell_face`) then moved the
+    constant for a reason that has nothing to do with advise mode, and the
+    literal went red while the thing it was guarding was untouched. So the
+    assertion is aimed at the subject instead: advise mode is documented
+    inside `seatkit-14`'s own paragraph. This is strictly the stronger check -
+    it now also catches the failure the literal never could, someone lifting
+    the advise items out into a version entry of their own."""
+    assert protocol.PROTOCOL_VERSION == seatkit.PROTOCOL_VERSION
     changelog = Path(seatkit.__file__).read_text().split("PROTOCOL_VERSION = ", 1)[1]
-    assert "advise" in changelog.lower()
-    assert "/advice" in changelog
+    assert "`seatkit-14`" in changelog, "the seatkit-14 entry has left the changelog"
+    entry = changelog.split("`seatkit-14`", 1)[1].split("`seatkit-13`", 1)[0]
+    assert "advise" in entry.lower(), "advise mode is not documented under seatkit-14"
+    assert "/advice" in entry, "the /advice surface is not documented under seatkit-14"
 
 
 # ---------------------------------------------------------------------------
