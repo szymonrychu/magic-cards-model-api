@@ -142,8 +142,10 @@ class BoardRead(RequestModel):
 
     - `true` - the board had moved; the engine was never asked.
     - `false` - this seat named the board it decided against, that board was
-      current, and the engine judged the action illegal on it. A genuine
-      rules error.
+      current, and the engine judged the action illegal on it. A rules error
+      only when the api had not itself offered that action for that board
+      (`detail.offered`, `records.offered_action`) - a refusal of an action
+      this api's own enumeration listed is not the seat misreading anything.
     - absent - the caller sent no `expected_seq`, so nothing can be said
       about which of the two it was.
 
@@ -971,9 +973,17 @@ class DecideRequest(BoardRead):
     optional for a human one."""
 
 
-class MulliganRequest(RequestModel):
+class MulliganRequest(BoardRead):
     """One seat's CR 103.5 declaration: "a player who is dissatisfied with
-    their initial hand may take a mulligan"."""
+    their initial hand may take a mulligan".
+
+    `BoardRead` because this is a mutating move a seat makes and records
+    (`mulligan_declared`, one of `scripts/eval_report.py`'s `PLAY_ACTIONS`),
+    so a refusal of it belongs in the same measured split as every other:
+    without an `expected_seq` to name, a seat's first declaration of the game
+    was the one move whose refusals could not be told apart from a lost race.
+    Optional here exactly as it is everywhere else - the browser names no
+    board and is refused on nothing new."""
 
     player: str
     take: bool
@@ -2149,6 +2159,25 @@ class LegalActionsResponse(BaseModel):
     """
 
     actions: list[ActionWithTargets | Action]
+
+    last_seq: int = 0
+    """The ledger position this enumeration was computed against
+    (`audit.last_seq`) - the number a seat names back as
+    `BoardRead.expected_seq` on whatever it decides to do about it.
+
+    Here rather than in a second call, because a seat that has to *ask* for
+    the position it just read at has already lost the thing worth naming: one
+    more round trip is one more window for the board to move, and in a
+    parallel gauntlet it is also one more read through the single `serve`
+    process every game shares. This is the same number `GET .../log` answers
+    as its own `last_seq` and the same one `seatkit.Seat.last_seq` carries
+    from a `recent_log`; a seat driven by `api_client.SeatApiClient` has no
+    log read in its loop at all (three calls, deliberately - see there), so
+    without this it could name no board and every refusal it collected was
+    unsplittable (`scripts/eval_report.py`'s `unknown` bucket).
+
+    `0` for a game with no ledger, which is the same "name nothing" answer
+    `require_current_board` already short-circuits on."""
 
 
 class CandidateView(BaseModel):

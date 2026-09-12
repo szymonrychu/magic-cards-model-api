@@ -7,6 +7,49 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-12 - a 5xx is not a refusal, and the baseline must never
+  remember one as if it were.** `api_client.act` mapped every status >= 400
+  to `{"allowed": False}`, and the anti-stall memory then fingerprinted it:
+  a keyless move (`pass_priority`, `advance`, `decide`, a declaration) has no
+  next row for `_pick` to step to, so one 503 silenced the seat for the rest
+  of the game and `play_out` conceded - a fabricated baseline loss, in the
+  parallel gauntlet mode that produces the 503. A 5xx now carries
+  `unknown_outcome: True` (the shape `seatkit._normalise_non_2xx` already
+  used) and is retried, not remembered; a 4xx is still fingerprinted, because
+  that memory is the fix for the unbounded repost loop. A stall caused by an
+  unreachable server ends `ended_by: "transport"` with no concession.
+  `_refusal` also keeps the body's own keys now - the 409 board-moved answer's
+  `stale`/`last_seq` never reached this seam's only caller. `baseline_seat`
+  is the only consumer of `api_client.act`; nothing depended on the
+  conflation.
+
+- **2026-09-12 - the control arm could not measure its own refusal split.**
+  The `stale: False` stamp needs the request to name a current
+  `expected_seq`. `seatkit.run_action` arms one; `baseline_seat` never did, so
+  a baseline-only ledger read `stale_split: unknown` - the same structurally
+  empty bucket recorded below, one level down, for exactly the arm every agent
+  number is compared against. `LegalActionsResponse.last_seq` now carries the
+  position with the enumeration (read *before* the board, so it can never be
+  newer than what the seat saw), `SeatApiClient.board_seq` holds it, and
+  `BaselineSeat` folds it in at the seam - never into `Move.body`, whose
+  fingerprint is the anti-stall memory. `MulliganRequest` became `BoardRead`
+  as the one route the policy posts that could not name a board.
+
+- **2026-09-12 - `stale: False` is not a rules error on its own.** A refusal
+  on a current board was scored as the agent misreading the rules even when
+  the api had itself offered the action (the Adventure face, since fixed in
+  the engine, was the measured case). `app._run_command` holds the request and
+  `legal_actions_before` for the same board, so it sets
+  `records.offered_action` (a ContextVar, the `stale` flag's own pattern) and
+  `audit.record` stamps `offered` on refusal rows. `eval_report` now splits
+  refusals five ways - `rules` (never offered: the only agent fault),
+  `offered`, `stale`, `unknown`, `unchecked` - with an `offer_split` beside
+  `stale_split`. Decision, and its cost: a seat that mis-announces an offered
+  action (a bad target, X, mode) lands in `offered`, not `rules`, because the
+  ledger cannot tell that from the api contradicting itself and
+  `rules_error_rate` must only count what is certainly the seat's fault - read
+  it as a floor. `crew`, `cycle`, the declarations and `decide` make no claim
+  (no `ability_index`, or not a single enumerated row).
 - **2026-09-12 - degradation must never make a match EASIER.** The
   non-obvious half of hardening the deck-guide readers, and the one that must
   not be reintroduced. `guides._clauses` dropped an unusable clause from an

@@ -242,9 +242,32 @@ def test_refusal_rate_is_over_attempts_the_engine_ruled_on():
 
 
 def test_refusals_split_into_rules_errors_and_stale_races():
+    """`offered: False` on the two rules rows, and it is not decoration: a
+    refusal is the seat's own misreading only once the ledger says this api
+    had *not* offered the action (`audit._with_offered`). These rows carried
+    `stale: False` alone when this test was written, and counting that as a
+    rules error is what let an api refusing an action it had itself
+    enumerated be scored as the agent misreading the rules.
+    """
     rows = [
-        row(2, "cast", player="alice", allowed=False, reason="cannot pay", stale=False),
-        row(3, "cast", player="alice", allowed=False, reason="cannot pay", stale=False),
+        row(
+            2,
+            "cast",
+            player="alice",
+            allowed=False,
+            reason="cannot pay",
+            stale=False,
+            offered=False,
+        ),
+        row(
+            3,
+            "cast",
+            player="alice",
+            allowed=False,
+            reason="cannot pay",
+            stale=False,
+            offered=False,
+        ),
         row(4, "attack", player="alice", allowed=False, reason="not pending", stale=True),
     ]
     report = eval_report.build_report([finished_game("g1", "alice", extra=rows)])
@@ -253,7 +276,9 @@ def test_refusals_split_into_rules_errors_and_stale_races():
     assert split["rules"] == 2
     assert split["stale"] == 1
     assert split["unknown"] == 0
+    assert split["unchecked"] == 0
     assert report["stale_split"] == "measured"
+    assert report["offer_split"] == "measured"
 
 
 def test_an_absent_stale_flag_is_reported_as_unknown_not_as_a_rules_error():
@@ -470,3 +495,201 @@ def test_the_fixture_ledger_on_disk_matches_what_the_loader_expects():
     assert isinstance(raw, list) and raw
     for entry in raw:
         assert set(entry) >= {"game_id", "players", "rows"}
+
+
+# -- the control arm measures its own split too -------------------------------
+
+
+def _baseline_ledger(game_id: str) -> list[eval_report.GameRows]:
+    from magic_cards_model_api.store import store
+
+    return eval_report.ledger_from_store(store, game_ids=[game_id])
+
+
+def test_a_baseline_driven_refusal_lands_in_a_measured_split(client, game_fixture, monkeypatch):
+    """The same hole MEMORY.md records as fixed one level up, one level down.
+
+    `records.require_current_board` sets the flag that lets `audit.record`
+    stamp `stale: False` only when a request names a matching `expected_seq`
+    - and `baseline_seat` named none. So the WRAPPER agent seat
+    (`seatkit.run_action`, which arms it on every action) was measured while
+    the CONTROL ARM was not: on a baseline-only ledger every refusal fell in
+    the `unknown` bucket and `stale_split` read `unknown`, for exactly the
+    arm the whole comparison rests on.
+
+    The engine's verdict here is the one thing faked, and the only thing:
+    everything from the request body through `require_current_board`, the
+    `records` row and the report is the real path. A refusal is what the
+    split is about, and a baseline that reliably provokes one out of the
+    engine would have to be built out of a card fixture rather than out of
+    the policy.
+    """
+    from magic_cards_model_api import baseline_seat, engine_api
+    from magic_cards_model_api.api_client import HttpSeatApiClient
+    from magic_cards_model_api.store import store
+
+    add_card(client, game_fixture, "Forest", "alice", "hand")
+    monkeypatch.setattr(
+        engine_api,
+        "play_land",
+        lambda game, req: engine_api.refused("the engine says no, on this very board"),
+    )
+    uid = {name: uid for uid, name in store.seat_uids(game_fixture).items()}["alice"]
+    seat = baseline_seat.BaselineSeat(HttpSeatApiClient(http=client), game_fixture, "alice", uid)
+
+    move = seat.step()
+
+    assert move is not None and move.label == "play_land", move
+    assert seat.refusals == 1, "the engine refused it, and the seat counted that"
+    refusals = [
+        payload
+        for rows in _baseline_ledger(game_fixture)
+        for payload in rows.payloads()
+        if payload.get("detail", {}).get("allowed") is False
+    ]
+    assert [payload["detail"].get("stale") for payload in refusals] == [False], refusals
+
+    report = eval_report.build_report(_baseline_ledger(game_fixture))
+
+    assert report["stale_split"] == "measured", report
+    split = report["seats"]["alice"]["refusal_split"]
+    assert split["unknown"] == 0, report
+    # In the `offered` bucket rather than `rules`, and that is the other
+    # finding, next door: the api had listed this land drop as legal for this
+    # seat a moment before refusing it, so whatever it was, it was not the
+    # seat misreading the rules. What this test is about is that the row is
+    # SPLIT at all - the baseline named the board it decided against, so the
+    # race question has an answer.
+    assert (split["offered"], split["rules"], split["unchecked"]) == (1, 0, 0), report
+
+
+def test_an_api_refusal_of_an_action_the_api_offered_is_not_a_rules_error(
+    client, game_fixture, monkeypatch
+):
+    """What `rules_error_rate` is allowed to count.
+
+    `GET .../legal-actions` is the api's own claim that an action is legal for
+    this seat right now, and `records.legal_actions_before` writes that same
+    enumeration onto the row of whatever the seat then did. So the ledger can
+    say which of two things a refusal was, and only the second is the agent's
+    fault:
+
+    - the api refused an action it had itself offered, on the very board it
+      offered it on (the Adventure face was a measured instance of this: the
+      enumeration listed `["cast", "Stomp", <id>]`, posting it back verbatim
+      was refused, and the row read as an agent rules error);
+    - the seat asked for something that was never on offer.
+
+    Both rows here are real: one refusal of an offered action, one of an
+    action the enumeration does not contain, in one game, split apart.
+    """
+    from magic_cards_model_api import baseline_seat, engine_api
+    from magic_cards_model_api.api_client import HttpSeatApiClient
+    from magic_cards_model_api.store import store
+
+    add_card(client, game_fixture, "Forest", "alice", "hand")
+    forest = state(client, game_fixture)["hands"]["alice"][0]["id"]
+    uid = {name: uid for uid, name in store.seat_uids(game_fixture).items()}["alice"]
+
+    # (1) the api refuses the land drop it had just offered
+    monkeypatch.setattr(
+        engine_api,
+        "play_land",
+        lambda game, req: engine_api.refused("this api cannot do that yet"),
+    )
+    seat = baseline_seat.BaselineSeat(HttpSeatApiClient(http=client), game_fixture, "alice", uid)
+    assert seat.step() is not None
+
+    # (2) and the seat asks for something the enumeration never offered - a
+    # land is not a spell, and no `cast` row names it.
+    refused = client.post(
+        f"/api/games/{game_fixture}/actions/cast",
+        params={"uid": uid},
+        json={
+            "player": "alice",
+            "card_id": forest,
+            "expected_seq": _last_seq(client, game_fixture, uid),
+            "reasoning": "asking for something that was never offered",
+        },
+    )
+    assert refused.json()["allowed"] is False, refused.json()
+
+    rows = [
+        payload
+        for game_rows in _baseline_ledger(game_fixture)
+        for payload in game_rows.payloads()
+        if payload.get("detail", {}).get("allowed") is False
+    ]
+    assert [(row["action"], row["detail"]["stale"], row["detail"]["offered"]) for row in rows] == [
+        ("play_land", False, True),
+        ("cast", False, False),
+    ], rows
+
+    report = eval_report.build_report(_baseline_ledger(game_fixture))
+    alice = report["seats"]["alice"]
+
+    assert alice["refusal_split"] == {
+        "rules": 1,
+        "offered": 1,
+        "stale": 0,
+        "unknown": 0,
+        "unchecked": 0,
+    }, alice
+    assert alice["rules_error_rate"]["successes"] == 1, "only the unoffered one is the agent's"
+    assert report["offer_split"] == "measured", report
+    rendered = eval_report.render(report)
+    assert "offered" in rendered, rendered
+
+
+def _last_seq(client, game_id: str, uid: str) -> int:
+    return int(client.get(f"/api/games/{game_id}/log", params={"uid": uid}).json()["last_seq"])
+
+
+def test_a_refusal_with_no_offered_flag_is_unchecked_not_a_rules_error():
+    """The third state, kept for the same reason the missing `stale` flag
+    keeps one. A ledger from a build that did not record whether the api had
+    offered the action cannot say whether a refusal was the seat's own
+    misreading, and counting it as one would invent an agent defect out of a
+    field nobody wrote. The report says which of its rows it could not check
+    rather than filling the gap with a guess.
+    """
+    rows = [
+        row(2, "cast", player="alice", allowed=False, reason="cannot pay", stale=False),
+        row(3, "cast", player="alice", allowed=False, reason="cannot pay", stale=False),
+    ]
+    report = eval_report.build_report([finished_game("g1", "alice", extra=rows)])
+
+    split = report["seats"]["alice"]["refusal_split"]
+    assert (split["rules"], split["offered"], split["unchecked"]) == (0, 0, 2), split
+    assert report["stale_split"] == "measured", "the race question was answered"
+    assert report["offer_split"] == "unknown", "the offer question was not"
+    assert report["seats"]["alice"]["rules_error_rate"]["successes"] == 0
+    rendered = eval_report.render(report)
+    assert "unchecked       2 refusal(s) carry no detail.offered" in rendered, rendered
+    assert "OFFER SPLIT" in rendered and "cannot be told apart" in rendered, rendered
+
+
+def test_every_refusal_lands_in_exactly_one_bucket():
+    """The five buckets are a partition, not five counters that happen to be
+    near each other: they must add up to the refusals the report says there
+    were, or some refusal is being reported twice or not at all."""
+    rows = [
+        row(2, "cast", player="alice", allowed=False, reason="a", stale=False, offered=False),
+        row(3, "cast", player="alice", allowed=False, reason="b", stale=False, offered=True),
+        row(4, "cast", player="alice", allowed=False, reason="c", stale=False),
+        row(5, "cast", player="alice", allowed=False, reason="d", stale=True),
+        row(6, "cast", player="alice", allowed=False, reason="e"),
+        row(7, "cast", player="alice", allowed=True),
+    ]
+    report = eval_report.build_report([finished_game("g1", "alice", extra=rows)])
+
+    alice = report["seats"]["alice"]
+    assert sum(alice["refusal_split"].values()) == alice["refusals"]["successes"] == 5, alice
+    assert alice["refusal_split"] == {
+        "rules": 1,
+        "offered": 1,
+        "unchecked": 1,
+        "stale": 1,
+        "unknown": 1,
+    }, alice
+    assert report["stale_split"] == "partial" and report["offer_split"] == "partial", report

@@ -13,6 +13,7 @@ measuring stick, it is a second source of unfinished games.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -783,6 +784,14 @@ class RefusingSeam:
     def legal_actions(self, game_id, player, uid, *, candidates=False):
         return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
 
+    @property
+    def board_seq(self):
+        # Delegated, not defaulted: `SeatApiClient.board_seq` is what lets a
+        # seat name the board it decided against, and a double answering
+        # `None` would quietly put every refusal it collected back in the
+        # report's `unknown` bucket.
+        return self.inner.board_seq
+
     def act(self, game_id, path, body, uid):
         self.attempts.append(path)
         if path == "actions/concede":
@@ -888,6 +897,10 @@ def test_play_out_checks_the_stop_flag_before_every_seat(client, game):
 
         def legal_actions(self, game_id, player, uid, *, candidates=False):
             return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
+
+        @property
+        def board_seq(self):
+            return self.inner.board_seq
 
         def act(self, game_id, path, body, uid):
             flag["stop"] = True
@@ -1067,6 +1080,10 @@ class CountingSeam:
         self.calls.append("legal_actions")
         return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
 
+    @property
+    def board_seq(self):
+        return self.inner.board_seq
+
     def affordances(self, game_id, card_id, player, uid):
         # Not on `SeatApiClient` any more (see `api_client.py`): a seat reads
         # its candidates off the enumeration. Kept here, and kept counting,
@@ -1146,3 +1163,267 @@ def test_has_turn_is_the_one_rule_for_whether_it_is_our_move(client, game):
     board, _ = look(client, game, "alice")
     assert baseline_seat.has_turn(board, "alice") is True
     assert baseline_seat.has_turn(board, "bob") is False
+
+
+# -- a transport failure is not a refusal ------------------------------------
+
+
+class FlakyHttp:
+    """The `httpx`-shaped client `HttpSeatApiClient` talks through, with a
+    chosen number of POSTs to one path answered by a synthetic HTTP failure
+    instead of by the app.
+
+    A legitimate test double at exactly one seam - the socket - and nothing
+    below it is faked: the board, the enumeration and every call this does
+    not intercept are the real app's. Faking the *outcome* instead (a seam
+    that answers `{"allowed": False}`) is what could not have caught this
+    defect, because the whole question is what `api_client.act` does with a
+    status code.
+    """
+
+    def __init__(
+        self, inner: TestClient, *, fail_on: str, status: int, times: int | None = 1
+    ) -> None:
+        self.inner = inner
+        self.fail_on = fail_on
+        self.status = status
+        self.times = times
+        self.posts: list[str] = []
+        self.failed = 0
+
+    class _Response:
+        """Just the three members `api_client.act` reads off a response."""
+
+        def __init__(self, status_code: int, body: dict[str, Any]) -> None:
+            self.status_code = status_code
+            self._body = body
+            self.text = json.dumps(body)
+
+        def json(self) -> dict[str, Any]:
+            return self._body
+
+    def get(self, url, **kwargs):
+        return self.inner.get(url, **kwargs)
+
+    def post(self, url, **kwargs):
+        self.posts.append(url)
+        if self.fail_on in url and (self.times is None or self.failed < self.times):
+            self.failed += 1
+            return self._Response(
+                self.status,
+                {"detail": f"synthetic HTTP {self.status} from FlakyHttp"},
+            )
+        return self.inner.post(url, **kwargs)
+
+
+def test_a_transient_5xx_leaves_the_seat_playing_rather_than_silenced(client, game):
+    """One 503 on one `pass-priority` used to silence this seat for the rest
+    of the game.
+
+    `api_client.act` turned every status >= 400 into `{"allowed": False}`,
+    so the anti-stall memory fingerprinted a pseudo-refusal the engine never
+    made - and `pass_priority` has no enumerated row to step past, so `_pick`
+    answered `None` for every later round against a board that could not move
+    while this seat was the one to act.
+
+    A 5xx is not a refusal: nobody knows whether the server acted. So it is
+    remembered as nothing, and the next round posts the same move again.
+    """
+    wire = FlakyHttp(client, fail_on="actions/pass-priority", status=503)
+    seat = baseline_seat.BaselineSeat(
+        HttpSeatApiClient(http=wire), game, "alice", seats_for(game)["alice"]
+    )
+
+    first = seat.step()
+
+    assert first is not None and first.label == "pass_priority", first
+    assert wire.failed == 1, wire.posts
+    assert seat.refusals == 0, "the engine refused nothing - the transport failed"
+    assert seat.advanced is False, "and nothing was learned, so the round was idle"
+
+    second = seat.step()
+
+    assert second is not None and second.label == "pass_priority", second
+    assert seat.advanced is True, "the retry went through"
+
+
+def test_one_transient_5xx_never_fabricates_a_concession(client, game):
+    """The cost of the defect, end to end: the ledger recorded a baseline
+    concession with no cause, which reads as a harness loss for the baseline
+    and a win for whatever it was being compared against. The default
+    parallel gauntlet mode is precisely the condition that produces the blip
+    - N games driven through one GIL-bound `serve` process - so the arm every
+    number is measured against was one 503 away from an invented loss.
+    """
+    wire = FlakyHttp(client, fail_on="actions/pass-priority", status=503)
+    seam = HttpSeatApiClient(http=wire)
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+
+    outcome = baseline_seat.play_out(seats, max_steps=40)
+
+    assert outcome["ended_by"] == "play", outcome
+    assert [url for url in wire.posts if "concede" in url] == [], wire.posts
+    # Ended by the rules, not by the guard: two libraryless baselines pass
+    # until one of them draws from an empty library (CR 104.3c). The seat
+    # the 503 hit is still the one that won it.
+    assert outcome["winner"] == "alice", outcome
+
+
+def test_a_genuine_refusal_is_still_remembered_and_still_stops_the_retry(client, game):
+    """The other half, and the reason the 5xx fix is a gate rather than a
+    deletion: a 4xx *is* the api's own answer that this action did not happen
+    and will not, so the anti-stall memory must still fingerprint it. That
+    memory was itself the fix for an unbounded loop (post, refused,
+    re-derive, post the identical body again), and a seat that retried every
+    refusal would spin exactly as it used to.
+    """
+    wire = FlakyHttp(client, fail_on="actions/pass-priority", status=400, times=None)
+    seat = baseline_seat.BaselineSeat(
+        HttpSeatApiClient(http=wire), game, "alice", seats_for(game)["alice"]
+    )
+
+    first = seat.step()
+
+    assert first is not None and first.label == "pass_priority", first
+    assert seat.refusals == 1, "a 4xx is the api's own refusal, and it was counted"
+    assert seat.advanced is True, "the first refusal taught this seat something"
+    assert seat.step() is None, "and the identical body is not posted a second time"
+    assert [url for url in wire.posts if "pass-priority" in url] != [], wire.posts
+    assert len([url for url in wire.posts if "pass-priority" in url]) == 1, wire.posts
+
+
+def test_a_server_that_keeps_failing_ends_the_game_unfinished_not_conceded(client, game):
+    """The bound on the fix above. A 5xx is retried rather than remembered,
+    so a server that never recovers would spin this loop to `max_steps` -
+    and the stall guard that catches that concedes, which is the fabricated
+    loss all over again, just later.
+
+    So the guard reads why the table went quiet. Quiet because the policy ran
+    out of moves is a concession it should be seen to take; quiet because the
+    server was unreachable is an unfinished game, scored for nobody, with the
+    reason named.
+    """
+    wire = FlakyHttp(client, fail_on="actions/pass-priority", status=503, times=None)
+    seam = HttpSeatApiClient(http=wire)
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+
+    outcome = baseline_seat.play_out(seats, max_steps=60)
+
+    assert outcome["ended_by"] == "transport", outcome
+    assert outcome["over"] is False, outcome
+    assert [url for url in wire.posts if "concede" in url] == [], wire.posts
+    assert state(client, game)["winner"] is None, "an unreachable server is nobody's loss"
+    assert sum(seat.unknown_outcomes for seat in seats) > 0, "and the count says it happened"
+
+
+# -- naming the board it decided against -------------------------------------
+
+
+class BodyRecordingHttp:
+    """The `httpx`-shaped client, with every POST body written down. Every
+    call still reaches the real app; nothing here answers for it."""
+
+    def __init__(self, inner: TestClient) -> None:
+        self.inner = inner
+        self.bodies: list[tuple[str, dict[str, Any]]] = []
+
+    def get(self, url, **kwargs):
+        return self.inner.get(url, **kwargs)
+
+    def post(self, url, **kwargs):
+        self.bodies.append((url, dict(kwargs.get("json") or {})))
+        return self.inner.post(url, **kwargs)
+
+
+def test_every_move_names_the_ledger_position_it_was_chosen_at(client, game):
+    """`records.require_current_board` can only measure a seat that names a
+    board, and the baseline named none - so the control arm's refusals were
+    the one set the scorecard could not split (MEMORY.md 2026-09-12, one
+    level up).
+
+    The number comes back on the enumeration itself
+    (`schemas.LegalActionsResponse.last_seq`), so naming a board costs this
+    seat no extra round trip - see the round-trip test above, which still
+    counts three requests for a targeted cast.
+    """
+    add_card(client, game, "Forest", "alice", "hand")
+    wire = BodyRecordingHttp(client)
+    seam = HttpSeatApiClient(http=wire)
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+
+    move = seat.step()
+
+    assert move is not None and move.label == "play_land", move
+    assert seat.advanced is True, "and naming the board did not get it refused"
+    (url, body), *rest = wire.bodies
+    assert rest == [], wire.bodies
+    assert "play-land" in url, url
+    assert body["expected_seq"] == seam.board_seq, body
+    assert isinstance(body["expected_seq"], int) and body["expected_seq"] > 0, body
+    # Kept out of `Move.body` itself: `answer_fingerprint` is the body, and a
+    # seq that changed every round would make every re-post look like a new
+    # answer - which is the anti-stall memory switched off.
+    assert "expected_seq" not in move.body, move.body
+
+
+class RacingSeam:
+    """A `SeatApiClient` that moves the ledger once, between the seat's read
+    and its post.
+
+    A legitimate double at the seam (this is the api repo), and the race it
+    creates is real: the interleaving call goes through the app and writes
+    its own `records` row, which is exactly what a second seat acting on the
+    same game does.
+    """
+
+    def __init__(self, inner: HttpSeatApiClient, client: TestClient) -> None:
+        self.inner = inner
+        self.client = client
+        self.raced = False
+
+    def game_state(self, game_id, uid):
+        return self.inner.game_state(game_id, uid)
+
+    def legal_actions(self, game_id, player, uid, *, candidates=False):
+        return self.inner.legal_actions(game_id, player, uid, candidates=candidates)
+
+    @property
+    def board_seq(self):
+        return self.inner.board_seq
+
+    def act(self, game_id, path, body, uid):
+        if not self.raced:
+            self.raced = True
+            add_card(self.client, game_id, "Mountain", "bob", "hand")
+        return self.inner.act(game_id, path, body, uid)
+
+
+def test_a_lost_race_is_neither_a_refusal_nor_the_end_of_this_seat(client, game):
+    """Naming a board is what makes a race visible, and a race is not a
+    ruling: `records.require_current_board` refuses before the engine is
+    asked anything, so there is nothing about the answer to remember. A seat
+    that fingerprinted it would have retired a move the engine never judged
+    - which is how the 5xx defect worked - and a scorecard that counted it as
+    a refusal would report the harness's own interleaving as the policy
+    playing badly.
+    """
+    add_card(client, game, "Forest", "alice", "hand")
+    seam = RacingSeam(api(client), client)
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+
+    first = seat.step()
+
+    assert first is not None and first.label == "play_land", first
+    assert seat.races == 1, "the board moved under it"
+    assert seat.refusals == 0, "and the engine was never asked"
+
+    second = seat.step()
+
+    assert second is not None and second.label == "play_land", second
+    assert seat.advanced is True, "the same move, against the board as it now is"

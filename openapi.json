@@ -4787,6 +4787,11 @@
             },
             "title": "Actions",
             "type": "array"
+          },
+          "last_seq": {
+            "default": 0,
+            "title": "Last Seq",
+            "type": "integer"
           }
         },
         "required": [
@@ -5580,7 +5585,7 @@
       },
       "MulliganRequest": {
         "additionalProperties": false,
-        "description": "One seat's CR 103.5 declaration: \"a player who is dissatisfied with\ntheir initial hand may take a mulligan\".",
+        "description": "One seat's CR 103.5 declaration: \"a player who is dissatisfied with\ntheir initial hand may take a mulligan\".\n\n`BoardRead` because this is a mutating move a seat makes and records\n(`mulligan_declared`, one of `scripts/eval_report.py`'s `PLAY_ACTIONS`),\nso a refusal of it belongs in the same measured split as every other:\nwithout an `expected_seq` to name, a seat's first declaration of the game\nwas the one move whose refusals could not be told apart from a lost race.\nOptional here exactly as it is everywhere else - the browser names no\nboard and is refused on nothing new.",
         "properties": {
           "bottom": {
             "anyOf": [
@@ -5596,6 +5601,17 @@
               }
             ],
             "title": "Bottom"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",

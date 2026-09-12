@@ -964,6 +964,12 @@ class BaselineSeat:
     signature: Any = None
     moves: int = 0
     refusals: int = 0
+    races: int = 0
+    """How many of this seat's posts were refused as stale - the board moved
+    between the read they were decided against and the post itself, so the
+    engine was never asked (`records.require_current_board`). Kept apart from
+    `refusals` because that is the whole point of naming a board at all: a
+    race is a fact about the harness, a refusal is a fact about the policy."""
     advanced: bool = False
     """Whether the most recent `step` got anywhere: a move the api accepted,
     or a refusal that was new against this board and so narrowed what is
@@ -971,6 +977,17 @@ class BaselineSeat:
     advanced, which is what makes it able to fire at all - reading `step`'s
     return value instead counted a refused move as a round of play, and a
     seat that keeps attempting refused moves never let the guard fire."""
+    unknown_outcome: bool = False
+    """Whether the most recent `step` ended with the *transport* failing
+    rather than with an answer (`api_client._refusal`'s `unknown_outcome`, a
+    5xx). Neither progress nor a refusal: nothing was learned, so the round
+    was idle, and nothing is remembered, so the same move is posted again
+    next round. `play_out` reads it to tell a stall it must not concede over
+    from one the policy genuinely could not play out of."""
+    unknown_outcomes: int = 0
+    """How many times in this game the transport failed under this seat -
+    reported rather than hidden, because a run whose baseline could not
+    reach the server is a run whose numbers mean less than they look."""
 
     def step(self, state: dict[str, Any] | None = None) -> Move | None:
         """Read, choose, act - once. Returns the move made, or `None` when
@@ -981,6 +998,7 @@ class BaselineSeat:
         a second time here doubled every round's cost for nothing.
         """
         self.advanced = False
+        self.unknown_outcome = False
         if state is None:
             state = self.client.game_state(self.game_id, self.uid)
         current = board_signature(state)
@@ -995,8 +1013,33 @@ class BaselineSeat:
         move = self._pick(state, actions)
         if move is None:
             return None
-        outcome = self.client.act(self.game_id, move.path, move.body, self.uid)
+        outcome = self.client.act(self.game_id, move.path, self._naming_the_board(move), self.uid)
         self.moves += 1
+        if outcome.get("stale") is True:
+            # A race, not a ruling (`app._board_moved`'s 409): the board
+            # moved between this seat's read and this post, so
+            # `records.require_current_board` refused before the engine was
+            # asked anything at all. Nothing to remember, then - the answer
+            # was never judged, and the next round re-reads and re-derives
+            # against whatever the board actually is now. Counted on its own
+            # rather than as a refusal, because a race is a fact about the
+            # harness and a refusal is a fact about the policy, and the
+            # scorecard exists to keep those two apart.
+            self.races += 1
+            return move
+        if outcome.get("unknown_outcome") is True:
+            # The transport failed, not the engine (`api_client._refusal`).
+            # Nobody knows whether this action landed, so there is nothing
+            # here to remember: fingerprinting it as a refusal is what
+            # silenced this seat permanently on one 503, because a keyless
+            # move has no next row for `_pick` to step to and the board
+            # cannot move while this seat is the one that must act. Not
+            # progress either - the round was idle - so `play_out`'s guard
+            # still bounds the game, and reads `unknown_outcome` to know not
+            # to score the stall as a concession.
+            self.unknown_outcome = True
+            self.unknown_outcomes += 1
+            return move
         if outcome.get("allowed") is False:
             self.refusals += 1
             fingerprint = answer_fingerprint(move)
@@ -1026,9 +1069,48 @@ class BaselineSeat:
             self.advanced = True
         return move
 
+    def _naming_the_board(self, move: Move) -> dict[str, Any]:
+        """`move.body` with the board this move was decided against named
+        (`schemas.BoardRead.expected_seq`), when the seam read one.
+
+        **Folded in here rather than built into `Move.body`**, and that is
+        load-bearing: `answer_fingerprint` is the body, and the anti-stall
+        memory compares one post's fingerprint against the last. A seq inside
+        the body would change every round, so no refusal would ever look like
+        one already seen and the loop that memory exists to stop would be
+        back.
+
+        The number is the position `GET .../legal-actions` reported for the
+        enumeration this move was chosen out of (`api_client.SeatApiClient.
+        board_seq`), which is the read the policy actually decided against -
+        `state` is read a moment earlier and only ever *older*, so naming the
+        enumeration's position can never claim a board newer than the one
+        this seat saw.
+
+        What it buys is the whole of `scripts/eval_report.py`'s refusal
+        split: with it, a refusal this seat collects is stamped `stale: True`
+        (the board had moved) or `stale: False` (it had not, and the engine
+        judged the action illegal on it) rather than left unsplittable. The
+        baseline named nothing until now, so the arm every agent number is
+        compared against was the one arm with no measured split at all
+        (MEMORY.md 2026-09-12 records the same defect one level up).
+        """
+        seq = self.client.board_seq
+        if seq is None:
+            return move.body
+        return {**move.body, "expected_seq": seq}
+
     def concede(self) -> dict[str, Any]:
         """CR 104.3a: "A player can concede the game at any time." The
-        backstop `play_out` reaches for, never part of the policy itself."""
+        backstop `play_out` reaches for, never part of the policy itself.
+
+        Names no board on purpose, unlike every move `step` posts: this is
+        the guard's last resort on a game that is already going nowhere, and
+        a concession refused as stale is a guard that failed for a reason
+        that has nothing to do with the game (`play_out` reports
+        `stall_guard_refused` and stops). CR 104.3a makes it legal at any
+        time; there is no race to lose.
+        """
         return self.client.act(
             self.game_id,
             "actions/concede",
@@ -1214,12 +1296,21 @@ def play_out(
     `"stall_guard"` when a seat had to concede because no seat got anywhere
     for `stall_rounds` rounds, `"stopped"` when `should_stop` said to,
     `"stall_guard_refused"` when the guard's own concession was refused (see
-    below), `"bound"` when none of those happened inside `max_steps` (which
-    is a defect in this module, and is reported as one rather than hidden).
+    below), `"transport"` when the quiet was the server failing rather than
+    the policy running out of moves (see below), `"bound"` when none of those
+    happened inside `max_steps` (which is a defect in this module, and is
+    reported as one rather than hidden).
 
     The guard is deliberately a concession rather than a silent stop: a game
     that ends is a game the scorecard can count, and a game the baseline could
     not play is a loss it should be seen to take.
+
+    **Except when the server is what failed.** A stall any seat's
+    `unknown_outcome` contributed to is not a game the baseline could not
+    play - it is a game the baseline could not reach - and conceding it would
+    put a loss in the ledger that nothing in the game earned. That one ends
+    `"transport"` with no concession, so the game is scored for nobody and
+    the report says why it was cut off.
 
     **A round is idle when no seat advanced**, which is not the same as no
     seat having attempted anything: a move the api refused is only progress
@@ -1245,9 +1336,11 @@ def play_out(
         raise ValueError("play_out needs at least one seat")
     steps = 0
     idle_rounds = 0
+    unreachable_rounds = 0
     conceded = False
     while steps < max_steps:
         acted = False
+        unreachable = False
         for seat in seats:
             # Asked before every seat rather than once a round: this loop
             # runs in a thread `scripts/eval_gauntlet.py` joins as soon as
@@ -1267,10 +1360,24 @@ def play_out(
             # The guard could not fire, and the run spun to `max_steps`.
             if seat.advanced:
                 acted = True
+            if seat.unknown_outcome:
+                unreachable = True
             steps += 1
             if steps >= max_steps:
                 break
         idle_rounds = 0 if acted else idle_rounds + 1
+        unreachable_rounds = 0 if acted else unreachable_rounds + int(unreachable)
+        if idle_rounds >= stall_rounds and unreachable_rounds and not conceded:
+            # The table went quiet because the *server* kept failing, not
+            # because the policy ran out of moves (`BaselineSeat.
+            # unknown_outcome`). Conceding here would write a loss into the
+            # ledger for a game nothing was wrong with, which is the one
+            # thing this guard must never do: the harness's whole product is
+            # metrics, and a fabricated concession reads as a baseline loss
+            # and an opponent win. So the game is left unfinished and named
+            # as such - `scripts/eval_report.py` scores an unfinished game
+            # for nobody and prints why it was cut off.
+            return _outcome(_read(seats), steps, "transport")
         if idle_rounds >= stall_rounds and not conceded:
             state = _read(seats)
             active = state.get("active_player")

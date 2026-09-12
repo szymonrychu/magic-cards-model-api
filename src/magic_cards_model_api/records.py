@@ -237,7 +237,9 @@ def named_a_current_board() -> bool:
     - `stale: True` - the board had moved; the engine was never asked.
     - `stale: False` - the seat named the board it decided against, that
       board was current, and the engine judged the action illegal on it.
-      A genuine rules error (`scripts/eval_report.py`'s `tally.rules`).
+      Necessary for a rules error but not sufficient: `offered_action` is
+      the other half, and only a refusal of an action the api had *not*
+      offered is counted as one (`scripts/eval_report.py`'s `tally.rules`).
     - no `stale` key - the caller named no board position at all (the
       browser, and every caller written before `expected_seq` existed), so
       nothing can be said about which of the two it was
@@ -246,6 +248,147 @@ def named_a_current_board() -> bool:
       `"measured"` over data that measured nothing.
     """
     return _NAMED_A_CURRENT_BOARD.get()
+
+
+#: Whether the action this request is running was one this api's own
+#: enumeration offered for this seat, on this very board - `None` for a
+#: request whose shape cannot be looked for in an enumeration at all (see
+#: `OFFERED_KINDS`). Set by `note_offered_action`, read by
+#: `offered_action` - and, exactly like `_NAMED_A_CURRENT_BOARD` above, by
+#: nothing else.
+#:
+#: **A ContextVar for the same reason that one is.** The fact has to reach a
+#: refusal row wherever one is written, and only one place in this api holds
+#: both halves of it: `app._run_command`, which builds the `Command` from the
+#: request *and* computes `legal_actions_before` from the game, under the
+#: same lock, before the engine is asked anything. Threading it out of there
+#: into six recording sites is how the `stale` flag first shipped written
+#: from nowhere at all (MEMORY.md 2026-09-12). One write site and one read
+#: site in `audit.record` cannot drift that way.
+_OFFERED: ContextVar[bool | None] = ContextVar("offered_action", default=None)
+
+#: Which enumerated `models.action.ActionKind` values each `commands.
+#: COMMAND_HANDLERS` kind could have come out of, and nothing else.
+#:
+#: A positive list, and short on purpose: a command kind that is absent makes
+#: no claim either way (`offered_action` answers `None`, `audit.record`
+#: stamps nothing, and `scripts/eval_report.py` counts the row as unchecked
+#: rather than as a rules error). The ones left out are left out for a
+#: reason, not for lack of effort:
+#:
+#: - `advance`, `resolve_top`, `state_based_actions`, `pregame_settle` -
+#:   there is no `ActionKind` for them; the enumeration does not offer them
+#:   as rows at all.
+#: - `crew` and `cycle` - both reach the engine through an activated ability
+#:   (`ACTIVATE`, `ACTIVATE_OFF_ZONE`), but neither request carries the
+#:   `ability_index` that says *which*, so a match on the card alone could
+#:   claim an offer that was for a different ability of the same card.
+#: - the two combat declarations and `decide`, which do not come through
+#:   `_run_command` at all: a declaration is one answer built out of many
+#:   enumerated rows (CR 508.1a/509.1a are checked over the whole of it), so
+#:   "was this offered" is not a question the enumeration can answer about it.
+OFFERED_KINDS: dict[str, frozenset[str]] = {
+    "cast": frozenset({"cast"}),
+    "play_land": frozenset({"play_land"}),
+    "activate_ability": frozenset({"activate", "activate_mana", "activate_off_zone"}),
+    "suspend": frozenset({"suspend"}),
+    "plot": frozenset({"plot"}),
+    "foretell": frozenset({"foretell"}),
+    "pass_priority": frozenset({"pass_priority"}),
+    "concede": frozenset({"concede"}),
+}
+
+#: The two kinds that name no object. Everything else is an action taken with
+#: a card, and a request that does not say which card (`card`, a printed
+#: name, rather than `card_id`) is not something an enumeration of ids can be
+#: searched for - that answers `None` rather than guessing.
+_OBJECTLESS_KINDS = frozenset({"pass_priority", "concede"})
+
+#: Announcement fields where the request's `None` is itself the answer, so
+#: they are compared exactly. "No face named" is the plain printed cast
+#: (CR 709.3/715.3), and the enumeration's plain row carries `None` for it
+#: too - which is precisely how a face the enumeration never offered is kept
+#: from matching the plain row it sits beside.
+_EXACT_FIELDS = ("spell_face", "keyword", "alternative_cost")
+
+#: Fields the request may leave for the server to work out (which zone the
+#: card is in, which of an ability's indices) - compared only when the
+#: request actually names one.
+_GIVEN_FIELDS = ("from_zone", "ability_index")
+
+
+def note_offered_action(kind: str, payload: Any, legal_before: LegalActionsBefore | None) -> None:
+    """Work out, once, whether `payload`'s action is one `legal_before`
+    offered - and remember it for whatever row this request goes on to
+    record.
+
+    Called from `app._run_command` before the engine runs, because that is
+    the one place holding the request and the enumeration for the same board
+    at the same moment.
+    """
+    _OFFERED.set(_was_offered(kind, payload, legal_before))
+
+
+def offered_action() -> bool | None:
+    """Whether the action this request is running was in this api's own
+    enumeration for this seat and this board.
+
+    Read by `audit.record` alone, and the three states a refusal row can
+    carry are three different facts about who is at fault:
+
+    - `offered: True` - the api listed this action as legal for this seat, on
+      the board it was then refused against. Either the api contradicted its
+      own offer (the Adventure face, CR 715.3, was a measured instance: the
+      enumeration offered the row, posting it back verbatim was refused) or
+      the seat mis-announced something it was genuinely offered - a target,
+      a mode, an X. The ledger cannot tell those two apart, so neither is
+      counted as a rules error.
+    - `offered: False` - no row in the enumeration named this action at all.
+      The seat asked for something that was never on offer, which is the one
+      refusal that is unambiguously its own doing
+      (`scripts/eval_report.py`'s `tally.rules`).
+    - no `offered` key - this action's shape cannot be looked for in an
+      enumeration (`OFFERED_KINDS`), or the row was recorded by a route that
+      never built a command. Kept as its own third state for the same reason
+      `named_a_current_board` keeps one: a missing check is not evidence of
+      a defect, and the report says which of its rows it could not check.
+    """
+    return _OFFERED.get()
+
+
+def _was_offered(kind: str, payload: Any, legal_before: LegalActionsBefore | None) -> bool | None:
+    kinds = OFFERED_KINDS.get(kind)
+    if kinds is None or legal_before is None:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    needs_object = kind not in _OBJECTLESS_KINDS
+    card_id = payload.get("card_id")
+    if needs_object and not card_id:
+        return None
+    for row in legal_before.actions:
+        if str(row.get("kind")) not in kinds:
+            continue
+        if needs_object and str(row.get("card_id") or "") != str(card_id):
+            continue
+        if any(_same(row.get(name)) != _same(payload.get(name)) for name in _EXACT_FIELDS):
+            continue
+        if any(
+            payload.get(name) is not None and _same(row.get(name)) != _same(payload.get(name))
+            for name in _GIVEN_FIELDS
+        ):
+            continue
+        return True
+    return False
+
+
+def _same(value: Any) -> str | None:
+    """One enumerated field and one request field, comparable: the row has
+    been through `model_dump(mode="json")` and the request has not, so a
+    `Zone` enum on one side meets its own `"hand"` on the other."""
+    if value is None:
+        return None
+    return str(getattr(value, "value", value))
 
 
 class BoardMoved(Exception):

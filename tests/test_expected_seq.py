@@ -328,6 +328,18 @@ MUTATING_ROUTES: list[tuple[str, str, str, dict[str, Any]]] = [
         "/api/games/{gid}/pregame/opening-hand/finish",
         {"player": "alice"},
     ),
+    # CR 103.5's declaration, and the first move a seat makes in a game.
+    # `MulliganRequest` did not carry `expected_seq` at all until the
+    # baseline started naming the board it decides against on every move it
+    # posts (`baseline_seat.BaselineSeat._naming_the_board`): this was the one
+    # route in that set that could not be named, which left a seat's opening
+    # declaration the only refusal the scorecard could not split.
+    (
+        "mulligan_declared",
+        "POST",
+        "/api/games/{gid}/pregame/mulligan",
+        {"player": "alice", "take": False},
+    ),
 ]
 
 

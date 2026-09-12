@@ -155,6 +155,35 @@ def _with_stale(detail: dict[str, Any], named_a_current_board: bool) -> dict[str
     return {**detail, "stale": False}
 
 
+def _with_offered(detail: dict[str, Any], offered: bool | None) -> dict[str, Any]:
+    """`detail` with `offered` added when this row is a refusal and this api
+    knows whether its own enumeration had offered the action being refused
+    (`records.offered_action`).
+
+    The other half of the same split `_with_stale` starts. `stale` says
+    whether the engine was asked at all; this says whether what it was asked
+    about was something this api had itself just listed as legal for this
+    seat. Only a refusal of an action that was *never offered* is
+    unambiguously the seat's own misreading, and that is the only thing
+    `scripts/eval_report.py` counts as a rules error.
+
+    Written here, once, for the same reason the `stale` flag is: six places
+    in this api record a refusal row (`records._NAMED_A_CURRENT_BOARD`
+    enumerates them), and a flag each of them has to remember to pass is a
+    flag that ends up written by none of them.
+
+    `offered is None` means there was nothing to know - an action shape no
+    enumeration lists as a row, or a refusal recorded before any command was
+    built - and gets no key, so the report can say which rows it could not
+    check rather than counting an unchecked one as a defect.
+    """
+    if offered is None:
+        return detail
+    if detail.get("allowed") is not False or "offered" in detail:
+        return detail
+    return {**detail, "offered": offered}
+
+
 def record(
     game_id: str,
     action: str,
@@ -202,12 +231,12 @@ def record(
     `audit_outcome` and the `resolve-top`/`advance`/`pass-priority`
     endpoints) against a later read, rather than guessing from a blind retry.
     """
-    from .records import named_a_current_board  # lazy, with `store` below
+    from .records import named_a_current_board, offered_action  # lazy, with `store` below
     from .repository import GameUnloadable  # lazy, with `store` below
     from .serialize import snapshot  # lazy: keep module import light
     from .store import store  # lazy: audit imports nothing of the app at load
 
-    detail = _with_stale(detail, named_a_current_board())
+    detail = _with_offered(_with_stale(detail, named_a_current_board()), offered_action())
     # A game whose snapshot this build cannot decode still gets its entry -
     # every board-derived field simply comes out `None`, exactly as it
     # already does for a game that is gone. Raising here would take out the

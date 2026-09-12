@@ -36,6 +36,15 @@ treats it.
   errors** - inventing an agent defect out of a missing field is exactly the
   kind of arithmetic-dressed-as-judgement this repo refuses elsewhere. The
   report says which of `measured`/`partial`/`unknown` its own ledger was.
+- **And a rules error is only a refusal of something never offered.** A
+  board being current is not enough to blame the seat: the api's own
+  enumeration (`GET .../legal-actions`, written onto every row as
+  `legal_actions_before`) may have listed the very action it then refused.
+  `detail.offered` says which (`records.offered_action`). A refusal of an
+  offered action is either the api contradicting itself or the seat
+  mis-announcing something real, and the ledger cannot say which, so it gets
+  its own `offered` bucket and is counted as neither. `offer_split` reports
+  `measured`/`partial`/`unknown` the same way `stale_split` does.
 
 ## What it deliberately does not grade
 
@@ -371,8 +380,10 @@ class _SeatTally:
     non_pass_reasoned: int = 0
     refused: int = 0
     rules: int = 0
+    offered: int = 0
     stale: int = 0
     unknown: int = 0
+    unchecked: int = 0
     unclassified: dict[str, int] = field(default_factory=dict)
 
 
@@ -411,6 +422,8 @@ def build_report(
     turns: list[int] = []
     flagged_refusals = 0
     unflagged_refusals = 0
+    checked_refusals = 0
+    unchecked_refusals = 0
 
     for game in games:
         payloads = list(game.payloads())
@@ -468,12 +481,27 @@ def build_report(
                 continue
             tally.refused += 1
             stale = detail.get("stale")
+            offered = detail.get("offered")
             if stale is True:
                 tally.stale += 1
                 flagged_refusals += 1
             elif stale is False:
-                tally.rules += 1
+                # The engine ruled, on a board this seat had named. Which of
+                # the two facts that leaves depends on whether the api had
+                # offered the action in the first place (`detail.offered`,
+                # `audit._with_offered`): a refusal of something never
+                # offered is the seat asking for what was not there, and
+                # nothing else is.
                 flagged_refusals += 1
+                if offered is True:
+                    tally.offered += 1
+                    checked_refusals += 1
+                elif offered is False:
+                    tally.rules += 1
+                    checked_refusals += 1
+                else:
+                    tally.unchecked += 1
+                    unchecked_refusals += 1
             else:
                 tally.unknown += 1
                 unflagged_refusals += 1
@@ -484,6 +512,12 @@ def build_report(
         stale_split = "measured"
     else:
         stale_split = "unknown"
+    if checked_refusals and unchecked_refusals:
+        offer_split = "partial"
+    elif checked_refusals:
+        offer_split = "measured"
+    else:
+        offer_split = "unknown"
 
     return {
         "games": len(games),
@@ -495,6 +529,7 @@ def build_report(
         "seats": {name: _seat_report(tally) for name, tally in sorted(seats.items())},
         "unclassified_actions": unclassified,
         "stale_split": stale_split,
+        "offer_split": offer_split,
     }
 
 
@@ -514,12 +549,20 @@ def _seat_report(tally: _SeatTally) -> dict[str, Any]:
         "reasoning": beta_interval(tally.reasoned, tally.attempts),
         "reasoning_beyond_passes": beta_interval(tally.non_pass_reasoned, tally.non_pass_attempts),
         "refusals": beta_interval(tally.refused, tally.attempts),
+        # Five mutually exclusive buckets that sum to `refused`, each named
+        # for what it actually is: `rules` the seat's own misreading,
+        # `offered` a refusal of something this api had listed as legal,
+        # `stale` a lost race, and the last two the rows this ledger could
+        # not check either question on.
         "refusal_split": {
             "rules": tally.rules,
+            "offered": tally.offered,
             "stale": tally.stale,
             "unknown": tally.unknown,
+            "unchecked": tally.unchecked,
         },
         "rules_error_rate": beta_interval(tally.rules, tally.attempts),
+        "offered_refusal_rate": beta_interval(tally.offered, tally.attempts),
         "stale_race_rate": beta_interval(tally.stale, tally.attempts),
     }
 
@@ -649,19 +692,28 @@ def render(report: Mapping[str, Any]) -> str:
         )
         lines.append(f"  refusals          {_rate(seat['refusals'], unit=' attempts')}")
         split = seat["refusal_split"]
+        unsplit = split["unknown"] + split["unchecked"]
         lines.append(
             f"    rules errors    {_rate(seat['rules_error_rate'], unit=' attempts')}"
-            + ("" if split["unknown"] == 0 else "  [see stale split below]")
+            + ("" if unsplit == 0 else "  [see the splits below]")
         )
+        lines.append(f"    api offered it  {_rate(seat['offered_refusal_rate'], unit=' attempts')}")
         lines.append(f"    stale races     {_rate(seat['stale_race_rate'], unit=' attempts')}")
         if split["unknown"]:
             lines.append(
                 f"    unsplit         {split['unknown']} refusal(s) carry no detail.stale - "
                 "not counted as either"
             )
+        if split["unchecked"]:
+            lines.append(
+                f"    unchecked       {split['unchecked']} refusal(s) carry no detail.offered - "
+                "not counted as either"
+            )
         lines.append("")
 
     lines.extend(_stale_note(report))
+    lines.append("")
+    lines.extend(_offer_note(report))
     lines.append("")
     lines.extend(_sizing_note(report))
     return "\n".join(lines)
@@ -686,6 +738,43 @@ def _stale_note(report: Mapping[str, Any]) -> list[str]:
         "  unknown: no refusal in this ledger carries detail.stale, so rules errors",
         "  and stale races cannot be told apart. Every refusal is counted as unsplit",
         "  rather than as a rules error - a missing field is not evidence of a defect.",
+    ]
+
+
+def _offer_note(report: Mapping[str, Any]) -> list[str]:
+    """What the rules-error number is, and what it deliberately leaves out.
+
+    `GET .../legal-actions` is this api's own claim that an action is legal
+    for a seat right now, and `records.legal_actions_before` writes that
+    claim onto the row of whatever the seat did next. A refusal of an action
+    that enumeration never contained is the seat asking for something that
+    was not on offer - the one refusal that is unambiguously its own
+    misreading. A refusal of one the api *had* offered is either the api
+    contradicting itself or the seat mis-announcing something real (a target,
+    a mode, an X), and the ledger cannot say which - so it is reported on its
+    own line and counted as neither.
+    """
+    state = report["offer_split"]
+    if state == "measured":
+        return [
+            "OFFER SPLIT",
+            "  measured: every refusal the engine ruled on says whether this api had",
+            "  itself offered the action. Rules errors above are refusals of actions",
+            "  that were never on offer, and nothing else.",
+        ]
+    if state == "partial":
+        return [
+            "OFFER SPLIT",
+            "  partial: some refusals say whether this api had offered the action and",
+            "  some do not. The unchecked ones are counted as neither - read the",
+            "  rules-error rate as a floor.",
+        ]
+    return [
+        "OFFER SPLIT",
+        "  unknown: no refusal the engine ruled on carries detail.offered, so a",
+        "  refusal of an action this api had itself enumerated cannot be told apart",
+        "  from a seat asking for something that was never offered. Every such",
+        "  refusal is counted as unchecked rather than as a rules error.",
     ]
 
 

@@ -648,6 +648,15 @@ def _run_command(
             if dry_run
             else records.legal_actions_before(game, player, paused[2] if paused else None)
         )
+        # Both halves of "was this on offer" are in hand exactly here, and
+        # nowhere else: the command as the request spelled it, and the
+        # enumeration this api would have handed the same seat for the same
+        # board, a line above the engine being asked anything. Whatever row
+        # this request goes on to record is stamped from it
+        # (`audit._with_offered`), which is what lets the scorecard count a
+        # refusal of something never offered as the seat's own misreading and
+        # a refusal of something offered as anything but.
+        records.note_offered_action(command.kind, command.payload, legal_before)
         result = commands.run_command(game, command)
         seq: int | None = None
         if dry_run:
@@ -1954,6 +1963,16 @@ def get_legal_actions(
     names - `ValueError` -> 400, the same as `pregame_settle`'s admin-key
     check - rather than a 403, which appears nowhere else in this api.
     """
+    # Read *before* the board, never after. This number goes back to the
+    # caller as the position this answer describes, and a caller names it as
+    # `expected_seq` on the action it decides to take - so it has to be a
+    # position the board this enumeration was computed from is at least as
+    # new as. Read afterwards, a write landing in between would hand a seat a
+    # number newer than the board it actually read, and
+    # `require_current_board` would then stamp its refusal `stale: False` -
+    # "decided against a current board" - about a board that had already
+    # moved. Failing the other way costs a re-read and says so.
+    at_seq = audit.last_seq(game_id)
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
     if viewer is not visibility.ADMIN and viewer != player:
@@ -1967,7 +1986,12 @@ def get_legal_actions(
     views = [action.model_dump(mode="json") for action in actions]
     if candidates:
         _attach_target_candidates(game, player, actions, views)
-    return {"actions": views}
+    # The ledger position this enumeration describes, handed back with it
+    # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
+    # whatever it decides to do, and that is what makes its refusals
+    # splittable into races and rules errors at all. See `at_seq` above for
+    # why it is read before the board rather than here.
+    return {"actions": views, "last_seq": at_seq}
 
 
 @app.post(
@@ -3272,6 +3296,9 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
     and there is no reason it alone should be unexplained.
     """
     _pregame_seat(game_id, uid, req.player)
+    records.require_current_board(
+        game_id, "mulligan_declared", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
