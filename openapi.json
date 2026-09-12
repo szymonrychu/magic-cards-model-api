@@ -405,6 +405,14 @@
             "title": "Modes",
             "type": "array"
           },
+          "pays_with": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ManaPlanEntry"
+            },
+            "title": "Pays With",
+            "type": "array"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -4507,6 +4515,10 @@
           "label"
         ],
         "title": "LoyaltyHintView",
+        "type": "object"
+      },
+      "ManaPlanEntry": {
+        "additionalProperties": true,
         "type": "object"
       },
       "ManaPoolUpdate": {
