@@ -33,14 +33,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from conftest import add_card, find, state
+from conftest import find, state
 from fastapi.testclient import TestClient
+from magic_cards_model.models import Game
 from test_cast_cost_choices import answer, text_of
 from test_mcp_input_required import call_tool, wired
 
 from magic_cards_model_api import affordances
 from magic_cards_model_api import mcp as mcp_module
 from magic_cards_model_api.mcp import build_server
+from magic_cards_model_api.store import store
 
 #: A board with something on it - fourteen permanents a side, eight cards in
 #: each graveyard, a seven-card hand. Smaller than the pod's real board, which
@@ -101,15 +103,78 @@ BULK_KEYS = ("battlefield", "hands", "graveyards", "exile", "exile_pile", "comma
 BULK_SECTIONS = ("battlefield", "hands", "graveyards", "exile", "command")
 
 
-def busy_board(client: TestClient, game: str) -> None:
+#: The busy board's `Game`, staged once and then adopted (a deep copy of its
+#: `players`/`shared_zones`) by every test's own fresh game rather than
+#: rebuilding it forty-four `add_card` calls at a time, eleven times over.
+#:
+#: `POST /api/games/{id}/cards` (`add_card`) does three things: fetch the
+#: card, place it (`engine_api.put_card_in_zone`, which only ever touches
+#: `Game.shared_zones` or a `Player`'s own zones - never `turn`/`priority`/
+#: `combat`), and serialise a whole `state_view` for the HTTP response. That
+#: third part was the entire measured cost: `computed_board`/
+#: `characteristics_of` (`magic_cards_model/models/game.py`) re-parses every
+#: permanent's oracle text from scratch on every single request, so building
+#: a board one card at a time recomputes it once per card as the board grows
+#: - and every one of the eleven tests here built the identical board this
+#: way. `_stage_busy_board` places the same cards directly
+#: (`engine_api.put_card_in_zone`), the same way `conftest.force_turn_position`
+#: reaches past the API for test setup, and never asks for a view - so no
+#: test pays for a `state_view` it was going to throw away. What it builds is
+#: cached once (`_BUSY_BOARD_TEMPLATE`) and deep-copied onto each test's own
+#: game, so even that one-time construction happens exactly once per session
+#: rather than once per test.
+_BUSY_BOARD_TEMPLATE: Game | None = None
+
+
+def stage_card(game_id: str, name: str, player: str, zone_name: str) -> None:
+    """`add_card`'s own placement, minus the `state_view` it always computes
+    for the HTTP response - straight to `engine_api.put_card_in_zone`, the
+    same reach past the API `conftest.force_turn_position` already uses for
+    test setup. Every caller here throws the response away anyway, so
+    nothing changes except which of them pays for a board recompute nobody
+    reads."""
+    from magic_cards_model.models import Card, CardState, Zone
+
+    from magic_cards_model_api import engine_api, scryfall
+
+    game = store.get(game_id)
+    assert game is not None
+    raw = scryfall.fetch_card(name)
+    card = Card.model_validate(raw)
+    zone = Zone(zone_name)
+    if zone in engine_api.SHARED_ZONES:
+        state = CardState(card=card, zone=zone, controller=player, owner=player)
+    else:
+        state = CardState(card=card, controller=player)
+    state.tapped = False
+    state.face_up = True
+    engine_api.put_card_in_zone(game, state, player, zone, None)
+
+
+def _stage_busy_board(game_id: str) -> None:
     for name in BOARD:
-        add_card(client, game, name, "alice", "battlefield")
-        add_card(client, game, name, "bob", "battlefield")
+        stage_card(game_id, name, "alice", "battlefield")
+        stage_card(game_id, name, "bob", "battlefield")
     for name in GRAVE:
-        add_card(client, game, name, "alice", "graveyard")
-        add_card(client, game, name, "bob", "graveyard")
+        stage_card(game_id, name, "alice", "graveyard")
+        stage_card(game_id, name, "bob", "graveyard")
     for name in ["Lightning Bolt", "Preordain", "Subtlety", "Living End", "Treasure Cruise"]:
-        add_card(client, game, name, "alice", "hand")
+        stage_card(game_id, name, "alice", "hand")
+
+
+def busy_board(client: TestClient, game: str) -> None:
+    global _BUSY_BOARD_TEMPLATE
+    if _BUSY_BOARD_TEMPLATE is None:
+        _stage_busy_board(game)
+        current = store.get(game)
+        assert current is not None
+        _BUSY_BOARD_TEMPLATE = current.model_copy(deep=True)
+        return
+    template = _BUSY_BOARD_TEMPLATE.model_copy(deep=True)
+    existing = store.get(game)
+    assert existing is not None
+    existing.players = template.players
+    existing.shared_zones = template.shared_zones
 
 
 def cast_solitude(server: Any, uid: str, **extra: Any) -> Any:
@@ -129,8 +194,8 @@ def test_a_refused_cast_answers_with_the_refusal_first_and_nothing_else_ahead_of
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     result = cast_solitude(server, uids["alice"], reasoning="evoking")
     text = text_of(result)
@@ -154,8 +219,8 @@ def test_an_action_answer_stays_small_enough_for_a_seat_to_read_in_one_go(
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     text = text_of(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -168,8 +233,8 @@ def test_an_action_answer_carries_no_board_dump_but_says_so_out_loud(client, gam
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     payload = answer(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -188,8 +253,8 @@ def test_an_action_answer_still_carries_what_a_seat_needs_to_act_again(client, g
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
     pitched = find(state(client, game)["hands"]["alice"], "Savannah Lions")["id"]
 
     payload = answer(
@@ -219,8 +284,8 @@ def test_a_legal_action_entry_carries_only_the_fields_it_actually_uses(client, g
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     payload = answer(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -244,7 +309,7 @@ def test_every_action_tool_shares_the_same_narrowed_answer(client, game, monkeyp
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Plains", "alice", "hand")
+    stage_card(game, "Plains", "alice", "hand")
     sol_ring = next(
         card
         for card in state(client, game)["battlefield"]
@@ -296,8 +361,8 @@ def test_the_worst_case_an_answer_can_reach_still_fits(client, game, monkeypatch
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     caps = mcp_module.MAX_DIGEST_BYTES + mcp_module.MAX_CANDIDATE_BYTES
     monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 0)
@@ -313,8 +378,8 @@ def test_a_real_enriched_answer_is_nowhere_near_the_cap(client, game, monkeypatc
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     text = text_of(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -355,11 +420,10 @@ def advisor_server(client: TestClient, game: str, monkeypatch) -> Any:
 
 def advisor_on_the_busy_board(client: TestClient, game: str, monkeypatch) -> Any:
     from magic_cards_model_api.repository import Advisor
-    from magic_cards_model_api.store import store
 
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
     store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
     return advisor_server(client, game, monkeypatch)
 

@@ -2951,3 +2951,18 @@ whoever works on the repo itself.
   had been looping `wait_for_priority` 3 times on an unchanged board asserting
   a real wake every time - it was pinning the bug as a feature - and needed
   updating alongside the fix.
+- **2026-09-13 - `test_action_answer_size.py` cost 6 CI minutes twice
+  (`test`/`test:pg`) because every one of its eleven tests rebuilt an
+  identical 44-card board through `add_card`, and each call recomputes the
+  whole board's `characteristics_of` from scratch (no memoisation of parsed
+  oracle text anywhere in the engine) as the board grows - not the actions
+  under test, which were cheap by comparison. Fixed at the test layer, not
+  the engine: `stage_card`/`_stage_busy_board` place cards straight through
+  `engine_api.put_card_in_zone` (skipping the `state_view` every caller here
+  threw away unread), and the resulting `Game` is cached once per session
+  and deep-copied onto each test's own game rather than restaged. 136s -> 27.8s
+  for the file, 712s -> 211s for the whole suite. The underlying
+  `characteristics_of` cost is a real production hot path with no caching -
+  left alone here since nothing in this file's own scope called for an
+  engine change, but any future work touching that path should know eleven
+  tests in one file were enough to double CI's budget.
