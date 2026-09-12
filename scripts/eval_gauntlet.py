@@ -45,6 +45,37 @@ is about to shut down, which the scorecard could never read. `mise run
 eval:gauntlet` brings postgres up and exports `DATABASE_URL` before calling
 this; run directly, this refuses rather than play ten games nobody can report
 on.
+
+## Throughput: this shares one process, and it is measured, not assumed
+
+A 10-seed `--agent baseline` acceptance run was left for 30 minutes and hit
+every game's own `--max-seconds` bound still mid-game, at turn 6-9 - not
+stalled (the server log showed steady `pass-priority`/`legal-actions`
+traffic the whole time, 0 refusals out of 3197 ruled-on attempts) and not a
+policy defect (attacks and blocks were being declared correctly). The cause
+is throughput: every game in one run shares one server process - one CPU's
+worth of GIL, and on postgres one connection pool - and `GET .../legal-
+actions` is not free. A standalone timing probe (one game, no concurrency,
+`InMemoryRepository`, `tests/fixtures`-scale decks) measured legal-actions
+latency at mean 61ms / p90 154ms / max 226ms once the board had a dozen-odd
+permanents on it, and needed about 400 of `baseline_seat.play_out`'s own
+half-round steps - about 90 seconds, alone, with nothing else competing for
+the CPU - to reach turn 7. Ten of those sharing one process is the 30
+minutes/turn-9 result; this is a known, deliberate cost in `Game.
+computed_board`'s own design (it does not cache), not something this module
+works around.
+
+**The honest acceptance condition, given that measurement**: a bounded
+baseline-vs-baseline game reaches a real engine terminal state (win, loss,
+or draw) within its own `--max-seconds`/`--stall-seconds` bounds, and the
+harness never hangs or silently miscounts a cut-off game as a loss (see
+`eval_report.build_report`'s `edges`/`unfinished_detail`). It is **not**
+"ten concurrent games finish in any particular wall-clock time" - that is a
+throughput property of this machine and this process model, tunable with
+`--serial` and `--max-seconds`, and a claim this module does not make.
+`--seeds 10 --agent baseline` finishing unattended in a lunch break is not
+proven on this machine at this concurrency; `--seeds 2` is, and is the
+size this module is actually exercised at in its own test suite.
 """
 
 from __future__ import annotations
@@ -131,6 +162,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="quiet log time before `watch_game` calls a game stalled",
     )
     parser.add_argument("--poll", type=float, default=2.0, help="watcher poll interval")
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help=(
+            "play one game to its edge before starting the next, instead of all of them "
+            "at once. Every game shares one server process (one CPU's worth of GIL) and, "
+            "on postgres, one connection pool - on a machine where that contention is the "
+            "bottleneck, N games run one at a time can finish sooner than N run together"
+        ),
+    )
     parser.add_argument(
         "--database-url", default=None, help="where the ledger lands; default $DATABASE_URL"
     )
@@ -266,6 +307,34 @@ def stop_agent_seat(api: str, game_id: str, uid: str) -> None:
         pass
 
 
+def archive_game(api: str, game_id: str, uid: str) -> None:
+    """Soft-delete this run's own game once it is done being played.
+
+    `GET /api/games` lists every *live* game in the database
+    (`archived_at IS NULL`), and nothing before this ever archived a
+    gauntlet's games - so postgres, which outlives the process that booted
+    them, kept every past run's games live forever. An operator watching a
+    10-seed run from outside saw 34 live games: four earlier runs' games
+    this harness never cleaned up, plus the current one's ten. `booted_games`
+    already keeps a run from *adopting* games it did not create (see its own
+    docstring); this is the other half - cleaning up the ones it did.
+
+    Uses the same `DELETE /api/games/{id}` back door `stop_agent_seat` uses
+    for the ai-seat stop, which soft-deletes (`store.delete` stamps
+    `archived_at` rather than dropping the row) - so `eval_report`'s own
+    `ledger_from_database`, which reads the `games`/`records` tables
+    directly and does not filter on `archived_at`, can still read this run's
+    ledger after this call. Best-effort: a game already gone, or a server
+    that is on its way down, is not a reason to fail a run whose scorecard
+    has already been computed.
+    """
+    try:
+        with httpx.Client(base_url=api, timeout=30.0) as client:
+            client.delete(f"/api/games/{game_id}", params={"uid": uid})
+    except httpx.HTTPError:
+        pass
+
+
 def play_one(
     api: str,
     game_id: str,
@@ -336,6 +405,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"eval:gauntlet: booting {len(seeds)} game(s) on {api} - seeds {seeds}", flush=True)
     process, log_path = boot_server(args, seeds, database_url)
     started: list[tuple[str, str]] = []
+    booted: list[tuple[str, str]] = []
     plans: list[tuple[str, list[baseline_seat.BaselineSeat]]] = []
     try:
         wait_for_health(api, process, log_path)
@@ -350,6 +420,10 @@ def run(args: argparse.Namespace) -> int:
             uids = {
                 name: printed_uids.get(name) or mint_seat(api, game_id, name) for name in players
             }
+            # Any one seat's uid is enough to archive this game later
+            # (`DELETE /api/games/{id}` accepts either seat's credential) -
+            # this is not a per-seat action, just a way in the door.
+            booted.append((game_id, next(iter(uids.values()))))
             if args.agent == "wrapper":
                 status = start_agent_seat(api, game_id, uids[agent_player])
                 started.append((game_id, uids[agent_player]))
@@ -375,12 +449,21 @@ def run(args: argparse.Namespace) -> int:
         def one(game_id: str, seats: list[baseline_seat.BaselineSeat]) -> None:
             collected[game_id] = play_one(api, game_id, seats, args, stall_rounds=stall_rounds)
 
-        for game_id, seats in plans:
-            thread = threading.Thread(target=one, args=(game_id, seats), name=f"game-{game_id}")
-            thread.start()
-            threads.append(thread)
-        for thread in threads:
-            thread.join()
+        if args.serial:
+            # One game to its edge before the next starts. Still through
+            # `play_one` (its own watcher/driver pair), just never more than
+            # one of those pairs live at a time - see `--serial`'s own help
+            # for why a machine bottlenecked on the shared server/database
+            # can finish sooner this way than with every game racing at once.
+            for game_id, seats in plans:
+                one(game_id, seats)
+        else:
+            for game_id, seats in plans:
+                thread = threading.Thread(target=one, args=(game_id, seats), name=f"game-{game_id}")
+                thread.start()
+                threads.append(thread)
+            for thread in threads:
+                thread.join()
         results = [collected[game_id] for game_id, _ in plans if game_id in collected]
 
         print("", flush=True)
@@ -391,6 +474,14 @@ def run(args: argparse.Namespace) -> int:
     finally:
         for game_id, uid in started:
             stop_agent_seat(api, game_id, uid)
+        # Archive every game this run booted, whether it finished, was cut
+        # off, or never got its first move - before the server it lives in
+        # goes away. See `archive_game`'s own docstring for the accumulation
+        # this fixes; done here rather than only on the happy path, so a
+        # run that raised out of the `try` block still cleans up after
+        # itself.
+        for game_id, uid in booted:
+            archive_game(api, game_id, uid)
         process.terminate()
         try:
             process.wait(timeout=30)
@@ -406,7 +497,12 @@ def run(args: argparse.Namespace) -> int:
         Path(args.dump).write_text(
             json.dumps([game.to_json() for game in ledger], indent=1, sort_keys=True)
         )
-    report = eval_report.build_report(ledger)
+    # `watch_game`'s own edge for each game - `report`/`game_over`/`stalled`/
+    # `timeout` - threaded into the report so an unfinished game says *why*
+    # it is unfinished (cut off by the harness) rather than leaving a reader
+    # to wonder whether "unfinished" means "still playing" or "lost".
+    edges = {result["game"]: result["edge"] for result in results}
+    report = eval_report.build_report(ledger, edges=edges)
     print(json.dumps(report, indent=1, sort_keys=True) if args.json else eval_report.render(report))
     print(f"\nserver console: {log_path}", flush=True)
     return 0

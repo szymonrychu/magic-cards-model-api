@@ -372,6 +372,59 @@ def test_the_report_names_the_unfinished_games():
     assert "g-unfinished" in text
 
 
+def test_an_unfinished_game_reports_the_edge_that_cut_it_off():
+    """`finished 3/10` must never be readable as "the other 7 lost" - a run
+    that hit its own `--max-seconds` bound mid-game is not a result, it is
+    the harness giving up on watching. `watch_game.watch`'s own edge
+    (`timeout`/`stalled`/`report`) is threaded through so the report says
+    which one ended each unfinished game, instead of leaving a reader to
+    guess whether it is still running, stuck, or lost."""
+    unfinished = game("g3", [row(1, "create_game"), row(2, "cast", player="alice", allowed=True)])
+    edges = {"g3": {"edge": "timeout", "game": "g3", "seq": 7, "turn": 8}}
+
+    report = eval_report.build_report([unfinished], edges=edges)
+
+    assert report["unfinished_detail"]["g3"]["edge"] == "timeout"
+    assert report["unfinished_detail"]["g3"]["turn"] == 8
+
+
+def test_an_unfinished_game_with_no_edge_given_says_so_rather_than_guessing():
+    unfinished = game("g3", [row(1, "create_game")])
+
+    report = eval_report.build_report([unfinished])
+
+    assert report["unfinished_detail"]["g3"]["edge"] == "unknown"
+
+
+def test_a_finished_game_carries_no_unfinished_detail():
+    report = eval_report.build_report(
+        [finished_game("g1", "alice")], edges={"g1": {"edge": "game_over"}}
+    )
+
+    assert "g1" not in report["unfinished_detail"]
+
+
+def test_the_rendered_report_names_each_unfinished_games_own_edge():
+    unfinished = game("g3", [row(1, "create_game"), row(2, "cast", player="alice", allowed=True)])
+    edges = {"g3": {"edge": "timeout", "game": "g3", "seq": 7, "turn": 8}}
+
+    text = eval_report.render(eval_report.build_report([unfinished], edges=edges))
+
+    assert "g3" in text
+    assert "timeout" in text
+    assert "turn 8" in text
+
+
+def test_the_rendered_report_says_unfinished_is_not_a_loss():
+    """The one sentence that keeps a reader from misreading a low finish
+    rate as a bad win rate for whichever seat did not finish."""
+    unfinished = game("g3", [row(1, "create_game")])
+
+    text = eval_report.render(eval_report.build_report([unfinished]))
+
+    assert "not scored as a loss" in text
+
+
 # -- loading -----------------------------------------------------------------
 
 

@@ -388,13 +388,26 @@ def ending_of(payloads: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
     return found
 
 
-def build_report(games: Sequence[GameRows]) -> dict[str, Any]:
+def build_report(
+    games: Sequence[GameRows], *, edges: Mapping[str, Mapping[str, Any]] | None = None
+) -> dict[str, Any]:
     """Every metric, over `games`. Pure: the same ledger always produces the
-    same report, intervals included."""
+    same report, intervals included, for a fixed `edges`.
+
+    `edges` is `scripts.watch_game.watch`'s own return value, one per game id
+    - the edge that ended *watching* that game (`game_over`, `timeout`,
+    `stalled`, `report`, `stopped`), which is not stored in the ledger itself
+    and so cannot be recovered from `games`/`records` alone. Passed by
+    `eval_gauntlet.run`, which has it in hand; a bare `--database-url` read
+    (or a captured `--dump`) has no such thing and reports `"unknown"`
+    instead of guessing. Never used to call an unfinished game finished - it
+    only explains *why* one is not.
+    """
     seats: dict[str, _SeatTally] = {}
     unclassified: dict[str, int] = {}
     finished_ids: list[str] = []
     unfinished_ids: list[str] = []
+    unfinished_detail: dict[str, dict[str, Any]] = {}
     turns: list[int] = []
     flagged_refusals = 0
     unflagged_refusals = 0
@@ -422,6 +435,8 @@ def build_report(games: Sequence[GameRows]) -> dict[str, Any]:
                     tally.losses += 1
         else:
             unfinished_ids.append(game.game_id)
+            edge = (edges or {}).get(game.game_id)
+            unfinished_detail[game.game_id] = dict(edge) if edge else {"edge": "unknown"}
 
         for payload in payloads:
             action = str(payload.get("action") or "")
@@ -475,6 +490,7 @@ def build_report(games: Sequence[GameRows]) -> dict[str, Any]:
         "finished": len(finished_ids),
         "finish_rate": beta_interval(len(finished_ids), len(games)),
         "unfinished": unfinished_ids,
+        "unfinished_detail": unfinished_detail,
         "turns_to_end": _spread(turns),
         "seats": {name: _seat_report(tally) for name, tally in sorted(seats.items())},
         "unclassified_actions": unclassified,
@@ -549,6 +565,38 @@ def _rate(rate: Mapping[str, Any], *, unit: str = "") -> str:
     )
 
 
+def _unfinished_reason(edge: Mapping[str, Any] | None) -> str:
+    """One line: why this game has no `game_over` row. `edge` is
+    `build_report`'s own `unfinished_detail` entry - `watch_game.watch`'s
+    edge when `eval_gauntlet` supplied one, `{"edge": "unknown"}` when
+    nothing did (a bare `--database-url`/`--ledger` read, with no run in
+    hand to ask)."""
+    if not edge:
+        return "[unknown] no watcher edge recorded for this run"
+    kind = str(edge.get("edge") or "unknown")
+    if kind == "timeout":
+        turn = edge.get("turn")
+        return (
+            f"[timeout] cut off by --max-seconds (turn {turn})"
+            if turn is not None
+            else "[timeout] cut off by --max-seconds"
+        )
+    if kind == "stalled":
+        quiet = edge.get("quiet_seconds")
+        return (
+            f"[stalled] {quiet}s with no log activity"
+            if quiet is not None
+            else "[stalled] no log activity"
+        )
+    if kind == "report":
+        return "[report] cut off by a filed problem report"
+    if kind == "stopped":
+        return "[stopped] watcher told to stop (should_stop)"
+    if kind == "watcher_failed":
+        return f"[watcher_failed] the watcher itself errored: {edge.get('error')}"
+    return f"[{kind}] reason not one this report recognises"
+
+
 def render(report: Mapping[str, Any]) -> str:
     """The scorecard as text. Everything a reader needs to judge whether a
     number here is worth acting on is on the page, including how big the run
@@ -570,6 +618,12 @@ def render(report: Mapping[str, Any]) -> str:
         lines.append("  turns to end      no data (no game reached an end state)")
     if report["unfinished"]:
         lines.append(f"  unfinished        {', '.join(report['unfinished'])}")
+        lines.append("                    not scored as a loss for either seat - only a finished")
+        lines.append("                    game has a winner, loser, or draw; see why each was cut")
+        lines.append("                    off below:")
+        detail = report.get("unfinished_detail") or {}
+        for game_id in report["unfinished"]:
+            lines.append(f"    {game_id}  {_unfinished_reason(detail.get(game_id))}")
     if report["unclassified_actions"]:
         rows = ", ".join(
             f"{action} x{count}" for action, count in sorted(report["unclassified_actions"].items())
