@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audit import GAME_OVER_ACTION, PLAN_ACTION
+from .audit import ADVICE_ACTION, ADVICE_APPROVED_ACTION, GAME_OVER_ACTION, PLAN_ACTION
 from .repository import ArchivedGame
 
 #: The keys a paired entry carries inside a declaration. Deliberately not
@@ -114,6 +114,7 @@ def build_review(archived: ArchivedGame, entries: list[dict[str, Any]]) -> dict[
         "ended_seq": ending["seq"] if ending is not None else None,
         **head,
         "declarations": _declarations(entries),
+        "advice": _advice(entries),
         "entries": entries,
     }
 
@@ -230,6 +231,133 @@ def _paired(entry: dict[str, Any]) -> dict[str, Any]:
     paired = {key: entry.get(key) for key in _PAIRED_KEYS}
     paired["player"] = _actor(entry)
     return paired
+
+
+def _advice(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every `ADVICE_ACTION` row - the mtg-buddy advisor's own proposal to a
+    human seat - paired with whether it was approved and what the seat did
+    about it.
+
+    A **separate stream from `_declarations`, on purpose**: a declaration's
+    window runs from one `plan_declared` row to the next *by any seat*, and
+    an advice row - one per decision point, potentially several a turn - would
+    slice that window into fragments it was never meant to have. Marking
+    unaffected: this function reads `ADVICE_ACTION` only, `_declarations`
+    reads `PLAN_ACTION` only, and neither list's marks depend on the other
+    existing. An advice row still appears inside a declaration's own
+    `did`/`opponent_did`, exactly like any other row by that seat - it is
+    simply never a *window boundary* the way `plan_declared` is.
+
+    **Deliberately not scored** - see the module docstring's stand on
+    `_declarations`, which is the same stand here: whether a piece of advice
+    was *good* is a judgement, not an outcome, and it stays off this page.
+    What is reported, plainly, is one of three things (the fourth being a
+    split of the third): the proposal was approved and the seat's next real
+    move matched it; it was approved and then refused by the engine (`did` is
+    `None` - a refusal is a failed attempt, not "what happened", so it is
+    never handed back as the outcome); or it was never approved, in which
+    case the seat either did something else (`did` is that row) or did
+    nothing at all before the next piece of advice (`did` is `None`).
+
+    `reasoning` is read off the entry's own top-level field first, falling
+    back to `detail["reasoning"]` - the write side may land it either way
+    (every action route's own `reasoning` argument to `audit.record` lands
+    top-level; this defends against a payload that instead folded it into
+    `detail`, since both spellings carry the same meaning here).
+    """
+    approvals = [row for row in entries if row["action"] == ADVICE_APPROVED_ACTION]
+    result: list[dict[str, Any]] = []
+    for index, row in enumerate(entries):
+        if row["action"] != ADVICE_ACTION:
+            continue
+        detail = row.get("detail") or {}
+        player = detail.get("player")
+        seq = row["seq"]
+        approved_row = next(
+            (a for a in approvals if (a.get("detail") or {}).get("advice_seq") == seq), None
+        )
+        boundary = len(entries)
+        for later_index in range(index + 1, len(entries)):
+            later = entries[later_index]
+            if (
+                later["action"] == ADVICE_ACTION
+                and (later.get("detail") or {}).get("player") == player
+            ):
+                boundary = later_index
+                break
+        did_row = _first_real_action(entries, index + 1, boundary, player)
+        result.append(
+            {
+                "seq": seq,
+                "ts": row["ts"],
+                "turn": row["turn"],
+                "step": row["step"],
+                "phase": row["phase"],
+                "player": player,
+                "summary": detail.get("summary"),
+                "reasoning": row.get("reasoning") or detail.get("reasoning"),
+                "path": detail.get("path"),
+                "body": detail.get("body"),
+                "based_on_seq": detail.get("based_on_seq"),
+                "validated": detail.get("validated"),
+                "approved": approved_row is not None,
+                "approved_seq": approved_row["seq"] if approved_row is not None else None,
+                "did": _paired(did_row) if did_row is not None else None,
+                "followed": _advice_followed(detail.get("path"), detail.get("body"), did_row),
+            }
+        )
+    return result
+
+
+def _first_real_action(
+    entries: list[dict[str, Any]], start: int, end: int, player: str | None
+) -> dict[str, Any] | None:
+    """The first row in `entries[start:end]` that is a real move by `player`:
+    not an `advice`/`advice_approved` marker (neither mutates the game), and
+    never a row the engine refused - a refusal is a failed attempt, not a
+    thing that happened, and is deliberately never handed back as `did` (see
+    `_advice`)."""
+    for candidate in entries[start:end]:
+        if candidate["action"] in (ADVICE_ACTION, ADVICE_APPROVED_ACTION):
+            continue
+        if _actor(candidate) != player:
+            continue
+        if (candidate.get("detail") or {}).get("allowed") is False:
+            continue
+        return candidate
+    return None
+
+
+def _kind_of_path(path: str | None) -> str | None:
+    """The ledger's own action name for a proposal's `path` - the route's
+    last segment, hyphens turned to underscores (`/actions/play-land` ->
+    `play_land`), which is exactly how every action route's own path relates
+    to the name it audits under."""
+    if not path:
+        return None
+    tail = path.rstrip("/").rsplit("/", 1)[-1]
+    return tail.replace("-", "_") or None
+
+
+def _advice_followed(
+    path: str | None, body: dict[str, Any] | None, did_row: dict[str, Any] | None
+) -> bool:
+    """Whether `did_row` actually matches the proposal: the same action kind
+    for `path`, and the same card where `body` names one by id or name (a
+    proposal that names no card - a pass, most often - has nothing further to
+    check, so the kind match alone is enough)."""
+    if did_row is None:
+        return False
+    kind = _kind_of_path(path)
+    if kind is None or did_row.get("action") != kind:
+        return False
+    body = body or {}
+    proposed_card = body.get("card_id", body.get("card"))
+    if proposed_card is None:
+        return True
+    did_detail = did_row.get("detail") or {}
+    did_card = did_detail.get("card_id", did_detail.get("card"))
+    return did_card is not None and str(did_card) == str(proposed_card)
 
 
 def _last(entries: list[dict[str, Any]], action: str) -> dict[str, Any] | None:

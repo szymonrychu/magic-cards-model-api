@@ -1609,6 +1609,64 @@ class ReviewDeclaration(BaseModel):
     """What the opponent actually did in the same window."""
 
 
+class ReviewAdvice(BaseModel):
+    """One `audit.ADVICE_ACTION` row - the mtg-buddy advisor's own proposal
+    to a human seat - paired with whether it was approved and what the seat
+    did about it (`review.py`'s `_advice`).
+
+    A stream of its own, beside `declarations` rather than folded into it: a
+    declaration's window runs from one `plan_declared` row to the next *by
+    any seat*; an advice row is per-decision-point and would fragment that
+    window if it were treated as a second kind of marker. It is not - see
+    `_advice`'s own docstring.
+
+    Nothing here grades the advice either, for the same reason
+    `ReviewDeclaration` grades no prediction: whether it was *good* is a
+    judgement, not an outcome. What is reported is one of three things (the
+    third splitting in two): approved and followed; approved and then
+    refused by the engine (`did` is `None` - a refusal is a failed attempt,
+    never the outcome); or never approved, in which case the seat either did
+    something else (`did` is that row) or did nothing before the next piece
+    of advice (`did` is `None` too, distinguished from the refused case only
+    by `approved` being `False`).
+    """
+
+    seq: int
+    ts: str | None = None
+    turn: int | None = None
+    step: str | None = None
+    phase: str | None = None
+    player: str | None = None
+    summary: str | None = None
+    """Server-derived from the proposal's request body - card names resolved
+    from ids, targets, cost."""
+    reasoning: str | None = None
+    """The advisor's own stated reason for proposing this."""
+    path: str | None = None
+    """The route the proposal would have posted to."""
+    body: dict[str, Any] | None = None
+    """The proposed request body, verbatim."""
+    based_on_seq: int | None = None
+    """The ledger position the proposal was made against."""
+    validated: bool | None = None
+    """Whether the proposal could be checked with `dry_run` before ever
+    reaching the human - `False` for a request shape with no `dry_run`
+    support, and therefore not probed."""
+    approved: bool = False
+    approved_seq: int | None = None
+    """The matching `advice_approved` row's own `seq` - paired by `seq`,
+    never by comparing bodies, since a field like `mana_sources` legitimately
+    differs between what was proposed and what the engine actually taps."""
+    did: ReviewEntry | None = None
+    """The first real move this seat made after the advice and before its
+    own next piece of advice, excluding any row the engine refused. `None`
+    covers two different situations distinguished only by `approved`: the
+    approved attempt was refused, or nothing followed at all."""
+    followed: bool = False
+    """Whether `did` actually matches the proposal - same action kind for
+    `path`, and the same card where `body` names one."""
+
+
 class GameReviewResponse(BaseModel):
     """`GET /api/games/{game_id}/review` - post-game only, and never open."""
 
@@ -1642,6 +1700,11 @@ class GameReviewResponse(BaseModel):
     all, and which are therefore `None` rather than a value. Empty for every
     review built from a decodable final state."""
     declarations: list[ReviewDeclaration] = Field(default_factory=list)
+    advice: list[ReviewAdvice] = Field(default_factory=list)
+    """Every piece of advice the mtg-buddy advisor made to a seat in this
+    game, paired with whether it was approved and what happened next - a
+    stream of its own, beside `declarations` rather than folded into it. See
+    `ReviewAdvice`."""
     entries: list[dict[str, Any]] = Field(default_factory=list)
     """The whole ledger, oldest first, each row carrying its own
     full-information `snapshot` - the frames a reviewer renders. Left

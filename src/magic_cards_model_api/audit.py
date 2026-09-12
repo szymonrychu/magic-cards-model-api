@@ -69,6 +69,28 @@ GAME_OVER_ACTION = "game_over"
 #: starts reaching the ledger rather than needing the page changed again.
 REFLECTION_ACTION = "game_reflection"
 
+#: One proposal from the "mtg-buddy" advisor watching a human seat's own
+#: view: a suggested request (`method`/`path`/`body`), the server-derived
+#: `summary` of it (card names resolved from ids, targets, cost), the
+#: agent's own `reasoning` for proposing it, `based_on_seq` (the ledger
+#: position the proposal was made against), and `validated` (whether the
+#: shape could be probed with `dry_run` before ever reaching the human -
+#: `False` for a request shape with no `dry_run` support, per `game_access.
+#: DRY_RUN_ROUTES`). Written by the advice route itself - a later, separate
+#: task - and defined here ahead of it landing so this constant, and
+#: `review.py`'s reading of it, meet that task's write side cleanly rather
+#: than drifting into a second spelling of the same action name.
+ADVICE_ACTION = "advice"
+
+#: The human's one-click approval of an `ADVICE_ACTION` row, detail carrying
+#: `advice_seq` - the approved row's own `seq`, which is how `review.py`
+#: pairs the two (by seq, never by comparing bodies: `mana_sources` and
+#: similar fields legitimately differ between what was proposed and what the
+#: engine actually taps). Like `ADVICE_ACTION`, mutates no game state - the
+#: approval is a marker; the real attempt that follows, if any, is its own
+#: ordinary action row with its own `allowed`.
+ADVICE_APPROVED_ACTION = "advice_approved"
+
 #: The actions that get a banner at WARNING rather than one compact line.
 LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION)
 

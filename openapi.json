@@ -3734,6 +3734,13 @@
       "GameReviewResponse": {
         "description": "`GET /api/games/{game_id}/review` - post-game only, and never open.",
         "properties": {
+          "advice": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewAdvice"
+            },
+            "title": "Advice",
+            "type": "array"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -8008,6 +8015,173 @@
           "understood"
         ],
         "title": "RestrictionView",
+        "type": "object"
+      },
+      "ReviewAdvice": {
+        "description": "One `audit.ADVICE_ACTION` row - the mtg-buddy advisor's own proposal\nto a human seat - paired with whether it was approved and what the seat\ndid about it (`review.py`'s `_advice`).\n\nA stream of its own, beside `declarations` rather than folded into it: a\ndeclaration's window runs from one `plan_declared` row to the next *by\nany seat*; an advice row is per-decision-point and would fragment that\nwindow if it were treated as a second kind of marker. It is not - see\n`_advice`'s own docstring.\n\nNothing here grades the advice either, for the same reason\n`ReviewDeclaration` grades no prediction: whether it was *good* is a\njudgement, not an outcome. What is reported is one of three things (the\nthird splitting in two): approved and followed; approved and then\nrefused by the engine (`did` is `None` - a refusal is a failed attempt,\nnever the outcome); or never approved, in which case the seat either did\nsomething else (`did` is that row) or did nothing before the next piece\nof advice (`did` is `None` too, distinguished from the refused case only\nby `approved` being `False`).",
+        "properties": {
+          "approved": {
+            "default": false,
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "approved_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Seq"
+          },
+          "based_on_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Based On Seq"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "did": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "followed": {
+            "default": false,
+            "title": "Followed",
+            "type": "boolean"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "player": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn"
+          },
+          "validated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "ReviewAdvice",
         "type": "object"
       },
       "ReviewDeclaration": {
