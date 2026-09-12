@@ -33,6 +33,8 @@ from mtg_agent.driver.guides import (
     LOW,
     NONE,
     GuideLibrary,
+    held_faces,
+    holds,
     parse_decklist,
 )
 
@@ -211,10 +213,18 @@ def test_the_analysis_directory_is_chosen_by_date_not_lexicographically(tmp_path
     (deck).mkdir(parents=True)
     (deck / "decklist.txt").write_text("4 Psychic Frog\n")
     for name in ("zzz-frog-modern-2025-01-01", "aaa-frog-modern-2026-08-10"):
-        (deck / "analysis" / name / "domain3-matchup-threat" / "matchups").mkdir(parents=True)
+        domain = deck / "analysis" / name / "domain3-matchup-threat"
+        (domain / "matchups").mkdir(parents=True)
+        (domain / "boarding-plan.json").write_text("{}")
 
     guide = GuideLibrary(root).get("dimir-frog")
     assert guide.matchups_dir.parents[1].name == "aaa-frog-modern-2026-08-10"
+    # The boarding plan is read off the SAME run, by the same key. It has its
+    # own glob's worth of temptation to sort lexicographically, and a plan
+    # from 2025 rendered next to matchup files from 2026 is a card that
+    # describes a field the deck was not analysed against.
+    assert guide.boarding_plan.parents[1].name == "aaa-frog-modern-2026-08-10"
+    assert guide.boarding_plan.parents[1] == guide.matchups_dir.parents[1]
 
 
 def test_missing_guide_files_are_none_not_an_error(tmp_path):
@@ -596,3 +606,41 @@ def test_one_broken_file_does_not_hide_the_decks_that_are_fine(tmp_path):
         identify_text(library, (CORPUS / "living-end" / "decklist.txt").read_text()).confidence
         == NONE
     )
+
+
+# ---- a card the list holds, whichever way either side spells it -----------
+#
+# The corpus spells one card three ways: Scryfall and the guides' own
+# decklists write "Wear // Tear", the bundled decks the server deals write
+# "Wear/Tear", and a hand-written boarding plan writes the swap as "1 Wear".
+# `matchup_card` intersects the second against the third, so the rule that
+# says those are one card lives here, next to the decklist parser.
+
+
+def test_a_split_card_is_held_under_every_spelling_of_it():
+    for spelling in ("Wear // Tear", "Wear/Tear", "Wear", "wear // tear"):
+        held = held_faces({spelling: 2})
+        assert holds(held, "Wear"), spelling
+        assert holds(held, "Wear // Tear"), spelling
+        assert holds(held, "Wear/Tear"), spelling
+
+
+def test_either_face_of_a_split_the_list_holds_counts_as_held():
+    """Looser than `scryfall._pool_names_match`'s "whole name or front face",
+    and deliberately so: a seat holding Wear // Tear can cast Tear, and the
+    expensive mistake here is telling the agent not to board a card it has."""
+    held = held_faces({"Wear // Tear": 2})
+    assert holds(held, "Tear")
+
+
+def test_a_card_no_face_of_which_is_in_the_list_is_not_held():
+    held = held_faces({"Wear // Tear": 2, "Lightning Bolt": 4})
+    assert not holds(held, "Mystical Dispute")
+    assert not holds(held, "Bolt")
+    assert not holds(held, "")
+
+
+def test_holding_is_read_off_a_parsed_decklist():
+    held = held_faces(parse_decklist("2 Wear // Tear\n4 Fatal Push (MH3) 89\n"))
+    assert holds(held, "Wear")
+    assert holds(held, "Fatal Push")

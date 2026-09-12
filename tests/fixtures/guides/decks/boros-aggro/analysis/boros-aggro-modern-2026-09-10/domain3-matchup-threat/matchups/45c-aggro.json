@@ -1,0 +1,105 @@
+{
+  "name": "45c aggro",
+  "meta_share": 2.102891475779196,
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed 2026-09-10 capture holds no row named '45c aggro'. It carries 'domain zoo' at 0.5243 over 617 matches, which is a plausible neighbour, but the 2026-09-10 signature validation asserts no join between those two labels - the four joins it supports are the boros pair, the prowess family, the affinity pair and the goryos family - so this name resolves to nothing and the dossier records the absence."
+  },
+  "meta_basis": {
+    "kind": "current"
+  },
+  "primary_gameplan": "Attack the domain count, not the creatures. Tear on Leyline of the Guildpact shrinks Territorial Kavu to the two or three basic land types they really have, pushes Leyline Binding back towards {5}{W} and pushes Scion of Draco back towards {12}; Wear answers a resolved Scion of Draco outright because it is an artifact. Both halves are instants, so neither costs us a turn of pressure.",
+  "secondary_gameplan": "Blood Moon is the same attack from the other side, and it is stronger than usual here: twelve of their lands are fetchlands, which lose their activated ability entirely, and their only basics are one Plains and one Mountain - so a resolved copy leaves them on red mana and a domain of two. Sequence a fetched Plains first, and hold it against a hand that has not yet shown the Leyline.",
+  "opponent_gameplan": "The ten lists pulled 2026-08-29 to 2026-09-08 (meta/snapshots/decks-45c-aggro-2026-09-10.json) run 4 Scion of Draco, 4 Territorial Kavu, 4 Leyline of the Guildpact, 4 Leyline Binding, 4 Ragavan, Nimble Pilferer, 4 Quantum Riddler, 4 Lightning Bolt and 2.8 Stubborn Denial in 10 of 10, off a manabase of 4 Arid Mesa, 4 Flooded Strand and 4 Wooded Foothills with a single Plains and a single Mountain. Every payoff is priced off domain: Leyline of the Guildpact makes their lands every basic land type, which turns Territorial Kavu into a 5/5 for two, Leyline Binding into a one-mana exile effect and Scion of Draco into a four-mana 4/4 flier that hands the team vigilance, hexproof, lifelink, first strike and trample. Take the Leyline away and the deck is a pile of expensive cards on an eight-land manabase.",
+  "tournament_refs": [
+    {
+      "pilot": "The_Catfin",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "pilot": "FacadeJK",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "pilot": "WhiteNinja",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "pilot": "FacadeJK",
+      "tournament_date": "2026-09-05",
+      "tournament_id": "67ef1df3-a631-4a75-b461-3b22e40b474e"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Every card that makes this deck function is an artifact or an enchantment, and the oracle text is what says so. Leyline of the Guildpact is 'Lands you control are every basic land type in addition to their other types', which is the whole manabase and the whole domain count; Leyline Binding is a {5}{W} enchantment reduced by that domain; Scion of Draco is an Artifact Creature reduced by it; Territorial Kavu's power and toughness are literally the number of basic land types. Wear destroys the artifact half, Tear destroys either Leyline, and Blood Moon attacks the same axis from the manabase side.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Wrath of the Skies",
+      "count": 2,
+      "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.2; the sweeper that punishes the wide Cat board",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Obsidian Charmaw",
+      "count": 2,
+      "why": "In 9 of 10 pulled boards at 2.1; a 4/4 flier that also destroys one of our fourteen nonbasic lands, and it is discounted by nothing we play - none of our lands produces {C}",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "In 10 of 10 pulled boards at 2.9; one blue mana counters a triggered ability, which is what our whole engine is",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    },
+    {
+      "card": "Rest in Peace",
+      "count": 1,
+      "why": "In 10 of 10 pulled boards at 1.3; against us it only stops Seasoned Pyromancer's graveyard activation, so it usually stays in the box",
+      "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+    }
+  ],
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Leyline of the Guildpact turns eight lands into every basic type, so a two-mana Territorial Kavu is a 5/5 and Scion of Draco costs four rather than twelve.",
+    "key_cards": [
+      {
+        "card": "Leyline of the Guildpact",
+        "why": "A 4-of in 10 of 10 recorded lists that can start on the battlefield; it makes their lands every basic land type, which is the mana, the domain count and Territorial Kavu's size at once"
+      },
+      {
+        "card": "Territorial Kavu",
+        "why": "A 4-of two-drop whose power and toughness are the number of basic land types among their lands - a 5/5 for {R}{G} behind the Leyline"
+      },
+      {
+        "card": "Leyline Binding",
+        "why": "A 4-of flash enchantment that exiles any nonland permanent for one white mana once domain is five"
+      },
+      {
+        "card": "Wrath of the Skies",
+        "why": "Postboard, the sweeper aimed at the token board",
+        "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands, a one-drop, and a Galvanic Discharge for their turn-one play.",
+    "goldfish_for": "Ocelot Pride or Guide of Souls on turn one and Voice of Victory on turn two, with Tear held for the Leyline.",
+    "watch_for": "Whether Leyline of the Guildpact started on the battlefield, and white mana up for a flashed Leyline Binding.",
+    "posture": "race",
+    "posture_why": "Their creatures outsize ours from turn two, so the game has to be decided on damage while their domain payoffs are still expensive."
+  },
+  "card_names": [
+    "Consign to Memory",
+    "Leyline Binding",
+    "Leyline of the Guildpact",
+    "Obsidian Charmaw",
+    "Rest in Peace",
+    "Territorial Kavu",
+    "Wrath of the Skies"
+  ],
+  "self_cost": "Blood Moon turns our own fourteen nonbasics into Mountains and takes the fetch ability off all ten fetchlands, so it comes down only behind a fetched Plains and our white half is stranded on whatever basics are already out. Against this deck it is worth it: their two basic lands are one Plains and one Mountain across 10 of 10 recorded lists, so the same effect costs us a colour and costs them four."
+}

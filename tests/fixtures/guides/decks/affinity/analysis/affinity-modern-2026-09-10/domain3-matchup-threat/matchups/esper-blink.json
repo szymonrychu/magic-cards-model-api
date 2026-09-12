@@ -1,0 +1,160 @@
+{
+  "name": "esper blink",
+  "meta_share": 7.660533233195643,
+  "winrate": 0.5722,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='pinnacle affinity', limit=60), committed verbatim at .protocol/raw-matchups.json; row 'esper blink' at 0.5722 over 88 matches / 187 games",
+    "n": 88
+  },
+  "meta_basis": {
+    "kind": "current"
+  },
+  "primary_gameplan": "Deploy the free artifacts to metalcraft, then land Kappa Cannoneer off improvise on turn three with Consign to Memory or Mystical Dispute held. Ward {4} and the unblockable clause mean a resolved Cannoneer is a four-turn clock they can only answer with a free Solitude, which is precisely what the two counterspells are for.",
+  "secondary_gameplan": "If the Cannoneer never arrives, Weapons Manufacturing plus Claws of Gix drains: every nontoken artifact that enters makes a Munitions token, and sacrificing it to Claws for {1} deals 2 to the face. Urza's Saga chapter three keeps supplying the artifact, and their removal suite does not interact with a token that has already left the battlefield.",
+  "opponent_gameplan": "Ten captured 2026-09-10 lists play one deck: Flickerwisp, Solitude, Phelia, Exuberant Shepherd, Emperor of Bones and Overlord of the Balemurk are bodies whose enter-the-battlefield and attack triggers do the work, and Ephemerate re-buys the best one twice because it rebounds. Thoughtseize and Prismatic Ending strip the engine piece, Fatal Push answers Emry, and Teferi, Time Raveler locks our instant-speed Metallic Rebuke out of their turn while its minus three bounces a resolved Weapons Manufacturing.",
+  "tournament_refs": [
+    {
+      "pilot": "rastaf",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "pilot": "MeninoNey",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "pitfalls": [
+    "Casting Engineered Explosives before their board exists. Their cheap permanents are Ephemerate rebounds and Phelia, so the number is 1 or 2 and it wants to be cast after they have committed, not on curve.",
+    "Deploying Vexing Bauble first. It counters our own {0} artifacts, and the sixteen of them in this mainboard are how metalcraft and improvise get paid for.",
+    "Equipping Shadowspear expecting it to beat Kappa Cannoneer's problem. Ward {4} is not hexproof and not indestructible, so Shadowspear's activated ability does nothing about it - the row cuts Shadowspear for that reason."
+  ],
+  "hands_keep": [
+    {
+      "cards": "Two lands including a blue source, Mox Opal, Mishra's Bauble, Weapons Manufacturing",
+      "reason": "Metalcraft on turn one and a Munitions token on every artifact after it; the deck's fastest honest draw."
+    },
+    {
+      "cards": "Urza's Saga, one coloured land, Kappa Cannoneer, two {0} artifacts",
+      "reason": "The Saga is a land and a tutor: chapter three finds the artifact that turns on improvise, and the Cannoneer is the card their board is worst against."
+    }
+  ],
+  "hands_mulligan": [
+    {
+      "cards": "Five lands, Preordain, Shadowspear",
+      "reason": "This deck wants three lands and a pile of artifacts; a hand with no free artifact has neither metalcraft nor improvise and casts Kappa Cannoneer on turn six."
+    },
+    {
+      "cards": "Four {0} artifacts, Claws of Gix, no land and no Mox Opal",
+      "reason": "Every artifact is castable and none of them does anything without a mana source, and Weapons Manufacturing is the card that makes them matter."
+    }
+  ],
+  "phase_plan": {
+    "early": "Land, free artifacts, metalcraft. Hold Metallic Rebuke for the Prismatic Ending or Fatal Push aimed at Weapons Manufacturing rather than for a creature.",
+    "mid": "Kappa Cannoneer off improvise with a counter up, or Weapons Manufacturing plus Claws of Gix if they have shown Solitude.",
+    "late": "Consign to Memory on the Emperor of Bones counters trigger; Urza's Saga rebuilds after Wrath of the Skies because chapter three puts the artifact onto the battlefield rather than casting it."
+  },
+  "opponent_card_index": [
+    {
+      "card": "Solitude",
+      "role": "Free removal",
+      "why_run": "Evoked for a white card, it exiles our threat for no mana",
+      "our_answer": "Metallic Rebuke or Mystical Dispute; a Munitions token already sacrificed cannot be exiled"
+    },
+    {
+      "card": "Ephemerate",
+      "role": "Value engine",
+      "why_run": "Rebound doubles any enter-the-battlefield trigger",
+      "our_answer": "Nothing clean; race it or counter the creature it is aimed at"
+    },
+    {
+      "card": "Emperor of Bones",
+      "role": "Recursion",
+      "why_run": "Adapt puts counters on it, which returns an exiled creature",
+      "our_answer": "Consign to Memory on the counters-are-put-on trigger, or Tormod's Crypt on the graveyard first"
+    },
+    {
+      "card": "Teferi, Time Raveler",
+      "role": "Lock piece",
+      "why_run": "We can cast spells only at sorcery speed, which blanks Metallic Rebuke on their turn",
+      "our_answer": "Galvanic Blast is not in this matchup; attack it with the Cannoneer"
+    },
+    {
+      "card": "Wrath of the Skies",
+      "role": "Postboard sweeper",
+      "why_run": "Destroys artifacts, creatures and enchantments at or below the energy paid",
+      "our_answer": "Rebuild off Urza's Saga chapter three and Emry"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Wrath of the Skies",
+      "count": 3,
+      "why": "10 of the 10 captured boards run it. It destroys each artifact, creature and enchantment with mana value less than or equal to the energy paid, which is our whole board in one card, and every permanent this deck plays costs {0} to {2}.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "10 of the 10 captured boards run it. Sixteen of our maindeck cards are colorless spells and every payoff we have - Weapons Manufacturing, Kappa Cannoneer, Pinnacle Emissary, Urza's Saga - wins through a triggered ability, so one card answers either half for {U}.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Clarion Conqueror",
+      "count": 2,
+      "why": "10 of the 10 captured boards run it. Activated abilities of artifacts, creatures and planeswalkers can't be activated, which turns off Mox Opal, Claws of Gix, Mishra's Bauble, Tormod's Crypt, Welding Jar and Emry at once.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Mystical Dispute",
+      "count": 2,
+      "why": "8 of the 10 captured boards run it; it costs {2} less against our blue spells, so Kappa Cannoneer and Emry are taxed {3} by a one-mana card.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Their deck is triggered abilities on bodies - Flickerwisp, Phelia, Solitude and Emperor of Bones all do their work on the way in - and Consign to Memory counters a triggered ability for {U} with replicate {1} buying the second one. We are not trying to beat their creatures, only the triggers that turn each one into a two-for-one, and at 7.66pp this is the largest row in the recorded field.",
+  "play_plan": {
+    "keep": "Any seven with two coloured sources, a Weapons Manufacturing or Kappa Cannoneer, and two of the free artifacts.",
+    "goldfish_for": "Kappa Cannoneer on turn three off improvise, with Consign to Memory held for the Solitude that answers it.",
+    "watch_for": "A white source held open through their own main phase is an evoked Solitude; bait it with Emry first.",
+    "posture": "disrupt_first",
+    "posture_why": "Their removal is free and ours is not, so the Cannoneer only lands once their evoke is spent or countered."
+  },
+  "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Every creature they cast replaces itself through a trigger, and Ephemerate rebuys the best one, so they win a long game on cards rather than on speed.",
+    "key_cards": [
+      {
+        "card": "Solitude",
+        "why": "Free exile removal for the Kappa Cannoneer the whole plan is built on; evoked it costs them no mana at all."
+      },
+      {
+        "card": "Ephemerate",
+        "why": "Rebounds, so one mana buys two more enter-the-battlefield triggers and turns any body into a two-for-one."
+      },
+      {
+        "card": "Wrath of the Skies",
+        "why": "Postboard, this is the card that kills the board rather than the threat - every permanent we play is inside its range.",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Clarion Conqueror",
+        "why": "Postboard, it switches off Mox Opal, Claws of Gix and Emry in one body, which is the whole engine.",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "card_names": [
+    "Clarion Conqueror",
+    "Consign to Memory",
+    "Emperor of Bones",
+    "Ephemerate",
+    "Mystical Dispute",
+    "Solitude",
+    "Teferi, Time Raveler",
+    "Wrath of the Skies"
+  ],
+  "self_cost": "Vexing Bauble counters any spell cast for no mana and sixteen of this mainboard's cards have a mana cost of {0} - four Mox Opal, four Mishra's Bauble, four Tormod's Crypt, three Claws of Gix and the Welding Jar. It is the last permanent we deploy in a turn, never the first, and the row cuts the Welding Jar rather than pretend the tax is free."
+}

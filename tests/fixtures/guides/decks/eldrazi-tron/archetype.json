@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "archetype": "eldrazi tron",
+  "parent": "tron",
+  "signature": [
+    {
+      "cards": [
+        "Urza's Tower",
+        "Urza's Mine",
+        "Urza's Power Plant"
+      ],
+      "min": 9,
+      "why": "The tron family's shared clause: three copies of each is what assembling Tron means, and no list in the field runs fewer than nine while claiming either branch. It is shared on purpose and it is deliberately not enough on its own - a list that holds nine Tron lands and neither branch's package matches NO signature and resolves to nothing. That is the intended answer rather than a gap: naming a branch whose cards are absent hands a pilot the guide for a deck they are not playing, and a caller that knows the list is some kind of tron can say so from this clause without this file guessing which kind."
+    },
+    {
+      "cards": [
+        "Eldrazi Temple",
+        "Ugin's Labyrinth"
+      ],
+      "min": 6,
+      "why": "The family's second shared clause. Both branches run 4 Eldrazi Temple and 4 Ugin's Labyrinth, because the deck's mana story is lands that produce more than one and Labyrinth is what makes an opening hand holding a 7-drop keepable."
+    },
+    {
+      "cards": [
+        "Sowing Mycospawn",
+        "Giant's Boulder"
+      ],
+      "min": 6,
+      "why": "What makes this branch eldrazi tron rather than urzatron. All ten current field eldrazi tron lists run Sowing Mycospawn and Giant's Boulder at about seven combined copies; zero of the ten current urzatron lists run either. Mycospawn is the reason the deck can be a land deck and a threat deck at once - it fetches the missing Tron piece off Eldrazi Temple mana and later exiles the opponent's land - and Boulder is the colorless ramp that replaces urzatron's Mind Stone."
+    }
+  ]
+}

@@ -1,0 +1,2399 @@
+{
+ "field": {
+  "cutoff_share": 2.002730996813837,
+  "count": 19
+ },
+ "sideboard_access": {
+  "kind": "wish",
+  "tutor": "Karn, the Great Creator",
+  "why": "All 12 distinct sideboard cards are artifacts and Karn's -2 puts any of them from outside the game into hand, so the board is reached by tutor rather than by swapping. Physically siding a card in REMOVES it from Karn's pool: a card moved into the maindeck is no longer outside the game, so every physical swap trades tutorable breadth for the ability to draw one specific answer before a four-mana Karn resolves. That trade is only worth making against turn-two graveyard decks (Grafdigger's Cage) and against combo on the play (Trinisphere); everywhere else the correct number of physical swaps is zero."
+ },
+ "matchups": [
+  {
+   "name": "instant reanimator",
+   "meta_share": 4.415111515703232,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Grafdigger's Cage and Tormod's Crypt attack the Goryo's Vengeance line without touching anything our own deck does.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "one mana, counters every colorless spell we cast plus Devourer's and Thought-Knot's triggers, with replicate.",
+     "source_tournament_id": "8ab91b51-0256-4570-87dd-497bcf782ae5"
+    },
+    {
+     "card": "March of Otherworldly Light",
+     "count": 2,
+     "why": "instant-speed X exile: the only card in their board that answers a resolved Chalice or Grafdigger's Cage.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Goryo's Vengeance returns Atraxa or Griselbrand on turn two or three and Ephemerate rebuys the enters trigger, so the game is decided before our seven-mana half functions.",
+    "key_cards": [
+     {
+      "card": "Goryo's Vengeance",
+      "why": "instant-speed two-mana reanimation, which is what makes the kill turn two or three rather than turn six."
+     },
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "the payoff body; its enters trigger refuels them on the same turn the clock starts."
+     },
+     {
+      "card": "Ephemerate",
+      "why": "rebuys the Atraxa trigger and dodges removal, so the fast draw needs no second copy."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "their boards carry no artifact removal at all - March of Otherworldly Light is the only card that can point at it, and at 1-2 copies it is a one-for-one they would rather spend on Chalice."
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "free, so it resolves under their own Chalice-less curve and empties the yard in response to Goryo's Vengeance targeting."
+    },
+    {
+     "card": "Torpor Orb",
+     "verdict": "SURVIVES",
+     "why": "nothing they board answers a two-mana artifact; the cost is ours, not theirs, which is why it is third rather than first."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "Atraxa and Griselbrand are 7 and 7 power, so the Bridge stops both at any hand size they can force us down to, and they board nothing that destroys an artifact."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands plus Chalice or a turn-two Cage; a seven-mana hand with no early interaction loses to a turn-three Atraxa.",
+    "goldfish_for": "Chalice on 2, then Karn for the second Cage.",
+    "watch_for": "Ephemerate mana held means Solitude; Fallaji Archaeologist binning Atraxa is the Goryo's build.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot race a turn-three Atraxa."
+   },
+   "play": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Trinisphere"
+    ]
+   },
+   "draw": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Trinisphere"
+    ]
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Tormod's Crypt",
+    "Torpor Orb",
+    "Ensnaring Bridge"
+   ]
+  },
+  {
+   "name": "broodscale bloodchief",
+   "meta_share": 4.961310878470642,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Chalice on 1 plus Karn's static shuts their one-mana artifact engine off, and the same Chalice number blanks our own Expedition Map.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Damping Sphere",
+     "count": 2,
+     "why": "cuts assembled Tower, Mine, Power Plant and an imprinted Labyrinth to one mana each; the worst card in the field against us.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Nature's Claim",
+     "count": 2,
+     "why": "{G} destroy artifact answers any card Karn puts in our hand.",
+     "source_tournament_id": "8ab91b51-0256-4570-87dd-497bcf782ae5"
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "boarded generically; it is blank against us and effectively cuts a card from their post-board deck.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Basking Broodscale plus Blade of the Bloodchief or a sacrifice outlet is an early kill our blockers cannot outsize; Emrakul is only the fail-safe when the fast draw is disrupted.",
+    "key_cards": [
+     {
+      "card": "Basking Broodscale",
+      "why": "makes the Eldrazi Spawn both the combo and the clock run on, as early as turn two."
+     },
+     {
+      "card": "Blade of the Bloodchief",
+      "why": "grows a token to lethal size off their own sacrifices, starting a clock we cannot block profitably."
+     },
+     {
+      "card": "Urza's Saga",
+      "why": "colorless Construct redundancy that Karn's static, Devourer, Ugin and All Is Dust all fail to touch, so the clock survives our lock pieces."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "naming Basking Broodscale taxes its {1}{G} Adapt 1 activation by {3}, shutting off the engine that grows it (the 'Sacrifice: Add {C}' ability lives on the Eldrazi Spawn tokens, which the Flute does not catch); their 2 Nature's Claim can destroy the Flute but that is a card and a turn spent not developing."
+    },
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "their removal is Unholy Heat and Nature's Claim, neither of which profitably answers a Ballista that has already shot a Broodscale."
+    },
+    {
+     "card": "The Filigree Sylex",
+     "verdict": "SURVIVES",
+     "why": "fired on 1 it destroys Blade of the Bloodchief, Springleaf Drum, Vexing Bauble and Soul-Guide Lantern at once; Nature's Claim can kill it first but only if they hold up {G} for four turns."
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with Chalice or an early Karn; Blade of the Bloodchief starts a clock we cannot outsize.",
+    "goldfish_for": "Chalice on 1, then Karn's static onto Springleaf Drum.",
+    "watch_for": "Urza's Saga chapter count, and whether Emrakul or the Broodscale-plus-Chrysalis kill is their route.",
+    "posture": "lock",
+    "posture_why": "their engine is one-mana artifacts Karn switches off."
+   },
+   "self_cost": "Chalice on 1 costs us Expedition Map and Vexing Bauble, and this is the matchup where losing the Map is worth paying; The Filigree Sylex fired on 1 also destroys any Map still on the battlefield.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "Every answer here is a Karn target and the Karn pool is worth more intact: Disruptor Flute, Walking Ballista and The Filigree Sylex are all situational picks we choose after seeing which half of their engine showed up, and physically boarding any of them would delete that choice."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw. Nothing here needs to be drawn before Karn resolves - their clock is an artifact engine, not a turn-two kill - so all 12 stay outside the game where the -2 can reach them."
+   },
+   "fetch_priority": [
+    "Disruptor Flute",
+    "Walking Ballista",
+    "The Filigree Sylex"
+   ]
+  },
+  {
+   "name": "eldrazi ramp",
+   "meta_share": 5.052344105598544,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "The Stone Brain and a fetched Trinisphere attack a bigger ramp deck's top end and its acceleration, and Trinisphere taxes our own Expedition Map and Mind Stone to three on the way.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 3,
+     "why": "taxes Expedition Map and Mind Stone to three; in 3 of 3 boards we pulled, which matches NOTES' 5 of 6.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 3,
+     "why": "free on our turn for a green card, destroys two artifacts - every card Karn fetches is an artifact.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Chalice of the Void",
+     "count": 3,
+     "why": "on 1 it blanks our Expedition Map and Vexing Bauble; on 2 our Mind Stone and most of the karnboard.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Green acceleration reaches Ulamog or Emrakul before we reach seven and Fight Rigging can cheat one out earlier still; Sowing Mycospawn takes a Tron piece on the way past.",
+    "key_cards": [
+     {
+      "card": "Sowing Mycospawn",
+      "why": "ramps and, kicked, exiles our third Tron piece, so they gain mana while we lose it."
+     },
+     {
+      "card": "Fight Rigging",
+      "why": "puts Ulamog or Emrakul onto the battlefield ahead of schedule, which is the whole speed advantage."
+     },
+     {
+      "card": "Malevolent Rumble",
+      "why": "the 4-of accelerant and finder in every list; it is why the fast ramp draw is consistent."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "The Stone Brain",
+     "verdict": "SURVIVES",
+     "why": "naming Emrakul, the Promised End strips it from library, hand and graveyard; their boards answer artifacts with Force of Vigor, but the Brain has already resolved its exile by the time it dies."
+    },
+    {
+     "card": "Trinisphere",
+     "verdict": "SURVIVES",
+     "why": "they board 2-3 Trinisphere of their own, so they are not set up to destroy ours; Force of Vigor can take it, which is the reason to deploy it alone rather than alongside another artifact."
+    },
+    {
+     "card": "Cityscape Leveler",
+     "verdict": "SURVIVES",
+     "why": "the destroy is a cast trigger, so it resolves before Force of Vigor or a blocker matters, and it is the only card in the 75 that answers a resolved Emrakul, the Promised End."
+    }
+   ],
+   "play_plan": {
+    "keep": "Lands plus Karn; a hand that only ramps loses to the bigger ramp deck every time.",
+    "goldfish_for": "Karn, then The Stone Brain on Emrakul before they cast it.",
+    "watch_for": "Utopia Sprawl or a Talisman is the Icetill build with no Green Sun's Zenith, so Cage stays unfetched.",
+    "posture": "disrupt_first",
+    "posture_why": "their ceiling is higher than ours."
+   },
+   "self_cost": "A fetched Trinisphere makes our own Expedition Map and Mind Stone cost three, so it is only correct once those are already deployed; it also makes a Karn-fetched {2} artifact cost three the turn we cast it.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "The Karn pool stays intact because two of the three cards that matter here (The Stone Brain, Cityscape Leveler) are single copies we can only reach by tutor, and because Force of Vigor punishes a board assembled all at once - we want to fetch one piece at a time, not draw them."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw. Their fastest line is a kicked Sowing Mycospawn on turn six, not a turn-two kill, so there is nothing here we need in hand before Karn resolves."
+   },
+   "fetch_priority": [
+    "The Stone Brain",
+    "Trinisphere",
+    "Cityscape Leveler"
+   ]
+  },
+  {
+   "name": "dimir control",
+   "meta_share": 2.5034137460172965,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Trinisphere on the play taxes Consign to Memory, Spell Snare, Thoughtseize, Fatal Push and Preordain to three, and taxes our own Expedition Map and Mind Stone the same way.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "{U}, counters a triggered ability or a colorless spell, with replicate - it answers literally every spell we cast plus Devourer's and Thought-Knot's triggers.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "count": 3,
+     "why": "makes our nonbasic lands Islands - 20 of 22 - so Thought-Knot, Devourer, Fleshraker and Kozilek's Command stop being castable.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Break the Ice",
+     "count": 3,
+     "why": "{B}{B}, overload {4}{B}{B}, destroys each land that could produce {C} - overloaded that is 21 of our lands and there is no answer to it in the 75.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Engineered Explosives",
+     "count": 3,
+     "why": "one setting sweeps our Chalice, Expedition Map, Mind Stone or a fetched two-mana artifact.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "disrupt_first",
+    "posture_why": "Thoughtseize and counters strip our spells while Harbinger of the Seas and Break the Ice take our mana away; only once we cannot function do they advance Psychic Frog or a planeswalker.",
+    "key_cards": [
+     {
+      "card": "Thoughtseize",
+      "why": "takes the one relevant spell before we cast it, which is how their answers stay ahead of our threats."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "one mana answers any colorless spell or trigger we have, so every counter they hold is live.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Harbinger of the Seas",
+      "why": "makes 20 of our lands Islands, disabling our threats without them having to answer any of them.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Break the Ice",
+      "why": "overloaded it destroys 21 of our lands with no answer in the 75; disruption that ends the game by itself.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Trinisphere",
+     "verdict": "SURVIVES",
+     "why": "their boards carry Engineered Explosives, which at 3 does answer it, but every Explosives pointed at Trinisphere is one not pointed at Chalice or a Karn fetch."
+    },
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "naming Consign to Memory taxes their one-mana catch-all to {3}; it is itself a colorless spell, so cast it with Karn already resolved or into a tapped-out turn, not through open blue."
+    },
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "the Karn answer to Harbinger of the Seas, a 2/2; Engineered Explosives at 0 kills a Ballista with no counters, so bring it in with the mana to load it."
+    }
+   ],
+   "play_plan": {
+    "keep": "Lands plus two threats; one-threat hands lose to Consign to Memory and Thoughtseize.",
+    "goldfish_for": "Karn, cast only after Map or Mind Stone has eaten a Consign.",
+    "watch_for": "An untapped Island on turn three is Harbinger, not Counterspell; Break the Ice means racing, not building.",
+    "posture": "bait",
+    "posture_why": "each counter they hold answers exactly one colorless spell."
+   },
+   "self_cost": "Trinisphere makes Expedition Map and Mind Stone cost three, which is our whole turn-two play; Chalice on 1 on the play blanks the same Map and our Vexing Bauble.",
+   "play": {
+    "in": [
+     "1 Trinisphere"
+    ],
+    "out": [
+     "1 All Is Dust"
+    ]
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "On the draw Trinisphere lands after their cheap interaction has already been spent and taxes only us, so it stays in Karn's pool; the plan on the draw is Chalice on 2 for Psychic Frog and Orcish Bowmasters, cast after the {2} Karn fetches rather than before them."
+   },
+   "fetch_priority": [
+    "Disruptor Flute",
+    "Walking Ballista"
+   ]
+  },
+  {
+   "name": "ur cutter prowess",
+   "meta_share": 2.6854802002730995,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Chalice on 1 is the best Chalice in the field and Ensnaring Bridge stops their whole board, and both of them also switch off cards of ours.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "counters any colorless spell or trigger of ours for {U}, including a Karn fetch and Devourer's cast trigger.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Meltdown",
+     "count": 2,
+     "why": "X artifact sweeper: at X=1 it takes Expedition Map, Vexing Bauble and a Grafdigger's Cage, at X=2 Mind Stone and most of the karnboard.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Spell Snare",
+     "count": 3,
+     "why": "counters Mind Stone and every two-mana artifact Karn hands us.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "One-mana prowess threats and Cori-Steel Cutter tokens backed by Lightning Bolt, Lava Dart and Slickshot Show-Off's dash kill from a small board well before our seven-drops arrive.",
+    "key_cards": [
+     {
+      "card": "Cori-Steel Cutter",
+      "why": "makes a token every turn they cast two spells, rebuilding the clock through our blockers."
+     },
+     {
+      "card": "Lightning Bolt",
+      "why": "the reach half of the race; it goes to our face rather than trading with Fleshraker."
+     },
+     {
+      "card": "Slickshot Show-Off",
+      "why": "dashes past our blockers for a large hit, which is how they close a race Fleshraker has stalled."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "Dragon's Rage Channeler, Monastery Swiftspear and Slickshot Show-Off are all 1-3 toughness; Meltdown at X=0 kills a bare Ballista, so load it before passing."
+    },
+    {
+     "card": "Wurmcoil Engine",
+     "verdict": "SURVIVES",
+     "why": "a 6/6 deathtouch and lifelink body gains life back out of burn range and blocks their whole board; Meltdown at X=6 is a huge investment and still leaves two 3/3 tokens, and Consign can counter the cast, so land it into a tapped-out turn."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "their creatures are 1-4 power and their whole plan is combat damage; Meltdown at X=3 answers it, which costs them three mana and a card on a turn they are not attacking."
+    },
+    {
+     "card": "Extinguisher Battleship",
+     "verdict": "SURVIVES",
+     "why": "4 damage to each creature clears their entire board, and at eight mana no Meltdown they can cast reaches it."
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with Chalice; without it their one-mana spells outnumber our answers.",
+    "goldfish_for": "Chalice on 1, then Karn into Extinguisher Battleship.",
+    "watch_for": "Cori-Steel Cutter with a bauble in play makes a token every turn; Karn's static stops both.",
+    "posture": "lock",
+    "posture_why": "Chalice on 1 turns most of their deck off."
+   },
+   "self_cost": "Chalice on 1 blanks our own Expedition Map and Vexing Bauble, which is irrelevant next to what it answers; Ensnaring Bridge needs six cards in hand before Devourer can attack, so we win under it with Ugin, Fleshraker damage or Karn rather than by attacking.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "No physical swaps: the maindeck already has the card that beats them (Chalice on 1) and every supplementary answer is a Karn target. Keeping the pool intact matters more here than anywhere - their Meltdown is an X sweeper, so we want to fetch one artifact at a time rather than draw three."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Chalice on 1 is the plan on the draw as well, so nothing changes; Thought-Knot Seer and Fleshraker block better than they attack and stay maindeck."
+   },
+   "fetch_priority": [
+    "Walking Ballista",
+    "Wurmcoil Engine",
+    "Ensnaring Bridge",
+    "Extinguisher Battleship"
+   ]
+  },
+  {
+   "name": "boros aggro",
+   "meta_share": 3.0040964952207556,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Same plan as boros energy: Ensnaring Bridge and a Sylex on 3 stop their board and their Blood Moon while switching off our own attackers and our own three-drops.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 4,
+     "why": "effectively {R}{R} against us for a 4/4 flier that destroys a nonbasic land on entry; 2-4 copies in 3 of 3 boards.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Blood Moon",
+     "count": 2,
+     "why": "our 20 nonbasics become Mountains; Expedition Map fetching Wastes is the first play under it.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Pithing Needle",
+     "count": 1,
+     "why": "names Karn, the Great Creator and stops both loyalty abilities without touching the static.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A heavier creature count than boros energy and manlands instead of maindeck Blood Moon: they curve one-drops into Voice of Victory and Goblin Bombardment reach and kill on turn four.",
+    "key_cards": [
+     {
+      "card": "Ocelot Pride",
+      "why": "one-drop that widens the board every turn, so the turn-four kill survives our blockers and spot removal."
+     },
+     {
+      "card": "Guide of Souls",
+      "why": "energy and lifegain that push the race out of Dismember and Walking Ballista range."
+     },
+     {
+      "card": "Goblin Bombardment",
+      "why": "converts their spare bodies into reach, so the race finishes even under Ensnaring Bridge."
+     },
+     {
+      "card": "Obsidian Charmaw",
+      "why": "post-board a cheap 4/4 flier that eats a Tron piece on entry, adding clock while delaying our answers.",
+      "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "Ragavan, Ocelot Pride and Guide of Souls all die to one counter, and their only artifact removal is 1-2 Wear / Tear."
+    },
+    {
+     "card": "Wurmcoil Engine",
+     "verdict": "SURVIVES",
+     "why": "a 6/6 deathtouch and lifelink body blocks their whole one-drop board and the lifelink buys back the race their Goblin Bombardment reach was closing; Wear / Tear kills it but leaves two 3/3 tokens."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "their whole board is 1-3 power including the manlands, so the Bridge at a low hand size stops all of it; Wear / Tear is a 1-2 of."
+    },
+    {
+     "card": "The Filigree Sylex",
+     "verdict": "SURVIVES",
+     "why": "Blood Moon out of their board is mana value 3, and nothing they bring in kills a {2} artifact before it reaches three counters except the same Wear / Tear."
+    },
+    {
+     "card": "Extinguisher Battleship",
+     "verdict": "SURVIVES",
+     "why": "the 4 damage clears Ajani, Voice of Victory, Seasoned Pyromancer and every token at once, and nothing in their 75 answers an eight-drop."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and an early blocker; Fleshraker plus a Spawn stabilises where a seven-drop does not.",
+    "goldfish_for": "Walking Ballista off Karn, then Bridge at a low hand size.",
+    "watch_for": "Den of the Bugbear and Dalkovan Encampment mean their board survives the sweeper we do not have.",
+    "posture": "disrupt_first",
+    "posture_why": "they kill on turn four unchecked."
+   },
+   "self_cost": "Ensnaring Bridge needs six cards in hand before Devourer of Destiny can attack, four for Thought-Knot and two for Fleshraker; the Sylex on 3 destroys our Fleshraker, our Trinisphere and that same Bridge.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "Nothing comes in: the answers to Blood Moon are maindeck and all-generic, and every answer to their creatures is a Karn target. Leaving all 12 outside the game is what lets a single Karn pick Ballista against Ocelot Pride or Bridge against a wide board, after seeing which one we face."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw. Their four Obsidian Charmaw make the game about lands, not about which artifact we drew, so the pool stays intact for Karn."
+   },
+   "fetch_priority": [
+    "Walking Ballista",
+    "Wurmcoil Engine",
+    "Ensnaring Bridge",
+    "The Filigree Sylex",
+    "Extinguisher Battleship"
+   ]
+  },
+  {
+   "name": "esper blink",
+   "meta_share": 5.2344105598543464,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Torpor Orb is the only card that pre-empts Witch Enchanter, Solitude and Flickerwisp at once, and it turns off two of our own creatures' triggers to do it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Clarion Conqueror",
+     "count": 2,
+     "why": "{2}{W} 3/3 flier: Karn's -2 and +1, Ugin's 0 and +2, Walking Ballista, Expedition Map, Mind Stone and the Sylex all off at once.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Damping Sphere",
+     "count": 2,
+     "why": "cuts every Tron land to one mana; no card in the 75 answers it and the eight-mana pair is uncastable under it.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "one mana, counters any colorless spell or trigger we have.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "White Orchid Phantom",
+     "count": 3,
+     "why": "destroys a nonbasic land on entry and is blinkable, so it eats a Tron piece every turn.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Ephemerate and Phelia rebuy Solitude, Witch Enchanter and Overlord of the Balemurk, so anything we resolve dies twice; they beat us on cards over many turns rather than on tempo.",
+    "key_cards": [
+     {
+      "card": "Solitude",
+      "why": "free removal, and rebought it answers a second threat for no card at all; the attrition engine's main gun."
+     },
+     {
+      "card": "Ephemerate",
+      "why": "one mana with rebound turns a single enters trigger into two, which is where their card advantage comes from."
+     },
+     {
+      "card": "Overlord of the Balemurk",
+      "why": "refills their hand out of the graveyard, so the attrition runs one way."
+     },
+     {
+      "card": "White Orchid Phantom",
+      "why": "blinked repeatedly it eats a Tron piece every turn, grinding our mana down alongside our threats.",
+      "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Torpor Orb",
+     "verdict": "SURVIVES",
+     "why": "a resolved Orb turns off Witch Enchanter's own enters trigger, so it protects itself; Clarion Conqueror does not touch it because a static is not an activated ability."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "BLANKED",
+     "why": "Witch Enchanter is {3}{W} with destroy target artifact or enchantment on entry, 3-4 copies in 5 of 6 lists, and Ephemerate, Phelia and Flickerwisp all rebuy it; unless the Orb resolved first, the Bridge dies the turn after it lands and we paid a Karn activation for it."
+    },
+    {
+     "card": "Cityscape Leveler",
+     "verdict": "SURVIVES",
+     "why": "the destroy is a cast trigger, so it resolves and kills a Witch Enchanter or Teferi before the 8/8 ever meets a Solitude."
+    }
+   ],
+   "play_plan": {
+    "keep": "Lands plus Ugin, or Dismember for Clarion Conqueror; artifact-only hands do nothing here.",
+    "goldfish_for": "Ugin, Eye of the Storms - not a Karn board.",
+    "watch_for": "Witch Enchanter mana open plus Ephemerate means anything we resolve dies twice.",
+    "posture": "grind",
+    "posture_why": "Ugin's repeating exile beats their rebuys on cards."
+   },
+   "self_cost": "Under our own Torpor Orb, Thought-Knot Seer loses the enters-exile but KEEPS the leaves trigger that gives them a card, so it is a 4/4 with a pure drawback; Glaring Fleshraker loses its damage trigger. Devourer's and Ugin's are cast triggers and survive, as does Fleshraker's Spawn trigger.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "Nothing physically: the whole plan is fetch priority. Their four Witch Enchanter and the Ephemerate, Phelia and Flickerwisp rebuys destroy any artifact we present, so drawing one is worth less than being able to pick the right one - and the right one is usually the Orb, which pre-empts the Enchanter's own enters trigger."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw, and Ugin rather than the Karn board is what actually wins here, so there is nothing to add."
+   },
+   "fetch_priority": [
+    "Torpor Orb",
+    "Ensnaring Bridge",
+    "Cityscape Leveler"
+   ]
+  },
+  {
+   "name": "living end",
+   "meta_share": 2.913063268092854,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Vexing Bauble counters the cascaded copy outright, Chalice of the Void on zero does the same, and Tormod's Crypt and The Stone Brain attack the payoff from the graveyard side.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Foundation Breaker",
+     "count": 3,
+     "why": "evoked for {G}, destroys our Grafdigger's Cage or Chalice for free on their turn.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Ingot Chewer",
+     "count": 2,
+     "why": "evoked for {R}, same job, and it also trades with a Fleshraker on the way.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 3,
+     "why": "free for a green card, destroys two of our artifacts at once - the reason not to deploy Cage and Chalice on the same turn.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Clarion Conqueror",
+     "count": 3,
+     "why": "shuts off Karn's -2 and +1 and Ugin's loyalty abilities for {2}{W}.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Cycling fills the yard and a turn-three cascade into Living End makes a whole board at once; one resolved copy ends the game before our top end is castable.",
+    "key_cards": [
+     {
+      "card": "Living End",
+      "why": "one card turns their cycled graveyard into a lethal board and sweeps ours at the same time."
+     },
+     {
+      "card": "Violent Outburst",
+      "why": "cascades into the payoff at instant speed for three mana, and the cascade itself is not taxed by Trinisphere."
+     },
+     {
+      "card": "Shardless Agent",
+      "why": "the second cascade shell, so the payoff is effectively a six-of and one answer does not stop it."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "free, so it empties the graveyard in response to the cascade trigger resolving; no card in their boards profitably answers a zero-mana artifact."
+    },
+    {
+     "card": "The Stone Brain",
+     "verdict": "SURVIVES",
+     "why": "sorcery speed, names Living End and exiles all three copies from library, hand and graveyard, after which the cascade finds nothing; the exile is already done by the time an Ingot Chewer answers the artifact."
+    }
+   ],
+   "play_plan": {
+    "keep": "Lands plus Vexing Bauble or Chalice, or lands plus Karn; a hand with none of them loses to the first Violent Outburst.",
+    "goldfish_for": "The Bauble on turn one, then The Stone Brain naming Living End.",
+    "watch_for": "Force of Vigor mana means the Chalice wants Tormod's Crypt behind it rather than a second artifact alongside it.",
+    "posture": "disrupt_first",
+    "posture_why": "one resolved Living End ends the game."
+   },
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "Nothing comes in. All three answers to a cascaded Living End are already in the sixty - Vexing Bauble, Chalice of the Void named on zero, and Kozilek's Command's exile mode - and the Karn pool adds Tormod's Crypt and The Stone Brain on demand."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw. Their kill is a turn-three cascade either way, so there is nothing here worth drawing before a four-mana Karn resolves that Karn cannot then fetch."
+   },
+   "fetch_priority": [
+    "Tormod's Crypt",
+    "The Stone Brain"
+   ],
+   "notes": [
+    "Grafdigger's Cage does nothing here and is deliberately not fetched: cascade EXILES the card and casts it from exile, not from a library, and Living End then exiles their creatures from the graveyard and returns them from exile, not from the graveyard. Neither of Cage's two clauses is touched by either half.",
+    "Vexing Bauble is the cheapest answer and the one that needs no read: the cascaded Living End spends no mana, so the Bauble counters it on turn one. Chalice named on zero does the same job - Living End has no mana cost, so its mana value is 0 wherever it is cast from.",
+    "Do not try to have both. A Chalice cast for X=0 spends no mana, so our own Bauble counters our own Chalice; if the Bauble is already down, sacrifice it for the card in response to casting the Chalice, or just leave the Chalice in hand. See the Vexing Bauble deck tech.",
+    "Tormod's Crypt is held for the cascade TRIGGER rather than for the cast: crack it in response and Living End resolves with an empty graveyard. It is `{0}`, so cash the Bauble before casting it."
+   ]
+  },
+  {
+   "name": "allosaurus combo",
+   "meta_share": 2.2303140646335917,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Trinisphere on the play is the one physical swap NOTES sanctions against combo, and it taxes our own Map and Mind Stone as much as it taxes their two zero-mana Pacts.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Natural State",
+     "count": 2,
+     "why": "{G} destroy an artifact or enchantment with mana value 3 or less - Chalice, Trinisphere, and every Karn fetch except the two eight-drops.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Nature's Claim",
+     "count": 2,
+     "why": "same job for {G} with no mana-value limit; the four life is irrelevant to a deck that kills with one attack.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Thundertrap Trainer",
+     "count": 3,
+     "why": "extra redundancy for the combo half against a deck they expect to interact on artifacts.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "They convert Allosaurus Rider into a lethal fatty on turn two or three; Consign to Memory and Pact of Negation only protect that turn, so the win comes from raw speed.",
+    "key_cards": [
+     {
+      "card": "Allosaurus Rider",
+      "why": "pitched for free on turn one or two, it is the body every conversion spell needs and it costs no land drop."
+     },
+     {
+      "card": "Neoform",
+      "why": "turns the Rider into Griselbrand or Atraxa on the same turn, which is the entire clock."
+     },
+     {
+      "card": "Pact of Negation",
+      "why": "free counter that protects the combo turn so nothing we hold interrupts the race."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Trinisphere",
+     "verdict": "SURVIVES",
+     "why": "Summoner's Pact and Pact of Negation are both {0} and go to three under it; their answers are 2 Natural State and 2 Nature's Claim, each a card and a mana spent not comboing."
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "Neoform and Eldritch Evolution both search the library and put a creature card onto the battlefield, which Cage stops outright; Natural State can destroy it but they must find both halves."
+    },
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "naming Summoner's Pact taxes it {3}, or naming Allosaurus Rider taxes the enabler; nothing in their 75 destroys an artifact except the same 2 Natural State or 2 Nature's Claim."
+    }
+   ],
+   "play_plan": {
+    "keep": "Trinisphere or Chalice on the play; anything slower concedes the turn-three kill.",
+    "goldfish_for": "Trinisphere, then Cage off Karn for Neoform and Eldritch Evolution.",
+    "watch_for": "Allosaurus Rider with a green card in hand is the free pitch - no land drop needed.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot interact once the combo turn starts."
+   },
+   "self_cost": "Trinisphere makes Expedition Map and Mind Stone cost three, which is our entire turn-two play, and makes any {2} Karn fetch cost three the turn we cast it.",
+   "play": {
+    "in": [
+     "1 Trinisphere"
+    ],
+    "out": [
+     "1 Emrakul, the Promised End"
+    ]
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "On the draw a turn-three Trinisphere is behind their kill, so it is worth more inside Karn's pool than in the deck; Grafdigger's Cage becomes the primary fetch instead and Chalice on 0 is the maindeck answer to both Pacts."
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Disruptor Flute"
+   ],
+   "notes": [
+    "Emrakul is the cut, not the Bauble. Allosaurus Rider's alternative cost pitches two green cards and spends no mana and Summoner's Pact spends none either, so Vexing Bauble counters the front half of their combo turn; the top end never gets cast against it."
+   ]
+  },
+  {
+   "name": "reanimator",
+   "meta_share": 2.1847974510696404,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Same plan as instant reanimator - Cage, Crypt and a conditional Torpor Orb - and none of the three costs our own deck anything it needs.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "counters a colorless spell or a trigger for {U} - our Cage, our Karn and Devourer's trigger all sit under it.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "count": 2,
+     "why": "makes 20 of our lands Islands, so Thought-Knot, Devourer, Fleshraker and Kozilek's Command stop being castable.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Meltdown",
+     "count": 2,
+     "why": "X artifact sweeper: X=1 takes Cage, Map and Vexing Bauble together.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Faithless Looting bins Archon of Cruelty and Persist returns it on turn two or three; one trigger two-for-ones us immediately, so the game is decided long before Tron assembles.",
+    "key_cards": [
+     {
+      "card": "Archon of Cruelty",
+      "why": "every trigger is a two-for-one and a clock at once; the trigger, not the body, is what beats us."
+     },
+     {
+      "card": "Persist",
+      "why": "two-mana reanimation as early as turn two, faster than anything our maindeck can answer."
+     },
+     {
+      "card": "Faithless Looting",
+      "why": "one-mana enabler that finds and bins the Archon in the same card."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "Persist and Unearth both return a creature card from the graveyard to the battlefield, which Cage stops outright; their answer is 2 Meltdown, a one-for-one that the second copy and Tormod's Crypt outlast."
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "free, so it fires in response to Persist targeting; Meltdown at X=0 reaches it, which costs them a card and a red mana for a zero-mana artifact."
+    },
+    {
+     "card": "Torpor Orb",
+     "verdict": "SURVIVES",
+     "why": "Archon of Cruelty's enters trigger is the whole payoff of a reanimation - the Orb turns it off and leaves them a 6/6 that still has to attack; nothing they board answers a {2} artifact except that same Meltdown."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a Cage, or two lands and Karn; a turn-two Persist is otherwise unbeatable.",
+    "goldfish_for": "Chalice on 2, then Karn for the second Cage.",
+    "watch_for": "Faithless Looting binning Archon is the Persist line; Abhorrent Oculus means they are playing fair.",
+    "posture": "disrupt_first",
+    "posture_why": "one Archon trigger two-for-ones us immediately."
+   },
+   "play": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Trinisphere"
+    ]
+   },
+   "draw": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Trinisphere"
+    ]
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Tormod's Crypt",
+    "Torpor Orb"
+   ]
+  },
+  {
+   "name": "creatures toolbox",
+   "meta_share": 2.3213472917614935,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Grafdigger's Cage and Disruptor Flute cost us nothing, but the third fetch does: Torpor Orb is what answers the Badgermole Cub ramp and a hard-cast Craterhoof Behemoth once the Cage is gone, and it turns off our own Thought-Knot Seer's enters trigger to do it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Collector Ouphe",
+     "count": 1,
+     "why": "ten of ten boards at one copy. {1}{G} 2/2 whose entire text is 'Activated abilities of artifacts can't be activated' - that is four Expedition Map, four Mind Stone and Vexing Bauble in the maindeck, and five of the twelve karnboard slots (Walking Ballista, Tormod's Crypt, The Stone Brain, The Filigree Sylex, and Extinguisher Battleship's Station). It is symmetric, which is why it is a one-of: it also turns off their own Agatha's Soul Cauldron and Walking Ballista.",
+     "source_tournament_id": "6e7fe4c4-65d4-4fc3-9c41-280e0467c883"
+    },
+    {
+     "card": "Guerrilla Gorilla",
+     "count": 1,
+     "why": "five of ten boards at one copy, and Outland Liberator is the other five - the two sets are disjoint, so every one of the ten lists boards exactly one sacrifice-for-an-artifact creature. Chalice, Trinisphere, Grafdigger's Cage, Torpor Orb and Ensnaring Bridge are all noncreature artifacts.",
+     "source_tournament_id": "037d505d-0c61-4dcc-9a1c-252e69e4c0b7"
+    },
+    {
+     "card": "Outland Liberator",
+     "count": 1,
+     "why": "the other five of ten. {1}, Sacrifice: destroy target artifact or enchantment - no mana-value limit, so it reaches Ensnaring Bridge and Trinisphere as well as the cheap pieces.",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "three of ten boards at two copies. Free on our turn by exiling a green card, and it destroys up to TWO artifacts, so it is the one card that answers a Chalice and a Grafdigger's Cage in the same turn without spending mana.",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "eight of ten boards at exactly two copies. It counters a spell cast for no mana, and Tormod's Crypt is the only {0} card in our 75 - Karn's -2 puts a card into HAND, so everything else we wish for is cast normally and the Bauble never sees it.",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Fatal Push",
+     "count": 2,
+     "why": "ten of ten boards at two or three copies. Mana value 2 or less is nothing of ours, but revolt lifts it to 4 and with two Dryad Arbor and a fetch manabase revolt is on whenever they want it - which is Glaring Fleshraker at 3 and Thought-Knot Seer at 4.",
+     "source_tournament_id": "6e7fe4c4-65d4-4fc3-9c41-280e0467c883"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Devoted Druid plus Vizier of Remedies is unbounded mana the turn it assembles and Green Sun's Zenith fetches Craterhoof Behemoth onto the battlefield to end it on the same turn, so they outrun us rather than grind.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "combo half one: taps for {G} and untaps itself for a -1/-1 counter, four copies in ten of ten lists."
+     },
+     {
+      "card": "Vizier of Remedies",
+      "why": "combo half two: the -1/-1 counter is reduced to none, so the untap is free and the mana is unbounded."
+     },
+     {
+      "card": "Green Sun's Zenith",
+      "why": "four copies in ten of ten lists; it finds whichever combo half is missing and puts Craterhoof Behemoth onto the battlefield at X=8."
+     },
+     {
+      "card": "Collector Ouphe",
+      "why": "one copy in ten of ten boards, and the card that beats the Karn plan rather than the deck: activated abilities of artifacts can't be activated, either player's.",
+      "source_tournament_id": "6e7fe4c4-65d4-4fc3-9c41-280e0467c883"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "Collector Ouphe, the card all ten lists board, does not touch it - both of Cage's clauses are static and it has no activated ability. It dies to Boseiju, Who Endures, Guerrilla Gorilla, Outland Liberator or Force of Vigor, but each of those is a card and a turn spent not comboing, and we hold a second copy in Karn's pool."
+    },
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "static tax and a static ability-lock, so Collector Ouphe does nothing to it; naming Devoted Druid taxes all four copies {3} and shuts off the untap that makes the mana unbounded. Same artifact removal answers it as answers the Cage, and they cannot spend it twice."
+    },
+    {
+     "card": "Torpor Orb",
+     "verdict": "SURVIVES",
+     "why": "static, so it survives Collector Ouphe as well; nothing in their 75 answers a two-mana artifact except the same sacrifice-for-an-artifact creature they are already holding for the Cage."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a Chalice, or a hand that reaches Karn before their fourth land; a seven-mana hand with no early artifact is a mulligan.",
+    "goldfish_for": "Chalice on 2, then Karn for the second Grafdigger's Cage.",
+    "watch_for": "One Collector Ouphe turns off Map, Mind Stone and half the karnboard; once it resolves, fetch only the static pieces.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot race a turn-three Craterhoof Behemoth."
+   },
+   "self_cost": "Torpor Orb costs us Thought-Knot Seer's enters-exile while leaving the leaves trigger that gives them a card, and blanks Glaring Fleshraker's damage trigger; Devourer's and Ugin's cast triggers and Fleshraker's Spawn trigger survive. Our own Grafdigger's Cage also stops Cityscape Leveler's Unearth {8}, which is the only line in the 75 that casts from a graveyard.",
+   "play": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Vexing Bauble"
+    ]
+   },
+   "draw": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Vexing Bauble"
+    ]
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Disruptor Flute",
+    "Torpor Orb"
+   ],
+   "notes": [
+    "Vexing Bauble is the cut: nothing in this deck is cast for no mana - Chord of Calling convokes and Nature's Rhythm harmonizes, and both spend mana - so it is a one-mana cantrip here. Emrakul stays as a Ugin's Labyrinth imprint even in a game that never casts it."
+   ]
+  },
+  {
+   "name": "amulet titan",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Disruptor Flute naming Amulet of Vigor and The Stone Brain naming Primeval Titan attack their two required cards and cost our own plan nothing.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 4,
+     "why": "their bounce lands and Amulet ramp play through it far better than our Expedition Map and Mind Stone do.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Dismember",
+     "count": 2,
+     "why": "kills Thought-Knot Seer or Glaring Fleshraker for {1} plus 4 life regardless of their green mana.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "free on our turn, destroys two artifacts - Chalice plus a Karn fetch in one card.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Amulet of Vigor plus a bounce land puts Primeval Titan down on turn two or three and Hanweir Battlements makes it hasty lethal, which is faster than Tron assembles.",
+    "key_cards": [
+     {
+      "card": "Amulet of Vigor",
+      "why": "the accelerant the whole turn-two kill runs through; untapping bounce lands is what makes them faster than us."
+     },
+     {
+      "card": "Primeval Titan",
+      "why": "fetches the lethal land package; a resolved Titan ends the game before our seven-drops matter."
+     },
+     {
+      "card": "Hanweir Battlements",
+      "why": "gives the Titan haste, converting their ramp turn straight into damage."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "naming Amulet of Vigor taxes it {3} and stops nothing else, which is enough - their 1-2 Force of Vigor is the only artifact answer and it is a free two-for-one they would rather aim at Chalice."
+    },
+    {
+     "card": "The Stone Brain",
+     "verdict": "SURVIVES",
+     "why": "naming Primeval Titan removes the payoff from library, hand and graveyard; Summoner's Pact then has nothing legal to find and kills them on upkeep."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "Primeval Titan is 6/6 and Cultivator Colossus larger, so the Bridge stops both at any hand size; they board no artifact removal beyond the same Force of Vigor."
+    }
+   ],
+   "play_plan": {
+    "keep": "Lands plus Chalice or Karn; Titan resolves on turn three otherwise.",
+    "goldfish_for": "Chalice on 1 for Amulet of Vigor, then Flute naming it.",
+    "watch_for": "Two Summoner's Pacts seen makes 0 finally live; Spelunking with no Amulet is a slow draw.",
+    "posture": "disrupt_first",
+    "posture_why": "a resolved Primeval Titan ends it."
+   },
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "All three answers are single copies in the board, so every one of them is only reachable by the -2; boarding any of them in would cost us the other two. Their post-board Trinisphere count is also the reason not to add more three-drops to the deck."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw. Chalice on 1 for Amulet of Vigor is the maindeck plan in both modes and needs no help from the board."
+   },
+   "fetch_priority": [
+    "Disruptor Flute",
+    "The Stone Brain",
+    "Ensnaring Bridge"
+   ]
+  },
+  {
+   "name": "hollow one",
+   "meta_share": 2.321347291761493,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Grafdigger's Cage stops Vengevine and Detective's Phoenix returning and costs our own deck nothing - the only graveyard line in the sixty is Kozilek's Command's exile mode, which we point where we like.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Meltdown",
+     "count": 3,
+     "why": "X artifact sweeper: X=1 takes Grafdigger's Cage, Expedition Map, Vexing Bauble and Tormod's Crypt in one card.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Damping Sphere",
+     "count": 3,
+     "why": "cuts every Tron land to one mana; no card in the 75 answers it.",
+     "source_tournament_id": "53907faa-fb26-4be5-aa36-6aa17db3a33a"
+    },
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "cheap against us and destroys a nonbasic land on entry.",
+     "source_tournament_id": "53907faa-fb26-4be5-aa36-6aa17db3a33a"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Burning Inquiry and Faithless Looting put Hollow One and Vengevine into play on turns one and two; the discard is the payoff, so their clock starts before any answer of ours.",
+    "key_cards": [
+     {
+      "card": "Hollow One",
+      "why": "free or near-free 4/4 off the discard, and it is cast from hand, so graveyard hate does not slow it."
+     },
+     {
+      "card": "Burning Inquiry",
+      "why": "turn-one enabler that dumps three threats into play instead of costing them cards."
+     },
+     {
+      "card": "Vengevine",
+      "why": "returns itself off every pair of creature spells, so the clock rebuilds through our removal."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "Vengevine and Detective's Phoenix both return themselves from the graveyard to the battlefield and Cage stops both; their 2-3 Meltdown answer it one at a time, which the second copy and Tormod's Crypt are there to outlast."
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "free, so it fires the turn a Burning Inquiry fills their yard, before Vengevine has a pair of creature spells to trigger on."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "they empty their own hand on purpose, and so do we by then, so the Bridge stops Hollow One, Vengevine and Marauding Mako at zero cards; Meltdown at X=3 is their only out and costs them the turn."
+    },
+    {
+     "card": "Wurmcoil Engine",
+     "verdict": "SURVIVES",
+     "why": "a 6/6 deathtouch and lifelink body blocks their whole discarded board and the lifelink undoes the burst they opened on; Meltdown reaches it only at X=6 and still leaves two 3/3 tokens."
+    }
+   ],
+   "play_plan": {
+    "keep": "Cage plus two lands; a turn-one Burning Inquiry otherwise empties into three threats.",
+    "goldfish_for": "Karn for the second Cage, then Ensnaring Bridge with an empty hand.",
+    "watch_for": "Vengevine in the yard means every pair of creature spells rebuys it; Cage stops the return.",
+    "posture": "disrupt_first",
+    "posture_why": "their turn-two board beats any of our sevens."
+   },
+   "play": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 All Is Dust"
+    ]
+   },
+   "draw": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 All Is Dust"
+    ]
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Tormod's Crypt",
+    "Wurmcoil Engine",
+    "Ensnaring Bridge"
+   ]
+  },
+  {
+   "name": "boros energy",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Ensnaring Bridge and The Filigree Sylex on 3 stop their board and their Blood Moon, and both of them switch off large parts of ours.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 3,
+     "why": "costs {1} less per land of ours that could produce {C}, so {R}{R} for a 4/4 flier that destroys a Tron piece on entry.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Blood Moon",
+     "count": 1,
+     "why": "turns 20 of our 22 lands into Mountains; Wastes is then our only {C} source.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Clarion Conqueror",
+     "count": 1,
+     "why": "{2}{W} 3/3 flier that stops activated abilities of artifacts, creatures and planeswalkers - Karn's -2 and +1 both off.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Energy one-drops into Ajani and Voice of Victory kill on turn four; Blood Moon and Obsidian Charmaw exist to keep our answers off the table while that clock runs.",
+    "key_cards": [
+     {
+      "card": "Ocelot Pride",
+      "why": "one-drop that keeps making bodies, so their clock survives chump blocks and one-for-one removal."
+     },
+     {
+      "card": "Guide of Souls",
+      "why": "energy and lifegain that put the race out of range of Dismember and a fetched Ballista."
+     },
+     {
+      "card": "Blood Moon",
+      "why": "turns 20 of our 22 lands into Mountains, so nothing we are holding answers the board in time.",
+      "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+     },
+     {
+      "card": "Obsidian Charmaw",
+      "why": "effectively two red mana for a 4/4 flier that destroys a Tron piece, adding clock and removing our outs at once.",
+      "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "Ocelot Pride, Guide of Souls and Ragavan all die to one counter; their 1-2 Wear / Tear can destroy the Ballista but only after it has already shot something."
+    },
+    {
+     "card": "Wurmcoil Engine",
+     "verdict": "SURVIVES",
+     "why": "a 6/6 deathtouch and lifelink body blocks their energy board and the lifelink outruns Guide of Souls; Wear / Tear kills it but leaves two 3/3 tokens."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "their creatures are 1-3 power and every one of them is stopped; Wear / Tear is the only card in their boards that answers it and it is a 1-2 of."
+    },
+    {
+     "card": "The Filigree Sylex",
+     "verdict": "SURVIVES",
+     "why": "Blood Moon is mana value 3, so three oil counters destroy it; the Sylex is not answered by Galvanic Discharge or Goblin Bombardment and their artifact removal is the same 1-2 Wear / Tear."
+    },
+    {
+     "card": "Extinguisher Battleship",
+     "verdict": "SURVIVES",
+     "why": "at eight mana the 4 damage clears their entire board in one card, and nothing they board interacts with a resolved eight-drop."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands plus Fleshraker or Dismember; a slow seven-mana hand dies to Ocelot Pride before it functions.",
+    "goldfish_for": "Karn into Walking Ballista, then Bridge once our hand is spent.",
+    "watch_for": "A basic Mountain fetched early is the Blood Moon tell - Map for Wastes before it lands.",
+    "posture": "disrupt_first",
+    "posture_why": "their board outpaces anything we goldfish."
+   },
+   "self_cost": "Ensnaring Bridge stops attackers with power greater than our hand size, so Devourer of Destiny needs six cards in hand to attack, Thought-Knot four and Glaring Fleshraker two; The Filigree Sylex fired on 3 destroys our own Glaring Fleshraker, our Trinisphere and the Ensnaring Bridge we fetched one slot earlier.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "NOTES is explicit that nothing comes in here: every answer to their creatures is a Karn fetch and the answers to Blood Moon and Static Prison (Ugin, All Is Dust, Devourer) are already maindeck. Keeping all 12 outside the game is what lets one Karn choose between Ballista, Bridge and Sylex after seeing whether the Moon showed up."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw, only more so: on the draw Chalice on 1 arrives after the damage is done, so the plan leans harder on fetched answers and the pool has to stay complete."
+   },
+   "fetch_priority": [
+    "Walking Ballista",
+    "Wurmcoil Engine",
+    "Ensnaring Bridge",
+    "The Filigree Sylex",
+    "Extinguisher Battleship"
+   ]
+  },
+  {
+   "name": "pinnacle affinity",
+   "meta_share": 2.6399635867091487,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Karn's static plus a Sylex fired at zero counters blanks most of their 75, and the Sylex takes every Chalice and Walking Ballista we control with it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Damping Sphere",
+     "count": 3,
+     "why": "assembled Tower goes from three mana to one, Mine and Power Plant to one, an imprinted Labyrinth to one; in 3 of 3 boards and no card in the 75 answers it.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "counters every colorless spell and every trigger we have, for {U}, with replicate.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Shattering Spree",
+     "count": 2,
+     "why": "replicate turns one card into an answer for every artifact we have resolved, including a Karn board.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Blood Moon",
+     "count": 2,
+     "why": "their manabase is four Urza's Saga plus blue duals they can afford; ours becomes Mountains.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Zero-mana artifacts into Urza's Saga Constructs and Kappa Cannoneer are fast, redundant and near-identical across lists; post-board Damping Sphere buys the extra turns that clock needs.",
+    "key_cards": [
+     {
+      "card": "Urza's Saga",
+      "why": "a colorless Enchantment Land making Constructs, which Karn's static, Devourer, Ugin and All Is Dust all fail to touch."
+     },
+     {
+      "card": "Kappa Cannoneer",
+      "why": "ward keeps Dismember off it and cost reduction lands it early, so it is a clock nothing in our maindeck answers."
+     },
+     {
+      "card": "Pinnacle Emissary",
+      "why": "one more cheap redundant threat, which is why disrupting a single draw does not slow them down."
+     },
+     {
+      "card": "Damping Sphere",
+      "why": "cuts every Tron land to one mana with no answer in the 75, so our answers arrive after their clock does.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "naming Urza's Saga: the tax half is dead against a land, but chapter II's granted activated ability is stopped, so no Constructs. Their answer is 2 Shattering Spree, which is a card and two mana we are happy to see spent."
+    },
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "their Constructs are X/X off artifact count and Pinnacle Emissary makes 1/1 drones; Galvanic Blast cannot kill a Ballista that is already sinking mana into counters."
+    },
+    {
+     "card": "The Filigree Sylex",
+     "verdict": "SURVIVES",
+     "why": "sacrificed the turn it lands at zero counters it destroys Mox Opal, Mishra's Bauble, Claws of Gix and Welding Jar at once; Shattering Spree can pre-empt it only if they have {R} open the turn it resolves."
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with Chalice or a turn-four Karn; their draws are fast and near-identical.",
+    "goldfish_for": "Chalice on 0, sequenced after the Sylex has already fired.",
+    "watch_for": "Damping Sphere out of the board is the game; count their Saga chapters before durdling.",
+    "posture": "lock",
+    "posture_why": "Karn's static blanks most of their 75."
+   },
+   "self_cost": "The Filigree Sylex sacrificed at zero counters destroys every mana value 0 permanent, and Chalice of the Void and Walking Ballista are both {X}{X} - a permanent on the battlefield has X=0, so ours die too whatever they are set to. Chalice on 0 also costs us a boarded Ballista at X=0 and Tormod's Crypt.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "Every answer here is a Karn fetch and all three are single copies: Disruptor Flute naming Urza's Saga, Walking Ballista and the Sylex. Boarding one in would leave Karn choosing from a smaller pool against the matchup where the static is best."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw; their draws are fast and near-identical, so nothing we could physically add arrives sooner than a turn-four Karn."
+   },
+   "fetch_priority": [
+    "Disruptor Flute",
+    "Walking Ballista",
+    "The Filigree Sylex"
+   ]
+  },
+  {
+   "name": "devoted combo",
+   "meta_share": 4.8247610377787895,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Grafdigger's Cage and Disruptor Flute cost us nothing, but the third fetch does: Torpor Orb is what blanks the Craterhoof Behemoth kill and Chomping Changeling once the Cage has been answered, and it turns off our own Thought-Knot Seer's enters trigger to do it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Collector Ouphe",
+     "count": 1,
+     "why": "nine of ten boards at one copy, absent only from deck 881870. {1}{G} 2/2 whose entire text is 'Activated abilities of artifacts can't be activated' - that is four Expedition Map, four Mind Stone and Vexing Bauble in the maindeck, and five of the twelve karnboard slots (Walking Ballista, Tormod's Crypt, The Stone Brain, The Filigree Sylex and Extinguisher Battleship's Station). It is symmetric, which is why it is a one-of: it also turns off their own Agatha's Soul Cauldron and Walking Ballista.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Abrupt Decay",
+     "count": 3,
+     "why": "eight of ten boards, three copies in five of them, and the single biggest change from the retired `creatures toolbox` label, where it was in zero of ten. 'This spell can't be countered. Destroy target nonland permanent with mana value 3 or less' reaches every static piece we fetch - Grafdigger's Cage at 1, Disruptor Flute and Torpor Orb at 2, Ensnaring Bridge and Trinisphere at 3 - and Chalice of the Void too, whose mana value on the battlefield is 0 because X is 0 there. Chalice on 2 cannot counter it either.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Crystal Barricade",
+     "count": 1,
+     "why": "ten of ten boards at one or two copies, and recorded nowhere under the retired label. 'You have hexproof' means a Walking Ballista counter can never point at the player, and 'Prevent all noncombat damage that would be dealt to other creatures you control' prevents the rest, which leaves the 0/4 Barricade itself and their planeswalkers as the only live targets. It does not reach Glaring Fleshraker, whose trigger damages the PLAYER, and Dismember is -5/-5 rather than damage.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "seven of ten boards at one to three copies, up from three of ten under the retired label. Free on our turn by exiling a green card, and it destroys up to two artifacts, so it is the one card that answers a Chalice of the Void and a fetched Grafdigger's Cage in the same turn for no mana.",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    },
+    {
+     "card": "Guerrilla Gorilla",
+     "count": 1,
+     "why": "six of ten boards. 'Sacrifice this creature: Destroy target noncreature artifact or noncreature enchantment. Activate only as a sorcery' - no mana-value limit, so it reaches Ensnaring Bridge and Trinisphere as well as the cheap pieces. Outland Liberator, which the retired label recorded in the other five of ten, is in zero of ten now.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Chomping Changeling",
+     "count": 1,
+     "why": "five of ten boards, and new since the retired label. {2}{G} 1/2 whose enters trigger destroys up to one target artifact or enchantment - so it is both a fifth answer to a resolved lock piece and the one card of theirs our own Torpor Orb blanks outright, which is a second reason to have the Orb down before they get to answer the Cage with it.",
+     "source_tournament_id": "a95e0f70-4cb4-486b-ab71-80d4fca36392"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "five of ten boards at exactly two copies, down from eight of ten under the retired label. It counters a spell cast for no mana, and Tormod's Crypt is the only {0} card in our 75; Karn's -2 puts a card into HAND, so everything else we wish for is cast normally and the Bauble never sees it.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Thoughtseize",
+     "count": 2,
+     "why": "three of ten boards at two copies, and the card aimed at the one physical swap we make: it takes the boarded Grafdigger's Cage or a Karn out of hand before either resolves. That is exactly why the second Cage stays outside the game, where no discard spell can reach it.",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Devoted Druid plus a mana doubler is unbounded green the turn it assembles, and Green Sun's Zenith puts Craterhoof Behemoth onto the battlefield to end it on that same turn, so they outrun us rather than grind.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "combo half one: taps for {G} and untaps itself for a -1/-1 counter, four copies in ten of ten lists."
+     },
+     {
+      "card": "Green Sun's Zenith",
+      "why": "four copies in ten of ten lists; it finds a missing Devoted Druid or Badgermole Cub at X=2 and puts Craterhoof Behemoth onto the battlefield at X=8."
+     },
+     {
+      "card": "Craterhoof Behemoth",
+      "why": "the kill in eight of ten lists: one enters trigger turns a board of mana dorks into lethal trample damage on the turn the mana comes online."
+     },
+     {
+      "card": "Collector Ouphe",
+      "why": "one copy in nine of ten boards, and the card that beats the Karn plan rather than the deck: activated abilities of artifacts can't be activated, either player's.",
+      "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "Collector Ouphe, in nine of ten boards, does not touch it - both clauses are static and it has no activated ability. It dies to Boseiju, Who Endures, three Abrupt Decay, Force of Vigor, Guerrilla Gorilla or Chomping Changeling, but each of those is a card and a turn spent not comboing, and the second copy is still outside the game where the -2 can reach it."
+    },
+    {
+     "card": "Disruptor Flute",
+     "verdict": "SURVIVES",
+     "why": "static tax and a static ability-lock, so Collector Ouphe does nothing to it; naming Devoted Druid taxes all four copies {3} and shuts off the untap that makes the mana unbounded, leaving only the mana ability. The same artifact removal that answers the Cage answers it, and they cannot spend one card on both."
+    },
+    {
+     "card": "Torpor Orb",
+     "verdict": "SURVIVES",
+     "why": "static, so it survives Collector Ouphe as well, and it blanks Chomping Changeling's own enters trigger, which is one of the five ways they have to answer it. Their remaining outs are the same Boseiju, Abrupt Decay, Force of Vigor and Guerrilla Gorilla the Cage is already asking them to spend."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a Chalice of the Void, or a hand that reaches Grafdigger's Cage before their third land; a seven-mana hand with no early artifact is a mulligan.",
+    "goldfish_for": "The boarded Grafdigger's Cage, then Chalice on 2, then Karn for Disruptor Flute.",
+    "watch_for": "Collector Ouphe turns off Map, Mind Stone and half the karnboard; after it resolves, fetch only static pieces.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot race a turn-three Craterhoof Behemoth."
+   },
+   "self_cost": "Torpor Orb costs us Thought-Knot Seer's enters-exile while leaving the leaves trigger that gives them a card, and blanks Glaring Fleshraker's damage-on-a-colorless-creature-entering trigger; Devourer of Destiny's and Ugin's cast triggers and Fleshraker's Spawn-on-cast trigger are cast triggers and survive it. Our own Grafdigger's Cage also stops Cityscape Leveler's Unearth {8}, the only line in the 75 that casts from a graveyard.",
+   "play": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Vexing Bauble"
+    ]
+   },
+   "draw": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Vexing Bauble"
+    ]
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Disruptor Flute",
+    "Torpor Orb"
+   ],
+   "notes": [
+    "Vexing Bauble is the cut for the same reason as in the `creatures toolbox` row - one deck, two archetype ids - and their Collector Ouphe turns off its sacrifice-to-draw as well, so post-board it is not even a cantrip."
+   ]
+  },
+  {
+   "name": "esper control",
+   "meta_share": 2.3668639053254434,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Walking Ballista and Cityscape Leveler answer their Psychic Frog, White Orchid Phantom and planeswalkers without costing our own plan anything, and Ugin's repeating exile out-grinds their Ephemerate and Ketramose rebuys.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "{U}, counters any colorless spell or trigger we have, with replicate - live against our whole colorless deck, so a Karn fetch, Devourer's cast trigger and Cityscape Leveler's cast trigger all sit under it.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "White Orchid Phantom",
+     "count": 3,
+     "why": "against colorless Tron it comes in as land destruction: a {1}{W} 2/2 that eats a nonbasic on entry and, blinked by Ephemerate, a Tron piece every turn.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Relic, Prismatic Ending and Solitude exile everything and Ketramose turns each exile into a card, so they win long games on attrition; against Tron they add White Orchid Phantom to grind our lands down too.",
+    "key_cards": [
+     {
+      "card": "Ketramose, the New Dawn",
+      "why": "indestructible engine: every card their removal exiles on their turn draws them one, so the longer the game the further ahead they get."
+     },
+     {
+      "card": "Solitude",
+      "why": "free evoked exile removal on our creatures, rebought by Ephemerate; it answers Devourer or Fleshraker without tapping out of counter mana."
+     },
+     {
+      "card": "White Orchid Phantom",
+      "why": "{1}{W} 2/2 that destroys a nonbasic land on entry, and blinked by Ephemerate it eats a Tron piece every turn - land destruction bolted onto their control shell.",
+      "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "{U} counters any colorless spell or trigger we have, with replicate, so every answer we cast into open blue mana is live for them.",
+      "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "kills Psychic Frog, White Orchid Phantom and Orcish Bowmasters; Consign can counter the cast, so land it into a tapped-out turn and load it before passing."
+    },
+    {
+     "card": "Cityscape Leveler",
+     "verdict": "SURVIVES",
+     "why": "8/8 colorless that destroys a Teferi, a Frog or a White Orchid Phantom on cast and again on each attack - the inevitability their Ephemerate rebuys cannot out-grind; Consign counters the cast, so bait it first."
+    }
+   ],
+   "play_plan": {
+    "keep": "Lands plus Ugin or a threat that grinds; a hand of only artifacts does nothing against a deck that never taps out into our lock.",
+    "goldfish_for": "Ugin, Eye of the Storms, or a Karn into Cityscape Leveler - not the artifact lock.",
+    "watch_for": "One open white source is a free Solitude; an untapped Island plus a card is Consign, so bait it before the fetch.",
+    "posture": "grind",
+    "posture_why": "Ugin's repeating exile beats their Ephemerate and Ketramose rebuys on cards."
+   },
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "No physical swaps: every answer here is a Karn target and Ugin is maindeck, so the pool stays intact for the -2 to pick Walking Ballista or Cityscape Leveler after seeing their board."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw - Ugin still wins and the fetches still answer their board, so there is nothing worth drawing before Karn resolves."
+   },
+   "fetch_priority": [
+    "Walking Ballista",
+    "Cityscape Leveler"
+   ]
+  },
+  {
+   "name": "45c aggro",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Walking Ballista and a fetched Ensnaring Bridge answer their small attacking bodies and stop the rest, and Ensnaring Bridge taxes our own big colorless attackers exactly as it taxes theirs.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "ten of ten boards; costs {1} less per land of ours that could produce {C}, so it is cheap against a colorless manabase and eats a Tron piece on entry.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "ten of ten boards; an X sweeper paid in energy that clears our Chalice, Trinisphere or a Karn fetch at low X, symmetric against their own one- and two-drops.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "ten of ten boards; counters a spell unless we pay 3, cheaper against a blue spell we do not cast, so it lands on Karn or Ugin for full price.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 2,
+     "why": "already a maindeck 1-2 of and boarded higher; counters a colorless spell or trigger for {U}, live against our whole deck.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Rest in Peace",
+     "count": 2,
+     "why": "nine of ten boards; exiles graveyards and everything headed there, incidental against us but a card we are happy to see instead of a fifth threat.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Containment Priest",
+     "count": 2,
+     "why": "seven of ten boards; exiles a nontoken creature that enters without being cast, which stops nothing of ours since every Karn fetch is a noncreature artifact.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Ragavan and Territorial Kavu curve into a discounted Scion of Draco off five basic land types, protected by Stubborn Denial and Consign to Memory, and beat down before our seven-drops matter.",
+    "key_cards": [
+     {
+      "card": "Ragavan, Nimble Pilferer",
+      "why": "one-mana clock that generates a Treasure and a free spell off combat damage, so the beatdown snowballs from turn two."
+     },
+     {
+      "card": "Territorial Kavu",
+      "why": "Domain sizes it off five basic land types, so it is a 4/4 or 5/5 for two mana that also loots or exiles our graveyard."
+     },
+     {
+      "card": "Scion of Draco",
+      "why": "Domain discounts it as low as four mana for a 4/4 flier that grants first strike, vigilance, hexproof, lifelink and trample across their whole board."
+     },
+     {
+      "card": "Obsidian Charmaw",
+      "why": "post-board a cheap 4/4 flier that eats a Tron piece on entry, adding clock while delaying our answers.",
+      "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Walking Ballista",
+     "verdict": "SURVIVES",
+     "why": "Ragavan is 2/1 and Phelia 2/2, both die to one or two counters; their removal is Mystical Dispute and Wrath of the Skies, neither of which profitably answers a Ballista that has already shot something."
+    },
+    {
+     "card": "Wurmcoil Engine",
+     "verdict": "SURVIVES",
+     "why": "a 6/6 deathtouch and lifelink body blocks their whole board and the lifelink undoes their reach; Wrath of the Skies at mana value 5 costs them seven mana and their own smaller board to reach it."
+    },
+    {
+     "card": "Ensnaring Bridge",
+     "verdict": "SURVIVES",
+     "why": "their creatures are 2-4 power and the manlands are the same; nothing in their board destroys an artifact, so a low hand size stops the whole attack."
+    },
+    {
+     "card": "Extinguisher Battleship",
+     "verdict": "SURVIVES",
+     "why": "4 damage clears Ragavan, Territorial Kavu, Phelia and Quantum Riddler in one card, and at eight mana no Wrath of the Skies X they can afford reaches it without also losing their own board."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and an early blocker; Fleshraker plus a Spawn stabilises where a seven-drop does not.",
+    "goldfish_for": "Walking Ballista off Karn, then Bridge once our hand is spent.",
+    "watch_for": "A fourth or fifth basic land type in play early is the fast Scion of Draco draw; five domain types make it a four-mana 4/4 flier with every keyword.",
+    "posture": "disrupt_first",
+    "posture_why": "their curve outraces our seven-drops."
+   },
+   "self_cost": "Ensnaring Bridge needs six cards in hand before Devourer of Destiny can attack, four for Thought-Knot and two for Fleshraker; Extinguisher Battleship's 4 damage also kills our own Fleshraker and Spawn tokens if they are out when it fires.",
+   "play": {
+    "in": [],
+    "out": [],
+    "no_changes": "Nothing comes in: every answer here is a Karn target and the Karn pool is worth more intact. Leaving all 12 outside the game is what lets one Karn pick Ballista against Ragavan or Bridge against a wide board, after seeing which shape their draw took."
+   },
+   "draw": {
+    "in": [],
+    "out": [],
+    "no_changes": "Same on the draw. Their curve does not change, so the pool stays complete for Karn to answer whichever threat resolves first."
+   },
+   "fetch_priority": [
+    "Walking Ballista",
+    "Wurmcoil Engine",
+    "Ensnaring Bridge",
+    "Extinguisher Battleship"
+   ]
+  },
+  {
+   "name": "esper goryo",
+   "meta_share": 2.093764223941739,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Grafdigger's Cage stops Goryo's Vengeance returning Atraxa or Griselbrand from the graveyard and Tormod's Crypt empties it in response, and neither costs our own deck anything; when the reanimation is answered the fair Frog game is one Ugin beats.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "ten of ten boards, up to four copies; {U} counters any colorless spell or trigger of ours, with replicate, so a Cage or a Karn cast into open blue mana is theirs to answer.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "ten of ten boards; an X sweeper paid in energy that reaches our Grafdigger's Cage or Tormod's Crypt at a low energy paid, since both sit at mana value 1 and 0.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "ten of ten boards; counters a spell unless we pay 3, cheaper against a blue spell we do not cast, so it costs full price on our Karn or Ugin.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Teferi, Time Raveler",
+     "count": 1,
+     "why": "nine of ten boards; static ability stops us casting spells at instant speed and its -3 bounces a resolved permanent, so a fetched Cage timed wrong comes right back off the battlefield.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "This is not the all-in reanimator: Goryo's Vengeance is the free win they take when we tap out, but Frog and Atraxa's card draw win the long fair game behind Thoughtseize and counters when the reanimation is answered.",
+    "key_cards": [
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "the payoff body; reanimated by Goryo's Vengeance her enters trigger refuels their hand on the turn the clock starts."
+     },
+     {
+      "card": "Goryo's Vengeance",
+      "why": "instant-speed two-mana reanimation, which is what makes the Atraxa clock start on turn two or three rather than turn seven."
+     },
+     {
+      "card": "Psychic Frog",
+      "why": "the fair backup: four maindeck copies that discard Atraxa to set up Goryo's and win the long game when the graveyard plan is answered."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "{U} counters any colorless spell or trigger, with replicate - live against our whole colorless deck, so a Cage or a Karn cast into open blue mana is theirs to answer.",
+      "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Grafdigger's Cage",
+     "verdict": "SURVIVES",
+     "why": "creatures can't enter from a graveyard, so Goryo's Vengeance returning Atraxa or Griselbrand does nothing; Wrath of the Skies at a low energy paid can reach a mana-value-1 Cage, but spending a sweeper on our cheapest artifact while their own reanimation plan is still dead is a bad trade for them, and the second copy is still outside the game."
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "free, so it fires in response to Goryo's Vengeance targeting rather than needing to pre-empt it, and it dodges Consign to Memory because the sacrifice is an activated ability, not a spell."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Cage or Crypt, or a hand that reaches Karn; a seven-mana hand with no graveyard answer loses to a turn-two Goryo's Vengeance.",
+    "goldfish_for": "The boarded Grafdigger's Cage, then Karn for the second one; on a stocked yard, Tormod's Crypt in response to Goryo's.",
+    "watch_for": "Faithful Mending with two mana open is the Goryo's turn; a bare Mending is the fair Frog game.",
+    "posture": "disrupt_first",
+    "posture_why": "answer the graveyard and Atraxa first, then out-size the fair half with Ugin."
+   },
+   "play": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Trinisphere"
+    ]
+   },
+   "draw": {
+    "in": [
+     "1 Grafdigger's Cage"
+    ],
+    "out": [
+     "1 Trinisphere"
+    ]
+   },
+   "fetch_priority": [
+    "Grafdigger's Cage",
+    "Tormod's Crypt"
+   ]
+  }
+ ],
+ "sideboard_audit": [
+  {
+   "card": "Cityscape Leveler",
+   "copies": 1,
+   "matchups_served": [
+    "eldrazi ramp",
+    "esper blink",
+    "esper control"
+   ],
+   "cumulative_meta_share": 12.6536,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The Tron-mana trump: 8/8 trample that destroys a nonland permanent on cast and again on each attack. It is the only card in the 75 that answers a resolved Emrakul, the Promised End, because it is a colorless permanent ability rather than a spell, so protection from instants does not stop it; against esper control it is the inevitability that grinds a Teferi, a Frog or a White Orchid Phantom off the board every attack."
+  },
+  {
+   "card": "Disruptor Flute",
+   "copies": 2,
+   "matchups_served": [
+    "broodscale bloodchief",
+    "dimir control",
+    "allosaurus combo",
+    "creatures toolbox",
+    "amulet titan",
+    "pinnacle affinity",
+    "devoted combo"
+   ],
+   "cumulative_meta_share": 21.4838,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The only clean answer to a named combo piece, and the widest Karn target in the pool: Consign to Memory against dimir, Basking Broodscale, Karn in the mirror, Ruby Medallion, Amulet of Vigor, and Devoted Druid against both the `creatures toolbox` and `devoted combo` halves of the same deck, where the second clause is the whole point - the {T}: Add {G} is a mana ability and survives, the untap-for-a-counter that makes the mana unbounded does not - and Urza's Saga, whose granted Construct ability it shuts off even though the tax half is dead against a land."
+  },
+  {
+   "card": "Ensnaring Bridge",
+   "copies": 1,
+   "matchups_served": [
+    "instant reanimator",
+    "ur cutter prowess",
+    "boros aggro",
+    "esper blink",
+    "amulet titan",
+    "hollow one",
+    "boros energy",
+    "45c aggro"
+   ],
+   "cumulative_meta_share": 23.6686,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The widest fetch in the pool by share: Atraxa, Griselbrand, Primeval Titan, a boros board, a prowess board, Territorial Kavu and Hollow One all stop. It shuts most of ours off too - six cards in hand for Devourer, four for Thought-Knot, two for Fleshraker - so it is a stall, not a lock, and we win under it with Ugin, Fleshraker damage or Karn."
+  },
+  {
+   "card": "Extinguisher Battleship",
+   "copies": 1,
+   "matchups_served": [
+    "ur cutter prowess",
+    "boros aggro",
+    "boros energy",
+    "45c aggro"
+   ],
+   "cumulative_meta_share": 9.695,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Sweeper and noncreature answer in one card at eight mana. The destroy half is noncreature-only, so it is aimed at Damping Sphere and Urza's Saga-style permanents rather than at threats; the 4 damage is what clears a boros or prowess board. It comes off the eldrazi ramp list on purpose - it moves neither Emrakul nor Ulamog."
+  },
+  {
+   "card": "Grafdigger's Cage",
+   "copies": 2,
+   "matchups_served": [
+    "instant reanimator",
+    "allosaurus combo",
+    "reanimator",
+    "creatures toolbox",
+    "hollow one",
+    "devoted combo",
+    "esper goryo"
+   ],
+   "cumulative_meta_share": 20.3914,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Two copies because it is one of the two cards NOTES sanctions physically boarding, so the first is drawn and the second fetched. It does exactly two things - creature cards cannot enter from a graveyard or library, and nobody casts from either - which covers Goryo's Vengeance, Persist, Vengevine, the Neoform/Eldritch Evolution half of allosaurus combo, and - the widest of them - four Green Sun's Zenith, four Nature's Rhythm, Fiend Artisan and Tyvar, Jubilant Brawler's -2 in every list of the `creatures toolbox` and `devoted combo` rows, which are one deck under two archetype ids and so pay it twice. It does NOT cover living end, which is why that row is not on this list: cascade casts from exile and Living End returns creatures from exile, so neither clause is ever touched there."
+  },
+  {
+   "card": "Wurmcoil Engine",
+   "copies": 1,
+   "matchups_served": [
+    "ur cutter prowess",
+    "boros aggro",
+    "boros energy",
+    "hollow one",
+    "45c aggro"
+   ],
+   "cumulative_meta_share": 12.0164,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The fetchable lifelinked blocker that races burn and aggro: a 6/6 deathtouch and lifelink body Karn hands us against the fast half of the field, and two 3/3 tokens through a sweeper or an artifact-removal spell when it dies. It ends a race Ensnaring Bridge only stalls, which is why it is the aggro-segment pickup rather than a second lock piece."
+  },
+  {
+   "card": "The Filigree Sylex",
+   "copies": 1,
+   "matchups_served": [
+    "broodscale bloodchief",
+    "boros aggro",
+    "boros energy",
+    "pinnacle affinity"
+   ],
+   "cumulative_meta_share": 12.6081,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The cheap enchantment answer rather than the only one - the maindeck has eight at seven mana - and the reason to fetch it is that it costs {2} when seven is out of reach, notably under a Blood Moon at mana value 3. At zero counters it is also the sweeper against pinnacle affinity's free artifacts. Slow, and at 3 it destroys our own Fleshraker, Trinisphere and a fetched Bridge."
+  },
+  {
+   "card": "The Stone Brain",
+   "copies": 1,
+   "matchups_served": [
+    "eldrazi ramp",
+    "living end",
+    "amulet titan"
+   ],
+   "cumulative_meta_share": 9.9681,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Nothing else in the 75 touches a card still in their library. It names Emrakul against eldrazi ramp, Living End, Primeval Titan and Past in Flames. Sorcery speed only, and it counters nothing in response, so it is used proactively on our own turn or not at all."
+  },
+  {
+   "card": "Tormod's Crypt",
+   "copies": 1,
+   "matchups_served": [
+    "instant reanimator",
+    "living end",
+    "reanimator",
+    "hollow one",
+    "esper goryo"
+   ],
+   "cumulative_meta_share": 13.9281,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Free, so it is the graveyard answer castable under a Trinisphere or off one land, and it fires in response to Goryo's Vengeance or Persist targeting rather than needing to pre-empt them. It is the redundancy behind two Grafdigger's Cage, not a duplicate of them."
+  },
+  {
+   "card": "Torpor Orb",
+   "copies": 2,
+   "matchups_served": [
+    "instant reanimator",
+    "esper blink",
+    "reanimator",
+    "creatures toolbox",
+    "devoted combo"
+   ],
+   "cumulative_meta_share": 18.9804,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The pre-emptive answer to Solitude, Witch Enchanter, Flickerwisp, Ephemerate loops and Archon of Cruelty, and the only one that also blanks Witch Enchanter's own enters trigger. Its cost to us is asymmetric and worse than it looks - Thought-Knot keeps the leaves trigger that draws them a card - so it is fetched when their enters triggers are genuinely the problem, not by default. Against the `creatures toolbox` and `devoted combo` halves of the Devoted Druid deck those triggers are the earthbend on four Badgermole Cub in every list, the Craterhoof Behemoth pump in eight of ten, and Chomping Changeling's destroy-an-artifact trigger in five of ten of the current lists."
+  },
+  {
+   "card": "Trinisphere",
+   "copies": 1,
+   "matchups_served": [
+    "eldrazi ramp",
+    "dimir control",
+    "allosaurus combo"
+   ],
+   "cumulative_meta_share": 9.7861,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The second copy is both the standard combo fetch and the one card the plan physically boards on the play, because this deck has more three-plus spells than any fair opponent. It taxes storm rituals, cascade, one-mana disruption, Ephemerate and two zero-mana Pacts; on the draw against a fair deck it is the card most often left in the board."
+  },
+  {
+   "card": "Walking Ballista",
+   "copies": 1,
+   "matchups_served": [
+    "broodscale bloodchief",
+    "dimir control",
+    "ur cutter prowess",
+    "boros aggro",
+    "boros energy",
+    "pinnacle affinity",
+    "esper control",
+    "45c aggro"
+   ],
+   "cumulative_meta_share": 22.1666,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Scalable removal and the answer to a one-toughness board: Ocelot Pride, Guide of Souls, Ragavan, Dragon's Rage Channeler, Emissary Drones, Orcish Bowmasters, Psychic Frog and Harbinger of the Seas all die to one or two counters. The broadest cheap fetch across the aggro half of the field."
+  }
+ ],
+ "deck_tech": [
+  {
+   "kind": "card",
+   "name": "Chalice of the Void: which number",
+   "cards": [
+    "Chalice of the Void"
+   ],
+   "quirk": "X is chosen on cast and never again, so the number is a read on their curve rather than a default.",
+   "lines": [
+    {
+     "mode": "X=0",
+     "matchups": [
+      "pinnacle affinity",
+      "living end"
+     ],
+     "why": "Mox Opal, Mishra's Bauble, Claws of Gix and Welding Jar are all free. Living End has no mana cost, so its mana value is 0 and zero counters the cascaded copy. Cash our own Vexing Bauble before casting it."
+    },
+    {
+     "mode": "X=1",
+     "matchups": [
+      "ur cutter prowess",
+      "broodscale bloodchief",
+      "esper blink",
+      "amulet titan"
+     ],
+     "why": "Their one-mana spells outnumber our answers. It counters our own Expedition Map and Vexing Bauble too, so set it once the lands are already found and the Bauble has been cashed."
+    },
+    {
+     "mode": "X=2",
+     "matchups": [
+      "instant reanimator",
+      "reanimator",
+      "creatures toolbox",
+      "devoted combo"
+     ],
+     "why": "Goryo's Vengeance and both storm rituals are two mana; against the Devoted Druid deck two catches Devoted Druid, Badgermole Cub, Vizier of Remedies and a post-board Collector Ouphe. Cast the two-mana Karn fetches BEFORE this resolves."
+    },
+    {
+     "mode": "X=1 on the play, X=2 on the draw",
+     "matchups": [
+      "dimir control",
+      "boros aggro",
+      "boros energy"
+     ],
+     "why": "On the play one catches their whole turn-one suite. On the draw it lands after the damage is done, and two for Psychic Frog, Ajani or Goblin Bombardment is worth more."
+    },
+    {
+     "mode": "X=3",
+     "matchups": [
+      "boros energy"
+     ],
+     "why": "Only once Blood Moon is the card beating us. Three also blanks our own three Fleshraker, two Dismember, Trinisphere and a fetched Ensnaring Bridge: a trade, not an upgrade."
+    },
+    {
+     "mode": "leave it out",
+     "matchups": [
+      "any"
+     ],
+     "why": "Against a curve of one and four-plus it costs us more than it costs them, and a number we have already named is a number we cannot change."
+    }
+   ]
+  },
+  {
+   "kind": "card",
+   "name": "Vexing Bauble: the three casts of OURS it counters",
+   "cards": [
+    "Vexing Bauble"
+   ],
+   "quirk": "The trigger is 'whenever A PLAYER casts a spell, if no mana was spent' - it does not care whose spell it is, and this deck casts three things for no mana.",
+   "lines": [
+    {
+     "mode": "sacrifice it before the zero-mana Karn fetch",
+     "matchups": [
+      "instant reanimator",
+      "broodscale bloodchief",
+      "dimir control",
+      "ur cutter prowess",
+      "boros aggro",
+      "living end",
+      "reanimator",
+      "hollow one",
+      "boros energy",
+      "pinnacle affinity",
+      "esper control"
+     ],
+     "why": "Karn's -2 puts Tormod's Crypt or a Walking Ballista for X=0 into hand and our own Bauble counters both. Cash it for the card in response to the Karn activation, not after the fetch is already in hand."
+    },
+    {
+     "mode": "Chalice on 0 and the Bauble are the same slot",
+     "matchups": [
+      "living end",
+      "pinnacle affinity",
+      "amulet titan"
+     ],
+     "why": "A Chalice cast for X=0 spends no mana, so our own Bauble counters it. Pick one: against living end the Bauble already counters the payoff, so the Chalice is redundant there."
+    },
+    {
+     "mode": "cash it before Ugin's -11",
+     "matchups": [
+      "any"
+     ],
+     "why": "The -11 casts colorless cards without paying their mana costs, which is no mana spent, so the Bauble counters every one of them. Sacrifice it for the card before the ultimate resolves."
+    }
+   ]
+  },
+  {
+   "kind": "card",
+   "name": "Which lock piece goes down",
+   "cards": [
+    "Trinisphere",
+    "Ensnaring Bridge"
+   ],
+   "quirk": "Both are symmetric and both tax us, so the question is which one and whether either is worth it at all.",
+   "lines": [
+    {
+     "mode": "Trinisphere, on the play",
+     "matchups": [
+      "allosaurus combo"
+     ],
+     "why": "The one card worth a physical swap: we need to draw it before a four-mana Karn resolves. Weakest on the draw, and against a fair deck it stays in the board."
+    },
+    {
+     "mode": "Ensnaring Bridge, once our hand is spent",
+     "matchups": [
+      "boros aggro",
+      "boros energy",
+      "ur cutter prowess"
+     ],
+     "why": "Their creatures are one to three power and ours are bigger. Power greater than OUR hand size cannot attack, so it goes down empty-handed, not on turn three holding six."
+    },
+    {
+     "mode": "Bridge as a stall we still have to win under",
+     "matchups": [
+      "hollow one",
+      "instant reanimator"
+     ],
+     "why": "Under our own Bridge, Devourer needs six cards in hand to attack and Thought-Knot four. Win through it with Ugin, Fleshraker damage or Karn, not with combat."
+    },
+    {
+     "mode": "neither",
+     "matchups": [
+      "any"
+     ],
+     "why": "A symmetric lock piece taxes the player with more cheap spells, and against a deck we are already ahead of, that is us."
+    }
+   ]
+  },
+  {
+   "kind": "path",
+   "name": "Which of our two engines this matchup is",
+   "cards": [
+    "Karn, the Great Creator",
+    "Ugin, Eye of the Storms",
+    "All Is Dust",
+    "Glaring Fleshraker"
+   ],
+   "quirk": "The deck has an artifact lock and a colourless top end, and most hands only get to run one of them.",
+   "lines": [
+    {
+     "mode": "the Karn artifact lock",
+     "matchups": [
+      "pinnacle affinity",
+      "broodscale bloodchief",
+      "ur cutter prowess"
+     ],
+     "why": "Karn's static blanks most of their seventy-five and the minus two reaches twelve answers from outside the game. Against artifact decks it is the whole plan."
+    },
+    {
+     "mode": "the colourless top end",
+     "matchups": [
+      "esper blink",
+      "esper control",
+      "eldrazi ramp"
+     ],
+     "why": "Ugin exiles a coloured permanent on every colourless spell we cast and grinds their rebuys down, and All Is Dust answers a coloured board; against these decks our bigger colourless top end wins, not the Karn lock."
+    },
+    {
+     "mode": "Fleshraker and its Spawn as a clock",
+     "matchups": [
+      "boros aggro",
+      "boros energy"
+     ],
+     "why": "Fleshraker plus a Spawn stabilises where a seven-drop does not. A Spawn held is mana for a later Ugin turn; a Spawn cashed is gone, so do not sacrifice them to use them."
+    }
+   ]
+  }
+ ],
+ "meta_calls": [
+  {
+   "kind": "field",
+   "call": "aggro-heavy",
+   "trigger": {
+    "matchups": [
+     "boros aggro",
+     "boros energy",
+     "ur cutter prowess"
+    ],
+    "share_pp": 7.6923,
+    "over_pp": 18.0
+   },
+   "main": {
+    "in": [
+     "1 Chalice of the Void"
+    ],
+    "out": [
+     "1 Vexing Bauble"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "A room of one-drops makes a fourth Chalice on one the card that wins alone; the sideboard already carries Wurmcoil Engine for the race Ensnaring Bridge only stalls, so only the maindeck Chalice moves.",
+   "cost": "Chalice named on one counters our own Vexing Bauble, so the fourth copy and the Bauble cannot both sit in the sixty: the free-spell answer is what the aggro hedge is bought with."
+  },
+  {
+   "kind": "archetype",
+   "call": "amulet titan",
+   "trigger": {
+    "matchups": [
+     "amulet titan"
+    ],
+    "share_pp": 2.0027,
+    "over_pp": 6.0
+   },
+   "main": {
+    "in": [
+     "1 Blast Zone"
+    ],
+    "out": [
+     "1 Wastes"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "Blast Zone with the counter it enters with destroys Amulet of Vigor, the permanent that turns their bounce lands into a turn-two Titan. Karn tutors artifacts, so only a land reaches this.",
+   "cost": "A colourless source that always taps becomes one that costs two to use, in a deck whose curve is already colourless-hungry."
+  },
+  {
+   "kind": "card",
+   "call": "Consign to Memory",
+   "trigger": {
+    "matchups": [
+     "instant reanimator",
+     "dimir control",
+     "ur cutter prowess",
+     "esper blink",
+     "reanimator",
+     "pinnacle affinity",
+     "esper control",
+     "esper goryo",
+     "45c aggro"
+    ],
+    "share_pp": 26.1265,
+    "over_pp": 34.0
+   },
+   "main": {
+    "in": [
+     "2 Cavern of Souls"
+    ],
+    "out": [
+     "1 Wastes",
+     "1 All Is Dust"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "Consign counters a colourless spell or a triggered ability, and every spell in this sixty is colourless. Cavern naming Eldrazi makes eleven of them uncounterable and still taps for colourless.",
+   "cost": "Twenty-three lands, no sweeper in the sixty, and a land that does not assemble Tron in place of the basic that survives Harbinger. Cavern protects creature spells only, so All Is Dust was never one of the eleven."
+  },
+  {
+   "kind": "card",
+   "call": "Harbinger of the Seas",
+   "trigger": {
+    "matchups": [
+     "dimir control",
+     "reanimator"
+    ],
+    "share_pp": 4.6882,
+    "over_pp": 12.0
+   },
+   "main": {
+    "in": [
+     "2 Dismember"
+    ],
+    "out": [
+     "1 Emrakul, the Promised End",
+     "1 All Is Dust"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "Under Harbinger every land taps for blue only and the deck stops casting. Dismember is payable off one Island plus four life, so it still answers the Harbinger.",
+   "cost": "All Is Dust is the only sweeper in the sixty and Karn cannot fetch it; Emrakul goes with it, and under a resolved Harbinger every land taps for blue only, so neither was castable anyway."
+  },
+  {
+   "kind": "field",
+   "call": "fast field",
+   "trigger": {
+    "matchups": [
+     "boros aggro",
+     "boros energy",
+     "ur cutter prowess",
+     "hollow one"
+    ],
+    "share_pp": 10.0137,
+    "over_pp": 20.0
+   },
+   "main": {
+    "in": [
+     "1 Thought-Knot Seer"
+    ],
+    "out": [
+     "1 Emrakul, the Promised End"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "A turn-two 4/4 off Eldrazi Temple blocks and strips a card; a nine-drop needs a game that reaches turn nine. When the field kills before it, the fourth Seer is worth more than the haymaker.",
+   "cost": "Emrakul is the only inevitability against a grindy fair deck and one of nine Ugin's Labyrinth imprints; the fourth Seer is the weakest in a topdeck war, and its leaves trigger gives them a card."
+  },
+  {
+   "kind": "field",
+   "call": "creature-ability combo",
+   "trigger": {
+    "matchups": [
+     "broodscale bloodchief",
+     "creatures toolbox",
+     "devoted combo"
+    ],
+    "share_pp": 12.1074,
+    "over_pp": 16.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 Cursed Totem"
+    ],
+    "out": [
+     "1 Extinguisher Battleship"
+    ]
+   },
+   "why": "Basking Broodscale's adapt and Devoted Druid's untap are activated abilities of CREATURES, and Karn's static only reaches artifacts. Totem covers the one gap the lock has against all three engines.",
+   "cost": "Symmetric, and we are not clean: it blanks our own Walking Ballista and every Eldrazi Spawn token's Sacrifice: Add {C}, which is the mana Glaring Fleshraker and Kozilek's Command make."
+  }
+ ],
+ "gaps": [
+  {
+   "matchup": "dimir control",
+   "why": "Break the Ice ({B}{B}, overload {4}{B}{B}) destroys each land that could produce {C}; overloaded that is 21 of our 22 lands, and there is no answer to it in the 75. Three copies in a board we pulled (tournament 9518c175-dc15-4b8f-b81d-d9d6b14227fd). The plan is to have already resolved a Karn or a Ugin, which is a race, not an answer. Harbinger of the Seas compounds it from the other side."
+  },
+  {
+   "matchup": "pinnacle affinity",
+   "why": "Damping Sphere is in every board we pulled and no card in the 75 reaches it: Karn's static does not (it has no activated ability), no mode of Kozilek's Command answers an artifact, and Devourer, Ugin and All Is Dust all read 'one or more colors'. The only outs are the eight-mana pair, which is exactly what a resolved Damping Sphere stops us from casting."
+  },
+  {
+   "matchup": "esper blink",
+   "why": "The matchup the Karn plan is worst against. Everything Karn fetches is an artifact and Witch Enchanter ({3}{W}, destroy target artifact or enchantment on entry) is a 3-4 of rebought by Ephemerate, Phelia and Flickerwisp, which is why Ensnaring Bridge is recorded BLANKED here. Clarion Conqueror turns Karn's own abilities off, and Damping Sphere is in 2 of the 3 boards we pulled with no answer in the 75."
+  }
+ ]
+}

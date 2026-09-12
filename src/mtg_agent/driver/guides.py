@@ -36,8 +36,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from magic_cards_model_api.scryfall import name_faces
 
 #: Exactly one archetype satisfies every one of its signature clauses, after
 #: `exclude` clauses have knocked out the archetypes that disown the list.
@@ -51,6 +54,14 @@ LOW = "low"
 #: plays from its list.
 NONE = "none"
 
+#: The key a matchup with no guide behind it is filed under, in the tells
+#: table, in the `vs-<name>.md` note the reflection turn writes, and in any
+#: later study pass over those notes. One spelling, shared, so the three
+#: agree without a lookup table. It is also what `Identification` resolves
+#: to for a list nothing claimed, so the two halves of the briefing - "which
+#: deck am I on" and "who is across the table" - spell absence the same way.
+UNKNOWN_ARCHETYPE = "unknown"
+
 _LINE = re.compile(r"^\s*(\d+)\s*x?\s+(.+?)\s*$")
 _TRAILING_SET = re.compile(r"\s*\([^)]*\)\s*[\dA-Za-z-]*\s*$")
 _SIDEBOARD_HEADER = re.compile(r"^\s*(sideboard|side board|sb:)\b", re.IGNORECASE)
@@ -58,6 +69,19 @@ _MAINBOARD_HEADER = re.compile(r"^\s*(maindeck|mainboard|main deck|deck)\b", re.
 #: `analysis/<deck>-modern-<YYYY-MM-DD>` - the date is the run, and the name
 #: in front of it is not.
 _DATE_SUFFIX = re.compile(r"\d{4}-\d{2}-\d{2}\s*$")
+_NON_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(name: str) -> str:
+    """The canonical archetype key: what a boarding plan calls `boros energy`
+    is what `matchups/boros-energy.json` and `vs-boros-energy.md` are named
+    after.
+
+    The plan writes archetype names as prose ("ur cutter prowess"), the files
+    beside it are slugs, and the agent has to write a note keyed the same way
+    a later pass will look it up - so the conversion lives in one place.
+    """
+    return _NON_SLUG.sub("-", name.strip().lower()).strip("-") or UNKNOWN_ARCHETYPE
 
 
 @dataclass(frozen=True)
@@ -73,10 +97,21 @@ class Decklist:
 
     @property
     def total(self) -> int:
-        """Cards in the whole 75. Deliberately the only thing this class will
-        add the two boards together for: a folded name-to-count mapping is
-        exactly what the classifier must never be handed."""
+        """Cards in the whole 75."""
         return sum(self.mainboard.values()) + sum(self.sideboard.values())
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Every card name in the 75, mainboard first.
+
+        Names, never counts: a folded name-to-count mapping is exactly what
+        the classifier must not be handed, because a sideboard card has not
+        been cast and cannot make a claim about what the deck is. A boarding
+        swap is the opposite question - "do I own this card" - and every card
+        a swap boards IN comes from the sideboard, so that one is asked of
+        the whole 75. See `held_faces`.
+        """
+        return (*self.mainboard, *self.sideboard)
 
 
 def parse_decklist(text: str) -> Decklist:
@@ -116,6 +151,41 @@ def parse_decklist(text: str) -> Decklist:
         if name:
             board[name] = board.get(name, 0) + int(match.group(1))
     return Decklist(mainboard=mainboard, sideboard=sideboard)
+
+
+def held_faces(decklist: Decklist | Mapping[str, int]) -> frozenset[str]:
+    """Every face name the list holds, casefolded - across the WHOLE 75.
+
+    Both boards, deliberately. This answers "is the agent holding this
+    card", which is not the question the classifier asks: a card a boarding
+    plan tells the agent to board IN comes from the sideboard by definition,
+    so intersecting a swap against the mainboard alone marks every board-in
+    absent - the exact false positive the matchup card exists to avoid.
+
+    A split or modal card has as many names as it has faces and the corpus
+    uses all of them: the list the server deals writes "Wear/Tear"
+    (`decks/boros_aggro.txt`) or "Wear // Tear" (`decks/ruby_storm.txt`),
+    while a hand-written boarding plan writes the swap as "1 Wear". Compared
+    as raw strings those are three different cards, and the card the seat is
+    holding gets reported absent.
+
+    A bare mapping is accepted too, for the one-board case a caller already
+    has in hand (a test, or a single board on its own).
+    """
+    names: Iterable[str] = decklist.names if isinstance(decklist, Decklist) else decklist
+    return frozenset(face for name in names for face in name_faces(name))
+
+
+def holds(held: frozenset[str], name: str) -> bool:
+    """Whether a list with these faces contains the card `name` names.
+
+    Any face counts, which is looser than `scryfall._pool_names_match`'s
+    "whole name or front face" - deliberately, because the two are wrong in
+    opposite directions. There, a wrong hit serves the agent a card it did
+    not ask for; here, a wrong miss tells the agent not to board a card it is
+    holding. So a swap naming either half of a split the list holds is a hit.
+    """
+    return any(face in held for face in name_faces(name))
 
 
 @dataclass(frozen=True)
@@ -223,6 +293,22 @@ class DeckGuide:
     def signature(self) -> ArchetypeSignature | None:
         """This deck's signature, or `None` when it has no usable one."""
         return load_signature(self.archetype) if self.archetype is not None else None
+
+    def sibling_archetype_files(self) -> list[Path]:
+        """Every `archetype.json` in the corpus, this deck's included.
+
+        The tells table needs the signature cards of the archetype a row
+        *names*, which is a different deck's file - so the lookup is over the
+        whole `decks/` directory, not over this guide. It is also not over
+        `GuideLibrary.decks()`: that skips a directory with no
+        `decklist.txt`, and two thirds of the corpus is exactly that - an
+        `archetype.json` written so the field can be recognised, with no
+        guide behind it.
+        """
+        decks_dir = self.root.parent
+        if not decks_dir.is_dir():
+            return []
+        return sorted(p for p in decks_dir.glob("*/archetype.json") if p.is_file())
 
 
 @dataclass(frozen=True)

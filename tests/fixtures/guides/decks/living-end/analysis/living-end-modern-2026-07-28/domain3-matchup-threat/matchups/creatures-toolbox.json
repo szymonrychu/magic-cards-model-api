@@ -1,0 +1,416 @@
+{
+ "name": "creatures toolbox",
+ "meta_share": 2.278481012658228,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "statistics_matchups(format=modern, archetype_a=\"living end\", archetype_b=\"creatures toolbox\") returned zero rows (hint: 'No matchup data for this archetype/pair'), statistics_archetypes carries no winrate field for Modern, and this run's fingerprint records winrate_vs_field as empty. No head-to-head number exists to record."
+ },
+ "primary_gameplan": "Cycle cyclers to fill the graveyard, hold Force of Negation for their first noncreature spell (especially Vexing Bauble), and cascade into Living End once the graveyard is loaded and no live counter-hate is on their battlefield.",
+ "secondary_gameplan": "If the cascade window closes (Vexing Bauble or Drannith Magistrate resolves), fall back to Endurance/Subtlety/Wistfulness as flash bodies and disruption while digging for artifact/enchantment answers to clear the hate piece.",
+ "opponent_gameplan": "Devoted Druid taps for green mana and untaps itself for the cost of a -1/-1 counter; Vizier of Remedies reduces that counter to zero, so the loop is free and repeatable, producing infinite green mana with no doubler required. Green Sun's Zenith and Nature's Rhythm tutor whichever half is missing, or go straight to Craterhoof Behemoth for a hasty lethal swing off a board of dorks.",
+ "tournament_refs": [
+  {
+   "pilot": "bakkenal",
+   "finish": 3,
+   "date": "2026-08-09",
+   "tournament_id": "293d8ec3-926d-42e3-a266-b0e62703f826"
+  },
+  {
+   "pilot": "Nhat-nam Tran",
+   "finish": 3,
+   "date": "2026-08-09",
+   "tournament_id": "ce9de29a-e0f0-49ef-8a9d-eaab02365769"
+  },
+  {
+   "pilot": "FreezingTempest",
+   "finish": 4,
+   "date": "2026-08-11",
+   "tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  }
+ ],
+ "pitfalls": [
+  "Cascading with a live Vexing Bauble on their battlefield -- the cascaded Living End is cast without paying its mana cost (Violent Outburst/Shardless Agent oracle text) and gets countered outright.",
+  "Firing Force of Negation at a mana dork instead of holding it for Vexing Bauble, Leyline of Abundance, or a tutor -- Force of Negation cannot target a creature spell at all.",
+  "Evoking Endurance purely for its graveyard-strip mode -- their engine is entirely on-board (Devoted Druid + Vizier), so stripping their graveyard buys little; evoke it for the 3/4 reach body instead.",
+  "Boarding in Tormod's Crypt against this matchup -- it is mana value 0, a valid cascade target below Violent Outburst/Shardless Agent's mana value 3, and this archetype's own engine wants graveyards full (Agatha's Soul Cauldron), so it answers nothing here while adding a cascade-collision risk.",
+  "CORRECTED 2026-08-24. This pitfall previously read that Damping Matrix is symmetric_counter because CR 702.29b keeps the cycling ability alive in every zone, and therefore shuts our own Street Wraith / Curator of Mysteries / Generous Ent / Oliphaunt / Colossal Skyturtle / Waker of Waves. That is WRONG on two counts and it contradicted both this wiki's own `matchups/broodscale-bloodchief.json` and the `creatures toolbox` row of `boarding-plan.json`. First, the rules: Damping Matrix reads 'Activated abilities of artifacts and creatures can't be activated unless they're mana abilities'. It names no zone and uses none of the words 'card', 'spell', 'source' or 'scheme', so CR 109.2 scopes 'creatures' to permanents, and CR 403.3 says permanents exist only on the battlefield. A Street Wraith being cycled is a creature CARD in a hand (CR 110.4a), not a creature, so Damping Matrix does not reach it. CR 702.29b says only that the cycling ability continues to EXIST in other zones so effects can see it; it does not put the card into the set of objects CR 109.2 built, which is the set Damping Matrix restricts. Second, the card list: Colossal Skyturtle has no cycling at all (two Channel abilities) and Waker of Waves has no cycling either (a plain '{1}{U}, Discard this card:' ability), so CR 702.29b never governed them. Damping Matrix is a `counter` for this 75, not a `symmetric_counter`. It remains a PARTIAL answer to this engine for a different reason, recorded on the `devoted combo` row: Devoted Druid's '{T}: Add {G}' is a mana ability and survives, Badgermole Cub's and Leyline of Abundance's 'whenever you tap a creature for mana' clauses are triggered abilities and survive, and Tyvar, Jubilant Brawler's '+1: Untap up to one target creature' is a planeswalker loyalty ability the Matrix never mentions."
+ ],
+ "hands_keep": [
+  {
+   "cards": [
+    "Curator of Mysteries",
+    "Generous Ent",
+    "Scalding Tarn",
+    "Wistfulness",
+    "Subtlety",
+    "Endurance",
+    "Scalding Tarn"
+   ],
+   "reason": "no cascade spell, but three free-cast disruption pieces (Wistfulness, Subtlety, Endurance) plus two cyclers to dig -- keepable specifically because this matchup rewards holding up interaction for Vexing Bauble/their finisher while digging toward a cascade spell, not because it satisfies the deck's baseline keepable predicate (which requires a cascade card)."
+  }
+ ],
+ "hands_mulligan": [
+  {
+   "cards": [
+    "Living End",
+    "Living End",
+    "Forest",
+    "Island",
+    "Street Wraith",
+    "Wistfulness",
+    "Sink into Stupor"
+   ],
+   "reason": "two copies of Living End and no cascade enabler -- the deck's own keepable predicate caps Living End at max 1 in decks/living-end/evidence-spec.json because a second copy is dead without a cascade spell to find it, and against a deck racing to a same-turn infinite-mana kill a hand that cannot cascade for several turns is too slow."
+  }
+ ],
+ "phase_plan": {
+  "early": "Cycle cyclers to load the graveyard; hold Force of Negation for their first noncreature spell rather than a creature.",
+  "mid": "Cascade the instant the graveyard is loaded and no live Vexing Bauble is on their battlefield. This line previously also named Drannith Magistrate; it is 0 of 10 in the successor label's boards and is no longer the gate on the cascade turn.",
+  "late": "Endurance's reach body blocks a Craterhoof-pumped attacker; a second Living End or hard-cast evoke creature closes out a stalled board."
+ },
+ "game_plan_matrix": [
+  {
+   "phase": "early",
+   "g1": "hold Force of Negation for a noncreature spell, not a creature",
+   "post_p1": "same, plus Force of Vigor and Dismember are live answers to the mana engine",
+   "post_p2": "one extra card seen raises our answer-in-hand odds to 96.72% by T4 (spec_hash sha1-d67f746698ee)"
+  },
+  {
+   "phase": "mid",
+   "g1": "cascade the instant the graveyard is loaded and no Vexing Bauble is live",
+   "post_p1": "Dismember kills Devoted Druid or Vizier of Remedies before the loop assembles, at no cost to our own cycling engine",
+   "post_p2": "same, one turn later relative to their clock"
+  },
+  {
+   "phase": "late",
+   "g1": "Endurance's reach body blocks Craterhoof-pumped attackers",
+   "post_p1": "a second Living End or hard-cast evoke creature closes it out",
+   "post_p2": "identical to on-the-play late plan"
+  }
+ ],
+ "effect_timing": [
+  {
+   "card": "Force of Negation",
+   "cost": "If it's not your turn, you may exile a blue card from your hand rather than pay this spell's mana cost. Counter target noncreature spell.",
+   "when": "their first noncreature spell that is not a land -- Vexing Bauble, Leyline of Abundance, Green Sun's Zenith",
+   "hold_for": "cannot target a creature spell at all; save it specifically for Vexing Bauble before it resolves, since nothing in the maindeck answers it afterward"
+  },
+  {
+   "card": "Subtlety",
+   "cost": "Flash. Flying. When this creature enters, choose up to one target creature spell or planeswalker spell. Its owner puts it on their choice of the top or bottom of their library. Evoke -- exile a blue card.",
+   "when": "their Craterhoof Behemoth or a tutored finisher creature spell",
+   "hold_for": "do not spend it on an early mana dork; the finisher is the only target that matters"
+  },
+  {
+   "card": "Endurance",
+   "cost": "Flash. Reach. When this creature enters, up to one target player puts all the cards from their graveyard on the bottom of their library in a random order. Evoke -- exile a green card.",
+   "when": "as a 3/4 reach blocker against a pumped attacker",
+   "hold_for": "the graveyard-strip clause is low-value here since their engine is entirely on-board; deploy for the body, not the trigger"
+  },
+  {
+   "card": "Wistfulness",
+   "cost": "When this creature enters, if {G}{G} was spent to cast it, exile target artifact or enchantment an opponent controls. Evoke {G/U}{G/U}.",
+   "when": "hard-cast with {G}{G} once Vexing Bauble, Agatha's Soul Cauldron, or Leyline of Abundance resolves",
+   "hold_for": "the exile mode only triggers off a GG hard cast, never the evoke cost -- do not evoke it expecting this mode"
+  }
+ ],
+ "target_priority": [
+  {
+   "effect": "Force of Negation (counter noncreature spell)",
+   "priority": "1. Vexing Bauble 2. Leyline of Abundance 3. Green Sun's Zenith / Nature's Rhythm"
+  },
+  {
+   "effect": "Subtlety (bounce creature/planeswalker spell to library)",
+   "priority": "1. Craterhoof Behemoth 2. Devoted Druid (if Vizier is already down) 3. any tutored finisher creature"
+  },
+  {
+   "effect": "Wistfulness (hard-cast, exile artifact/enchantment)",
+   "priority": "1. Vexing Bauble 2. Agatha's Soul Cauldron 3. Leyline of Abundance"
+  }
+ ],
+ "threat_timeline": [
+  {
+   "turn": "1",
+   "threats": "mana dork (Badgermole Cub / Delighted Halfling / Birds of Paradise / Devoted Druid / Dryad Arbor)",
+   "answer_prob": "90.06%",
+   "spec_hash": "sha1-d19a66921136"
+  },
+  {
+   "turn": "2",
+   "threats": "Leyline of Abundance / Green Sun's Zenith / Nature's Rhythm online (opponent-side 85.29%, spec_hash sha1-d845126faeb3)",
+   "answer_prob": "90.06%",
+   "spec_hash": "sha1-d19a66921136"
+  },
+  {
+   "turn": "3",
+   "threats": "at least one combo half in hand (opponent-side 57.32%, spec_hash sha1-2228d1a53607)",
+   "answer_prob": "95.19%",
+   "spec_hash": "sha1-fddc2d0fa928"
+  },
+  {
+   "turn": "4",
+   "threats": "full Devoted Druid + Vizier combo or dork+tutor equivalent online (opponent-side 81.13%, spec_hash sha1-da5029a46ce8)",
+   "answer_prob": "96.72%",
+   "spec_hash": "sha1-d67f746698ee"
+  },
+  {
+   "turn": "6",
+   "threats": "finisher (Craterhoof Behemoth / Walking Ballista / Ouroboroid) assembled (opponent-side 95.32%, spec_hash sha1-534612c71715)",
+   "answer_prob": "96.72%",
+   "spec_hash": "sha1-d67f746698ee"
+  }
+ ],
+ "scenario_probabilities": [
+  {
+   "scenario": "Opponent has a turn-1 mana dork (opening 7, on the play)",
+   "p": 0.9008,
+   "spec_hash": "sha1-b5cfc175af7d"
+  },
+  {
+   "scenario": "Opponent's Devoted Druid + Vizier of Remedies loop (or dork+tutor equivalent) online by T4 on the play",
+   "p": 0.8113,
+   "spec_hash": "sha1-da5029a46ce8"
+  },
+  {
+   "scenario": "Our deck holds a free-spell answer (Force of Negation/Subtlety/Endurance/Wistfulness) in the opening 7",
+   "p": 0.9006,
+   "spec_hash": "sha1-d19a66921136"
+  },
+  {
+   "scenario": "Our deck holds that same answer by T4 on the draw",
+   "p": 0.9672,
+   "spec_hash": "sha1-d67f746698ee"
+  },
+  {
+   "scenario": "Our opening 7 contains Force of Negation specifically",
+   "p": 0.4025,
+   "spec_hash": "sha1-0e153a4c83fe"
+  }
+ ],
+ "sample_lines": [
+  {
+   "label": "our deck -- disruption-heavy opener, no cascade card",
+   "seed": 42,
+   "opening": [
+    "Curator of Mysteries",
+    "Generous Ent",
+    "Scalding Tarn",
+    "Wistfulness",
+    "Subtlety",
+    "Endurance",
+    "Scalding Tarn"
+   ],
+   "turns": "T1 land. T2 land, watch their board. T3 third land; evoke Endurance as a 3/4 reach blocker or hold Subtlety for their first real creature spell. T4 draw is a second Endurance (pure body now). T5 cycle Street Wraith to dig toward a cascade spell while disruption keeps Vexing Bauble/their finisher off the table."
+  },
+  {
+   "label": "opponent's deck -- fast combo assembly",
+   "seed": 7,
+   "opening": [
+    "Underground Mortuary",
+    "Green Sun's Zenith",
+    "Overgrown Tomb",
+    "Vizier of Remedies",
+    "Agatha's Soul Cauldron",
+    "Leyline of Abundance",
+    "Delighted Halfling"
+   ],
+   "turns": "T1 land, Delighted Halfling. T2 land, Leyline of Abundance (every dork now taps for two). T3 Green Sun's Zenith for X=2 into Devoted Druid. T4 Vizier of Remedies resolves if the mana base delivers white -- loop is live that turn."
+  }
+ ],
+ "opponent_card_index": [
+  {
+   "card": "Devoted Druid",
+   "role": "combo engine half 1, free repeatable untap",
+   "why_run": "with Vizier of Remedies it produces infinite green mana at zero cost",
+   "our_answer": "Force of Negation on the spell, or Subtlety if it resolves before Vizier"
+  },
+  {
+   "card": "Vizier of Remedies",
+   "role": "combo engine half 2, prevents the -1/-1 counter",
+   "why_run": "makes the Devoted Druid untap loop free instead of self-limiting",
+   "our_answer": "Force of Negation on the spell; no maindeck answer once both halves resolve"
+  },
+  {
+   "card": "Vexing Bauble",
+   "role": "counters any spell cast for no mana",
+   "why_run": "shuts our cascaded Living End, evoked Endurance/Subtlety, and a freely-pitched Force of Negation",
+   "our_answer": "Force of Negation before it resolves; Wistfulness (GG hard-cast) exiles it afterward"
+  },
+  {
+   "card": "Craterhoof Behemoth",
+   "role": "primary finisher",
+   "why_run": "immediate lethal swing off any board with multiple dorks",
+   "our_answer": "Subtlety, held specifically for this"
+  }
+ ],
+ "stance": "counter",
+ "stance_rationale": "RETIRED LABEL -- read the `devoted combo` row instead. statistics_decks returns zero decks under this archetype id (c22029ff-3de2-424e-85bc-c270daf9558a) dated on or after 2026-08-13: the archetype was relabelled `devoted combo` (c4fc27b7-4e36-4b08-a070-4d5824a6d1a6), the two ids overlap only on 2026-08-11 and 2026-08-12, and 10 recent top-8 lists per label carry an identical 28-card four-of core. This row survives only because boarding_field.py derives the field from the committed fingerprint and the fingerprint still counts 43 decks under this id. Everything below is frozen at 2026-08-12 and two reads have already moved: Drannith Magistrate was in 9 of 10 boards and is now in 0 of 10, and Abrupt Decay was in 0 of 10 and is now in 8 of 10. On the merits, unchanged: Force of Vigor (kills Vexing Bauble / Leyline of Abundance / Agatha's Soul Cauldron) and Dismember (kills Devoted Druid / Vizier of Remedies before the loop assembles) attack their engine directly at no cost to our own cascade plan; both are mana value 3-4, safely clear of the cascade floor. Damping Matrix is boarded here too and is a `counter`, not a `symmetric_counter` -- the earlier claim in pitfall #5 that it disabled our own cycling was a rules error and is corrected there.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "most common configuration (9 of 10 pulled lists board it); counters our free-cast cascade/evoke suite",
+   "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  },
+  {
+   "card": "Drannith Magistrate",
+   "count": 1,
+   "why": "9 of 10 lists boarded it AS OF 2026-08-12; restricts casting from anywhere but hand, which turns our cascade off outright. STALE: 0 of 10 lists under the successor `devoted combo` label board it. Do not plan around it.",
+   "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  },
+  {
+   "card": "Fatal Push",
+   "count": 3,
+   "why": "universal removal in every pulled sideboard; kills a bare evoked body but whiffs on our post-cascade creatures",
+   "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  },
+  {
+   "card": "Endurance",
+   "count": 2,
+   "why": "8 of 10 lists board it; graveyard strip plus a 3/4 reach blocker",
+   "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  },
+  {
+   "card": "Grist, the Hunger Tide",
+   "count": 1,
+   "why": "7 of 10 lists board it; -2 kills a single Living End creature",
+   "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+  },
+  {
+   "card": "Force of Vigor",
+   "count": 2,
+   "why": "4 of 10 lists board it; likely aimed at other artifact/enchantment matchups, incidental here",
+   "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+  },
+  {
+   "card": "Thoughtseize",
+   "count": 3,
+   "why": "4 of 10 lists board it; strips our cascade spell or held Force of Negation pre-emptively",
+   "source_tournament_id": "037d505d-0c61-4dcc-9a1c-252e69e4c0b7"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Force of Vigor",
+    "2 Dismember"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Force of Vigor",
+    "2 Dismember"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "A hand with disruption (Force of Negation/Subtlety/Wistfulness) or two-plus cyclers even without a cascade spell; a pure cascade-only hand risks a live Vexing Bauble or Drannith Magistrate.",
+  "goldfish_for": "A second land plus a cascade spell while holding Force of Negation for their first noncreature spell.",
+  "watch_for": "Whether they tap out for Leyline of Abundance or Green Sun's Zenith on turn two or three -- that signals the combo is one turn away and Force of Negation should stay in hand, not fire at a dork.",
+  "posture": "disrupt_first",
+  "posture_why": "Their kill is faster than ours once the loop assembles, so denying Vexing Bauble and the combo pieces before cascading wins, not racing."
+ },
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Devoted Druid plus Vizier of Remedies is a same-turn infinite-mana kill once assembled, so outracing our turn 4-6 cascade clock is the plan, not attrition.",
+  "key_cards": [
+   {
+    "card": "Devoted Druid",
+    "why": "combo engine half 1, taps for mana and untaps itself for free with Vizier down"
+   },
+   {
+    "card": "Vizier of Remedies",
+    "why": "combo engine half 2, makes the untap loop free instead of self-limiting"
+   },
+   {
+    "card": "Vexing Bauble",
+    "why": "counters our cascaded Living End and every other free-cast spell we run",
+    "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+   },
+   {
+    "card": "Craterhoof Behemoth",
+    "why": "immediate lethal swing off any board with multiple dorks"
+   }
+  ]
+ },
+ "opposing_hand_odds": [
+  {
+   "turn": "T1",
+   "threat": "mana dork",
+   "probability": "90.1%"
+  },
+  {
+   "turn": "T2",
+   "threat": "Leyline of Abundance / tutor online",
+   "probability": "85.3%"
+  },
+  {
+   "turn": "T3",
+   "threat": "one combo half in hand",
+   "probability": "57.3%"
+  },
+  {
+   "turn": "T4",
+   "threat": "full combo online",
+   "probability": "81.1%"
+  },
+  {
+   "turn": "T6",
+   "threat": "finisher assembled",
+   "probability": "95.3%"
+  },
+  {
+   "turn": "postboard",
+   "threat": "Vexing Bauble live",
+   "probability": "90.0%"
+  },
+  {
+   "turn": "postboard",
+   "threat": "Drannith Magistrate live",
+   "probability": "90.0%"
+  }
+ ],
+ "card_names": [
+  "Devoted Druid",
+  "Vizier of Remedies",
+  "Green Sun's Zenith",
+  "Nature's Rhythm",
+  "Leyline of Abundance",
+  "Badgermole Cub",
+  "Delighted Halfling",
+  "Birds of Paradise",
+  "Tyvar, Jubilant Brawler",
+  "Fiend Artisan",
+  "Duskwatch Recruiter",
+  "Shang-Chi, Master of Kung Fu",
+  "Craterhoof Behemoth",
+  "Agatha's Soul Cauldron",
+  "Walking Ballista",
+  "Ouroboroid",
+  "Boseiju, Who Endures",
+  "Dryad Arbor",
+  "Vexing Bauble",
+  "Drannith Magistrate",
+  "Fatal Push",
+  "Collector Ouphe",
+  "Endurance",
+  "Grist, the Hunger Tide",
+  "Keen-Eyed Curator",
+  "Force of Vigor",
+  "Thoughtseize"
+ ]
+}

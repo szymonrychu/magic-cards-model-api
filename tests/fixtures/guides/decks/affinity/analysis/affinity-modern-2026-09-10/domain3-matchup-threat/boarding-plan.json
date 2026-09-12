@@ -1,0 +1,2000 @@
+{
+  "schema_version": 1,
+  "deck": "affinity",
+  "archetype": "pinnacle affinity",
+  "format": "modern",
+  "captured_at": "2026-09-10",
+  "sideboard_access": {
+    "kind": "boarded"
+  },
+  "matchups": [
+    {
+      "name": "esper blink",
+      "meta_share": 7.660533233195643,
+      "winrate": 0.5722,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Their deck is triggered abilities on bodies - Flickerwisp, Phelia, Solitude and Emperor of Bones all do their work on the way in - and Consign to Memory counters a triggered ability for {U} with replicate {1} buying the second one. We are not trying to beat their creatures, only the triggers that turn each one into a two-for-one, and at 7.66pp this is the largest row in the recorded field.",
+      "play": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Mystical Dispute",
+          "1 Vexing Bauble"
+        ],
+        "out": [
+          "2 Preordain",
+          "1 Pithing Needle",
+          "1 Skateboard",
+          "1 Shadowspear",
+          "1 Welding Jar"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Mystical Dispute",
+          "1 Vexing Bauble"
+        ],
+        "out": [
+          "2 Preordain",
+          "1 Pithing Needle",
+          "1 Skateboard",
+          "1 Shadowspear",
+          "1 Welding Jar"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it. It destroys each artifact, creature and enchantment with mana value less than or equal to the energy paid, which is our whole board in one card, and every permanent this deck plays costs {0} to {2}.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it. Sixteen of our maindeck cards are colorless spells and every payoff we have - Weapons Manufacturing, Kappa Cannoneer, Pinnacle Emissary, Urza's Saga - wins through a triggered ability, so one card answers either half for {U}.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Clarion Conqueror",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. Activated abilities of artifacts, creatures and planeswalkers can't be activated, which turns off Mox Opal, Claws of Gix, Mishra's Bauble, Tormod's Crypt, Welding Jar and Emry at once.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it; it costs {2} less against our blue spells, so Kappa Cannoneer and Emry are taxed {3} by a one-mana card.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Consign to Memory",
+          "verdict": "SURVIVES",
+          "why": "Nothing in the captured board answers a one-mana instant, and their own Consign to Memory cannot counter it because it is blue rather than colorless."
+        },
+        {
+          "card": "Mystical Dispute",
+          "verdict": "SURVIVES",
+          "why": "It costs {U} against their own blue spells and their board holds no discard; Thoughtseize is a maindeck card they will have already spent on the engine."
+        },
+        {
+          "card": "Vexing Bauble",
+          "verdict": "SURVIVES",
+          "why": "Wrath of the Skies eats it at one energy, but it has already done its job the first time they evoke Solitude or rebound Ephemerate, both of which spend no mana."
+        }
+      ],
+      "play_plan": {
+        "keep": "Any seven with two coloured sources, a Weapons Manufacturing or Kappa Cannoneer, and two of the free artifacts.",
+        "goldfish_for": "Kappa Cannoneer on turn three off improvise, with Consign to Memory held for the Solitude that answers it.",
+        "watch_for": "A white source held open through their own main phase is an evoked Solitude; bait it with Emry first.",
+        "posture": "disrupt_first",
+        "posture_why": "Their removal is free and ours is not, so the Cannoneer only lands once their evoke is spent or countered."
+      },
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "Every creature they cast replaces itself through a trigger, and Ephemerate rebuys the best one, so they win a long game on cards rather than on speed.",
+        "key_cards": [
+          {
+            "card": "Solitude",
+            "why": "Free exile removal for the Kappa Cannoneer the whole plan is built on; evoked it costs them no mana at all."
+          },
+          {
+            "card": "Ephemerate",
+            "why": "Rebounds, so one mana buys two more enter-the-battlefield triggers and turns any body into a two-for-one."
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, this is the card that kills the board rather than the threat - every permanent we play is inside its range.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Clarion Conqueror",
+            "why": "Postboard, it switches off Mox Opal, Claws of Gix and Emry in one body, which is the whole engine.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "self_cost": "Vexing Bauble counters any spell cast for no mana and sixteen of this mainboard's cards have a mana cost of {0} - four Mox Opal, four Mishra's Bauble, four Tormod's Crypt, three Claws of Gix and the Welding Jar. It is the last permanent we deploy in a turn, never the first, and the row cuts the Welding Jar rather than pretend the tax is free.",
+      "notes": [
+        "Consign to Memory answers Emperor of Bones' put-onto-the-battlefield trigger, not the creature it returns, so it has to be held for the counters-are-put-on trigger rather than pointed at the body.",
+        "Their Clarion Conqueror does not stop Urza's Saga chapter three: that is a triggered chapter ability of a land, not an activated ability of an artifact, so the fetch still happens under it."
+      ]
+    },
+    {
+      "name": "broodscale bloodchief",
+      "meta_share": 6.947052196770559,
+      "winrate": 0.4234,
+      "stance": "symmetric_counter",
+      "stance_rationale": "At 6.95pp this is the second largest row in the recorded field and the capture records us at 0.4234 over 58 matches, so it is a recorded worst case. Their lists are Eldrazi Temple, Ugin's Labyrinth, Cavern of Souls, Urza's Saga and Yavimaya over two or three basic Forests, and the whole board is aimed at making that mana and their spawn-token engine cost more than it produces.",
+      "play": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Damping Sphere",
+          "1 Blood Moon"
+        ],
+        "out": [
+          "2 Preordain",
+          "1 Shadowspear",
+          "1 Skateboard",
+          "1 Welding Jar",
+          "1 Metallic Rebuke"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Damping Sphere",
+          "1 Blood Moon"
+        ],
+        "out": [
+          "2 Preordain",
+          "1 Shadowspear",
+          "1 Skateboard",
+          "1 Welding Jar",
+          "1 Metallic Rebuke"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Nature's Claim",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. One green mana destroys Weapons Manufacturing, Mox Opal or a resolved Blood Moon, and the 4 life it gives us is irrelevant against a deck that wins with Munitions tokens.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Trinisphere",
+          "count": 2,
+          "why": "11 of the captured board slots are Trinisphere. Every spell costs three, and sixteen of our maindeck cards cost {0}, so it is the single worst card in the field against this shell.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Disruptor Flute",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it. It names Kappa Cannoneer or Weapons Manufacturing for {3} more, and its second clause switches off the named card's activated abilities unless they are mana abilities.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Vexing Bauble",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it, and it counters every one of our sixteen {0} spells outright because no mana is spent to cast them.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Consign to Memory",
+          "verdict": "SURVIVES",
+          "why": "It counters Sowing Mycospawn, Thief of Existence and Warping Wail as colorless spells and the Basking Broodscale spawn trigger as a triggered ability; nothing in their board touches a one-mana instant."
+        },
+        {
+          "card": "Damping Sphere",
+          "verdict": "SURVIVES",
+          "why": "Nature's Claim answers it, but the Sphere has already made Eldrazi Temple and Ugin's Labyrinth produce {C} instead of two mana, and forcing them to spend a green mana and a card on it is the point."
+        },
+        {
+          "card": "Blood Moon",
+          "verdict": "BLANKED",
+          "why": "Two Nature's Claim in 10 of 10 captured boards, and the Forests those boards keep, mean a single copy is answered on sight for one mana - and it costs us four Urza's Saga and eleven coloured sources in the meantime. It is boarded because the games it is not answered in are unwinnable otherwise, and the matchup is recorded in `gaps` for it."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands, at least one blue source, Weapons Manufacturing and two free artifacts; a Preordain-only hand is a mulligan here.",
+        "goldfish_for": "Weapons Manufacturing on turn two into Claws of Gix, so the Munitions tokens answer the Broodscale rather than the face.",
+        "watch_for": "A turn-one Ancient Stirrings means Trinisphere or Disruptor Flute is already found; deploy the {0} artifacts before they untap with three mana.",
+        "posture": "race",
+        "posture_why": "The capture records 0.4234 over 58 matches; long games belong to their engine."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Basking Broodscale and Blade of the Bloodchief assemble a growing creature and free mana from turn two, so they close before a slower artifact draw is online.",
+        "key_cards": [
+          {
+            "card": "Basking Broodscale",
+            "why": "Adapt makes a spawn token, the token makes mana, and the counter grows it; the whole engine is one two-drop."
+          },
+          {
+            "card": "Blade of the Bloodchief",
+            "why": "Every death, including their own sacrificed spawn tokens, puts counters on the equipped creature."
+          },
+          {
+            "card": "Trinisphere",
+            "why": "Postboard, it prices our sixteen {0} artifacts at three mana each and ends the game on its own.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Nature's Claim",
+            "why": "Postboard, one green mana for Weapons Manufacturing, a Mox Opal or the Blood Moon we just resolved.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "self_cost": "Blood Moon turns thirteen of our own seventeen lands into Mountains and takes the chapter abilities off all four Urza's Saga, leaving two Island and four Mox Opal to pay every {U} in the deck. Damping Sphere taxes our own multi-artifact turns by {1} per extra spell, which is the turn this deck is built around. Both are correct here only because their mana is greedier than ours and their engine casts more spells per turn than ours.",
+      "notes": [
+        "Munitions damage can be pointed at a creature. Against a growing Basking Broodscale the two damage from a sacrificed token is removal, and Claws of Gix turns each one on for {1}.",
+        "Their Disruptor Flute exempts mana abilities, so a named Mox Opal still taps for mana; a named Claws of Gix does not, and that is the activation the drain plan needs."
+      ]
+    },
+    {
+      "name": "devoted combo",
+      "meta_share": 4.769057453999249,
+      "winrate": null,
+      "stance": "counter",
+      "stance_rationale": "Their combo is two creatures and their whole deck is creatures, so removal is interaction and a sweeper is a two-for-three. The row takes all three Emry out, which is what prices Grafdigger's Cage and Whipflare: with Emry gone the Cage costs us nothing and Whipflare is one-sided, because every other creature this deck makes - Kappa Cannoneer, Pinnacle Emissary, the Drone tokens and the Urza's Saga Constructs - is an artifact creature.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare",
+          "1 Grafdigger's Cage"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Shadowspear",
+          "1 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare",
+          "1 Grafdigger's Cage"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Shadowspear",
+          "1 Preordain"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Vexing Bauble",
+          "count": 1,
+          "why": "11 of the captured board slots across 10 lists. It counters every one of our sixteen {0} spells, which is the metalcraft and improvise engine, for one mana.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Abrupt Decay",
+          "count": 3,
+          "why": "8 of the 10 captured boards run it and it cannot be countered. Weapons Manufacturing, Mox Opal, Emry and Pinnacle Emissary are all mana value 3 or less.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Force of Vigor",
+          "count": 1,
+          "why": "7 of the 10 captured boards run it. On our turn it costs them a green card and nothing else, and it destroys two artifacts.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Endurance",
+          "count": 1,
+          "why": "9 of the 10 captured boards run it. Evoked for free it puts our graveyard on the bottom of the library, which is the Emry plan; flashed in it is a 3/4 reach blocker.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Metalcraft is on by turn two in this deck, so it is four damage for {R} at instant speed and kills Devoted Druid, Vizier of Remedies, Birds of Paradise and Delighted Halfling; their board holds no counterspell."
+        },
+        {
+          "card": "Whipflare",
+          "verdict": "SURVIVES",
+          "why": "It deals 2 to each nonartifact creature, which is their entire board and none of ours once the three Emry are out; Crystal Barricade gives them hexproof but not their creatures damage prevention from a sweeper that does not target."
+        },
+        {
+          "card": "Grafdigger's Cage",
+          "verdict": "SURVIVES",
+          "why": "It stops Green Sun's Zenith, Fiend Artisan and Nature's Rhythm putting a creature onto the battlefield from the library. Force of Vigor and Abrupt Decay both answer it, which is what makes it one copy rather than two."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands with a red source, a Galvanic Blast after boarding, and any two free artifacts for metalcraft.",
+        "goldfish_for": "Metalcraft by turn two so Galvanic Blast is four damage, then an unblockable Kappa Cannoneer.",
+        "watch_for": "A turn-one Birds of Paradise or Delighted Halfling means turn-two Devoted Druid; hold the Blast for the Druid rather than the mana creature.",
+        "posture": "disrupt_first",
+        "posture_why": "Killing either half of the pair at instant speed is cheaper than outrunning unbounded mana into Craterhoof Behemoth."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Devoted Druid plus Vizier of Remedies is unbounded mana on turn three, and three separate tutors put the missing half onto the battlefield rather than into hand.",
+        "key_cards": [
+          {
+            "card": "Devoted Druid",
+            "why": "Half the combo, and it untaps itself by taking a -1/-1 counter; two damage kills it before Vizier lands."
+          },
+          {
+            "card": "Vizier of Remedies",
+            "why": "The other half; it removes the counter cost, which is what makes the untap unbounded."
+          },
+          {
+            "card": "Green Sun's Zenith",
+            "why": "Puts the missing combo piece onto the battlefield from the library rather than casting it."
+          },
+          {
+            "card": "Abrupt Decay",
+            "why": "Postboard, uncounterable removal for the Weapons Manufacturing the drain plan needs.",
+            "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+          }
+        ]
+      },
+      "notes": [
+        "Pithing Needle stays in and names Devoted Druid. The Druid's {T}: Add {G} is a mana ability and Needle does not stop it, but the untap ability is not a mana ability, so naming the Druid stops the loop while leaving them a single green mana."
+      ]
+    },
+    {
+      "name": "eldrazi ramp",
+      "meta_share": 4.618850920015021,
+      "winrate": 0.3636,
+      "stance": "symmetric_counter",
+      "stance_rationale": "The capture records us at 0.3636 over 70 matches, the worst measured row in the field, and the reason is mana: they start on four to six colorless mana while we are still assembling metalcraft. The two cards that change that arithmetic both tax us as well, which is why the stance is symmetric rather than a clean counter.",
+      "play": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Damping Sphere",
+          "1 Blood Moon"
+        ],
+        "out": [
+          "2 Engineered Explosives",
+          "1 Shadowspear",
+          "1 Skateboard",
+          "2 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Damping Sphere",
+          "1 Blood Moon"
+        ],
+        "out": [
+          "4 Engineered Explosives",
+          "1 Shadowspear",
+          "1 Skateboard"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Trinisphere",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it. Sixteen of our maindeck cards cost {0} and it prices every one of them at three mana while their own Eldrazi Temple mana is unaffected in practice.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Force of Vigor",
+          "count": 2,
+          "why": "6 of the 10 captured boards run it. On our turn it costs a green card and no mana and destroys two artifacts, which is Weapons Manufacturing plus a Mox Opal.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Warping Wail",
+          "count": 2,
+          "why": "5 of the 10 captured boards run it. It exiles a creature with power or toughness 1 or less, which is every Drone token Pinnacle Emissary makes, and it counters a sorcery.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Collector Ouphe",
+          "count": 1,
+          "why": "3 of the 10 captured boards run it, and it reads that activated abilities of artifacts can't be activated with no mana-ability exception - so Mox Opal, Claws of Gix, Mishra's Bauble, Tormod's Crypt and Welding Jar are all switched off by one two-drop.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Consign to Memory",
+          "verdict": "SURVIVES",
+          "why": "Ugin, Emrakul, Sowing Mycospawn, Kozilek's Command, Devourer of Destiny and Thought-Knot Seer are all colorless spells, and Ugin's own cast trigger is a triggered ability, so one card answers either half; nothing in their board counters a one-mana instant."
+        },
+        {
+          "card": "Damping Sphere",
+          "verdict": "SURVIVES",
+          "why": "Force of Vigor answers it, but until it does Eldrazi Temple and Ugin's Labyrinth each produce {C} instead of two mana, which is the whole reason their curve beats ours."
+        },
+        {
+          "card": "Blood Moon",
+          "verdict": "SURVIVES",
+          "why": "Their captured lists keep Forests and Cavern of Souls, so it is not a hard lock, but a Moon on turn two takes Eldrazi Temple, Ugin's Labyrinth, Yavimaya, Boseiju and Mosswort Bridge to one colorless mana each. Force of Vigor is the answer and it costs them a green card from a hand that wants to keep them."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands, a blue source and two free artifacts, or any hand with Blood Moon and two lands after boarding.",
+        "goldfish_for": "Weapons Manufacturing on two into Claws of Gix on three, so the Munitions drain is lethal before their sixth mana.",
+        "watch_for": "A tapped Eldrazi Temple on turn one means Thought-Knot Seer on three; empty the hand first.",
+        "posture": "race",
+        "posture_why": "Our worst measured row at 0.3636 over 70 matches; every long game is theirs."
+      },
+      "opponent_plan": {
+        "posture": "lock",
+        "posture_why": "Ugin, Eye of the Storms exiles a coloured permanent on cast and again on every colorless spell after it, so the board stops being ours before their top end has to attack.",
+        "key_cards": [
+          {
+            "card": "Ugin, Eye of the Storms",
+            "why": "Exiles a coloured permanent on cast and on every colorless spell after; our whole board except the Constructs is coloured."
+          },
+          {
+            "card": "Eldrazi Temple",
+            "why": "Two mana for colorless Eldrazi, which is the turn of ramp that beats our clock."
+          },
+          {
+            "card": "Trinisphere",
+            "why": "Postboard, sixteen {0} cards priced at three mana each is the game.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Collector Ouphe",
+            "why": "Postboard, it switches off every activated ability our artifacts have, mana abilities included.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "self_cost": "Blood Moon costs us four Urza's Saga and eleven of our thirteen coloured sources, leaving two Island and four Mox Opal to pay every {U} and {R} in the deck, and Damping Sphere taxes our own second and third artifact each turn by {1}. Both are boarded because Eldrazi Temple and Ugin's Labyrinth each make two mana and Blood Moon takes both of them to one, which is a bigger number than the one we pay.",
+      "notes": [
+        "Engineered Explosives comes out entirely on the draw. Their cheapest relevant permanents are Eldrazi Temple and Ugin's Labyrinth, which are lands, and Explosives destroys nonland permanents only.",
+        "Consign to Memory does not counter Emrakul's take-a-turn trigger cheaply enough to matter, but it does counter the cast trigger of Ugin, Eye of the Storms, which is the exile that costs us the board."
+      ]
+    },
+    {
+      "name": "instant reanimator",
+      "meta_share": 4.50619601952685,
+      "winrate": 0.6327,
+      "stance": "counter",
+      "stance_rationale": "Their kill is a two-mana instant that returns a legendary creature from the graveyard, and every piece of it is answerable at instant speed for one or two mana. Grafdigger's Cage statically stops the return; the three Emry leave the 60 in this row, so the Cage costs us nothing at all.",
+      "play": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Mystical Dispute",
+          "1 Grafdigger's Cage",
+          "1 Swan Song"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "2 Preordain",
+          "1 Shadowspear",
+          "1 Skateboard"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Mystical Dispute",
+          "1 Grafdigger's Cage",
+          "1 Swan Song"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "2 Preordain",
+          "1 Shadowspear",
+          "1 Skateboard"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "9 of the 10 captured boards run it, at four copies in this list. Every artifact we cast is a colorless spell and every payoff wins through a triggered ability.",
+          "source_tournament_id": "480efd5a-916e-4ce6-8d3c-40e291899575"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it. Against Kappa Cannoneer and Emry it costs {U} and taxes {3}, which improvise cannot pay because improvise pays generic costs, not the tax on the stack.",
+          "source_tournament_id": "480efd5a-916e-4ce6-8d3c-40e291899575"
+        },
+        {
+          "card": "Wrath of the Skies",
+          "count": 2,
+          "why": "9 of the 10 captured boards run it, and every permanent in this 60 is inside its range at two or three energy.",
+          "source_tournament_id": "480efd5a-916e-4ce6-8d3c-40e291899575"
+        },
+        {
+          "card": "Spell Snare",
+          "count": 1,
+          "why": "8 of the 10 captured boards run it. It counters a spell with mana value exactly 2, which is Metallic Rebuke and nothing else we play - Kappa Cannoneer is mana value 6 however cheaply improvise pays for it.",
+          "source_tournament_id": "480efd5a-916e-4ce6-8d3c-40e291899575"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Consign to Memory",
+          "verdict": "SURVIVES",
+          "why": "It counters the Atraxa enter-the-battlefield trigger, which is the card advantage half of their kill, and their own Consign cannot answer it because it is blue rather than colorless."
+        },
+        {
+          "card": "Mystical Dispute",
+          "verdict": "SURVIVES",
+          "why": "Their deck is blue, so it costs us {U} and taxes {3} on Force of Negation, Quantum Riddler or a hard-cast Atraxa; nothing in their board answers an instant."
+        },
+        {
+          "card": "Grafdigger's Cage",
+          "verdict": "SURVIVES",
+          "why": "Creature cards in graveyards can't enter the battlefield, which is exactly what Goryo's Vengeance tries to do. Prismatic Ending and March of Otherworldly Light answer it from the maindeck, which is why the plan does not rest on it alone."
+        },
+        {
+          "card": "Swan Song",
+          "verdict": "SURVIVES",
+          "why": "Goryo's Vengeance is an instant and Faithful Mending is a sorcery, so one blue mana answers either; the 2/2 Bird it gives them does not block Kappa Cannoneer, which cannot be blocked the turn an artifact entered."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands with a blue source, an artifact engine piece, and at least one of the boarded counterspells.",
+        "goldfish_for": "Kappa Cannoneer on three with Swan Song or Consign to Memory held up.",
+        "watch_for": "Two open mana and a card discarded to Psychic Frog is the Goryo's Vengeance turn.",
+        "posture": "disrupt_first",
+        "posture_why": "Their entire kill is one two-mana instant, so a single held answer beats it more cheaply than any clock beats it."
+      },
+      "opponent_plan": {
+        "posture": "bait",
+        "posture_why": "Thoughtseize and Force of Negation clear the one answer, then a two-mana instant does the whole job at the end of our turn.",
+        "key_cards": [
+          {
+            "card": "Goryo's Vengeance",
+            "why": "A two-mana instant that returns the legend from the graveyard with haste; the entire kill is this card."
+          },
+          {
+            "card": "Atraxa, Grand Unifier",
+            "why": "Refills their hand on the way in, so the reanimation is card advantage even when the body is exiled at end step."
+          },
+          {
+            "card": "Consign to Memory",
+            "why": "Postboard, one mana answers either an artifact of ours or the trigger that makes it matter.",
+            "source_tournament_id": "480efd5a-916e-4ce6-8d3c-40e291899575"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, it destroys the whole board at two energy because nothing we play costs more than {2} to have on the battlefield.",
+            "source_tournament_id": "480efd5a-916e-4ce6-8d3c-40e291899575"
+          }
+        ]
+      },
+      "notes": [
+        "Tormod's Crypt stays in and is held rather than cracked. Goryo's Vengeance reads the graveyard on resolution, so the Crypt has to be sacrificed with the Vengeance on the stack, not on their draw step."
+      ]
+    },
+    {
+      "name": "boros ponza",
+      "meta_share": 3.379647014645137,
+      "winrate": 0.4861,
+      "stance": "counter",
+      "stance_rationale": "Their plan is to attack lands, and this is a seventeen-land deck that casts sixteen of its cards for {0}. What actually beats us is Wrath of the Skies in all ten captured maindecks, so the row brings interaction for the sweeper and the removal rather than more permanents to lose to it.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Swan Song"
+        ],
+        "out": [
+          "1 Shadowspear",
+          "1 Skateboard",
+          "2 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Swan Song"
+        ],
+        "out": [
+          "1 Shadowspear",
+          "1 Skateboard",
+          "2 Preordain"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Disruptor Flute",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it. It has flash, names Kappa Cannoneer or Weapons Manufacturing for {3} more, and its second clause stops the named card's non-mana activated abilities.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "High Noon",
+          "count": 4,
+          "why": "9 of the 10 captured boards run it, at four copies in this list. Each player can't cast more than one spell each turn, and this deck's turns are four or five free artifacts.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Rest in Peace",
+          "count": 2,
+          "why": "7 of the 10 captured boards run it. It exiles all graveyards and replaces every future one, which blanks Emry entirely.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Surgical Extraction",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. After an Emry mill it takes all four copies of Weapons Manufacturing or Kappa Cannoneer out of the library for 2 life.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Metalcraft makes it four damage at instant speed, which kills Solitude and every other body in their captured lists, and doubles as four to the face when the drain is the plan; their board holds no counterspell."
+        },
+        {
+          "card": "Swan Song",
+          "verdict": "SURVIVES",
+          "why": "Wrath of the Skies, Cleansing Wildfire, Price of Freedom, Avengers Disassembled, High Noon and Rest in Peace are all enchantments, instants or sorceries, so one blue mana answers whichever of them the game turns on. The 2/2 Bird does not block Kappa Cannoneer."
+        }
+      ],
+      "play_plan": {
+        "keep": "Three lands with two colours, or two lands and a Mox Opal with two free artifacts to turn metalcraft on.",
+        "goldfish_for": "Weapons Manufacturing and Claws of Gix, so Munitions damage resolves through the sweeper.",
+        "watch_for": "Two white mana held on our end step is Solitude or a flashed Disruptor Flute.",
+        "posture": "grind",
+        "posture_why": "They have no clock, so the game is decided by whether our board survives the sweeper, not by how fast it arrives."
+      },
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "They trade one for one on lands and threats and win when the last card in the game is theirs; nothing in their deck kills quickly.",
+        "key_cards": [
+          {
+            "card": "Wrath of the Skies",
+            "why": "In all ten captured maindecks, and every permanent this deck plays is inside its range."
+          },
+          {
+            "card": "Cleansing Wildfire",
+            "why": "Land destruction that replaces itself, aimed at the coloured sources this deck only has thirteen of."
+          },
+          {
+            "card": "High Noon",
+            "why": "Postboard, one spell per turn against a deck whose turns are four free artifacts.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Surgical Extraction",
+            "why": "Postboard, it strips all four Weapons Manufacturing out of the library for 2 life once anything of ours is in a graveyard.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "notes": [
+        "Sacrifice Munitions tokens to Claws of Gix in response to Wrath of the Skies. The leaves-the-battlefield trigger deals its two damage whether or not the sweeper resolves.",
+        "Pithing Needle stays in and names Demolition Field or Field of Ruin: both are nonbasic lands whose land destruction is an activated ability, and neither is a mana ability."
+      ]
+    },
+    {
+      "name": "ur cutter prowess",
+      "meta_share": 3.2294404806609087,
+      "winrate": 0.5547,
+      "stance": "counter",
+      "stance_rationale": "Their creatures are one and two toughness and their whole deck is noncreature spells, so Galvanic Blast at metalcraft and a Whipflare are removal that trades up. The three Emry leave the 60, which makes Whipflare one-sided: every other creature this deck fields is an artifact creature.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Pithing Needle"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Pithing Needle"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "10 of the 10 captured boards run it, at four copies in this list. It answers our colorless spells and the Weapons Manufacturing trigger for one mana with replicate {1} on top.",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        },
+        {
+          "card": "Meltdown",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. At X=1 it destroys sixteen {0} artifacts plus Pithing Needle, Shadowspear and Skateboard for two mana.",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        },
+        {
+          "card": "Spell Pierce",
+          "count": 1,
+          "why": "8 of the 10 captured boards run it. Every card in this 60 except Kappa Cannoneer, Emry and Pinnacle Emissary is a noncreature spell.",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        },
+        {
+          "card": "Spell Snare",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it, and Metallic Rebuke is the mana value 2 card in this deck it is aimed at.",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Metalcraft makes it four damage, which covers Dragon's Rage Channeler with delirium, Slickshot Show-Off and a Monk token; Spell Pierce taxes it {2} and Consign to Memory cannot touch it because it is red rather than colorless."
+        },
+        {
+          "card": "Whipflare",
+          "verdict": "SURVIVES",
+          "why": "Two damage to each nonartifact creature is their whole board and none of ours once the Emry are out. Mutagenic Growth saves one creature for no mana, which is why the row also brings three Galvanic Blast."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands with a red source, two free artifacts for metalcraft, and a removal spell or Weapons Manufacturing.",
+        "goldfish_for": "Metalcraft on turn two so every Galvanic Blast is four damage, then Kappa Cannoneer.",
+        "watch_for": "Mutagenic Growth costs no mana, so remove creatures in their second main phase.",
+        "posture": "disrupt_first",
+        "posture_why": "Their board rebuilds every turn off Cori-Steel Cutter, so the Blasts have to answer the creature that is actually attacking."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Cori-Steel Cutter makes a new attacker every turn they cast two spells, and Mutagenic Growth costs them no mana, so the clock is three or four turns.",
+        "key_cards": [
+          {
+            "card": "Cori-Steel Cutter",
+            "why": "Makes and equips a prowess Monk on their second spell each turn, so removal never actually empties the board."
+          },
+          {
+            "card": "Slickshot Show-Off",
+            "why": "Flying haste that gets +2/+0 per noncreature spell, which is the card that turns a stalled board into lethal."
+          },
+          {
+            "card": "Meltdown",
+            "why": "Postboard, X=1 destroys nineteen of our permanents for two mana.",
+            "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+          },
+          {
+            "card": "Consign to Memory",
+            "why": "Postboard, one mana for either an artifact of ours or the trigger that makes it matter.",
+            "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+          }
+        ]
+      },
+      "notes": [
+        "Pithing Needle comes out. The only activated ability in their captured lists is Cori-Steel Cutter's equip, and the Flurry trigger attaches it for free anyway, so naming it stops nothing that matters."
+      ]
+    },
+    {
+      "name": "pinnacle affinity",
+      "meta_share": 3.1543372136687946,
+      "winrate": 0.5,
+      "stance": "counter",
+      "stance_rationale": "The mirror is decided by whose Kappa Cannoneer lands first and whose engine survives, so the row brings removal for the bodies that are not Cannoneers and a Grafdigger's Cage for their Emry recursion. All three of our own Emry leave the 60 with it, so the Cage is one-sided by construction.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Grafdigger's Cage"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Grafdigger's Cage"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Preordain"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Damping Sphere",
+          "count": 2,
+          "why": "10 of the 10 captured mirror boards run it, and it taxes the four-and-five-spell turns both sides are built on.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "10 of the 10 captured mirror boards run it. It counters our colorless artifacts and the Weapons Manufacturing, Kappa Cannoneer and Pinnacle Emissary triggers.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Galvanic Blast",
+          "count": 3,
+          "why": "10 of the 10 captured mirror boards run it. With metalcraft it is four damage, which kills Emry and Pinnacle Emissary but not a grown Cannoneer.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Whipflare",
+          "count": 1,
+          "why": "10 of the 10 captured mirror boards run it, and it is aimed at exactly one card in the mirror: Emry, which is the only nonartifact creature either list plays.",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Four damage at metalcraft kills their Emry and Pinnacle Emissary; their Consign to Memory cannot counter it because it is red rather than colorless, and their Whipflare does not touch it."
+        },
+        {
+          "card": "Grafdigger's Cage",
+          "verdict": "SURVIVES",
+          "why": "It stops their Emry casting artifacts from the graveyard, and with our own three Emry out it costs us nothing. Nine of the ten captured mirror boards are the same nine cards this deck plays - Galvanic Blast, Whipflare, Damping Sphere, Consign to Memory, Mystical Dispute, Swan Song, Blood Moon, Vexing Bauble and Grafdigger's Cage - and none of them removes a resolved artifact; the exception is a single Hurkyl's Recall in one of the ten boards, so the Cage is answered in roughly one game in ten."
+        }
+      ],
+      "play_plan": {
+        "keep": "Any two-land hand with Mox Opal or two free artifacts and one of Weapons Manufacturing or Kappa Cannoneer.",
+        "goldfish_for": "Kappa Cannoneer on turn three; on the draw, Engineered Explosives cast for {0} to answer both boards of free artifacts first.",
+        "watch_for": "A held Welding Jar means Galvanic Blast on their Cannoneer is a wasted card, because regeneration answers damage.",
+        "posture": "race",
+        "posture_why": "Both lists kill on turn four off the same engine, so the mirror belongs to whoever resolves the Cannoneer first."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Both lists win on turn four off the same engine, so the mirror is decided by which Kappa Cannoneer resolves first and which engine survives the other's removal.",
+        "key_cards": [
+          {
+            "card": "Kappa Cannoneer",
+            "why": "Ward 4 and unblockable makes it the only body in the mirror that both sides struggle to answer."
+          },
+          {
+            "card": "Weapons Manufacturing",
+            "why": "Turns every free artifact into two damage once a sacrifice outlet is down; it is the clock that ignores blockers."
+          },
+          {
+            "card": "Galvanic Blast",
+            "why": "Postboard, four damage at instant speed for Emry or Pinnacle Emissary.",
+            "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+          },
+          {
+            "card": "Consign to Memory",
+            "why": "Postboard, one mana for either an artifact or the trigger it was cast for.",
+            "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+          }
+        ]
+      },
+      "notes": [
+        "Engineered Explosives cast for {0} destroys each nonland permanent with mana value 0, which is sixteen cards on each side. It is a symmetric reset that the player with Urza's Saga chapter three still to come wins.",
+        "Their Welding Jar regenerates an artifact, so a Galvanic Blast pointed at a Kappa Cannoneer while they hold one mana and a Jar is a card thrown away."
+      ]
+    },
+    {
+      "name": "living end",
+      "meta_share": 3.0792339466766805,
+      "winrate": 0.5421,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Living End has no mana cost at all: it is cast for free off Violent Outburst or Shardless Agent, or off its own suspend timer. Every card boarded in here attacks that fact rather than the creatures it returns, and Grafdigger's Cage stops the return itself because creature cards in graveyards can't enter the battlefield.",
+      "play": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Damping Sphere",
+          "1 Grafdigger's Cage",
+          "1 Swan Song",
+          "1 Vexing Bauble"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "2 Preordain",
+          "2 Engineered Explosives",
+          "1 Shadowspear"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Damping Sphere",
+          "1 Grafdigger's Cage",
+          "1 Swan Song",
+          "1 Vexing Bauble"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "2 Preordain",
+          "2 Engineered Explosives",
+          "1 Skateboard"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Force of Vigor",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. On our turn it costs a green card and no mana and destroys two artifacts, which is the fastest answer to Weapons Manufacturing in the field.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 4,
+          "why": "10 of the 10 captured boards run it, at four copies in this list; it costs {U} against Kappa Cannoneer and Emry.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Clarion Conqueror",
+          "count": 4,
+          "why": "5 of the 10 captured boards run it, at four copies in this list. Activated abilities of artifacts, creatures and planeswalkers can't be activated, which switches off Mox Opal, Claws of Gix, Mishra's Bauble, Tormod's Crypt and Welding Jar together.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Teferi, Time Raveler",
+          "count": 2,
+          "why": "5 of the 10 captured boards run it. Its static ability means we can cast spells only at sorcery speed, which blanks Metallic Rebuke and Consign to Memory on their turn.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Consign to Memory",
+          "verdict": "SURVIVES",
+          "why": "Cascade is a triggered ability, so one mana counters the trigger and the Living End is never cast; replicate {1} covers the second cascade in the same turn. Nothing in their board answers a one-mana instant at sorcery speed."
+        },
+        {
+          "card": "Damping Sphere",
+          "verdict": "SURVIVES",
+          "why": "Force of Vigor answers it, but while it is on the battlefield the cascaded Living End is their second spell that turn and costs {1} more, which a tapped-out cascade cannot pay."
+        },
+        {
+          "card": "Grafdigger's Cage",
+          "verdict": "SURVIVES",
+          "why": "Creature cards in graveyards can't enter the battlefield, which is the entire Living End resolution; Force of Vigor is the answer and it costs them a card from the hand cascade wants full."
+        },
+        {
+          "card": "Swan Song",
+          "verdict": "SURVIVES",
+          "why": "Living End is a sorcery, so a hard-cast or suspended copy is countered for {U}; the 2/2 Bird it makes is irrelevant against a Kappa Cannoneer that cannot be blocked."
+        },
+        {
+          "card": "Vexing Bauble",
+          "verdict": "SURVIVES",
+          "why": "It counters the cascade-cast Living End, an evoked Endurance or Subtlety, and a pitched Force of Vigor or Force of Negation, all of which spend no mana. Wistfulness evokes for a mana cost and is the one free-looking card it does not stop."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands, a blue source, one of Consign to Memory or Vexing Bauble, and an artifact engine piece.",
+        "goldfish_for": "Kappa Cannoneer on turn three behind a held Consign to Memory, so their cascade turn is the turn they lose.",
+        "watch_for": "A turn-one cycle means the cascade lands on two or three.",
+        "posture": "disrupt_first",
+        "posture_why": "An unanswered Living End puts ten or more power on the board at once, and every answer we hold costs one mana."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Cascade turns two mana into a whole reanimated board on turn three, and the free interaction protecting it costs them nothing.",
+        "key_cards": [
+          {
+            "card": "Living End",
+            "why": "Their payoff has no mana cost at all, which is why every answer in this row is aimed at free casting rather than at a creature."
+          },
+          {
+            "card": "Violent Outburst",
+            "why": "The cascade that casts it, and it makes Living End the second spell of the turn under a Damping Sphere."
+          },
+          {
+            "card": "Force of Vigor",
+            "why": "Postboard, two of our artifacts destroyed for a green card and no mana on our own turn.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Clarion Conqueror",
+            "why": "Postboard, every activated ability our artifacts have is switched off by one body.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "self_cost": "Vexing Bauble counters any spell cast for no mana, and sixteen of this mainboard's cards have a mana cost of {0}. Damping Sphere taxes our own second and third artifact each turn by {1}. Both are correct here because their entire deck - the cascade cast of Living End, an evoked Endurance or Subtlety, and a pitched Force of Negation - spends no mana at all, and cascade makes their payoff the second spell of the turn.",
+      "notes": [
+        "Vexing Bauble does not stop Wistfulness. Its evoke cost is a mana cost, so mana is spent and the counter condition is not met; Endurance, Subtlety, Force of Negation and Force of Vigor all pitch a card instead and are stopped.",
+        "Sequencing under our own Vexing Bauble: cast every {0} artifact first, then the Bauble. Urza's Saga chapter three is exempt either way because it puts the artifact onto the battlefield rather than casting it."
+      ]
+    },
+    {
+      "name": "izzet prowess",
+      "meta_share": 2.778820878708224,
+      "winrate": 0.5547,
+      "stance": "counter",
+      "stance_rationale": "One and two toughness across their whole board, so Galvanic Blast at metalcraft and one Whipflare are removal that trades up every time. The three Emry come out, which makes Whipflare one-sided: Kappa Cannoneer, Pinnacle Emissary, the Drone tokens and the Urza's Saga Constructs are all artifact creatures and take no damage from it.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Skateboard"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Preordain"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it. Sixteen of our maindeck cards are colorless spells and every payoff wins through a triggered ability.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Meltdown",
+          "count": 1,
+          "why": "8 of the 10 captured boards run it, and X=1 destroys nineteen of our permanents for two mana.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Spell Pierce",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it, and every card in this 60 except the three creatures is a noncreature spell.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Unholy Heat",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. Two damage normally, six with delirium, and Dragon's Rage Channeler's surveil turns delirium on quickly.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Four damage at metalcraft covers a delirium Dragon's Rage Channeler and a pumped Slickshot Show-Off; Spell Pierce taxes it {2} and their Consign to Memory cannot counter a red spell."
+        },
+        {
+          "card": "Whipflare",
+          "verdict": "SURVIVES",
+          "why": "Two damage to each nonartifact creature clears their board and leaves ours untouched once the Emry are out; Mutagenic Growth saves one creature for no mana, which is why three Blasts come in beside it."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands including a red source, two free artifacts for metalcraft, and one piece of removal or Weapons Manufacturing.",
+        "goldfish_for": "Metalcraft by turn two, a four-damage Galvanic Blast on their best creature, then Kappa Cannoneer behind ward 4.",
+        "watch_for": "Mutagenic Growth costs no mana at all, so removal is cast in their second main phase rather than during combat.",
+        "posture": "disrupt_first",
+        "posture_why": "Their clock only exists while creatures are on the battlefield, and every one of them dies to a metalcraft Blast."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Every creature they play grows on the spells they were casting anyway, so the clock is three turns and it does not need a second creature to get there.",
+        "key_cards": [
+          {
+            "card": "Monastery Swiftspear",
+            "why": "Haste and prowess turns a one-drop into four damage on the turn they cast two spells."
+          },
+          {
+            "card": "Cori-Steel Cutter",
+            "why": "A new attacker every turn they cast two spells, which is why one removal spell never empties the board."
+          },
+          {
+            "card": "Unholy Heat",
+            "why": "Postboard, six damage with delirium for one mana, which reaches a grown Kappa Cannoneer if it is targeted through ward.",
+            "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+          },
+          {
+            "card": "Consign to Memory",
+            "why": "Postboard, one mana for either the artifact or the trigger it was cast for.",
+            "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+          }
+        ]
+      },
+      "notes": [
+        "Shadowspear stays in on both modes. Lifelink and trample on a Kappa Cannoneer that cannot be blocked is what turns a lost race into a won one, and their board has no way to remove an Equipment."
+      ]
+    },
+    {
+      "name": "goryos vengeance",
+      "meta_share": 2.290649643259482,
+      "winrate": 0.5132,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Same package as instant reanimator - Goryo's Vengeance on Griselbrand or Atraxa - so the answers are the same and they are cheap. Grafdigger's Cage stops the return statically and costs nothing once the three Emry are out, and Swan Song answers the instant that is the whole kill.",
+      "play": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Mystical Dispute",
+          "1 Grafdigger's Cage",
+          "1 Swan Song",
+          "1 Vexing Bauble"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "2 Preordain",
+          "1 Shadowspear",
+          "1 Skateboard",
+          "1 Welding Jar"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Consign to Memory",
+          "2 Mystical Dispute",
+          "1 Grafdigger's Cage",
+          "1 Swan Song",
+          "1 Vexing Bauble"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "2 Preordain",
+          "1 Shadowspear",
+          "1 Skateboard",
+          "1 Welding Jar"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "10 of the 10 captured boards run it, at four copies in this list. It answers a colorless artifact or the trigger it was cast for, for one mana.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it, and it costs {U} against Kappa Cannoneer, Emry and Metallic Rebuke.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Wrath of the Skies",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it, and every permanent this deck plays is inside its range at two energy.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Spell Snare",
+          "count": 1,
+          "why": "9 of the 10 captured boards run it; Metallic Rebuke is the only mana value 2 card in this 60.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Consign to Memory",
+          "verdict": "SURVIVES",
+          "why": "The Atraxa enter-the-battlefield trigger is the card advantage half of the kill and this answers it for {U}; their own Consign cannot counter ours because it is blue rather than colorless."
+        },
+        {
+          "card": "Mystical Dispute",
+          "verdict": "SURVIVES",
+          "why": "Their deck is blue, so it costs {U} and taxes Force of Negation, Quantum Riddler or a hard-cast Atraxa by {3}."
+        },
+        {
+          "card": "Grafdigger's Cage",
+          "verdict": "SURVIVES",
+          "why": "Creature cards in graveyards can't enter the battlefield, which is exactly the Goryo's Vengeance return. Prismatic Ending and March of Otherworldly Light answer it from the maindeck, which is why it is one of five answers rather than the plan."
+        },
+        {
+          "card": "Swan Song",
+          "verdict": "SURVIVES",
+          "why": "Goryo's Vengeance is an instant and Faithful Mending a sorcery, so one blue mana answers either half; the 2/2 Bird cannot block an unblockable Cannoneer."
+        },
+        {
+          "card": "Vexing Bauble",
+          "verdict": "SURVIVES",
+          "why": "Force of Negation and an evoked Solitude are both cast for no mana and are both in all ten captured maindecks, so the Bauble is live on the turn that matters."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands with a blue source, an engine artifact, and one of the four boarded answers to the reanimation turn.",
+        "goldfish_for": "Kappa Cannoneer on three with Swan Song up, so their end-of-turn Goryo's Vengeance is the play that loses the game.",
+        "watch_for": "Two open mana plus a discard to Psychic Frog is the reanimation turn; do not tap out on our own third turn.",
+        "posture": "disrupt_first",
+        "posture_why": "One held one-mana answer beats a two-mana instant more cheaply than any clock outruns it."
+      },
+      "opponent_plan": {
+        "posture": "bait",
+        "posture_why": "Thoughtseize and Force of Negation clear the one answer we hold, then a two-mana instant does everything at the end of our turn.",
+        "key_cards": [
+          {
+            "card": "Goryo's Vengeance",
+            "why": "The kill is one two-mana instant returning a legend from the graveyard with haste."
+          },
+          {
+            "card": "Griselbrand",
+            "why": "Pay 7 life, draw seven, repeatable - the body does not need to survive the end step."
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, one sorcery answers our whole board at two energy.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Consign to Memory",
+            "why": "Postboard, one mana for the artifact or for the trigger it was cast for.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "self_cost": "Vexing Bauble counters any spell cast for no mana, and sixteen of this mainboard's cards have a mana cost of {0}, so it has to be the last artifact deployed in a turn. It comes in because all ten captured lists run Force of Negation and Solitude, both of which are cast for no mana on the turn that decides the game.",
+      "notes": [
+        "Tormod's Crypt is held rather than cracked. Goryo's Vengeance reads the graveyard on resolution, so the Crypt is sacrificed with the Vengeance on the stack.",
+        "Welding Jar comes out: their captured lists carry no artifact destruction at all, so regeneration has nothing to regenerate against."
+      ]
+    },
+    {
+      "name": "boros aggro",
+      "meta_share": 2.2906496432594814,
+      "winrate": 0.5128,
+      "stance": "counter",
+      "stance_rationale": "Their board is one and two toughness bodies that snowball, and Whipflare deals 2 to each nonartifact creature - which after this row's three Emry come out is every creature they have and none of ours. Galvanic Blast at metalcraft covers the ones that arrive afterwards.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "1 Whipflare"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Skateboard"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it, and every permanent in this 60 is inside its range at two or three energy.",
+          "source_tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+        },
+        {
+          "card": "Vexing Bauble",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it, and it counters every one of our sixteen {0} spells because no mana is spent to cast them.",
+          "source_tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+        },
+        {
+          "card": "High Noon",
+          "count": 2,
+          "why": "9 of the 10 captured boards run it. Each player can't cast more than one spell each turn, which halves a deck whose turns are four free artifacts.",
+          "source_tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+        },
+        {
+          "card": "Obsidian Charmaw",
+          "count": 2,
+          "why": "8 of the 10 captured boards run it. It costs {1} less for each of our lands that could produce {C}, which is all four Urza's Saga, and it destroys a nonbasic land on the way in.",
+          "source_tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Four damage at metalcraft covers Ragavan, Seasoned Pyromancer, Voice of Victory and the Ajani body; their board holds no counterspell and Vexing Bauble does not stop a spell we pay {R} for."
+        },
+        {
+          "card": "Whipflare",
+          "verdict": "SURVIVES",
+          "why": "Two damage to each nonartifact creature is their whole curve and, with the Emry out, none of ours; Guide of Souls, Ocelot Pride, Ragavan and every token die to it at once."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands with a red source, two free artifacts, and a Whipflare or Galvanic Blast after boarding.",
+        "goldfish_for": "Whipflare on turn two or three into Kappa Cannoneer, so their rebuilt board is attacking into a ward-4 blocker.",
+        "watch_for": "Life gained on their turn doubles their tokens at end step; sweep early.",
+        "posture": "disrupt_first",
+        "posture_why": "Their board compounds, so a sweeper on turn three is worth more than two removal spells on turn five."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Ocelot Pride and Guide of Souls compound every creature into more creatures and life, so the board doubles rather than grows and the clock is three or four turns.",
+        "key_cards": [
+          {
+            "card": "Ocelot Pride",
+            "why": "Copies every token made on a turn they gained life, which is how one removal spell stops mattering."
+          },
+          {
+            "card": "Goblin Bombardment",
+            "why": "Turns the surplus tokens into damage, so chump blocking against them does not buy turns."
+          },
+          {
+            "card": "Vexing Bauble",
+            "why": "Postboard, it counters sixteen of our maindeck cards for one mana.",
+            "source_tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+          },
+          {
+            "card": "Obsidian Charmaw",
+            "why": "Postboard, it is discounted by our own Urza's Saga and destroys one of our seventeen lands.",
+            "source_tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+          }
+        ]
+      },
+      "notes": [
+        "Skateboard comes out on the draw rather than the Preordain: giving Kappa Cannoneer haste only matters when we are the beatdown, and on the draw we are not.",
+        "Obsidian Karn-style land destruction is cheapest against us specifically - Obsidian Charmaw costs {1} less per land of ours that could produce {C}, and all four Urza's Saga qualify."
+      ]
+    },
+    {
+      "name": "45c aggro",
+      "meta_share": 2.102891475779196,
+      "winrate": null,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Their threats are cheap and enormous - Scion of Draco and Territorial Kavu cost almost nothing off Leyline of the Guildpact - and the only thing that makes them small again is their own manabase. Blood Moon attacks the cost-reduction and the colours at once, and Galvanic Blast covers Ragavan and the smaller half.",
+      "play": {
+        "in": [
+          "1 Blood Moon",
+          "3 Galvanic Blast"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "1 Blood Moon",
+          "3 Galvanic Blast"
+        ],
+        "out": [
+          "3 Emry, Lurker of the Loch",
+          "1 Preordain"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it. Sixteen of our maindeck cards are colorless spells and every payoff wins through a triggered ability.",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it, and it costs {U} against Kappa Cannoneer and Emry.",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Wrath of the Skies",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it, and every permanent this deck plays is inside its range at two energy.",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Obsidian Charmaw",
+          "count": 2,
+          "why": "9 of the 10 captured boards run it. It costs {1} less for each of our lands that could produce {C} - all four Urza's Saga - and destroys a nonbasic land.",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Blood Moon",
+          "verdict": "SURVIVES",
+          "why": "Their captured lists keep Leyline of the Guildpact, which grants every basic land type - but a Blood Moon resolving after it has the later timestamp and sets their nonbasic lands to Mountains, and a Leyline hard-cast for five colours afterwards is not castable off Mountains. The answer they do have is Wrath of the Skies, in all ten captured boards at three copies: Blood Moon is mana value 3, so three energy destroys it - and the same three energy destroys their own cheap permanents. It is contested rather than blanked, and the Moon has usually already cost them a turn of mana by then."
+        },
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Four damage at metalcraft kills Ragavan and Phelia; it does not kill a Territorial Kavu, which is why the Moon and not the Blast is the plan. Their Consign to Memory cannot counter a red spell."
+        }
+      ],
+      "play_plan": {
+        "keep": "Blood Moon plus two lands, or two lands and two free artifacts with Weapons Manufacturing.",
+        "goldfish_for": "Blood Moon on turn two off a metalcraft Mox Opal, then Munitions drain while they hold uncastable five-colour cards.",
+        "watch_for": "Leyline of the Guildpact on the battlefield before the first turn means the Moon still wins the timestamp; a hard-cast Leyline after it does not exist under Mountains.",
+        "posture": "lock",
+        "posture_why": "Their cost reduction and their colours are both their manabase, and one card takes both away."
+      },
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Leyline of the Guildpact makes their two biggest creatures cost almost nothing, so a turn-two four-power body backed by Leyline Binding is the normal draw.",
+        "key_cards": [
+          {
+            "card": "Leyline of the Guildpact",
+            "why": "Every land becomes every basic land type, which is what makes their whole curve cost one or two mana."
+          },
+          {
+            "card": "Territorial Kavu",
+            "why": "The payoff of that manabase: an enormous body for two or three mana that our removal does not reach."
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, one sorcery answers our entire board at two energy.",
+            "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+          },
+          {
+            "card": "Obsidian Charmaw",
+            "why": "Postboard, discounted by our own Urza's Saga and it destroys one of our seventeen lands.",
+            "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+          }
+        ]
+      },
+      "self_cost": "Blood Moon turns thirteen of our seventeen lands into Mountains and takes the chapter abilities off all four Urza's Saga, leaving two Island and four Mox Opal to pay every blue pip. It is correct here only because their manabase is a five-colour pile of Triomes, shocklands and fetchlands with almost no basics behind it, so the same card costs them the whole deck.",
+      "notes": [
+        "The capture records no row for this archetype, so the boarding row carries `\"winrate\": null` and the dossier records winrate_basis kind 'absent'. Nothing here is priced off a measured win rate.",
+        "Blood Moon after their Leyline of the Guildpact is the later timestamp and wins the layer; Blood Moon before an opening-hand Leyline that was already on the battlefield is also later. The case it loses is a Leyline cast after the Moon, which needs five colours off Mountains."
+      ]
+    },
+    {
+      "name": "dimir control",
+      "meta_share": 2.102891475779196,
+      "winrate": 0.6067,
+      "stance": "counter",
+      "stance_rationale": "Their answers are one-for-one and ours are permanents that replace themselves - Urza's Saga fetches, Weapons Manufacturing makes a token per artifact - so the matchup is decided on the stack rather than on the board. Two Mystical Dispute and a Swan Song turn their key spells off for one mana each, which is the exchange rate a control deck cannot afford.",
+      "play": {
+        "in": [
+          "2 Mystical Dispute",
+          "1 Swan Song"
+        ],
+        "out": [
+          "1 Shadowspear",
+          "1 Skateboard",
+          "1 Preordain"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Mystical Dispute",
+          "1 Swan Song"
+        ],
+        "out": [
+          "1 Shadowspear",
+          "1 Skateboard",
+          "1 Preordain"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Engineered Explosives",
+          "count": 2,
+          "why": "11 of the captured board slots across 10 lists. At one counter it destroys sixteen {0} artifacts, at two it takes Weapons Manufacturing and Pinnacle Emissary.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "10 of the 10 captured boards run it, at four copies in this list. Every artifact we cast is a colorless spell.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 3,
+          "why": "10 of the 10 captured boards run it, and it costs {U} against Kappa Cannoneer, Emry and Metallic Rebuke.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Damnation",
+          "count": 2,
+          "why": "6 of the 10 captured boards run it. It destroys all creatures and they can't be regenerated, so Welding Jar does not save the Cannoneer from it.",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Mystical Dispute",
+          "verdict": "SURVIVES",
+          "why": "Their deck is blue, so it costs {U} and taxes Counterspell, Force of Negation, Subtlety, Murktide Regent and Wan Shi Tong by {3}; their own Consign to Memory cannot counter it because it is blue rather than colorless."
+        },
+        {
+          "card": "Swan Song",
+          "verdict": "SURVIVES",
+          "why": "Counterspell, Fatal Push, Sheoldred's Edict, Toxic Deluge, Damnation and Consult the Star Charts are all instants or sorceries, so one blue mana answers whichever one is aimed at the engine. The 2/2 Bird gives them a blocker Kappa Cannoneer ignores."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands with a blue source, a threat, and two free artifacts.",
+        "goldfish_for": "Kappa Cannoneer resolved with Metallic Rebuke or Mystical Dispute held up.",
+        "watch_for": "A flashed Orcish Bowmasters on our Mishra's Bauble draw is a two-for-one; crack Baubles on their end step when the Bowmasters is already down.",
+        "posture": "grind",
+        "posture_why": "Urza's Saga and Weapons Manufacturing both replace themselves, so a long game favours us against a deck of one-for-ones."
+      },
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "Every card in their 60 answers one of ours and two of them draw more answers, so they win by being the last deck with cards rather than by attacking.",
+        "key_cards": [
+          {
+            "card": "Counterspell",
+            "why": "Two mana for whichever of our permanents actually matters; their whole plan is one-for-one exchanges."
+          },
+          {
+            "card": "Orcish Bowmasters",
+            "why": "Punishes Mishra's Bauble's delayed draw and every Preordain, and it amasses a body while doing it."
+          },
+          {
+            "card": "Engineered Explosives",
+            "why": "Postboard, one card answers sixteen of ours at a single charge counter.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          },
+          {
+            "card": "Consign to Memory",
+            "why": "Postboard, one mana for either an artifact or the trigger it was cast for.",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "notes": [
+        "Welding Jar stays in but does not answer Damnation - creatures destroyed by it can't be regenerated. It is for Engineered Explosives and Fatal Push."
+      ]
+    },
+    {
+      "name": "dimir frog",
+      "meta_share": 1.9902365752910252,
+      "winrate": null,
+      "stance": "counter",
+      "stance_rationale": "Psychic Frog, Orcish Bowmasters, Tamiyo and Murktide Regent are the whole clock and every one of them dies to a metalcraft Galvanic Blast except the Regent, which is why removal and not a sweeper is the plan. Mystical Dispute is a one-mana answer to their two- and three-mana interaction.",
+      "play": {
+        "in": [
+          "3 Galvanic Blast",
+          "2 Mystical Dispute"
+        ],
+        "out": [
+          "1 Shadowspear",
+          "1 Skateboard",
+          "2 Preordain",
+          "1 Pithing Needle"
+        ]
+      },
+      "draw": {
+        "in": [
+          "3 Galvanic Blast",
+          "2 Mystical Dispute"
+        ],
+        "out": [
+          "1 Skateboard",
+          "2 Preordain",
+          "1 Pithing Needle",
+          "1 Welding Jar"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Consign to Memory",
+          "count": 2,
+          "why": "11 of the captured board slots across 10 lists. Every artifact we cast is a colorless spell and every payoff wins through a triggered ability.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Engineered Explosives",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it. At one charge counter it destroys sixteen of our maindeck cards for two mana.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Harbinger of the Seas",
+          "count": 2,
+          "why": "9 of the 10 captured boards run it. Nonbasic lands are Islands, which takes the chapter abilities off all four Urza's Saga and leaves us no red mana for Weapons Manufacturing.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Mystical Dispute",
+          "count": 2,
+          "why": "10 of the 10 captured boards run it, and it costs {U} against Kappa Cannoneer and Emry.",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Galvanic Blast",
+          "verdict": "SURVIVES",
+          "why": "Four damage at metalcraft kills Psychic Frog, Orcish Bowmasters and Tamiyo; their Consign to Memory cannot counter a red spell and Engineered Explosives does not answer an instant."
+        },
+        {
+          "card": "Mystical Dispute",
+          "verdict": "SURVIVES",
+          "why": "Their deck is blue, so it costs {U} and taxes Counterspell, Force of Negation, Subtlety and Murktide Regent by {3}."
+        }
+      ],
+      "play_plan": {
+        "keep": "Two lands including a red source, two free artifacts, and one of Weapons Manufacturing, Kappa Cannoneer or a Blast.",
+        "goldfish_for": "Metalcraft by turn two so the first Galvanic Blast kills Psychic Frog before it has counters on it.",
+        "watch_for": "A Harbinger of the Seas takes the Saga chapters and our red mana.",
+        "posture": "disrupt_first",
+        "posture_why": "Their clock is one two-mana creature at a time; kill it small."
+      },
+      "opponent_plan": {
+        "posture": "disrupt_first",
+        "posture_why": "Thoughtseize and cheap counters strip the engine piece, and only then does a two-mana creature start attacking; the clock is slow on purpose.",
+        "key_cards": [
+          {
+            "card": "Psychic Frog",
+            "why": "A two-mana creature that grows on their own discards and draws a card every time it connects."
+          },
+          {
+            "card": "Thoughtseize",
+            "why": "Takes Weapons Manufacturing or Kappa Cannoneer out of the hand before it can be protected."
+          },
+          {
+            "card": "Harbinger of the Seas",
+            "why": "Postboard, it makes our nonbasic lands Islands, which takes the Urza's Saga chapters and all our red mana.",
+            "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+          },
+          {
+            "card": "Engineered Explosives",
+            "why": "Postboard, one charge counter answers sixteen of our cards.",
+            "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+          }
+        ]
+      },
+      "notes": [
+        "Shadowspear stays in on the draw. Lifelink on a Kappa Cannoneer that cannot be blocked is what beats a Psychic Frog that has been growing for three turns, and on the draw that is the game we are in.",
+        "Pithing Needle comes out on both modes: Psychic Frog's discard-a-card ability and Murktide's delve are not activated abilities Needle can name usefully, and their captured lists carry no planeswalker except Tamiyo and Kaito."
+      ]
+    }
+  ],
+  "sideboard_audit": [
+    {
+      "card": "Blood Moon",
+      "copies": 1,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "45c aggro",
+        "broodscale bloodchief",
+        "eldrazi ramp"
+      ],
+      "cumulative_meta_share": 13.6688,
+      "why": "Three rows reach for it and all three are decks whose mana is greedier than ours: eldrazi ramp and broodscale bloodchief both run Eldrazi Temple and Ugin's Labyrinth, and 45c aggro's whole curve is priced by Leyline of the Guildpact. One copy, because ten of ten broodscale boards answer it with Nature's Claim and it costs us four Urza's Saga while it is out."
+    },
+    {
+      "card": "Consign to Memory",
+      "copies": 3,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "broodscale bloodchief",
+        "eldrazi ramp",
+        "esper blink",
+        "goryos vengeance",
+        "instant reanimator",
+        "living end"
+      ],
+      "cumulative_meta_share": 29.1025,
+      "why": "The single widest card in the box. It counters a colorless spell or a triggered ability for {U}, and the six rows that reach for it cover the Eldrazi shells, both reanimation shells, living end's cascade trigger and esper blink's entire enter-the-battlefield engine."
+    },
+    {
+      "card": "Damping Sphere",
+      "copies": 2,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "broodscale bloodchief",
+        "eldrazi ramp",
+        "living end"
+      ],
+      "cumulative_meta_share": 14.6451,
+      "why": "Two copies for the three rows whose lands make two mana at a time - eldrazi ramp and broodscale bloodchief run Eldrazi Temple and Ugin's Labyrinth, and living end's cascade makes its payoff the second spell of the turn. It taxes our own multi-artifact turns, which is why it is two and not three."
+    },
+    {
+      "card": "Galvanic Blast",
+      "copies": 3,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "45c aggro",
+        "boros aggro",
+        "boros ponza",
+        "devoted combo",
+        "dimir frog",
+        "izzet prowess",
+        "pinnacle affinity",
+        "ur cutter prowess"
+      ],
+      "cumulative_meta_share": 23.6951,
+      "why": "Eight rows, and metalcraft is on by turn two in this deck, so it is four damage at instant speed for one red mana. It covers every creature in the prowess shells, boros aggro's whole curve, devoted combo's two combo pieces and dimir frog's Psychic Frog."
+    },
+    {
+      "card": "Grafdigger's Cage",
+      "copies": 1,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "devoted combo",
+        "goryos vengeance",
+        "instant reanimator",
+        "living end",
+        "pinnacle affinity"
+      ],
+      "cumulative_meta_share": 17.7995,
+      "why": "Five rows. It stops Goryo's Vengeance returning a legend, Living End putting creatures back, and devoted combo's three library-to-battlefield tutors. Every row that boards it also boards out all three Emry, which is what makes it one-sided."
+    },
+    {
+      "card": "Mystical Dispute",
+      "copies": 2,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "dimir control",
+        "dimir frog",
+        "esper blink",
+        "goryos vengeance",
+        "instant reanimator"
+      ],
+      "cumulative_meta_share": 18.5505,
+      "why": "Five blue rows. It costs {U} against their own blue spells and taxes Counterspell, Force of Negation, Subtlety and Murktide Regent by {3}, which is the exchange rate that beats a deck of one-for-ones."
+    },
+    {
+      "card": "Swan Song",
+      "copies": 1,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "boros ponza",
+        "dimir control",
+        "goryos vengeance",
+        "instant reanimator",
+        "living end"
+      ],
+      "cumulative_meta_share": 15.3586,
+      "why": "Five rows where the card that decides the game is an instant, a sorcery or an enchantment - Goryo's Vengeance, Living End itself, Wrath of the Skies and Counterspell. The 2/2 Bird it gives them does not block Kappa Cannoneer, which cannot be blocked the turn an artifact entered."
+    },
+    {
+      "card": "Vexing Bauble",
+      "copies": 1,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "esper blink",
+        "goryos vengeance",
+        "living end"
+      ],
+      "cumulative_meta_share": 13.0304,
+      "why": "Three rows where their best cards are cast for no mana at all: an evoked Solitude in esper blink, a cascaded Living End, and Force of Negation in all ten goryos vengeance lists. It counters sixteen of our own cards too, so it is one copy and it is the last artifact deployed each turn."
+    },
+    {
+      "card": "Whipflare",
+      "copies": 1,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "matchups_served": [
+        "boros aggro",
+        "devoted combo",
+        "izzet prowess",
+        "ur cutter prowess"
+      ],
+      "cumulative_meta_share": 13.068,
+      "why": "Four rows of one-and-two-toughness creatures. Every creature this deck fields except Emry is an artifact creature, so with the three Emry boarded out it is a one-sided sweeper for two mana."
+    }
+  ],
+  "deck_tech": [
+    {
+      "name": "Engineered Explosives, and the number sunburst can actually reach",
+      "kind": "card",
+      "quirk": "Sunburst counts the COLOURS of mana spent, and a two-colour manabase reaches two; the third counter exists only because Mox Opal adds one mana of any colour.",
+      "cards": [
+        "Engineered Explosives",
+        "Mox Opal"
+      ],
+      "lines": [
+        {
+          "mode": "cast for {0}, zero counters",
+          "matchups": [
+            "pinnacle affinity"
+          ],
+          "why": "Destroys each nonland permanent with mana value 0, which is sixteen cards on each side of the mirror. The player with Urza's Saga chapter three still to come wins the reset."
+        },
+        {
+          "mode": "one counter, one coloured source",
+          "matchups": [
+            "esper blink",
+            "boros aggro",
+            "dimir frog"
+          ],
+          "why": "Ephemerate, Ocelot Pride, Guide of Souls and Fatal Push all sit at mana value 1, and one counter costs a single mana."
+        },
+        {
+          "mode": "two counters, one blue and one red",
+          "matchups": [
+            "izzet prowess",
+            "ur cutter prowess",
+            "dimir control"
+          ],
+          "why": "Cori-Steel Cutter and Counterspell are mana value 2, and two counters need one mana of each of our two colours."
+        },
+        {
+          "mode": "three counters, Mox Opal supplies the third colour",
+          "matchups": [
+            "45c aggro"
+          ],
+          "why": "Only a metalcraft Mox Opal can add a third colour of mana, which is the one way this deck reaches mana value 3."
+        }
+      ]
+    },
+    {
+      "name": "The Munitions drain",
+      "kind": "loop",
+      "quirk": "Weapons Manufacturing turns every nontoken artifact into a token whose leaves-the-battlefield trigger deals 2, and Claws of Gix is the sacrifice outlet that fires it on demand.",
+      "cards": [
+        "Weapons Manufacturing",
+        "Claws of Gix",
+        "Emry, Lurker of the Loch",
+        "Mishra's Bauble",
+        "Urza's Saga"
+      ],
+      "loop": [
+        "Cast any nontoken artifact - sixteen of this mainboard cost {0} - and Weapons Manufacturing creates a Munitions token.",
+        "Pay {1} and sacrifice that Munitions token to Claws of Gix; the token's leaves-the-battlefield trigger deals 2 damage to any target.",
+        "Tap Emry, Lurker of the Loch to cast one of those artifacts again out of the graveyard, which makes another Munitions token, and repeat for {1} plus that artifact's cost."
+      ],
+      "lines": [
+        {
+          "mode": "point the 2 damage at their face",
+          "matchups": [
+            "boros ponza",
+            "dimir control",
+            "eldrazi ramp"
+          ],
+          "why": "Against decks with no creatures worth killing the drain is the clock, and it works through a sweeper because the damage is already on the stack."
+        },
+        {
+          "mode": "point the 2 damage at a creature",
+          "matchups": [
+            "boros aggro",
+            "izzet prowess",
+            "dimir frog",
+            "devoted combo"
+          ],
+          "why": "Guide of Souls, Ocelot Pride, Monastery Swiftspear, Psychic Frog and Devoted Druid are all inside two damage, so each token is a removal spell that costs no card."
+        }
+      ]
+    },
+    {
+      "name": "Which deck this hand is",
+      "kind": "path",
+      "quirk": "Two different decks share these sixty cards - a ward-4 unblockable clock, and an engine that drains without attacking - and the opening seven picks one.",
+      "cards": [
+        "Kappa Cannoneer",
+        "Weapons Manufacturing",
+        "Claws of Gix",
+        "Urza's Saga",
+        "Metallic Rebuke"
+      ],
+      "lines": [
+        {
+          "mode": "the Kappa clock",
+          "matchups": [
+            "esper blink",
+            "dimir control",
+            "instant reanimator",
+            "goryos vengeance"
+          ],
+          "why": "Against decks whose removal is targeted or whose interaction is on the stack, ward 4 and unblockable is the threat they have to answer on our terms."
+        },
+        {
+          "mode": "the Munitions drain",
+          "matchups": [
+            "boros ponza",
+            "eldrazi ramp",
+            "broodscale bloodchief"
+          ],
+          "why": "Against sweepers and against decks that go over the top, damage already on the stack beats a permanent on the battlefield."
+        },
+        {
+          "mode": "the Urza's Saga toolbox",
+          "matchups": [
+            "any"
+          ],
+          "why": "When the hand is neither, chapter three finds whichever one-mana artifact the matchup wants and does it without casting a spell."
+        }
+      ]
+    },
+    {
+      "name": "Vexing Bauble counts our own free spells",
+      "kind": "card",
+      "quirk": "It counters any spell cast for no mana, and sixteen of this mainboard's cards have a mana cost of {0}, so the order the turn is played in decides whether it is a hate piece or a Stone Rain on our own hand.",
+      "cards": [
+        "Vexing Bauble",
+        "Mox Opal",
+        "Mishra's Bauble",
+        "Tormod's Crypt",
+        "Claws of Gix",
+        "Welding Jar",
+        "Urza's Saga"
+      ],
+      "lines": [
+        {
+          "mode": "empty the free artifacts first, Bauble last",
+          "matchups": [
+            "esper blink",
+            "goryos vengeance"
+          ],
+          "why": "Everything cast before it resolves normally; everything cast after it is countered, so it is the last spell of the turn and never the first."
+        },
+        {
+          "mode": "let Urza's Saga chapter three supply the artifact",
+          "matchups": [
+            "living end"
+          ],
+          "why": "Chapter three puts the artifact onto the battlefield rather than casting it, so no spell is cast and the Bauble never triggers."
+        }
+      ]
+    }
+  ],
+  "meta_calls": [
+    {
+      "call": "a graveyard-and-free-cast room",
+      "kind": "field",
+      "trigger": {
+        "matchups": [
+          "instant reanimator",
+          "goryos vengeance",
+          "living end"
+        ],
+        "share_pp": 9.88,
+        "over_pp": 12.0
+      },
+      "why": "Three shells that win off the graveyard, and all three cast their key card for no mana; a second Cage answers each of them statically rather than one at a time.",
+      "cost": "The Blood Moon slot, which only three rows reach for and which ten of ten broodscale boards answer with Nature's Claim.",
+      "board": {
+        "in": [
+          "1 Grafdigger's Cage"
+        ],
+        "out": [
+          "1 Blood Moon"
+        ]
+      }
+    },
+    {
+      "call": "eldrazi ramp",
+      "kind": "archetype",
+      "trigger": {
+        "matchups": [
+          "eldrazi ramp"
+        ],
+        "share_pp": 4.62,
+        "over_pp": 6.5
+      },
+      "why": "The worst row we recorded, at 0.3636 over 70 matches, and the reason is Eldrazi Temple and Ugin's Labyrinth each making two mana. A third Sphere makes both of them make one.",
+      "cost": "The Whipflare slot, so boros aggro, izzet prowess, ur cutter prowess and devoted combo all lose their sweeper and fall back on three Galvanic Blast.",
+      "board": {
+        "in": [
+          "1 Damping Sphere"
+        ],
+        "out": [
+          "1 Whipflare"
+        ]
+      }
+    },
+    {
+      "call": "Nature's Claim",
+      "kind": "card",
+      "trigger": {
+        "matchups": [
+          "broodscale bloodchief"
+        ],
+        "share_pp": 6.95,
+        "over_pp": 8.5
+      },
+      "why": "Ten of ten captured broodscale boards run it at two copies, and it answers Weapons Manufacturing, Mox Opal or a resolved Blood Moon for one green mana.",
+      "cost": "The Swan Song slot, so living end, goryos vengeance, instant reanimator, boros ponza and dimir control lose their one-mana answer to an instant or a sorcery.",
+      "board": {
+        "in": [
+          "1 Welding Jar"
+        ],
+        "out": [
+          "1 Swan Song"
+        ]
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "matchup": "eldrazi ramp",
+      "why": "The capture records 0.3636 over 70 matches, the worst measured row in the field, and nothing in the box fixes it. Ten of ten captured boards hold Trinisphere, which prices sixteen {0} cards at three mana each, and the two cards that attack their mana - Blood Moon and Damping Sphere - tax our own manabase and our own multi-artifact turns as well. The row is a race we lose more often than we win."
+    },
+    {
+      "matchup": "broodscale bloodchief",
+      "why": "The capture records 0.4234 over 58 matches at 6.95pp, the second largest row in the field. Their board answers our hate pieces more cheaply than we deploy them - two Nature's Claim in ten of ten boards for the Blood Moon or the Damping Sphere, Trinisphere for the sixteen free artifacts, Disruptor Flute for the payoff - and this 75 carries no answer to a resolved Trinisphere at all."
+    }
+  ]
+}

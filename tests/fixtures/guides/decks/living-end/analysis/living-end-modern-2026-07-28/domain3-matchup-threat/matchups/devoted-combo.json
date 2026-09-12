@@ -1,0 +1,483 @@
+{
+ "name": "devoted combo",
+ "meta_share": 3.8818565400843883,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "statistics_matchups(format=modern, archetype_a=\"living end\", archetype_b=\"devoted combo\") returned {\"hint\": \"No matchup data for this archetype/pair. Data depends on tournament pairing records.\", \"results\": []} -- zero rows. statistics_archetypes carries no winrate field for Modern, and this run's fingerprint (.protocol/meta-state.json, captured_at 2026-08-24) records winrate_vs_field as an EMPTY OBJECT, {} with zero keys -- not a table of zeros, which is what the sibling sidecars in this wiki still say. No head-to-head number exists to record."
+ },
+ "primary_gameplan": "Cycle Street Wraith/Generous Ent/Curator of Mysteries to load the graveyard and hold Subtlety, not Force of Negation, for Tyvar, Jubilant Brawler; cascade off Violent Outburst or Shardless Agent once the graveyard is loaded and no Vexing Bauble is on their battlefield.",
+ "secondary_gameplan": "If the cascade window closes (a resolved Vexing Bauble, or a Drannith Magistrate off Green Sun's Zenith), fall back to Damping Matrix and Dismember on the mana engine, Force of Vigor on Leyline of Abundance, and hard-cast Wistfulness with {G}{G} to exile the enchantment while Endurance and Subtlety hold the board.",
+ "opponent_gameplan": "Badgermole Cub and Leyline of Abundance each read 'Whenever you tap a creature for mana, add an additional {G}', so with one down a Devoted Druid taps for two green and with both down for three. Devoted Druid's own 'Put a -1/-1 counter on this creature: Untap this creature' recurs that, free and unbounded once the 1-of Vizier of Remedies reduces the counter to zero, and once per turn regardless off Tyvar, Jubilant Brawler's '+1: Untap up to one target creature'. Green Sun's Zenith and Nature's Rhythm convert the pile of green into Craterhoof Behemoth, or into Walking Ballista where the list runs one. Delighted Halfling's second mana ability makes any legendary spell it pays for uncounterable, which is how Tyvar, Jubilant Brawler resolves through Force of Negation.",
+ "tournament_refs": [
+  {
+   "pilot": "Egeyama Tomoki",
+   "finish": 2,
+   "date": "2026-08-22",
+   "tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "pilot": "meanfannypack",
+   "finish": 3,
+   "date": "2026-08-22",
+   "tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+  },
+  {
+   "pilot": "Caz Rodriguez",
+   "finish": 5,
+   "date": "2026-08-22",
+   "tournament_id": "a95e0f70-4cb4-486b-ab71-80d4fca36392"
+  },
+  {
+   "pilot": "MC_amp2267",
+   "finish": 13,
+   "date": "2026-08-22",
+   "tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+  }
+ ],
+ "pitfalls": [
+  "Treating this row as a second archetype. Across 10 recent top-8 lists per label, `devoted combo` and this wiki's `creatures toolbox` share an identical seven-card four-of core -- 4 Badgermole Cub, 4 Delighted Halfling, 4 Devoted Druid, 4 Green Sun's Zenith, 4 Nature's Rhythm, 4 Leyline of Abundance, 4 Tyvar, Jubilant Brawler -- present in 20 of 20 lists, plus 2 Birds of Paradise in 20 of 20. The rest of the shell is near-universal rather than universal, and the exact counts matter because they are the evidence: Vizier of Remedies is 1-of in 18 of 20 and a 2-of in decks 879293 and 878822; Fiend Artisan is a 2-of in deck 878794; Duskwatch Recruiter is absent from deck 879067; and Underground Mortuary is absent from decks 882367 and 879293, the latter running Lair of the Hydra instead. They are ONE deck under two unmerged archetype ids (c4fc27b7-4e36-4b08-a070-4d5824a6d1a6 versus c22029ff-3de2-424e-85bc-c270daf9558a), and the labels are temporally disjoint -- zero `creatures toolbox` decks dated on or after 2026-08-13, zero `devoted combo` decks dated on or before 2026-08-10, overlapping only on 2026-08-11 and 2026-08-12 (decks 879293 and 879301). This is a relabel, so `creatures toolbox` is the retired id. The shares are NOT double-counted: `shares` partitions 100pp over deck counts at 0.074683pp per deck, so 43 + 44 = 87 decks = 6.4974pp is this deck's true single share and a slot serving both rows is credited once per half. What the split does cost is ranking - 6.4974pp is the field's #3 archetype, behind instant reanimator and broodscale bloodchief, and each half reads as an #8/#9 - and currency, because only the 44 recent lists reflect the live board.",
+  "Expecting Subtlety to ANSWER Tyvar, Jubilant Brawler. Two separate errors sit here. First, Force of Negation is dead on a Tyvar the opponent paid for with Delighted Halfling's SECOND ability ('{T}: Add one mana of any color. Spend this mana only to cast a legendary spell, and that spell can't be countered') -- but only then. Halfling's first ability is '{T}: Add {C}' and confers no uncounterability at all, so an untapped Halfling is a warning, not a rule. Second, Subtlety is not the answer: its OWNER chooses, and the text is 'Its owner puts it on their choice of the top or bottom of their library'. Against a resolved-on-the-stack Tyvar they take top and recast it next turn, so Subtlety buys one turn here and nothing more. Treat it as a tempo card in this matchup, not as removal.",
+  "Reading Damping Matrix as a total lock here. Tyvar, Jubilant Brawler's '+1: Untap up to one target creature' is a LOYALTY ability of a planeswalker, not an activated ability of an artifact or a creature, so Damping Matrix does not touch it -- and Tyvar is a 4-of in 10 of 10 pulled lists. Matrix shuts off the free repeating Devoted Druid untap, Walking Ballista, Agatha's Soul Cauldron, Fiend Artisan and Duskwatch Recruiter; it leaves them one untap per turn.",
+  "Tapping out for Damping Matrix into open {B}{G}. Abrupt Decay ('This spell can't be countered. Destroy target nonland permanent with mana value 3 or less') is in 8 of 10 pulled sideboards and Damping Matrix is exactly mana value 3, so it is the single worst artifact in the 15 to walk into their untapped duals. Force of Vigor is in 7 of 10 and Boseiju, Who Endures is maindeck in 10 of 10.",
+  "Boarding Tormod's Crypt. It is mana value 0 and a legal cascade hit under Violent Outburst/Shardless Agent's mana value 3, their engine is on the battlefield rather than in the graveyard, and Collector Ouphe ('Activated abilities of artifacts can't be activated') is in 9 of 10 pulled sideboards -- absent only from deck 881870 -- which blanks the Crypt's only ability outright.",
+  "Assuming Endurance's graveyard clause is dead here, as this wiki's `creatures toolbox` sidecar says. Nature's Rhythm has 'Harmonize {X}{G}{G}{G}{G} (You may cast this card from your graveyard for its harmonize cost...)' and is a 4-of in 10 of 10 lists, and Dewdrop Cure ('Return up to two target creature cards each with mana value 2 or less from your graveyard to the battlefield') is in 4 of 10 sideboards. The strip mode has real targets in this matchup.",
+  "Repeating this wiki's `creatures toolbox` claim that Damping Matrix is symmetric_counter against our own cycling. It is not, and the contradiction is resolved under stance_rationale: CR 109.2 scopes 'artifacts and creatures' to permanents on the battlefield, and a Street Wraith being cycled is a creature CARD in a hand."
+ ],
+ "hands_keep": [
+  {
+   "cards": [
+    "Wistfulness",
+    "Commercial District",
+    "Force of Negation",
+    "Colossal Skyturtle",
+    "Misty Rainforest",
+    "Mountain",
+    "Shardless Agent"
+   ],
+   "reason": "three lands, a cascade spell and two pieces of free interaction. It FAILS the deck's baseline keepable predicate (decks/living-end/evidence-spec.json requires at least two cyclers; this hand has one, Colossal Skyturtle) but is a clear keep here: against a deck that can begin the game with Leyline of Abundance already on the battlefield, holding Wistfulness for a {G}{G} hard cast on that enchantment matters more than a second cycler. Verbatim opening from scripts/hand_odds.py sample, seed 7, spec_hash sha1-e5660c3a3a4e."
+  }
+ ],
+ "hands_mulligan": [
+  {
+   "cards": [
+    "Scalding Tarn",
+    "Waker of Waves",
+    "Boseiju, Who Endures",
+    "Generous Ent",
+    "Subtlety",
+    "Sink into Stupor",
+    "Subtlety"
+   ],
+   "reason": "no cascade spell at all, which the deck's own keepable predicate requires (evidence-spec.json, category `cascade`, min 1). Two Subtlety is real interaction, but Subtlety only answers a creature or planeswalker spell and their whole mana engine is already resolving off Delighted Halfling and Badgermole Cub before a Subtlety window exists. Verbatim opening from scripts/hand_odds.py sample, seed 101, spec_hash sha1-e5660c3a3a4e."
+  }
+ ],
+ "phase_plan": {
+  "early": "Cycle to load the graveyard. Do not spend Force of Negation on a mana dork; it cannot target a creature spell at all, and their first noncreature spell worth countering is Leyline of Abundance or Green Sun's Zenith.",
+  "mid": "Cascade the moment the graveyard is loaded and no Vexing Bauble is live. Post-board, Damping Matrix on turn three off an untapped board is stronger than a cascade into a Bauble.",
+  "late": "Endurance's 3/4 reach body blocks a Craterhoof-pumped attacker and its enter trigger denies a harmonized Nature's Rhythm; a second Living End rebuilds through Grist, the Hunger Tide."
+ },
+ "game_plan_matrix": [
+  {
+   "phase": "early",
+   "g1": "cycle, and hold Force of Negation for Leyline of Abundance or Green Sun's Zenith rather than a dork",
+   "post_p1": "same, plus Dismember on Devoted Druid or Badgermole Cub on sight -- both die to -5/-5",
+   "post_p2": "one extra card seen lifts our chance of holding Dismember/Damping Matrix/Force of Vigor by turn four to 71.89% (spec_hash sha1-a6787b65c149) from 63.80% on turn three on the play (spec_hash sha1-1c6fbae3ea6b)"
+  },
+  {
+   "phase": "mid",
+   "g1": "cascade as soon as the graveyard is loaded; Subtlety, not Force of Negation, answers a Halfling-cast Tyvar, Jubilant Brawler",
+   "post_p1": "Damping Matrix stops the free Devoted Druid untap loop, Walking Ballista and Agatha's Soul Cauldron, at zero cost to our own cycling",
+   "post_p2": "identical, but play around Abrupt Decay (8 of 10 sideboards, uncounterable, and Matrix is exactly mana value 3)"
+  },
+  {
+   "phase": "late",
+   "g1": "Endurance blocks a pumped attacker and bottoms the graveyard Nature's Rhythm harmonizes from",
+   "post_p1": "Force of Vigor destroys two of Leyline of Abundance / Agatha's Soul Cauldron / Vexing Bauble off-turn for no mana",
+   "post_p2": "identical to on-the-play late plan"
+  }
+ ],
+ "effect_timing": [
+  {
+   "card": "Subtlety",
+   "cost": "Flash. Flying. When this creature enters, choose up to one target creature spell or planeswalker spell. Its owner puts it on their choice of the top or bottom of their library. Evoke -- exile a blue card from your hand.",
+   "when": "Tyvar, Jubilant Brawler, or Craterhoof Behemoth off a tutor",
+   "hold_for": "this is the ONLY answer we have to a legendary spell cast with Delighted Halfling mana, because Subtlety does not counter -- it moves the spell to a library. Do not spend it on a Birds of Paradise."
+  },
+  {
+   "card": "Force of Negation",
+   "cost": "If it's not your turn, you may exile a blue card from your hand rather than pay this spell's mana cost. Counter target noncreature spell. If that spell is countered this way, exile it instead of putting it into its owner's graveyard.",
+   "when": "Leyline of Abundance cast from hand, Green Sun's Zenith, Nature's Rhythm, Agatha's Soul Cauldron, or a post-board Vexing Bauble",
+   "hold_for": "it cannot target a creature spell, and it is dead against any legendary spell paid for with Delighted Halfling's second ability. Exiling the countered Nature's Rhythm also denies its Harmonize graveyard cast."
+  },
+  {
+   "card": "Wistfulness",
+   "cost": "When this creature enters, if {G}{G} was spent to cast it, exile target artifact or enchantment an opponent controls. Evoke {G/U}{G/U}.",
+   "when": "hard-cast with {G}{G} on a resolved Leyline of Abundance, Agatha's Soul Cauldron, or Vexing Bauble",
+   "hold_for": "the exile mode triggers only off a {G}{G} hard cast, never off evoke. Leyline of Abundance is the target that matters: it is a 4-of in 10 of 10 lists and can start the game on the battlefield."
+  },
+  {
+   "card": "Endurance",
+   "cost": "Flash. Reach. When this creature enters, up to one target player puts all the cards from their graveyard on the bottom of their library in a random order. Evoke -- exile a green card from your hand.",
+   "when": "in response to a Harmonize cast of Nature's Rhythm from their graveyard, or as a 3/4 reach blocker",
+   "hold_for": "unlike the `creatures toolbox` note, the strip clause is live here: Nature's Rhythm harmonizes from the graveyard in 10 of 10 lists and Dewdrop Cure rebuys from it in 4 of 10 sideboards."
+  }
+ ],
+ "target_priority": [
+  {
+   "effect": "Subtlety (put creature/planeswalker spell on top or bottom of library)",
+   "priority": "1. Craterhoof Behemoth -- the one target where top-of-library is still a real answer, because they have to redraw and recast an 8-drop. 2. Devoted Druid when a doubler is already down. 3. Tyvar, Jubilant Brawler ONLY as a tempo play: the owner chooses top, so this delays a Tyvar by one turn rather than answering it, and it is never worth a card if the game is not decided inside that turn."
+  },
+  {
+   "effect": "Force of Negation (counter noncreature spell)",
+   "priority": "1. Vexing Bauble 2. Leyline of Abundance 3. Nature's Rhythm 4. Green Sun's Zenith"
+  },
+  {
+   "effect": "Wistfulness (hard-cast, exile artifact/enchantment)",
+   "priority": "1. Leyline of Abundance 2. Vexing Bauble 3. Agatha's Soul Cauldron"
+  },
+  {
+   "effect": "Dismember (-5/-5)",
+   "priority": "1. Devoted Druid 2. Badgermole Cub 3. Vizier of Remedies 4. Delighted Halfling"
+  }
+ ],
+ "threat_timeline": [
+  {
+   "turn": "1",
+   "threats": "a castable one-mana accelerant plus a land (Delighted Halfling / Birds of Paradise / Dryad Arbor)",
+   "answer_prob": "90.05%",
+   "spec_hash": "sha1-e5660c3a3a4e"
+  },
+  {
+   "turn": "2",
+   "threats": "a mana doubler online -- Badgermole Cub or Leyline of Abundance -- with two lands (opponent-side 58.12%, spec_hash sha1-5b635100fff7)",
+   "answer_prob": "90.05%",
+   "spec_hash": "sha1-e5660c3a3a4e"
+  },
+  {
+   "turn": "3",
+   "threats": "Devoted Druid plus a doubler in hand with two lands (opponent-side 29.89%, spec_hash sha1-8f59254ae4ba)",
+   "answer_prob": "63.80%",
+   "spec_hash": "sha1-1c6fbae3ea6b"
+  },
+  {
+   "turn": "4",
+   "threats": "Devoted Druid plus a doubler plus an untapper or tutor, on three lands (opponent-side 25.76%, spec_hash sha1-8e2e83d4de21)",
+   "answer_prob": "71.89%",
+   "spec_hash": "sha1-a6787b65c149"
+  },
+  {
+   "turn": "6",
+   "threats": "a finisher or a tutor for one in hand (opponent-side 96.26%, spec_hash sha1-53c886dc4fbc)",
+   "answer_prob": "97.76%",
+   "spec_hash": "sha1-7476f00034ee"
+  }
+ ],
+ "scenario_probabilities": [
+  {
+   "scenario": "Opponent's opening 7 on the play holds a one-mana accelerant (Delighted Halfling / Birds of Paradise / Dryad Arbor) and a land",
+   "p": 0.6293,
+   "spec_hash": "sha1-4dd9a0589169"
+  },
+  {
+   "scenario": "Opponent has a mana doubler (Badgermole Cub / Leyline of Abundance) and two lands by turn 2 on the play",
+   "p": 0.5812,
+   "spec_hash": "sha1-5b635100fff7"
+  },
+  {
+   "scenario": "Opponent has Devoted Druid plus a doubler plus an untapper (Vizier of Remedies / Tyvar, Jubilant Brawler) or a tutor, on three lands, by turn 4 on the play",
+   "p": 0.2576,
+   "spec_hash": "sha1-8e2e83d4de21"
+  },
+  {
+   "scenario": "Our opening 7 holds a free-spell answer (Force of Negation / Subtlety / Endurance / Wistfulness)",
+   "p": 0.9005,
+   "spec_hash": "sha1-e5660c3a3a4e"
+  },
+  {
+   "scenario": "Our opening 7 holds Force of Negation specifically",
+   "p": 0.4025,
+   "spec_hash": "sha1-51b12a68f621"
+  },
+  {
+   "scenario": "Post-board, we hold Dismember, Damping Matrix or Force of Vigor by turn 3 on the play",
+   "p": 0.638,
+   "spec_hash": "sha1-1c6fbae3ea6b"
+  },
+  {
+   "scenario": "Post-board, we hold Dismember, Damping Matrix or Force of Vigor by turn 4 on the draw",
+   "p": 0.7189,
+   "spec_hash": "sha1-a6787b65c149"
+  },
+  {
+   "scenario": "Post-board, we can actually deploy Damping Matrix on turn 3 on the play (a copy in hand plus three lands)",
+   "p": 0.1049,
+   "spec_hash": "sha1-310fe3319f1e"
+  }
+ ],
+ "sample_lines": [
+  {
+   "label": "our deck -- interaction plus a cascade spell, one cycler short of the baseline keep",
+   "seed": 7,
+   "opening": [
+    "Wistfulness",
+    "Commercial District",
+    "Force of Negation",
+    "Colossal Skyturtle",
+    "Misty Rainforest",
+    "Mountain",
+    "Shardless Agent"
+   ],
+   "turns": "T1 Misty Rainforest. T2 Commercial District; hold Force of Negation for Leyline of Abundance. T3 Mountain; channel Colossal Skyturtle ({1}{U}, discard) to bounce a Devoted Druid rather than casting Shardless Agent into an unloaded graveyard. T4 cast Shardless Agent and cascade into Living End once a cycled body or two is in the yard, or hard-cast Wistfulness with {G}{G} if Leyline of Abundance has already resolved."
+  },
+  {
+   "label": "opponent's deck -- two Leyline of Abundance in the opener, one of them free",
+   "seed": 42,
+   "opening": [
+    "Formidable Speaker",
+    "Badgermole Cub",
+    "Leyline of Abundance",
+    "Overgrown Tomb",
+    "Verdant Catacombs",
+    "Wooded Foothills",
+    "Leyline of Abundance"
+   ],
+   "turns": "T0 begin the game with one Leyline of Abundance on the battlefield ('If this card is in your opening hand, you may begin the game with it on the battlefield'). T1 Overgrown Tomb. T2 Verdant Catacombs, Badgermole Cub -- every creature now taps for three green. T3 Wooded Foothills, Devoted Druid (drawn). T4 Wooded Foothills, Tyvar, Jubilant Brawler (drawn), +1 to untap Devoted Druid: six green off one dork with no Vizier of Remedies in sight."
+  }
+ ],
+ "opponent_card_index": [
+  {
+   "card": "Devoted Druid",
+   "role": "engine, repeatable untap",
+   "why_run": "'{T}: Add {G}' plus 'Put a -1/-1 counter on this creature: Untap this creature' -- 4-of in 10 of 10 pulled lists",
+   "our_answer": "Dismember (-5/-5 on a 0/2), or Damping Matrix, which shuts the untap off permanently"
+  },
+  {
+   "card": "Badgermole Cub",
+   "role": "mana doubler, and the reason the deck no longer needs Vizier of Remedies",
+   "why_run": "'Whenever you tap a creature for mana, add an additional {G}' on a two-mana body; 4-of in 10 of 10 lists",
+   "our_answer": "Dismember kills the 2/2; there is no maindeck answer to the Leyline of Abundance copy of the same text"
+  },
+  {
+   "card": "Leyline of Abundance",
+   "role": "the same doubler as an enchantment, castable for free on turn zero",
+   "why_run": "4-of in 10 of 10 lists; 'If this card is in your opening hand, you may begin the game with it on the battlefield'",
+   "our_answer": "Force of Vigor, or Wistfulness hard-cast with {G}{G}; Force of Negation only if they cast it from hand"
+  },
+  {
+   "card": "Tyvar, Jubilant Brawler",
+   "role": "the untap that Damping Matrix does not stop",
+   "why_run": "'+1: Untap up to one target creature' as a planeswalker loyalty ability; 4-of in 10 of 10 lists",
+   "our_answer": "Subtlety. Force of Negation is dead when Delighted Halfling paid for it"
+  },
+  {
+   "card": "Vizier of Remedies",
+   "role": "the piece that turns repeatable into infinite",
+   "why_run": "reduces the Devoted Druid untap counter to zero; a 1-of tutor target in 10 of 10 lists, never a 2-of",
+   "our_answer": "Dismember on the 2/1, or Damping Matrix, which makes the Vizier irrelevant"
+  },
+  {
+   "card": "Craterhoof Behemoth",
+   "role": "primary finisher",
+   "why_run": "8 of 10 lists run one; the other two (both musasabi) run Walking Ballista and Finale of Devastation instead",
+   "our_answer": "Subtlety on the spell; Endurance's 3/4 reach body blocks one pumped attacker"
+  },
+  {
+   "card": "Vexing Bauble",
+   "role": "post-board anti-cascade",
+   "why_run": "'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' -- 5 of 10 pulled sideboards, down from 9 of 10 under the `creatures toolbox` label",
+   "our_answer": "Force of Negation before it resolves, Force of Vigor or Wistfulness afterwards"
+  }
+ ],
+ "stance": "counter",
+ "stance_rationale": "Dismember kills every relevant body in the engine (Devoted Druid 0/2, Badgermole Cub 2/2, Vizier of Remedies 2/1, Delighted Halfling 1/2), Force of Vigor destroys two of Leyline of Abundance / Agatha's Soul Cauldron / Vexing Bauble off-turn for no mana, and Damping Matrix turns off the free Devoted Druid untap loop, Walking Ballista, Agatha's Soul Cauldron, Fiend Artisan and Duskwatch Recruiter. All three are mana value 3-4, clear of the Violent Outburst / Shardless Agent cascade floor of 3. Damping Matrix is a `counter`, NOT a `symmetric_counter`, and this wiki's two sidecars disagree about that -- `broodscale-bloodchief.json` is right and `creatures-toolbox.json` is wrong. The rules chain: Damping Matrix reads 'Activated abilities of artifacts and creatures can't be activated unless they're mana abilities'; those descriptions name card types, name no zone, and use none of the words 'card', 'spell' or 'source', so CR 109.2 makes them mean permanents of that type on the battlefield, and CR 403.3 ('Permanents exist only on the battlefield') closes it. A Street Wraith being cycled is a creature CARD in a hand, never a 'creature', so its cycling is untouched -- as are Curator of Mysteries, Generous Ent, Oliphaunt, Colossal Skyturtle's channel and Waker of Waves's discard ability, which are all activated from hand. CR 702.29b, which `creatures-toolbox.json` cites the other way, says only that the cycling ability continues to EXIST in other zones so that effects keying off the presence of an ability can see it; it does not put a card in hand inside the set of objects CR 109.2 built. The real cost of Damping Matrix in this matchup is not symmetry, it is their removal: Abrupt Decay (8 of 10 sideboards, uncounterable, and Matrix is exactly mana value 3), Force of Vigor (7 of 10), Guerrilla Gorilla (6 of 10), Chomping Changeling (5 of 10) and maindeck Boseiju, Who Endures (10 of 10). It is still a counter -- each of those is a card they must draw and spend -- but it is a more contested one here than against the `creatures toolbox` label of the same deck.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Collector Ouphe",
+   "count": 1,
+   "why": "9 of 10 pulled sideboards board it, absent only from deck 881870; 'Activated abilities of artifacts can't be activated' blanks Tormod's Crypt entirely, which is why the Crypt stays in the box here. It does NOT touch Damping Matrix, whose ability is static",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Crystal Barricade",
+   "count": 1,
+   "why": "10 of 10 pulled sideboards board 1-2; 'Prevent all noncombat damage that would be dealt to other creatures you control' blanks Anger of the Gods, and 'You have hexproof' protects the player only, so Dismember and Force of Vigor still target normally",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Abrupt Decay",
+   "count": 3,
+   "why": "8 of 10 pulled sideboards; 'This spell can't be countered. Destroy target nonland permanent with mana value 3 or less' answers Damping Matrix at exactly its mana value and cannot be fought on the stack",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Endurance",
+   "count": 1,
+   "why": "8 of 10 pulled sideboards; flash graveyard strip that bottoms the creature cards our Living End needs, plus a 3/4 reach blocker",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Grist, the Hunger Tide",
+   "count": 1,
+   "why": "8 of 10 pulled sideboards; '-2: You may sacrifice a creature. When you do, destroy target creature or planeswalker' kills one reanimated body per activation",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Force of Vigor",
+   "count": 2,
+   "why": "7 of 10 pulled sideboards; free off-turn removal for Damping Matrix and Tormod's Crypt",
+   "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "5 of 10 pulled sideboards, down from 9 of 10 under the `creatures toolbox` label of the same deck; counters our cascaded Living End and our freely-pitched Force of Negation, Subtlety and Endurance",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Thoughtseize",
+   "count": 2,
+   "why": "3 of 10 pulled sideboards; strips the cascade spell or a held Force of Negation before the cascade turn",
+   "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Force of Vigor",
+    "2 Dismember",
+    "2 Damping Matrix"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt",
+    "1 Waker of Waves",
+    "1 Colossal Skyturtle"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Force of Vigor",
+    "2 Dismember",
+    "2 Damping Matrix"
+   ],
+   "out_cards": [
+    "2 Sink into Stupor",
+    "2 Oliphaunt",
+    "1 Waker of Waves",
+    "1 Colossal Skyturtle"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "A hand with Force of Negation, Subtlety or Wistfulness plus two lands; a cascade-only hand loses to a turn-two Leyline of Abundance start.",
+  "goldfish_for": "Two lands and a cascade spell while holding Subtlety for Tyvar, Jubilant Brawler.",
+  "watch_for": "A Delighted Halfling untapped: any legendary spell it pays for cannot be countered, so Force of Negation is dead and Subtlety is the answer.",
+  "posture": "disrupt_first",
+  "posture_why": "Their doubled mana kills on turn four, so denying the engine beats racing."
+ },
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Badgermole Cub and Leyline of Abundance double every mana a dork makes, so Devoted Druid plus one untap is lethal ramp by turn four, faster than our turn four to six cascade clock.",
+  "key_cards": [
+   {
+    "card": "Devoted Druid",
+    "why": "engine half, taps for green and untaps itself for a -1/-1 counter"
+   },
+   {
+    "card": "Leyline of Abundance",
+    "why": "mana doubler that can start the game on the battlefield for free"
+   },
+   {
+    "card": "Tyvar, Jubilant Brawler",
+    "why": "a loyalty-ability untap Damping Matrix cannot stop, and uncounterable whenever Delighted Halfling's legendary-mana ability paid for it"
+   },
+   {
+    "card": "Craterhoof Behemoth",
+    "why": "lethal swing off any board of dorks once the green is arbitrarily large"
+   }
+  ]
+ },
+ "opposing_hand_odds": [
+  {
+   "turn": "T1",
+   "threat": "one-mana accelerant plus a land",
+   "probability": "62.9%"
+  },
+  {
+   "turn": "T2",
+   "threat": "mana doubler online with two lands",
+   "probability": "58.1%"
+  },
+  {
+   "turn": "T3",
+   "threat": "Devoted Druid plus a doubler in hand",
+   "probability": "29.9%"
+  },
+  {
+   "turn": "T4",
+   "threat": "Druid plus doubler plus untapper/tutor on three lands",
+   "probability": "25.8%"
+  },
+  {
+   "turn": "T6",
+   "threat": "a finisher or a tutor for one",
+   "probability": "96.3%"
+  },
+  {
+   "turn": "postboard",
+   "threat": "Vexing Bauble in their 75 at all",
+   "probability": "50.0%"
+  },
+  {
+   "turn": "postboard",
+   "threat": "Abrupt Decay in their 75 at all",
+   "probability": "80.0%"
+  }
+ ],
+ "card_names": [
+  "Abrupt Decay",
+  "Agatha's Soul Cauldron",
+  "Badgermole Cub",
+  "Birds of Paradise",
+  "Boseiju, Who Endures",
+  "Chomping Changeling",
+  "Collector Ouphe",
+  "Craterhoof Behemoth",
+  "Crystal Barricade",
+  "Delighted Halfling",
+  "Devoted Druid",
+  "Dewdrop Cure",
+  "Drannith Magistrate",
+  "Dryad Arbor",
+  "Duskwatch Recruiter",
+  "Endurance",
+  "Fatal Push",
+  "Fiend Artisan",
+  "Finale of Devastation",
+  "Force of Vigor",
+  "Formidable Speaker",
+  "Green Sun's Zenith",
+  "Grist, the Hunger Tide",
+  "Guerrilla Gorilla",
+  "Keen-Eyed Curator",
+  "Leyline of Abundance",
+  "Nature's Rhythm",
+  "Overgrown Tomb",
+  "Shang-Chi, Master of Kung Fu",
+  "Summoner's Pact",
+  "Temple Garden",
+  "Thoughtseize",
+  "Tyvar, Jubilant Brawler",
+  "Tyvar, the Pummeler",
+  "Underground Mortuary",
+  "Vexing Bauble",
+  "Vizier of Remedies",
+  "Walking Ballista"
+ ]
+}

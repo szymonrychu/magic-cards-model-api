@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "archetype": "pinnacle affinity",
+  "signature": [
+    {
+      "cards": [
+        "Kappa Cannoneer",
+        "Pinnacle Emissary",
+        "Weapons Manufacturing"
+      ],
+      "min": 8,
+      "why": "The payoffs, 4-of in 10/10 current field lists. Weapons Manufacturing is the engine, Pinnacle Emissary the value body it makes, and Kappa Cannoneer the ward-4 threat the deck wins with; a build without them is playing artifacts rather than playing this deck."
+    },
+    {
+      "cards": [
+        "Mox Opal",
+        "Urza's Saga",
+        "Mishra's Bauble",
+        "Tormod's Crypt",
+        "Engineered Explosives",
+        "Claws of Gix",
+        "Welding Jar",
+        "Springleaf Drum"
+      ],
+      "min": 8,
+      "why": "The zero-and-one-mana artifact count that makes metalcraft, Urza's Saga and affinity itself work. 10/10 field lists run Mox Opal, Urza's Saga, Mishra's Bauble and Tormod's Crypt at four copies each - the Crypt is a free artifact first and graveyard hate second."
+    }
+  ]
+}

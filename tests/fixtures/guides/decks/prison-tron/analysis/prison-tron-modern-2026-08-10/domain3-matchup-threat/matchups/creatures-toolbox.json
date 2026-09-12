@@ -1,0 +1,113 @@
+{
+ "name": "creatures toolbox",
+ "meta_share": 2.3213472917614935,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own 2026-08-18 fingerprint records winrate_vs_field as an empty map. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Devoted Druid taps for {G} and untaps itself by taking a -1/-1 counter; Vizier of Remedies reduces that counter to none, so the untap is free and the pair is unbounded green mana. Ten of ten lists play four Devoted Druid, four Green Sun's Zenith and four Nature's Rhythm, and both search spells put the missing half straight onto the battlefield rather than into hand. Four Badgermole Cub and four Leyline of Abundance each add a second {G} whenever a creature taps for mana, and four Tyvar, Jubilant Brawler let those abilities be activated the turn a creature arrives and return a killed Devoted Druid or Vizier of Remedies from the graveyard to the battlefield. The mana goes into Craterhoof Behemoth in eight of ten lists, or into Walking Ballista in the four that play it, which converts the same mana into damage without attacking. Every list also mainboards one Boseiju, Who Endures, which channels for {1}{G} to destroy a Tron land or any artifact we have resolved.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Devoted Druid plus Vizier of Remedies is unbounded mana the turn it assembles and Green Sun's Zenith fetches Craterhoof Behemoth onto the battlefield to end it on the same turn, so they outrun us rather than grind.",
+  "key_cards": [
+   {
+    "card": "Devoted Druid",
+    "why": "combo half one: taps for {G} and untaps itself for a -1/-1 counter, four copies in ten of ten lists."
+   },
+   {
+    "card": "Vizier of Remedies",
+    "why": "combo half two: the -1/-1 counter is reduced to none, so the untap is free and the mana is unbounded."
+   },
+   {
+    "card": "Green Sun's Zenith",
+    "why": "four copies in ten of ten lists; it finds whichever combo half is missing and puts Craterhoof Behemoth onto the battlefield at X=8."
+   },
+   {
+    "card": "Collector Ouphe",
+    "why": "one copy in ten of ten boards, and the card that beats the Karn plan rather than the deck: activated abilities of artifacts can't be activated, either player's.",
+    "source_tournament_id": "6e7fe4c4-65d4-4fc3-9c41-280e0467c883"
+   }
+  ]
+ },
+ "primary_gameplan": "Grafdigger's Cage is the hoser and it is not close: 'creature cards in graveyards and libraries can't enter the battlefield' blanks four Green Sun's Zenith, four Nature's Rhythm and Fiend Artisan outright, and the second clause stops Nature's Rhythm's harmonize mode and Tyvar, Jubilant Brawler's -2 from rebuilding out of the graveyard - roughly a sixth of their deck, aimed at the half that is not redundant. Disruptor Flute names Devoted Druid rather than a search spell, because Flute's second clause stops activated abilities that are not mana abilities: the {T}: Add {G} stays live but the untap-for-a-counter that makes the mana unbounded does not, which is the one thing Trinisphere cannot do. Torpor Orb is the third fetch and covers what neither of those reaches - the earthbend trigger on four Badgermole Cub and the Craterhoof Behemoth enters trigger in the eight lists that play it. Chalice on 2 is the maindeck answer; Kozilek's Command at X=2, Dismember and Devourer of Destiny's cast trigger are what kill a resolved Collector Ouphe.",
+ "pitfalls": [
+  "Fetching an activated artifact into a resolved Collector Ouphe. It is in ten of ten boards and its one line of text turns off Walking Ballista, Tormod's Crypt, The Stone Brain, The Filigree Sylex and Extinguisher Battleship's Station - five of the twelve karnboard slots - plus four Expedition Map, four Mind Stone and Vexing Bauble in the maindeck. Grafdigger's Cage, Disruptor Flute, Torpor Orb, Ensnaring Bridge and Trinisphere are static and keep working, which is why the fetch order here is the static half of the box and nothing else. Karn itself is a planeswalker, so the -2 is untouched.",
+  "Reading Mind Stone as a mana source under Collector Ouphe. A mana ability is still an activated ability, so Mind Stone produces nothing; the Tron lands are lands and keep producing, so the engine survives and only the assembly half (Map and Mind Stone) goes offline.",
+  "Setting Chalice on 1 rather than 2. Their nonland mainboard is 44.6% mana value 2 across the ten lists against 26.5% at 1, and 2 is where Devoted Druid, Vizier of Remedies, Badgermole Cub, Nature's Rhythm, Fiend Artisan and Agatha's Soul Cauldron all sit. Chalice on 2 also counters five of our own karnboard artifacts, so fetch and cast before setting it.",
+  "Expecting Trinisphere to stop the loop. Their nonland mainboard is 72.3% under three mana so the tax is real before the combo assembles, but Devoted Druid's untap and its mana ability are activated abilities, not spells, and Trinisphere does not touch either once both halves have resolved.",
+  "Fetching Ensnaring Bridge as the answer to the kill. Six of ten lists win only by attacking with Craterhoof Behemoth, but four play Walking Ballista, which converts the same unbounded mana into damage with no attack at all - and two of those four (deck ids 8ef7360a-b939-4b23-90b8-15e371ecd762 and 6ae2a3ef-5775-4aec-bab9-123934e2652e) play no Craterhoof Behemoth whatsoever, so the Bridge is close to a blank against them.",
+  "Boarding a second Grafdigger's Cage in. One is sided so it can be drawn before a four-mana Karn resolves; the second is worth more inside Karn's pool, because every list mainboards a Boseiju, Who Endures and boards a sacrifice-for-an-artifact creature, so the first Cage is expected to die."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Grafdigger's Cage and Disruptor Flute cost us nothing, but the third fetch does: Torpor Orb is what answers the Badgermole Cub ramp and a hard-cast Craterhoof Behemoth once the Cage is gone, and it turns off our own Thought-Knot Seer's enters trigger to do it.",
+ "self_cost": "Torpor Orb costs us Thought-Knot Seer's enters-exile while leaving the leaves trigger that gives them a card, and blanks Glaring Fleshraker's damage trigger; Devourer's and Ugin's cast triggers and Fleshraker's Spawn trigger survive. Our own Grafdigger's Cage also stops Cityscape Leveler's Unearth {8}, which is the only line in the 75 that casts from a graveyard.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Collector Ouphe",
+   "count": 1,
+   "why": "ten of ten boards at one copy. {1}{G} 2/2 whose entire text is 'Activated abilities of artifacts can't be activated' - that is four Expedition Map, four Mind Stone and Vexing Bauble in the maindeck, and five of the twelve karnboard slots (Walking Ballista, Tormod's Crypt, The Stone Brain, The Filigree Sylex, and Extinguisher Battleship's Station). It is symmetric, which is why it is a one-of: it also turns off their own Agatha's Soul Cauldron and Walking Ballista.",
+   "source_tournament_id": "6e7fe4c4-65d4-4fc3-9c41-280e0467c883"
+  },
+  {
+   "card": "Guerrilla Gorilla",
+   "count": 1,
+   "why": "five of ten boards at one copy, and Outland Liberator is the other five - the two sets are disjoint, so every one of the ten lists boards exactly one sacrifice-for-an-artifact creature. Chalice, Trinisphere, Grafdigger's Cage, Torpor Orb and Ensnaring Bridge are all noncreature artifacts.",
+   "source_tournament_id": "037d505d-0c61-4dcc-9a1c-252e69e4c0b7"
+  },
+  {
+   "card": "Outland Liberator",
+   "count": 1,
+   "why": "the other five of ten. {1}, Sacrifice: destroy target artifact or enchantment - no mana-value limit, so it reaches Ensnaring Bridge and Trinisphere as well as the cheap pieces.",
+   "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  },
+  {
+   "card": "Force of Vigor",
+   "count": 2,
+   "why": "three of ten boards at two copies. Free on our turn by exiling a green card, and it destroys up to TWO artifacts, so it is the one card that answers a Chalice and a Grafdigger's Cage in the same turn without spending mana.",
+   "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "eight of ten boards at exactly two copies. It counters a spell cast for no mana, and Tormod's Crypt is the only {0} card in our 75 - Karn's -2 puts a card into HAND, so everything else we wish for is cast normally and the Bauble never sees it.",
+   "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+  },
+  {
+   "card": "Fatal Push",
+   "count": 2,
+   "why": "ten of ten boards at two or three copies. Mana value 2 or less is nothing of ours, but revolt lifts it to 4 and with two Dryad Arbor and a fetch manabase revolt is on whenever they want it - which is Glaring Fleshraker at 3 and Thought-Knot Seer at 4.",
+   "source_tournament_id": "6e7fe4c4-65d4-4fc3-9c41-280e0467c883"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "1 Grafdigger's Cage"
+   ],
+   "out_cards": [
+    "1 Vexing Bauble"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "1 Grafdigger's Cage"
+   ],
+   "out_cards": [
+    "1 Vexing Bauble"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands and a Chalice, or a hand that reaches Karn before their fourth land; a seven-mana hand with no early artifact is a mulligan.",
+  "goldfish_for": "Chalice on 2, then Karn for the second Grafdigger's Cage.",
+  "watch_for": "One Collector Ouphe turns off Map, Mind Stone and half the karnboard; once it resolves, fetch only the static pieces.",
+  "posture": "disrupt_first",
+  "posture_why": "we cannot race a turn-three Craterhoof Behemoth."
+ }
+}

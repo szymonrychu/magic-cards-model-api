@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "archetype": "eldrazi ramp",
+  "signature": [
+    {
+      "cards": [
+        "Sowing Mycospawn",
+        "Malevolent Rumble",
+        "Kozilek's Command",
+        "Eldrazi Temple",
+        "Ugin's Labyrinth"
+      ],
+      "min": 12,
+      "why": "The colorless Eldrazi engine, 4-of in 10/10 current field lists. Temple and Labyrinth are the mana, Rumble and Mycospawn find the missing piece, and Kozilek's Command is the flexible Eldrazi spell all of it is spent on."
+    },
+    {
+      "cards": [
+        "Disciple of Freyalise",
+        "Fanatic of Rhonas",
+        "Slumbering Trudge",
+        "Fight Rigging",
+        "Green Sun's Zenith",
+        "Utopia Sprawl",
+        "Talisman of Resilience",
+        "Talisman of Impulse",
+        "Talisman of Curiosity"
+      ],
+      "min": 8,
+      "why": "The ramp half, which is what makes this ramp rather than tron or the Broodscale combo. The field runs it two ways and the clause covers both: a creature build on Disciple of Freyalise, Fanatic of Rhonas and Slumbering Trudge found with Green Sun's Zenith, and an enchantment-and-rock build on 4 Utopia Sprawl plus 4 Talisman. Seven of the ten current field lists are the first, three are the second, and none of them assembles Tron - these are the cards that turn Forests into the seven mana Emrakul costs."
+    },
+    {
+      "cards": [
+        "Emrakul, the Promised End",
+        "Ulamog, the Ceaseless Hunger",
+        "Ugin, Eye of the Storms",
+        "Sire of Seven Deaths"
+      ],
+      "min": 3,
+      "why": "What the ramp is for. 10/10 field lists run Emrakul at 3.7 copies on average and the thinnest top end in the field is three copies, which is the floor here: a ramp deck is defined as much by what it ramps to as by the accelerants, and this clause is what stops a green midrange list holding a Temple from matching."
+    }
+  ],
+  "exclude": [
+    {
+      "cards": [
+        "Urza's Tower",
+        "Urza's Mine",
+        "Urza's Power Plant"
+      ],
+      "min": 6,
+      "why": "Tron lands. A list that ramps with Eldrazi Temple AND assembles Tron is one of the two tron branches, which have their own guides; eldrazi ramp reaches seven mana off Forests and Disciple of Freyalise instead, and 0/10 of its field lists run a Tron land."
+    }
+  ]
+}

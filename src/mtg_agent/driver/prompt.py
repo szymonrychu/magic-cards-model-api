@@ -17,7 +17,20 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .guides import CONFIDENT, LOW, Candidate, DeckGuide, Decklist, Identification
+from .guides import (
+    CONFIDENT,
+    LOW,
+    UNKNOWN_ARCHETYPE,
+    Candidate,
+    DeckGuide,
+    Decklist,
+    Identification,
+)
+from .matchup_card import (
+    guide_paths,
+    matchup_note_key,
+    render_matchup_card,
+)
 from .revision import UNKNOWN_REVISION
 
 UNKNOWN_DECK = "unknown-deck"
@@ -144,7 +157,8 @@ def _deck_claim(identification: Identification) -> list[str]:
         return [
             f"You are piloting **{guide.slug}** - `{identification.archetype}` in the "
             f"guides corpus. Every one of its {top.clauses} signature clauses is in "
-            "your maindeck, so this is the deck the guide below was written for.",
+            "your maindeck, so the matchup card below is the plan for the deck you "
+            "are actually holding.",
         ]
     if identification.confidence == LOW:
         if guide is None:
@@ -154,9 +168,9 @@ def _deck_claim(identification: Identification) -> list[str]:
                 f"This list is some kind of **{identification.archetype}**, but which "
                 "branch of it is not settled: "
                 f"{_named(identification.leaders)} match equally well, on the clauses "
-                "they share and on nothing that tells them apart. Read both guides "
-                "below for the parts they agree on, and trust the board over either "
-                "of them where they disagree.",
+                "they share and on nothing that tells them apart. There is a matchup "
+                "card below for each branch: take the parts they agree on, and trust "
+                "the board over either of them where they disagree.",
             ]
         top = identification.candidates[0]
         plausible = (
@@ -168,17 +182,82 @@ def _deck_claim(identification: Identification) -> list[str]:
             f"You are probably piloting **{guide.slug}** - `{identification.archetype}` "
             f"in the guides corpus - but this is a **low-confidence** match: it "
             f"answers {_clause_count(top)}, not all of them.{plausible} "
-            "Read the guide for what it is worth and trust the board over it where "
-            "they disagree.",
+            "Take the matchup card below for what it is worth and trust the board "
+            "over it where they disagree.",
         ]
     return [
         "There is **no guide** for this decklist - no archetype in the guides corpus "
-        "answers even half its signature clauses from your maindeck. Play it "
-        "from the list itself and from what the board tells you.",
+        "answers even half its signature clauses from your maindeck. So there is no "
+        "deck plan and no field tells to hand you: play it from the list itself and "
+        "from what the board tells you.",
     ]
 
 
-def render_current_game(assignment: Assignment, memory_root: Path) -> str:
+#: How much of the agent's own standing `vs-<archetype>.md` notes the
+#: briefing inlines. A note the agent has been revising for twenty games can
+#: be any size, and inlining all of it would spend the context the matchup
+#: card just saved.
+VS_NOTE_BUDGET_BYTES = 4 * 1024
+
+
+def _standing_notes(
+    notes: list[Path],
+    opponent_archetype: str | None,
+) -> tuple[list[Path], list[Path]]:
+    """The `vs-<archetype>.md` standing reads, and everything else.
+
+    Standing reads are inlined; a past game's write-up stays a path, because
+    there can be dozens of those and each is about one game rather than about
+    the matchup.
+    """
+    standing = [p for p in notes if p.name.startswith("vs-") and p.parent.name != "games"]
+    rest = [p for p in notes if p not in standing]
+    if opponent_archetype:
+        wanted = f"vs-{matchup_note_key(opponent_archetype)}.md"
+        standing.sort(key=lambda p: (p.name != wanted, p.name))
+    return standing, rest
+
+
+def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
+    """The standing reads' bodies, in fenced blocks, until the budget runs
+    out - and then the paths of the ones that did not fit, said out loud."""
+    lines: list[str] = []
+    spent = 0
+    for path in standing:
+        try:
+            body = path.read_text()
+        except OSError:
+            lines.append(f"- `{path}` (unreadable)")
+            continue
+        room = budget - spent
+        if room <= 0:
+            lines.append(
+                f"- `{path}` - not inlined, the note budget was spent; read it if you want it"
+            )
+            continue
+        clipped = body.encode()[:room].decode(errors="ignore")
+        spent += len(clipped.encode())
+        lines += [f"**`{path}`** - your standing read on this matchup:", "", "````"]
+        lines.append(clipped.rstrip())
+        if len(clipped) < len(body):
+            lines.append(f"[...cut at {room} bytes - the rest is in the file]")
+        lines += ["````", ""]
+    return lines
+
+
+def render_current_game(
+    assignment: Assignment,
+    memory_root: Path,
+    opponent_archetype: str | None = None,
+) -> str:
+    """The briefing, which turn 0 inlines verbatim.
+
+    `opponent_archetype` is normally unknown at turn 0 and stays that way -
+    the owner's doctrine is that the agent deduces the matchup from the cards
+    it sees. It exists for the case where a caller already knows (a resumed
+    game, a study run), and only changes which standing note is inlined
+    first.
+    """
     identification = assignment.identification
     lines = [
         "# This game",
@@ -207,29 +286,61 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
             "",
         ]
 
-    for offered in identification.guides:
-        heading = "## Your guides" if len(identification.guides) == 1 else f"## `{offered.slug}`"
-        lines += [heading, ""]
-        for label, path in (
-            ("gameplan", offered.gameplan),
-            ("sideboard", offered.sideboard),
-            ("meta calls", offered.meta_calls),
-        ):
-            if path is not None:
-                lines.append(f"- {label}: `{path}`")
-        if offered.matchups_dir is not None:
+    offered = identification.guides
+    for guide in offered:
+        # Inlined, not referenced: this is the whole point of the card. The
+        # gameplan guide it is rendered from is 42-73 KB of generated
+        # markdown, and the plan behind it fits in ~11 KB of context.
+        #
+        # Every branch gets the card's OWN budget - the module's target and
+        # cap, unshared - because the budget the brief sets is per card, and
+        # a card is what each branch needs. Dividing it by the number of
+        # branches was a briefing-wide budget nothing asked for, and the
+        # thing it bought was paid for out of the one field the brief
+        # requires on every row: at 5120 bytes with a shared cap there is no
+        # rung left that keeps the tells table's `watch for` column, so the
+        # tron case rendered both branches with it deleted off every one of
+        # their 34 rows. Rendered at its own budget each of those two comes
+        # in whole, with every field, at 10026 and 11659 bytes.
+        #
+        # So a two-branch briefing carries ~21 KB of card rather than ~15,
+        # and that is the cheaper half of the trade by a wide margin: it is
+        # still a fraction of the two 45-73 KB gameplan guides it replaces,
+        # and it happens only when the classifier could not tell two branches
+        # of one family apart, which is the case where the agent most needs
+        # both plans intact.
+        card = render_matchup_card(guide, assignment.decklist)
+        lines += [card.text, ""]
+        lines += [
+            "## Your guides, for a deliberate look-up"
+            if len(offered) == 1
+            else f"## `{guide.slug}` guides, for a deliberate look-up",
+            "",
+            "The card above is your brief. These are here for one specific line it "
+            "does not carry - not for a read before your first action.",
+            "",
+        ]
+        for label, path in guide_paths(guide):
+            lines.append(f"- {label}: `{path}`")
+        if guide.matchups_dir is not None:
             lines += [
-                f"- per-matchup detail: `{offered.matchups_dir}/<archetype>.json`",
+                f"- per-matchup detail, one small read once you have the read: "
+                f"`{guide.matchups_dir}/<archetype>.json`",
                 "",
-                "Archetypes with a matchup file: "
-                + ", ".join(f"`{a}`" for a in offered.archetypes),
+                "Archetypes with a matchup file: " + ", ".join(f"`{a}`" for a in guide.archetypes),
             ]
         lines.append("")
+    if not offered:
+        lines += [render_matchup_card(None, assignment.decklist).text, ""]
 
     notes = memory_index(memory_root, assignment.deck_slug)
+    standing, rest = _standing_notes(notes, opponent_archetype)
     lines += ["## What you have already learned on this deck", ""]
-    if notes:
-        lines += [f"- `{path}`" for path in notes]
+    if standing or rest:
+        lines += _inlined_notes(standing, VS_NOTE_BUDGET_BYTES)
+        if rest:
+            lines += ["Past games, as paths - open one only if you have a reason to:", ""]
+            lines += [f"- `{path}`" for path in rest]
     else:
         lines.append("Nothing yet - this is your first recorded game on it.")
     lines += [
@@ -271,9 +382,17 @@ who is playing through a web UI against the same game server you act on.
 ## Before you take a single action
 
 {briefing_block}
-2. Read your deck's gameplan guide, and any notes you have already written
-   about this deck. You are expected to arrive at the first action already
-   knowing what this deck is trying to do.
+2. That briefing IS your brief. Its matchup card carries your deck's plan,
+   a row per archetype in the field with the signature cards that give each
+   one away, and the three biggest matchups in detail - rendered from the
+   same structured plan the gameplan guide is generated from - and your own
+   standing notes on this deck are inlined underneath it. So **do not read
+   the gameplan guide to get started**: you already have what is in it, and
+   that file is 42-73 KB. Open a guide file only for one specific line the
+   card does not carry. Once the cards they play tell you what you are
+   facing, one small read of {matchups} (3-9 KB) gets you that whole
+   matchup. You are expected to arrive at the first action already knowing
+   what this deck is trying to do.
 3. Write your opening plan into the plan file named in the briefing (see
    "Your plan file" below) - once, near the start. You do not update this
    file turn to turn any more; see "Declare your plan before you act" for
@@ -765,9 +884,14 @@ Write up what you learned, so the next game on this deck starts from it.
    or three decisions that actually decided it, and what you would do
    differently.
 2. `{deck_dir / "vs-<archetype>.md"}` - your standing read on this matchup,
-   using the archetype you deduced. Create it if it does not exist, and revise
-   it rather than appending if it does: their threats, your answers, which
-   cards are dead, what the race maths looks like, mulligan policy.
+   keyed on the archetype you deduced, spelled exactly as the matchup card's
+   tells table spells it, or on `{UNKNOWN_ARCHETYPE}` if what they played
+   matched none of those rows. Never a name of your own invention: the next
+   game's briefing looks this file up by exactly that key, and a note filed
+   under a name nobody looks up is a note you wrote for nothing. Create it if
+   it does not exist, and revise it rather than appending if it does: their
+   threats, your answers, which cards are dead, what the race maths looks
+   like, mulligan policy.
 3. `{Path(memory_root) / "MEMORY.md"}` - one line per note, `- [title](path) -
    hook`. Add lines for anything new; do not restate the note's contents there.
 

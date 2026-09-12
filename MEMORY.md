@@ -7,6 +7,39 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-12 - the card's byte budget is per card, and it is never
+  divided.** `render_current_game` used to hand each branch of a family
+  `CARD_TARGET_BYTES // len(offered)` with a shared cap, on the theory that a
+  briefing's cost is the sum of the cards in it. It bought those bytes out of
+  the one thing the brief requires on every one of fifteen to nineteen rows:
+  at a 5120 byte target and an 8192 byte cap there is no rung of the trim
+  ladder left that keeps the tells table's `watch for` column, so the tron
+  case - the case `_family` exists for, and a routine one when pilots bring
+  their own lists - rendered `prison-tron` at 6923 bytes and `eldrazi-tron`
+  at 7879 with the column deleted off all 34 rows between them, while each of
+  those two plans renders whole at 11-12 KB under its own cap. Both halves of
+  the trade were the wrong half: 14802 bytes of card, over the 12288 per-card
+  cap the brief does set, and still missing the field. Rendered at its own
+  budget each branch comes out whole - 11659 and 10026 bytes, 34 rows, no
+  empty cell, neither truncated - for 21685 bytes of card in a 25 KB
+  briefing, against the 58540 + 58973 bytes of gameplan guide it replaces. Two things
+  to keep:
+
+  (1) **A briefing-wide budget is not a budget the brief set.** The only
+  numbers written down are per card (10 KB target, 12 KB hard cap), and the
+  card's own trim ladder is the only authorised way to spend less. Inventing
+  an outer budget hands the ladder a floor it cannot meet honestly and the
+  cost comes out of whichever field the last rung happens to delete.
+
+  (2) **A test at a squeezed budget is not a test of the default path.**
+  Every family test asserted the renderer behaved honestly under the divided
+  budget - and two of them asserted the loss as expected behaviour ("it
+  dropped section 3 and said otherwise") - so a green suite hid a briefing
+  with zero `| watch for |` in it. What was missing was an assertion about
+  the briefing the driver actually produces:
+  `test_a_family_briefing_keeps_the_watch_for_on_every_row_of_every_branch`
+  is that, and the squeezed-budget tests are now named for what they are.
+
 - **2026-09-12 - two audit gaps: a public component vanished from
   `openapi.json`, and the baseline paid a round trip this branch existed to
   remove.**
@@ -172,6 +205,108 @@ whoever works on the repo itself.
   being consistent, not drift - `tests/driver/test_guides.py`'s table records
   each with its reasoning, pinned to mtg-decks sha
   `936b324bedcad1c4de6e328c0f32c33a03bfa703`.
+
+- **2026-09-12 - the agent's deck brief is rendered into turn 0, not read
+  from a 58 KB guide.** `GAMEPLAN_GUIDE.md` is 42-73 KB of markdown across the
+  corpus (72.8 KB for orzhov-martyr) and it is *generated*: the structured
+  source is `analysis/<run>/domain3-matchup-threat/boarding-plan.json`, which
+  was sitting unread beside the file the seat was told to open.
+  `driver/matchup_card.py` renders that plan into ~10 KB of turn-0 context
+  instead.
+
+  Three things this cost time to get right:
+
+  (1) **An archetype's signature cards are keyed on the name the archetype
+  file calls itself, not on its directory.** `decks/affinity/archetype.json`
+  says `"archetype": "pinnacle affinity"`, and `pinnacle affinity` is what
+  every boarding plan in the corpus writes; keying the lookup on the directory
+  slug alone found 6 of 19 rows instead of 9. `signature_index` keys on both.
+
+  (2) **A boarding plan has no deck-wide keep rule.** Every `keep` in it is
+  written for a named matchup, so the card presents the *modal* keep across
+  the plan's own matchups, says how many matchups back it, and does not pass
+  one matchup's keep off as universal.
+
+  (3) **The specified trim order - `watch_for` first, top-three detail second
+  - has no power on some plans.** dimir-frog's longest `watch_for` is 123
+  characters, so squeezing the table's cap to 85 saves less than the
+  truncation notice costs, and the detail levels do all the work there. The
+  ladder still tries the table first (that is the order the requirement asks
+  for); the test asserts both branches rather than pretending the first lever
+  always bites. The corpus renders 10.0-11.5 KB at full fidelity, so 11 of 13
+  guides trim by a rung or two against the 10 KB target and every one of them
+  lands under the 12 KB hard cap.
+
+  Also: the seat's own `vs-<archetype>.md` standing notes are now inlined into
+  the briefing (4 KB budget, alphabetical, the deduced matchup's note first
+  when a caller knows it); a past game's write-up stays a path, because there
+  can be dozens. Every note key is the tells table's canonical slug or
+  `unknown`, and `reflection_turn` says so - a note filed under an invented
+  name is one the next briefing never looks up.
+
+- **2026-09-12 - a byte cap is not a trim lever, and the card's notice is
+  derived from the rung rather than written next to it.** Halving the hard
+  cap for a family briefing (entry above, (3)) handed every real corpus plan
+  a budget no honest rendering can meet: the trim ladder bottomed out around
+  9.3 KB, the 6 KB cap took the rest with a blunt byte cut at the end of the
+  text, and each card came out missing two to six tells rows, the brew case,
+  the one-small-read pointer and the whole of section 3 - while its own
+  notice went on saying "Nothing was dropped - every archetype still has a
+  row". Three things came out of fixing it:
+
+  (1) **The ladder got the two levers it was missing**, both announced: the
+  tells table's `watch for` COLUMN goes after its prose has given all it is
+  going to (the prose rungs are nearly free on this corpus - most `watch_for`
+  values are already under 85 characters), and section 3 then keeps its
+  heading and the three names while its detail goes to the matchup files.
+  That reaches ~6.2-6.9 KB with every row, every section and every pointer
+  intact - which is as far down as the ladder goes honestly, and the reason
+  no caller is allowed to ask it for less than a whole card.
+
+  (2) **Rows are the last thing to give, and they are named where they
+  were.** Below every lever the renderer drops tells rows from the bottom of
+  the field up and lists the archetypes that lost one, so their
+  `vs-<name>.md` keys and matchup files stay reachable. Only a budget that
+  cannot hold even an empty table gets the byte cut, and the notice then says
+  the card was cut and what follows the marker is missing.
+
+  (3) **`_notice` is computed from the `_Trim` rung that rendered the card**,
+  not written alongside the loop that picked it, and it separates SHORTENED
+  from DROPPED. A notice written by hand is a second source of truth about
+  what the card did to itself, and it was wrong at every rung below the two
+  it knew about.
+
+  (`CARD_FLOOR_BYTES`, the floor a shared cap did not go below, is gone with
+  the sharing itself - see the 2026-09-12 entry at the top of this file.)
+
+- **2026-09-12 - the matchup card reads the 75, the classifier reads the 60,
+  and both halves of that are in one briefing.** The card and the classifier
+  were built on separate branches and integrating them turned up one real
+  bug and two near-misses worth recording:
+
+  (1) **The swap intersection must be asked of the WHOLE 75, not of the
+  mainboard.** `parse_decklist` returns a split `Decklist` because a
+  signature clause may only be answered from the maindeck - nobody has cast
+  a sideboard card. A boarding swap is the opposite question: every card a
+  plan boards IN comes out of the sideboard by definition, so intersecting
+  on `.mainboard` stamps `(NOT IN YOUR LIST)` on every single board-in.
+  dimir-frog is the case verbatim - `esper blink` is its biggest matchup and
+  boards three Mystical Dispute, which its list ships in the sideboard
+  behind a bare blank line. `guides.held_faces` takes the union of both
+  boards and is the only place that decision lives.
+
+  (2) **The boarding plan and the matchup files are read off the SAME
+  analysis run, selected by the run's date suffix.** A separate
+  `sorted(glob("analysis/*/.../boarding-plan.json"))` sorts by deck name and
+  picks the newest run only by accident - two runs with different name
+  prefixes is all it takes for 2025's plan to beat 2026's. `_analysis_key`
+  picks the run; `matchups_dir` and `boarding_plan` both come off it.
+
+  (3) **A family match hands over two guides, so it renders two cards.**
+  `Identification.guides` returns both leading branches when the list
+  resolved to a parent. Dividing one card's budget between them looked like
+  the thrifty answer and was not - superseded, see the 2026-09-12 entry at
+  the top of this file.
 
 - **2026-09-10 - an action answer now carries its own legal targets, and the
   candidates are opt-in because the engine will not cache the board.** M1's
@@ -2245,6 +2380,44 @@ whoever works on the repo itself.
   generations. `seatkit-14` covers both halves - additive on the request,
   additive on the response.**
 
+- **2026-09-12 - the matchup card's rendered size is not a function of its
+  plan's size, and the fixture slice is not the card's worst case.** Measured
+  over all thirteen guides in `mtg-decks` at `01fae6c`, corpus root
+  `~/Documents/mtg-decks`, with the ladder that gives full fidelity the whole
+  cap: the three largest `boarding-plan.json` (orzhov-martyr 141730,
+  dimir-frog 110697, prison-tron 109669) render the 7th, 8th and 3rd largest
+  cards (10982, 10864, 11357), while the largest cards come from mid-sized
+  plans - living-end 11566 from a 107974 byte plan, affinity 11490 from
+  97592 - because the trim ladder bounds the output and what is left is set
+  by matchup COUNT and how many of those archetypes have an `archetype.json`
+  to quote. Maximum in the corpus is 11566 against the 12288 cap, no guide
+  truncated; the smallest rung renders at most 6923 (prison-tron). The full
+  table is in `tests/fixtures/guides/README.md`, pinned by
+  `test_the_readme_quotes_the_size_the_card_actually_renders_to` so it cannot
+  drift again. Two consequences: the card's byte figure is path-dependent -
+  the card prints the plan's absolute path twice (the header, and the
+  one-read line), so a figure moves by exactly TWICE the root's length: 58
+  bytes larger under `.claude/worktrees/<name>/...` than under `code/`, 56
+  smaller under the `/guides` a seat Job clones to. Never quote a raw figure
+  without its root, and pin only `byte_size - 2 * len(str(plan_path))` in a
+  test. And the cap holds regardless of what the fixture pins, because
+  `_capped` enforces `hard_cap_bytes` by cutting bytes in code. Also
+  re-measured the `matchups/*.json` figure the briefing quotes: 211 files,
+  min 3376, median 6202, p90 8194, max 28492, so the prose says 3-9 KB (28 KB
+  at the largest), not the 5-20 KB it used to claim.
+
+- **2026-09-12 - a measurement written into docs in the same commit that
+  changes the code being measured is stale on arrival.** `27291a8` reordered
+  the trim ladder AND wrote byte figures measured before the reorder into
+  `tests/fixtures/guides/README.md` and this file; every figure was 1.3-1.9
+  KB low with the ranking wrong, and the same commit's own test docstring
+  contradicted them. Worse, the program that made its suite green existed
+  only as uncommitted working-tree edits - `HEAD` failed 9 tests of
+  `tests/driver/test_matchup_card.py`. Two habits out of it: re-measure
+  AFTER the last code change and never reuse a number from earlier in the
+  session, and make any figure a doc quotes a thing a test reads out of the
+  doc, so "the docs went stale" becomes a red suite rather than a review
+  finding.
 - **2026-09-12 - never infer intent from the raw request body. The advisor
   gate permitted a POST carrying `dry_run: true`, read straight off the JSON,
   and only nine routes declare that field: on every other shape pydantic

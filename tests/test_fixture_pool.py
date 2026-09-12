@@ -124,7 +124,7 @@ def test_every_multi_faced_pool_card_resolves_from_any_spelling(pool):
     it is that *every* multi-faced printing in the pool resolves the same
     way, with no per-card knowledge anywhere in the reader. Derived straight
     from each printing's own name (the `//` separator and its faces, exactly
-    what `scryfall._faces`/`fixture_slug`/`_pool_names_match` already key
+    what `scryfall.name_faces`/`fixture_slug`/`_pool_names_match` already key
     off): the full Scryfall name, the front face alone, and both slash-only
     spellings a real decklist export uses ("A/B", "A//B") must all find it,
     and must all agree on which printing they found. A split, transform, or

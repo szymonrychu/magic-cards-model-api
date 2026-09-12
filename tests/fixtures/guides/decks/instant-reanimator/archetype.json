@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "archetype": "instant reanimator",
+  "signature": [
+    {
+      "cards": [
+        "Goryo's Vengeance",
+        "Atraxa, Grand Unifier"
+      ],
+      "min": 6,
+      "why": "The two cards that ARE the deck, 4-of in 10/10 field lists: a one-mana instant that returns a legendary creature, and the seven-drop it returns. Nothing else in Modern puts an Atraxa onto the battlefield on turn two at instant speed."
+    },
+    {
+      "cards": [
+        "Psychic Frog",
+        "Faithful Mending",
+        "Otherworldly Gaze",
+        "Fallaji Archaeologist",
+        "Thoughtseize"
+      ],
+      "min": 6,
+      "why": "The discard outlets that get Atraxa into the graveyard, and the hand attack that buys the turn. Psychic Frog is 4-of in 10/10 - it is the outlet, the clock and the card advantage at once - and which of the others fill the rest is a build decision."
+    },
+    {
+      "cards": [
+        "Flooded Strand",
+        "Polluted Delta",
+        "Marsh Flats",
+        "Watery Grave",
+        "Godless Shrine",
+        "Hallowed Fountain",
+        "Undercity Sewers",
+        "Shadowy Backstreet",
+        "Meticulous Archive"
+      ],
+      "min": 8,
+      "why": "An esper fetch-and-shock manabase. Goryo's Vengeance wants {B}, Solitude and Prismatic Ending want {W} and Faithful Mending wants {U} on the same turns, which is why every field list plays eight or more of these nine."
+    }
+  ]
+}

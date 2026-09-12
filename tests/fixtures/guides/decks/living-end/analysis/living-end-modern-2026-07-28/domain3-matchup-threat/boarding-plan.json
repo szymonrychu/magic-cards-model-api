@@ -1,0 +1,2283 @@
+{
+ "field": {
+  "cutoff_share": 2.002730996813837,
+  "count": 19
+ },
+ "sideboard_access": {
+  "kind": "boarded"
+ },
+ "matchups": [
+  {
+   "name": "broodscale bloodchief",
+   "meta_share": 4.961310878470642,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Force of Vigor, Boseiju's channel, and Dismember attack their engine pieces (Soul-Guide Lantern, Urza's Saga, Vexing Bauble, Basking Broodscale) without taxing our own cascade density or graveyard plan. Damping Matrix does NOT symmetrically shut our own Cycling/Channel/loot suite: per CR 109.2, 'Activated abilities of artifacts and creatures' (with no zone stated) scopes to permanents on the battlefield, and per CR 702.29a cycling functions only from a player's hand, where a creature card is not a 'creature' under CR 109.2 -- Street Wraith, Curator of Mysteries, Generous Ent, Oliphaunt, Colossal Skyturtle, and Waker of Waves are untouched, and Boseiju, Who Endures is a Legendary Land Damping Matrix never mentions at all. Damping Matrix is boarded in here, replacing Tormod's Crypt, because it is a free answer to their own non-mana activated abilities -- Soul-Guide Lantern's 'Sacrifice: Exile each opponent's graveyard' and Haywire Mite -- at zero cost to our plan, while Tormod's Crypt is moved to the reanimator-shaped matchups where its instant-speed graveyard exile actually fizzles a spell on the stack; the in/out totals are unchanged because it is a straight swap.",
+   "play": {
+    "in": [
+     "2 Dismember",
+     "2 Force of Vigor",
+     "2 Damping Matrix"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Dismember",
+     "2 Force of Vigor",
+     "2 Damping Matrix"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "standard graveyard-hate slot; does not function against Living End's exile-first resolution",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Soulless Jailer",
+     "count": 1,
+     "why": "same graveyard-hate assumption, same exile-intermediary loophole against us",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "extra copies aimed at free-cast/evoke decks like ours",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Damping Sphere",
+     "count": 1,
+     "why": "taxes a multi-spell cascade turn",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "instant-speed -5/-5, resolves before Grafdigger's Cage/Soulless Jailer can matter and neither pulled sideboard runs hexproof-granting effects"
+    },
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "green-cost spell (not colorless), so Consign to Memory-style hate elsewhere in the field cannot touch it; no such counter appears in this archetype's pulled sideboards anyway"
+    },
+    {
+     "card": "Damping Matrix",
+     "verdict": "SURVIVES",
+     "why": "a {3} colorless artifact cast for its normal mana cost, not the zero-mana-spent cast Vexing Bauble catches; Pithing Needle (70% of pulled sideboards) has nothing to name on it because its ability is static, and Grafdigger's Cage, Soulless Jailer and Damping Sphere do not interact with it at all. Nature's Claim ('Destroy target artifact or enchantment', 100% of pulled sideboards) does answer it -- a clean one-for-one on a lock piece they have to answer, not a blank -- while the Urza's-Saga-fetched Haywire Mite that would otherwise exile it works through '{G}, Sacrifice this creature: Exile target noncreature artifact or noncreature enchantment', an activated creature ability a resolved Matrix has already shut off. Once resolved it shuts Soul-Guide Lantern's '{T}, Sacrifice this artifact: Exile each opponent's graveyard' (100% main, the one card here that beats Living End outright), Urza's Saga chapter II and Haywire Mite (all activated, non-mana abilities of permanents, CR 109.2) at zero cost to our own cycling, which functions only from hand (CR 702.29a)"
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with a cascade spell plus Force of Negation or a fetch land; slower hands lose to an unanswered Vexing Bauble or Blade turn.",
+    "goldfish_for": "Boseiju or Force of Vigor before committing a cascade spell into an untapped Vexing Bauble.",
+    "watch_for": "An early Urza's Saga plus mana dork signals the fast Blade-of-the-Bloodchief line; heavy digging with no Broodscale signals the slower Emrakul line.",
+    "posture": "disrupt_first",
+    "posture_why": "Their engine, not raw damage, is the threat; strip Vexing Bauble and Soul-Guide Lantern before racing."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Basking Broodscale plus Blade of the Bloodchief is an arbitrarily large loop that kills before we assemble; Urza's Saga finds the halves, and Living End alone does not stop a combo kill.",
+    "key_cards": [
+     {
+      "card": "Basking Broodscale",
+      "why": "the lizard half of the loop, which makes the kill a two-card assembly rather than a board they have to build"
+     },
+     {
+      "card": "Blade of the Bloodchief",
+      "why": "turns Eldrazi Spawn sacrifices into arbitrarily large power, closing the game the turn it is equipped"
+     },
+     {
+      "card": "Urza's Saga",
+      "why": "four copies that tutor the Blade and the utility artifacts, so the fast draw shows up far more often than one card would"
+     },
+     {
+      "card": "Emrakul, the Promised End",
+      "why": "the fair backup clock for the games where the loop is answered, so disruption does not buy us the long game"
+     }
+    ]
+   }
+  },
+  {
+   "name": "instant reanimator",
+   "meta_share": 4.415111515703232,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Their kill is a graveyard we can preemptively strip (Endurance) or directly counter (Force of Negation) for free, and our recommended additions (Dismember, Mystical Dispute) attack their plan without taxing our own -- both are mv 3 and do not collide with cascade. Tormod's Crypt is added because it is an instant-speed {0} artifact that can fizzle Goryo's Vengeance ('Return target legendary creature card from your graveyard') with the spell on the stack -- Dismember cannot substitute here since Atraxa, Grand Unifier is 7/7 and -5/-5 does not kill it. The instant-reanimator-dossier calls Sink into Stupor, Oliphaunt, and Curator of Mysteries 'our most passive/situational bodies against a deck that isn't racing on the ground'; the same reasoning extends one copy further to Curator of Mysteries and Waker of Waves as the extra cuts to pay for the Crypts.",
+   "play": {
+    "in": [
+     "2 Dismember",
+     "3 Mystical Dispute",
+     "2 Tormod's Crypt"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Dismember",
+     "3 Mystical Dispute",
+     "2 Tormod's Crypt"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "counters the cascade trigger, and separately our Endurance/Subtlety/Wistfulness ETB triggers; 10/10 pulled lists",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "taxes our blue spells; 10/10 pulled lists",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "X-cost sweeper for whatever board Living End actually resolves into; 9/10 pulled lists",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    },
+    {
+     "card": "Surgical Extraction",
+     "count": 1,
+     "why": "exiles every copy of a named Living End card once one is seen in a graveyard",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 1,
+     "why": "full graveyard exile in response to a cascade hit",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "instant removal, resolves before any of their graveyard hate matters and nothing in their pulled sideboards grants hexproof"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "at parity in a counter-war their own Mystical Dispute can contest it, but that is normal interaction, not a blank -- it still resolves when they are tapped out"
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "Consign to Memory (4 copies) can counter the cast, since 'Counter target triggered ability or colorless spell' does cover a colorless artifact spell -- but Tormod's Crypt costs {0}, so it is deployed before they hold up {U}, and once it has resolved its ability is activated, not triggered, which Consign to Memory cannot counter at all. A Consign spent on a free artifact is one fewer left for our cascade trigger. There is no summoning-sickness restriction on an artifact's tap ability (CR 302.6), so it resolves and activates the same turn, and it can be fired in response to Goryo's Vengeance on the stack; Nihil Spellbomb, Surgical Extraction and their Mystical Dispute (which taxes a spell, and this one costs nothing to recast) do not remove it"
+    }
+   ],
+   "play_plan": {
+    "keep": "Force of Negation or Endurance plus lands; loose proactive hands with no interaction lose to Thoughtseize into an unanswered Goryo's Vengeance.",
+    "goldfish_for": "A held Endurance or Force of Negation alongside cascade pieces, not a fast clock.",
+    "watch_for": "Fallaji Archaeologist/Otherworldly Gaze resolving early means their graveyard is already live for Goryo's Vengeance.",
+    "posture": "disrupt_first",
+    "posture_why": "our answers are free (evoke/off-turn) but must be held for the right window, not played on curve."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Goryo's Vengeance puts Atraxa, Grand Unifier down on turn two and Ephemerate doubles the trigger; our clock is a full turn slower, so they win before our interaction is castable.",
+    "key_cards": [
+     {
+      "card": "Goryo's Vengeance",
+      "why": "two mana at instant speed for a turn-two fatty, which is the whole clock"
+     },
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "the body they reanimate, refilling their hand on entry so the fast start does not run out of gas"
+     },
+     {
+      "card": "Ephemerate",
+      "why": "blinks the reanimated body to double the enters trigger and dodge the exile clause"
+     },
+     {
+      "card": "Fallaji Archaeologist",
+      "why": "sets the graveyard up on turn one, which is what makes the turn-two kill repeatable"
+     }
+    ]
+   }
+  },
+  {
+   "name": "eldrazi ramp",
+   "meta_share": 5.052344105598544,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Force of Vigor and Dismember attack their mana engine and hate pieces directly (both mv-safe for cascade at 4 and 3 respectively) without taxing our own plan; neither traded card was doing real work in this matchup.",
+   "play": {
+    "in": [
+     "2 Force of Vigor",
+     "2 Dismember"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "1 Oliphaunt"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Force of Vigor",
+     "2 Dismember"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "1 Oliphaunt"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 2,
+     "why": "intended as a free-spell tax but does not actually affect cascade or our alternative-cost pitches",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Chalice of the Void",
+     "count": 2,
+     "why": "the real lock piece; set for X=3 it counters Violent Outburst, Shardless Agent, and Sink into Stupor simultaneously",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Endurance",
+     "count": 2,
+     "why": "graveyard hate that can strip our Living End fuel if targeted at us, plus a 3/4 reach blocker",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "seen in 8 of 10 pulled sideboards, primarily insurance vs other artifact/enchantment decks",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "destroys Chalice of the Void/Trinisphere/Vexing Bauble outright once resolved; no hexproof-granting effect in their pulled sideboards"
+    },
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "kills their accelerants (Disciple of Freyalise, Fanatic of Rhonas, Sowing Mycospawn) before board interaction matters"
+    }
+   ],
+   "play_plan": {
+    "keep": "3+ lands, a cascade source, and one titan answer (Subtlety or Sink into Stupor); a pure goldfish hand loses to an unanswered Emrakul on turn three or four.",
+    "goldfish_for": "A cascade source to find Living End before their titan resolves.",
+    "watch_for": "Whether they tap out turn two -- an empty back-line means no Chalice/Trinisphere yet.",
+    "posture": "race",
+    "posture_why": "No card in this 75 answers a titan's cast trigger, so winning before turn four beats winning through a resolved titan."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Temple and Labyrinth mana puts Emrakul, the Promised End or Ulamog, the Ceaseless Hunger down on turn three or four, inside our clock; Sowing Mycospawn and post-board Trinisphere only widen the gap.",
+    "key_cards": [
+     {
+      "card": "Emrakul, the Promised End",
+      "why": "a turn-three or turn-four eight-drop that Living End cannot beat once it resolves"
+     },
+     {
+      "card": "Ulamog, the Ceaseless Hunger",
+      "why": "the second titan, so answering one accelerant does not buy the turns we need"
+     },
+     {
+      "card": "Sowing Mycospawn",
+      "why": "attacks our lands on the way, slowing the only clock that could have kept pace"
+     },
+     {
+      "card": "Trinisphere",
+      "why": "makes the cascaded payload and every free pitch spell cost three, which their ramp pays and we cannot",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     }
+    ]
+   }
+  },
+  {
+   "name": "dimir control",
+   "meta_share": 2.5034137460172965,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Nearly every disruptive card in their 75 is blue, so cheap countermagic aimed at their own plan is the highest-leverage swap; Mystical Dispute's mana value is 3 (resolve_cards: {2}{U}), which sits exactly on the Violent Outburst / Shardless Agent cascade floor of 3, so it is never a cascade collision -- the same treatment Anger of the Gods gets elsewhere in this board -- and the deck runs three here because the matchup is decided by a counter war, not because of any cascade cost. The third Dismember is added this pass out of the two Foundation Breaker slots: it is the only card we can board that Harbinger of the Seas cannot switch off, and it kills Harbinger, Psychic Frog and Orcish Bowmasters. It does not close this row's recorded gap - see `gaps` - because it kills neither a 4/6 Quantum Riddler nor a delved Murktide Regent.",
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "1 Dismember"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "1 Waker of Waves",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "1 Dismember"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "1 Waker of Waves",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 2,
+     "why": "brings the cascade-trigger counter up to 4 total copies in the 75 against a combo deck",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "one mana against our blue spells",
+     "source_tournament_id": "41eeab1c-12b4-4733-9e7b-127ce19e5df3"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 2,
+     "why": "instant-speed graveyard exile, activatable in response to the cascade trigger",
+     "source_tournament_id": "41eeab1c-12b4-4733-9e7b-127ce19e5df3"
+    },
+    {
+     "card": "Toxic Deluge",
+     "count": 2,
+     "why": "scalable sweeper for our post-cascade board",
+     "source_tournament_id": "41eeab1c-12b4-4733-9e7b-127ce19e5df3"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a counter war against their own Mystical Dispute/Consign to Memory package is expected interaction, not a blank; it still resolves once they are tapped out"
+    },
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "Consign to Memory counters activated and triggered abilities, not spells, so their copies cannot touch it, and their own Mystical Dispute gets no discount against a black spell. It is also the only card we board here that Harbinger of the Seas cannot switch off: with our 13 nonbasics turned into Islands, {1} plus 4 life is still payable off any land we control, where hard-cast Force of Vigor and Anger of the Gods are not. It is a partial answer and the row's gap entry says so - it kills Harbinger of the Seas, Psychic Frog and Orcish Bowmasters, and it does NOT kill a 4/6 Quantum Riddler or a delved Murktide Regent."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a cascade spell, and Endurance or Force of Negation -- a hand that survives the first Thoughtseize and still threatens a second cascade attempt.",
+    "goldfish_for": "The turn they show 2 or fewer open mana with no flash creature untapped.",
+    "watch_for": "Two open blue mana on our turn is Spell Snare plus a Dispute-class card; four is a hard counter plus backup.",
+    "posture": "bait",
+    "posture_why": "their interaction density means we need a piece spent on the wrong spell first."
+   },
+   "opponent_plan": {
+    "posture": "disrupt_first",
+    "posture_why": "Prose calls it a long game on card quality, but the pitfalls and stance describe a counter war: Thoughtseize and three counters answer our cascade first, then Murktide Regent closes.",
+    "key_cards": [
+     {
+      "card": "Thoughtseize",
+      "why": "strips the cascade spell before it is ever cast, which is the cheapest way to answer our plan"
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "one mana with replicate for the cascade trigger itself, the counter our own Dispute cannot outnumber",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Orcish Bowmasters",
+      "why": "taxes the cycling we use to set up, so building the payload costs us life and gives them a body"
+     },
+     {
+      "card": "Murktide Regent",
+      "why": "the clock they deploy once our cascade has been answered, closing a game they never had to race"
+     }
+    ]
+   }
+  },
+  {
+   "name": "boros aggro",
+   "meta_share": 3.0040964952207556,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Anger of the Gods attacks their board directly (every maindeck creature has toughness 3 or less) at no cost to our own plan, since Oliphaunt is a redundant top-end finisher we do not need once Living End has reset the board. Force of Vigor is added alongside it -- resolve_cards confirms Force of Vigor (mana_cost {2}{G}{G}, mv4) reads 'If it's not your turn, you may exile a green card from your hand rather than pay this spell's mana cost. Destroy up to two target artifacts and/or enchantments,' which is a free, off-turn, permanent answer to all four of this matchup's hardest sideboard cards at once -- Vexing Bauble (artifact), and High Noon / Blood Moon / Rest in Peace (all enchantments per resolve_cards' type_line). The boros-aggro-dossier calls High Noon 'the single most dangerous card in their 75' since it stops the cascade combo outright (CR 601.3 + CR 702.85a) and states 'Boseiju, Who Endures is the only maindeck answer' -- a single copy, sorcery-speed, one-shot. Force of Vigor is a second, redundant, instant-speed, free answer to that same card, plus a hard answer to Goblin Bombardment. The two Sink into Stupor are the correct cut to make room: they were a one-shot bounce on Voice of Victory/Ranger-Captain of Eos/Goblin Bombardment (per the playbook's interaction table), but Anger of the Gods already exiles those same toughness-3-or-less bodies outright once it is in the 75, so Sink into Stupor's creature-removal job is now redundant with Anger of the Gods while Force of Vigor covers a job (permanent artifact/enchantment removal) nothing else in this configuration does. Damping Matrix is removed from this matchup: it is now boarded in for broodscale bloodchief and creatures toolbox instead, where its target (a non-mana activated ability of an opposing artifact/creature) is a bigger share of what beats us than Ranger-Captain of Eos's sacrifice ability is here, and High Noon's static lock (which Damping Matrix never touched) is still answered by Force of Vigor's redundant free removal.",
+   "play": {
+    "in": [
+     "2 Anger of the Gods",
+     "2 Force of Vigor"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "2 Sink into Stupor"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Anger of the Gods",
+     "2 Force of Vigor"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "2 Sink into Stupor"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 4,
+     "why": "a two-for-one on our manabase (15 of 16 lands nonbasic) that also presents a four-power flying body",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "80% pulled-sideboard inclusion (8/10, boros-aggro-card-index); CR 601.3 + CR 702.85a mean that once we've cast our one permitted spell of the turn, High Noon prohibits the cascade trigger from casting the exiled Living End as a second spell -- it stops the combo outright, not just tax our interaction. Boseiju, Who Endures (channel) is the only maindeck answer; Force of Vigor is now a second, instant-speed, free answer",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Rest in Peace",
+     "count": 1,
+     "why": "exiles our graveyard on entry and keeps it empty, blanking Living End completely",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "counters the cascaded Living End, Force of Negation's alternate cost, and evoked Subtlety/Endurance",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Blood Moon",
+     "count": 2,
+     "why": "turns off the green and blue halves of an almost entirely nonbasic manabase",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Anger of the Gods",
+     "verdict": "SURVIVES",
+     "why": "exiles rather than kills, denying Goblin Bombardment's sacrifice outlet on what it removes; nothing in their pulled sideboards protects creatures from a sweeper"
+    },
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "green-cost spell (mv4, {2}{G}{G}), not colorless, so nothing in this archetype's pulled sideboards can tax or counter it specifically; it destroys up to two of Vexing Bauble/High Noon/Blood Moon/Rest in Peace/Goblin Bombardment outright once resolved, and its off-turn alternate cost (exile a green card, no mana) works even under a resolved High Noon since it is cast on their turn, not ours"
+    }
+   ],
+   "play_plan": {
+    "keep": "Subtlety or Endurance plus 3-4 lands; no 2-landers against a T5 clock.",
+    "goldfish_for": "Boseiju or a green card for Force of Vigor before Vexing Bauble or High Noon locks the cascade line.",
+    "watch_for": "Ranger-Captain of Eos tutoring a second one-drop signals a wider curve; an untapped High Noon on our cascade turn means our one permitted spell must already be Living End, with no follow-up.",
+    "posture": "disrupt_first",
+    "posture_why": "their clock beats our goldfish by a turn, so interaction must land first."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Their one-drop curve beats our goldfish by a turn, and Ranger-Captain of Eos plus Goblin Bombardment convert a stalled board into the last points before we can rebuild.",
+    "key_cards": [
+     {
+      "card": "Voice of Victory",
+      "why": "a protected threat that also stops us casting spells on their turn, so the alpha strike goes unanswered"
+     },
+     {
+      "card": "Ranger-Captain of Eos",
+      "why": "sacrificed, it stops our noncreature spells for the turn, which is the cascade turn they are racing to"
+     },
+     {
+      "card": "Goblin Bombardment",
+      "why": "turns a board we have blocked or swept into reach, so the race does not stall out"
+     }
+    ]
+   }
+  },
+  {
+   "name": "ur cutter prowess",
+   "meta_share": 2.6854802002730995,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Force of Vigor kills their only permanent engine piece (Cori-Steel Cutter) and Mystical Dispute protects the cascade trigger from their postboard Consign to Memory, neither of which taxes our own game plan; Anger of the Gods can clip our own Shardless Agent (2/2) if it is already reanimated, a minor avoidable pitfall.",
+   "play": {
+    "in": [
+     "2 Force of Vigor",
+     "2 Anger of the Gods",
+     "2 Mystical Dispute"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "2 Sink into Stupor",
+     "2 Curator of Mysteries"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Force of Vigor",
+     "2 Anger of the Gods",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "2 Sink into Stupor",
+     "2 Curator of Mysteries",
+     "1 Colossal Skyturtle"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "counters our cascade trigger directly; modal configuration is the full 4 copies",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Tormod's Crypt",
+     "count": 2,
+     "why": "free, instant-speed, empties our graveyard in response to a cascade trigger",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Surgical Extraction",
+     "count": 2,
+     "why": "once any Living End is seen in a graveyard, strips all three copies",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    },
+    {
+     "card": "Unholy Heat",
+     "count": 3,
+     "why": "delirium turns this into 6 damage, enough to kill nearly every reanimated body except Generous Ent and Waker of Waves",
+     "source_tournament_id": "d8f62182-dc4f-47e6-af5c-623da0c3a7fd"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "destroys Cori-Steel Cutter outright once resolved; no protection for artifacts in their pulled sideboards"
+    },
+    {
+     "card": "Anger of the Gods",
+     "verdict": "SURVIVES",
+     "why": "does not hit Cori-Steel Cutter (an artifact) but resets their creature curve cleanly; watch our own Shardless Agent (self-cost, not a blank)"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a one-mana answer to their postboard Consign to Memory when they target our cascade trigger"
+    }
+   ],
+   "play_plan": {
+    "keep": "2+ lands with a cascade spell, or 3 lands with Force of Negation and a cycler; one-landers and cascade-less flood both lose here.",
+    "goldfish_for": "Violent Outburst or Shardless Agent; failing that, evoke Endurance to strip their delirium fuel.",
+    "watch_for": "an early Cutter plus a second spell same turn means the engine is live.",
+    "posture": "race",
+    "posture_why": "no removal exists for their creatures; only a fast cascade wins."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "One-mana threats and Cori-Steel Cutter tokens kill on turn three or four; the post-board Consign to Memory and Tormod's Crypt exist only to keep our sweeper-and-cascade reset off the table.",
+    "key_cards": [
+     {
+      "card": "Cori-Steel Cutter",
+      "why": "makes a token every turn with free pump behind it, which is how the clock rebuilds after a sweeper"
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "one mana with replicate for the cascade trigger, so the reset never resolves and the race stands",
+      "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+     },
+     {
+      "card": "Tormod's Crypt",
+      "why": "free instant-speed graveyard exile that empties the payload in response, buying the turns their clock needs",
+      "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+     }
+    ]
+   }
+  },
+  {
+   "name": "living end",
+   "meta_share": 2.913063268092854,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Mystical Dispute and Force of Vigor attack their post-board plan (Leyline of the Void, their own Mystical Dispute) without taxing our own cascade-into-Living-End line; both are mana value 3 and 4 respectively, so neither is ever a legal cascade hit.",
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "1-mana tax against our whole blue half, full price against Living End; 10/10 pulled lists at avg 3.5 copies",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "answers a resolved Leyline of the Void or our own boarded-in artifacts, free on their turn; 8/10 pulled lists",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Inevitable Betrayal",
+     "count": 2,
+     "why": "steals a creature straight from our library, bypassing graveyard hate entirely; 8/10 pulled lists",
+     "source_tournament_id": "5e54c170-d139-452f-bbac-cb2dbb39ab42"
+    },
+    {
+     "card": "Brotherhood's End",
+     "count": 2,
+     "why": "sweeps our post-Living-End reanimated board; 7/10 pulled lists",
+     "source_tournament_id": "8236eacd-bf1e-4743-bb07-21beab730112"
+    },
+    {
+     "card": "Leyline of the Void",
+     "count": 4,
+     "why": "free turn-0 graveyard exile; only 2/10 pulled lists, both times as 4 copies from the highest-finishing pilot's list",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a counter war against their own Mystical Dispute is expected mirror interaction; it resolves once they are tapped out"
+    },
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "destroys a resolved Leyline of the Void outright, the one card in their post-board plan it needs to answer"
+    }
+   ],
+   "play_plan": {
+    "keep": "2-5 lands, a cascade spell, and Force of Negation or Subtlety, not just the fastest graveyard fill.",
+    "goldfish_for": "3 lands plus a cascade spell online by T3, with a second cycler already in the yard before committing.",
+    "watch_for": "An untapped Leyline of the Void on their side by T1 means our cycling plan is dead until Force of Vigor.",
+    "posture": "bait",
+    "posture_why": "the cheaper cascade spell draws out their counter so the real Living End resolves clean."
+   },
+   "opponent_plan": {
+    "posture": "disrupt_first",
+    "posture_why": "Post-board they lead with Leyline of the Void to blank our engine and hold Mystical Dispute for our cascade; they answer our Living End before they ever advance their own.",
+    "key_cards": [
+     {
+      "card": "Leyline of the Void",
+      "why": "free on turn zero, it exiles everything we cycle so our engine becomes a mill effect before the game starts",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     },
+     {
+      "card": "Mystical Dispute",
+      "why": "one mana against our whole blue half, so our cascade is answered while theirs is still protected",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     },
+     {
+      "card": "Force of Vigor",
+      "why": "free on our turn, it destroys the Tormod's Crypt or Damping Matrix we bring in, so their graveyard exchange keeps working",
+      "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+     }
+    ]
+   }
+  },
+  {
+   "name": "creatures toolbox",
+   "meta_share": 2.3213472917614935,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Force of Vigor (kills Vexing Bauble/Leyline of Abundance/Agatha's Soul Cauldron) and Dismember (kills Devoted Druid/Vizier of Remedies before the loop assembles) attack their engine directly without costing us anything we need for our own cascade plan; both are mana value 3-4, safely clear of the cascade floor. Damping Matrix is added alongside them: Devoted Druid's own text is 'Put a -1/-1 counter on this creature: Untap this creature,' an activated, non-mana ability of a creature on the battlefield (CR 109.2), which Damping Matrix shuts off permanently for zero cost to our own cycling, which functions only from hand (CR 702.29a) -- it does not tax Street Wraith, Curator of Mysteries, Generous Ent, Oliphaunt, or Colossal Skyturtle. Waker of Waves and Colossal Skyturtle are the extra cuts to pay for it: neither is needed early (the matchup's own early-turn sequence cycles Street Wraith/Generous Ent/Curator of Mysteries to dig, not these two), so they are the least missed bodies against a combo deck we plan to disrupt before racing.",
+   "play": {
+    "in": [
+     "2 Force of Vigor",
+     "2 Dismember",
+     "2 Damping Matrix"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "1 Waker of Waves",
+     "1 Colossal Skyturtle"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Force of Vigor",
+     "2 Dismember",
+     "2 Damping Matrix"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "1 Waker of Waves",
+     "1 Colossal Skyturtle"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "most common configuration (9 of 10 pulled lists); counters our free-cast cascade/evoke suite",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Drannith Magistrate",
+     "count": 1,
+     "why": "9 of 10 lists; restricts casting from anywhere but hand",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Fatal Push",
+     "count": 3,
+     "why": "universal removal; kills a bare evoked body but whiffs on our post-cascade creatures",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Endurance",
+     "count": 2,
+     "why": "8 of 10 lists; graveyard strip plus a 3/4 reach blocker",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Grist, the Hunger Tide",
+     "count": 1,
+     "why": "7 of 10 lists; -2 kills a single Living End creature",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Thoughtseize",
+     "count": 3,
+     "why": "4 of 10 lists; strips our cascade spell or held Force of Negation pre-emptively",
+     "source_tournament_id": "037d505d-0c61-4dcc-9a1c-252e69e4c0b7"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "destroys Vexing Bauble/Agatha's Soul Cauldron outright; no protection for artifacts/enchantments in their pulled sideboards"
+    },
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "kills Devoted Druid/Vizier of Remedies before combo assembly; nothing in their pulled sideboards grants hexproof"
+    },
+    {
+     "card": "Damping Matrix",
+     "verdict": "SURVIVES",
+     "why": "a {3} colorless artifact cast for its normal mana cost, not the zero-mana-spent cast Vexing Bauble catches, and neither Fatal Push nor the rest of their creature removal can touch an artifact. Their real answers are Boseiju, Who Endures (100% maindeck; 'Channel -- {1}{G}, Discard this card: Destroy target artifact, enchantment, or nonbasic land an opponent controls') and Force of Vigor (40% of pulled sideboards) -- both cost them a card, and Boseiju a land drop, to answer a lock piece they cannot combo through, which is interaction rather than a blank. Once resolved it shuts off Devoted Druid's 'Put a -1/-1 counter on this creature: Untap this creature' (100% main, an activated non-mana ability of a permanent, CR 109.2), and with it the Druid/Vizier mana loop the card index records as otherwise unanswerable, at zero cost to our own cycling (CR 702.29a)"
+    }
+   ],
+   "play_plan": {
+    "keep": "A hand with disruption (Force of Negation/Subtlety/Wistfulness) or two-plus cyclers even without a cascade spell; a pure cascade-only hand risks a live Vexing Bauble.",
+    "goldfish_for": "A second land plus a cascade spell while holding Force of Negation for their first noncreature spell.",
+    "watch_for": "Whether they tap out for Leyline of Abundance or Green Sun's Zenith turn two or three.",
+    "posture": "disrupt_first",
+    "posture_why": "Their kill is faster once the loop assembles, so denying Vexing Bauble before cascading wins, not racing."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Devoted Druid plus Vizier of Remedies is a same-turn infinite-mana kill once assembled, so outracing our turn 4-6 cascade clock is the plan, not attrition.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "combo engine half 1, taps for mana and untaps itself for free with Vizier down"
+     },
+     {
+      "card": "Vizier of Remedies",
+      "why": "combo engine half 2, makes the untap loop free instead of self-limiting"
+     },
+     {
+      "card": "Vexing Bauble",
+      "why": "counters our cascaded Living End and every other free-cast spell we run",
+      "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+     },
+     {
+      "card": "Craterhoof Behemoth",
+      "why": "immediate lethal swing off any board with multiple dorks"
+     }
+    ]
+   }
+  },
+  {
+   "name": "hollow one",
+   "meta_share": 2.321347291761493,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Anger of the Gods and Dismember attack their small-creature curve directly, but Anger's 3 damage also kills our own Subtlety (3/3) and Shardless Agent (2/2) if they are already in play, so the sweep taxes our own board along with theirs.",
+   "play": {
+    "in": [
+     "2 Anger of the Gods",
+     "2 Dismember"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "2 Colossal Skyturtle"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Anger of the Gods",
+     "2 Dismember",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "2 Oliphaunt",
+     "2 Colossal Skyturtle",
+     "2 Curator of Mysteries",
+     "1 Sink into Stupor"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Thoughtseize",
+     "count": 4,
+     "why": "the most common configuration (6/10 lists); proactive disruption that strips Living End or Force of Negation before they matter",
+     "source_tournament_id": "c9a7ade3-f6ba-4b16-8d4f-cf482344e2c8"
+    },
+    {
+     "card": "Surgical Extraction",
+     "count": 2,
+     "why": "6/10 lists; once any Living End is in our graveyard this exiles the rest",
+     "source_tournament_id": "f181eb58-dab2-4709-9679-4b924e77b05b"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "4/10 lists; unconditional lock on Living End since cascade and suspend both cast it without paying its mana cost",
+     "source_tournament_id": "c9a7ade3-f6ba-4b16-8d4f-cf482344e2c8"
+    },
+    {
+     "card": "Faerie Macabre",
+     "count": 4,
+     "why": "3/10 lists, most commonly a 4-of; cheap flying body plus free graveyard exile that hits our evoked creatures pre-cascade",
+     "source_tournament_id": "c9a7ade3-f6ba-4b16-8d4f-cf482344e2c8"
+    },
+    {
+     "card": "Force of Despair",
+     "count": 4,
+     "why": "only 2/10 lists but directly answers our Living End turn for free, the single most dangerous card in their 75 against us",
+     "source_tournament_id": "293d8ec3-926d-42e3-a266-b0e62703f826"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Anger of the Gods",
+     "verdict": "SURVIVES",
+     "why": "exiles rather than kills, denying Nethergoyf escape and Detective's Phoenix bestow-recursion permanently; self-cost noted above, not a blank from their side"
+    },
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "kills a grown Moonshadow or Nethergoyf outright; nothing in their pulled sideboards grants hexproof"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "taxes their last burn spell for 3 mana they usually do not have up on the draw"
+    }
+   ],
+   "play_plan": {
+    "keep": "A flash answer (Subtlety/Endurance) plus 2-3 lands with a blue or green source.",
+    "goldfish_for": "A discard/evoke outlet in the yard before firing the cascade, so Living End is not a one-sided wrath.",
+    "watch_for": "RB shell (Nethergoyf/Bowmasters/Moonshadow) versus RW shell (Vengevine/Hardened Academic).",
+    "posture": "disrupt_first",
+    "posture_why": "their clock is faster than our assembly turn, so an early answer matters more than racing."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Discard-fueled Hollow One/Nethergoyf/Moonshadow bodies plus direct burn aim to close the game by T4-5, faster than our T4+ Living End assembly.",
+    "key_cards": [
+     {
+      "card": "Hollow One",
+      "why": "the free/discounted 4/4 payoff their whole discard engine exists to enable"
+     },
+     {
+      "card": "Burning Inquiry",
+      "why": "the single card most likely to dump the discards needed for a turn-one Hollow One"
+     },
+     {
+      "card": "Force of Despair",
+      "why": "directly answers our Living End turn for free",
+      "source_tournament_id": "293d8ec3-926d-42e3-a266-b0e62703f826"
+     },
+     {
+      "card": "Surgical Extraction",
+      "why": "exiles every remaining copy of Living End once one is seen in our graveyard",
+      "source_tournament_id": "f181eb58-dab2-4709-9679-4b924e77b05b"
+     }
+    ]
+   },
+   "self_cost": "Anger of the Gods kills our own Shardless Agent (2/2) and Subtlety (3/3) alongside their board, so it cannot be cast the same turn we commit either creature without losing them too."
+  },
+  {
+   "name": "esper blink",
+   "meta_share": 5.2344105598543464,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Overlord of the Balemurk and Emperor of Bones make their own graveyard the card-advantage engine, so Dismember answers those bodies before they recur, and Mystical Dispute is a cheap answer to their maindeck-blue interaction and postboard Consign to Memory/Mystical Dispute; neither taxes our own cascade (both mv3). Tormod's Crypt is added because it is an instant-speed {0} artifact that can strip Overlord of the Balemurk's and Emperor of Bones's recursion targets before Ephemerate doubles a blink trigger onto them. Oliphaunt and Curator of Mysteries are the extra cuts to pay for it: their clock is slow enough (the play_plan already calls it a grind, not a race) that top-end bodies are less urgent than denying the graveyard engine.",
+   "play": {
+    "in": [
+     "2 Dismember",
+     "2 Mystical Dispute",
+     "2 Tormod's Crypt"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Dismember",
+     "2 Mystical Dispute",
+     "2 Tormod's Crypt"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana with replicate, counters the cascade triggered ability; 100% of pulled sideboards",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "stops the cascade from casting a second spell the turn we've already cast one; 100% of pulled sideboards",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "one mana against Force of Negation, Subtlety, Wistfulness, Sink into Stupor; 100% of pulled sideboards",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "X-cost sweeper (energy-paid) that cleans up whatever Living End resolves into; 100% of pulled sideboards",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "instant removal on Overlord of the Balemurk/Emperor of Bones/Witch Enchanter, resolves before their blink engine can protect the target"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a counter war against their own Mystical Dispute/Consign to Memory package is expected interaction, still resolves once they are tapped out"
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "Consign to Memory (3 copies) can counter the cast, since 'Counter target triggered ability or colorless spell' does cover a colorless artifact spell -- but Tormod's Crypt costs {0}, so it is deployed before they hold up {U}, and once it has resolved its ability is activated, not triggered, which Consign to Memory cannot counter at all. A Consign spent on a free artifact is one fewer left for our cascade trigger. There is no summoning-sickness restriction on an artifact's tap ability (CR 302.6), so it resolves and activates the same turn, and it can be fired in response to Emperor of Bones' beginning-of-combat exile trigger; Wrath of the Skies at X=0 would destroy it, but a Wrath sized to catch a {0} artifact catches nothing else of ours, and Ashiok, Dream Render does not remove permanents"
+    }
+   ],
+   "play_plan": {
+    "keep": "Two cyclers plus a cascade spell; their clock is slow enough that a setup-heavy hand is still a keep.",
+    "goldfish_for": "One protected cascade turn -- Dispute mana up first, graveyard fill second.",
+    "watch_for": "Phelia attacking means our returned bodies are not safe from exile-and-return removal; an open white mana on their turn is Solitude.",
+    "posture": "grind",
+    "posture_why": "their pressure is too slow to punish a slow start, so out-resourcing them matters more than racing."
+   },
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Ephemerate loops on Solitude and Overlord of the Balemurk accrue cards rather than tempo; the dossier records their pressure as too slow to punish a slow start, so they win on value.",
+    "key_cards": [
+     {
+      "card": "Overlord of the Balemurk",
+      "why": "recurs cards out of the graveyard every turn, which is the engine the card advantage actually comes from"
+     },
+     {
+      "card": "Ephemerate",
+      "why": "one mana that repeats an enters trigger twice, turning each blink target into a two-for-one"
+     },
+     {
+      "card": "Solitude",
+      "why": "free removal with lifegain that answers our returned bodies one at a time without spending a card in tempo"
+     },
+     {
+      "card": "Thoughtseize",
+      "why": "strips the cascade spell so the value engine never has to race anything"
+     }
+    ]
+   }
+  },
+  {
+   "name": "boros energy",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Their curve beats our goldfish clock before turn three on the draw, and Anger of the Gods exiles rather than kills, denying Goblin Bombardment's sacrifice-for-damage outlet -- the same swap boros aggro uses since the creature bases largely overlap (all toughness 3 or less).",
+   "play": {
+    "in": [
+     "2 Anger of the Gods"
+    ],
+    "out": [
+     "2 Oliphaunt"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Anger of the Gods"
+    ],
+    "out": [
+     "2 Oliphaunt"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 3,
+     "why": "kills a nonbasic land on a 4/4 flying body; 17 of our 20 land slots are nonbasic; 87.5% of pulled sideboards",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "counters the cascaded Living End and both free pitch spells unconditionally; 87.5% of pulled sideboards",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "X-cost energy sweeper that cleans up whatever Living End resolves into; 100% of pulled sideboards",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Surgical Extraction",
+     "count": 2,
+     "why": "free, exiles all three Living End once one hits a graveyard; 62.5% of pulled sideboards",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Anger of the Gods",
+     "verdict": "SURVIVES",
+     "why": "exiles their small-toughness curve outright; nothing in their pulled sideboards protects creatures from a sweeper"
+    }
+   ],
+   "play_plan": {
+    "keep": "Double red mana by turn three, or a hand that cascades on turn three; anything slower loses to an Ocelot Pride-doubled clock.",
+    "goldfish_for": "Anger of the Gods on the turn they commit their third body.",
+    "watch_for": "Goblin Bombardment already on the board means they sacrifice into our sweeper in response.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot outrace a lifelinking, ascend-doubled start, so denying their board before it snowballs is the only path."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Energy one-drops into Guide of Souls build a lifelinking flying clock we cannot outrace, with Galvanic Discharge and Goblin Bombardment supplying reach through a stalled board.",
+    "key_cards": [
+     {
+      "card": "Guide of Souls",
+      "why": "converts every one-drop into life and flying damage, which is why our goldfish loses the race outright"
+     },
+     {
+      "card": "Galvanic Discharge",
+      "why": "cheap removal that clears a blocker and keeps the clock moving on schedule"
+     },
+     {
+      "card": "Goblin Bombardment",
+      "why": "sacrifices the board in response to our sweeper, converting a race we were about to reset into damage"
+     }
+    ]
+   }
+  },
+  {
+   "name": "reanimator",
+   "meta_share": 2.1847974510696404,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Persist and Unearth into Archon of Cruelty is a repeatable graveyard kill, and their protection suite is entirely blue, so removal that kills Psychic Frog/Emperor of Bones before they combo off plus a one-mana counter for their blue shell covers both angles without taxing our own cascade (both mv3). Tormod's Crypt is added because it is an instant-speed {0} artifact that fizzles Persist ('Return target nonlegendary creature card from your graveyard') with the spell on the stack before Archon of Cruelty ever re-enters -- Dismember cannot substitute since Archon of Cruelty is 6/6 and -5/-5 does not kill it. Oliphaunt and Curator of Mysteries are the extra cuts to pay for it: both are slow top-end bodies against a deck whose own clock lands on turn two, so they are the least missed cards while the graveyard-answer suite grows.",
+   "play": {
+    "in": [
+     "2 Dismember",
+     "2 Mystical Dispute",
+     "2 Tormod's Crypt"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Dismember",
+     "2 Mystical Dispute",
+     "2 Tormod's Crypt"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "2 Oliphaunt",
+     "1 Curator of Mysteries"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "one mana with replicate, counters the cascade trigger rather than the cascade spell; 87.5% of pulled sideboards",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 2,
+     "why": "instant-speed graveyard exile that also cantrips; 50% of pulled sideboards",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Pyroclasm",
+     "count": 2,
+     "why": "aimed at their own small creatures after a sweep, keeping Psychic Frog live; 62.5% of pulled sideboards",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "one mana against our blue interaction suite; 75% of pulled sideboards",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "kills Psychic Frog/Emperor of Bones before they combo off; no hexproof-granting effect in their pulled sideboards"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "answers their Consign to Memory/Mystical Dispute at parity or discount; still resolves once they are tapped out"
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "Consign to Memory (4 copies) can counter the cast, since 'Counter target triggered ability or colorless spell' does cover a colorless artifact spell -- but Tormod's Crypt costs {0}, so it is deployed before they hold up {U}, and once it has resolved its ability is activated, not triggered, which Consign to Memory cannot counter at all. A Consign spent on a free artifact is one fewer left for our cascade trigger. There is no summoning-sickness restriction on an artifact's tap ability (CR 302.6), so it resolves and activates the same turn, and it can be fired in response to Persist or Unearth on the stack; Nihil Spellbomb, Pyroclasm and Harbinger of the Seas do not interact with it"
+    }
+   ],
+   "play_plan": {
+    "keep": "A hand with a cheap interaction piece (Endurance, Force of Negation) held back; a pure setup keep loses outright to a turn-two Archon of Cruelty.",
+    "goldfish_for": "Endurance timed for right after their discard/mill sets up a target, then a protected cascade turn behind Mystical Dispute.",
+    "watch_for": "Psychic Frog discarding big creatures on turn two signals the Persist line is live.",
+    "posture": "disrupt_first",
+    "posture_why": "one unanswered Archon of Cruelty trigger undoes a whole Living End board, so timing the graveyard strip matters more than racing."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Persist or Unearth returns Archon of Cruelty on turn two and the enters trigger both clocks us and strips our board; Psychic Frog holds the ground while that happens.",
+    "key_cards": [
+     {
+      "card": "Archon of Cruelty",
+      "why": "one trigger sacrifices a body, strips a card and drains, so a single turn-two hit undoes a whole Living End board"
+     },
+     {
+      "card": "Persist",
+      "why": "two mana on turn two for the Archon, which is the fastest version of their clock"
+     },
+     {
+      "card": "Unearth",
+      "why": "the redundant cheap reanimation spell, so answering one graveyard trigger does not end the race"
+     },
+     {
+      "card": "Psychic Frog",
+      "why": "fills the graveyard and holds the ground, protecting the clock while it fires again"
+     }
+    ]
+   }
+  },
+  {
+   "name": "amulet titan",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Their fast draws run through Amulet of Vigor and their resilience plan runs through Urza's Saga, and both are artifacts/enchantment-lands that Force of Vigor destroys outright at no cost to our own cascade (mv4, clear of the cascade floor of 3). This row previously also boarded 2 Foundation Breaker; those two slots were cut this pass because the three matchups Foundation Breaker served fell to 7.5430pp against the 8.0pp versatile_min_cumulative_share bar, and a third Force of Vigor covers the same ground while being free on their turn and destroying two permanents rather than one.",
+   "play": {
+    "in": [
+     "3 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 3,
+     "why": "intended as a free-spell tax; does not affect our cascade or evoke suite per CR 601.2i but is still their modal postboard configuration; 100% of pulled sideboards",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "free artifact/enchantment removal on their turn, aimed at anything artifact-shaped we resolve; 100% of pulled sideboards",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Dismember",
+     "count": 2,
+     "why": "kills a returned Shardless Agent or small evoked body; 100% of pulled sideboards",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 1,
+     "why": "counters the cascaded (or suspended) Living End unconditionally since neither path spends mana; 62.5% of pulled sideboards",
+     "source_tournament_id": "919cdb87-f9f4-4873-bbba-13b105cb3287"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "destroys Amulet of Vigor/Urza's Saga/Trinisphere outright; no artifact protection in their pulled sideboards"
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with a green card for Force of Vigor's free mode; this matchup answers Amulet of Vigor and Trinisphere, not a race.",
+    "goldfish_for": "Force of Vigor in hand before spending the graveyard, then one clean cascade once the Amulet engine is dead.",
+    "watch_for": "Amulet of Vigor plus a bounce land on turn two means the Titan lands turn three.",
+    "posture": "disrupt_first",
+    "posture_why": "a resolved Titan or Vexing Bauble each independently end the game, so denying the engine matters more than racing it."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Amulet of Vigor mana lands Primeval Titan on turn three, faster than our cascade; post-board Trinisphere taxes the free spells that would have interacted, so the race stops being close.",
+    "key_cards": [
+     {
+      "card": "Amulet of Vigor",
+      "why": "untaps bouncelands into fast mana, which is what makes their clock a turn faster than ours"
+     },
+     {
+      "card": "Primeval Titan",
+      "why": "a resolved Titan ends the game, and at six-six it is out of range of our removal"
+     },
+     {
+      "card": "Summoner's Pact",
+      "why": "finds the Titan for no mana on the turn it matters, so the fast draw is far more consistent than one copy"
+     },
+     {
+      "card": "Trinisphere",
+      "why": "makes our cascaded payload and every free pitch spell cost three, a tax their ramp pays and ours cannot",
+      "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+     }
+    ]
+   }
+  },
+  {
+   "name": "allosaurus combo",
+   "meta_share": 2.2303140646335917,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "The combo runs through one small creature and 4 maindeck Consign to Memory, so instant-speed removal that fizzles the sacrifice (Dismember) plus a one-mana counter for their blue protection suite (Mystical Dispute) is the whole plan; neither taxes our own cascade (both mv3).",
+   "play": {
+    "in": [
+     "2 Dismember",
+     "2 Mystical Dispute"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "1 Oliphaunt"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Dismember",
+     "2 Mystical Dispute"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves",
+     "1 Oliphaunt"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Mystical Dispute",
+     "count": 4,
+     "why": "one mana against Shardless Agent, Subtlety and Force of Negation; 100% of pulled sideboards",
+     "source_tournament_id": "a2e70485-b940-49b5-8ca8-c56a5175a6b2"
+    },
+    {
+     "card": "Veil of Summer",
+     "count": 2,
+     "why": "hexproof from blue and black plus uncounterable, answering both our Dismember and Mystical Dispute in one card; 100% of pulled sideboards",
+     "source_tournament_id": "a2e70485-b940-49b5-8ca8-c56a5175a6b2"
+    },
+    {
+     "card": "Nature's Claim",
+     "count": 2,
+     "why": "one mana for a resolved artifact or enchantment; 87.5% of pulled sideboards",
+     "source_tournament_id": "a2e70485-b940-49b5-8ca8-c56a5175a6b2"
+    },
+    {
+     "card": "Elesh Norn, Grand Cenobite",
+     "count": 1,
+     "why": "a Neoform/Eldritch Evolution target that also sweeps our small ETB creatures; 100% of pulled sideboards",
+     "source_tournament_id": "a2e70485-b940-49b5-8ca8-c56a5175a6b2"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "resolves against the Rider/sacrifice fodder whenever Veil of Summer (100% of pulled sideboards) is not already drawn, held, and proactively cast that turn -- a real conditional risk (see pitfalls), but not an unconditional blank since it requires them to hold and commit the specific card"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "same Veil of Summer conditionality -- when they do not have it live, Mystical Dispute answers Neoform/Eldritch Evolution/Consign to Memory normally; when they do, it is contested the same way a counter war is contested elsewhere in this field"
+    }
+   ],
+   "play_plan": {
+    "keep": "A hand with a removal spell or Force of Negation live; a pure cascade-only keep loses outright to their turn-one or turn-two kill.",
+    "goldfish_for": "Removal mana held from turn one, aimed at the Rider the moment their tutor spell is announced.",
+    "watch_for": "Two green cards exiled from hand on turn one means the Rider was cast for free.",
+    "posture": "disrupt_first",
+    "posture_why": "their combo can kill or stabilize before our third land, so interaction has to land before our own cascade turn even starts."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Free Allosaurus Rider into Neoform kills on turn one or two; the maindeck Consign to Memory only buys that clock a clear window. We are dead before our third land.",
+    "key_cards": [
+     {
+      "card": "Allosaurus Rider",
+      "why": "cast free by exiling two green cards, which is the whole reason the kill lands before our first interaction"
+     },
+     {
+      "card": "Neoform",
+      "why": "converts the Rider into the fatty on turn one or two, the fastest clock in the field"
+     },
+     {
+      "card": "Griselbrand",
+      "why": "the payoff body that ends the game on the spot once it is in play"
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "four maindeck copies protecting the combo turn for a single mana, so the race is never interrupted"
+     }
+    ]
+   }
+  },
+  {
+   "name": "pinnacle affinity",
+   "meta_share": 2.6399635867091487,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Maindeck Tormod's Crypt at high average count is the card that beats us here, and Force of Vigor destroys it - and any copy replayed later - outright with no self-cost to our own cascade. This row previously also boarded 2 Foundation Breaker; those two slots were cut this pass on the 8.0pp versatile bar (see the amulet titan row). Damping Matrix is NOT boarded here, but the reason recorded on this row before this pass was wrong: it claimed the Matrix 'would also disable our own cycling suite', which CR 109.2 and CR 403.3 refute - Damping Matrix reaches permanents on the battlefield, and a creature card being cycled from hand is not a creature. The real reason is that their threats are cheap artifact creatures the Matrix does not stop and Force of Vigor kills two of at instant speed for free.",
+   "play": {
+    "in": [
+     "3 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Waker of Waves"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "counters the cascade trigger and, being colorless-only in scope, cannot touch our green-cost Force of Vigor; 100% of pulled sideboards",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Damping Sphere",
+     "count": 2,
+     "why": "taxes a multi-spell turn; 100% of pulled sideboards",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 1,
+     "why": "unconditional lock on Living End via cascade or suspend; 87.5% of pulled sideboards",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "restricts entering from a graveyard, though Living End's exile-first resolution means this does not actually stop it; 12.5% of pulled sideboards",
+     "source_tournament_id": "ce9de29a-e0f0-49ef-8a9d-eaab02365769"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "a green spell (not colorless), so their maindeck Consign to Memory cannot counter it regardless of payment method; destroys the Crypt outright once resolved"
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with a green card and a cascade spell; the maindeck Crypts mean we need an artifact answer before committing the graveyard.",
+    "goldfish_for": "Force of Vigor held for a Tormod's Crypt activation, not spent early on a Mox Opal.",
+    "watch_for": "Urza's Saga's second chapter fetching Pithing Needle or Shadowspear signals a grindier build.",
+    "posture": "disrupt_first",
+    "posture_why": "an uncontested maindeck Crypt blanks our whole combo turn, so removing it comes before resolving anything else."
+   },
+   "opponent_plan": {
+    "posture": "disrupt_first",
+    "posture_why": "Four maindeck Tormod's Crypt exile the payload with the trigger on the stack; only once Living End is blank does the Urza's Saga clock have to do any work.",
+    "key_cards": [
+     {
+      "card": "Tormod's Crypt",
+      "why": "four maindeck copies of free instant-speed graveyard exile, so the hate arrives without costing them a card or a turn"
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "one mana for the cascade trigger, and it also answers both colorless cards we bring in to fight the Crypts",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     },
+     {
+      "card": "Urza's Saga",
+      "why": "a land that builds the clock and tutors the utility artifact, so disrupting us costs them no board presence"
+     },
+     {
+      "card": "Kappa Cannoneer",
+      "why": "the ward-four finisher that closes once our payload has already been blanked"
+     }
+    ]
+   }
+  },
+  {
+   "name": "devoted combo",
+   "meta_share": 4.8247610377787895,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Dismember kills every body in the engine (Devoted Druid 0/2, Badgermole Cub 2/2, Vizier of Remedies 2/1, Delighted Halfling 1/2), Force of Vigor destroys two of Leyline of Abundance / Agatha's Soul Cauldron / Vexing Bauble off-turn for no mana, and Damping Matrix shuts off Devoted Druid's 'Put a -1/-1 counter on this creature: Untap this creature', Walking Ballista, Agatha's Soul Cauldron, Fiend Artisan and Duskwatch Recruiter. All three are mana value 3-4, clear of the Violent Outburst / Shardless Agent cascade floor of 3. Damping Matrix is a counter and NOT a symmetric_counter: CR 109.2 makes 'artifacts and creatures' with no zone named mean permanents on the battlefield, CR 403.3 confirms permanents exist only there, so a Street Wraith, Generous Ent or Oliphaunt being cycled from HAND is a creature card, not a creature, and pays nothing. It is a partial answer, not a lock: Devoted Druid's '{T}: Add {G}' is a mana ability and survives, Badgermole Cub's and Leyline of Abundance's 'whenever you tap a creature for mana' clauses are triggered abilities and survive, and Tyvar, Jubilant Brawler's '+1: Untap up to one target creature' is a planeswalker loyalty ability Damping Matrix never mentions - a 4-of in 10 of 10 lists, so they keep one untap a turn whatever we resolve. Note on this row's opponent: `creatures toolbox` and `devoted combo` are the same deck under two archetype ids the source never merged (c22029ff-3de2-424e-85bc-c270daf9558a and c4fc27b7-4e36-4b08-a070-4d5824a6d1a6). Ten recent top-8 lists per label carry an identical 28-card four-of core - 4 Badgermole Cub, 4 Delighted Halfling, 4 Devoted Druid, 4 Green Sun's Zenith, 4 Nature's Rhythm, 4 Leyline of Abundance, 4 Tyvar, Jubilant Brawler - in 20 of 20, plus 2 Birds of Paradise in 20 of 20. The two labels are temporally disjoint: statistics_decks returns zero `creatures toolbox` decks dated on or after 2026-08-13 and zero `devoted combo` decks dated on or before 2026-08-10, overlapping only on 2026-08-11 and 2026-08-12. This is a relabel, not a fork, so `creatures toolbox` is the retired label and its card reads are frozen at 2026-08-12. The shares do NOT double-count: `shares` partitions 100pp over deck counts at 0.074683pp per deck, so 43 decks + 44 decks = 87 decks = 6.4974pp is this deck's true single share, and a slot serving both rows is credited once for each half of it. What the split does cost is ranking - each half reads as the field's #8/#9 matchup when the merged deck is its #3, behind instant reanimator (7.8417) and broodscale bloodchief (6.6468) - and it costs currency, because the live card reads come from the 44 recent `devoted combo` lists only.",
+   "play": {
+    "in": [
+     "3 Force of Vigor",
+     "3 Dismember",
+     "2 Damping Matrix"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves",
+     "1 Colossal Skyturtle"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Force of Vigor",
+     "3 Dismember",
+     "2 Damping Matrix"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves",
+     "1 Colossal Skyturtle"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Collector Ouphe",
+     "count": 1,
+     "why": "9 of 10 pulled sideboards; 'Activated abilities of artifacts can't be activated' blanks our Tormod's Crypt, but never touches a static Damping Matrix",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Abrupt Decay",
+     "count": 3,
+     "why": "8 of 10 pulled sideboards, up from 0 of 10 under the retired `creatures toolbox` label; uncounterable, destroys a nonland permanent of mana value 3 or less, and Damping Matrix is exactly 3",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Endurance",
+     "count": 1,
+     "why": "8 of 10 pulled sideboards; flash graveyard strip plus a 3/4 reach blocker",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Grist, the Hunger Tide",
+     "count": 1,
+     "why": "8 of 10 pulled sideboards; -2 kills one reanimated body",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "7 of 10 pulled sideboards; their own free off-turn answer to our Damping Matrix",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "5 of 10 pulled sideboards, down from 7 of 10 under the retired label; counters our cascaded Living End and our free-pitched spells",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Thoughtseize",
+     "count": 2,
+     "why": "3 of 10 pulled sideboards; strips the cascade spell before the cascade turn",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    },
+    {
+     "card": "Drannith Magistrate",
+     "count": 0,
+     "why": "0 of 10 pulled sideboards, DOWN FROM 9 of 10 under the retired `creatures toolbox` label. 'Your opponents can't cast spells from anywhere other than their hands' is the one card in this matchup that turns cascade off outright, and it has left their board. The `creatures toolbox` row and sidecar are still written around it; this row is not.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "destroys Leyline of Abundance (a 4-of in 10 of 10 lists), Agatha's Soul Cauldron and a post-board Vexing Bauble for no mana off-turn; nothing in the 10 pulled sideboards protects an artifact or enchantment"
+    },
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "-5/-5 kills Devoted Druid, Badgermole Cub, Vizier of Remedies, Delighted Halfling and Birds of Paradise; nothing in their 10 pulled sideboards grants a creature hexproof or protection, and the {B/P} hybrid means it is castable off any land even through their Boseiju, Who Endures"
+    },
+    {
+     "card": "Damping Matrix",
+     "verdict": "SURVIVES",
+     "why": "a {3} colorless artifact cast for its normal mana cost, so Vexing Bauble does not see it, and no creature removal in their board touches an artifact. Contested rather than blanked, and the contest got worse with the relabel: Abrupt Decay is now 8 of 10 boards (0 of 10 under `creatures toolbox`), is uncounterable, and hits mana value 3 exactly, so the Matrix is a one-for-one they can answer on curve; Force of Vigor (7 of 10) and maindeck Boseiju, Who Endures (10 of 10) also answer it. It survives in the sense the gate asks about - it resolves and does its job when it resolves - but expect it to be answered rather than to lock the game."
+    }
+   ],
+   "play_plan": {
+    "keep": "A hand with Force of Negation, Subtlety or Wistfulness plus two lands; a cascade-only hand loses to a turn-two Leyline of Abundance start.",
+    "goldfish_for": "Two lands and a cascade spell, holding Force of Vigor for Leyline of Abundance.",
+    "watch_for": "An untapped Delighted Halfling paying for a legendary spell: that Tyvar cannot be countered, and Subtlety only delays it because the owner chooses top.",
+    "posture": "disrupt_first",
+    "posture_why": "Their doubled mana kills on turn four, so denying the engine beats racing."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Badgermole Cub and Leyline of Abundance double every mana a dork makes, so Devoted Druid plus one untap is lethal ramp by turn four, faster than our turn four to six cascade clock.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "engine half, taps for green and untaps itself for a -1/-1 counter"
+     },
+     {
+      "card": "Leyline of Abundance",
+      "why": "mana doubler that can start the game on the battlefield for free"
+     },
+     {
+      "card": "Tyvar, Jubilant Brawler",
+      "why": "a loyalty-ability untap Damping Matrix cannot stop, and uncounterable whenever Delighted Halfling's legendary-mana ability paid for it"
+     },
+     {
+      "card": "Craterhoof Behemoth",
+      "why": "lethal swing off any board of dorks once the green is arbitrarily large"
+     }
+    ]
+   }
+  },
+  {
+   "name": "esper control",
+   "meta_share": 2.3668639053254434,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Nearly every disruptive card in their 75 is blue -- No More Lies, Spell Snare, Quantum Riddler, Psychic Frog and post-board Consign to Memory and Mystical Dispute -- so cheap countermagic that protects our cascade and answers their threats is the highest-leverage swap; three Mystical Dispute go in, and at mana value 3 (resolve_cards: {2}{U}) each sits exactly on the cascade floor, so none of them is ever a cascade collision -- the deck runs three purely because the matchup is decided by the counter war. Force of Vigor is the second half: mana value 4, clear of the cascade floor, free on their turn, and it destroys the four maindeck Relic of Progenitus (and any post-board Grafdigger's Cage) that keep our graveyard too empty for Living End to matter.",
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "1 Waker of Waves"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Force of Vigor"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "1 Waker of Waves"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "one mana with replicate; counters the cascade trigger and, separately, our Endurance/Subtlety/Wistfulness enters triggers",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "one mana against our all-blue cascade spells and counter suite",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "reflexive graveyard-hate slot; Living End enters its creatures from exile and cascade casts from exile, so the Cage is close to dead here and Force of Vigor kills it anyway",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "X-cost energy sweeper for the board Living End resolves into, but our reanimated bodies are mana value five to seven, so it must be paid up far higher here than against a small-creature deck",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a counter war against their own Consign to Memory and Mystical Dispute is expected interaction, not a blank; it still resolves once they are tapped out"
+    },
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "a green-cost spell (mv4, {2}{G}{G}), not colorless, so their Consign to Memory cannot counter it and their Mystical Dispute gets no discount against it; it destroys Relic of Progenitus and any post-board Grafdigger's Cage outright once resolved, and nothing in their pulled sideboard protects an artifact"
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a cascade spell, and Force of Negation or Subtlety; a fill-only hand loses to a Relic that empties the yard.",
+    "goldfish_for": "Force of Vigor on their Relic first, then a protected cascade behind Mystical Dispute.",
+    "watch_for": "Two open blue mana is No More Lies or Spell Snare; an active Relic makes Living End a blank.",
+    "posture": "grind",
+    "posture_why": "Relic hate and counters make this a resource fight, not a race, so out-grinding their engine beats a blind cascade."
+   },
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Every removal spell they cast draws a card through Ketramose, so they win long games on attrition while Relic of Progenitus keeps our graveyard too empty for Living End to punish them.",
+    "key_cards": [
+     {
+      "card": "Ketramose, the New Dawn",
+      "why": "indestructible engine; each card their removal exiles on their turn draws them one, so they out-card us the longer the game runs"
+     },
+     {
+      "card": "Relic of Progenitus",
+      "why": "four maindeck copies that exile our graveyard at instant speed, so a cascaded Living End brings back little or nothing"
+     },
+     {
+      "card": "Psychic Frog",
+      "why": "the evasive blue clock that closes the game once the Ketramose engine has buried us in cards"
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "post-board energy sweeper for our reanimated board, though it must be paid up to our mv-five-plus bodies to sweep them",
+      "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+     }
+    ]
+   }
+  },
+  {
+   "name": "esper goryo",
+   "meta_share": 2.093764223941739,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Not the fair Frog deck: this shell reanimates. Faithful Mending (resolve_cards: 'You gain 2 life, draw two cards, then discard two cards') and Psychic Frog discard Atraxa, Grand Unifier, Goryo's Vengeance ('Return target legendary creature card from your graveyard to the battlefield. That creature gains haste. Exile it at the beginning of the next end step.') returns her at instant speed on turn two, and Ephemerate ('Exile target creature you control, then return it to the battlefield under its owner's control') both doubles the enters trigger and dodges the end-step exile clause. Griselbrand is the second target. Tormod's Crypt cracked in response to Goryo's Vengeance answers the legendary target on the stack before Atraxa or Griselbrand ever re-enters; Dismember cannot substitute, since both are 7/7 and -5/-5 leaves either alive. Three Mystical Dispute fight the counter war over our cascade and their maindeck Force of Negation and Solitude-backed fair game -- at mana value 3 (resolve_cards: {2}{U}) each sits exactly on the cascade floor and is never a collision -- and two Dismember cover the fair Psychic Frog/Quantum Riddler game they fall back on once the reanimation is answered.",
+   "play": {
+    "in": [
+     "2 Tormod's Crypt",
+     "3 Mystical Dispute",
+     "2 Dismember"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Tormod's Crypt",
+     "3 Mystical Dispute",
+     "2 Dismember"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "one mana with replicate; counters the cascade trigger and, separately, our Endurance/Subtlety enters triggers; 10/10 pulled lists at avg 3.1 copies",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "one mana against our all-blue cascade spells and counter suite; 10/10 pulled lists",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "X-cost energy sweeper for the board Living End resolves into, but our reanimated bodies are mana value five to seven, so it must be paid up far higher here than against their own fair-Frog opponents; 10/10 pulled lists",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 1,
+     "why": "instant-speed cantripping graveyard exile, activatable in response to a cascade trigger; 8/10 pulled lists",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "instant -5/-5 on Psychic Frog and Quantum Riddler, resolving before any graveyard hate matters; nothing in their pulled sideboards grants hexproof. It does not kill a 7/7 Atraxa or Griselbrand, but the graveyard answer, not removal, is what beats those -- see stance_rationale"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a counter war against their own Mystical Dispute/Consign to Memory package is expected interaction, not a blank; it still resolves once they are tapped out"
+    },
+    {
+     "card": "Tormod's Crypt",
+     "verdict": "SURVIVES",
+     "why": "Consign to Memory (up to 4 copies) can counter the cast, since 'Counter target triggered ability or colorless spell' does cover a colorless artifact spell -- but Tormod's Crypt costs {0}, so it is deployed before they hold up {U}, and once it has resolved its ability is activated, not triggered, which Consign to Memory cannot counter at all. There is no summoning-sickness restriction on an artifact's tap ability (CR 302.6), so it resolves and activates the same turn, and it can be fired in response to Goryo's Vengeance on the stack; Nihil Spellbomb and their own Mystical Dispute do not remove it"
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands with Tormod's Crypt or Force of Negation; a hand with no answer to a turn-two Goryo's Vengeance is a mulligan.",
+    "goldfish_for": "Tormod's Crypt on the table, cracked in response to Goryo's Vengeance rather than on their end step.",
+    "watch_for": "Faithful Mending or Psychic Frog binning Atraxa or Griselbrand signals the Goryo's turn; open blue mana is Force of Negation.",
+    "posture": "disrupt_first",
+    "posture_why": "Their reanimation half outraces our clock, so answering the graveyard and spell comes before racing the fair game."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Goryo's Vengeance puts Atraxa or Griselbrand down on turn two and Ephemerate doubles the trigger, a clock a full turn faster than our cascade and protected for free by Force of Negation.",
+    "key_cards": [
+     {
+      "card": "Goryo's Vengeance",
+      "why": "two mana at instant speed for a turn-two Atraxa or Griselbrand, which is the whole clock we cannot outrace"
+     },
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "the reanimation target that refills their hand on entry, so answering the body does not answer the cards"
+     },
+     {
+      "card": "Ephemerate",
+      "why": "one mana that doubles the enters trigger and blinks the body past Goryo's end-step exile clause"
+     },
+     {
+      "card": "Faithful Mending",
+      "why": "discards Atraxa and loots toward Goryo's Vengeance, which is what makes the turn-two kill repeatable"
+     }
+    ]
+   }
+  },
+  {
+   "name": "45c aggro",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Ragavan (2/1) and Phelia, Exuberant Shepherd (2/2) die to a plain sweep, and domain-scaled Territorial Kavu tops out at 5/5 with all five basic land types online via Leyline of the Guildpact, so Dismember's -5/-5 (resolve_cards: '{B/P} can be paid with either {B} or 2 life') kills the whole curve except a 4/6 Quantum Riddler. Force of Vigor is the higher-leverage swap: Scion of Draco's type_line is 'Artifact Creature -- Dragon' and both Leyline Binding and Leyline of the Guildpact are Enchantments (resolve_cards), so Force of Vigor's 'Destroy up to two target artifacts and/or enchantments' hits their flying anthem body and either domain-enabling permanent for free on their turn, without costing us anything our own cascade needs (mv4, clear of the floor). Mystical Dispute (mv3, resolve_cards: {2}{U}, exactly on the cascade floor and never a collision) is added third because 10 of 10 pulled sideboards carry it plus Consign to Memory, so the matchup is decided by the same counter war every blue-heavy row in this field is.",
+   "play": {
+    "in": [
+     "2 Dismember",
+     "2 Force of Vigor",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Dismember",
+     "2 Force of Vigor",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Oliphaunt",
+     "2 Curator of Mysteries",
+     "1 Waker of Waves"
+    ]
+   },
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "a two-for-one on our manabase (17 of 20 land slots nonbasic) that also presents a four-power flying body; 10/10 pulled lists",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 2,
+     "why": "counters the cascade trigger and, separately, our Endurance/Subtlety enters triggers; 10/10 pulled lists",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "one mana against our all-blue cascade spells and counter suite; 10/10 pulled lists",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "X-cost energy sweeper for the board Living End resolves into; 9/10 pulled lists",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    }
+   ],
+   "survives_opposing_board": [
+    {
+     "card": "Dismember",
+     "verdict": "SURVIVES",
+     "why": "instant removal, resolves before Obsidian Charmaw or any graveyard hate matters and nothing in their pulled sideboards grants hexproof"
+    },
+    {
+     "card": "Force of Vigor",
+     "verdict": "SURVIVES",
+     "why": "a green-cost spell (mv4, {2}{G}{G}), not colorless, so their maindeck-adjacent Consign to Memory ('Counter target triggered ability or colorless spell') cannot touch it and their Mystical Dispute gets no discount against it; it destroys Scion of Draco (an artifact creature) or a Leyline outright, and nothing in their pulled sideboards protects an artifact or enchantment"
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "a counter war against their own Mystical Dispute/Consign to Memory package is expected interaction, not a blank; it still resolves once they are tapped out"
+    }
+   ],
+   "play_plan": {
+    "keep": "2-3 lands with removal or Force of Negation; a pure goldfish hand loses to an unanswered Kavu or Scion of Draco.",
+    "goldfish_for": "Dismember or Force of Vigor before a cascade spell, aimed at whichever domain threat is down.",
+    "watch_for": "An early Leyline of the Guildpact means lands are already every basic type, so Kavu and Scion arrive at full size turn two.",
+    "posture": "disrupt_first",
+    "posture_why": "their curve is faster than our goldfish, so removing domain-scaled threats comes before racing them."
+   },
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Ragavan on one, Territorial Kavu or a domain-discounted Scion of Draco on two or three, protected by Stubborn Denial and Mystical Dispute, is a faster clock than our turn four to six cascade.",
+    "key_cards": [
+     {
+      "card": "Ragavan, Nimble Pilferer",
+      "why": "a one-mana 2/1 that generates a Treasure and a free spell off combat damage, snowballing the mana and cards behind the rest of the curve"
+     },
+     {
+      "card": "Territorial Kavu",
+      "why": "power and toughness equal every basic land type among their lands, so Leyline of the Guildpact turns a two-drop into a 5/5"
+     },
+     {
+      "card": "Scion of Draco",
+      "why": "an artifact creature that costs less for each basic land type they control and grants their whole team a keyword, closing the game once the domain package is online"
+     },
+     {
+      "card": "Leyline Binding",
+      "why": "flash exile at domain-reduced cost, the removal that answers whatever we resolve after a cascade turn"
+     }
+    ]
+   }
+  }
+ ],
+ "sideboard_audit": [
+  {
+   "card": "Dismember",
+   "copies": 3,
+   "matchups_served": [
+    "45c aggro",
+    "allosaurus combo",
+    "broodscale bloodchief",
+    "creatures toolbox",
+    "devoted combo",
+    "dimir control",
+    "eldrazi ramp",
+    "esper blink",
+    "esper goryo",
+    "hollow one",
+    "instant reanimator",
+    "reanimator"
+   ],
+   "cumulative_meta_share": 40.1457,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "instant-speed -5/-5 for {1} plus 4 life (resolve_cards: '{B/P} can be paid with either {B} or 2 life'), so it is castable off any land in the 60 -- the only removal we board that Harbinger of the Seas and Blood Moon cannot switch off. The third copy is the second slot freed by cutting Foundation Breaker and buys the dimir control row (2.5034pp), where it kills Harbinger of the Seas, Psychic Frog and Orcish Bowmasters. Its limit is recorded on that row and in `gaps`: -5/-5 kills neither a 4/6 Quantum Riddler nor a delved Murktide Regent."
+  },
+  {
+   "card": "Force of Vigor",
+   "copies": 3,
+   "matchups_served": [
+    "45c aggro",
+    "amulet titan",
+    "boros aggro",
+    "broodscale bloodchief",
+    "creatures toolbox",
+    "devoted combo",
+    "eldrazi ramp",
+    "esper control",
+    "living end",
+    "pinnacle affinity",
+    "ur cutter prowess"
+   ],
+   "cumulative_meta_share": 34.7747,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "free, off-turn removal for up to two artifacts and/or enchantments (resolve_cards: 'Destroy up to two target artifacts and/or enchantments'; the alternative cost exiles a green card instead of paying mana) -- answers Vexing Bauble, Leyline of Abundance, Blood Moon, Amulet of Vigor, Urza's Saga, esper control's four maindeck Relic of Progenitus, maindeck Tormod's Crypt, and 45c aggro's Scion of Draco (an artifact creature) or Leyline Binding/Leyline of the Guildpact (both enchantments) across 11 matchups without taxing our own cascade (mv4). The third copy is one of the two slots freed by cutting Foundation Breaker: it covers every matchup Foundation Breaker covered, and unlike Foundation Breaker it is free and it is instant speed."
+  },
+  {
+   "card": "Mystical Dispute",
+   "copies": 3,
+   "matchups_served": [
+    "45c aggro",
+    "allosaurus combo",
+    "dimir control",
+    "esper blink",
+    "esper control",
+    "esper goryo",
+    "hollow one",
+    "instant reanimator",
+    "living end",
+    "reanimator",
+    "ur cutter prowess"
+   ],
+   "cumulative_meta_share": 30.9513,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "a {2}{U} counter (resolve_cards: mana_cost {2}{U}, mana value 3) whose text 'This spell costs {2} less to cast if it targets a blue spell' drops it to {U} against nearly every relevant spell in the eleven matchups that board it. At mana value 3 each copy sits exactly on the Violent Outburst / Shardless Agent cascade floor -- the same treatment Anger of the Gods gets elsewhere in this board -- so it is never a cascade collision; Tormod's Crypt (mv0) is the only true sub-mv3 collision this board carries. A fourth copy was rejected this pass on slot economy, not cascade math: the 15-card board is already 3 Dismember + 3 Force of Vigor + 3 Mystical Dispute + 2 Damping Matrix + 2 Tormod's Crypt + 2 Anger of the Gods = 15/15, so a fourth Dispute can only be added by cutting one of the other five cards, each of which answers matchups Dispute does not."
+  },
+  {
+   "card": "Damping Matrix",
+   "copies": 2,
+   "matchups_served": [
+    "broodscale bloodchief",
+    "creatures toolbox",
+    "devoted combo"
+   ],
+   "cumulative_meta_share": 12.1074,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "a static {3} artifact reading 'Activated abilities of artifacts and creatures can't be activated unless they're mana abilities'. It is a COUNTER, not a symmetric_counter: CR 109.2 scopes an unzoned card-type description to permanents, CR 403.3 confirms permanents exist only on the battlefield, so our own cycling and channel abilities activated from hand are untouched. Answers Devoted Druid's untap, Soul-Guide Lantern, Urza's Saga chapter II, Haywire Mite, The Stone Brain, Walking Ballista, Agatha's Soul Cauldron and Fiend Artisan across 3 matchups now that urzatron has left the field."
+  },
+  {
+   "card": "Tormod's Crypt",
+   "copies": 2,
+   "matchups_served": [
+    "esper blink",
+    "esper goryo",
+    "instant reanimator",
+    "reanimator"
+   ],
+   "cumulative_meta_share": 13.9281,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "instant-speed free graveyard exile that can fizzle a reanimation spell on the stack, which is what the four reanimator-shaped matchups it serves are decided by. Mana value 0 makes it the worst cascade collision in the board, and `matchups/creatures-toolbox.json` pitfall #4 names it as exactly that -- it is boarded only where exiling a graveyard at instant speed beats that cost."
+  },
+  {
+   "card": "Anger of the Gods",
+   "copies": 2,
+   "matchups_served": [
+    "boros aggro",
+    "boros energy",
+    "hollow one",
+    "ur cutter prowess"
+   ],
+   "cumulative_meta_share": 10.0137,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "a {1}{R}{R} sweeper that deals 3 damage to each creature and exiles what it kills, which is what makes it the answer to the three recursive-creature aggro decks and to hollow one specifically. Mana value 3 sits exactly on the cascade floor, so it is never a cascade collision."
+  }
+ ],
+ "deck_tech": [
+  {
+   "kind": "card",
+   "name": "Which cycler goes first",
+   "cards": [
+    "Street Wraith",
+    "Generous Ent",
+    "Oliphaunt",
+    "Waker of Waves",
+    "Curator of Mysteries"
+   ],
+   "quirk": "They are not interchangeable: only one is free, and two of them fetch a land while they fill the graveyard.",
+   "lines": [
+    {
+     "mode": "Street Wraith first",
+     "matchups": [
+      "broodscale bloodchief",
+      "allosaurus combo",
+      "esper goryo"
+     ],
+     "why": "Cycling costs two life and no mana, so it is the only cycler that does not compete with holding up Force of Negation. Against a turn-three kill that is the whole difference."
+    },
+    {
+     "mode": "Ent or Oliphaunt for a surveil land",
+     "matchups": [
+      "dimir control",
+      "esper control",
+      "esper blink"
+     ],
+     "why": "Forestcycling and Mountaincycling reach Hedge Maze, Commercial District and Thundering Falls, whose surveil puts a second card in the yard. They enter tapped, so it costs the turn."
+    },
+    {
+     "mode": "Ent or Oliphaunt for an untapped shock",
+     "matchups": [
+      "boros aggro",
+      "boros energy",
+      "ur cutter prowess"
+     ],
+     "why": "Breeding Pool, Stomping Ground and Steam Vents all carry a basic type. Against a turn-four clock the untapped land is worth more than the extra graveyard card."
+    },
+    {
+     "mode": "Waker of Waves to dig, not as a beater",
+     "matchups": [
+      "any"
+     ],
+     "why": "One mana looks at two cards, puts one in hand and bins the other: a cycle and a Living End target at once. Sequence it early rather than keeping it to hard-cast."
+    }
+   ]
+  },
+  {
+   "kind": "card",
+   "name": "Sink into Stupor: land or spell",
+   "cards": [
+    "Sink into Stupor"
+   ],
+   "quirk": "Every copy is a land drop we might need and the only maindeck answer to a permanent that has already resolved.",
+   "lines": [
+    {
+     "mode": "as Soporific Springs, paying three life",
+     "matchups": [
+      "boros aggro",
+      "boros energy",
+      "ur cutter prowess"
+     ],
+     "why": "A tapped land loses the turn that matters against a turn-four clock. Three life is cheap next to missing the cascade turn by one."
+    },
+    {
+     "mode": "held as the spell",
+     "matchups": [
+      "eldrazi ramp",
+      "amulet titan"
+     ],
+     "why": "Bouncing a resolved Primeval Titan or an Eldrazi is the only maindeck answer we have once their enters trigger has already happened."
+    },
+    {
+     "mode": "as a land, entering tapped",
+     "matchups": [
+      "any"
+     ],
+     "why": "When the cascade turn is still a turn away the land drop is not urgent, and three life against a deck with any reach is real."
+    }
+   ]
+  },
+  {
+   "kind": "path",
+   "name": "Cascade turn, free spells, or no Living End at all",
+   "cards": [
+    "Violent Outburst",
+    "Shardless Agent",
+    "Force of Negation",
+    "Subtlety",
+    "Endurance",
+    "Curator of Mysteries"
+   ],
+   "quirk": "Living End has no mana cost and can only be cascaded into, so the question is whether this matchup wants it cast at all.",
+   "lines": [
+    {
+     "mode": "protect one cascade turn",
+     "matchups": [
+      "dimir control",
+      "living end",
+      "esper blink"
+     ],
+     "why": "Bait the counter with the first cascade spell, then resolve the second behind Force of Negation. Their clock is slow enough that a setup-heavy keep is still a keep."
+    },
+    {
+     "mode": "free spells as the whole plan",
+     "matchups": [
+      "amulet titan",
+      "eldrazi ramp"
+     ],
+     "why": "The evoke and pitch suite works with no mana at all, so Subtlety and Endurance beat a ramp deck that never gets a turn where its mana is the problem."
+    },
+    {
+     "mode": "do not cascade at all",
+     "matchups": [
+      "hollow one",
+      "reanimator"
+     ],
+     "why": "Living End returns their graveyard too. Against a deck filling its own yard it is a wrath in their favour, so the cyclers already on board are the clock."
+    }
+   ]
+  }
+ ],
+ "meta_calls": [
+  {
+   "kind": "field",
+   "call": "graveyard-combo-heavy",
+   "trigger": {
+    "matchups": [
+     "esper goryo",
+     "instant reanimator",
+     "reanimator"
+    ],
+    "share_pp": 8.6937,
+    "over_pp": 15.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 Tormod's Crypt"
+    ],
+    "out": [
+     "1 Anger of the Gods"
+    ]
+   },
+   "why": "A third Crypt fizzles Persist, Unearth or Goryo's Vengeance on the stack with the spell still on the stack, free and at instant speed, in the extra reanimation-shaped matchup this field now carries.",
+   "cost": "Down to one Anger of the Gods, so boros aggro, boros energy, hollow one and ur cutter prowess each lose a copy of the sweeper their fast starts are answered by."
+  },
+  {
+   "kind": "archetype",
+   "call": "broodscale bloodchief",
+   "trigger": {
+    "matchups": [
+     "broodscale bloodchief"
+    ],
+    "share_pp": 4.961310878470642,
+    "over_pp": 11.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 Damping Matrix"
+    ],
+    "out": [
+     "1 Tormod's Crypt"
+    ]
+   },
+   "why": "Damping Matrix stops the Broodscale loop without answering a creature, which is the only angle that survives their Cage and Jailer.",
+   "cost": "Down to one Crypt, so Reanimator, instant reanimator, esper goryo and the mirror each lose an answer - and the Crypt is what wins the mirror's split."
+  },
+  {
+   "kind": "card",
+   "call": "Consign to Memory",
+   "trigger": {
+    "matchups": [
+     "45c aggro",
+     "allosaurus combo",
+     "dimir control",
+     "esper blink",
+     "esper control",
+     "esper goryo",
+     "instant reanimator",
+     "pinnacle affinity",
+     "reanimator",
+     "ur cutter prowess"
+    ],
+    "share_pp": 28.3569,
+    "over_pp": 35.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 Mystical Dispute"
+    ],
+    "out": [
+     "1 Tormod's Crypt"
+    ]
+   },
+   "why": "Consign counters the cascade trigger itself, and Force of Negation only answers spells. Dispute costs one against a blue spell and taxes Consign three they do not have open.",
+   "cost": "One fewer graveyard answer against Reanimator and against the mirror, where the Crypt is the card that wins the split."
+  }
+ ],
+ "gaps": [
+  {
+   "matchup": "dimir control",
+   "why": "We still run no removal that kills their real threats. Quantum Riddler is 4/6 and a delved Murktide Regent is routinely 7/7 or larger, so the third Dismember boarded here (-5/-5) kills neither; what it actually answers is Harbinger of the Seas, Psychic Frog and Orcish Bowmasters. This is a structural gap, not an oversight: Temur has no instant-speed removal for a 6-toughness flier at mana value 3 or above, and anything below mana value 3 is a live cascade collision under Violent Outburst and Shardless Agent. If the cascade turn is denied twice - a pre-emptive Thoughtseize, then a counter on the second attempt - the matchup becomes a card-quality grind this removal-light shell is not built to win. At 2.5034pp (statistics_archetypes, modern: dimir control 29 decks + dimir control 26 decks) this sits mid-field, behind esper blink (5.2344pp), eldrazi ramp (5.0523pp), broodscale bloodchief (4.9613pp), devoted combo (4.8248pp), instant reanimator (4.4151pp), boros aggro (3.0041pp), living end (2.9131pp), ur cutter prowess (2.6855pp) and pinnacle affinity (2.6400pp) - not the second-largest matchup in the field."
+  },
+  {
+   "matchup": "hollow one",
+   "why": "Force of Despair (resolve_cards: 'If it's not your turn, you may exile a black card from your hand rather than pay this spell's mana cost. Destroy all creatures that entered this turn.') is a free, one-sided blowout on our own Living End turn specifically, timed to resolve after our creatures have already entered; nothing in the 75 protects a just-resolved board from it, and the only recourse is a second Living End or a fast enough clock that they never draw it."
+  },
+  {
+   "matchup": "creatures toolbox",
+   "why": "This row's opponent no longer exists under this label. statistics_decks returns zero `creatures toolbox` decks dated on or after 2026-08-13; the archetype was relabelled `devoted combo` and the two ids overlap only on 2026-08-11 and 2026-08-12. The row and its sidecar are kept because boarding_field.py derives the field from the committed fingerprint and the fingerprint still carries 43 decks under this id, but its card reads are frozen at 2026-08-12 and two of them have already moved: Drannith Magistrate was 9 of 10 boards and is now 0 of 10, and Abrupt Decay was 0 of 10 and is now 8 of 10. Board this matchup off the `devoted combo` row, not this one, until the source merges the labels."
+  }
+ ]
+}

@@ -1,0 +1,167 @@
+{
+ "name": "devoted combo",
+ "meta_share": 3.8818565400843883,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "statistics_matchups(format=modern, archetype_a=\"dimir frog\", archetype_b=\"devoted combo\") returns {\"hint\": \"No matchup data for this archetype/pair. Data depends on tournament pairing records.\", \"results\": []} -- zero rows, and statistics_matchups(format=modern, archetype_a=\"devoted combo\") is empty too. statistics_archetypes carries no winrate field for Modern, and this run's fingerprint (.protocol/meta-state.json, captured_at 2026-08-24) records winrate_vs_field as an empty object with zero keys. No head-to-head number exists to record, so none is recorded."
+ },
+ "opponent_gameplan": "Devoted Druid is '{T}: Add {G}' plus 'Put a -1/-1 counter on this creature: Untap this creature', and Vizier of Remedies makes that counter zero, so the pair is unbounded green. Badgermole Cub and Leyline of Abundance each read 'Whenever you tap a creature for mana, add an additional {G}', so one dork with both down taps for three. Four copies of each sit in ten of ten lists pulled 2026-08-19 to 2026-08-22. Tyvar, Jubilant Brawler is a four-of in ten of ten and does two jobs: '+1: Untap up to one target creature' is a LOYALTY ability, and its static lets a creature that just arrived tap for mana immediately - as do Shang-Chi, Master of Kung Fu in ten of ten and Formidable Speaker's '{1}, {T}: Untap another target permanent' in six of ten. Nature's Rhythm searches ANY creature card onto the battlefield and harmonizes back from the graveyard; Green Sun's Zenith finds only a GREEN one, so it can never fetch the white Vizier of Remedies. The mana goes into Craterhoof Behemoth in eight of ten, or Walking Ballista in six of ten, which converts the same mana into damage without attacking.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Doubled dork mana kills through an empty board on turn three or four, faster than a Psychic Frog clock, so they never need to interact with us at all.",
+  "key_cards": [
+   {
+    "card": "Devoted Druid",
+    "why": "engine half one, four copies in ten of ten lists: a 0/2 that taps for green and untaps itself for a -1/-1 counter."
+   },
+   {
+    "card": "Leyline of Abundance",
+    "why": "the doubler as an enchantment, so it starts on the battlefield for free out of the opening hand and no removal in our sixty touches it."
+   },
+   {
+    "card": "Tyvar, Jubilant Brawler",
+    "why": "a loyalty-ability untap, uncounterable whenever Delighted Halfling's legendary-mana ability paid for it, and the static that lets a fresh dork tap on arrival."
+   },
+   {
+    "card": "Nature's Rhythm",
+    "why": "the only tutor that finds the white Vizier of Remedies, it puts the creature onto the battlefield uncast, and it harmonizes back from the graveyard."
+   }
+  ]
+ },
+ "primary_gameplan": "Fatal Push is the best card in the sixty and it is arithmetic, not a read: Birds of Paradise and Delighted Halfling are mana value 1, and Devoted Druid, Badgermole Cub, Vizier of Remedies, Duskwatch Recruiter, Fiend Artisan, Shang-Chi and Collector Ouphe are all mana value 2. Spell Snare covers the same band on the stack, and it also counters Green Sun's Zenith for X equals 1 and Nature's Rhythm for X equals 0. Counterspell and Force of Negation answer the tutors themselves, because a creature put onto the battlefield by Nature's Rhythm is never cast and so is never counterable. Thoughtseize leads on turn one. Post-board, Toxic Deluge for two is the reset and Consign to Memory is held for the Craterhoof Behemoth enters trigger, which is the ability that actually kills us.",
+ "pitfalls": [
+  "Treating this row and this wiki's `creatures toolbox` row as two decks. They are ONE deck under two unmerged archetype ids (c4fc27b7-4e36-4b08-a070-4d5824a6d1a6 versus c22029ff-3de2-424e-85bc-c270daf9558a) and the labels are temporally disjoint: zero `creatures toolbox` decks dated on or after 2026-08-13, zero `devoted combo` decks on or before 2026-08-10, overlapping only on 2026-08-11 and 2026-08-12. `creatures toolbox` is the RETIRED id and its reads are frozen at 08-12. The shares do NOT double-count: `shares` in this run's committed fingerprint partitions 100pp over deck counts, so 43 plus 44 equals 87 decks equals 6.4974pp is the true single share - and 3.286034 plus 3.211352 in that file is 6.497386, which checks. What the split costs is ranking: 6.4974pp is the field's #3 archetype behind instant reanimator and broodscale bloodchief, while each half reads as #8 and #9. Board against 6.5pp of this deck, not against 3.3pp of it.",
+  "Reading Damping-Matrix-style 'shuts it all off' effects onto Tyvar, Jubilant Brawler. Its '+1: Untap up to one target creature' is a planeswalker LOYALTY ability, not an activated ability of an artifact or a creature, and it is a four-of in ten of ten lists. Nothing in our seventy-five turns a loyalty ability off; Sheoldred's Edict's third mode - 'Each opponent sacrifices a planeswalker of their choice' - is the only card in the sixty that removes a resolved Tyvar at all.",
+  "Assuming an untapped Delighted Halfling makes everything uncounterable. The rider is on its SECOND ability only: '{T}: Add one mana of any color. Spend this mana only to cast a legendary spell, and that spell can't be countered'. Its first ability is plain '{T}: Add {C}' and confers nothing. So Halfling mana beats our three Force of Negation, three Counterspell, two Spell Snare, two Drown in the Loch and three Mystical Dispute only on a LEGENDARY spell - Tyvar, Jubilant Brawler, Tyvar the Pummeler, Shang-Chi, Agatha's Soul Cauldron, Oath of Nissa. Devoted Druid, Badgermole Cub and Nature's Rhythm are not legendary and are countered normally however the Halfling paid.",
+  "Conceding the uncounterable Tyvar. Two cards in the sixty beat 'can't be countered' because neither counters: Subtlety relocates the spell ('Its owner puts it on their choice of the top or bottom of their library' - they take top, so it buys one turn), and Sink into Stupor returns 'target spell or nonland permanent an opponent controls' to hand, which answers the Tyvar spell outright and is also our only maindeck answer to a resolved Leyline of Abundance.",
+  "Boarding Engineered Explosives for Leyline of Abundance. Leyline's mana cost is {2}{G}{G}, so its mana value is 4 on the battlefield no matter that its own ability put it there from the opening hand rather than being cast - Explosives would need four charge counters and our two colours cap sunburst at two. At zero it hits exactly one card in their deck, a Walking Ballista sitting at mana value 0. Two colours also means Explosives at two, which would sweep the whole mana-value-2 half of their board, and it still stays in the box: Collector Ouphe ('Activated abilities of artifacts can't be activated') is a one-of in nine of ten boards, Abrupt Decay is uncounterable and kills an Explosives at mana value 0, Force of Vigor is free, and the {2} activation arrives a turn after their kill. Nihil Spellbomb is out of the plan for the same Ouphe clause.",
+  "Boarding Harbinger of the Seas. 'Nonbasic lands are Islands' does real work on their duals and fetches, and it still loses: twenty-four basic Forest across the ten lists are untouched, so are twenty Birds of Paradise and forty Devoted Druid, and Leyline of Abundance is an enchantment it cannot reach. Worse, an Islanded Dryad Arbor - eighteen copies across the ten lists - is still a Land CREATURE, so tapping it for {U} triggers Leyline and Badgermole Cub and launders the mana straight back into green, and the same is true of the land Badgermole Cub earthbends into a 1/1. Meanwhile our own Harbinger turns seventeen of our twenty lands into Islands and leaves one basic Swamp as the only black source for four Fatal Push, four Thoughtseize, four Orcish Bowmasters, four Psychic Frog, one Sheoldred's Edict, two Drown in the Loch and one Kaito - twenty of the sixty.",
+  "Pointing Consign to Memory at the mana. Badgermole Cub's and Leyline of Abundance's 'whenever you tap a creature for mana' are triggered MANA abilities, so they never use the stack and cannot be targeted (CR 605.4a); Devoted Druid's untap, Tyvar's loyalty abilities, Formidable Speaker's untap and Fiend Artisan's tutor are activated, not triggered. What Consign to Memory does reach here is the Craterhoof Behemoth enters trigger, an Endurance enters trigger, a Badgermole Cub earthbend trigger, a Vexing Bauble trigger aimed at our own pitched spell, and Walking Ballista and Agatha's Soul Cauldron as colorless SPELLS. Replicate {1} buys a second trigger on four mana.",
+  "Expecting Orcish Bowmasters' draw clause to matter. Duskwatch Recruiter, Oath of Nissa and Formidable Speaker all LOOK at cards and put one in hand; none of them draws, and this deck casts almost no card draw. Bowmasters is a flash 1/1 that kills a Birds of Paradise or a Dryad Arbor on their turn, and the line worth remembering is that a Devoted Druid which has already untapped once carries a -1/-1 counter and is a -1/1, so one ping kills it where an untouched 0/2 shrugs. Crystal Barricade, a one-of or two-of in ten of ten boards, 'prevent[s] all noncombat damage that would be dealt to other creatures you control' and blanks every one of those pings after game one - it does not stop Bowmasters aiming at Tyvar or at the player, because the clause covers creatures only and 'You have hexproof' is on the player.",
+  "Casting Dress Down after the Craterhoof Behemoth trigger has resolved. The +X/+X is a resolved one-shot effect and Dress Down does not undo it; it strips the granted trample and leaves a lethal attack. Dress Down goes down in response to the second combo piece, or proactively while they are tapped out, and if it is already on the battlefield when Craterhoof arrives there is no enters trigger at all - Craterhoof also loses haste. Note what Dress Down does NOT do: Leyline of Abundance is an enchantment, so the doubler keeps running.",
+  "Leading a discard spell into an open {W} when Crystal Barricade is live, and reading Boseiju as expensive. Barricade is in ten of ten boards and 'You have hexproof' blanks all four Thoughtseize outright; it does not touch Sheoldred's Edict or Toxic Deluge, which never target. Boseiju, Who Endures is maindeck in ten of ten at one or two copies and its channel 'costs {1} less to activate for each legendary creature you control' - with a Delighted Halfling, a Shang-Chi or a Tyvar the Pummeler out it is a free or one-mana answer to our Dress Down, our Engineered Explosives and our Nihil Spellbomb from a card that also taps for green."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Fatal Push and Spell Snare do the one-for-one work maindeck, but neither answers an engine already assembled, and the two cards in the box that do are both symmetric. Toxic Deluge for two kills Birds of Paradise, Delighted Halfling, Devoted Druid, Badgermole Cub, Vizier of Remedies, Duskwatch Recruiter, Collector Ouphe, Sylvan Safekeeper, an eighteen-copies-in-ten-lists Dryad Arbor and the 1/1 land Badgermole Cub earthbends - it is the only sweeper in the box that is also land destruction here - and it does it as a sorcery with no permanent for Boseiju, Force of Vigor, Abrupt Decay or Guerrilla Gorilla to destroy, and with no targeting for Crystal Barricade or Sylvan Safekeeper's shroud to dodge. Dress Down for two turns Devoted Druid back into a vanilla 0/2 at flash speed. Consign to Memory is the one-sided card in the plan and it only reaches the triggers, chiefly Craterhoof Behemoth's.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Collector Ouphe",
+   "count": 1,
+   "why": "nine of ten boards at one copy, absent only from the selesneal list. 'Activated abilities of artifacts can't be activated' turns off both Engineered Explosives and both Nihil Spellbomb, four of our fifteen board slots, and it is the single reason neither is boarded here.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Crystal Barricade",
+   "count": 2,
+   "why": "ten of ten boards at one or two copies, the most universal card in their fifteen. 'You have hexproof' blanks all four Thoughtseize and the prevention clause walls Orcish Bowmasters off their creatures. It is a {1}{W} 0/4 artifact creature, so Fatal Push kills it and Spell Snare counters it.",
+   "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+  },
+  {
+   "card": "Abrupt Decay",
+   "count": 3,
+   "why": "eight of ten boards at two or three copies. 'This spell can't be countered. Destroy target nonland permanent with mana value 3 or less' takes a Dress Down at mana value 2 and an Engineered Explosives at mana value 0, and there is no fighting it on the stack. Toxic Deluge is the only card we board that it cannot answer.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Kraul Harpooner",
+   "count": 1,
+   "why": "nine of ten boards at one copy. Its enters trigger fights a creature we don't control WITH FLYING, which is an unconditional two-mana kill on Tamiyo, Inquisitive Student, a 0/3 with printed flying. It does not reach Psychic Frog: the Frog is a 1/2 with no printed flying and we decline to exile three cards on their turn, leaving the trigger no legal target.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Endurance",
+   "count": 2,
+   "why": "eight of ten boards at one or two copies, plus two lists that run it maindeck. A flash 3/4 reach blocker that survives Toxic Deluge for two and outclasses everything we have, and its enters trigger bottoms our graveyard, which shrinks Drown in the Loch and denies Psychic Frog the three cards it exiles for flying.",
+   "source_tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+  },
+  {
+   "card": "Force of Vigor",
+   "count": 2,
+   "why": "seven of ten boards at one to three copies. Free off-turn destruction of two artifacts or enchantments, which is the answer to Dress Down that Collector Ouphe does not already cover and the reason the single Dress Down is the third line of defence here rather than the first.",
+   "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+  },
+  {
+   "card": "Keen-Eyed Curator",
+   "count": 1,
+   "why": "eight of ten boards at one copy. '{1}: Exile target card from a graveyard' is an activated ability of a CREATURE, so their own Collector Ouphe does not turn it off; it grinds Psychic Frog's exile-three-for-flying fuel and Drown in the Loch's count one card at a time. A {G}{G} 3/3 that survives Toxic Deluge for two.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Grist, the Hunger Tide",
+   "count": 1,
+   "why": "eight of ten boards at one copy. '-2: You may sacrifice a creature. When you do, destroy target creature or planeswalker' grinds one-for-one through our board, and it is 'a 1/1 Insect creature in addition to its other types' everywhere but the battlefield, so it is a legal Subtlety target on the stack.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Guerrilla Gorilla",
+   "count": 1,
+   "why": "six of ten boards at one or two copies. 'Sacrifice this creature: Destroy target noncreature artifact or noncreature enchantment' reads like an answer to Dress Down and is not one: under Dress Down the Gorilla is a creature that has lost all abilities, including that one. Sorcery-speed only, so it also cannot be held up.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "five of ten boards at exactly two copies, down from eight of ten under the retired `creatures toolbox` label. 'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' taxes our three pitched Force of Negation and three evoked Subtlety - six of the sixty. Consign to Memory for {U} counters the Bauble trigger itself.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Thoughtseize",
+   "count": 2,
+   "why": "three of ten boards at exactly two copies. They take the Toxic Deluge, which is the card the rest of their board cannot answer, and it is the reason Deluge is cast on the turn it is drawn rather than held for a second combo piece.",
+   "source_tournament_id": "2d5b078d-9a51-46ed-8ead-37b75bedf3c5"
+  },
+  {
+   "card": "Sylvan Safekeeper",
+   "count": 1,
+   "why": "two of ten boards at one copy, recorded for what it does rather than how common it is. 'Sacrifice a land: Target creature you control gains shroud until end of turn' blanks Fatal Push, Spell Snare on the stack aside, on the one dork that matters, for free and repeatedly. It does nothing against Toxic Deluge, which never targets, and it is a 1/1 that Deluge for two kills.",
+   "source_tournament_id": "45f908e0-304e-435a-9b1d-9169c08ce8d3"
+  },
+  {
+   "card": "Teferi, Time Raveler",
+   "count": 3,
+   "why": "one of ten boards, and the only blue card in the whole twenty-list sample - which is also why Mystical Dispute stays in the box. 'Each opponent can cast spells only any time they could cast a sorcery' turns off every counterspell in our seventy-five plus flashed Orcish Bowmasters, evoked Subtlety, Dress Down and Sink into Stupor at once. Rare, and the worst single card they can have.",
+   "source_tournament_id": "ff73d68a-de63-4c97-8ef8-283f647257cd"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "2 Toxic Deluge",
+    "2 Consign to Memory",
+    "1 Dress Down"
+   ],
+   "out_cards": [
+    "2 Drown in the Loch",
+    "1 Quantum Riddler",
+    "1 Kaito, Bane of Nightmares",
+    "1 Sheoldred's Edict"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "2 Toxic Deluge",
+    "2 Consign to Memory",
+    "1 Dress Down"
+   ],
+   "out_cards": [
+    "2 Drown in the Loch",
+    "2 Quantum Riddler",
+    "1 Kaito, Bane of Nightmares"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands and a one-mana answer; Thoughtseize on turn one, Fatal Push or Spell Snare on their two-drop.",
+  "goldfish_for": "Toxic Deluge at two on the turn the second doubler lands.",
+  "watch_for": "An untapped Delighted Halfling: only a LEGENDARY spell it pays for is uncounterable, and Sink into Stupor still bounces it.",
+  "posture": "disrupt_first",
+  "posture_why": "They kill from an empty board on turn three or four, so our clock is worth nothing until the mana engine is answered."
+ },
+ "self_cost": "Toxic Deluge at two kills Psychic Frog and Orcish Bowmasters along with their board and costs two life, so it is cast from behind rather than on curve; Tamiyo, Inquisitive Student is a 0/3 and survives -2/-2 as a 0/1. Dress Down strips Psychic Frog's pump and its exile-three flying, Tamiyo's flying and Orcish Bowmasters' trigger for as long as it is out. Both are the price of answering a combo that never has to interact with our clock."
+}
