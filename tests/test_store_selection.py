@@ -226,12 +226,18 @@ with TestClient(app) as client:
     )
     info = made.json()
     game_id = info["game_id"]
+    # The admin key on both mutations: this script runs a real app in a real
+    # subprocess, so `conftest.py`'s harness credential cannot reach it, and
+    # `game_access.py` requires a credential of every mutating call on a game.
+    key = {"key": info["admin_key"]}
     client.post(
         f"/api/games/{game_id}/cards",
+        params=key,
         json={"card": "Mountain", "player": "alice", "zone": "hand"},
     )
     played = client.post(
         f"/api/games/{game_id}/actions/play-land",
+        params=key,
         json={"player": "alice", "card": "Mountain"},
     )
     log = client.get(

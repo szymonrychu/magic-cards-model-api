@@ -60,6 +60,7 @@ from magic_cards_model_api.repository_postgres import PostgresRepository
 # (needed here to monkeypatch its `store` name) rather than the app object
 # `magic_cards_model_api.main` also exports it as.
 app_module = sys.modules["magic_cards_model_api.app"]
+game_access_module = sys.modules["magic_cards_model_api.game_access"]
 
 _TEST_DATABASE_URL_ENV = "MCM_TEST_DATABASE_URL"
 
@@ -102,6 +103,15 @@ def postgres_app(monkeypatch: pytest.MonkeyPatch, database_url: str):
     repo_b = PostgresRepository(database_url, engine=make_engine(database_url))
     monkeypatch.setattr(app_module, "store", repo_a)
     monkeypatch.setattr(store_module, "store", repo_a)
+    # And a third, for the same reason as the first: `game_access.py` does
+    # `from .store import store` at import time too, and it now *reads* that
+    # store on every request - its positive credential rule asks whether the
+    # uid opens a seat of this game and whether it is the admin key, where
+    # before it only asked `owner_user_id` and took `None` for "unowned, let
+    # it through". Left unpatched, the gate consults the process's real
+    # (untouched) `InMemoryRepository`, finds no such game, and answers the
+    # 404 it owes an unknown one - so the 409 under test never happens.
+    monkeypatch.setattr(game_access_module, "store", repo_a)
     with TestClient(app) as client:
         yield client, repo_a, repo_b
 
