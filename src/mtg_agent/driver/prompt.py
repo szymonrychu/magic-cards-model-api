@@ -13,10 +13,11 @@ the seat command line.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .guides import DeckGuide
+from .guides import CONFIDENT, LOW, Candidate, DeckGuide, Decklist, Identification
 from .revision import UNKNOWN_REVISION
 
 UNKNOWN_DECK = "unknown-deck"
@@ -29,9 +30,14 @@ class Assignment:
     player: str
     opponent: str
     api_base: str
-    decklist: dict[str, int]
-    guide: DeckGuide | None
-    match_score: float
+    decklist: Decklist
+    identification: Identification
+    """What the archetype classifier could say about `decklist`: the guide,
+    how sure it is, and the runners-up. Carried whole rather than reduced to
+    a guide, because what the agent is told in turn 0 differs per outcome -
+    a confident match, a low-confidence one that has to name the other
+    plausible archetype, and no match at all."""
+
     guides_revision: str = UNKNOWN_REVISION
     """Which revision of the deck-guides corpus this seat was handed
     (`revision.guides_revision` over the driver's `GUIDES_ROOT`). The corpus
@@ -53,8 +59,23 @@ class Assignment:
     caller that predates roles is a seat, unchanged."""
 
     @property
+    def guide(self) -> DeckGuide | None:
+        """The one guide this seat is playing from, if the classifier could
+        name one."""
+        return self.identification.guide
+
+    @property
     def deck_slug(self) -> str:
         return self.guide.slug if self.guide else UNKNOWN_DECK
+
+    @property
+    def matchups_dir(self) -> Path | None:
+        """Where the per-opponent matchup files are, across every guide the
+        classifier handed over."""
+        for guide in self.identification.guides:
+            if guide.matchups_dir is not None:
+                return guide.matchups_dir
+        return None
 
 
 def memory_index(memory_root: Path, deck_slug: str) -> list[Path]:
@@ -97,12 +118,68 @@ def plan_header(assignment: Assignment) -> str:
     )
 
 
-def _decklist_block(decklist: dict[str, int]) -> str:
-    return "\n".join(f"{count} {name}" for name, count in sorted(decklist.items()))
+def _board_block(board: dict[str, int]) -> str:
+    return "\n".join(f"{count} {name}" for name, count in sorted(board.items()))
+
+
+def _clause_count(candidate: Candidate) -> str:
+    return f"{candidate.matched} of its {candidate.clauses} signature clauses"
+
+
+def _named(candidates: Sequence[Candidate]) -> str:
+    return ", ".join(f"`{c.slug}` ({_clause_count(c)})" for c in candidates)
+
+
+def _deck_claim(identification: Identification) -> list[str]:
+    """What the agent is told about which deck it is holding.
+
+    Three outcomes, three different things to say - and the `none` branch is
+    load-bearing: it is the behaviour a list with no guide has always had,
+    and a pasted list reaching it must still be playable.
+    """
+    guide = identification.guide
+    others = identification.alternatives
+    if identification.confidence == CONFIDENT:
+        top = identification.candidates[0]
+        return [
+            f"You are piloting **{guide.slug}** - `{identification.archetype}` in the "
+            f"guides corpus. Every one of its {top.clauses} signature clauses is in "
+            "your maindeck, so this is the deck the guide below was written for.",
+        ]
+    if identification.confidence == LOW:
+        if guide is None:
+            # A family, with no branch chosen: both branches' guides are
+            # handed over below rather than one of them picked by coin flip.
+            return [
+                f"This list is some kind of **{identification.archetype}**, but which "
+                "branch of it is not settled: "
+                f"{_named(identification.leaders)} match equally well, on the clauses "
+                "they share and on nothing that tells them apart. Read both guides "
+                "below for the parts they agree on, and trust the board over either "
+                "of them where they disagree.",
+            ]
+        top = identification.candidates[0]
+        plausible = (
+            f" Also plausible: {_named(others)}."
+            if others
+            else " No other archetype came close, but this one is not certain either."
+        )
+        return [
+            f"You are probably piloting **{guide.slug}** - `{identification.archetype}` "
+            f"in the guides corpus - but this is a **low-confidence** match: it "
+            f"answers {_clause_count(top)}, not all of them.{plausible} "
+            "Read the guide for what it is worth and trust the board over it where "
+            "they disagree.",
+        ]
+    return [
+        "There is **no guide** for this decklist - no archetype in the guides corpus "
+        "answers even half its signature clauses from your maindeck. Play it "
+        "from the list itself and from what the board tells you.",
+    ]
 
 
 def render_current_game(assignment: Assignment, memory_root: Path) -> str:
-    guide = assignment.guide
+    identification = assignment.identification
     lines = [
         "# This game",
         "",
@@ -117,35 +194,35 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         "## Your deck",
         "",
     ]
-    if guide is not None:
+    lines += [*_deck_claim(identification), ""]
+    lines += ["Maindeck:", "", "```", _board_block(assignment.decklist.mainboard), "```", ""]
+    if assignment.decklist.sideboard:
         lines += [
-            f"You are piloting **{guide.slug}** "
-            f"(matched at {assignment.match_score:.0%} against the guided list).",
+            "Sideboard (yours to board with between games; nothing here is on the "
+            "battlefield or in your library):",
+            "",
+            "```",
+            _board_block(assignment.decklist.sideboard),
+            "```",
             "",
         ]
-    else:
-        lines += [
-            "There is **no guide** for this decklist - it matches none of the guided "
-            f"decks (best match {assignment.match_score:.0%}). Play it from the list "
-            "itself and from what the board tells you.",
-            "",
-        ]
-    lines += ["```", _decklist_block(assignment.decklist), "```", ""]
 
-    if guide is not None:
-        lines += ["## Your guides", ""]
+    for offered in identification.guides:
+        heading = "## Your guides" if len(identification.guides) == 1 else f"## `{offered.slug}`"
+        lines += [heading, ""]
         for label, path in (
-            ("gameplan", guide.gameplan),
-            ("sideboard", guide.sideboard),
-            ("meta calls", guide.meta_calls),
+            ("gameplan", offered.gameplan),
+            ("sideboard", offered.sideboard),
+            ("meta calls", offered.meta_calls),
         ):
             if path is not None:
                 lines.append(f"- {label}: `{path}`")
-        if guide.matchups_dir is not None:
+        if offered.matchups_dir is not None:
             lines += [
-                f"- per-matchup detail: `{guide.matchups_dir}/<archetype>.json`",
+                f"- per-matchup detail: `{offered.matchups_dir}/<archetype>.json`",
                 "",
-                "Archetypes with a matchup file: " + ", ".join(f"`{a}`" for a in guide.archetypes),
+                "Archetypes with a matchup file: "
+                + ", ".join(f"`{a}`" for a in offered.archetypes),
             ]
         lines.append("")
 
@@ -176,10 +253,9 @@ def turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "
     file only the driver can open. The guides stay as paths - `/guides` is
     mounted in both containers, and they run to hundreds of lines each.
     """
-    guide = assignment.guide
     matchups = (
-        f"`{guide.matchups_dir}/<archetype>.json`"
-        if guide is not None and guide.matchups_dir is not None
+        f"`{assignment.matchups_dir}/<archetype>.json`"
+        if assignment.matchups_dir is not None
         else "(none for this deck)"
     )
     briefing_block = (

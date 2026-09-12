@@ -2,7 +2,17 @@ from pathlib import Path
 
 import pytest
 
-from mtg_agent.driver.guides import DeckGuide
+from mtg_agent.driver.guides import (
+    CONFIDENT,
+    LOW,
+    NONE,
+    ArchetypeSignature,
+    Candidate,
+    DeckGuide,
+    Identification,
+    SignatureClause,
+    parse_decklist,
+)
 from mtg_agent.driver.prompt import (
     Assignment,
     memory_index,
@@ -33,16 +43,45 @@ def guide(tmp_path) -> DeckGuide:
     )
 
 
-def assignment(guide: DeckGuide | None, score: float = 1.0) -> Assignment:
+DECKLIST = "4 Psychic Frog\n4 Fatal Push\n\nSideboard\n2 Dress Down\n"
+
+
+def candidate(guide: DeckGuide, name: str, clauses: int, matched: int) -> Candidate:
+    """A `Candidate` with `clauses` clauses of which `matched` are satisfied -
+    the shape `GuideLibrary.identify` builds, without needing a real corpus
+    on disk to build it from."""
+    all_clauses = tuple(SignatureClause((f"Card {i}",), 4, f"clause {i}") for i in range(clauses))
+    return Candidate(guide, ArchetypeSignature(name, all_clauses), all_clauses[:matched])
+
+
+def identified(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -> Identification:
+    if guide is None and confidence == NONE:
+        return Identification(NONE)
+    candidates = kwargs.pop("candidates", None)
+    if candidates is None:
+        clauses = 3
+        matched = clauses if confidence == CONFIDENT else 2
+        candidates = (candidate(guide, "dimir frog", clauses, matched),)
+    return Identification(
+        confidence,
+        guide,
+        tuple(candidates),
+        kwargs.pop("archetype", candidates[0].archetype if candidates else None),
+    )
+
+
+def assignment(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -> Assignment:
+    identification = kwargs.pop("identification", None)
+    if identification is None:
+        identification = identified(guide, NONE if guide is None else confidence, **kwargs)
     return Assignment(
         game_id="g-1",
         uid="secret-uid",
         player="bob",
         opponent="alice",
         api_base="http://game:8000",
-        decklist={"Psychic Frog": 4, "Fatal Push": 4},
-        guide=guide,
-        match_score=score,
+        decklist=parse_decklist(DECKLIST),
+        identification=identification,
     )
 
 
@@ -77,8 +116,92 @@ def test_current_game_never_names_the_opponents_deck(tmp_path, guide):
     assert "alice" in text, "the opponent's seat NAME is public at a real table"
 
 
+# ---- one briefing per classification outcome -----------------------------
+#
+# Three outcomes, three different things to say. Getting these wrong is not
+# cosmetic: a low-confidence match presented as a confident one is an agent
+# playing a guide written for somebody else's deck and never questioning it.
+
+
+def test_a_confident_match_states_the_deck_without_hedging(tmp_path, guide):
+    text = render_current_game(assignment(guide, CONFIDENT), tmp_path / "memory")
+    assert "You are piloting **dimir-frog**" in text
+    assert "dimir frog" in text, "the archetype's own name for itself, not just the slug"
+    assert "low-confidence" not in text
+    assert "plausible" not in text
+
+
+def test_a_low_confidence_match_says_so_and_names_the_other_candidate(tmp_path, guide):
+    """`low` hands over the guide AND says which other archetype is
+    plausible, so the agent knows the guide is a hypothesis."""
+    other = DeckGuide(slug="instant-reanimator", root=tmp_path, decklist=tmp_path / "d.txt")
+    text = render_current_game(
+        assignment(
+            guide,
+            LOW,
+            candidates=(
+                candidate(guide, "dimir frog", clauses=4, matched=2),
+                candidate(other, "instant reanimator", clauses=3, matched=2),
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    assert "probably piloting **dimir-frog**" in text
+    assert "low-confidence" in text
+    assert "2 of its 4 signature clauses" in text
+    assert "Also plausible: `instant-reanimator`" in text
+    assert str(guide.gameplan) in text, "low still hands over the guide"
+
+
+def test_a_family_match_names_the_family_and_hands_over_both_branches(tmp_path):
+    """The tron case: neither branch chosen, so neither branch's guide is
+    presented as THE guide - both are offered under their own heading."""
+    guides = []
+    for slug in ("eldrazi-tron", "prison-tron"):
+        root = tmp_path / slug
+        root.mkdir()
+        (root / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
+        guides.append(
+            DeckGuide(
+                slug=slug,
+                root=root,
+                decklist=root / "decklist.txt",
+                gameplan=root / "GAMEPLAN_GUIDE.md",
+            )
+        )
+    text = render_current_game(
+        assignment(
+            None,
+            LOW,
+            identification=Identification(
+                LOW,
+                None,
+                tuple(candidate(g, g.slug, clauses=3, matched=2) for g in guides),
+                "tron",
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    assert "some kind of **tron**" in text
+    assert "`eldrazi-tron`" in text
+    assert "`prison-tron`" in text
+    for offered in guides:
+        assert str(offered.gameplan) in text
+
+
+def test_the_briefing_keeps_the_maindeck_and_the_sideboard_apart(tmp_path, guide):
+    """The agent boards between games, so it has to be able to tell which
+    fifteen cards are not in its library."""
+    text = render_current_game(assignment(guide), tmp_path / "memory")
+    assert "Maindeck:" in text
+    assert "4 Psychic Frog" in text
+    assert "Sideboard" in text
+    assert "2 Dress Down" in text
+    assert text.index("4 Psychic Frog") < text.index("2 Dress Down")
+
+
 def test_current_game_says_so_when_there_is_no_guide(tmp_path):
-    text = render_current_game(assignment(None, score=0.2), tmp_path / "memory")
+    text = render_current_game(assignment(None), tmp_path / "memory")
     assert "no guide" in text.lower()
     assert "4 Psychic Frog" in text
 
@@ -205,7 +328,7 @@ def test_reflection_turn_names_the_files_to_write(tmp_path, guide):
 
 def test_reflection_turn_for_an_unguided_deck_still_writes_notes(tmp_path):
     memory = tmp_path / "memory"
-    text = reflection_turn(assignment(None, 0.1), memory, outcome="alice won")
+    text = reflection_turn(assignment(None), memory, outcome="alice won")
     assert str(memory / "unknown-deck" / "games" / "g-1.md") in text
 
 

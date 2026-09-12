@@ -23,7 +23,7 @@ def driver(monkeypatch):
     @app.post("/dispatch", status_code=202)
     def dispatch(body: dict):
         received.append(body)
-        return {"deck": "dimir-frog", "turnId": "turn-1", "matchScore": 0.98}
+        return {"deck": "dimir-frog", "turnId": "turn-1", "confidence": "confident"}
 
     monkeypatch.setenv("AI_SEAT_MODE", "wrapper")
     monkeypatch.setenv("DRIVER_URL", "http://driver:8090")
@@ -131,7 +131,7 @@ def driver_with_status(monkeypatch):
 
     @app.post("/dispatch", status_code=202)
     def dispatch(body: dict):
-        return {"deck": "dimir-frog", "turnId": "turn-1", "matchScore": 0.98}
+        return {"deck": "dimir-frog", "turnId": "turn-1", "confidence": "confident"}
 
     @app.get("/status")
     def status():
@@ -174,7 +174,7 @@ def test_an_unreachable_driver_is_reported_rather_than_raised(monkeypatch):
 
     @app.post("/dispatch", status_code=202)
     def dispatch(body: dict):
-        return {"deck": None, "turnId": "turn-1", "matchScore": 0.0}
+        return {"deck": None, "turnId": "turn-1", "confidence": "none"}
 
     monkeypatch.setattr(ai_seat, "_driver_client", lambda base: TestClient(app, base_url=base))
     registry = started()

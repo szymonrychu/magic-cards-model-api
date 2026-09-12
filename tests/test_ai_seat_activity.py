@@ -39,7 +39,7 @@ def driver_status(monkeypatch):
 
     @app.post("/dispatch", status_code=202)
     def dispatch(body: dict):
-        return {"deck": None, "turnId": "turn-1", "matchScore": 0.0}
+        return {"deck": None, "turnId": "turn-1", "confidence": "none"}
 
     @app.get("/status")
     def status():

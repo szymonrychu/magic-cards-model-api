@@ -134,6 +134,44 @@ whoever works on the repo itself.
   advisor uid outright, so a buddy pinned to its game was simply nobody. It
   keeps its isolation by checking the game the lookup reports against the pin
   rather than by asking a narrower question.
+- **2026-09-12 - a decklist is identified by its archetype signature, never
+  by resemblance to a sample 75.** `GuideLibrary.identify` reads each guide's
+  `decks/<slug>/archetype.json` from the mtg-decks corpus and asks every
+  archetype the same question about the same MAINBOARD: does this list hold
+  `min` copies across the cards this clause names. `_similarity` and
+  `MATCH_THRESHOLD` are gone and must not come back as a fallback - two code
+  paths identifying the same 60 cards differently, depending on whether the
+  list was bundled or pasted, was the bug. Three things worth knowing before
+  touching it:
+
+  (1) **`archetype` in those files is not the directory slug.** `prison-tron`
+  calls itself "urzatron", `orzhov-martyr` calls itself "orzhov blink",
+  `affinity` calls itself "pinnacle affinity". The slug names the guide
+  directory, the `archetype` field names the deck; conflating them reports
+  the wrong deck to the agent.
+
+  (2) **The tron family needed a rule the outcome table did not spell out.**
+  `prison-tron` and `eldrazi-tron` share two clauses verbatim and declare
+  `parent: tron`. A list with nine Tron lands and Temple/Labyrinth mana
+  answers both shared clauses and neither branch's own, so both sit at 2/3 -
+  and the specificity tie-breaks (clause count, then exclude count) DO
+  separate them, because prison-tron carries one exclude clause and
+  eldrazi-tron none. Letting that tie-break decide hands the pilot the wrong
+  branch's gameplan, which `eldrazi-tron/archetype.json` explicitly argues
+  against. So the family check runs BEFORE the tie-breaks: leaders by
+  strength alone that share a parent and satisfied the same clauses as each
+  other resolve to the parent, `low`, with no single guide and both branches'
+  guides offered.
+
+  (3) **The corpus's own answer on two lists that look like misses.** The
+  bundled `jeskai_aggro` and `dimir_control` classify confidently as
+  boros-aggro and dimir-frog: they run the whole boros one-drop suite and 4
+  Psychic Frog + 3 Quantum Riddler respectively, and those signatures' own
+  `why` text says that is what the archetype IS. `boros_energy` matches the
+  single commissioned boros guide on all three clauses. These are the corpus
+  being consistent, not drift - `tests/driver/test_guides.py`'s table records
+  each with its reasoning, pinned to mtg-decks sha
+  `936b324bedcad1c4de6e328c0f32c33a03bfa703`.
 
 - **2026-09-10 - an action answer now carries its own legal targets, and the
   candidates are opt-in because the engine will not cache the board.** M1's

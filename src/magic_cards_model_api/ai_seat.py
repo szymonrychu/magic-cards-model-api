@@ -387,7 +387,8 @@ class AiSeatRegistry:
             "state": "dispatched",
             "deck": answer.get("deck"),
             "turn_id": answer.get("turnId"),
-            "match_score": answer.get("matchScore"),
+            "confidence": answer.get("confidence"),
+            "archetype": answer.get("archetype"),
             "driver": base,
             "dispatched_at": time.time(),
         }
@@ -543,7 +544,8 @@ class AiSeatRegistry:
                     note = (
                         f"handed to the driver at {status['driver']}: deck="
                         f"{status.get('deck') or 'unrecognised'} "
-                        f"match={status.get('match_score')} turn={status.get('turn_id')}"
+                        f"({status.get('confidence') or 'no classification'}) "
+                        f"turn={status.get('turn_id')}"
                     )
             else:
                 reason = status.get("reason") or "the seat did not start"

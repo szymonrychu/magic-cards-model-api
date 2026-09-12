@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "archetype": "devoted combo",
+  "signature": [
+    {
+      "cards": [
+        "Devoted Druid",
+        "Vizier of Remedies",
+        "Tyvar, Jubilant Brawler",
+        "Tyvar, the Pummeler"
+      ],
+      "min": 6,
+      "why": "The combo. Devoted Druid untaps itself for a -1/-1 counter and Vizier of Remedies or either Tyvar stops the counter from arriving, which is infinite green mana; 10/10 field lists run 4 Druid and 4 Tyvar, Jubilant Brawler and at least one of the other two."
+    },
+    {
+      "cards": [
+        "Delighted Halfling",
+        "Birds of Paradise",
+        "Leyline of Abundance",
+        "Badgermole Cub"
+      ],
+      "min": 8,
+      "why": "The accelerants that make the combo a turn-three kill rather than a turn-five one, 10/10 in the field at 4 Halfling, 4 Leyline and 4 Badgermole Cub. Leyline also untaps a Druid on its own, so this clause is half mana and half redundancy for the combo above."
+    },
+    {
+      "cards": [
+        "Green Sun's Zenith",
+        "Nature's Rhythm",
+        "Fiend Artisan",
+        "Duskwatch Recruiter"
+      ],
+      "min": 6,
+      "why": "The tutors. Every field list runs 4 Green Sun's Zenith and 4 Nature's Rhythm: a two-card combo in a 60 is only consistent when eight or more cards find either half, and it is what lets the singleton toolbox in the list be a plan rather than a hope."
+    }
+  ]
+}

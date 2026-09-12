@@ -1,0 +1,32 @@
+1 Boseiju, Who Endures
+1 Cavern of Souls
+2 Devourer of Destiny
+4 Disciple of Freyalise
+1 Dryad Arbor
+4 Eldrazi Temple
+4 Emrakul, the Promised End
+4 Fanatic of Rhonas
+4 Fight Rigging
+3 Forest
+4 Green Sun's Zenith
+2 Grove of the Burnwillows
+4 Kozilek's Command
+4 Malevolent Rumble
+1 Mosswort Bridge
+4 Slumbering Trudge
+4 Sowing Mycospawn
+4 Ugin's Labyrinth
+2 Ugin, Eye of the Storms
+2 Ulamog, the Ceaseless Hunger
+1 Yavimaya, Cradle of Growth
+
+Sideboard
+1 Collector Ouphe
+1 Dismember
+1 Elder Gargaroth
+2 Force of Vigor
+1 Grafdigger's Cage
+1 Soulless Jailer
+2 Thought-Knot Seer
+4 Trinisphere
+2 Warping Wail

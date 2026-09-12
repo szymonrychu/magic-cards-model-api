@@ -1,0 +1,38 @@
+2 Agatha's Soul Cauldron
+4 Badgermole Cub
+2 Birds of Paradise
+2 Boseiju, Who Endures
+1 Craterhoof Behemoth
+4 Delighted Halfling
+4 Devoted Druid
+2 Dryad Arbor
+1 Duskwatch Recruiter
+1 Fiend Artisan
+2 Forest
+1 Formidable Speaker
+4 Green Sun's Zenith
+4 Leyline of Abundance
+3 Misty Rainforest
+4 Nature's Rhythm
+1 Nurturing Peatland
+2 Overgrown Tomb
+1 Shang-Chi, Master of Kung Fu
+1 Temple Garden
+4 Tyvar, Jubilant Brawler
+1 Tyvar, the Pummeler
+1 Underground Mortuary
+2 Verdant Catacombs
+1 Vizier of Remedies
+1 Walking Ballista
+2 Windswept Heath
+2 Wooded Foothills
+
+Sideboard
+3 Abrupt Decay
+1 Collector Ouphe
+2 Endurance
+1 Grist, the Hunger Tide
+1 Keen-Eyed Curator
+1 Kraul Harpooner
+3 Thoughtseize
+3 Vexing Bauble

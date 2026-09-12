@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "archetype": "orzhov blink",
+  "signature": [
+    {
+      "cards": [
+        "Martyr of Sands",
+        "Serra Ascendant"
+      ],
+      "min": 6,
+      "why": "The lifegain engine and its payoff. Martyr turns a hand of white cards into a life total no aggro deck can beat and Serra Ascendant is a 6/6 flying lifelink for one mana the moment it does; a build with neither is a different white deck. Owner judgement rather than a field count: statistics_decks returns no orzhov blink list at all today, which is why this deck's shell is declared a brew."
+    },
+    {
+      "cards": [
+        "Phelia, Exuberant Shepherd",
+        "Ephemerate",
+        "Flickerwisp",
+        "Solitude",
+        "Skyclave Apparition",
+        "Starfield Shepherd",
+        "Abiding Grace",
+        "Enduring Innocence"
+      ],
+      "min": 8,
+      "why": "The blink half the archetype is named for: something that re-triggers an enters ability, and enough enters abilities to be worth re-triggering. Martyr of Sands is a one-shot without it, so this clause and the one above are the same engine described from its two ends."
+    },
+    {
+      "cards": [
+        "Plains",
+        "Marsh Flats",
+        "Godless Shrine",
+        "Shadowy Backstreet",
+        "Emeria, the Sky Ruin",
+        "Mistveil Plains",
+        "Flooded Strand",
+        "Isolated Chapel",
+        "Caves of Koilos"
+      ],
+      "min": 8,
+      "why": "A white-based orzhov manabase. Martyr of Sands reveals white cards and Solitude pitches one, so the deck is mono-white with a black splash rather than a two-colour deck, and the count is what makes that claim checkable offline."
+    }
+  ]
+}

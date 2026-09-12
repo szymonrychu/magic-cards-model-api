@@ -415,8 +415,10 @@ def test_the_real_game_server_carries_the_field_seat_decklist_reads():
         "bob's own uid must never unlock alice's decklist too"
     )
     # And it parses to a real list, which is what `GuideLibrary.identify`
-    # scores: an unparseable or empty answer is the "0 cards" symptom.
-    assert parse_decklist(by_player["bob"]["decklist"]) == {"Forest": 56, "Grizzly Bears": 4}
+    # classifies: an unparseable or empty answer is the "0 cards" symptom.
+    parsed = parse_decklist(by_player["bob"]["decklist"])
+    assert parsed.mainboard == {"Forest": 56, "Grizzly Bears": 4}
+    assert parsed.sideboard == {}
 
 
 # ---- a failed turn has to be visible to whoever asks the driver ------------
