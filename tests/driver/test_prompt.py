@@ -20,6 +20,7 @@ from mtg_agent.driver.guides import (
 from mtg_agent.driver.matchup_card import CARD_HARD_CAP_BYTES
 from mtg_agent.driver.prompt import (
     Assignment,
+    advisor_turn_zero,
     memory_index,
     plan_path,
     reflection_turn,
@@ -471,6 +472,34 @@ def test_turn_zero_points_at_the_one_small_read_once_the_opponent_shows_cards(tm
     briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
     text = turn_zero(assignment(real_guide), tmp_path / "current-game.md", briefing=briefing)
     assert "<archetype>.json" in text
+
+
+def test_advisor_turn_zero_no_longer_requires_a_gameplan_guide_read(tmp_path, real_guide):
+    """Mirrors `test_turn_zero_no_longer_requires_a_gameplan_guide_read` for the
+    buddy: the advisor seat is the most inference-hungry one in the system (it
+    thinks at every decision point its human holds), and it was still being
+    sent to read a 42-73 KB gameplan guide that the briefing already inlines
+    as a matchup card."""
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = advisor_turn_zero(
+        assignment(real_guide), tmp_path / "current-game.md", briefing=briefing
+    )
+    assert "Read their deck's gameplan guide" not in text
+    flat = " ".join(text.lower().split())
+    assert "matchup card" in flat
+    assert "do not read the gameplan guide to get started" in flat
+
+
+def test_advisor_turn_zero_brief_carries_the_inlined_matchup_card(tmp_path, real_guide):
+    """The buddy's brief must carry the same inlined card the opponent seat
+    gets - it is advising on the human's own deck, so the card is rendered
+    from that deck's boarding plan, same as the seat's."""
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = advisor_turn_zero(
+        assignment(real_guide), tmp_path / "current-game.md", briefing=briefing
+    )
+    assert "Matchup card" in text
+    assert "Psychic Frog into Quantum Riddler" in text
 
 
 def test_reflection_turn_keys_the_note_on_a_canonical_archetype_or_unknown(tmp_path, guide):

@@ -2759,3 +2759,20 @@ whoever works on the repo itself.
   is now the end of what the policy has to say, not a guarantee of
   acceptance; the stall guard is what ends such a game, and both docstrings
   say so.
+- **2026-09-12: two parallel tasks, each correct alone, wrong together -
+  `advisor_turn_zero` kept telling the buddy to read a 58 KB gameplan guide
+  after a sibling task had already replaced that instruction with an inlined
+  matchup card for the seat.** One task narrowed `turn_zero`'s doctrine to
+  the inlined card (`render_current_game` via `matchup_card.py`); the other
+  added `advisor_turn_zero` in the same file, against a base that predated
+  the first. Neither diff conflicted, so nothing forced a look at the other's
+  prose, and the buddy - the most inference-hungry seat, thinking at every
+  decision point its human holds - kept the one instruction that costs a
+  whole turn of output for a `Read`. Fixed by pointing `advisor_turn_zero` at
+  the same `briefing` the driver already built with `render_current_game`
+  (it was already threaded through as a parameter, just not trusted) instead
+  of telling it to go read the guide itself. Lesson: two prose-editing tasks
+  in the same file that both touch "what turn 0 tells the agent to read"
+  need to diff against each other explicitly, not just against their own
+  base, or a base-truth instruction can survive in one branch after the
+  other branch made it wrong.

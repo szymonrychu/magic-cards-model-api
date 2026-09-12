@@ -934,10 +934,9 @@ def advisor_turn_zero(assignment: Assignment, current_game_path: Path, briefing:
     `seatkit._NOT_THE_BOARD` excludes `recent_log`, a ledger row (the buddy's
     own advice included) is not a board change and never wakes it.
     """
-    guide = assignment.guide
     matchups = (
-        f"`{guide.matchups_dir}/<archetype>.json`"
-        if guide is not None and guide.matchups_dir is not None
+        f"`{assignment.matchups_dir}/<archetype>.json`"
+        if assignment.matchups_dir is not None
         else "(none for this deck)"
     )
     briefing_block = (
@@ -963,9 +962,17 @@ game for them, so propose honestly.
 ## Before you say a single thing
 
 {briefing_block}
-2. Read their deck's gameplan guide, and any notes you have already written
-   about this deck. You are expected to arrive at your first piece of advice
-   already knowing what the deck is trying to do.
+2. That briefing IS your brief. Its matchup card carries {assignment.player}'s
+   deck's plan, a row per archetype in the field with the signature cards that
+   give each one away, and the three biggest matchups in detail - rendered
+   from the same structured plan the gameplan guide is generated from - and
+   their own standing notes on this deck are inlined underneath it. So **do
+   not read the gameplan guide to get started**: you already have what is in
+   it, and that file is 42-73 KB. Open a guide file only for one specific line
+   the card does not carry. Once the cards the opponent plays tell you what
+   they are facing, one small read of {matchups} (3-9 KB) gets you that whole
+   matchup. You are expected to arrive at your first piece of advice already
+   knowing what {assignment.player}'s deck is trying to do.
 3. Only then call `wait_for_priority`.
 
 ## The tools you read the game with
