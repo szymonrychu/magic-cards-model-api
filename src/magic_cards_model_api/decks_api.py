@@ -519,7 +519,11 @@ class SeatDetail(BaseModel):
     """`ai_seat.registry.status(uid)` verbatim, or the same `not_started`
     fallback `GET .../ai-seat/status` used to hand back for an unstarted
     uid - `None` only means this seat's liveness was never tracked at all,
-    which in practice never happens once a uid exists."""
+    which in practice never happens once a uid exists.
+
+    Verbatim on a *seat* row. On an advisor row it is put through
+    `_advisor_row_status` first, which takes the advisor uid out of it - see
+    `uid` above for why that row may not name one."""
     decklist: str | None = None
     """This seat's own decklist text (`store.decklists`) - present only on
     the entry matching the caller's own `uid` query parameter, the same
@@ -532,26 +536,76 @@ class GameSeatsResponse(BaseModel):
     seats: list[SeatDetail]
 
 
-def _without_uid(status: dict[str, Any]) -> dict[str, Any]:
-    """One `ai_seat.registry.status` answer with its `uid` dropped.
+#: Status keys that spell an advisor's uid out in full, dropped whole from an
+#: advisor's row rather than redacted: `prompt` is the brief with the uid
+#: substituted into it (`ai_seat.build_prompt`) and `command` is the argv that
+#: prompt is joined into (`ai_seat.command_for`), both handed back by a
+#: `mechanism: "fallback"` start so a human holding the uid can run the session
+#: by hand. Without the uid they are a wall of text nobody can act on, and the
+#: human who *can* act on them reads them where the uid is already known:
+#: `GET .../ai-seat/status?uid=<the advisor uid>`, which is unchanged.
+_UID_BEARING_KEYS = ("uid", "prompt", "command")
 
-    Every status dict this registry produces names the uid it is about -
-    `AiSeatRunner.status`, `K8sSeats.status`'s base, and both fallback
-    shapes - and an advisor's row on this broadly-readable route must carry
-    no advisor uid at all (`SeatDetail.uid`). Stripping it here, on the way
-    out, rather than asking each producer not to say it, is what makes that
-    hold for a status shape this module does not own and a mechanism added
-    later: there is exactly one place a uid can reach an advisor row from,
+#: What a redacted uid reads as. Named rather than blank so an operator
+#: looking at a buddy's row sees that something was taken out, and why.
+_REDACTED = "<advisor uid redacted>"
+
+
+def _scrub(value: Any, uid: str) -> Any:
+    """`value` with every occurrence of the full `uid` replaced - through
+    dicts, lists and strings alike, because a status value is not always a
+    flat string (`stdout_tail` and `stderr_tail` are lists of process
+    output)."""
+    if isinstance(value, str):
+        return value.replace(uid, _REDACTED)
+    if isinstance(value, dict):
+        return {key: _scrub(item, uid) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item, uid) for item in value]
+    return value
+
+
+def _advisor_row_status(status: dict[str, Any], uid: str) -> dict[str, Any]:
+    """One `ai_seat.registry.status` answer with the advisor uid taken out of
+    it - keys and quoted occurrences both.
+
+    An advisor's row on this broadly-readable route must carry no advisor uid
+    at all (`SeatDetail.uid`), and a status dict names it in more places than
+    the obvious one. Two passes, because the leaks are two different shapes:
+
+    - **`_UID_BEARING_KEYS` are dropped.** Every producer names the uid it is
+      about (`AiSeatRunner.status`, `K8sSeats.status`'s base, both fallback
+      shapes), and a fallback also hands back the `prompt` and the `command`
+      it was built from, each with the uid inside it.
+    - **Whatever is left is scrubbed of the uid as a substring.** A value this
+      module does not compose can still quote the credential: a kubernetes
+      `reason` is `could not read pod status: {exc}`, and the exception is
+      raised against a label selector of `mtg/seat-uid=<the full uid>`
+      (`K8sSeats._pod`), so the uid rides out in the API error's own text. A
+      subprocess runner's `stdout_tail` is the agent's own output, which
+      quotes its credential freely. Neither key can be enumerated ahead of
+      time, so the uid is removed by value rather than by name, which also
+      covers the mechanism nobody has written yet.
+
+    Doing it here, on the way out, rather than asking each producer not to say
+    it, is what makes the guarantee hold for a status shape this module does
+    not own: there is exactly one place a uid can reach an advisor row from,
     and this is it.
 
-    `job` is deliberately left in place on a kubernetes status, uid prefix
-    and all (`k8s_seats.job_name` truncates both ids to eight characters):
-    it is what an operator greps for, the remaining 96 bits of the uid are
-    not in it, and this same route already hands out every *seat* uid in
-    full - so an attacker after a credential has a strictly better one to
-    take, and dropping the Job name would cost the human the pod name
-    without closing anything."""
-    return {key: value for key, value in status.items() if key != "uid"}
+    `job` survives on a kubernetes status, uid prefix and all
+    (`k8s_seats.job_name` truncates both ids to eight characters, so the
+    scrub - which matches the whole uid - leaves it alone): it is what an
+    operator greps for, the remaining 96 bits of the uid are not in it, and
+    this same route already hands out every *seat* uid in full - so an
+    attacker after a credential has a strictly better one to take, and
+    dropping the Job name would cost the human the pod name without closing
+    anything."""
+    kept = {key: value for key, value in status.items() if key not in _UID_BEARING_KEYS}
+    if not uid:
+        # No credential to scrub for, and `str.replace("")` would splice the
+        # marker between every character of every value.
+        return kept
+    return {key: _scrub(value, uid) for key, value in kept.items()}
 
 
 @router.get(
@@ -654,7 +708,7 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
                 # From the advisor's own entry, never the name-keyed
                 # `agent_settings` map - `NewUiPlayer.buddy_agent` says why.
                 "agent": None if advisor.agent is None else advisor.agent.model_dump(),
-                "ai_seat": _without_uid(status)
+                "ai_seat": _advisor_row_status(status, advisor_uid)
                 if status is not None
                 else {"mechanism": None, "state": "not_started", "role": ai_seat.ROLE_ADVISOR},
             }

@@ -289,6 +289,105 @@ def test_no_advisor_uid_appears_before_the_buddy_has_started_either(
     assert uid not in body
 
 
+def test_no_advisor_uid_appears_in_a_failed_buddys_fallback_status(
+    client: TestClient, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """The third shape, and the one that actually leaked: a buddy that *tried
+    and could not* start.
+
+    `AiSeatRegistry.start`'s subprocess fallback hands back the `prompt` and
+    the `command` a human would need to run the session by hand, and both
+    spell the uid out - `build_prompt` substitutes it into the brief and
+    `command_for` joins that prompt into the argv - so stripping the `uid`
+    key alone left the credential sitting in the body twice over. This is the
+    container's own case, not a contrived one: no `claude` on PATH (the
+    api image installs none, and `conftest`'s autouse
+    `_no_real_claude_by_default` pins it off for the suite), so every buddy
+    started in `subprocess` mode lands here."""
+    created = boot(client)
+    game_id, uid = created["game_id"], created["advisor_uids"]["you"]
+    started = client.post(
+        f"/api/lobby/games/{game_id}/ai-seat/start",
+        json={"advisor_uid": uid},
+        params={"uid": created["seat_uids"]["you"]},
+    )
+    assert started.status_code == 200, started.text
+    assert started.json()["mechanism"] == "fallback"
+    # The owner, holding the uid, still gets the prompt and the command - it
+    # is the whole point of a fallback - on the route that takes the uid.
+    own = client.get(f"/api/lobby/games/{game_id}/ai-seat/status", params={"uid": uid})
+    assert own.status_code == 200, own.text
+    assert uid in own.json()["prompt"]
+    # The broadly-readable listing names none of it.
+    body = client.get(f"/api/lobby/games/{game_id}/seats").text
+    assert uid not in body
+    advisor = next(row for row in _seats(client, game_id) if row.get("role") == "advisor")
+    assert advisor["ai_seat"]["mechanism"] == "fallback"
+    assert "prompt" not in advisor["ai_seat"]
+    assert "command" not in advisor["ai_seat"]
+    # And the row is still worth rendering: the reason survives.
+    assert "claude" in advisor["ai_seat"]["reason"]
+
+
+def test_an_advisor_uid_quoted_inside_a_status_value_is_redacted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """Dropping the keys known to carry a uid is not enough on its own,
+    because a status value this module does not compose can quote one: a
+    kubernetes API hiccup comes back as `could not read pod status: {exc}`
+    and `K8sSeats._pod` selects on `mtg/seat-uid=<the full uid>`, so the
+    selector - uid and all - rides out inside the exception's own text. So
+    the advisor's row is scrubbed of the uid wherever it appears, not just
+    where it is expected to."""
+    monkeypatch.setenv("AI_SEAT_MODE", "kubernetes")
+
+    class HiccupSeats:
+        """`K8sSeats`, answering the transient-API-error branch its own
+        `status` has (`k8s_seats.py`, `could not read pod status`)."""
+
+        def start(self, *, uid: str, game_id: str, player: str, agent: Any, role: str = "seat"):
+            return {
+                "uid": uid,
+                "mechanism": "kubernetes",
+                "state": "pending",
+                "job": k8s_seats.job_name(game_id=game_id, uid=uid, role=role),
+                "game_id": game_id,
+                "player": player,
+                "role": role,
+            }
+
+        def status(self, uid: str):
+            return {
+                "uid": uid,
+                "mechanism": "kubernetes",
+                "state": "pending",
+                "job": f"mtg-buddy-abcdef12-{uid[:8]}",
+                "player": "you",
+                "role": "advisor",
+                "reason": (
+                    "could not read pod status: (403) GET /api/v1/namespaces/mtg/pods"
+                    f"?labelSelector=mtg%2Fseat-uid%3D{uid}"
+                ),
+            }
+
+        def release(self, uid: str):
+            return {"deleted": True}
+
+    monkeypatch.setattr(k8s_seats, "get", HiccupSeats)
+    created = boot(client)
+    game_id, uid = created["game_id"], created["advisor_uids"]["you"]
+    body = client.get(f"/api/lobby/games/{game_id}/seats").text
+    assert uid not in body
+    advisor = next(row for row in _seats(client, game_id) if row.get("role") == "advisor")
+    # Redacted, not dropped: the operator still learns that the pod could not
+    # be read and that it was a 403.
+    assert "could not read pod status" in advisor["ai_seat"]["reason"]
+    assert "403" in advisor["ai_seat"]["reason"]
+    # The Job name keeps its eight-character prefix, deliberately - see
+    # `decks_api._advisor_row_status`.
+    assert advisor["ai_seat"]["job"] == f"mtg-buddy-abcdef12-{uid[:8]}"
+
+
 def test_an_advisor_uid_reads_its_humans_decklist_and_no_one_elses(
     client: TestClient,
 ) -> None:

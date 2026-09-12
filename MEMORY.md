@@ -2338,13 +2338,22 @@ whoever works on the repo itself.
   in `uid`: `game_access._credentials` reads a body's own `uid` as the
   CALLER's credential, and an advisor credential is refused every POST - so
   the human asking for their own buddy back with `{"uid": <advisor>}` got a
-  404 from the gate before the route ever ran. (2) `game_seats` strips `uid`
-  out of an advisor's `ai_seat` status (`_without_uid`): every registry
-  status dict names its own uid, so listing the advisor's liveness on that
-  broadly-readable route leaked the credential through the status even
-  though the row itself carried no `uid` field - caught by a test that runs
-  the buddy before reading the route, which the not-started version of the
-  same test could not see. `AiSeatRegistry.status` also answers a remembered
+  404 from the gate before the route ever ran. (2) `game_seats` takes the
+  advisor uid out of an advisor's `ai_seat` status (`_advisor_row_status`):
+  every registry status dict names its own uid, so listing the advisor's
+  liveness on that broadly-readable route leaked the credential through the
+  status even though the row itself carried no `uid` field. Dropping the
+  `uid` key was not enough, and review caught it: a `mechanism: "fallback"`
+  start also hands back `prompt` and `command`, which are the brief and the
+  argv with the uid substituted INTO them, and that is the shape the api
+  container actually produces (no `claude` on PATH). So the helper drops
+  every uid-bearing key AND scrubs the uid as a substring from whatever is
+  left - a kubernetes `reason` quotes the `mtg/seat-uid=<uid>` selector its
+  API error was raised against, and a subprocess `stdout_tail` is the
+  agent's own output. Removing it by value, not only by name, is what covers
+  the key nobody enumerated. Three tests, one per status shape (running,
+  never started, tried and failed), because the running one alone missed the
+  fallback. `AiSeatRegistry.status` also answers a remembered
   `fallback` now instead of `None` (`_fallbacks`), because a buddy is started
   once at creation and a `None` there rendered as a bare "not started" with
   no reason for a runner that had genuinely tried and failed.**
