@@ -28,11 +28,12 @@ stack or stepping the turn on, and you never need one.
 
 **`--hold` is how you take two actions in one phase.** A `cast` releases
 priority by default and checks once for your next moment to act - it does not
-wait for one (`wake_reason` may say "nothing new yet"; run `wait
+wait for one (`wake_reason` may say "nothing new yet"; run `pass-until <step>
 --max-seconds 20`, which waits out that bound on the server for you rather
-than you sleeping and calling again by hand). If you mean to act again before the
-phase moves on - cast two spells, hold up an instant - pass `--hold`, or the
-phase can end between your two actions:
+than you sleeping and calling again by hand, and - unlike a bare `wait` -
+hands you your `available_actions` and `recent_log` when it comes back). If
+you mean to act again before the phase moves on - cast two spells, hold up an
+instant - pass `--hold`, or the phase can end between your two actions:
 
     ... --uid U --game G --hold cast "Sakura-Tribe Elder"
     ... --uid U --game G --hold cast "Amulet of Vigor"
@@ -111,13 +112,15 @@ middle buys you nothing and costs you a whole round trip. A seat was measured
 spending 65 calls on a single activation this way, two out of every three of
 them asking for something it had already been handed.
 
-What that means concretely, for the five commands you will be tempted to run:
+What that means concretely, for the five commands you will be tempted to run
+- plus the one answer that genuinely does arrive thin:
 
-- **Do NOT run `state`.** Every command that acts or waits - `pass-until`,
-  `pass`, `cast`, `activate`, `play-land`, `decide`, `attackers`, `blockers`,
-  `wait` - prints the whole `state` you are allowed to see, right there in
-  its own answer, alongside `available_actions`: every legal action with what
-  it would cost (`cost`/`mana_cost`), the engine's own `affordable` verdict,
+- **Do NOT run `state`.** Every command that acts, and the wait that belongs
+  in the loop with them - `pass`, `pass-until`, `cast`, `activate`,
+  `play-land`, `decide`, `attackers`, `blockers` - prints the whole `state`
+  you are allowed to see, right there in its own answer, alongside
+  `available_actions`: every legal action with what it would cost
+  (`cost`/`mana_cost`), the engine's own `affordable` verdict,
   and - for every action that targets - that action's legal target candidates
   per slot under `targets.slots[].candidates`, each candidate a plain string
   whose leading id is exactly what `--target` takes back. Choosing what to do
@@ -126,6 +129,17 @@ What that means concretely, for the five commands you will be tempted to run:
   tail of what both seats have actually done, allowed and refused, in the
   game's own words, with `omitted` saying how many entries fell off the front
   (zero, nearly always).
+- **`wait` is the one answer that carries neither**, and the only exception
+  on this list. It looks without acting (`seatkit.block_until_wake`), so it
+  prints the `state` alone: no `available_actions`, no `recent_log`. What it
+  does carry is the whole state, `pending_decision` included - so a decision
+  that woke you is answerable straight off it, from its own `answer_with`.
+  For anything else, make `pass-until <step> --max-seconds 20` your wait
+  instead: it waits out the same bound on the server AND hands you the action
+  list and the log tail, which keeps the loop two commands. Reach for a bare
+  `wait` only when you cannot pass at all - `pass` refused with "you do not
+  have priority" - and read its answer as "something moved", never as your
+  action list; the wait you follow it with is the one that carries one.
 - **Do NOT pass `--sources`.** Leaving it off is the correct answer in
   essentially every case: `seatkit.sources_or_all` then offers the engine
   every untapped source you control, and the engine taps only what the cost
@@ -548,8 +562,11 @@ per priority.
 
   is the one command that used to take two - a `sleep`, then a separate
   `wait` call - and it is the pattern to reach for every time the answer would
-  otherwise be "nothing new yet" - a bare `wait` loop with no wait at all in
-  it issues back-to-back calls for the whole time your opponent is deciding,
+  otherwise be "nothing new yet" (with `pass-until <step> --max-seconds 20`
+  the one to prefer whenever you have priority to give up, since its answer
+  carries your action list and `wait`'s does not) - a bare `wait` loop with
+  no wait at all in it issues back-to-back calls for the whole time your
+  opponent is deciding,
   which does not make them decide any sooner and burns your own turn budget
   on the same answer. Leave `--max-seconds` at 0 only when you specifically
   want the immediate poll-and-return - right after your own action, when

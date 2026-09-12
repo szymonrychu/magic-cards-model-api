@@ -279,6 +279,14 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
   specifically want the immediate poll-and-return, right after your own
   action, when something has plausibly already changed.
+
+  What it hands back is a whole state view - every zone you are allowed to
+  see, with `recent_log` merged into it - and NOT an action list: it is the
+  one answer with no `available_actions`, because it only looks, it never
+  acts. That is why the loop's wait is `pass_until`, not this: a
+  `pass_until`/`pass` answer carries the action list as well. Open your
+  activation with this one, answer any `input_required` decision it hands
+  you straight from that decision's `answer_with`, and go back to the loop.
 - An action tool's answer is about the action: `outcome` first (whether it
   was allowed, and if not, the engine's own refusal in its own words - read
   that before you do anything else, it is the whole reason the call did what

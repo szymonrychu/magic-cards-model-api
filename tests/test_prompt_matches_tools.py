@@ -73,6 +73,10 @@ NON_TOOL_VOCABULARY = {
     # decision and the parameter it names, and the payment plan an action
     # reports. All answer shape; none is a tool or a parameter.
     "battlefield_digest",
+    # the legal-action list itself: it rides `pass_until`/`pass` and every
+    # action's answer, and is the one thing `wait_for_priority`'s state view
+    # does not carry - answer shape either way, never a tool or a parameter
+    "available_actions",
     "truncated",
     "more_with",
     "answer_with",
@@ -343,3 +347,179 @@ def test_both_briefs_state_the_loop_in_terms_of_the_real_verbs():
         assert "nothing in between" in flat, (
             f"{name}'s loop section never says there is no third call between the two"
         )
+
+
+# -- M4 review: `wait` is the one answer that carries neither ----------------
+#
+# The loop's prohibitions are only safe where they are true. `seat_cli`'s
+# `wait` is the exception: `seatkit.block_until_wake` returns `recent_log` as
+# a *sibling* of `state` (its own docstring says why it can never be a key
+# inside it) and never computes `available_actions` at all, and the `wait`
+# branch prints `woken["state"]` alone. So a seat told "do not run `state`,
+# every command including `wait` prints it alongside `available_actions`" and
+# "`recent_log` rides every one of those answers" is told two false things
+# about `wait` - and the brief itself sends a seat to `wait --max-seconds 20`
+# whenever an action woke with nothing new. Obeying both leaves it holding an
+# answer with no action list and no log tail and no sanctioned way to get
+# either. The MCP side never had this: `prompt.py`'s loop names only
+# `pass_until`/`pass` as the wait, and both of those go through `pass_until`,
+# which does carry all three.
+
+#: The keys a `wait` answer does NOT carry. Asserted against the running code
+#: below, then used to pin the prose.
+WAIT_CARRIES_NEITHER = ("available_actions", "recent_log")
+
+
+def _brief_bullet(marker: str) -> str:
+    """One top-level markdown bullet of the brief, `marker` through the line
+    before the next `- ` at column zero."""
+    text = BRIEF.read_text()
+    start = text.index(marker)
+    end = text.index("\n- ", start + len(marker))
+    return " ".join(text[start:end].split())
+
+
+def test_wait_is_the_one_answer_carrying_neither_actions_nor_log(client, game, monkeypatch, capsys):
+    """The behavioural fact the prose has to match, read off the real CLI:
+    `pass-until`'s answer carries `available_actions` and `recent_log`, and
+    `wait`'s answer carries neither."""
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from magic_cards_model_api import seat_cli
+    from magic_cards_model_api.main import app
+    from magic_cards_model_api.store import store
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+
+    assert seat_cli.run(["--uid", uids["alice"], "--game", game, "wait"]) == 0
+    waited = json.loads(capsys.readouterr().out)
+    for key in WAIT_CARRIES_NEITHER:
+        assert key not in waited, (
+            f"`wait` now carries `{key}` - if that is deliberate, the brief's "
+            "exception for it is what has to change"
+        )
+
+    assert seat_cli.run(["--uid", uids["alice"], "--game", game, "pass-until", "end_step"]) == 0
+    passed = json.loads(capsys.readouterr().out)
+    for key in WAIT_CARRIES_NEITHER:
+        assert key in passed, f"`pass-until` no longer carries `{key}`, which the loop leans on"
+
+
+def test_a_wait_answer_still_carries_the_decision_that_woke_it(client, game, monkeypatch, capsys):
+    """What a `wait` answer *is* good for, and the reason the brief can keep
+    sending a seat to it: `pending_decision` is part of the state itself, so
+    the paste-ready `answer_with` rides a bare `wait` even though no action
+    list does."""
+    import httpx
+    from fastapi.testclient import TestClient
+    from test_decisions import advance_into_cleanup
+
+    from magic_cards_model_api import seat_cli
+    from magic_cards_model_api.main import app
+    from magic_cards_model_api.store import store
+
+    for _ in range(8):
+        client.post(
+            f"/api/games/{game}/cards",
+            json={"card": "Mountain", "player": "alice", "zone": "hand"},
+        )
+    assert advance_into_cleanup(game) is not None, "cleanup never asked alice to discard"
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    assert seat_cli.run(["--uid", uids["alice"], "--game", game, "wait"]) == 0
+    waited = json.loads(capsys.readouterr().out)
+
+    pending = waited.get("pending_decision")
+    assert pending, "a bare `wait` no longer shows the decision that woke it"
+    assert pending["answer_with"], "a `wait` answer's decision carries no paste-ready call"
+
+
+def test_the_brief_never_promises_wait_an_action_list_or_a_log():
+    """The two bullets that forbid `state` and `log` enumerate the commands
+    whose own answer replaces them. `wait` is not one of them (above), so it
+    must not be enumerated there - and because the brief elsewhere tells a
+    seat to reach for `wait --max-seconds 20`, the exception has to be stated
+    out loud rather than merely left out."""
+    for marker in ("- **Do NOT run `state`.**", "- **Do NOT run `log`.**"):
+        bullet = _brief_bullet(marker)
+        assert "`wait`" not in bullet, (
+            f"the brief's {marker!r} bullet still enumerates `wait` among the "
+            "answers that carry an action list and a log tail; it carries "
+            "neither (test_wait_is_the_one_answer_carrying_neither_actions_nor_log)"
+        )
+
+    flat = _flat(BRIEF)
+    assert "carries neither" in flat, (
+        "the brief never says which answer carries neither an action list nor "
+        "a log tail - a seat sent to `wait` by the brief's own advice needs to "
+        "be told what it is holding"
+    )
+    exception = flat[flat.index("carries neither") - 400 : flat.index("carries neither") + 400]
+    for key in WAIT_CARRIES_NEITHER:
+        assert key in exception, (
+            f"the brief's `wait` exception never names `{key}` as the thing that answer lacks"
+        )
+    assert "`wait`" in exception, "the brief's exception never says it is `wait` that is the one"
+
+
+def test_the_brief_sends_a_nothing_new_yet_seat_to_the_wait_that_carries_something():
+    """The other half of the same defect: it is the brief itself that tells a
+    seat what to run when an action comes back `nothing new yet`. Sending it
+    to a bare `wait` there and then forbidding `state` and `log` leaves it
+    holding an answer with no action list and no log tail, so every such
+    passage has to name `pass-until` - the wait whose own answer carries
+    both."""
+    text = BRIEF.read_text()
+    passages = [
+        " ".join(block.split())
+        for block in re.split(r"\n\s*\n", text)
+        if "nothing new yet" in block
+    ]
+    assert passages, "the brief no longer says what to do when nothing has changed yet"
+    for passage in passages:
+        assert "pass-until" in passage, (
+            "a passage about `nothing new yet` never names `pass-until`, the "
+            f"only wait whose answer carries {' and '.join(WAIT_CARRIES_NEITHER)}: {passage!r}"
+        )
+
+
+def test_the_mcp_wait_carries_the_log_but_no_action_list(client, game, monkeypatch):
+    """The same question asked of the MCP transport, because the answer there
+    is different and the prose has to match the transport it is written for:
+    `mcp.wait_for_priority` merges `recent_log` into the state view it hands
+    back (so "recent_log rides every answer" is true), but a state view is
+    not an action list - `available_actions` comes with `pass_until`/`pass`
+    and with every action's own answer."""
+    import asyncio
+
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from magic_cards_model_api.main import app
+    from magic_cards_model_api.mcp import build_server
+    from magic_cards_model_api.seatkit import Seats
+    from magic_cards_model_api.store import store
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    uids = {name: uid for uid, name in store.seat_uids(game).items()}
+    server = build_server(Seats(api="http://testserver", game_id=game))
+    raw = asyncio.run(server.call_tool("wait_for_priority", {"player_uid": uids["alice"]}))
+    answer = json.loads(raw.content[0].text)
+
+    assert "recent_log" in answer, "the MCP wait no longer carries the log tail the prose promises"
+    assert "available_actions" not in answer, (
+        "the MCP wait now carries an action list - then the prompt's note that "
+        "it does not is what has to change"
+    )
+
+    flat = _flat(PROMPT_SOURCE)
+    bullet_start = flat.index("`wait_for_priority(player_uid, max_seconds=20)`")
+    bullet = flat[bullet_start : bullet_start + 1600]
+    assert "available_actions" in bullet, (
+        "prompt.py never tells a seat that the wait it opens with hands back "
+        "no `available_actions` - the action list rides `pass_until`/`pass` "
+        "and every action's own answer"
+    )
