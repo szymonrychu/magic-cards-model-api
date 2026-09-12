@@ -810,6 +810,96 @@ def test_a_cycling_proposal_reads_the_cycling_cost(client: TestClient, game: str
     assert "{1}{W}" not in summary, f"that is the printing, not the cycling cost: {summary}"
 
 
+def test_the_cost_is_found_from_a_card_named_by_name(client: TestClient, game: str) -> None:
+    """Every action shape takes `card` (a name) as the alternative to
+    `card_id` - `schemas.CastRequest.card`, `CycleRequest.card`,
+    `PlayLandRequest.card` - and it is the path `mcp.py`'s own `cast`/
+    `cycle`/`play_land` tools take whenever the model's argument is not a
+    uuid, which is most of the time. The cost half of the line has to be
+    found from a name exactly as it is from an id, or the documented path is
+    the one that renders no price."""
+    uid = advisor_uid(game, "alice")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/cast",
+        {"player": "alice", "card": "Lightning Bolt", "targets": ["bob"]},
+    )
+
+    assert summary == "alice: cast Lightning Bolt, for {R}, targeting bob", summary
+
+
+def test_a_by_name_cycle_reads_the_cycling_cost_too(client: TestClient, game: str) -> None:
+    """The by-name path is not only the cast route's: `actions/cycle` reaches
+    the same matcher through `_PATH_KINDS`, and its cost is the cycling
+    ability's."""
+    uid = advisor_uid(game, "alice")
+    add_card(client, game, "Angelsong", "alice", "hand")
+
+    summary = summary_of(
+        client, game, uid, "actions/cycle", {"player": "alice", "card": "Angelsong"}
+    )
+
+    assert "for {2}, Discard this card" in summary, summary
+    assert "{1}{W}" not in summary, f"that is the printing, not the cycling cost: {summary}"
+
+
+def test_a_by_name_proposal_no_action_matches_still_says_the_printed_cost(
+    client: TestClient, game: str
+) -> None:
+    """The printed-cost fallback resolves a name the way the cast route
+    itself does (`engine_api.locate_castable`: the first name match in
+    `from_zone`), so a born-stale by-name proposal still shows a price."""
+    uid = advisor_uid(game, "alice")
+    add_card(client, game, "Pacifism", "alice", "graveyard")
+
+    summary = summary_of(
+        client,
+        game,
+        uid,
+        "actions/cast",
+        {"player": "alice", "card": "Pacifism", "from_zone": "graveyard"},
+    )
+
+    assert "for {1}{W} (printed)" in summary, summary
+
+
+def test_a_name_this_game_has_never_seen_renders_no_cost_and_does_not_raise(
+    client: TestClient, game: str
+) -> None:
+    """Resolution stays best effort (`_named`'s own contract): a body naming
+    a card nobody holds must still produce a readable line rather than lose
+    the whole row to an exception."""
+    uid = advisor_uid(game, "alice")
+
+    summary = summary_of(
+        client, game, uid, "actions/cast", {"player": "alice", "card": "Nonesuch Ritual"}
+    )
+
+    assert summary == "alice: cast Nonesuch Ritual", summary
+
+
+def test_two_copies_of_one_card_in_hand_still_price_the_by_name_proposal(
+    client: TestClient, game: str
+) -> None:
+    """Two Lightning Bolts in hand are two legal cast rows carrying the same
+    name, which the matcher must resolve to one cost rather than to none."""
+    uid = advisor_uid(game, "alice")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+
+    summary = summary_of(
+        client, game, uid, "actions/cast", {"player": "alice", "card": "Lightning Bolt"}
+    )
+
+    assert "for {R}" in summary, summary
+
+
 def test_a_decide_answer_is_summarised_without_a_cost(client: TestClient, game: str) -> None:
     """`decide` names no card and pays nothing; the cost lookup must not
     attach one (nor raise looking for it)."""

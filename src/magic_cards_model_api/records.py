@@ -49,7 +49,7 @@ from uuid import UUID
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import PendingDecision
 from magic_cards_model.machines.legal_actions import legal_actions as _legal_actions
-from magic_cards_model.models import Game
+from magic_cards_model.models import CardState, Game
 
 from .audit import PLAN_ACTION
 from .repository import RECENT_RECORDS_WINDOW
@@ -495,8 +495,53 @@ def _agreement(action: dict[str, Any], body: dict[str, Any]) -> int | None:
     return agreed
 
 
+def _card_reference(body: dict[str, Any]) -> tuple[str, bool] | None:
+    """Which card this proposal is about, and whether it said so by name -
+    `None` when it names no card at all (`decide`, `pass-priority`, a whole
+    attack declaration).
+
+    Every action shape takes both spellings (`schemas.CastRequest.card_id`
+    and `.card`, "used when no card_id is given: first match in from_zone";
+    `CycleRequest`, `SpecialActionRequest` and `PlayLandRequest` the same),
+    and the by-name one is not the exotic path: `mcp.py`'s `cast`, `cycle`
+    and `play_land` send `card` for every argument that is not a uuid, which
+    is what a model writing "Lightning Bolt" produces. So both spellings
+    have to reach the cost lookup, or the documented path is the one that
+    renders no price.
+
+    `card_id` wins when both are given, which is the precedence the routes
+    themselves apply (`engine_api.locate_castable` returns on `req.card_id`
+    before it ever looks at `req.card`)."""
+    identifier = body.get("card_id")
+    if identifier is not None and str(identifier).strip():
+        return str(identifier).strip(), False
+    name = body.get("card")
+    if name is not None and str(name).strip():
+        return str(name).strip(), True
+    return None
+
+
+def _is_card(game: Game, action: dict[str, Any], reference: str, by_name: bool) -> bool:
+    """Whether this `legal_actions` row is about the card `reference` names.
+
+    A row carries only a `card_id` (`models.action.Action` has no name
+    field), so a by-name reference is compared against the row's own
+    resolved card name - the same resolution the rest of this section reads
+    ids through. Case-insensitively, because a name is something a model
+    typed."""
+    identifier = str(action.get("card_id") or "")
+    if not identifier:
+        return False
+    if not by_name:
+        return identifier == reference
+    return _named(game, identifier).casefold() == reference.casefold()
+
+
 def _proposed_action(
-    path: str, body: dict[str, Any], legal_before: LegalActionsBefore | None
+    game: Game,
+    path: str,
+    body: dict[str, Any],
+    legal_before: LegalActionsBefore | None,
 ) -> dict[str, Any] | None:
     """The row of `legal_before` this proposal is proposing, or `None` when
     nothing in it matches - including when the proposal names no card at all
@@ -510,20 +555,53 @@ def _proposed_action(
     prints `{2}` and its second ability costs
     `{1}, {T}, Sacrifice this artifact`. `legal_before` is the enumeration
     the recording route has already computed for its own row, so this costs
-    no second pass over the engine."""
-    card = str(body.get("card_id") or "")
-    if not card or legal_before is None:
+    no second pass over the engine.
+
+    Two copies of one card in hand enumerate as two rows carrying the same
+    name, and a by-name body cannot say which - so the best-scoring one
+    wins, exactly as it does for the several rows one `card_id` can produce
+    (a cast and its evoke). They are the same card with the same cost; the
+    line is about the play, not about which copy leaves the hand."""
+    reference = _card_reference(body)
+    if reference is None or legal_before is None:
         return None
+    identifier, by_name = reference
     best: tuple[int, dict[str, Any]] | None = None
     for action in legal_before.actions:
         if not _kind_matches(str(action.get("kind") or ""), path):
             continue
-        if str(action.get("card_id") or "") != card:
+        if not _is_card(game, action, identifier, by_name):
             continue
         score = _agreement(action, body)
         if score is not None and (best is None or score > best[0]):
             best = (score, action)
     return best[1] if best is not None else None
+
+
+def _named_card(game: Game, body: dict[str, Any]) -> CardState | None:
+    """The `CardState` `body` names, by id or by name, or `None`.
+
+    The by-name half is `engine_api.locate_castable` itself rather than a
+    second implementation of it: "by id, or the first name match in
+    `from_zone`" is a rule the cast route already owns, and a fallback that
+    resolved a name differently from the route would quote the price of a
+    card the human's own click would not cast."""
+    from . import engine_api  # local: `engine_api` imports `schemas`, this does not
+    from .schemas import CastRequest
+
+    reference = _card_reference(body)
+    if reference is None:
+        return None
+    identifier, by_name = reference
+    if not by_name:
+        try:
+            return game.find_by_id(UUID(identifier))
+        except Exception:
+            return None
+    try:
+        return engine_api.locate_castable(game, CastRequest.model_validate(body))
+    except Exception:
+        return None
 
 
 def _printed_cost(game: Game, path: str, body: dict[str, Any]) -> str | None:
@@ -541,10 +619,7 @@ def _printed_cost(game: Game, path: str, body: dict[str, Any]) -> str | None:
     whose cost the printing usually *is*."""
     if _path_tail(path).replace("-", "_") not in _PRINTED_COST_PATHS:
         return None
-    try:
-        card = game.find_by_id(UUID(str(body.get("card_id"))))
-    except Exception:
-        card = None
+    card = _named_card(game, body)
     if card is None:
         return None
     return (card.card.mana_cost or "").strip() or None
@@ -558,7 +633,7 @@ def _cost_clause(
     ("the player simply puts the land onto the battlefield"), and a land
     prints no mana cost either, so the line says nothing about cost rather
     than inventing a `{0}`."""
-    action = _proposed_action(path, body, legal_before)
+    action = _proposed_action(game, path, body, legal_before)
     if action is not None:
         cost = str(action.get("cost") or "").strip()
         return f"for {cost}" if cost else None
