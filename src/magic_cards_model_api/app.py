@@ -1852,17 +1852,18 @@ def _attach_target_candidates(
             player,
             ability_index=action.ability_index,
             # CR 709.3b: a split card on the stack "has only the
-            # characteristics of the half being cast", so the half this row
-            # announces is the only text its candidates may come from. Passed
-            # rather than dropped, which is what left the Tear row of
-            # Wear // Tear offering Wear's own artifact targets: both rows
-            # were derived from `targeting_profile(card)` and that reads
+            # characteristics of the half being cast", and CR 715.3b says the
+            # same of an Adventure - so the face this row announces is the
+            # only text its candidates may come from. Passed rather than
+            # dropped, which is what left the Tear row of Wear // Tear
+            # offering Wear's own artifact targets: both rows were derived
+            # from `targeting_profile(card)` and that reads
             # `Card.front_oracle_text`. A seat is told to hand a candidate
             # straight back (`seatkit.TARGETS_NOTE`), so the wrong list does
             # not merely mislead - it costs the seat the action, refused at
             # announcement for a target it was handed. `affordances.
-            # _face_profile` answers `understood: false` for any face it
-            # cannot derive rather than guessing.
+            # _face_profile` answers `understood: false` for a face the
+            # printing does not carry rather than guessing.
             face=action.spell_face,
             targetables=targetables,
         )
