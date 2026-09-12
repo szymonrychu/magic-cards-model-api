@@ -625,7 +625,6 @@ def test_the_summary_is_derived_by_the_server_from_the_body(client: TestClient, 
         json=advice_body(
             path=f"/api/games/{game}/actions/cast",
             body={"player": "alice", "card_id": bolt, "targets": ["bob"]},
-            summary="a summary the agent made up",
         ),
     )
 
@@ -633,7 +632,37 @@ def test_the_summary_is_derived_by_the_server_from_the_body(client: TestClient, 
     summary = advice_rows(game)[0]["detail"]["summary"]
     assert "Lightning Bolt" in summary, summary
     assert "bob" in summary, summary
-    assert "made up" not in summary, "the agent's own summary reached the ledger"
+
+
+def test_advice_refuses_an_agent_written_summary_rather_than_discarding_it(
+    client: TestClient, game: str
+) -> None:
+    """The other half of "server-derived", and it got stronger than it was
+    written: `AdviceIn` inherits `schemas.RequestModel`, so a proposal that
+    claims a `summary` this shape does not declare earns a 422 naming the
+    field, instead of a 200 that quietly threw it away. The agent finds out
+    that what it wrote was never going to be shown to anyone - which is the
+    whole reason `extra="forbid"` is the invariant every request body in this
+    api is built on."""
+    uid = advisor_uid(game)
+    bolt = card_id(client, game, "Lightning Bolt", "alice", "hand")
+
+    response = client.post(
+        f"/api/games/{game}/advice",
+        params={"uid": uid},
+        json=advice_body(
+            path=f"/api/games/{game}/actions/cast",
+            body={"player": "alice", "card_id": bolt, "targets": ["bob"]},
+            summary="a summary the agent made up",
+        ),
+    )
+
+    assert response.status_code == 422, response.text
+    assert "summary" in response.text, response.text
+    assert advice_rows(game) == [], "a refused proposal must leave no ledger row"
+    assert "made up" not in "".join(str(row) for row in advice_rows(game)), (
+        "the agent's own summary reached the ledger"
+    )
 
 
 def summary_of(client: TestClient, game_id: str, uid: str, tail: str, body: dict[str, Any]) -> str:

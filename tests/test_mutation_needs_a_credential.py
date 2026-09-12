@@ -45,6 +45,10 @@ pytestmark = pytest.mark.no_harness_credential
 _DUMMY_PATH_PARAMS = {
     "card_id": "00000000-0000-0000-0000-000000000000",
     "username": "alice",
+    # `POST .../advice/{seq}/approve` (B2). The value never has to resolve to
+    # a real ledger row: the gate this file tests runs before the route body,
+    # so every case here is refused on the missing credential first.
+    "seq": "1",
 }
 
 
@@ -68,7 +72,19 @@ MUTATING_OPERATIONS = _mutating_game_operations()
 
 def _concrete(template: str, game_id: str) -> str:
     params = {**_DUMMY_PATH_PARAMS, "game_id": game_id}
-    return re.sub(r"\{(\w+)\}", lambda m: params[m.group(1)], template)
+
+    def value(match: re.Match[str]) -> str:
+        name = match.group(1)
+        # A new mutating route with a path parameter nobody has given a dummy
+        # for is exactly the case this file is enumerated to catch, so say so
+        # instead of raising a bare `KeyError` from inside a lambda.
+        assert name in params, (
+            f"{template} names a path parameter `{name}` with no dummy value - "
+            "add one to `_DUMMY_PATH_PARAMS`, do not narrow the enumeration"
+        )
+        return params[name]
+
+    return re.sub(r"\{(\w+)\}", value, template)
 
 
 def _is_gate_denial(response, game_id: str) -> bool:
