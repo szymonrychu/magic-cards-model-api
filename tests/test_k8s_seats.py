@@ -1138,6 +1138,8 @@ def test_the_guides_script_still_accepts_every_shape_of_real_ref(tmp_path: Path,
     guides = _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
 
     assert (guides / ".guides-revision").read_text().strip() == _rev(origin, ref)
+
+
 # ---- the buddy: an advisor Job, its own name, its own role label ----------
 #
 # A buddy (B5) is an advisor pod, not a seat: same template, same images,

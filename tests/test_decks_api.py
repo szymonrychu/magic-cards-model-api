@@ -236,7 +236,16 @@ def test_game_seats_does_not_hand_an_advisor_its_humans_seat_uid(
     response = client.get(f"/api/lobby/games/{game}/seats", params={"uid": "advisor-uid"})
 
     assert response.status_code == 200, response.text
-    assert [seat.get("uid") for seat in response.json()["seats"]] == [None, None], response.text
+    seats = response.json()["seats"]
+    # Three rows, not two: B5 appends a row per advisor after the seats, so
+    # the count is pinned rather than left implicit in the list below - an
+    # empty answer must not be able to satisfy this test.
+    assert len(seats) == 3, response.text
+    assert [seat.get("uid") for seat in seats] == [None, None, None], response.text
+    # And not by value either. An advisor row carries no `uid` key at all
+    # (`SeatDetail.uid`), so the read above cannot tell "absent" from
+    # "leaked under another key" - this can.
+    assert "advisor-uid" not in response.text, response.text
 
 
 def test_game_seats_still_answers_the_admin_key_in_full(
