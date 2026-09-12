@@ -969,8 +969,10 @@ h3 { font-size: 14px; }
 .advice-why { margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
 .advice-where { margin-top: 6px; color: var(--ink-faint); font-size: 11px; }
 .advice-stale { opacity: 0.55; }
-.advice-moved { margin-top: 8px; color: var(--warn); }
-.advice-unchecked { margin-top: 8px; color: var(--warn); }
+/* The two notices, in the same warning colour and deliberately outside
+   `.advice-stale`: both are the reason not to trust what is above them, so
+   neither may be dimmed by it. */
+.advice-moved, .advice-unchecked { margin-top: 8px; color: var(--warn); }
 #advice-box button { margin-top: 10px; }
 
 /* The game log's own overlay. `.modal` already centres its child and dims
