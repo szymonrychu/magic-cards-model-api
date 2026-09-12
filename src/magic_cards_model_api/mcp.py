@@ -316,11 +316,11 @@ def _digest_line(card: dict[str, Any], attacking: str | None) -> str:
         parts.append(f"{power}/{toughness}")
     if card.get("tapped"):
         parts.append("T")
+    if card.get("summoning_sick"):
+        parts.append("sick")
     counters = card.get("counters")
     if isinstance(counters, dict):
         parts.extend(f"{kind}x{count}" for kind, count in counters.items() if count)
-    if card.get("summoning_sick"):
-        parts.append("sick")
     attached = card.get("attached_to")
     if isinstance(attached, dict) and attached.get("name"):
         parts.append(f"on {attached['name']}")
@@ -459,16 +459,83 @@ def _spend_candidate_budget(actions: list[Any]) -> list[Any]:
     return budgeted
 
 
+#: How many bytes of `pays_with` one whole answer may carry with the tapped
+#: source's own `name` still attached, every action entry together - spent
+#: in list order like `MAX_CANDIDATE_BYTES` above, and for the same reason:
+#: `pays_with` was unbudgeted (nothing in this module capped it, or even
+#: acknowledged it existed) until an answer-size audit caught it.
+#:
+#: Measured, not guessed: `test_action_answer_size.py`'s busy board (28
+#: permanents, a five-card hand) casting Solitude left three other hand
+#: cards affordable, one mana source apiece, and their `pays_with` cost 373
+#: bytes for the three entries together - about 124 bytes each, almost all
+#: of it the source's own name. 4,000 is room for roughly thirty such
+#: entries - a hand of ten multi-source casts - well past anything a real
+#: hand holds, while still bounding an adversarial one.
+MAX_PAYS_WITH_BYTES = 4_000
+
+#: What a `pays_with` entry's `name` becomes once the budget above is spent.
+#: `Action.pays_with` is purely informational (its own docstring: nothing
+#: reads one of these back in, and no entry point takes one), so losing the
+#: label costs a seat one `battlefield_state`/`card_id` lookup - never the
+#: plan itself. `card_id`, `ability_index`, `adds` and `restriction` all
+#: survive untouched, which is the difference between this and dropping the
+#: field outright: an entry trimmed this way is still a complete, honest
+#: statement of what would be tapped and why, only less convenient to read
+#: without a second call.
+_PAYS_WITH_NAME_OMITTED = (
+    "name omitted - this answer's pays_with budget was spent; look this card_id "
+    "up with battlefield_state"
+)
+
+
+def _spend_pays_with_budget(actions: list[Any]) -> list[Any]:
+    """`actions`, with each `pays_with` entry's own `name` kept while
+    `MAX_PAYS_WITH_BYTES` lasts and replaced with `_PAYS_WITH_NAME_OMITTED`
+    once it does not.
+
+    In list order, deliberately, the same reasoning `_spend_candidate_budget`
+    already carries: the entries a reader meets first keep their names.
+    Nothing is mutated in place - a new dict replaces `pays_with` only on
+    the entries beyond the budget, the same non-destructive shape
+    `_spend_candidate_budget` uses.
+    """
+    spent = 0
+    budgeted: list[Any] = []
+    for action in actions:
+        pays_with = action.get("pays_with") if isinstance(action, dict) else None
+        if not isinstance(pays_with, list) or not pays_with:
+            budgeted.append(action)
+            continue
+        cost = len(json.dumps(pays_with, indent=1))
+        if spent + cost <= MAX_PAYS_WITH_BYTES:
+            spent += cost
+            budgeted.append(action)
+            continue
+        trimmed = [
+            {**entry, "name": _PAYS_WITH_NAME_OMITTED} if isinstance(entry, dict) else entry
+            for entry in pays_with
+        ]
+        budgeted.append({**action, "pays_with": trimmed})
+    return budgeted
+
+
 def _compact_actions(available: Any) -> Any:
     """`available_actions` with each action entry stripped to what it says,
-    and its target candidates trimmed to what the answer can afford."""
+    its target candidates trimmed to what the answer can afford, and its
+    `pays_with` entries trimmed to what a separate, smaller budget affords."""
     if not isinstance(available, dict):
         return available
     compacted = _without_empty(available)
     actions = compacted.get("actions")
     if isinstance(actions, list):
         compacted["actions"] = _spend_candidate_budget(
-            [_without_empty(action) if isinstance(action, dict) else action for action in actions]
+            _spend_pays_with_budget(
+                [
+                    _without_empty(action) if isinstance(action, dict) else action
+                    for action in actions
+                ]
+            )
         )
     return compacted
 

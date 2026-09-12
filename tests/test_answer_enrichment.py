@@ -33,6 +33,7 @@ from test_action_answer_size import busy_board
 from test_autopass import stage_an_attack_on_bob, stock_libraries
 from test_cast_cost_choices import answer
 from test_mcp_input_required import call_tool, wired
+from test_pays_with import _tap_a_mana_source
 
 from magic_cards_model_api import affordances, seatkit
 from magic_cards_model_api import mcp as mcp_module
@@ -166,6 +167,34 @@ def test_an_unaffordable_action_carries_no_candidates_and_the_envelope_says_why(
     for action in broke:
         assert "targets" not in action, action
     assert "affordable" in available["targets_note"]
+
+
+def test_the_note_appears_even_when_every_targeting_action_is_unaffordable(
+    client, game, monkeypatch
+):
+    """`test_an_unaffordable_action_carries_no_candidates_and_the_envelope_says_why`
+    above always had a second, affordable targeting action in the same
+    fixture (`held_up_burn`'s own Lightning Bolt) attaching `targets`
+    somewhere in the list - so `targets_note`'s own condition, keyed on
+    whether any entry actually carries `targets`, never had to prove itself
+    on a board where NOTHING does. That is exactly the board a seat holding
+    only unaffordable targeting spells has, and it is the board this note
+    exists for most: without it, nothing anywhere in the answer explains why
+    every one of those rows carries no candidates."""
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    add_card(client, game, "Lightning Bolt", "alice", "hand")  # {R}, no red source at all
+
+    payload = answer(
+        call_tool(server, "pass", {"player_uid": uids["alice"], "reasoning": "look around"})
+    )
+
+    available = payload["available_actions"]
+    targeting = [a for a in available["actions"] if a.get("target_slots")]
+    assert targeting, "the fixture must actually have a targeting action in it"
+    assert all(a["affordable"] == "no" for a in targeting), targeting
+    assert all("targets" not in a for a in targeting), targeting
+    assert "affordable" in available.get("targets_note", ""), available
 
 
 # -- understood: false is not "nothing is legal" ----------------------------
@@ -305,7 +334,12 @@ def test_the_digest_spells_out_tapped_and_counters_and_omits_what_is_absent(
     """The format pinned rather than described, and the absent halves pinned
     with it: a vanilla untapped land is its id and its name and nothing
     else, which is what "absent parts omitted" has to mean for the ~62 bytes
-    a line to hold."""
+    a line to hold.
+
+    Field order is the spec's own: `<P>/<T> <T> <sick> <counter>x<n> on
+    <attached> attacking <x>` - `T` and `sick` both read as flags about the
+    permanent itself and belong together, ahead of `+1/+1x2`, which is a
+    count rather than a flag."""
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     add_card(client, game, "Grizzly Bears", "alice", "battlefield", tapped=True)
@@ -323,7 +357,7 @@ def test_the_digest_spells_out_tapped_and_counters_and_omits_what_is_absent(
 
     lines = payload["board"]["battlefield_digest"]["alice"]
     bears_line = next(line for line in lines if "Grizzly Bears" in line)
-    assert bears_line == f"{bears['id']} Grizzly Bears 4/4 T +1/+1x2 sick", bears_line
+    assert bears_line == f"{bears['id']} Grizzly Bears 4/4 T sick +1/+1x2", bears_line
     mountain_line = next(line for line in lines if "Mountain" in line)
     assert mountain_line == f"{find(board, 'Mountain')['id']} Mountain", mountain_line
 
@@ -386,10 +420,35 @@ def test_the_digest_is_not_the_battlefield_section_and_does_not_claim_to_be(
 def test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_emitted(
     client, game, monkeypatch
 ):
-    """The failure this must not have: a seat that misses a blocker because
-    the digest ran out of room. So the cap does not trim the list - it throws
-    the whole digest away and says where the board actually is, the same
-    promise `omitted_sections` already makes."""
+    """The failure this must not have: a seat forming a WRONG BELIEF about
+    the board - missing a blocker because it read a partial digest and took
+    it for the whole battlefield. So the cap does not trim the digest's own
+    list - it throws the whole thing away and says where the board actually
+    is, the same promise `omitted_sections` already makes for the sections
+    it names.
+
+    That is a narrower claim than "no permanent's name may appear anywhere
+    in the answer", which is the assertion this test used to make and which
+    `pays_with` (`Action.pays_with`'s tap plan), `unaffordable_reason` (the
+    engine's own refusal prose) and a targeting action's own candidate
+    lines (`"<uuid> <name> (<zone>, <controller>)"`, deliberately added by
+    `_attach_target_candidates` - the whole point of that enrichment) all
+    violate the moment the board has more than a handful of permanents on
+    it. None of those three is the hazard this test guards against: each
+    names a card in service of one stated, scoped fact about one action -
+    "this is what the Bolt would tap", "this is why the Cryptic Command is
+    unaffordable", "this is what the Bolt may legally hit" - never as a
+    claim to have surveyed the whole battlefield the way the digest does.
+    A seat reading one cannot mistake it for a board summary, so none of the
+    three can produce the specific wrong belief ("I have seen every
+    permanent") this test is pinning against - and scrubbing them would gut
+    the enrichment work that put them there on purpose. `pays_with` gets its
+    own separate byte budget below regardless (`MAX_PAYS_WITH_BYTES`) - a
+    real but distinct concern from this test's own, about an answer's total
+    size rather than about a false belief in its completeness.
+
+    So the leak check here is scoped to `board` itself - the digest's own
+    home - rather than the whole answer text."""
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 400)
@@ -397,8 +456,9 @@ def test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_emitted(
     names = {card["name"] for card in state(client, game)["battlefield"]}
 
     result = call_tool(server, "pass", {"player_uid": uids["alice"], "reasoning": "look around"})
-    text = json.dumps(answer(result))
-    digest = answer(result)["board"]["battlefield_digest"]
+    board = answer(result)["board"]
+    text = json.dumps(board)
+    digest = board["battlefield_digest"]
 
     assert isinstance(digest, str), digest
     assert "battlefield_state" in digest
@@ -482,3 +542,65 @@ def test_the_budget_never_reaches_back_into_the_answer_it_narrowed(client, game,
     mcp_module._compact_actions(available)
 
     assert json.dumps(available, sort_keys=True) == before
+
+
+# -- pays_with's own budget ---------------------------------------------------
+
+
+def test_pays_with_keeps_names_while_its_own_budget_lasts_and_drops_them_once_spent(
+    client, game, monkeypatch
+):
+    """`pays_with` is unbudgeted no longer. `MAX_PAYS_WITH_BYTES` spends in
+    list order exactly like `MAX_CANDIDATE_BYTES` already does for target
+    candidates, and an entry that does not fit loses only its `name` -
+    `card_id`, `ability_index`, `adds` and `restriction` all survive, so the
+    plan itself is never partial, only less convenient to read without a
+    second `battlefield_state` lookup."""
+    seats, uids = wired(client, monkeypatch, game)
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Shock", "alice", "hand")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+
+    live = seats.seat_for(uids["alice"])
+    available = seatkit.available_actions(live, live.fetch_state())
+    priced = [a for a in available["actions"] if a.get("pays_with")]
+    assert len(priced) >= 2, priced
+    one_entry = len(json.dumps(priced[0]["pays_with"], indent=1))
+    monkeypatch.setattr(mcp_module, "MAX_PAYS_WITH_BYTES", one_entry)
+
+    compacted = mcp_module._compact_actions(available)
+    trimmed = [a for a in compacted["actions"] if a.get("pays_with")]
+    omitted_marker = mcp_module._PAYS_WITH_NAME_OMITTED
+    named = [a for a in trimmed if a["pays_with"][0]["name"] != omitted_marker]
+    omitted = [a for a in trimmed if a["pays_with"][0]["name"] == omitted_marker]
+    assert named, "the budget must have paid for the entry a reader meets first"
+    assert omitted, "and must have run out before the last of them"
+    assert trimmed.index(named[-1]) < trimmed.index(omitted[0]), "spent out of order"
+    for action in omitted:
+        entry = action["pays_with"][0]
+        assert entry["card_id"], entry
+        assert entry["adds"], entry
+
+
+def test_pays_with_is_unaffected_by_the_digest_being_withheld(client, game, monkeypatch):
+    """`MAX_DIGEST_BYTES` and `MAX_PAYS_WITH_BYTES` are independent budgets
+    on purpose: a board too big for its own one-line-per-permanent digest
+    does not also blank out a still-legal cast's own tap plan, because the
+    two say different things. The digest claims to summarise the whole
+    battlefield truthfully and must never do that half-way; `pays_with`
+    never claims that at all - it is one fact about one action - so there is
+    nothing dishonest about it surviving a digest that did not fit."""
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 1)
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+
+    payload = _tap_a_mana_source(server, uids, client, game, "Forest")
+    assert payload["board"]["battlefield_digest"] == mcp_module._DIGEST_TOO_BIG
+
+    casts = [a for a in payload["available_actions"]["actions"] if a.get("kind") == "cast"]
+    (cast_action,) = casts
+    assert cast_action["pays_with"][0]["name"] == "Mountain"

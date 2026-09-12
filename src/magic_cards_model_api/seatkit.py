@@ -1413,7 +1413,7 @@ def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) 
         "blockers_requested": kind == "declare_blockers",
         "pending_decision": pending,
     }
-    if any(isinstance(action, dict) and "targets" in action for action in actions):
+    if any(isinstance(action, dict) and action.get("target_slots") for action in actions):
         view["targets_note"] = TARGETS_NOTE
     if error is not None:
         view["actions_error"] = error
