@@ -18,7 +18,7 @@ read from a complete manifest at `settings.job_template_path` (env
 `SEAT_JOB_TEMPLATE_PATH`, default `deploy/seat-job.yaml`) with the
 `SEAT_JOB_PLACEHOLDERS` substituted (`render_seat_job_template`, and see that
 file's own header comment for the full list and rationale) - `metadata.name`,
-`metadata.namespace`, the three labels and the annotations are set in code
+`metadata.namespace`, the identity labels and the annotations are set in code
 afterward. This api no longer hardcodes the wrapper's 14 env names, the
 driver's 10, or either one's console-script/module path: the template is the
 one place that shape lives, owned by whoever deploys it.
@@ -58,7 +58,32 @@ logger = logging.getLogger(__name__)
 LABEL_APP = "app.kubernetes.io/name"
 LABEL_GAME = "mtg/game-id"
 LABEL_SEAT = "mtg/seat-uid"
+#: Which kind of pod this is - set only on an advisor's Job (B5's buddy).
+#: Absence means `seat`, deliberately: every Job in the cluster and every
+#: reader of them predates this label, and stamping `mtg/role: seat` onto
+#: them all would change every existing label set for no reader that wants
+#: it. `LABEL_APP` stays `APP_LABEL_VALUE` on both kinds, because
+#: `deploy/k8s/45-networkpolicy.yaml` selects the agent pods by it - a buddy
+#: that fell out of that selector could reach neither the api nor the
+#: Anthropic API.
+LABEL_ROLE = "mtg/role"
 APP_LABEL_VALUE = "mtg-agent"
+
+#: What a runner is: a seat that plays, or an advisor (B5's buddy) that
+#: reads one seat's own view and proposes. Defined here, of all places,
+#: because this module needs them without being able to import `ai_seat` -
+#: that dependency runs the other way - and re-exported from `ai_seat`,
+#: which is where the rest of the api reads them from: the role is a
+#: lifecycle fact, not a kubernetes one, and only its label value is ours.
+#: The same two words are spelled out as a `Literal` on the two responses
+#: that carry a role (`schemas.SeatLookupResponse`, `decks_api.SeatDetail`).
+ROLE_SEAT = "seat"
+ROLE_ADVISOR = "advisor"
+
+#: Job-name prefix per role. A buddy is named `mtg-buddy-...` rather than
+#: `mtg-seat-...` so `kubectl get jobs` says which kind of pod it is looking
+#: at without reading a label off each one.
+_JOB_PREFIX = {ROLE_SEAT: "mtg-seat", ROLE_ADVISOR: "mtg-buddy"}
 
 
 @dataclass(frozen=True)
@@ -120,8 +145,12 @@ class K8sSettings:
         )
 
 
-def job_name(game_id: str, uid: str) -> str:
-    return f"mtg-seat-{game_id[:8]}-{uid[:8]}"
+def job_name(game_id: str, uid: str, role: str = ROLE_SEAT) -> str:
+    """This Job's name: `mtg-seat-<game>-<uid>` for a seat,
+    `mtg-buddy-<game>-<uid>` for an advisor. An unknown role is named as a
+    seat rather than refused - a name is not the place to fail a dispatch,
+    and `ROLE_ADVISOR` is the only value that changes anything."""
+    return f"{_JOB_PREFIX.get(role, _JOB_PREFIX[ROLE_SEAT])}-{game_id[:8]}-{uid[:8]}"
 
 
 #: The closed placeholder set a seat Job template may use (M10 of
@@ -163,14 +192,21 @@ def _seat_job_values(
     agent_image: str,
     api_image: str,
     guides_ref: str,
+    role: str = ROLE_SEAT,
 ) -> dict[str, str]:
-    assignment = {
+    assignment: dict[str, Any] = {
         "uid": uid,
         "game_id": game_id,
         "player": player,
         "api_base": api_url,
         "agent": agent.to_wire(),
     }
+    if role != ROLE_SEAT:
+        # Written only for a non-default role, so a seat's payload stays
+        # byte-identical to what every driver before B5 read - and
+        # `DispatchIn.role` defaults to `seat` on the far end, so an absent
+        # key means exactly what it always meant.
+        assignment["role"] = role
     return {
         "__GAME_ID__": game_id,
         "__SEAT_UID__": uid,
@@ -213,7 +249,13 @@ def _load_seat_job_template(path: str) -> Any:
 
 
 def build_job(
-    settings: K8sSettings, *, game_id: str, uid: str, player: str, agent: AgentSettings
+    settings: K8sSettings,
+    *,
+    game_id: str,
+    uid: str,
+    player: str,
+    agent: AgentSettings,
+    role: str = ROLE_SEAT,
 ) -> dict[str, Any]:
     """Render one seat's Job body from `settings.job_template_path`.
 
@@ -226,10 +268,18 @@ def build_job(
     `metadata.namespace` (kept in code, not baked into the template, so it
     can never drift from the namespace `K8sSeats` actually creates the Job
     in - a body/URL namespace mismatch is a hard Kubernetes API rejection,
-    not a soft one), the three labels, and the annotations.
+    not a soft one), the identity labels, and the annotations.
+
+    `role` is `ROLE_SEAT` or `ROLE_ADVISOR` (B5's buddy): it picks the name
+    prefix, adds `LABEL_ROLE` for an advisor, and rides into the driver's
+    own self-dispatch payload through `__ASSIGNMENT_JSON__` - which is why
+    the committed template needs no change and `SEAT_JOB_PLACEHOLDERS` gains
+    no entry.
     """
-    name = job_name(game_id, uid)
+    name = job_name(game_id, uid, role)
     labels = {LABEL_APP: APP_LABEL_VALUE, LABEL_GAME: game_id, LABEL_SEAT: uid}
+    if role != ROLE_SEAT:
+        labels[LABEL_ROLE] = role
     values = _seat_job_values(
         game_id=game_id,
         uid=uid,
@@ -240,6 +290,7 @@ def build_job(
         agent_image=settings.agent_image,
         api_image=settings.api_image,
         guides_ref=settings.guides_ref,
+        role=role,
     )
     template = _load_seat_job_template(settings.job_template_path)
     job = render_seat_job_template(template, values)
@@ -303,14 +354,23 @@ class K8sSeats:
         self._lock = threading.Lock()
 
     # -- lifecycle ---------------------------------------------------------
-    def start(self, *, uid: str, game_id: str, player: str, agent: AgentSettings) -> dict[str, Any]:
-        name = job_name(game_id, uid)
+    def start(
+        self,
+        *,
+        uid: str,
+        game_id: str,
+        player: str,
+        agent: AgentSettings,
+        role: str = ROLE_SEAT,
+    ) -> dict[str, Any]:
+        name = job_name(game_id, uid, role)
         with self._lock:
             already_started = uid in self._seats
             if not already_started:
                 self._seats[uid] = {
                     "game_id": game_id,
                     "player": player,
+                    "role": role,
                     "job": name,
                     "error": None,
                     "created_at": time.monotonic(),
@@ -324,7 +384,9 @@ class K8sSeats:
         # second `start()` call for an already-started uid).
         if already_started:
             return self.status(uid) or {}
-        body = build_job(self.settings, game_id=game_id, uid=uid, player=player, agent=agent)
+        body = build_job(
+            self.settings, game_id=game_id, uid=uid, player=player, agent=agent, role=role
+        )
         try:
             self.batch.create_namespaced_job(self.settings.namespace, body=body)
         except ApiException as exc:
@@ -407,6 +469,7 @@ class K8sSeats:
             "job": seat["job"],
             "game_id": seat["game_id"],
             "player": seat["player"],
+            "role": seat.get("role", ROLE_SEAT),
         }
         if seat.get("gone"):
             # The Job finished cleanly (its pod's last known phase was

@@ -2322,3 +2322,29 @@ whoever works on the repo itself.
   the prose in step - the tests read the shape off the running CLI and MCP
   server first, then pin the sentences against it, so a future change to
   either answer fails on the behaviour rather than on the prose.
+- **2026-09-12 - the buddy reuses the whole seat lifecycle, and the two
+  places it could not are both about the uid being a credential.** An advisor
+  gets `role` threaded through `AiSeatRegistry.start` into all three
+  mechanisms - the brief (`docs/ai_buddy_brief.md`), `DispatchIn.role`
+  (picking `prompt.advisor_turn_zero`), and `k8s_seats.build_job` (the
+  `mtg-buddy-*` name plus `mtg/role=advisor`, with `app.kubernetes.io/name`
+  left at `mtg-agent` so `45-networkpolicy.yaml` still selects the pod).
+  `reconcile` needed nothing: it lists by that same app label and deletes by
+  `mtg/game-id`, which is right for a buddy too. No new Job template and no
+  new `SEAT_JOB_PLACEHOLDERS` entry - `role` rides in
+  `__ASSIGNMENT_JSON__`'s payload, written only when it is not `seat` so a
+  seat's body stays byte-identical. **The two exceptions.** (1)
+  `ai-seat/start|stop` take the buddy's uid in a new `advisor_uid` field, not
+  in `uid`: `game_access._credentials` reads a body's own `uid` as the
+  CALLER's credential, and an advisor credential is refused every POST - so
+  the human asking for their own buddy back with `{"uid": <advisor>}` got a
+  404 from the gate before the route ever ran. (2) `game_seats` strips `uid`
+  out of an advisor's `ai_seat` status (`_without_uid`): every registry
+  status dict names its own uid, so listing the advisor's liveness on that
+  broadly-readable route leaked the credential through the status even
+  though the row itself carried no `uid` field - caught by a test that runs
+  the buddy before reading the route, which the not-started version of the
+  same test could not see. `AiSeatRegistry.status` also answers a remembered
+  `fallback` now instead of `None` (`_fallbacks`), because a buddy is started
+  once at creation and a `None` there rendered as a bare "not started" with
+  no reason for a runner that had genuinely tried and failed.**

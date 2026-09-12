@@ -22,7 +22,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -32,6 +32,7 @@ from .config import DriverSettings
 from .guides import GuideLibrary, parse_decklist
 from .prompt import (
     Assignment,
+    advisor_turn_zero,
     plan_header,
     plan_path,
     reflection_turn,
@@ -67,6 +68,18 @@ class DispatchIn(BaseModel):
     player: str
     api_base: str = ""
     agent: dict | None = None
+    role: Literal["seat", "advisor"] = "seat"
+    """Which kind of container this dispatch is for: a `seat` that plays
+    `player`, or an `advisor` - B5's buddy - that watches `player`'s own view
+    and proposes, and whose uid the game server refuses every action from
+    (`magic_cards_model_api.game_access`). It picks the prose `assign` pushes
+    as turn 0 (`prompt.advisor_turn_zero` rather than `prompt.turn_zero`) and
+    nothing else: a buddy reuses the whole of this driver, the wrapper beside
+    it and the wake loop a seat runs.
+
+    Defaulted, so a dispatch body written before roles existed - and
+    `k8s_seats`' own `DRIVER_ASSIGNMENT_JSON`, which writes the key only for
+    a non-default role - reads back as a seat, unchanged."""
 
 
 class ReleaseIn(BaseModel):
@@ -507,6 +520,7 @@ def build_app(
             match_score=score,
             guides_revision=revision,
             agent=body.agent,
+            role=body.role,
         )
 
         settings.workspace.mkdir(parents=True, exist_ok=True)
@@ -522,7 +536,10 @@ def build_app(
         # learned", and this game's own plan file is not a past game's note.
         seed_plan_file(assignment)
 
-        text = turn_zero(assignment, current_game_path, briefing)
+        # An advisor gets its own prose, never the seat's with caveats bolted
+        # on: a buddy that is told to win the game will try to play it.
+        write_turn_zero = advisor_turn_zero if assignment.role == "advisor" else turn_zero
+        text = write_turn_zero(assignment, current_game_path, briefing)
         with lock:
             # Claim the agent before talking to it, so a second game arriving
             # while we are pushing gets the 409 rather than a race.

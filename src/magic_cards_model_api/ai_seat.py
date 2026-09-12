@@ -57,6 +57,14 @@ import httpx
 from . import k8s_seats
 from .agent_settings import AgentSettings
 
+# Re-exported deliberately: `k8s_seats` defines these because it cannot
+# import this module (the dependency runs the other way), but the role is a
+# runner-lifecycle fact rather than a kubernetes one, so every other caller
+# reads them off `ai_seat` - see `k8s_seats.ROLE_SEAT`'s own note.
+from .k8s_seats import ROLE_ADVISOR, ROLE_SEAT
+
+__all__ = ["ROLE_ADVISOR", "ROLE_SEAT", "AiSeatRegistry", "AiSeatRunner", "registry"]
+
 #: How many lines of stdout/stderr are kept per runner - enough to show a
 #: crash's own error text without holding a whole game transcript in memory
 #: for a process that, unlike the audit log, is not the source of truth for
@@ -124,31 +132,54 @@ def claude_available() -> bool:
     return shutil.which("claude") is not None
 
 
-def load_brief() -> str:
-    """The raw brief text, unfilled - package data (2b T11), read the same
-    way regardless of how this package got installed (editable/path install,
-    a wheel, a wheel unpacked into a container image), unlike a repo-relative
-    path: once `ai_seat.py`'s repo (`magic-cards-lobby`, per 2b's
-    decomposition map) is a separate container from the api's, there is no
-    `docs/` checkout sitting next to it to read from disk."""
-    return (
-        importlib.resources.files("magic_cards_model_api")
-        .joinpath("docs", "ai_seat_brief.md")
-        .read_text()
-    )
+#: Which brief each role is given. A seat plays; an advisor (B5's buddy)
+#: watches the same board through its human's eyes and proposes - two
+#: genuinely different jobs, so two briefs rather than one with an `if` in
+#: it. Both are package data, read the same way (see `load_brief`).
+BRIEF_FILES = {ROLE_SEAT: "ai_seat_brief.md", ROLE_ADVISOR: "ai_buddy_brief.md"}
 
 
-def build_prompt(*, uid: str, game_id: str, player: str, api_base: str) -> str:
-    """The brief plus this seat's own identifiers, substituted in - the same
-    shape a human dispatching a player through `mcp-seat` would be given by
-    hand (see `docs/ai_seat_brief.md`, adapted from the CLI playtest brief
-    this project already uses)."""
-    brief = load_brief()
-    filled = brief.format(uid=uid, game_id=game_id, api_base=api_base)
-    return (
-        f"You are seated as {player!r} in game {game_id}, seat uid {uid}, "
-        f"API at {api_base}.\n\n{filled}"
-    )
+def load_brief(role: str = ROLE_SEAT) -> str:
+    """The raw brief text for `role`, unfilled - package data (2b T11), read
+    the same way regardless of how this package got installed
+    (editable/path install, a wheel, a wheel unpacked into a container
+    image), unlike a repo-relative path: once `ai_seat.py`'s repo
+    (`magic-cards-lobby`, per 2b's decomposition map) is a separate container
+    from the api's, there is no `docs/` checkout sitting next to it to read
+    from disk.
+
+    An unrecognised role reads the seat's brief rather than raising: this is
+    on the start path of a seat whose game is already booted, and a brief is
+    not the place to refuse one."""
+    name = BRIEF_FILES.get(role, BRIEF_FILES[ROLE_SEAT])
+    return importlib.resources.files("magic_cards_model_api").joinpath("docs", name).read_text()
+
+
+def build_prompt(
+    *, uid: str, game_id: str, player: str, api_base: str, role: str = ROLE_SEAT
+) -> str:
+    """The brief for `role` plus this runner's own identifiers, substituted
+    in - the same shape a human dispatching a player through `mcp-seat` would
+    be given by hand (see `docs/ai_seat_brief.md`, adapted from the CLI
+    playtest brief this project already uses, and `docs/ai_buddy_brief.md`
+    for the advisor).
+
+    The opening line differs by role because the credential does: a seat
+    *is* `player`, while an advisor reads `player`'s view and may not act on
+    it (`game_access.py` refuses every mutating request it makes), so
+    telling a buddy it is "seated as" the human is the one sentence that
+    would make it try."""
+    filled = load_brief(role).format(uid=uid, game_id=game_id, api_base=api_base)
+    if role == ROLE_ADVISOR:
+        opening = (
+            f"You are advising {player!r} in game {game_id}, advisor uid {uid}, "
+            f"API at {api_base}. You are not seated: you advise, you do not act."
+        )
+    else:
+        opening = (
+            f"You are seated as {player!r} in game {game_id}, seat uid {uid}, API at {api_base}."
+        )
+    return f"{opening}\n\n{filled}"
 
 
 def command_for(prompt: str, agent: AgentSettings) -> list[str]:
@@ -168,13 +199,17 @@ def command_for(prompt: str, agent: AgentSettings) -> list[str]:
 
 @dataclass
 class AiSeatRunner:
-    """One AI seat's subprocess and what is known about it right now."""
+    """One AI seat's (or advisor's) subprocess and what is known about it
+    right now."""
 
     uid: str
     game_id: str
     player: str
     api_base: str
     agent: AgentSettings
+    role: str = ROLE_SEAT
+    """`ROLE_SEAT` or `ROLE_ADVISOR` - which brief this process was given
+    (`build_prompt`) and what the UI is told it is looking at."""
     process: subprocess.Popen[str] | None = None
     started_at: float = field(default_factory=time.monotonic)
     ended_at: float | None = None
@@ -201,7 +236,11 @@ class AiSeatRunner:
 
     def start(self) -> None:
         prompt = build_prompt(
-            uid=self.uid, game_id=self.game_id, player=self.player, api_base=self.api_base
+            uid=self.uid,
+            game_id=self.game_id,
+            player=self.player,
+            api_base=self.api_base,
+            role=self.role,
         )
         try:
             # 2b T11: no `cwd=API_REPO` any more - `claude` runs `mcp-seat`
@@ -258,6 +297,7 @@ class AiSeatRunner:
         return {
             "uid": self.uid,
             "player": self.player,
+            "role": self.role,
             "mechanism": "subprocess",
             "state": state,
             "started_at": self.started_at,
@@ -282,22 +322,48 @@ class AiSeatRegistry:
         #: `GONE` and will stay `GONE`: nothing was started, so nothing is
         #: coming.
         self._unavailable: dict[str, str] = {}
+        #: uid -> the `mechanism: "fallback"` status `start` last answered
+        #: for it. Kept so `status()` can still answer for a uid nothing is
+        #: running, which is what makes a failure *pollable*: the play UI
+        #: reads liveness off `decks_api.game_seats` -> `status()`, and a
+        #: `None` there renders as a bare "not started" with no reason,
+        #: indistinguishable from a runner nobody ever asked for. It matters
+        #: most for a buddy, which is started once at game creation and so
+        #: has no other answer anywhere for the human to read, and it is
+        #: right for a seat too. Written and cleared in lockstep with
+        #: `_unavailable`.
+        self._fallbacks: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def _dispatch_to_driver(
-        self, *, uid: str, game_id: str, player: str, api_base: str, agent: AgentSettings
+        self,
+        *,
+        uid: str,
+        game_id: str,
+        player: str,
+        api_base: str,
+        agent: AgentSettings,
+        role: str = ROLE_SEAT,
     ) -> dict[str, Any]:
         """Hand this seat to the driver. Never raises: an unreachable driver
         comes back as a fallback, exactly like a missing `claude` binary, so
-        the UI has something to show and the game stays playable."""
+        the UI has something to show and the game stays playable.
+
+        `role` rides in the dispatch payload (`DispatchIn.role`), where the
+        driver's `assign` reads it to pick the advisor prose."""
         base = driver_url()
-        payload = {
+        payload: dict[str, Any] = {
             "uid": uid,
             "game_id": game_id,
             "player": player,
             "api_base": api_base,
             "agent": agent.to_wire(),
         }
+        if role != ROLE_SEAT:
+            # Only for a non-default role, so a driver that predates B5
+            # receives the body it always received. `DispatchIn.role`
+            # defaults to `seat`, so absence keeps meaning what it meant.
+            payload["role"] = role
         try:
             with _driver_client(base) as client:
                 response = client.post("/dispatch", json=payload)
@@ -307,6 +373,7 @@ class AiSeatRegistry:
             return {
                 "uid": uid,
                 "player": player,
+                "role": role,
                 "mechanism": "fallback",
                 "state": "not_started",
                 "reason": f"the driver at {base} could not be reached: {exc}",
@@ -314,6 +381,7 @@ class AiSeatRegistry:
         return {
             "uid": uid,
             "player": player,
+            "role": role,
             "game_id": game_id,
             "mechanism": "wrapper",
             "state": "dispatched",
@@ -325,7 +393,13 @@ class AiSeatRegistry:
         }
 
     def _dispatch_to_kubernetes(
-        self, *, uid: str, game_id: str, player: str, agent: AgentSettings
+        self,
+        *,
+        uid: str,
+        game_id: str,
+        player: str,
+        agent: AgentSettings,
+        role: str = ROLE_SEAT,
     ) -> dict[str, Any]:
         """Hand this seat to `K8sSeats`. Never raises: `k8s_seats.get()`
         failing to load any cluster config, or `create_namespaced_job` itself
@@ -337,11 +411,14 @@ class AiSeatRegistry:
         "never raises" contract does not get to make an exception for this
         mechanism just because it usually behaves."""
         try:
-            return k8s_seats.get().start(uid=uid, game_id=game_id, player=player, agent=agent)
+            return k8s_seats.get().start(
+                uid=uid, game_id=game_id, player=player, agent=agent, role=role
+            )
         except Exception as exc:  # noqa: BLE001 - report, never raise - see the docstring
             return {
                 "uid": uid,
                 "player": player,
+                "role": role,
                 "mechanism": "fallback",
                 "state": "not_started",
                 "reason": f"kubernetes seat scheduling failed: {exc}",
@@ -385,9 +462,16 @@ class AiSeatRegistry:
         return status
 
     def start(
-        self, *, uid: str, game_id: str, player: str, api_base: str, agent: AgentSettings
+        self,
+        *,
+        uid: str,
+        game_id: str,
+        player: str,
+        api_base: str,
+        agent: AgentSettings,
+        role: str = ROLE_SEAT,
     ) -> dict[str, Any]:
-        """Start (or report the existing) AI seat for `uid`.
+        """Start (or report the existing) runner for `uid`.
 
         Three mechanisms, chosen by `AI_SEAT_MODE`. `subprocess` (the
         default) spawns a one-shot `claude --print` that forgets the game the
@@ -396,12 +480,25 @@ class AiSeatRegistry:
         notes across games. `kubernetes` schedules one Job (agent plus driver
         sidecar) per seat via `k8s_seats.K8sSeats`.
 
+        `role` is `ROLE_SEAT` or `ROLE_ADVISOR` (B5's buddy) and is the only
+        thing that differs between the two: **a buddy reuses this machinery
+        rather than cloning it**, so it gets the same three mechanisms, the
+        same idempotent start, the same `_unavailable` bookkeeping and the
+        same release path a seat does. Per mechanism the role picks the brief
+        (`build_prompt`), rides in the driver's dispatch payload
+        (`DispatchIn.role`), or picks the Job's name and role label
+        (`k8s_seats.build_job`).
+
         Never raises in any mode: an unavailable `claude` binary, one that
         fails to spawn, an unreachable driver, or a kubernetes seat that could
         not be scheduled (no cluster config, a transport error under the
         Job's create call) all come back as `mechanism: "fallback"` - see the
-        module docstring. Calling this again for a uid already started
-        returns its current status rather than starting a second seat.
+        module docstring. That stance is not relaxed for an advisor and is
+        the reason a buddy is safe to start at all: a buddy is strictly
+        optional to play, so a failure to start one must leave a fully
+        playable game and a status the UI can render, never an error that
+        blocks anything. Calling this again for a uid already started
+        returns its current status rather than starting a second runner.
         """
         mode = ai_seat_mode()
         if mode in ("wrapper", "kubernetes"):
@@ -410,11 +507,16 @@ class AiSeatRegistry:
                     return self._dispatched[uid]
             if mode == "kubernetes":
                 status = self._dispatch_to_kubernetes(
-                    uid=uid, game_id=game_id, player=player, agent=agent
+                    uid=uid, game_id=game_id, player=player, agent=agent, role=role
                 )
             else:
                 status = self._dispatch_to_driver(
-                    uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
+                    uid=uid,
+                    game_id=game_id,
+                    player=player,
+                    api_base=api_base,
+                    agent=agent,
+                    role=role,
                 )
             # Recorded either way: a dispatch that failed used to be entirely
             # silent here - the UI got a "fallback" status and the container
@@ -432,8 +534,11 @@ class AiSeatRegistry:
                     # surface in `release()`'s `was_unavailable` for a seat
                     # that, in the end, actually ran.
                     self._unavailable.pop(uid, None)
+                    self._fallbacks.pop(uid, None)
                 if status["mechanism"] == "kubernetes":
                     note = f"scheduled as kubernetes Job {status.get('job')}"
+                    if role != ROLE_SEAT:
+                        note = f"{role}: {note}"
                 else:
                     note = (
                         f"handed to the driver at {status['driver']}: deck="
@@ -445,9 +550,10 @@ class AiSeatRegistry:
                 note = f"NOT STARTED - {reason}"
                 with self._lock:
                     self._unavailable[uid] = str(reason)
+                    self._fallbacks[uid] = status
             from . import audit  # lazy: ai_seat is imported by modules audit imports
 
-            audit.record(game_id, "ai_seat", player=player, note=note)
+            audit.record(game_id, "ai_seat", player=player, note=note, role=role)
             return status
 
         with self._lock:
@@ -455,22 +561,26 @@ class AiSeatRegistry:
         if existing is not None:
             return existing.status()
 
-        prompt = build_prompt(uid=uid, game_id=game_id, player=player, api_base=api_base)
+        prompt = build_prompt(uid=uid, game_id=game_id, player=player, api_base=api_base, role=role)
         if not claude_available():
-            with self._lock:
-                self._unavailable[uid] = "the `claude` CLI is not on PATH in this server process"
-            return {
+            missing = "the `claude` CLI is not on PATH in this server process"
+            fallback = {
                 "uid": uid,
                 "player": player,
+                "role": role,
                 "mechanism": "fallback",
                 "state": "not_started",
-                "reason": "the `claude` CLI is not on PATH in this server process",
+                "reason": missing,
                 "command": " ".join(command_for(prompt, agent)),
                 "prompt": prompt,
             }
+            with self._lock:
+                self._unavailable[uid] = missing
+                self._fallbacks[uid] = fallback
+            return fallback
 
         runner = AiSeatRunner(
-            uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent
+            uid=uid, game_id=game_id, player=player, api_base=api_base, agent=agent, role=role
         )
         runner.start()
         with self._lock:
@@ -480,6 +590,7 @@ class AiSeatRegistry:
             # on to fail - is no longer the "nothing was ever started" case
             # `_unavailable` exists to record.
             self._unavailable.pop(uid, None)
+            self._fallbacks.pop(uid, None)
         status = runner.status()
         if status["state"] == "error":
             # Spawn itself failed (`runner.error` set) - report the fallback
@@ -605,14 +716,24 @@ class AiSeatRegistry:
         return "no process or agent was ever started for this seat"
 
     def status(self, uid: str) -> dict[str, Any] | None:
+        """What is known about `uid` right now, or `None` for a uid nothing
+        was ever started for.
+
+        A uid whose last `start` came back a fallback answers that fallback
+        rather than `None` - see `_fallbacks`: "we tried and could not" and
+        "nobody has asked" are different answers, and only the first has a
+        reason worth showing a human."""
         with self._lock:
             dispatched = self._dispatched.get(uid)
             runner = self._runners.get(uid)
+            fallback = self._fallbacks.get(uid)
         if dispatched is not None:
             if dispatched.get("mechanism") == "kubernetes":
                 return k8s_seats.get().status(uid)
             return self._live_driver_status(dispatched)
-        return runner.status() if runner is not None else None
+        if runner is not None:
+            return runner.status()
+        return dict(fallback) if fallback is not None else None
 
     def stop(self, uid: str) -> bool:
         """Stop whatever is playing `uid`.
@@ -633,6 +754,7 @@ class AiSeatRegistry:
             with self._lock:
                 self._dispatched.pop(uid, None)
                 self._unavailable.pop(uid, None)
+                self._fallbacks.pop(uid, None)
             return True
         if runner is None:
             return False
@@ -684,6 +806,7 @@ class AiSeatRegistry:
             runner = self._runners.pop(uid, None)
             dispatched = self._dispatched.pop(uid, None)
             unavailable = self._unavailable.pop(uid, None)
+            self._fallbacks.pop(uid, None)
         mechanism = dispatched.get("mechanism") if dispatched is not None else None
         if mechanism is None and runner is not None:
             mechanism = "subprocess"

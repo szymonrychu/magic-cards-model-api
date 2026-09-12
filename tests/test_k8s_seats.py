@@ -1138,3 +1138,156 @@ def test_the_guides_script_still_accepts_every_shape_of_real_ref(tmp_path: Path,
     guides = _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
 
     assert (guides / ".guides-revision").read_text().strip() == _rev(origin, ref)
+# ---- the buddy: an advisor Job, its own name, its own role label ----------
+#
+# A buddy (B5) is an advisor pod, not a seat: same template, same images,
+# same driver sidecar, a different name and one extra label. The three
+# properties below are what the cluster actually keys off, so each is pinned
+# directly rather than inferred from "role was passed in":
+#
+#   - the Job name says which kind it is at a glance (`mtg-buddy-...`),
+#   - `app.kubernetes.io/name` stays `mtg-agent`, so `deploy/k8s/
+#     45-networkpolicy.yaml`'s podSelector still selects the pod - without
+#     it the buddy can reach neither the api nor the Anthropic API,
+#   - `mtg/seat-uid` carries the *advisor's* uid, which is unique, so `_pod`
+#     lookup, `status()` and `release()` work unchanged.
+
+NETWORKPOLICY_PATH = REPO_ROOT / "deploy" / "k8s" / "45-networkpolicy.yaml"
+
+
+def _build_advisor(env: dict[str, str] | None = None, **agent_kwargs) -> dict:
+    kwargs = {"model": "sonnet", **agent_kwargs}
+    return build_job(
+        K8sSettings.from_env(env if env is not None else ENV),
+        game_id="g1",
+        uid="a1",
+        player="you",
+        agent=AgentSettings(**kwargs),
+        role="advisor",
+    )
+
+
+def test_job_name_for_an_advisor_is_the_buddy_name() -> None:
+    assert job_name("0123456789abcdef", "fedcba9876543210", "advisor") == (
+        "mtg-buddy-01234567-fedcba98"
+    )
+    # A seat keeps the name it has always had, with or without the argument -
+    # `tests/test_k8s_seats.py` pins it, and README and NetworkPolicy prose
+    # reference it.
+    assert job_name("0123456789abcdef", "fedcba9876543210", "seat") == (
+        "mtg-seat-01234567-fedcba98"
+    )
+    assert job_name("0123456789abcdef", "fedcba9876543210") == "mtg-seat-01234567-fedcba98"
+
+
+def test_no_placeholder_survives_rendering_an_advisor_job() -> None:
+    """The role rides in `__ASSIGNMENT_JSON__`'s payload, so the closed
+    placeholder set - and the committed template - need no change at all."""
+    assert _leftover_placeholders(_build_advisor()) == []
+    assert "__ROLE__" not in SEAT_JOB_PLACEHOLDERS
+
+
+def test_the_advisor_job_is_named_and_labelled_as_a_buddy() -> None:
+    job = _build_advisor()
+    meta = job["metadata"]
+    assert meta["name"] == "mtg-buddy-g1-a1"
+    assert meta["labels"] == {
+        "app.kubernetes.io/name": "mtg-agent",
+        "mtg/game-id": "g1",
+        "mtg/seat-uid": "a1",
+        "mtg/role": "advisor",
+    }
+    # The pod carries the same labels, which is what `_pod`'s selector and
+    # the NetworkPolicy's podSelector actually read.
+    assert job["spec"]["template"]["metadata"]["labels"] == meta["labels"]
+
+
+def test_a_seat_job_gains_no_role_label() -> None:
+    """Absence means seat: adding `mtg/role: seat` would change every
+    existing Job's label set for no reader that wants it."""
+    assert "mtg/role" not in _build()["metadata"]["labels"]
+
+
+def test_the_advisor_pod_still_matches_the_agent_networkpolicy() -> None:
+    policy = yaml.safe_load(NETWORKPOLICY_PATH.read_text())
+    selector = policy["spec"]["podSelector"]["matchLabels"]
+    labels = _build_advisor()["spec"]["template"]["metadata"]["labels"]
+    assert selector, "the NetworkPolicy selects by label - this test is meaningless without one"
+    assert all(labels.get(key) == value for key, value in selector.items())
+
+
+def test_the_advisor_assignment_carries_the_role_for_the_driver() -> None:
+    from mtg_agent.driver.app import DispatchIn
+
+    job = _build_advisor()
+    driver = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "driver")
+    denv = {e["name"]: e["value"] for e in driver["env"]}
+    parsed = DispatchIn.model_validate_json(denv["DRIVER_ASSIGNMENT_JSON"])
+    assert parsed.role == "advisor"
+    assert parsed.uid == "a1" and parsed.player == "you"
+    # A seat's payload is byte-identical to what it always was - `role` is
+    # written only when it is not the default, so a driver that predates
+    # roles reads an unchanged body.
+    seat_driver = next(
+        c for c in _build()["spec"]["template"]["spec"]["containers"] if c["name"] == "driver"
+    )
+    seat_env = {e["name"]: e["value"] for e in seat_driver["env"]}
+    assert "role" not in json.loads(seat_env["DRIVER_ASSIGNMENT_JSON"])
+
+
+def test_start_creates_the_buddy_job_under_its_own_name() -> None:
+    seats, batch, _ = make()
+    started = seats.start(
+        uid="a1", game_id="g1", player="you", agent=AgentSettings(model="sonnet"), role="advisor"
+    )
+    assert started["job"] == "mtg-buddy-g1-a1"
+    assert started["role"] == "advisor"
+    assert list(batch.jobs) == ["mtg-buddy-g1-a1"]
+    assert seats.status("a1")["job"] == "mtg-buddy-g1-a1"
+
+
+def test_reconcile_leaves_a_live_games_buddy_job_alone() -> None:
+    """`reconcile` deletes by game id, which is right for a buddy too - but
+    only if the buddy's Job is actually seen and its game read off the same
+    label. Both halves are asserted, rather than assumed from the code."""
+    seats, batch, _ = make()
+    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet"))
+    seats.start(
+        uid="a1", game_id="g1", player="you", agent=AgentSettings(model="sonnet"), role="advisor"
+    )
+    report = seats.reconcile(live_game_ids=lambda: {"g1"})
+    assert report == {"deleted": [], "missing": []}
+    assert set(batch.jobs) == {job_name("g1", "u1"), "mtg-buddy-g1-a1"}
+    assert seats.status("a1")["state"] != "error"
+
+
+def test_reconcile_deletes_a_dead_games_buddy_job_with_its_seat() -> None:
+    seats, batch, _ = make()
+    seats.start(uid="u1", game_id="g1", player="bot", agent=AgentSettings(model="sonnet"))
+    seats.start(
+        uid="a1", game_id="g1", player="you", agent=AgentSettings(model="sonnet"), role="advisor"
+    )
+    report = seats.reconcile(live_game_ids=lambda: set())
+    assert set(report["deleted"]) == {job_name("g1", "u1"), "mtg-buddy-g1-a1"}
+    assert batch.jobs == {}
+
+
+def test_reconcile_flags_a_vanished_buddy_job_rather_than_orphaning_it() -> None:
+    seats, batch, _ = make()
+    seats.start(
+        uid="a1", game_id="g1", player="you", agent=AgentSettings(model="sonnet"), role="advisor"
+    )
+    batch.jobs.pop("mtg-buddy-g1-a1")  # vanished behind our back
+    report = seats.reconcile(live_game_ids=lambda: {"g1"})
+    assert report == {"deleted": [], "missing": ["a1"]}
+    assert "missing" in seats.status("a1")["reason"]
+
+
+def test_release_deletes_the_buddy_job_by_its_own_name() -> None:
+    seats, batch, http = make()
+    seats.start(
+        uid="a1", game_id="g1", player="you", agent=AgentSettings(model="sonnet"), role="advisor"
+    )
+    released = seats.release("a1")
+    assert batch.deleted == ["mtg-buddy-g1-a1"] and released["deleted"] is True
+    assert seats.status("a1") is None

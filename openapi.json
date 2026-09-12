@@ -3917,6 +3917,11 @@
       },
       "EndGameResponse": {
         "properties": {
+          "advisors_invalidated": {
+            "default": 0,
+            "title": "Advisors Invalidated",
+            "type": "integer"
+          },
           "ai_seats_released": {
             "items": {
               "additionalProperties": true,
@@ -4700,6 +4705,14 @@
       },
       "LobbyGameSummary": {
         "properties": {
+          "advisors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Advisors",
+            "type": "object"
+          },
           "agents": {
             "additionalProperties": {
               "$ref": "#/components/schemas/AgentSettings"
@@ -5875,6 +5888,14 @@
             ],
             "title": "Admin Key"
           },
+          "advisor_uids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Advisor Uids",
+            "type": "object"
+          },
           "agents": {
             "additionalProperties": {
               "$ref": "#/components/schemas/AgentSettings"
@@ -5927,6 +5948,21 @@
             "default": false,
             "title": "Ai",
             "type": "boolean"
+          },
+          "buddy": {
+            "default": false,
+            "title": "Buddy",
+            "type": "boolean"
+          },
+          "buddy_agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decklist_text": {
             "minLength": 1,
@@ -9711,14 +9747,17 @@
       "StartAiSeat": {
         "additionalProperties": false,
         "properties": {
+          "advisor_uid": {
+            "default": "",
+            "title": "Advisor Uid",
+            "type": "string"
+          },
           "uid": {
+            "default": "",
             "title": "Uid",
             "type": "string"
           }
         },
-        "required": [
-          "uid"
-        ],
         "title": "StartAiSeat",
         "type": "object"
       },
@@ -13434,6 +13473,7 @@
     },
     "/api/lobby/games/{game_id}/ai-seat/start": {
       "post": {
+        "description": "Start (or report) the AI seat or buddy this body names.\n\nThe restart half of a buddy's lifecycle: creation starts one\n(`decks_api.start_game_from_decklists`), and this is how a human brings\nback one that fell over, or one whose game they have rejoined in a new\nbrowser. Never raises for a runner that cannot start -\n`AiSeatRegistry.start`'s own contract - so a buddy that will not come up\nanswers 200 with `mechanism: \"fallback\"` and a reason, exactly as a seat\ndoes.",
         "operationId": "start_ai_seat_api_lobby_games__game_id__ai_seat_start_post",
         "parameters": [
           {
@@ -13541,6 +13581,7 @@
     },
     "/api/lobby/games/{game_id}/ai-seat/stop": {
       "post": {
+        "description": "Stop the AI seat or buddy this body names. The uid is resolved the\nsame way `start` resolves it, so stopping something this game has never\nheard of is a 404 rather than a cheerful `stopped: false`.",
         "operationId": "stop_ai_seat_api_lobby_games__game_id__ai_seat_stop_post",
         "parameters": [
           {

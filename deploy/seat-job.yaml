@@ -1,10 +1,17 @@
-# One AI seat's Kubernetes Job, as a complete manifest with a closed set of
-# placeholders. `k8s_seats.build_job` reads this file (path from
+# One AI agent's Kubernetes Job, as a complete manifest with a closed set of
+# placeholders - a playing seat, or (B5) a **buddy**: an advisor container
+# watching one human seat's own view and proposing rather than acting. Both
+# render from this one file, deliberately: same images, same driver sidecar,
+# same mcp-config, and the only differences are set in code by
+# `k8s_seats.build_job` - the `mtg-buddy-*` name, an extra `mtg/role=advisor`
+# label, and `role` inside `__ASSIGNMENT_JSON__`'s payload (which is why the
+# placeholder set below needs no entry for it, and why a seat's rendered
+# assignment is byte-identical to what it always was). `k8s_seats.build_job` reads this file (path from
 # `SEAT_JOB_TEMPLATE_PATH`, default this path), substitutes the
 # `__X__` tokens below with this seat's per-render values, then sets
-# `metadata.name`, `metadata.namespace`, the three labels
-# (`app.kubernetes.io/name`, `mtg/game-id`, `mtg/seat-uid`) and the
-# annotations in code. Every placeholder appears as the WHOLE value of a
+# `metadata.name`, `metadata.namespace`, the identity labels
+# (`app.kubernetes.io/name`, `mtg/game-id`, `mtg/seat-uid`, plus `mtg/role`
+# on an advisor) and the annotations in code. Every placeholder appears as the WHOLE value of a
 # mapping entry (never embedded inside a larger string), so substitution is
 # a plain per-node dict/list walk with no YAML-escaping to get wrong.
 #

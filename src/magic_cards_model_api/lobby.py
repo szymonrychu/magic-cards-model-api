@@ -13,6 +13,10 @@ lobby and ends it, rather than starting a new one silently ending an old one.
 - every AI seat, released (`ai_seat.registry.release`) - a subprocess is
   terminated, a wrapper dispatch is handed back to the driver, and the
   registry forgets the uid so no stale status can be polled out of it,
+- every **buddy** (`repository.Advisor`, B5), released the same way and in
+  the same pass: an advisor has a runner behind it exactly like a seat does,
+  so leaving one out would leave a pod advising on a game that no longer
+  exists, and a status pollable out of a finished game,
 - the game itself, deleted from the store, which is what takes the old seat
   uids and the old admin key out of existence.
 
@@ -71,6 +75,7 @@ def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
     else:
         players = []
     seats = store.seat_uids(game_id)  # uid -> username
+    advisors = store.advisor_uids(game_id)  # uid -> repository.Advisor
 
     watcher_stopped = ai_pregame.stop(game_id)
     # Every uid is released, not only the ones flagged `ai: true`: the flag
@@ -83,10 +88,24 @@ def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
         for uid, name in seats.items()
         if (entry := ai_seat.registry.release(uid))["mechanism"] is not None
     ]
+    # The buddies, in the same pass and through the same registry call. Same
+    # reasoning as the seats above: the advisor map is what actually holds
+    # the credential, the registry is what holds the process or dispatch
+    # behind it, and a uid the registry knows nothing about releases to
+    # nothing, cheaply. `role` is stamped on the advisor entries alone, the
+    # same convention the Job labels and the dispatch payload follow: a seat
+    # entry stays byte-identical to what it always was, and absence means
+    # seat.
+    released += [
+        entry | {"player": advisor.player, "role": ai_seat.ROLE_ADVISOR}
+        for uid, advisor in advisors.items()
+        if (entry := ai_seat.registry.release(uid))["mechanism"] is not None
+    ]
     covered: dict[str, Any] = {
         "game_id": game_id,
         "players": players,
         "seats_invalidated": len(seats),
+        "advisors_invalidated": len(advisors),
         "watcher_stopped": watcher_stopped,
         "ai_seats_released": released,
     }
@@ -105,6 +124,7 @@ def reset_game(game_id: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
             reason=reason,
             note=_note(covered, reason),
             seats_invalidated=len(seats),
+            advisors_invalidated=len(advisors),
             watcher_stopped=watcher_stopped,
             ai_seats_released=released,
             **({"unloadable": unloadable} if unloadable is not None else {}),
@@ -119,8 +139,10 @@ def _note(covered: dict[str, Any], reason: str) -> str:
         f"{entry['player']}:{entry['mechanism'] or 'nothing'}"
         for entry in covered["ai_seats_released"]
     )
+    advisors = covered.get("advisors_invalidated") or 0
+    buddies = f", {advisors} buddy uid(s) invalidated" if advisors else ""
     return (
-        f"{reason}: {covered['seats_invalidated']} seat uid(s) invalidated, "
+        f"{reason}: {covered['seats_invalidated']} seat uid(s) invalidated{buddies}, "
         f"pregame watcher {'stopped' if covered['watcher_stopped'] else 'was not running'}, "
         f"ai seats released [{seats or 'none'}]; the agent's memory volume is untouched"
     )
