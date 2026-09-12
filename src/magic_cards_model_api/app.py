@@ -3323,6 +3323,23 @@ def pregame_opening_hand_finish(
     if not req.player:
         raise ValueError("finishing CR 103.6's actions needs the player who is finishing")
     _pregame_seat(game_id, uid, req.player)
+    # P4, and the one route it was missing. This takes `schemas.ActorRequest`
+    # and so has accepted `expected_seq` (via `BoardRead`) since the field
+    # existed, while never comparing it to anything: a seat could name the
+    # ledger position it decided against here and be allowed to act on a
+    # board that had already moved, with no `stale` refusal and no row to say
+    # it happened - the single guarantee this guard is documented to make
+    # ("called first in every mutating route") broken on the one route
+    # nobody had listed. CR 103.6's pass is as raceable as any other move:
+    # the other seat's own mulligan or pass resolves the round, and this one
+    # arriving after that is exactly the race.
+    #
+    # After `_pregame_seat` rather than before it, for the reason
+    # `pregame_settle` states: the refusal writes a ledger row, and a caller
+    # who cannot open this seat has no business writing one.
+    records.require_current_board(
+        game_id, "opening_hand_done", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:

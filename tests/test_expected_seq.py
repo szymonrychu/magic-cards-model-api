@@ -17,12 +17,15 @@ no use for that.
 
 from __future__ import annotations
 
+import inspect
+import typing
 from typing import Any
 
 import httpx
 import pytest
 from conftest import add_card, find, state
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
@@ -311,7 +314,79 @@ MUTATING_ROUTES: list[tuple[str, str, str, dict[str, Any]]] = [
     # changes nothing for the seat routes (the board guard runs ahead of every
     # viewer check) and is what lets this one past its own gate.
     ("pregame_settle", "POST", "/api/games/{gid}/pregame/settle", {}),
+    # CR 103.6's own "I am done" - a mutating route like any other, and the
+    # one this list was missing. It carries `expected_seq` by inheriting
+    # `schemas.ActorRequest`, so a seat could name a board position here and
+    # be allowed to act on a board that had already moved, with no `stale`
+    # refusal and no ledger row. Found by `EXPECTED_SEQ_ROUTES` below, which
+    # is why that test exists: this list was hand-derived, and 18 of 19 is
+    # exactly the shape a hand-derived list fails in.
+    (
+        "opening_hand_done",
+        "POST",
+        "/api/games/{gid}/pregame/opening-hand/finish",
+        {"player": "alice"},
+    ),
 ]
+
+
+def expected_seq_routes() -> dict[str, tuple[str, str]]:
+    """Every mutating `{game_id}` route whose request body carries
+    `expected_seq`, off the live route table: `{endpoint name: (method,
+    path)}`.
+
+    Read from `app.routes` and the endpoints' own resolved type hints rather
+    than written down, because a written-down list is what this file had
+    before and it was wrong: `records.require_current_board` is documented as
+    "called first in every mutating route" and was called in 18 of the 19,
+    and nothing failed. A route added tomorrow that inherits `BoardRead`
+    without honouring it goes red here on its own.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = (getattr(route, "methods", None) or set()) & {"POST", "PUT", "PATCH", "DELETE"}
+        endpoint = getattr(route, "endpoint", None)
+        if "{game_id}" not in path or not methods or endpoint is None:
+            continue
+        hints = typing.get_type_hints(endpoint)
+        models = (
+            model
+            for name in inspect.signature(endpoint).parameters
+            # `get_args` unpacks the `Request | None = None` bodies
+            # (`state_based_actions`, `resolve_top`, `pregame_settle`); a
+            # bare annotation is its own single candidate.
+            for model in (typing.get_args(hints.get(name)) or (hints.get(name),))
+            if isinstance(model, type)
+            and issubclass(model, BaseModel)
+            and "expected_seq" in model.model_fields
+        )
+        if next(models, None) is not None:
+            found[endpoint.__name__] = (sorted(methods)[0], path)
+    return found
+
+
+def test_every_route_that_accepts_expected_seq_is_covered_by_the_guard_tests(client, game) -> None:
+    """The guard cannot be honoured by a route nobody exercises, so the route
+    table itself decides what has to be exercised. `MUTATING_ROUTES` above is
+    the list the three parametrised tests below run over; this asserts it
+    covers every route that takes the field, naming any that is missing.
+
+    A route that accepts `expected_seq` and ignores it is worse than one that
+    does not accept it: the seat is told, by the schema, that it may name the
+    board it decided against, and is then silently allowed to act on a board
+    that has moved - the exact failure the field exists to prevent."""
+    live = expected_seq_routes()
+    assert live, "the route table must actually have been read"
+
+    covered = {path.replace("{gid}", "{game_id}") for _, _, path, _ in MUTATING_ROUTES}
+    missing = {name: where for name, where in live.items() if where[1] not in covered}
+
+    assert not missing, (
+        "these routes accept `expected_seq` and no test here exercises the guard on "
+        f"them - add a row to MUTATING_ROUTES and make the route call "
+        f"`records.require_current_board`: {missing}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -746,3 +821,4 @@ def test_the_admin_key_in_its_own_slot_is_recognised_by_the_stale_handler(
     assert response.status_code == 409, response.text
     hands = [row["snapshot"]["hands"] for row in response.json()["since"] if row.get("snapshot")]
     assert hands and all(hand["bob"] == ["Island"] for hand in hands), response.text
+
