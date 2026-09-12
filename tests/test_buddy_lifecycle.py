@@ -796,3 +796,144 @@ def test_the_driver_still_picks_the_seat_prose_with_no_role_named(tmp_path) -> N
     )
     assert response.status_code == 202, response.text
     assert "You are playing a real game" in world.submitted[0]["text"]
+
+
+def _cli_dry_run_split() -> tuple[frozenset[str], frozenset[str]]:
+    """Walk the real `mcp-seat` argparse tree: (subcommands that register
+    `--dry-run`, subcommands that do not). Derived from the parser rather
+    than a hand-kept list, so the prose tests below fail the moment the flag
+    moves."""
+    import argparse
+
+    from magic_cards_model_api.seat_cli import build_parser
+
+    parser = build_parser()
+    choices: dict[str, argparse.ArgumentParser] = {}
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            choices = dict(action.choices)
+    assert choices, "mcp-seat's parser has no subcommands - the walk is wrong"
+    takes, lacks = set(), set()
+    for name, sub in choices.items():
+        options = {opt for act in sub._actions for opt in act.option_strings}
+        (takes if "--dry-run" in options else lacks).add(name)
+    return frozenset(takes), frozenset(lacks)
+
+
+def _paragraph_naming(text: str, phrase: str) -> str:
+    """The whitespace-collapsed claim of `text` containing `phrase`. Both
+    briefs are hard-wrapped, so a claim spans several source lines; a claim
+    is a blank-line paragraph or a single top-level markdown bullet, because
+    the wrapper's prose teaches one tool per bullet inside one list."""
+    import re
+
+    for block in re.split(r"\n\n|\n(?=- )", text):
+        collapsed = " ".join(block.split())
+        if phrase in collapsed:
+            return collapsed
+    raise AssertionError(f"no paragraph of the prose says {phrase!r}")
+
+
+def test_the_buddy_brief_never_claims_every_subcommand_takes_dry_run() -> None:
+    """`--dry-run` is registered on `cast`, `cycle`, `activate` and the three
+    CR 116.2 special actions only. `decide`, `blockers`, `attackers` and
+    `play-land` have no such flag, so argparse errors out on it - and those
+    are exactly the shapes a buddy reaches for when a decision is pending.
+    Telling it "every action subcommand also takes `--dry-run`" sent it at a
+    flag that cannot work, in the same prose that teaches it the transport."""
+    import re
+
+    takes, lacks = _cli_dry_run_split()
+    brief = ai_seat.load_brief("advisor")
+    collapsed = " ".join(brief.split())
+    assert "every action subcommand also takes" not in collapsed.lower(), (
+        "the buddy brief still makes the universal `--dry-run` claim, which is "
+        f"false for {sorted(lacks)}"
+    )
+
+    positive = _paragraph_naming(brief, "take `--dry-run`")
+    named = {token for token in re.findall(r"`([a-z][a-z-]*)`", positive)}
+    assert named & takes == takes, (
+        "the paragraph teaching `--dry-run` must name every subcommand that "
+        f"registers it; missing {sorted(takes - named)}"
+    )
+    assert not (named & lacks), (
+        "the paragraph teaching `--dry-run` names subcommands that do not "
+        f"register it: {sorted(named & lacks)}"
+    )
+
+    negative = _paragraph_naming(brief, "no `--dry-run`")
+    refused = {token for token in re.findall(r"`([a-z][a-z-]*)`", negative)} & (takes | lacks)
+    assert refused <= lacks, (
+        "the brief says these take no `--dry-run` when argparse registers one: "
+        f"{sorted(refused & takes)}"
+    )
+    # B2 froze DecideRequest and DeclareBlockersRequest out of DRY_RUN_SHAPES,
+    # so those two must be named by the prose as unvalidatable, by name.
+    assert {"decide", "blockers"} <= refused, (
+        "the brief must say plainly that `decide` and `blockers` cannot be "
+        f"dry-run; it names only {sorted(refused)}"
+    )
+
+
+def test_the_advisor_wrapper_prose_never_claims_every_tool_takes_dry_run() -> None:
+    """The mirror of the brief's claim on the wrapper's transport. `dry_run`
+    is a parameter of six MCP tools, not of every action tool: `play_land`,
+    `declare_attackers`, `declare_blockers` and `decide` have none, and
+    passing one is a TypeError, not a dry run."""
+    import json
+    import re
+    from pathlib import Path
+
+    from mtg_agent.driver.prompt import Assignment, advisor_turn_zero
+
+    repo_root = Path(__file__).resolve().parent.parent
+    tools = json.loads((repo_root / "contract" / "tools.json").read_text())["tools"]
+    takes = frozenset(
+        tool["name"]
+        for tool in tools
+        if any(param["name"] == "dry_run" for param in tool["parameters"])
+    )
+    lacks = frozenset(tool["name"] for tool in tools) - takes
+    assert takes and lacks, "contract/tools.json says every tool is the same shape"
+
+    text = advisor_turn_zero(
+        Assignment(
+            game_id="g1",
+            uid="u1",
+            player="you",
+            opponent="bot",
+            api_base="http://api",
+            decklist={},
+            guide=None,
+            match_score=0.0,
+            role="advisor",
+        ),
+        Path("/workspace/current-game.md"),
+        "briefing",
+    )
+    collapsed = " ".join(text.split())
+    assert "every action tool takes" not in collapsed.lower(), (
+        "the advisor wrapper prose still makes the universal `dry_run` claim, "
+        f"which is false for {sorted(lacks)}"
+    )
+
+    positive = _paragraph_naming(text, "take `dry_run`")
+    named = {token for token in re.findall(r"`([a-z_]+)`", positive)} & (takes | lacks)
+    assert named & takes == takes, (
+        "the prose teaching `dry_run` must name every tool that has the "
+        f"parameter; missing {sorted(takes - named)}"
+    )
+    assert not (named & lacks), (
+        f"the prose teaching `dry_run` names tools without it: {sorted(named & lacks)}"
+    )
+
+    negative = _paragraph_naming(text, "no `dry_run`")
+    refused = {token for token in re.findall(r"`([a-z_]+)`", negative)} & (takes | lacks)
+    assert refused <= lacks, (
+        f"the prose says these take no `dry_run` when they do: {sorted(refused & takes)}"
+    )
+    assert {"decide", "declare_blockers"} <= refused, (
+        "the prose must say plainly that `decide` and `declare_blockers` cannot "
+        f"be dry-run; it names only {sorted(refused)}"
+    )

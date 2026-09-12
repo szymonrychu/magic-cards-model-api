@@ -775,12 +775,17 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   question is about one part of the board.
 - `game_log(player_uid, since=...)` is the whole history when `recent_log`
   does not reach back far enough.
-- Every action tool takes `dry_run` - `cast(player_uid=..., card="...",
-  targets="...", dry_run=True)` - and a dry run changes nothing, which is
-  how you check an idea before you propose it: is the mana really there, is
-  the target really legal. Read the `outcome` and, when it refuses, the
-  engine's own words for why. That refusal is the most reliable rules text
-  you will get, and it is worth more than your recollection of the card.
+- Six tools take `dry_run` - `cast`, `cycle`, `activate`, `suspend`, `plot`
+  and `foretell`, as in `cast(player_uid=..., card="...", targets="...",
+  dry_run=True)` - and a dry run changes nothing, which is how you check an
+  idea before you propose it: is the mana really there, is the target really
+  legal. Read the `outcome` and, when it refuses, the engine's own words for
+  why. That refusal is the most reliable rules text you will get, and it is
+  worth more than your recollection of the card.
+- `play_land`, `declare_attackers`, `declare_blockers` and `decide` have no
+  `dry_run` parameter - passing one is an error, not a rehearsal - and a
+  pending decision is exactly where advice matters most. Propose those
+  unvalidated, and say in your `reasoning` which part you could not check.
 - `report_problem` files an engine bug.
 
 ## When you think, and when you stay quiet
@@ -869,8 +874,9 @@ changes.
 - NEVER state card text or a rule from memory. Use the `spellslinger` MCP
   server's `knowledge_search` and `resolve_cards` to look them up.
 - NEVER pretend to an authority you do not have. You advise; you do not rule.
-  When you cannot tell whether something is legal, dry-run it and read the
-  answer.
+  When you cannot tell whether something is legal, dry-run it where the tool
+  takes `dry_run` and read the answer; where it does not, say in your
+  `reasoning` that you are proposing it unchecked.
 - Do not try to act. A refusal that reads "no game" is the advisor gate doing
   its job, not a bug to work around: you have reached for something only a
   seat may do.
