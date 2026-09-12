@@ -1382,3 +1382,69 @@ def test_the_report_problem_tool_still_files_for_an_advisor(
     assert '"recorded": true' in answer.lower(), answer
     assert [e for e in audit.entries(game) if e["action"] == audit.PROBLEM_ACTION]
     assert advice_rows(game) == []
+
+
+# ---------------------------------------------------------------------------
+# what an advisor's own wait actually carries - the fact each surface's prose
+# has to match (the two prose halves live in `test_buddy_lifecycle.py`)
+# ---------------------------------------------------------------------------
+
+
+def test_an_advisors_cli_wait_carries_the_state_but_no_log(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """Why "read the log" is defensible in the buddy brief and "read the
+    state" is not. `seat_cli`'s `wait` branch prints `woken["state"]` alone -
+    `block_until_wake` returns `recent_log` as a sibling, never a key inside
+    the state - and `pass-until`, the one CLI wait whose answer does carry
+    both, is refused outright for an advise seat. So a CLI buddy holding a
+    `wait` answer has the board and no log tail, and no sanctioned second
+    call for one unless the brief gives it `log`."""
+    from magic_cards_model_api import seat_cli
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    uid = advisor_uid(game)
+
+    assert seat_cli.run(["--uid", uid, "--game", game, "wait"]) == 0
+    waited = json.loads(capsys.readouterr().out)
+    assert waited.get("players"), "an advisor's `wait` no longer prints the state at all"
+    assert "recent_log" not in waited, (
+        "an advisor's `wait` now carries `recent_log` - then the buddy brief's "
+        "`log` read is what has to change, because it stops being the only way"
+    )
+
+    refused = pass_until(buddy(game), until_step="end_step", whose_turn="mine")
+    assert refused["stopped_because"] == seatkit.ADVISE_NO_PASS_UNTIL, (
+        "`pass-until` now runs for an advise seat - then the CLI buddy has a "
+        "wait that carries the log and the brief's `log` read is redundant too"
+    )
+
+
+def test_an_advisors_mcp_wait_carries_the_state_and_the_log(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """And why the MCP advisor block is redundant on BOTH counts.
+    `mcp.wait_for_priority` merges `recent_log` into the state view it hands
+    back, and that view is the whole state (it is not an action answer, so
+    nothing narrows it to `battlefield_digest`). So an MCP buddy's own wake
+    loop already answers both "what is the board" and "what happened", and
+    `battlefield_state`/`game_log` are escape hatches there rather than
+    ordinary reads."""
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: TestClient(app))
+    uid = advisor_uid(game)
+    server = build_server(seats_for(game))
+    raw = asyncio.run(server.call_tool("wait_for_priority", {"player_uid": uid}))
+    answer = json.loads(raw.content[0].text)
+
+    assert "recent_log" in answer, (
+        "the advisor's MCP wait no longer carries the log tail, so `game_log` "
+        "stops being an escape hatch and becomes a read it needs"
+    )
+    assert answer.get("players"), "the advisor's MCP wait no longer carries the board"
+    # The whole state, zones included - `battlefield_state`'s own "it is the
+    # only tool that hands you the zones" is not true of this answer.
+    for section in ("battlefield", "hands", "graveyards", "exile", "command"):
+        assert section in answer, (
+            f"the advisor's MCP wait no longer carries `{section}`, so "
+            "`battlefield_state` stops being an escape hatch and becomes a read it needs"
+        )

@@ -1010,3 +1010,109 @@ def test_the_advisor_wrapper_prose_never_claims_every_tool_takes_dry_run() -> No
         "the prose must say plainly that `decide` and `declare_blockers` cannot "
         f"be dry-run; it names only {sorted(refused)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 8. the routine board read, decided per surface
+# ---------------------------------------------------------------------------
+#
+# The seat's brief had "read `state`, read the `log`" deleted in this same
+# branch: `tests/test_seat_round_trips.py` names that instruction as the
+# measured cause of a 65-tool-call agent activation, and
+# `tests/test_prompt_matches_tools.py` keeps it from coming back. The buddy's
+# prose said the same thing in both surfaces' spelling, and the answer is not
+# the same on both - which is why these are two tests and not one.
+#
+# The facts they are written against are pinned in `test_advise_mode.py`:
+# `test_an_advisors_cli_wait_carries_the_state_but_no_log` and
+# `test_an_advisors_mcp_wait_carries_the_state_and_the_log`.
+
+
+def _collapsed_advisor_turn_zero() -> str:
+    from pathlib import Path
+
+    from mtg_agent.driver.guides import NONE, Identification
+    from mtg_agent.driver.prompt import Assignment, advisor_turn_zero
+
+    text = advisor_turn_zero(
+        Assignment(
+            game_id="g1",
+            uid="u1",
+            player="you",
+            opponent="bot",
+            api_base="http://api",
+            decklist={},
+            identification=Identification(NONE),
+            role="advisor",
+        ),
+        Path("/workspace/current-game.md"),
+        "briefing",
+    )
+    return " ".join(text.split())
+
+
+def test_the_buddy_brief_forbids_the_state_read_its_own_wait_already_answers() -> None:
+    """CLI surface, the half that IS redundant. `wait` prints the whole state
+    the advisor may see, so a separate `state` call asks for what the advisor
+    is already holding - exactly the call the seat's brief forbids, for
+    exactly the same reason."""
+    brief = ai_seat.load_brief("advisor")
+    collapsed = " ".join(brief.split())
+    assert "Do NOT run `state`" in collapsed, (
+        "the buddy brief never forbids the `state` call its own `wait` answer already carries"
+    )
+    assert "`wait`" in _paragraph_naming(brief, "Do NOT run `state`"), (
+        "the prohibition never names the answer that replaces the call, so an "
+        "advisor is told not to read the board and not told where it already has it"
+    )
+
+
+def test_the_buddy_brief_still_sends_the_advisor_to_the_log() -> None:
+    """CLI surface, the half that is NOT redundant, and the reason this is a
+    per-surface decision rather than a blanket deletion. `seat_cli`'s `wait`
+    prints `woken["state"]` alone - no `recent_log` - and `pass-until`, the
+    one CLI wait whose answer carries the log tail, is refused outright for an
+    advise seat (`seatkit.ADVISE_NO_PASS_UNTIL`). So `log` is the CLI buddy's
+    only way to know what has happened, and telling it not to run one would
+    leave it advising on a board with no history at all.
+
+    The brief has to say that out loud, too: an advisor that reads "do not run
+    `state`" and sees `log` beside it will assume the same applies."""
+    brief = ai_seat.load_brief("advisor")
+    collapsed = " ".join(brief.split())
+    assert "Do NOT run `log`" not in collapsed, (
+        "the buddy brief now forbids the one read a CLI advisor has no "
+        "replacement for - see test_an_advisors_cli_wait_carries_the_state_but_no_log"
+    )
+    # The exception has to be argued where it is stated, not merely left
+    # standing beside a prohibition that looks like it should cover it.
+    exception = _paragraph_naming(brief, "`log` is different")
+    assert "recent_log" in exception, (
+        "the exception never names `recent_log`, the key a CLI advisor's "
+        "`wait` answer does not carry - which is the whole reason `log` stays"
+    )
+    assert "pass-until" in exception, (
+        "the exception never says that `pass-until` - the wait whose answer "
+        "would have carried the log - is refused for an advisor, so it reads "
+        "as an oversight rather than a decision"
+    )
+
+
+def test_the_advisor_wrapper_prose_forbids_both_reads_its_wait_answers() -> None:
+    """MCP surface, where BOTH halves are redundant.
+    `mcp.wait_for_priority` merges `recent_log` into the state view it hands
+    back, and that view is the whole state, zones included - so an advisor's
+    own wake loop already answers "what is the board" and "what happened",
+    and both tools are escape hatches rather than ordinary reads. The prose
+    presented them as the primary way to read the game."""
+    collapsed = _collapsed_advisor_turn_zero()
+    for tool in ("battlefield_state", "game_log"):
+        assert f"Do NOT call `{tool}`" in collapsed, (
+            f"the advisor's wrapper prose still offers `{tool}` as an ordinary "
+            "read, when `wait_for_priority`'s own answer already carries what "
+            "it would ask for"
+        )
+    assert "recent_log" in collapsed, (
+        "the prose never names `recent_log`, the key that rides the advisor's "
+        "own wake loop and replaces a `game_log` call"
+    )

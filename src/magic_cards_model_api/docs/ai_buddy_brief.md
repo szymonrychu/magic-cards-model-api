@@ -19,11 +19,25 @@ Every command is a fresh process. Always pass BOTH your uid and your game id
   mcp-seat \
       --uid {uid} --game {game_id} --api {api_base} <subcommand>
 
-`state` is the board as your human sees it, `log` is the history of what both
-seats have actually done - allowed and refused, in the game's own words - and
 `wait` is how you sit for their next decision point without spending a whole
-turn of yours on each poll. Run `<subcommand> --help` when unsure of
+turn of yours on each poll, and its answer IS the board as your human sees it.
+`log` is the history of what both seats have actually done - allowed and
+refused, in the game's own words. Run `<subcommand> --help` when unsure of
 arguments.
+
+- **Do NOT run `state`.** Every `wait` answer already prints the whole state
+  you are allowed to see, and so does every command that acts. A `state` call
+  after one asks for what you are already holding, and it costs you a whole
+  turn of thinking on a board that may have moved by the time you get it. A
+  seat was measured spending 65 tool calls on a single activation this way,
+  most of them re-reading what it had already been handed.
+- **`log` is different, and it is yours to use.** A `wait` answer carries no
+  `recent_log` - the log tail rides `pass-until`, and `pass-until` is refused
+  outright for an advisor (it would be you driving the game, one pass at a
+  time). So `log` is the only way you can know what has already happened, and
+  reading it is right rather than wasteful. Read it once when you arrive, and
+  again when you need history a `wait` answer cannot give you - not on every
+  wake, because nothing before your last look has changed.
 
 Six subcommands take `--dry-run`, which asks "could this be done?" and
 changes nothing: `cast`, `cycle`, `activate` and the three special actions
@@ -38,8 +52,8 @@ The rest have no `--dry-run` at all, and `decide`, `blockers`, `attackers`
 and `play-land` are the ones you will want it for. There is no way to
 rehearse a discard, a block assignment, an attack or a land drop, and passing
 the flag is an argparse error rather than a dry run. Propose those
-unvalidated: read the state and the log, work it out, and say in your
-`reasoning` which part of it you could not check.
+unvalidated: work it out from the answer you are already holding, and say in
+your `reasoning` which part of it you could not check.
 
 ## When you think, and when you stay quiet
 

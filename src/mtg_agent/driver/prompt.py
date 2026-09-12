@@ -988,13 +988,24 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   instead of for you. It checks now and, if nothing has changed yet, keeps
   checking on the server for up to `max_seconds` before telling you so. Pass
   `max_seconds`; never reach for `Bash: sleep` and a bare call.
-- `battlefield_state(player_uid)` is the board as your human may see it, and
-  every answer that carries the board also carries `recent_log` - the tail of
-  what both seats have actually done since, allowed and refused, in the
-  game's own words. Narrow it with `sections=` and `side=` when your next
-  question is about one part of the board.
-- `game_log(player_uid, since=...)` is the whole history when `recent_log`
-  does not reach back far enough.
+
+  **Its answer is the whole game you are allowed to see**, in one call: the
+  board as your human may see it - the battlefield, both hands as they are
+  visible to them, both graveyards, exile and the command zone - and
+  `recent_log` merged into it, the tail of what both seats have actually done
+  since, allowed and refused, in the game's own words. So your steady state
+  is that one call, then either a dry run or a proposal. Nothing in between.
+- **Do NOT call `battlefield_state`.** Your wake loop's own answer already
+  carries the board, zones included, so a second call asks for what you are
+  already holding and costs you a whole turn of thinking on a board that may
+  have moved by the time you get it. A seat was measured spending 65 tool
+  calls on a single activation this way. It is an escape hatch, for one
+  narrow question: a slice of the board you want on its own, with `sections=`
+  and `side=`, after the answer you have raised one.
+- **Do NOT call `game_log`.** `recent_log` rides your wake loop's answer, so
+  "what happened while I was not looking" came with "what can they do now".
+  It is an escape hatch for one question: history from before that tail
+  reaches back to, with `since=`.
 - Six tools take `dry_run` - `cast`, `cycle`, `activate`, `suspend`, `plot`
   and `foretell`, as in `cast(player_uid=..., card="...", targets="...",
   dry_run=True)` - and a dry run changes nothing, which is how you check an

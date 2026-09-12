@@ -318,6 +318,7 @@ def test_every_how_you_act_bullet_token_is_a_real_tool_or_parameter():
 # instruction cannot silently come back.
 
 BRIEF = REPO_ROOT / "src" / "magic_cards_model_api" / "docs" / "ai_seat_brief.md"
+BUDDY_BRIEF = REPO_ROOT / "src" / "magic_cards_model_api" / "docs" / "ai_buddy_brief.md"
 
 #: Every word an agent seat is given about what it may do, and in whose
 #: spelling. `prompt.py` drives MCP tools; the brief drives `mcp-seat`
@@ -363,16 +364,35 @@ ANSWER_KEYS_THAT_REPLACE_A_CALL = {
     ),
 }
 
-#: The instruction wave 1 exists to remove, in both spellings, plus the
-#: framing that made an unconditional board read read as the right thing to
-#: do. None of these may appear in either brief again.
+#: The instruction wave 1 exists to remove, in every spelling it has been
+#: written in, plus the framing that made an unconditional board read read as
+#: the right thing to do. None of these may appear in any brief again.
+#:
+#: The unbackticked spellings are here because the buddy brief used one: "read
+#: the state and the log, work it out". Only the *board* half of that is
+#: retired, on every surface - the buddy's log read is a genuine exception and
+#: `test_buddy_lifecycle.py` says what makes it one.
 RETIRED_ROUTINE_READS = (
     "read `battlefield_state`, read `game_log`",
     "read `battlefield_state` and then `game_log`",
     "read `state`, read the `log`",
     "read `state`, read the `log` for everything",
+    "read the state and the log",
+    "read the state, read the log",
+    "read the state and log",
     "which is the right default",
 )
+
+#: Every brief the retired instruction must never reappear in. Wider than
+#: `DOCTRINE_SOURCES`, which is the two-tool loop's own sources: the buddy
+#: brief does not run that loop (its wait is not `pass_until` - that tool is
+#: refused outright for an advise seat) but it is prose an agent obeys just
+#: the same, and leaving it out is how the instruction the seat's brief had
+#: just deleted came straight back in the buddy's, in the same branch.
+RETIRED_READ_SOURCES = {
+    **DOCTRINE_SOURCES,
+    "src/magic_cards_model_api/docs/ai_buddy_brief.md": BUDDY_BRIEF,
+}
 
 
 def _flat(path: Path) -> str:
@@ -392,7 +412,7 @@ def test_neither_brief_instructs_a_routine_board_or_log_read():
     Both facts ride every answer now (`board.battlefield_digest`,
     `recent_log`), so the instruction is not merely redundant - it is the
     behaviour wave 1 was built to delete."""
-    for name, path in DOCTRINE_SOURCES.items():
+    for name, path in RETIRED_READ_SOURCES.items():
         flat = _flat(path)
         for retired in RETIRED_ROUTINE_READS:
             assert retired not in flat, (
