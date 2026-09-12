@@ -71,6 +71,16 @@ _MAINBOARD_HEADER = re.compile(r"^\s*(maindeck|mainboard|main deck|deck)\b", re.
 _DATE_SUFFIX = re.compile(r"\d{4}-\d{2}-\d{2}\s*$")
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
 
+#: A Modern sideboard is exactly fifteen cards, so a blank line with no more
+#: than that behind it is the corpus's board separator rather than a
+#: paragraph break in a grouped paste. Fifteen and not "about fifteen": a
+#: list short of its sideboard is still short of fifteen.
+_SIDEBOARD_MAX = 15
+#: ... and so is a blank line with a complete maindeck in FRONT of it,
+#: whatever follows. Sixty cards are a maindeck; nobody groups a paste in a
+#: way that puts sixty of them before the first paragraph break.
+_MAINBOARD_MIN = 60
+
 
 def slugify(name: str) -> str:
     """The canonical archetype key: what a boarding plan calls `boros energy`
@@ -114,6 +124,33 @@ class Decklist:
         return (*self.mainboard, *self.sideboard)
 
 
+def _board_split(counts: list[int], boundaries: list[int]) -> int:
+    """Which blank line separates the two boards, as an index into the rows -
+    or one past the end when none of them does.
+
+    A blank line is a board separator in the corpus and a paragraph break in
+    a paste, and the two are told apart by what the split would PRODUCE
+    rather than by where it falls. A separator leaves a legal sideboard
+    behind it, or a complete maindeck in front of it; a paragraph break
+    inside a grouped list leaves neither.
+
+    The first boundary that qualifies wins, not the last: a list grouped on
+    both sides of the split has boundaries inside its sideboard too
+    (60/15, then 65/10, then 70/5), and every one of those leaves a legal
+    fifteen-or-fewer behind it while putting sideboard cards in the maindeck.
+    """
+    running = 0
+    totals = []
+    for count in counts:
+        running += count
+        totals.append(running)
+    for index in boundaries:
+        before = totals[index - 1] if index else 0
+        if running - before <= _SIDEBOARD_MAX or before >= _MAINBOARD_MIN:
+            return index
+    return len(counts)
+
+
 def parse_decklist(text: str) -> Decklist:
     """Card name to count, mainboard and sideboard kept apart.
 
@@ -123,33 +160,54 @@ def parse_decklist(text: str) -> Decklist:
     header wins wherever the list carries one, so a blank line inside a
     maindeck is then only whitespace. A list with neither is all mainboard,
     which is the honest reading of a 60-card paste.
+
+    A blank line only splits when the split it produces looks like one (see
+    `_board_split`). It used to split on the FIRST blank line after any
+    mainboard card and never switch back, which is right for the corpus's own
+    files and wrong for the case this classifier exists to serve: a user
+    pasting their own list, grouped by card type with no `Sideboard` header -
+    the common case this module's docstring names. Three real corpus lists
+    pasted that way kept 21, 31 and 27 of their 75 cards in the mainboard and
+    filed the rest as a sideboard, and signatures read the mainboard alone,
+    so all three dropped from `CONFIDENT` to `LOW`.
     """
-    mainboard: dict[str, int] = {}
-    sideboard: dict[str, int] = {}
     lines = [raw.strip() for raw in text.splitlines()]
     content = [line for line in lines if not line.startswith(("#", "//"))]
     header_split = any(_SIDEBOARD_HEADER.match(line) for line in content)
 
-    board = mainboard
+    #: One row per counted card line, in list order, plus which board an
+    #: explicit header put it on. Collected before anything is split, because
+    #: where a blank line belongs is a question about the whole list and
+    #: cannot be answered at the blank line itself.
+    rows: list[tuple[str, int, bool]] = []
+    boundaries: list[int] = []
+    side = False
     for line in lines:
         if line.startswith(("#", "//")):
             continue
         if not line:
-            if not header_split and board is mainboard and mainboard:
-                board = sideboard
+            if not header_split and rows and (not boundaries or boundaries[-1] != len(rows)):
+                boundaries.append(len(rows))
             continue
         if _SIDEBOARD_HEADER.match(line):
-            board = sideboard
+            side = True
             continue
         if _MAINBOARD_HEADER.match(line):
-            board = mainboard
+            side = False
             continue
         match = _LINE.match(line)
         if not match:
             continue
         name = _TRAILING_SET.sub("", match.group(2)).strip()
         if name:
-            board[name] = board.get(name, 0) + int(match.group(1))
+            rows.append((name, int(match.group(1)), side))
+
+    split = len(rows) if header_split else _board_split([count for _, count, _ in rows], boundaries)
+    mainboard: dict[str, int] = {}
+    sideboard: dict[str, int] = {}
+    for index, (name, count, on_side) in enumerate(rows):
+        board = sideboard if on_side or index >= split else mainboard
+        board[name] = board.get(name, 0) + count
     return Decklist(mainboard=mainboard, sideboard=sideboard)
 
 

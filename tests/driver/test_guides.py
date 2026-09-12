@@ -23,6 +23,7 @@ notices.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -155,6 +156,40 @@ def test_parse_decklist_with_no_discernible_split_is_all_mainboard():
     parsed = parse_decklist("4 Psychic Frog\n4 Fatal Push\n")
     assert parsed.mainboard == {"Psychic Frog": 4, "Fatal Push": 4}
     assert parsed.sideboard == {}
+
+
+def test_a_grouped_paste_with_no_header_keeps_the_whole_list_as_mainboard():
+    """Finding 3. A list grouped by card type - creatures, then spells, then
+    lands, a blank line between each - carries no `Sideboard` header, and the
+    module's own docstring names that as the common case for a pasted list.
+
+    The first blank line used to start a sideboard nothing ever switched back
+    out of, so two thirds of the deck left the mainboard - and signatures are
+    read off the mainboard alone.
+    """
+    grouped = "4 Psychic Frog\n4 Quantum Riddler\n\n4 Fatal Push\n4 Thoughtseize\n\n20 Island\n"
+    parsed = parse_decklist(grouped)
+    assert sum(parsed.mainboard.values()) == 36
+    assert parsed.sideboard == {}
+
+
+def test_a_grouped_list_still_finds_its_real_sideboard_boundary():
+    """Grouped AND blank-line-separated at once, which is the case the guard
+    has to get right rather than merely survive: the boundary taken is the one
+    that leaves a legal sideboard behind it, not the first blank line in the
+    maindeck."""
+    parsed = parse_decklist("20 Island\n\n20 Mountain\n\n20 Forest\n\n15 Dress Down\n")
+    assert sum(parsed.mainboard.values()) == 60
+    assert parsed.sideboard == {"Dress Down": 15}
+
+
+def test_a_full_maindeck_before_the_blank_line_is_a_split_however_long_the_rest(tmp_path):
+    """The other half of the guard: sixty cards are a maindeck whatever
+    follows them, so a blank line after a complete one splits even when what
+    comes next is not a legal fifteen."""
+    parsed = parse_decklist("60 Island\n\n20 Dress Down\n")
+    assert parsed.mainboard == {"Island": 60}
+    assert parsed.sideboard == {"Dress Down": 20}
 
 
 def test_an_explicit_header_beats_a_blank_line_inside_the_mainboard():
@@ -552,6 +587,46 @@ def test_a_signature_cannot_be_satisfied_out_of_the_sideboard(corpus):
     folded = parse_decklist(f"60 Forest\n{board}")
     assert folded.sideboard == {}
     assert corpus.identify(folded).confidence == LOW
+
+
+# ---- a user's own paste, grouped by card type -----------------------------
+
+
+#: Anything a list uses to name a board. Stripped to build the paste a user
+#: actually produces when they group a list by card type and never type the
+#: word "Sideboard" at all.
+_BOARD_HEADER = re.compile(
+    r"^\s*(sideboard|side board|sb:|maindeck|mainboard|main deck|deck)\b", re.I
+)
+
+
+def grouped_paste(text: str) -> str:
+    """The same 75, pasted the way a user groups one: every board header
+    gone, and a blank line inside the maindeck where the grouping falls."""
+    rows = [line for line in text.splitlines() if line.strip() and not _BOARD_HEADER.match(line)]
+    return "\n".join([*rows[:8], "", *rows[8:]]) + "\n"
+
+
+@pytest.mark.parametrize("slug", ["dimir-frog", "living-end", "prowess"])
+def test_a_real_list_regrouped_without_its_header_still_identifies(corpus, slug):
+    """Finding 3 at the level that made it user-facing.
+
+    The whole reason for the signature classifier was "I want users to bring
+    their own decklists for the opponents", and a list grouped by card type
+    with no `Sideboard` header is a completely ordinary way to paste one.
+    These three real corpus lists went from `confident` to `low` when pasted
+    that way, with 21, 31 and 27 of their 75 cards left in the mainboard and
+    the rest filed as a sideboard that cannot make a claim about anything.
+    """
+    text = (CORPUS / slug / "decklist.txt").read_text()
+    assert identify_text(corpus, text).confidence == CONFIDENT
+
+    pasted = parse_decklist(grouped_paste(text))
+    assert sum(pasted.mainboard.values()) == 75, "the paste has no sideboard marker to read"
+    assert pasted.sideboard == {}
+    result = corpus.identify(pasted)
+    assert result.confidence == CONFIDENT
+    assert result.guide.slug == slug
 
 
 # ---- a broken archetype.json in a third repo must not take a game down ----
