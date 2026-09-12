@@ -129,13 +129,28 @@ class BoardRead(RequestModel):
 
     When it *is* given, `records.require_current_board` compares it to
     `audit.last_seq(game_id)` before anything else runs, and refuses the
-    call outright when the two differ. That refusal is written into the
-    ledger with `stale: true`, which is what makes the corpus answer the
-    question it could not answer before: how many of a seat's refusals were
-    races (it acted on a board that had already moved) and how many were
-    genuine misreads of the rules. The two used to be indistinguishable -
-    losing a race produced `claude does not have priority, you does`, prose
-    a reader can only guess at.
+    call outright when the two differ. That is what makes the corpus answer
+    the question it could not answer before: how many of a seat's refusals
+    were races (it acted on a board that had already moved) and how many
+    were genuine misreads of the rules. The two used to be
+    indistinguishable - losing a race produced `claude does not have
+    priority, you does`, prose a reader can only guess at.
+
+    **`detail.stale` on the ledger row carries all three answers**, and
+    naming the field is only half of it - `scripts/eval_report.py` reads
+    every one:
+
+    - `true` - the board had moved; the engine was never asked.
+    - `false` - this seat named the board it decided against, that board was
+      current, and the engine judged the action illegal on it. A genuine
+      rules error.
+    - absent - the caller sent no `expected_seq`, so nothing can be said
+      about which of the two it was.
+
+    The `false` case is the reason sending this field is worth a seat's
+    while beyond the refusal itself: without it every rules refusal is
+    indistinguishable from an unmeasured one, and `eval_report`'s rules
+    bucket is structurally zero (MEMORY.md 2026-09-12).
 
     It is a *ledger* position and not a game version on purpose: `records
     .seq` is the number every answer already hands a seat back

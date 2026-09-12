@@ -1015,3 +1015,25 @@ def test_the_flag_does_not_leak_from_one_request_into_the_next(client, game, adm
     first, second = refusals_in(client, game, admin_key, "cast")
     assert first["stale"] is False
     assert "stale" not in second, second
+
+
+def test_the_refusal_this_whole_feature_was_motivated_by_is_stamped(
+    client, game, admin_key
+) -> None:
+    """`pass_priority` refused for want of priority is the exact sentence the
+    three-way split exists to classify - "claude does not have priority, you
+    does", which reads identically whether the seat misread the rules or lost
+    a race. It is also the most common action in the measured corpus (75 of
+    92 reasoned rows), and it is recorded from `action_pass_priority`'s own
+    `except` arm rather than through `audit_outcome`, so it is the write site
+    a per-call-site fix would most likely have missed."""
+    response = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        json={"player": "bob", "expected_seq": last_seq_of(client, game)},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is False
+    assert "does not have priority" in response.json()["reason"]
+
+    (detail,) = refusals_in(client, game, admin_key, "pass_priority")
+    assert detail["stale"] is False, detail
