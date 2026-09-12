@@ -103,13 +103,24 @@ def test_end_game_deletes_it_and_its_seat_uids_stop_opening_anything(client: Tes
         )
         # And it cannot act on the still-live game either: a pregame
         # declaration is the first move a stale browser tab would make.
+        #
+        # This used to be `_pregame_seat`'s own 400 ("that uid does not open
+        # alice's seat"), reached because the gate let any caller through to
+        # an ownerless game. `game_access.py`'s positive rule refuses a
+        # mutating call whose credential opens no seat of *this* game before
+        # the route runs, so the answer is now the module's standard
+        # refusal: a 404 identical to the one a game that never existed
+        # produces. That is this repo's own deliberate choice (see
+        # `game_access.py`'s docstring - a caller must not be able to tell
+        # "not yours" from "does not exist"), and it is a strictly stronger
+        # answer to the question this test asks.
         refused = client.post(
             f"/api/games/{second['game_id']}/pregame/mulligan",
             params={"uid": old_uid},
             json={"player": "alice", "take": True},
         )
-        assert refused.status_code == 400, refused.text
-        assert "seat" in refused.text
+        assert refused.status_code == 404, refused.text
+        assert refused.json()["detail"] == f"no game {second['game_id']}", refused.text
     finally:
         client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
 

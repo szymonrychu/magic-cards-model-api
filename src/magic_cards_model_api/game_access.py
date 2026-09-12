@@ -197,10 +197,23 @@ def seat_for_uid(game_id: str, uid: str | None) -> str | None:
     be confused again. `app.declare_plan` and the archived-game check were
     already doing it correctly through `store.player_for_uid` directly; this
     is the same answer with a name that says which question it is.
+
+    **The archive counts.** A game the lobby has ended is soft-deleted -
+    `store.get` answers `None` for it - but the seat uid it was played with
+    is still that seat's credential, and `POST .../reflection` exists
+    precisely to be written afterwards (`app.declare_reflection` authorises
+    against `store.archived(...).seat_uids` for exactly this reason, and
+    the driver posts a game's reflection after the lobby has already ended
+    it). `store.archived` is consulted only when the live lookup found
+    nothing, so the ordinary path costs one dictionary read as before.
     """
     if not uid:
         return None
-    return store.player_for_uid(game_id, uid)
+    player = store.player_for_uid(game_id, uid)
+    if player is not None:
+        return player
+    archived = store.archived(game_id)
+    return None if archived is None else archived.seat_uids.get(uid)
 
 
 async def _json_body(request: Request) -> dict[str, Any] | None:
@@ -296,39 +309,66 @@ async def _advisor_may(request: Request) -> bool:
     return body is not None and body.get("dry_run") is True
 
 
+def _is_admin(game_id: str, uid: str | None, key: str | None) -> bool:
+    """Whether either credential slot carries `game_id`'s admin key.
+
+    Both slots, because this repo has always accepted the admin key in
+    either: `visibility.resolve_viewer` checks `store.is_admin(game_id,
+    uid)` before anything else, `POST .../pregame/settle` *requires* it
+    that way, and `conftest.state()` plus a couple of dozen test call sites
+    hand it over as `uid=`. Checking only `key=` here - which is what this
+    gate used to do - would refuse every one of them the moment the
+    positive rule below started requiring a credential at all.
+    """
+    return any(store.is_admin(game_id, candidate) for candidate in (key, uid) if candidate)
+
+
 async def can_access_game(request: Request, game_id: str) -> bool:
-    """Whether `request` may reach `game_id` at all - see this module's
-    docstring for the three ways an owned game is reachable, and
-    `_advisor_may` for the one credential whose answer also depends on what
-    the request is trying to do. `True` for an unowned or unknown game
-    presented with anything but an advisor uid: apart from that credential,
-    this function only ever narrows access for a game that names an owner.
-    Never raises for an *invalid* bearer token
-    either - the same rule `authorize_game_access` documents in more detail,
-    reused here so a filtered list can simply drop an entry the caller could
-    not prove instead of failing the whole listing over one bad token."""
+    """Whether `request` may reach `game_id` at all.
+
+    **Reading** an unowned game needs nothing, exactly as it always has -
+    see this module's docstring for the migration story, and
+    `test_user_separation.py` for the pin. An owned game is readable the
+    three ways that docstring lists.
+
+    **Mutating** one - POST, PUT, PATCH or DELETE (`MUTATING_METHODS`) -
+    needs a credential *for that game*, always: a uid that opens one of its
+    seats, its admin key, or a bearer token naming its owner. This is the
+    positive rule, and it exists because the advisor restriction could not
+    be enforced without it. `_advisor_may` is a deny-list keyed on a
+    credential, and a deny-list keyed on a credential cannot restrict a
+    caller who omits the credential - the buddy already knows the
+    `game_id`, so dropping `uid` walked past its own restriction into a
+    branch that answered `True` for every ownerless game, which is every
+    game in this deployment. An ownerless game being world-*writable* is
+    pre-existing behaviour rather than a regression this branch introduced,
+    but it makes the read-only guarantee unachievable, so it closes here.
+    World-*readable* is untouched.
+
+    Never raises for an *invalid* bearer token either - the same rule
+    `authorize_game_access` documents in more detail, reused here so a
+    filtered list can simply drop an entry the caller could not prove
+    instead of failing the whole listing over one bad token.
+    """
     uid, key = await _credentials(request)
+    seat = seat_for_uid(game_id, uid)
     # The advisor gate comes first, and before the ownership question, on
     # purpose: an advisor uid is read-only *whatever* the game's ownership
     # is, and an unowned game (every game today) would otherwise return
-    # `True` above before this was ever asked. A uid that is a seat of this
+    # `True` below before this was ever asked. A uid that is a seat of this
     # game is never treated as an advisor, so a seat is unaffected even if
     # the same string were somehow registered as both.
-    if (
-        uid
-        and store.player_for_uid(game_id, uid) is None
-        and player_for_advisor_uid(game_id, uid) is not None
-    ):
+    if uid and seat is None and player_for_advisor_uid(game_id, uid) is not None:
         return await _advisor_may(request)
+    if seat is not None or _is_admin(game_id, uid, key):
+        return True
     owner = store.owner_user_id(game_id)
-    if owner is None:
-        return True
-    user = await run_in_threadpool(oidc.current_user, request)
-    if user is not None and user.sub == owner:
-        return True
-    if uid and store.player_for_uid(game_id, uid) is not None:
-        return True
-    return bool(key) and store.is_admin(game_id, key)
+    if owner is not None:
+        user = await run_in_threadpool(oidc.current_user, request)
+        return user is not None and user.sub == owner
+    # An ownerless game, with no seat uid and no admin key: readable, as it
+    # has always been, and not writable.
+    return request.method not in MUTATING_METHODS
 
 
 async def authorize_game_access(request: Request, game_id: str) -> None:

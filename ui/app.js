@@ -113,6 +113,20 @@ function isSubmission(method, body) {
   return method !== "GET" && !(body && body.dry_run);
 }
 
+/** `path` with this seat's own `uid` on it, unless it already carries one.
+ *
+ * Idempotent by design, so the six call sites that already wrap themselves
+ * in `withUid` keep working untouched and `send()` can apply this to every
+ * path without caring which did. A path with no uid available is returned
+ * as it came: the server's refusal is a better answer than a `uid=null`
+ * query string, and the lobby screen (where there is no seat yet) never
+ * calls this. */
+function uidOf(path) {
+  if (/[?&]uid=/.test(path)) return path;
+  const uid = store.get().uid;
+  return uid ? withUid(path, uid) : path;
+}
+
 /** The in-flight state, on the page rather than only in the store: `body`
  * carries `.busy` (and `aria-busy`) for as long as one of this seat's own
  * submissions is outstanding, and `style.css` turns that into the progress
@@ -197,6 +211,22 @@ const inFlight = new Set();
  * the previous `store.set` call unmade).
  */
 export async function send(method, path, body) {
+  // This seat's own credential, on every request, and the reason it is here
+  // rather than at each call site: the server now REFUSES a mutating call on
+  // a game that presents no credential at all (`game_access.py`'s positive
+  // rule). A deny-list keyed on a uid cannot restrict a caller who omits the
+  // uid, so an ownerless game - which is every game in this deployment -
+  // used to be writable by anyone who knew its id, which made the mtg-buddy
+  // advisor's read-only-ness unenforceable.
+  //
+  // Nine of this file's own paths sent nothing: both halves of the cast
+  // flow (the `dry_run` probe and the real `fire()`), `play-land`, the
+  // keyword special actions, `cycle`, both `pass-priority` calls (the
+  // player's own and autopass acting for the AI seat), `report` and
+  // `concede`. Six others already wrapped themselves in `withUid` by hand,
+  // which is exactly the shape that leaves a tenth path to forget. One
+  // place, applied to whatever the caller did not already spell out.
+  path = uidOf(path);
   // Double-submit protection, and the reason it lives here rather than in
   // nine handlers: a request that is byte-for-byte a request already in
   // flight is the same submission, not a second one. That is exactly the
@@ -572,12 +602,23 @@ async function refresh() {
  * liveness together - `app.aiStatus` reads out the one entry matching
  * `app.aiUid`, the same shape `GET .../ai-seat/status` used to hand back
  * directly. A missing or unreachable game (a stale poll after leaving it)
- * or no AI seat at all is a silent no-op - the next tick tries again. */
+ * or no AI seat at all is a silent no-op - the next tick tries again.
+ *
+ * The `uid` query parameter is what makes the match possible now: that
+ * route only puts a seat's `uid` on the entry matching the credential the
+ * caller actually presents (`decks_api.SeatDetail.uid`), because a seat uid
+ * is the authority to act as that seat and handing every one of them to
+ * every reader made this route a way to obtain one. This browser holds the
+ * AI seat's uid already - it is what `?uid=` presents - so the entry it is
+ * looking for is exactly the entry it is answered about. */
 async function pollSeats() {
   const app = store.get();
   if (!app.gameId || !app.aiUid) return;
   try {
-    const { seats } = await api("GET", `${lobbyBase()}/games/${app.gameId}/seats`);
+    const { seats } = await api(
+      "GET",
+      withUid(`${lobbyBase()}/games/${app.gameId}/seats`, app.aiUid)
+    );
     const mine = (seats || []).find((seat) => seat.uid === app.aiUid);
     if (mine) store.set({ aiStatus: mine.ai_seat });
   } catch {

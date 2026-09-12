@@ -150,9 +150,29 @@ def render(payload: dict[str, Any]) -> str:
 # -- small HTTP helpers, mirroring tests/conftest.py's own ------------------
 
 
+def _key(game_id: str) -> dict[str, str]:
+    """This script's own credential for `game_id`, as query parameters.
+
+    `game_access.py` requires one of every mutating call on a game now -
+    a deny-list keyed on a credential cannot restrict a caller who omits
+    the credential, so an ownerless game used to be writable by anyone who
+    knew its id. This script creates the games it drives and is handed
+    their admin keys in the creation response, exactly the way
+    `tests/conftest.py` is; `store.admin_key` is the same answer read from
+    the other side. Board setup (`_add_card`, `PUT .../step`, `PATCH
+    .../cards/{id}`) uses this operator credential; a *player's* action
+    uses that player's own seat uid, since that is who is taking it.
+    """
+    key = store.admin_key(game_id)
+    assert key is not None, f"no admin key for {game_id}"
+    return {"key": key}
+
+
 def _add_card(client: TestClient, game_id: str, name: str, player: str, zone: str) -> None:
     response = client.post(
-        f"/api/games/{game_id}/cards", json={"card": name, "player": player, "zone": zone}
+        f"/api/games/{game_id}/cards",
+        params=_key(game_id),
+        json={"card": name, "player": player, "zone": zone},
     )
     assert response.status_code == 200, response.text
 
@@ -249,6 +269,7 @@ def _case_fetchland_search_choice(client: TestClient) -> dict[str, Any]:
         foothills = next(c for c in board["battlefield"] if c["name"] == "Wooded Foothills")
         activated = client.post(
             f"/api/games/{game_id}/actions/activate",
+            params={"uid": uids["alice"]},
             json={"player": "alice", "card_id": foothills["id"], "ability_index": 0},
         )
         assert activated.status_code == 200, activated.text
@@ -272,7 +293,11 @@ def _case_trigger_order_labels(client: TestClient) -> dict[str, Any]:
     try:
         _add_card(client, game_id, "Delver of Secrets", "alice", "battlefield")
         _add_card(client, game_id, "Delver of Secrets", "alice", "battlefield")
-        step = client.put(f"/api/games/{game_id}/step", json={"step": "untap", "player": "alice"})
+        step = client.put(
+            f"/api/games/{game_id}/step",
+            params=_key(game_id),
+            json={"step": "untap", "player": "alice"},
+        )
         assert step.status_code == 200, step.text
         advanced = client.post(
             f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
@@ -308,6 +333,7 @@ def _case_kozilek_command_zone_flow(client: TestClient) -> dict[str, Any]:
         lands = [c["id"] for c in board["battlefield"] if c["name"] == "Wastes"]
         cast = client.post(
             f"/api/games/{game_id}/actions/cast",
+            params={"uid": uids["alice"]},
             json={
                 "player": "alice",
                 "card_id": command["id"],
@@ -347,6 +373,7 @@ def _case_paused_combat_declaration(client: TestClient) -> dict[str, Any]:
         mountain = next(c for c in board["battlefield"] if c["name"] == "Mountain")
         cast = client.post(
             f"/api/games/{game_id}/actions/cast",
+            params={"uid": uids["alice"]},
             json={
                 "player": "alice",
                 "card": "Grizzly Bears",
@@ -354,7 +381,7 @@ def _case_paused_combat_declaration(client: TestClient) -> dict[str, Any]:
             },
         )
         assert cast.status_code == 200 and cast.json()["allowed"] is True, cast.text
-        resolved = client.post(f"/api/games/{game_id}/resolve-top")
+        resolved = client.post(f"/api/games/{game_id}/resolve-top", params={"uid": uids["alice"]})
         assert resolved.status_code == 200, resolved.text
         bears = next(
             c
@@ -362,10 +389,16 @@ def _case_paused_combat_declaration(client: TestClient) -> dict[str, Any]:
             if c["name"] == "Grizzly Bears"
         )
         patched = client.patch(
-            f"/api/games/{game_id}/cards/{bears['id']}", json={"summoning_sick": False}
+            f"/api/games/{game_id}/cards/{bears['id']}",
+            params=_key(game_id),
+            json={"summoning_sick": False},
         )
         assert patched.status_code == 200, patched.text
-        step = client.put(f"/api/games/{game_id}/step", json={"step": "beginning_of_combat"})
+        step = client.put(
+            f"/api/games/{game_id}/step",
+            params=_key(game_id),
+            json={"step": "beginning_of_combat"},
+        )
         assert step.status_code == 200, step.text
         advanced = client.post(
             f"/api/games/{game_id}/advance", params={"uid": uids["alice"]}, json={"player": "alice"}
@@ -434,7 +467,9 @@ def _case_mid_game_full_state(client: TestClient) -> dict[str, Any]:
             if board["turn_number"] == target_turn and board["step"] == target_step:
                 break
             advanced = client.post(
-                f"/api/games/{game_id}/advance", json={"player": board["active_player"]}
+                f"/api/games/{game_id}/advance",
+                params={"uid": uids[board["active_player"]]},
+                json={"player": board["active_player"]},
             )
             assert advanced.status_code == 200, advanced.text
             body = advanced.json()

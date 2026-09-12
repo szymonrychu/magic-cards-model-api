@@ -296,11 +296,14 @@ def test_pause_and_resume_round_trip_over_a_real_socket(live_server: str) -> Non
             for _ in range(8):  # 7 max hand size + 1 to force the discard
                 r = http.post(
                     f"/api/games/{game_id}/cards",
+                    params={"key": admin_key},
                     json={"card": "Mountain", "player": "alice", "zone": "hand"},
                 )
                 assert r.status_code == 200, r.text
             jump = http.put(
-                f"/api/games/{game_id}/step", json={"step": "end_step", "player": "alice"}
+                f"/api/games/{game_id}/step",
+                params={"key": admin_key},
+                json={"step": "end_step", "player": "alice"},
             )
             assert jump.status_code == 200, jump.text
             board = http.get(f"/api/games/{game_id}", params={"uid": admin_key}).json()

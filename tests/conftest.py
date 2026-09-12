@@ -49,6 +49,89 @@ def require_postgres_database_url(env_var: str) -> str:
     raise AssertionError("unreachable: pytest.skip/pytest.fail always raise")
 
 
+#: The methods the harness credential is added to. `game_access.py`'s
+#: positive rule also covers `DELETE`, and this deliberately does not:
+#: `app.delete_game` and `decks_api.end_lobby_game` have always required a
+#: seat uid or the admin key of their own, so no `DELETE` call site in this
+#: suite was ever relying on presenting nothing - and adding a key to one
+#: would silently turn `test_games.py::
+#: test_delete_without_credentials_is_refused` green for the wrong reason.
+_HARNESS_CREDENTIAL_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
+def _game_id_in(url: str) -> str | None:
+    """The `{game_id}` segment of `url`, or `None` for a path that names no
+    game. Both routers spell it the same way - `/api/games/<id>/...` and
+    `/api/lobby/games/<id>/...` - so one "the segment after `games`" rule
+    covers them."""
+    segments = url.split("?")[0].split("#")[0].strip("/").split("/")
+    if "games" not in segments:
+        return None
+    index = segments.index("games")
+    return segments[index + 1] if len(segments) > index + 1 else None
+
+
+def _already_credentialled(url: str, params: object, body: object) -> bool:
+    if "uid=" in url or "key=" in url:
+        return True
+    for source in (params, body):
+        if isinstance(source, dict) and ("uid" in source or "key" in source):
+            return True
+    return False
+
+
+@pytest.fixture(autouse=True)
+def _harness_credential(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The test harness's own credential, presented on any mutating
+    game-scoped request that carries none.
+
+    `game_access.py` now requires a credential of every mutating call on a
+    `{game_id}` route - a deny-list keyed on a uid cannot restrict a caller
+    who omits the uid, which is the hole this fixture's counterpart,
+    `tests/test_mutation_needs_a_credential.py`, pins closed. 469 call sites
+    across 81 files in this suite presented nothing at all, because until
+    now nothing made them.
+
+    They are not 469 separate bugs, and the fix is not 469 edits. Every one
+    of them is *this process*, driving a game *it created in this process*,
+    and the credential for exactly that is the game's admin key -
+    `store.admin_key` hands it over, so the harness is presenting a
+    credential it genuinely holds rather than being handed an exemption. The
+    key goes in `key=`, never over a `uid`/`key` a test supplied itself, and
+    only ever for a game the store still knows.
+
+    **Opt out with `@pytest.mark.no_harness_credential`** in any test whose
+    subject is the credential rule itself -
+    `tests/test_mutation_needs_a_credential.py` and
+    `tests/test_user_separation.py` both do, and a new security test that
+    forgets to will pass for the wrong reason. That is the one hazard this
+    fixture carries, and it is the reason it is a marker rather than
+    something implicit.
+
+    Patched onto `TestClient.request` rather than wrapped around the
+    `client` fixture on purpose: ~20 tests build a bare `TestClient(app)` of
+    their own, or hand one to `seatkit` through
+    `monkeypatch.setattr(httpx, "Client", ...)`, and every one of those has
+    to be covered too.
+    """
+    if "no_harness_credential" in request.keywords:
+        return
+    original = TestClient.request
+
+    def request_with_harness_credential(self, method, url, **kwargs):  # noqa: ANN001, ANN202
+        if str(method).upper() in _HARNESS_CREDENTIAL_METHODS:
+            target = str(url)
+            params = kwargs.get("params")
+            if not _already_credentialled(target, params, kwargs.get("json")):
+                game_id = _game_id_in(target)
+                key = store.admin_key(game_id) if game_id else None
+                if key is not None and (params is None or isinstance(params, dict)):
+                    kwargs["params"] = {**(params or {}), "key": key}
+        return original(self, method, url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request_with_harness_credential)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_claude_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """`POST /api/lobby/games` now starts each `ai: true` seat itself, right

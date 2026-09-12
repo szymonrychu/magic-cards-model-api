@@ -49,6 +49,13 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    # Opt out of `tests/conftest.py`'s `_harness_credential` fixture, which
+    # presents the game's admin key on any mutating game-scoped request that
+    # carries none. Only a test whose subject IS the credential rule wants
+    # this - see `tests/test_mutation_needs_a_credential.py`.
+    "no_harness_credential: send mutating game requests exactly as written, with no credential added",
+]
 # Repo root on sys.path so tests/wrapper/* can import shared helpers as
 # `tests.wrapper.test_session`. A second conftest.py under tests/wrapper/
 # cannot do this job: it collides with the top-level `conftest` module that

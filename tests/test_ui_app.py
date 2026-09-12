@@ -573,7 +573,11 @@ def test_ticking_run_never_ends_over_a_pass_that_paused_instead_of_completing() 
     )
     posts = [c for c in result["calls"] if c["method"] == "POST"]
     assert len(posts) == 1, result["calls"]
-    assert posts[0]["path"] == "/api/games/g1/actions/pass-priority"
+    # `?uid=u1`: `send()` puts this seat's own credential on every request
+    # it makes, because the server refuses a mutating call that presents
+    # none (`game_access.py`'s positive rule). Before that, nine of this
+    # file's action paths - `pass-priority` among them - sent nothing.
+    assert posts[0]["path"] == "/api/games/g1/actions/pass-priority?uid=u1"
     assert result["run"] is not None, "a paused pass must not end the run"
     assert result["run"]["passes"] == 0, "a pass that never completed must not be recorded as one"
 

@@ -187,8 +187,19 @@ def test_a_uid_cannot_answer_a_decision_in_a_game_it_is_not_seated_in(client: Te
             params={"uid": uids_b["carol"]},  # a real uid - for the wrong game
             json={"player": "alice", "card_ids": [pending["cards"][0]]},
         )
-        assert answer.status_code == 200
-        assert answer.json()["accepted"] is False
+        # Previously a 200 carrying `accepted: false` - `decide`'s own seat
+        # check, reached because the gate waved every caller through to an
+        # ownerless game. `game_access.py`'s positive rule now requires a
+        # mutating call to present a credential for *this* game, and carol's
+        # uid is a credential for game B, so the refusal comes from the gate
+        # instead: a 404 indistinguishable from "no such game", which is the
+        # answer this api gives on purpose to anyone who cannot prove they
+        # are entitled to a game (see `game_access.py`'s docstring). The
+        # isolation property this test is about holds either way, and rather
+        # more firmly this way - game A's pending decision is not even
+        # confirmed to exist.
+        assert answer.status_code == 404, answer.text
+        assert answer.json()["detail"] == f"no game {game_a}", answer.text
 
         # Answer it for real, with the correct game's own uid.
         correct = client.post(

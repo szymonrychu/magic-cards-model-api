@@ -38,6 +38,13 @@ from oidc_testkit import ISSUER, bearer_header, generate_keypair, jwks, token
 
 from magic_cards_model_api.app import app as raw_app
 
+#: This whole file's subject is what a caller may reach with the credential
+#: it actually presents, and several tests here deliberately present none -
+#: `conftest.py`'s `_harness_credential` fixture would hand them the game's
+#: admin key and turn every one of those assertions green for the wrong
+#: reason.
+pytestmark = pytest.mark.no_harness_credential
+
 LEGAL_DECK = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
 LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
 
