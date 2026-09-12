@@ -7,6 +7,40 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-12 - the advisor panel took the bottom-right corner, and the log
+  moved into an overlay of its own rather than into `#modal`.** Three things
+  this cost, worth not rediscovering.
+
+  (1) **`#log-modal` is a sibling of `#modal`, never a dialog inside it.**
+  `panels.js`'s `closeModal` empties `#modal`'s content on every close, and
+  `render/log.js`'s `mountLog` subscribes once at boot and keyed-patches one
+  `#log-box` for the life of the page. Nested, the log's element would be
+  destroyed the first time any other dialog closed and that subscription
+  would patch a detached node for the rest of the game - a log that silently
+  stops growing. So the overlay is built once in `index.html` and only
+  toggled (`toggleLogModal`/`closeLogModal`/`logModalIsOpen`), and `mountLog`
+  itself is untouched.
+
+  (2) **A hidden box has no scroll geometry, so opening the log needed its
+  own scroll pin.** `mountLog`'s auto-scroll reads `scrollHeight`, which is 0
+  while the overlay is `hidden`, so every poll tick pinned `scrollTop` to 0
+  and the log opened on entry #1 of 500. `toggleLogModal` reads
+  `scrollHeight` immediately after clearing `hidden` - which is what forces
+  the browser's synchronous reflow - and pins the bottom there, because that
+  is the only place where the laid-out height exists.
+
+  (3) **Advice freshness is judged over-conservatively on purpose.**
+  `advice_model.js`'s `isFresh` stales a proposal on ANY ledger row after the
+  board the agent read, including rows that move nothing (`plan_declared`,
+  `report_problem`). Deciding whether the board "really" changed means
+  re-implementing the engine in the browser; a false "stale" costs one
+  re-think, a false "fresh" means approving a play against a board that has
+  moved. A proposal with no `based_on_seq` is never fresh. Approve also
+  records `/advice/{seq}/approve` BEFORE performing the play, and performs
+  nothing if that record fails: an unrecorded approval is, in the ledger the
+  retrospective reads, indistinguishable from a play the human thought of
+  themselves.
+
 - **2026-09-10 - an action answer now carries its own legal targets, and the
   candidates are opt-in because the engine will not cache the board.** M1's
   three findings, in the order they cost time.

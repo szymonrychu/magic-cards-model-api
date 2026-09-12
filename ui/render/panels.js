@@ -11,7 +11,7 @@
 // `showAiError`, `showFallbackBox` (app.js:2835-2883), `renderPhaseTrack`/the
 // `$("#turn-info")` line (app.js:456-512), `renderAiStallBanner`/
 // `aiUnchangedSeconds` (app.js:1712-1748), `setConnection` (app.js:411-418),
-// `openZonesModal`/`openReportModal`/`showModal`/`closeModal`
+// `openZonesModal`/`openReportModal`/`showModal`/`closeModal`/`toggleLogModal`
 // (app.js:2645-2698), and `wireCardPreview`/`showPreview`/`hidePreview`
 // (app.js:656-700) - rebuilt as `h()`/`patchChildren` nodes instead of
 // `innerHTML` strings. The zones popover's cards are wired to the same
@@ -61,6 +61,53 @@ export function closeModal(root) {
   modal.hidden = true;
   clear(modal);
 }
+
+// ---------------------------------------------------------- log overlay --
+//
+// `#log-modal` is the game log's own persistent overlay, and it is
+// deliberately NOT built through `showModal` above. That empties `#modal` on
+// every open and `closeModal` empties it again on every close, which is
+// right for a dialog whose content is rebuilt each time - and fatal for the
+// log: `render/log.js`'s `mountLog` subscribes once, at boot, and keyed-
+// patches one `#log-box` element for the life of the page. Destroying that
+// element out from under it leaves it patching a detached node, so the log
+// silently stops growing. `#log-modal` is built once in `index.html` and
+// these three functions only ever toggle it.
+
+/** Whether the log overlay is open. */
+export function logModalIsOpen(root) {
+  const modal = root.querySelector("#log-modal");
+  return Boolean(modal && !modal.hidden);
+}
+
+/** Close the log overlay, content untouched. */
+export function closeLogModal(root) {
+  const modal = root.querySelector("#log-modal");
+  if (modal) modal.hidden = true;
+}
+
+/** Show the log overlay if it is hidden, hide it if it is not - what the
+ * topbar's Log button does. `hidden`, never `style.display`: `style.css`'s
+ * global `[hidden] { display: none !important }` is the only thing that
+ * beats `.modal`'s own `display: flex`, which is why a "hidden" modal once
+ * covered the whole page and swallowed every click. */
+export function toggleLogModal(root) {
+  const modal = root.querySelector("#log-modal");
+  if (!modal) return;
+  modal.hidden = !modal.hidden;
+  if (modal.hidden) return;
+  // Newest entries first sight, which needs doing HERE and not in `mountLog`
+  // (untouched on purpose). `mountLog`'s auto-scroll reads real scroll
+  // geometry, and a hidden element has none: while this overlay is closed,
+  // `scrollHeight` is 0, so every patch pins `scrollTop` to 0 and the log
+  // would open showing entry #1 of 500. Reading `scrollHeight` immediately
+  // after clearing `hidden` is what forces the browser's own synchronous
+  // reflow, so the height is the laid-out one rather than the stale zero.
+  const box = modal.querySelector("#log-box");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+// ------------------------------------------------------- modal (shared) --
 
 /** Build `#modal`'s content via `builder(inner, close)` and show it. One
  * shared overlay for every dialog-shaped thing this module needs (the zones
@@ -250,13 +297,29 @@ function renderPhaseTrack(el, state) {
 
 /** Mount the topbar into `root` (normally `document`): `#turn-info`,
  * `#phase-track`, `#ai-panel`, `#conn-status`/`#conn-status-game`, and
- * `#ai-loading-banner`/`#ai-stall-banner`, plus wiring `#open-zones`/`#leave-game`/
- * `#report-problem`. `handlers = {onOpenZones(), onLeaveGame(),
- * onPassForAiSeat(aiPlayer), onReportProblem(text)}`. Returns the
- * `store.subscribe` unsubscribe function. */
+ * `#ai-loading-banner`/`#ai-stall-banner`, plus wiring `#open-zones`/
+ * `#open-log`/`#leave-game`/`#report-problem`. `handlers = {onOpenZones(),
+ * onToggleLog(), onLeaveGame(), onPassForAiSeat(aiPlayer),
+ * onReportProblem(text)}`. Returns the `store.subscribe` unsubscribe
+ * function. */
 export function mountTopbar(root, store, handlers) {
   const openZones = root.querySelector("#open-zones");
   if (openZones) openZones.onclick = () => handlers.onOpenZones();
+  const openLog = root.querySelector("#open-log");
+  if (openLog) openLog.onclick = () => handlers.onToggleLog();
+  // The log overlay covers the whole viewport, this topbar included, so the
+  // button that opened it cannot close it again - without a backdrop click,
+  // Escape would be the only way out of a panel a mouse opened. `e.target
+  // === logModal` is the test that tells the dimmed backdrop apart from the
+  // log itself, so reading (or selecting a line in) the log does not dismiss
+  // it. Closing never empties it: `mountLog` keeps its element for the life
+  // of the page.
+  const logModal = root.querySelector("#log-modal");
+  if (logModal) {
+    logModal.addEventListener("click", (e) => {
+      if (e.target === logModal) closeLogModal(root);
+    });
+  }
   const leave = root.querySelector("#leave-game");
   if (leave) leave.onclick = () => handlers.onLeaveGame();
   const report = root.querySelector("#report-problem");

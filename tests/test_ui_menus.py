@@ -577,6 +577,33 @@ def test_the_casting_strip_is_in_the_control_ribbon_not_inside_the_board():
     assert 'id="casting-strip"' in side.group(1)
 
 
+def test_the_control_ribbon_holds_exactly_the_five_panels_that_ask_or_advise():
+    """What that column is, in order, top to bottom: what is being asked
+    (`#prompt-box`), the announcement in progress (`#casting-strip`), the
+    priority controls (`#priority-box`), the stops autopilot halts for
+    (`#stops-box`), and the mtg-buddy advisor's current proposal
+    (`#advice-box`) - which absorbs the leftover height, the role
+    `#log-box` used to have here.
+
+    The log is deliberately NOT in this list any more: the owner asked for
+    the advisor to "reuse bottom-right corner, where game log lives right
+    now", so it moved into `#log-modal` behind the topbar's Log button
+    (`tests/test_ui_advice_layout.py` holds that half). Pinned as an ordered
+    list rather than a set of `in` checks, because this column's order is
+    the reading order a player relies on.
+    """
+    html = (UI / "index.html").read_text()
+    side = re.search(r'<aside id="side-panel">(.*?)</aside>', html, re.S)
+    assert side, "could not find #side-panel in ui/index.html"
+    assert re.findall(r'<div id="([\w-]+)"', side.group(1)) == [
+        "prompt-box",
+        "casting-strip",
+        "priority-box",
+        "stops-box",
+        "advice-box",
+    ]
+
+
 def test_the_anchored_menu_is_viewport_fixed_never_document_absolute():
     """A `position: absolute` menu is placed in document coordinates, so one
     hanging past the bottom of the window extends the document and the page

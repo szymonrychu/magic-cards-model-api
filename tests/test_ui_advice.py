@@ -393,7 +393,10 @@ def test_a_fresh_proposal_shows_the_summary_the_rationale_and_an_enabled_approve
           return {
             hidden: box.hidden,
             text: box.textContent,
-            approveDisabled: approve === null ? null : Boolean(approve.disabled || approve.attrs.disabled !== undefined),
+            approveDisabled:
+              approve === null
+                ? null
+                : Boolean(approve.disabled || approve.attrs.disabled !== undefined),
             lines: box.children.length,
           };
         })()
@@ -449,13 +452,18 @@ def test_a_stale_proposal_keeps_its_words_dims_them_and_disables_approve() -> No
         + MOUNT
         + """
           const classes = [];
-          const walk = (n) => { if (n.className) classes.push(n.className); (n.children || []).forEach(walk); };
+          const walk = (n) => {
+            if (n.className) classes.push(n.className);
+            (n.children || []).forEach(walk);
+          };
           walk(box);
           click(approve);
           return {
             text: box.textContent,
             classes,
-            approveDisabled: Boolean(approve.disabled || approve.attrs.disabled !== undefined),
+            approveDisabled: Boolean(
+              approve.disabled || approve.attrs.disabled !== undefined
+            ),
             approveCalls: calls.length,
             dismiss: findByText(box, "button", "Dismiss") !== null,
           };
@@ -488,7 +496,9 @@ def test_approve_is_disabled_while_one_of_this_seats_submissions_is_outstanding(
         + """
           click(approve);
           return {
-            approveDisabled: Boolean(approve.disabled || approve.attrs.disabled !== undefined),
+            approveDisabled: Boolean(
+              approve.disabled || approve.attrs.disabled !== undefined
+            ),
             approveCalls: calls.length,
             stillShowsSummary: box.textContent.includes("Lightning Bolt"),
           };
@@ -517,7 +527,9 @@ def test_a_shape_the_server_could_not_dry_run_says_so_in_the_panel() -> None:
         + """
           return {
             text: box.textContent,
-            approveDisabled: Boolean(approve.disabled || approve.attrs.disabled !== undefined),
+            approveDisabled: Boolean(
+              approve.disabled || approve.attrs.disabled !== undefined
+            ),
           };
         })()
         """
@@ -566,7 +578,10 @@ def test_only_one_proposal_is_ever_on_screen_and_a_newer_one_replaces_it() -> No
           const before = box.textContent;
           store.set({
             log: {
-              entries: [...FRESH_LOG.entries, advice(12, { summary: "Attack with both", based_on_seq: 11 })],
+              entries: [
+                ...FRESH_LOG.entries,
+                advice(12, { summary: "Attack with both", based_on_seq: 11 }),
+              ],
               lastSeq: 12,
             },
           });
@@ -576,7 +591,10 @@ def test_only_one_proposal_is_ever_on_screen_and_a_newer_one_replaces_it() -> No
             after,
             approveButtons: (() => {
               let n = 0;
-              const walk = (x) => { if (x.tagName === "button") n += 1; (x.children || []).forEach(walk); };
+              const walk = (x) => {
+                if (x.tagName === "button") n += 1;
+                (x.children || []).forEach(walk);
+              };
               walk(box);
               return n;
             })(),
@@ -604,7 +622,8 @@ def test_the_panel_rerenders_when_busy_changes_even_though_the_log_did_not() -> 
         """
         + MOUNT
         + """
-          const enabledBefore = !(approve.disabled || approve.attrs.disabled !== undefined);
+          const disabledBefore = approve.disabled || approve.attrs.disabled !== undefined;
+          const enabledBefore = !disabledBefore;
           store.set({ busy: 1 });
           const now = findByText(box, "button", "Approve");
           const enabledAfter = !(now.disabled || now.attrs.disabled !== undefined);

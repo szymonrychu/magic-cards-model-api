@@ -3366,3 +3366,181 @@ def test_a_permanent_menu_opened_from_the_zones_modal_closes_it_too() -> None:
     assert result["modalHidden"] is True
     assert result["labels"] == ["+1: draw a card"]
     assert result["anchoredOnBoard"] is True
+
+
+# ------------------------------------------------- approving the advisor ---
+#
+# `ui/render/advice.js` renders the mtg-buddy advisor's proposal and hands
+# `{seq, method, path, body}` back on Approve; `approveAdvice` is what
+# `app.js` does with it, and the ORDERING is the contract. The approve-record
+# goes first so the post-match retrospective can pair an approval with the
+# proposal it approved - a play performed without that row recorded is a play
+# nothing can attribute to the advisor afterwards, which is the whole reason
+# the advisor is being trained against these games.
+
+
+def _advice_body() -> str:
+    """A fake DOM and a `fetch` stub that answers the approve-record however
+    the test asks: `__approve = "ok" | "refused" | "error"`. Every call is
+    recorded in order, method and path together, so the ordering between the
+    record and the action itself is readable rather than inferred."""
+    return """
+      globalThis.__calls = [];
+      globalThis.__toast = { textContent: "", hidden: true };
+      globalThis.__classes = new Set();
+      globalThis.document = {
+        body: {
+          classList: {
+            toggle: (name, on) => {
+              if (on) globalThis.__classes.add(name);
+              else globalThis.__classes.delete(name);
+            },
+          },
+          setAttribute: () => {},
+          removeAttribute: () => {},
+        },
+        querySelector: (sel) => (sel === "#toast" ? globalThis.__toast : null),
+      };
+      globalThis.__approve = "ok";
+      const board = () => ({
+        you: "alice", pending_decision: null, step: "precombat_main", turn_number: 4,
+        active_player: "alice", priority_holder: "alice", battlefield: [],
+        hands: { alice: [] }, stack: [], combat: { attacks: [] },
+        winner: null, drawn: false, pregame: null,
+      });
+      globalThis.fetch = (path, opts) => {
+        const method = opts ? opts.method : "GET";
+        globalThis.__calls.push({
+          method, path, body: opts && opts.body ? JSON.parse(opts.body) : null,
+        });
+        if (path.includes("/advice/")) {
+          if (globalThis.__approve === "error") {
+            return Promise.resolve({
+              ok: false, status: 409, json: async () => ({ detail: "that proposal is gone" }),
+            });
+          }
+          if (globalThis.__approve === "refused") {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                allowed: false,
+                reason: "that advice was not addressed to you",
+              }),
+            });
+          }
+          return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+        }
+        if (method === "POST") {
+          return Promise.resolve({ ok: true, json: async () => ({ allowed: true }) });
+        }
+        if (path.includes("/log")) {
+          return Promise.resolve({ ok: true, json: async () => ({ log: [], last_seq: 11 }) });
+        }
+        return Promise.resolve({ ok: true, json: async () => board() });
+      };
+      const seated = () => m.store.set({
+        gameId: "g1", uid: "u1", run: null, busy: 0,
+        stops: { mine: [], theirs: [], onStack: true },
+        state: board(),
+        log: { entries: [], lastSeq: 10 },
+      });
+      // What the panel hands over: the ledger row's own `{method, path,
+      // body}`, path included, carrying the ADVISOR's uid as recorded.
+      const PROPOSAL = {
+        seq: 11,
+        method: "POST",
+        path: "/api/games/g1/actions/cast?uid=advisor-uid",
+        body: { player: "alice", card_id: "c1" },
+      };
+    """
+
+
+def test_approving_records_the_approval_before_it_performs_the_play() -> None:
+    """The ordering, pinned. The routes themselves are a sibling task's work,
+    so the fetch is stubbed - but the sequence `app.js` sends them in is
+    decided here and is what has to hold."""
+    result = run_app(
+        _advice_body()
+        + """
+        (async () => {
+          seated();
+          await m.approveAdvice(PROPOSAL);
+          return globalThis.__calls.filter((c) => c.method === "POST").map((c) => c.path);
+        })()
+        """
+    )
+    assert len(result) == 2, f"expected the record then the play, got {result}"
+    assert "/advice/11/approve" in result[0], "the approval was not recorded first"
+    assert "/actions/cast" in result[1]
+
+
+def test_an_approval_the_server_would_not_record_performs_nothing_at_all() -> None:
+    """Both failure shapes: a non-2xx (`send()` turns it into a toast and a
+    `null`) and a 2xx refusal (`allowed: false`). Either way the play must
+    NOT be sent - an unrecorded approval is an advised play that looks, in
+    the ledger the retrospective reads, exactly like one the human thought of
+    themselves."""
+    result = run_app(
+        _advice_body()
+        + """
+        (async () => {
+          seated();
+          globalThis.__approve = "error";
+          await m.approveAdvice(PROPOSAL);
+          const posts = () =>
+            globalThis.__calls.filter((c) => c.method === "POST").map((c) => c.path);
+          const afterError = posts();
+          globalThis.__calls = [];
+          globalThis.__approve = "refused";
+          await m.approveAdvice(PROPOSAL);
+          const afterRefusal = posts();
+          return { afterError, afterRefusal, toast: globalThis.__toast.textContent };
+        })()
+        """
+    )
+    assert len(result["afterError"]) == 1
+    assert "/advice/11/approve" in result["afterError"][0]
+    assert len(result["afterRefusal"]) == 1
+    assert "/advice/11/approve" in result["afterRefusal"][0]
+    assert result["toast"], "the failure was silent - the player clicked Approve and saw nothing"
+
+
+def test_the_approved_play_is_sent_under_the_humans_uid_never_the_advisors() -> None:
+    """The advisor seat is read-only server-side, and an approved play is a
+    play the HUMAN made. The proposal's path arrives carrying the advisor's
+    own credential; it comes off, and `send()`'s one idempotent `uidOf` puts
+    this seat's uid on instead."""
+    result = run_app(
+        _advice_body()
+        + """
+        (async () => {
+          seated();
+          await m.approveAdvice(PROPOSAL);
+          const play = globalThis.__calls.filter((c) => c.path.includes("/actions/cast"))[0];
+          return { path: play.path, body: play.body };
+        })()
+        """
+    )
+    assert "uid=u1" in result["path"]
+    assert "advisor-uid" not in result["path"], "the play went out as the advisor"
+    assert result["body"] == {"player": "alice", "card_id": "c1"}, (
+        "the proposed body was not sent verbatim"
+    )
+
+
+def test_approving_refreshes_the_board_so_the_play_is_on_screen_at_once() -> None:
+    """Every other action path in `app.js` ends in `refresh()` rather than
+    waiting up to a full 1.2s tick, and an approved play is not special: the
+    whole point of the button is that the human does not have to click the
+    board, so the board has to show what happened."""
+    result = run_app(
+        _advice_body()
+        + """
+        (async () => {
+          seated();
+          await m.approveAdvice(PROPOSAL);
+          return globalThis.__calls.filter((c) => c.method === "GET").length;
+        })()
+        """
+    )
+    assert result >= 1, "nothing re-read the board after the play was performed"

@@ -911,10 +911,14 @@ h3 { font-size: 14px; }
 }
 /* The side panel's four stacked sections: what is being asked
    (`#prompt-box`), the priority controls (`#priority-box`), the stop
-   conditions autopilot will halt for (`#stops-box`), and the game log
-   (`#log-box`) - which alone takes whatever height the other three leave, so
-   a long log scrolls in place instead of pushing the panel taller than the
-   viewport. */
+   conditions autopilot will halt for (`#stops-box`), and the mtg-buddy
+   advisor's current proposal (`#advice-box`) - which alone takes whatever
+   height the other three leave, so the panel is exactly one viewport tall
+   whatever is in it.
+
+   `#log-box` used to be that last section. It now lives in `#log-modal`
+   instead (`index.html` has the reasoning), because this corner is the one
+   the owner asked to reuse for the advisor. */
 /* Careful with the next two rules: `#side-panel > div` above is an id *and*
    a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
    it does - measured with `getComputedStyle` in a real browser, both of them
@@ -927,9 +931,61 @@ h3 { font-size: 14px; }
 #prompt-box { border-color: var(--warn); }
 #priority-box { border-color: var(--accent); }
 #side-panel > #casting-strip { border-color: var(--accent); }
-#log-box {
+/* The advisor's panel, in the slot `#log-box` used to hold - so it carries
+   the same `flex: 1 1 auto; min-height: 0; overflow-y: auto`: it absorbs the
+   height the other three panels leave, and a long rationale scrolls inside
+   itself rather than pushing the ribbon past the window. It is still a
+   static panel, never a list - `render/advice.js` shows exactly one
+   proposal. */
+#advice-box {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+  font-size: 12px;
+}
+/* At `#side-panel > div`'s specificity, not below it - the trap documented
+   just above. A bare `#advice-box { border-color }` would lose, exactly as
+   `#prompt-box`'s and `#priority-box`'s did. */
+#side-panel > #advice-box { border-color: var(--accent); }
+
+/* One advisor proposal (`render/advice.js`). The summary is the play, the
+   `.advice-why` block is the agent's own words, and `.advice-where` says
+   which ledger entry and which step it was proposed at so it can be placed
+   against the log.
+
+   `.advice-stale` wraps all three once the board has moved: dimmed, because
+   the reasoning is still worth reading while deciding whether it still
+   applies, but no longer something to act on. The two notices that must NOT
+   dim with it - "the board moved" and "unchecked" - sit outside that
+   wrapper, at full contrast, and so does Approve. */
+.advice-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+.advice-summary { font-size: 13px; font-weight: 700; }
+.advice-why { margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+.advice-where { margin-top: 6px; color: var(--ink-faint); font-size: 11px; }
+.advice-stale { opacity: 0.55; }
+.advice-moved { margin-top: 8px; color: var(--warn); }
+.advice-unchecked { margin-top: 8px; color: var(--warn); }
+#advice-box button { margin-top: 10px; }
+
+/* The game log's own overlay. `.modal` already centres its child and dims
+   the page behind it; the log just needs a readable box to sit in, which is
+   what `.modal-inner` does for every other dialog - `#log-box` is that box
+   itself here, since it is the whole content. */
+#log-modal > #log-box {
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 11px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+  width: 860px;
+  max-width: 100%;
+  max-height: 86vh;
   overflow-y: auto;
   font-size: 12px;
 }

@@ -25,8 +25,8 @@ the mechanism and the brief the agent is given.
 The board is laid out the way MTGO and Arena lay it out: the opponent on top,
 the shared stack in the middle, you at the bottom. Everything the game ever
 asks you sits in one side panel on the right, top to bottom: the prompt, the
-priority verbs, the stops panel, and the game log. There is no confirm ribbon
-and no modal dialog.
+casting strip, the priority verbs, the stops panel, and the mtg-buddy
+advisor's current proposal. There is no confirm ribbon and no modal dialog.
 
 **One click when there is nothing left to choose.** Clicking a land in your
 hand plays it. Clicking a spell that has no modes, no X, no alternative cost
@@ -101,10 +101,24 @@ pass verb disarms it again. Once somebody has won or the game is drawn it
 goes away. The "keep priority" checkbox on
 the casting strip is CR 117.3c's retained priority.
 
-**The log.** The panel reads `GET /api/games/{id}/log?since=` incrementally
-and shows every action with its turn and step. A refused action appears in red
-with the engine's own words, which is the first place to look when a click did
-not do what you expected. The dashed row under your hand appears when
+**The advisor panel.** The bottom of that column shows the mtg-buddy
+advisor's current suggestion, if it has one: the decision summary, the
+agent's own rationale, which ledger entry and step it was proposed at, and
+Approve - which records the approval and then performs the play, so you do
+not have to click it out on the board yourself. It is a static panel showing
+exactly one proposal, never a list. Approve is enabled only while the
+proposal is still fresh (nothing has happened in the game since the board the
+agent read) and nothing else of yours is in flight; once the board moves, the
+summary and rationale stay readable but dimmed, the panel says which entry
+moved it, and the button is disabled until the advisor proposes again. A
+proposal the server could not dry-run is marked "unchecked".
+
+**The log.** Behind the topbar's **Log** button, next to Zones - it used to
+be the bottom of the side panel, and the advisor panel has that corner now.
+It reads `GET /api/games/{id}/log?since=` incrementally and shows every
+action with its turn and step. A refused action appears in red with the
+engine's own words, which is the first place to look when a click did not do
+what you expected. The dashed row under your hand appears when
 something grants you a play permission from a zone other than your hand.
 
 Starting a game from the lobby never touches another: games live side by side,
