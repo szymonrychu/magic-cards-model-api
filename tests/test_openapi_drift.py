@@ -271,6 +271,14 @@ def _baseline_components() -> tuple[str, set[str]]:
     pytest.skip("no git ref for openapi.json to compare against")
 
 
+def _vanished(baseline: set[str], names: set[str]) -> set[str]:
+    """Names the baseline published that the contract no longer names, minus
+    the ones a commit argued for. Shared by the guard and the test that
+    proves the guard works, so neither can pass on a comparison the other
+    does not make."""
+    return baseline - names - INTENTIONALLY_REMOVED_COMPONENTS
+
+
 def test_no_named_component_disappears_from_the_contract() -> None:
     """A component that existed on `main` may not stop being a component.
 
@@ -283,7 +291,7 @@ def test_no_named_component_disappears_from_the_contract() -> None:
     ref, baseline = _baseline_components()
     assert baseline, f"{ref}:openapi.json carries no components to compare against"
     names = set(_current_schema().get("components", {}).get("schemas", {}))
-    vanished = baseline - names - INTENTIONALLY_REMOVED_COMPONENTS
+    vanished = _vanished(baseline, names)
     assert not vanished, (
         f"these schema components existed in {ref}:openapi.json and are no longer "
         f"named in the contract: {sorted(vanished)}. Downstream repos validate "
@@ -295,12 +303,24 @@ def test_no_named_component_disappears_from_the_contract() -> None:
     )
 
 
-def test_the_baseline_guard_sees_a_removal() -> None:
-    """The guard above, proven in the direction that matters: given a
-    baseline naming a component this contract does not have, it reports that
-    name. Without this, a `_committed_at` that quietly answered `None`
-    everywhere would make the guard vacuous and nothing would notice."""
+def test_the_baseline_guard_reads_a_real_contract_and_sees_a_removal() -> None:
+    """The guard above, proven in both the directions that could make it
+    vacuous.
+
+    First that the baseline is a real contract and not an empty set: a
+    `_committed_at` that quietly answered `None` (a moved file, a ref that
+    stopped resolving, a git that is not there) would leave nothing to
+    compare and nothing would notice. `NewGame` stands in for "this parsed
+    an `openapi.json`" - it is one of the request models T1 names, so it has
+    been in every version of this artifact.
+
+    Then that the comparison itself reports a name the contract has stopped
+    publishing, through the same `_vanished` the guard calls."""
+    ref, baseline = _baseline_components()
+    assert "NewGame" in baseline, (
+        f"{ref}:openapi.json did not parse as a contract with named components - "
+        "the baseline this file's guard rests on is not being read"
+    )
     names = set(_current_schema().get("components", {}).get("schemas", {}))
     assert "NoSuchSchemaEverExisted" not in names
-    baseline = names | {"NoSuchSchemaEverExisted"}
-    assert baseline - names - INTENTIONALLY_REMOVED_COMPONENTS == {"NoSuchSchemaEverExisted"}
+    assert _vanished(baseline | {"NoSuchSchemaEverExisted"}, names) == {"NoSuchSchemaEverExisted"}
