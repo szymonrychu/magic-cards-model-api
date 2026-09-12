@@ -2111,3 +2111,31 @@ whoever works on the repo itself.
   created, patched onto `TestClient.request`, skipping DELETE, opt-out via
   `@pytest.mark.no_harness_credential`) - which is also the one hazard here:
   a new security test that forgets the marker passes for the wrong reason.**
+
+- **2026-09-12 - two acceptance-run anomalies, both diagnosed and fixed.**
+  (1) A 10-seed run's `GET /api/games` showed 34 live games, not 10: postgres
+  outlives the process that boots into it, and nothing ever archived a
+  gauntlet's games, so every past run's games (four of them, from earlier
+  dev/test runs: 2+2+10+10) stayed live forever, indistinguishable from the
+  current run's own 10. Fixed by soft-deleting every game a run booted, via
+  the existing `DELETE /api/games/{id}`, in `eval_gauntlet.run`'s own
+  `finally` - regression test boots a real subprocess against postgres and
+  asserts the live-game count is unchanged after the run.
+  (2) Baseline-vs-baseline mirrors were NOT stalling and NOT a policy defect
+  (attacks/blocks were being declared correctly, 0 refusals in 3197 ruled-on
+  attempts) - the acceptance run's 10 concurrent games shared one server
+  process (one CPU's worth of GIL, one postgres pool), and `legal-actions`
+  costs real time (measured mean 61ms/p90 154ms/max 226ms once a board had a
+  dozen-odd permanents, `Game.computed_board` recomputing rather than
+  caching, by design, out of scope to change). Confirmed by timing: the same
+  seed's game reached its own real `game_over` in ~131s run alone
+  (`--serial`) vs ~264s sharing the process with one other game - roughly
+  2x slower at just 2-way concurrency. Fix was `--serial` (play games one at
+  a time) plus making `eval_report`'s output honest about a cut-off game:
+  `unfinished_detail` carries `watch_game`'s own edge (`timeout`/`stalled`/
+  `report`) per game, and the rendered report states outright that
+  "unfinished" is never scored as a loss for either seat. The acceptance
+  condition is now stated explicitly in `eval_gauntlet`'s own docstring: a
+  bounded game reaching a real terminal state within its own bounds, not
+  "ten concurrent games finish in a given wall-clock time" - the latter is
+  a throughput property of this machine, tunable, and unproven at n=10.
