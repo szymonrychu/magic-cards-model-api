@@ -140,6 +140,68 @@ def review(entries: list[dict[str, Any]], declarations: list[dict[str, Any]]) ->
     }
 
 
+def advice_row(
+    seq: int,
+    player: str = "bob",
+    turn: int = 1,
+    path: str = "actions/play-land",
+    body: dict[str, Any] | None = None,
+    summary: str = "play the Forest",
+    reasoning: str = "a fourth land keeps the curve on track",
+    based_on_seq: int = 0,
+    validated: bool = True,
+    **over: Any,
+) -> dict[str, Any]:
+    """One `audit.ADVICE_ACTION` row, in the shape `audit.record` writes it -
+    `reasoning` top-level (the same convention every action route's own
+    `reasoning` argument already lands under), everything else in `detail`."""
+    return entry(
+        seq,
+        "advice",
+        turn=turn,
+        reasoning=reasoning,
+        detail={
+            "player": player,
+            "method": "POST",
+            "path": f"/api/games/g1/{path}",
+            "body": body if body is not None else {},
+            "summary": summary,
+            "based_on_seq": based_on_seq,
+            "validated": validated,
+        },
+        **over,
+    )
+
+
+def approval_row(seq: int, advice_seq: int, turn: int = 1, **over: Any) -> dict[str, Any]:
+    return entry(seq, "advice_approved", turn=turn, detail={"advice_seq": advice_seq}, **over)
+
+
+def advice_item(seq: int, player: str = "bob", **over: Any) -> dict[str, Any]:
+    """One `review.build_review`-computed `advice` list entry, snake_case as
+    the server hands it back."""
+    row: dict[str, Any] = {
+        "seq": seq,
+        "ts": f"2026-09-08T20:0{seq}:00+00:00",
+        "turn": 1,
+        "step": "precombat_main",
+        "phase": "precombat_main",
+        "player": player,
+        "summary": "play the Forest",
+        "reasoning": "a fourth land keeps the curve on track",
+        "path": "/api/games/g1/actions/play-land",
+        "body": {"card_id": "c1"},
+        "based_on_seq": 0,
+        "validated": True,
+        "approved": False,
+        "approved_seq": None,
+        "did": None,
+        "followed": False,
+    }
+    row.update(over)
+    return row
+
+
 # ------------------------------------------------ the snapshot's own lines --
 
 
@@ -575,3 +637,123 @@ def test_a_reflection_the_endpoint_carries_itself_is_used_when_present() -> None
     found = call("m.reflectionOf(rev)", rev=rev)
     assert found["text"] == "I was the beatdown and played like the control deck"
     assert found["afterTheResult"] is True
+
+
+# --------------------------------------------------- mtg-buddy's advice -----
+
+
+def test_the_advice_action_constants_match_what_audit_py_writes() -> None:
+    assert call("m.ADVICE_ACTION") == "advice"
+    assert call("m.ADVICE_APPROVED_ACTION") == "advice_approved"
+
+
+def test_an_advice_row_is_the_turns_header_not_one_of_its_frames() -> None:
+    """Mirrors `plan_declared`'s own treatment: `_declarations`'s marks are
+    `plan_declared`-only, and this stream's marks are `advice`-only - neither
+    is affected by the other existing."""
+    rows = [advice_row(2), entry(3, "play_land", detail={"player": "bob", "card": "Forest"})]
+    groups = call("m.reviewTurns(rev)", rev=review(rows, []))
+    assert len(groups[0]["advice"]) == 1
+    assert [f["seq"] for f in groups[0]["frames"]] == [3]
+    assert groups[0]["advice"][0]["summary"] == "play the Forest"
+
+
+def test_an_advice_approved_row_is_a_low_weight_frame_labelled_by_advice_seq() -> None:
+    rows = [advice_row(2), approval_row(3, advice_seq=2)]
+    frames = call("m.reviewTurns(rev)[0].frames", rev=review(rows, []))
+    assert len(frames) == 1
+    frame = frames[0]
+    assert frame["isApproval"] is True
+    assert frame["adviceSeq"] == 2
+    assert frame["label"] == "approving advice #2"
+    assert frame["routine"] is False, (
+        "not routine - it must never be folded into an unrelated run of "
+        "'advance'/'pass_priority' rows by collapseRoutine"
+    )
+
+
+def test_advice_of_prefers_the_servers_own_computed_list() -> None:
+    rows = [advice_row(2)]
+    rev = review(rows, [])
+    rev["advice"] = [advice_item(2, approved=True, approved_seq=3, followed=True)]
+    items = call("m.adviceOf(rev)", rev=rev)
+    assert len(items) == 1
+    assert items[0]["approved"] is True
+    assert items[0]["approvedSeq"] == 3
+    assert items[0]["followed"] is True
+
+
+def test_advice_of_falls_back_to_deriving_from_raw_entries() -> None:
+    """No `review.advice` at all - an older server, or a payload assembled by
+    hand - is exactly `test_ui_review_model.py`'s own `review()` fixture:
+    every existing test above this section already exercises this path."""
+    rows = [
+        advice_row(2, body={"card_id": "c1"}),
+        approval_row(3, advice_seq=2),
+        entry(4, "play_land", detail={"player": "bob", "card_id": "c1", "allowed": True}),
+    ]
+    items = call("m.adviceOf(rev)", rev=review(rows, []))
+    assert len(items) == 1
+    item = items[0]
+    assert item["seq"] == 2
+    assert item["player"] == "bob"
+    assert item["approved"] is True
+    assert item["approvedSeq"] == 3
+    assert item["did"]["seq"] == 4
+    assert item["followed"] is True
+
+
+def test_advice_of_derives_approved_and_followed() -> None:
+    rows = [
+        advice_row(2, body={"card_id": "c1"}),
+        approval_row(3, advice_seq=2),
+        entry(4, "play_land", detail={"player": "bob", "card_id": "c1", "allowed": True}),
+    ]
+    item = call("m.adviceOf(rev)[0]", rev=review(rows, []))
+    assert item["approved"] is True
+    assert item["did"]["action"] == "play_land"
+    assert item["followed"] is True
+
+
+def test_advice_of_derives_approved_but_refused_distinct_from_ignored() -> None:
+    """A refusal is never `did` - `did` is `None` here, and only the
+    `approved` flag tells this apart from a piece of advice nobody ever
+    approved at all."""
+    rows = [
+        advice_row(2, body={"card_id": "c1"}),
+        approval_row(3, advice_seq=2),
+        entry(
+            4,
+            "play_land",
+            detail={
+                "player": "bob",
+                "card_id": "c1",
+                "allowed": False,
+                "reason": "no land drop left",
+            },
+        ),
+    ]
+    item = call("m.adviceOf(rev)[0]", rev=review(rows, []))
+    assert item["approved"] is True
+    assert item["did"] is None
+    assert item["followed"] is False
+
+
+def test_advice_of_derives_ignored_did_something_else() -> None:
+    rows = [
+        advice_row(2, body={"card_id": "c1"}),
+        entry(3, "pass_priority", detail={"player": "bob", "allowed": True}),
+    ]
+    item = call("m.adviceOf(rev)[0]", rev=review(rows, []))
+    assert item["approved"] is False
+    assert item["approvedSeq"] is None
+    assert item["did"]["action"] == "pass_priority"
+    assert item["followed"] is False
+
+
+def test_advice_of_derives_ignored_did_nothing() -> None:
+    rows = [advice_row(2, body={"card_id": "c1"}), entry(3, "cast", detail={"player": "alice"})]
+    item = call("m.adviceOf(rev)[0]", rev=review(rows, []))
+    assert item["approved"] is False
+    assert item["did"] is None
+    assert item["followed"] is False
