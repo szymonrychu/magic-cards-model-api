@@ -910,13 +910,25 @@ class Seat:
         (its payment stops at the shortfall); an agent may also pass an
         explicit, smaller set of source ids to any mana-paying tool.
         """
-        return [
-            card["id"]
-            for card in state["battlefield"]
-            if card["controller"] == self.player
-            and not card["tapped"]
-            and any(ability["mana"] for ability in card["abilities"])
-        ]
+        return untapped_mana_sources(state, self.player)
+
+
+def untapped_mana_sources(state: dict[str, Any], player: str) -> list[str]:
+    """Every untapped mana source `player` controls, read off a state view.
+
+    One rule, one place: `Seat.my_untapped_sources` is this, and so is what
+    `baseline_seat.py` offers the engine when it pays for a cast. Offering
+    all of them lets the engine tap only what the cost needs (CR 601.2g -
+    its payment stops at the shortfall), which is why a caller with no
+    opinion should always offer the lot rather than pick.
+    """
+    return [
+        card["id"]
+        for card in state["battlefield"]
+        if card["controller"] == player
+        and not card["tapped"]
+        and any(ability["mana"] for ability in card["abilities"])
+    ]
 
 
 class Seats:
@@ -1090,11 +1102,16 @@ def _parse_pairs(value: str) -> list[dict[str, str]]:
 # -- the "one call, one action" flow ----------------------------------------
 
 
-def _board_signature(state: dict[str, Any]) -> Any:
+def board_signature(state: dict[str, Any]) -> Any:
     """A fingerprint of everything about the board this seat may see, used
     only to tell "the board changed since the call began" apart from "priority
     bounced straight back with nothing new". Two filtered views compare equal
-    under this exactly when nothing visible to this seat differs."""
+    under this exactly when nothing visible to this seat differs.
+
+    Public because `baseline_seat.py` needs the same question answered - it
+    forgets a refused action only once the board has actually moved - and
+    this project has twice shipped two implementations of one rule that
+    quietly drifted apart (see this module's own docstring)."""
     return {key: value for key, value in state.items() if key not in _NOT_THE_BOARD}
 
 
@@ -1167,7 +1184,7 @@ def compute_wake_reason(
         # other reason fall back to `advance` and bounce off that refusal too.
         return "the stack is non-empty and you have priority: pass_priority to let it resolve"
     if state.get("priority_holder") == player and (
-        before is None or _board_signature(state) != _board_signature(before)
+        before is None or board_signature(state) != board_signature(before)
     ):
         return "you have priority and the board has changed"
     return None
@@ -1246,7 +1263,7 @@ def block_until_wake(
         if reason is not None or remaining <= 0:
             # `recent_log` is a sibling of `state`, never a key inside it:
             # callers hand this very `state` back as the next call's `before`
-            # (`run_action`, and `test_action_flow.py`), and `_board_signature`
+            # (`run_action`, and `test_action_flow.py`), and `board_signature`
             # would then read a growing log as "the board has changed" and
             # wake the seat for its own history.
             return {
