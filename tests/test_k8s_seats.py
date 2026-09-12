@@ -1076,3 +1076,65 @@ def test_the_driver_reads_the_revision_stamp_from_the_guides_volume() -> None:
     mounts = {m["name"]: m for m in driver["volumeMounts"]}
     assert driver_env["GUIDES_ROOT"] == mounts["guides"]["mountPath"] == "/guides"
     assert GUIDES_REVISION_FILE in _guides_init_container(job)["command"][2]
+
+
+# `GUIDES_REF` reaches `git fetch` as a positional argument, and git reads a
+# leading `--` as an option wherever it appears. The value is quoted, so
+# there was never a *shell* injection here, and it is operator-set
+# deployment config rather than anything a player can reach - but
+# `--upload-pack=<command>` is a git option that runs a command, and one
+# typo'd or copy-pasted ref was all it took. Verified before the fix:
+# GUIDES_REF='--upload-pack=touch /tmp/pwned;git-upload-pack' fetched
+# successfully AND created the file.
+#
+# Two guards, because either alone is thin: the ref is validated against
+# `[A-Za-z0-9._/-]+` before anything runs, and `--` fences it off from git's
+# own option parsing regardless.
+
+
+def _guides_script(job: dict) -> str:
+    container = _guides_init_container(job)
+    assert container["command"][:2] == ["/bin/sh", "-euc"]
+    return container["command"][2]
+
+
+def test_the_guides_fetch_fences_the_ref_off_from_gits_option_parsing() -> None:
+    assert 'fetch --depth 1 origin -- "$ref"' in _guides_script(_build())
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        # The real one: `--upload-pack=<command>` is a git option that runs a
+        # command, and before the fix this fetched successfully and ran it.
+        "--upload-pack=true",
+        "--exec=true",
+        "main;true",
+        "main$(true)",
+        "main ref",
+        "-",
+    ],
+)
+def test_the_guides_script_refuses_a_ref_that_is_not_a_ref(tmp_path: Path, ref: str) -> None:
+    _, env = _origin_repo(tmp_path)
+
+    with pytest.raises(subprocess.CalledProcessError) as refused:
+        _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
+
+    assert b"GUIDES_REF" in refused.value.stderr, refused.value.stderr
+    assert not (tmp_path / "guides" / ".guides-revision").exists()
+
+
+@pytest.mark.parametrize("ref", ["main", "pinned", "v1.2.3", "release/2024-05"])
+def test_the_guides_script_still_accepts_every_shape_of_real_ref(tmp_path: Path, ref: str) -> None:
+    """A branch, a tag, a slashed branch and a bare sha are all legal git
+    refs, and the validation must not have narrowed the corpus to `main`."""
+    origin, env = _origin_repo(tmp_path)
+    if ref not in ("main", "pinned"):
+        subprocess.run(
+            ["git", "-C", str(origin), "branch", ref, "HEAD"], check=True, capture_output=True
+        )
+
+    guides = _run_guides_script(_build({**ENV, "GUIDES_REF": ref}), tmp_path, env)
+
+    assert (guides / ".guides-revision").read_text().strip() == _rev(origin, ref)

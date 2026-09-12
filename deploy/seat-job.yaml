@@ -111,6 +111,16 @@ spec:
       - name: mcp
         emptyDir: {}
       initContainers:
+      # GUIDES_REF reaches `git fetch` as a positional argument, and git reads
+      # a leading `--` as an option wherever one appears - `--upload-pack=
+      # <command>` is a git option that runs a command. The value is quoted,
+      # so there was never a *shell* injection here, and this is operator-set
+      # deployment config rather than anything a player can reach; one
+      # copy-pasted ref was still all it took. Two guards below: the ref is
+      # validated against `[A-Za-z0-9][A-Za-z0-9._/-]*` before anything runs,
+      # and `fetch ... origin -- "$ref"` fences it off from git's own option
+      # parsing regardless. `tests/test_k8s_seats.py` runs this script
+      # verbatim against a real local repo and pins both.
       - name: guides
         image: __AGENT_IMAGE__
         imagePullPolicy: IfNotPresent
@@ -123,6 +133,8 @@ spec:
 
           ref="${GUIDES_REF:-main}"
 
+          printf %s "$ref" | grep -Eq "^[A-Za-z0-9][A-Za-z0-9._/-]*$" || { echo "GUIDES_REF is not a ref: $ref" >&2; exit 1; }
+
           git config --global --add safe.directory "$dir"
 
           find "$dir" -mindepth 1 -delete
@@ -131,7 +143,7 @@ spec:
 
           git -C "$dir" remote add origin "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git"
 
-          git -C "$dir" fetch --depth 1 origin "$ref"
+          git -C "$dir" fetch --depth 1 origin -- "$ref"
 
           git -C "$dir" checkout -q --detach FETCH_HEAD
 
