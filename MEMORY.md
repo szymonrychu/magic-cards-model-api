@@ -2221,3 +2221,25 @@ whoever works on the repo itself.
   docstring and proven by `test_the_opponent_reads_the_same_advice_the_
   human_seat_does`, rather than left as an unstated consequence of reusing
   the same route.
+
+- **2026-09-12 - "no permanent name leaks once the digest is withheld" is
+  not the same claim as "the digest is never half-emitted", and conflating
+  them nearly broke a legitimate feature.** Wiring the engine's
+  `Action.pays_with` (mana tap plan, `magic-cards-model` at `4ad120c`)
+  through to an MCP answer made a pre-existing test
+  (`test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_
+  emitted`) fail: a `pays_with` entry legitimately names the permanent it
+  would tap, and that name showed up in the answer even when
+  `MAX_DIGEST_BYTES` forced the battlefield digest itself to be withheld.
+  The instinct was to scrub the name everywhere the digest is absent: wrong,
+  because the test's actual hazard is a seat forming a false belief that it
+  has seen the *whole* board - which only the digest (a claimed survey of
+  every permanent) can cause. `pays_with`, `unaffordable_reason` (engine
+  refusal prose) and a targeting action's own candidate lines all name a
+  card in service of one scoped fact about one action and never claim
+  completeness, so narrowing the test's assertion to `board` itself (with
+  the reasoning written into its docstring) was the correct fix, not a
+  weakened test - scrubbing them would have gutted the very target-candidate
+  enrichment that channel exists for. `pays_with` still got its own real
+  byte budget (`mcp.MAX_PAYS_WITH_BYTES`, independent of `MAX_DIGEST_BYTES`)
+  since it had never had one at all.
