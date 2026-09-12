@@ -2357,3 +2357,20 @@ whoever works on the repo itself.
   `fallback` now instead of `None` (`_fallbacks`), because a buddy is started
   once at creation and a `None` there rendered as a bare "not started" with
   no reason for a runner that had genuinely tried and failed.**
+
+- **2026-09-12 - `Action.pays_with` names a land, and the digest test had to
+  learn the difference.** The engine's tap plan carries the permanent's name
+  as well as its id, on purpose. That made
+  `test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_emitted`
+  red: it asserted no battlefield name appeared anywhere in an action answer,
+  as a proxy for the digest never being trimmed. The plan is a complete list
+  and the name on it is deliberate, so the check was re-aimed instead of
+  weakened. Two branches wrote that fix independently and M4's is the one
+  that landed (`cd38b85`): the scan is scoped to `board`, the digest's own
+  home, and looks for the digest line's own `<id> <name>` prefix. B5's
+  version (lift `pays_with` out, keep scanning the whole answer) was dropped
+  in the merge because the whole-answer scan is wrong in principle as well as
+  for `pays_with` - a targeting action's candidate lines name cards too, and
+  legitimately. Any engine pointer move that touches an `Action` field needs
+  `mise run openapi:dump` re-run as well; the dump is only as current as the
+  pointer it was taken against.**
