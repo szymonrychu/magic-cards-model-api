@@ -627,7 +627,32 @@ def run(args: argparse.Namespace) -> int:
     report = eval_report.build_report(ledger, edges=edges)
     print(json.dumps(report, indent=1, sort_keys=True) if args.json else eval_report.render(report))
     print(f"\nserver console: {log_path}", flush=True)
-    return 0
+    return exit_code(results)
+
+
+def exit_code(results: list[dict[str, Any]]) -> int:
+    """`1` when any game's baseline driver was abandoned rather than stopped
+    (`play_one`), `0` otherwise.
+
+    A driver that outlived its join kept playing while the next game started
+    and while the server was terminated under it, so the per-game timings
+    this run printed are not independent - which is the whole thing the run
+    exists to produce. That is a failed run, not a footnote in the
+    scrollback.
+    """
+    abandoned = [
+        str(result.get("game")) for result in results if result.get("driver") == "abandoned"
+    ]
+    if not abandoned:
+        return 0
+    print(
+        f"eval:gauntlet: {len(abandoned)} game(s) had their baseline driver abandoned "
+        f"({abandoned}), so the timings above are not independent - see each game's "
+        f"own line on stderr",
+        file=sys.stderr,
+        flush=True,
+    )
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:

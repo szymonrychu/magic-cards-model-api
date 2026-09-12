@@ -402,3 +402,13 @@ def test_serial_does_not_start_a_game_alongside_an_abandoned_driver() -> None:
 
     assert played == ["a", "b"]
     assert unplayed == ["c"]
+
+
+def test_an_abandoned_driver_fails_the_run() -> None:
+    """A run whose per-game timings are not independent has not produced the
+    thing it exists to produce, so it does not exit 0 and leave that to be
+    noticed in the scrollback."""
+    stopped = [{"game": "a", "driver": "stopped"}, {"game": "b", "driver": "stopped"}]
+
+    assert eval_gauntlet.exit_code(stopped) == 0
+    assert eval_gauntlet.exit_code([*stopped, {"game": "c", "driver": "abandoned"}]) == 1
