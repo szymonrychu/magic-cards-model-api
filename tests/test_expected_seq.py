@@ -31,6 +31,7 @@ from magic_cards_model_api import seatkit
 from magic_cards_model_api.main import app
 from magic_cards_model_api.seatkit import Seats, run_action
 from magic_cards_model_api.store import store
+from scripts import eval_report
 
 
 def seats_for(game_id: str) -> dict[str, str]:
@@ -822,3 +823,195 @@ def test_the_admin_key_in_its_own_slot_is_recognised_by_the_stale_handler(
     hands = [row["snapshot"]["hands"] for row in response.json()["since"] if row.get("snapshot")]
     assert hands and all(hand["bob"] == ["Island"] for hand in hands), response.text
 
+
+# ---------------------------------------------------------------------------
+# the other half of the boolean: a refusal the engine actually ruled on
+# ---------------------------------------------------------------------------
+#
+# `stale: true` alone only ever answered half the question. `scripts/
+# eval_report.py` counts three buckets - `stale`, `rules`, `unknown` - and
+# with only `true` ever written, every genuine rules refusal fell into
+# `unknown`: `rules_error_rate` reported 0/N forever and `stale_split` could
+# never be better than `"partial"`. The split that the whole `expected_seq`
+# feature exists to make answerable ("of 32 refusals in 556 agent attempts,
+# how many were races") was therefore unanswerable from the ledger itself.
+#
+# So the write side stamps all three states, and they mean exactly this:
+#
+#   stale: true   - the board had moved; nothing was attempted.
+#   stale: false  - the seat named a board position, it was current, and the
+#                   engine judged the action illegal on it.
+#   absent        - the caller named no board position, so nothing can be
+#                   said about which of the two it was.
+
+
+def refusals_in(client: TestClient, game_id: str, admin_key: str, action: str) -> list[dict]:
+    return [
+        row["detail"]
+        for row in log_of(client, game_id, admin_key)
+        if row["action"] == action and row["detail"].get("allowed") is False
+    ]
+
+
+def test_a_rules_refusal_against_a_current_board_is_stamped_not_stale(
+    client, game, admin_key
+) -> None:
+    """The branch `eval_report`'s `tally.rules` counts, reachable at last. bob
+    has no Bolt and no priority, and says so against the board as it actually
+    stands - a rules error, measured as one."""
+    bolt_id, _ = stock_a_bolt(client, game)
+    current = last_seq_of(client, game)
+
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "bob", "card_id": bolt_id, "targets": ["alice"], "expected_seq": current},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is False
+
+    (detail,) = refusals_in(client, game, admin_key, "cast")
+    assert detail["stale"] is False
+    assert "moved_from" not in detail, "nothing moved, so there is nowhere it moved from"
+
+
+def test_a_refusal_that_named_no_board_stays_unknown(client, game, admin_key) -> None:
+    """The `unknown` bucket has to stay honest, or the fix above would just
+    be relabelling. A caller that named no ledger position - the browser, and
+    every caller written before `expected_seq` existed - says nothing about
+    whether it raced, so the row carries no boolean either way."""
+    bolt_id, _ = stock_a_bolt(client, game)
+
+    response = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "bob", "card_id": bolt_id, "targets": ["alice"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is False
+
+    (detail,) = refusals_in(client, game, admin_key, "cast")
+    assert "stale" not in detail, detail
+
+
+def test_the_three_states_are_three_distinct_values_in_one_ledger(client, game, admin_key) -> None:
+    """All three, in one game, told apart by the boolean and nothing else -
+    which is the property a race analysis actually needs."""
+    bolt_id, mountain_id = stock_a_bolt(client, game)
+
+    # 1. absent: no board named.
+    client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "bob", "card_id": bolt_id, "targets": ["alice"]},
+    )
+    # 2. false: a current board named, refused on the rules.
+    client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "bob",
+            "card_id": bolt_id,
+            "targets": ["alice"],
+            "expected_seq": last_seq_of(client, game),
+        },
+    )
+    # 3. true: a board that has since moved.
+    stale = last_seq_of(client, game)
+    add_card(client, game, "Forest", "bob", "battlefield")
+    client.post(
+        f"/api/games/{game}/actions/cast",
+        json=cast_body(bolt_id, mountain_id, expected_seq=stale),
+    )
+
+    assert [detail.get("stale") for detail in refusals_in(client, game, admin_key, "cast")] == [
+        None,
+        False,
+        True,
+    ]
+
+
+@pytest.mark.parametrize(
+    "action,method,path,body", MUTATING_ROUTES, ids=[row[0] for row in MUTATING_ROUTES]
+)
+def test_every_mutating_route_stamps_a_refusal_it_ruled_on_as_not_stale(
+    client, game, admin_key, action: str, method: str, path: str, body: dict[str, Any]
+) -> None:
+    """The write side, route by route, off the same list the stale half uses.
+    Most of these bodies describe an illegal move and are refused on their own
+    merits; whichever of them are, their rows must carry `stale: false` rather
+    than nothing, or that route's refusals are invisible to the split."""
+    current = last_seq_of(client, game)
+
+    response = client.request(
+        method,
+        path.format(gid=game),
+        params={"uid": admin_key},
+        json={**body, "expected_seq": current},
+    )
+    assert response.status_code != 409, response.text
+
+    refused = refusals_in(client, game, admin_key, action)
+    if not refused:
+        pytest.skip(f"{action} was not refused on this board - the stale half covers the rest")
+    for detail in refused:
+        assert detail["stale"] is False, detail
+
+
+def test_a_ledger_of_flagged_refusals_reports_a_measured_split(client, game, admin_key) -> None:
+    """End to end, through the report that exists to answer the question: a
+    run whose every refusal carries the boolean says `"measured"`, and the
+    rules refusals are counted as rules refusals rather than swept into
+    `unknown`.
+
+    Before the write side stamped `false`, this was structurally impossible -
+    `rules` was 0 and `stale_split` capped at `"partial"` - while every
+    number in the report still looked healthy, which is exactly how a metric
+    misleads for months."""
+    bolt_id, mountain_id = stock_a_bolt(client, game)
+
+    client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "bob",
+            "card_id": bolt_id,
+            "targets": ["alice"],
+            "expected_seq": last_seq_of(client, game),
+        },
+    )
+    stale = last_seq_of(client, game)
+    add_card(client, game, "Forest", "bob", "battlefield")
+    client.post(
+        f"/api/games/{game}/actions/cast",
+        json=cast_body(bolt_id, mountain_id, expected_seq=stale),
+    )
+
+    report = eval_report.build_report(eval_report.ledger_from_store(store, game_ids=[game]))
+
+    assert report["stale_split"] == "measured"
+    split = report["seats"]["bob"]["refusal_split"]
+    assert (split["rules"], split["stale"], split["unknown"]) == (1, 0, 0), split
+    alice_split = report["seats"]["alice"]["refusal_split"]
+    assert (alice_split["rules"], alice_split["stale"], alice_split["unknown"]) == (0, 1, 0), (
+        alice_split
+    )
+
+
+def test_the_flag_does_not_leak_from_one_request_into_the_next(client, game, admin_key) -> None:
+    """The isolation `records._NAMED_A_CURRENT_BOARD`'s own docstring claims,
+    pinned rather than asserted: a request that named a current board is
+    followed immediately, on the same client, by one that named none - and
+    the second row must carry no `stale` key at all.
+
+    The ordering is the whole test. Every other case here happens to put the
+    un-flagged call first, where a leak is invisible."""
+    bolt_id, _ = stock_a_bolt(client, game)
+    refuse = {"player": "bob", "card_id": bolt_id, "targets": ["alice"]}
+
+    flagged = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={**refuse, "expected_seq": last_seq_of(client, game)},
+    )
+    assert flagged.json()["allowed"] is False, flagged.text
+    unflagged = client.post(f"/api/games/{game}/actions/cast", json=refuse)
+    assert unflagged.json()["allowed"] is False, unflagged.text
+
+    first, second = refusals_in(client, game, admin_key, "cast")
+    assert first["stale"] is False
+    assert "stale" not in second, second

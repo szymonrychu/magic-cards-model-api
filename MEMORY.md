@@ -2655,3 +2655,32 @@ whoever works on the repo itself.
   before believing a red suite belongs to the branch in hand; and a leak
   assertion must match the shape of the thing it is guarding, or it is
   asserting nothing until an unrelated field makes it fire.
+
+- **2026-09-12 - a metric that is structurally always zero while every rate
+  around it reads healthy.** `scripts/eval_report.py` has counted refusals
+  into three buckets since P4 - `stale` (a race), `rules` (a genuine
+  illegal action), `unknown` (cannot tell) - and `rules` was always 0.
+  Nothing was wrong with the report: `elif stale is False: tally.rules += 1`
+  is correct. The *write* side never produced a `False`. `detail["stale"]`
+  was set in exactly one place, `records.require_current_board`, and only
+  ever to `True`; no route stamped it on an ordinary refusal. So every rules
+  refusal fell into `unknown`, `rules_error_rate` read `0/N` forever, and
+  `stale_split` could never be better than `"partial"` - the ceiling was
+  structural, not data-dependent. Only synthetic rows in
+  `tests/test_eval_report.py` ever exercised the branch, which is precisely
+  why nothing went red: the read side was tested against a ledger shape the
+  write side could not produce. **The whole capability the field exists to
+  deliver - "of 32 refusals in 556 agent attempts, how many were
+  latency" - was missing for months, from a report that looked complete.**
+  Two lessons kept: (1) a three-state field needs all three states written
+  by production code and asserted end to end, never per-state unit rows;
+  (2) the fix belongs at ONE write site, not threaded as a parameter through
+  every refusal-recording call - this api records refusals in eleven places
+  (`app.audit_outcome`, `decide`/`declare_blockers`'s local `refuse()`,
+  `pass_priority`/`advance`'s `except` arms, `opening.py`, ...) and asking
+  each to pass a flag is how it came to be passed by none. It is now one
+  `ContextVar` set by the guard (`records.named_a_current_board`) and one
+  read in `audit.record`, so a route written tomorrow is stamped by
+  construction. The `unknown` bucket stays honest: absent still means the
+  caller named no board position, and collapsing it into `False` would make
+  `stale_split` report `"measured"` over data that measured nothing.

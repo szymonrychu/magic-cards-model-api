@@ -122,6 +122,38 @@ logger.setLevel(logging.INFO)
 logger.propagate = False
 
 
+def _with_stale(detail: dict[str, Any], named_a_current_board: bool) -> dict[str, Any]:
+    """`detail` with `stale: False` added when this row is a refusal that the
+    engine actually ruled on, against a board the caller had named and that
+    was current.
+
+    Three conditions, each carrying its own weight:
+
+    - **`allowed is False`.** Only a refusal has a race to be mistaken for.
+      An allowed action and a pause (`allowed: None`, a question the engine
+      asked part way through) are not refusals at all, and
+      `scripts/eval_report.py` never reads `stale` on either.
+    - **`stale` not already present.** `records.require_current_board` writes
+      its own `stale: True` and must win: that row is the refusal that says
+      the board moved, recorded from inside the very guard this flag reads.
+    - **the caller named a board position that was current.** Absent that,
+      the row gets no `stale` key and stays in the report's `unknown` bucket
+      - see `records.named_a_current_board` for why that third state is kept
+      rather than folded into `False`.
+
+    Done here, once, rather than at each of this api's refusal-writing sites,
+    because the version of this feature that asked each site to pass the flag
+    got `False` written by none of them: the bucket existed and was
+    structurally always zero while every rate in the report still read
+    healthy (MEMORY.md 2026-09-12).
+    """
+    if not named_a_current_board:
+        return detail
+    if detail.get("allowed") is not False or "stale" in detail:
+        return detail
+    return {**detail, "stale": False}
+
+
 def record(
     game_id: str,
     action: str,
@@ -169,10 +201,12 @@ def record(
     `audit_outcome` and the `resolve-top`/`advance`/`pass-priority`
     endpoints) against a later read, rather than guessing from a blind retry.
     """
+    from .records import named_a_current_board  # lazy, with `store` below
     from .repository import GameUnloadable  # lazy, with `store` below
     from .serialize import snapshot  # lazy: keep module import light
     from .store import store  # lazy: audit imports nothing of the app at load
 
+    detail = _with_stale(detail, named_a_current_board())
     # A game whose snapshot this build cannot decode still gets its entry -
     # every board-derived field simply comes out `None`, exactly as it
     # already does for a game that is gone. Raising here would take out the

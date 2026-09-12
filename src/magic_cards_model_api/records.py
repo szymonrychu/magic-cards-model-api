@@ -42,6 +42,7 @@ mutates.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -195,6 +196,53 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
     raise MissingPlan(player, turn.turn_number)
 
 
+#: Whether the request being served named a ledger position
+#: (`expected_seq`) and it was the one the game was actually on. Set by
+#: `require_current_board`, read by `named_a_current_board` - and by nothing
+#: else.
+#:
+#: **A ContextVar rather than a parameter threaded through every route, and
+#: that is the point.** `stale` has to reach a refusal row wherever one is
+#: written, and this api writes them in eleven places: `app.audit_outcome`
+#: (every route that goes through `_respond`), `action_declare_blockers`'s
+#: and `decide`'s own local `refuse()`, `pass_priority`'s and `advance`'s
+#: `except` arms, `opening.finish_opening_hand_actions`, and more to come.
+#: Threading an argument into each is how the first version of this shipped
+#: with `stale: False` written from nowhere at all: the flag existed, the
+#: report had a bucket for it, and the bucket was structurally always zero
+#: (MEMORY.md 2026-09-12). One write site at the guard and one read site in
+#: `audit.record` cannot drift that way - a route that records a refusal
+#: gets the stamp by construction, including routes nobody has written yet.
+#:
+#: Request isolation comes free and is pinned by a test
+#: (`test_expected_seq.py`): FastAPI runs each `def` route in a worker thread
+#: over `contextvars.copy_context()`, so a `set` here lands in that request's
+#: own copy and is never visible to the next one.
+_NAMED_A_CURRENT_BOARD: ContextVar[bool] = ContextVar("named_a_current_board", default=False)
+
+
+def named_a_current_board() -> bool:
+    """Whether this request named a ledger position that turned out to be
+    current - which is exactly what makes a refusal it goes on to record a
+    *rules* refusal rather than an unknown one.
+
+    Read by `audit.record` alone. The three states a refusal row can carry,
+    and what a reader of the ledger may conclude from each:
+
+    - `stale: True` - the board had moved; the engine was never asked.
+    - `stale: False` - the seat named the board it decided against, that
+      board was current, and the engine judged the action illegal on it.
+      A genuine rules error (`scripts/eval_report.py`'s `tally.rules`).
+    - no `stale` key - the caller named no board position at all (the
+      browser, and every caller written before `expected_seq` existed), so
+      nothing can be said about which of the two it was
+      (`tally.unknown`). This third state stays honest deliberately:
+      collapsing it into `False` would make `stale_split` report
+      `"measured"` over data that measured nothing.
+    """
+    return _NAMED_A_CURRENT_BOARD.get()
+
+
 class BoardMoved(Exception):
     """Raised by `require_current_board` when a seat names a ledger position
     (`expected_seq`) this game has already moved past.
@@ -293,7 +341,17 @@ def require_current_board(
     from . import audit
 
     current = audit.last_seq(game_id)
-    if current == expected_seq or current == 0:
+    if current == expected_seq:
+        # The seat named a board position and it is the one the game is
+        # actually on. Anything this request goes on to refuse is therefore a
+        # refusal against a *current* board, and `audit.record` stamps it
+        # `stale: False` - see `named_a_current_board` below.
+        _NAMED_A_CURRENT_BOARD.set(True)
+        return
+    if current == 0:
+        # Not there at all: the 404 the route is about to raise. Deliberately
+        # NOT stamped - nothing about this request's board position was ever
+        # confirmed, and there is no game for a refusal row to belong to.
         return
     moved = BoardMoved(game_id, expected_seq, current)
     if not dry_run:
