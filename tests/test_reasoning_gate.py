@@ -105,6 +105,19 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
         "in-progress agent turn here for `records.require_reasoning` to "
         "gate."
     ),
+    ("POST", "/api/games/{game_id}/advice"): (
+        "`AdviceIn.reasoning` IS the reasoning, and required non-blank by the "
+        "shape itself rather than by this gate - which is the stronger "
+        "guarantee: `records.require_reasoning` holds only registered agent "
+        "seats to it, while an advisor owes its human an argument whatever it "
+        "is. It also mutates no `Game`: a proposal is a statement about one, "
+        "the same exemption `POST .../plan` gets."
+    ),
+    ("POST", "/api/games/{game_id}/advice/{seq}/approve"): (
+        "the human saying yes to advice it has already read. One ledger row, "
+        "no `Game` touched, and made by the human seat rather than by an "
+        "agent - there is no agent turn here to hold to a reason."
+    ),
 }
 
 #: MCP tools that read and never mutate, each with the reason.

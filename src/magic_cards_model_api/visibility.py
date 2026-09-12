@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audit import PLAN_ACTION
+from .audit import ADVICE_ACTION, PLAN_ACTION
 from .store import player_for_advisor_uid, store
 
 
@@ -490,6 +490,15 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
       damaging thing in this ledger to hand the other seat. The row itself
       stays visible, because "bob declared a plan at this point" is public
       the way "bob took a long time" is; its content does not.
+    - an `advice` row (`audit.ADVICE_ACTION`) keeps only its `player`, for
+      exactly the same reason and by the same rule. A proposal names cards in
+      the advised player's own hand, the targets it would pick and the mana it
+      would spend, plus the advisor's reasoning for all of it - a plan
+      declaration with the specifics filled in. Its author is that `player`:
+      an advisor uid resolves to its human's username (`resolve_viewer`), so
+      the human and the buddy advising it both read the row whole and nobody
+      else reads any of it. "alice was given advice at this point" stays
+      public, the way a plan declaration's own existence does.
 
     Both are keyed on `detail["player"]`, which is what the acting route
     recorded. That is safe *in this direction* and only in this direction:
@@ -513,7 +522,7 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     own = viewer is ADMIN or (isinstance(viewer, str) and detail_player == viewer)
     if not own:
         entry["reasoning"] = None
-        if entry.get("action") == PLAN_ACTION:
+        if entry.get("action") in (PLAN_ACTION, ADVICE_ACTION):
             entry["detail"] = {"player": detail_player} if detail_player else {}
     detail_notices = (entry.get("detail") or {}).get("notices")
     if detail_notices:

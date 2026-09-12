@@ -77,6 +77,35 @@ whoever works on the repo itself.
   nothing if that record fails: an unrecorded approval is, in the ledger the
   retrospective reads, indistinguishable from a play the human thought of
   themselves.
+- **2026-09-12 - advise mode: the dangerous half is the 5 request shapes with
+  no `dry_run`, not the 7 with one.** B2's whole hazard, written down because
+  it is not visible from either side on its own.
+
+  `game_access._advisor_may` (wave 1) authorises an advisor's POST when the
+  *raw body* says `dry_run: true`. That reads as a general "an advisor may ask
+  questions" rule, and it is not: it is exactly as wide as the request shapes
+  that actually have the field. Seven of the twelve action shapes do
+  (`Activate`/`Attack`/`Cast`/`Crew`/`Cycle`/`PlayLand`/`SpecialAction`); the
+  other five (`Decide`/`DeclareBlockers`/`PassPriority`/`Concede`/`Advance`)
+  do not, so a body claiming `dry_run: true` on one of them passes the gate
+  and then reaches a route that commits for real. An advise `Seat` therefore
+  sends **no mutating request at all** for those five and builds the proposal
+  locally, marked `validated: false` - never "send it with `dry_run` and hope".
+  The split is a frozen constant (`seatkit.DRY_RUN_SHAPES`) pinned against
+  `openapi.json` by `tests/test_advise_mode.py`, because a shape quietly
+  gaining or losing the field silently changes which calls get *sent*.
+
+  Two smaller decisions from the same task. The `advice` row's `summary` is
+  derived server-side (`records.advice_summary`) rather than taken from the
+  agent: an agent-written summary is a second description of the same action
+  that nothing keeps honest, and a human who approves after reading only the
+  summary would approve something else. And `Seats.seat_for` now resolves
+  *every* uid through `GET /api/seats/{uid}`, the pinned `--game` branch
+  included, because that endpoint is the only place a uid's `role` is
+  answered - the pinned branch's old `GET /api/games/{id}/seat` 404s an
+  advisor uid outright, so a buddy pinned to its game was simply nobody. It
+  keeps its isolation by checking the game the lookup reports against the pin
+  rather than by asking a narrower question.
 
 - **2026-09-10 - an action answer now carries its own legal targets, and the
   candidates are opt-in because the engine will not cache the board.** M1's

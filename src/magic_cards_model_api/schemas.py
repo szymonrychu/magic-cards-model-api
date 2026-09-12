@@ -283,6 +283,110 @@ class ReflectionResponse(BaseModel):
     player: str
 
 
+class AdviceIn(RequestModel):
+    """`POST /api/games/{game_id}/advice` - one action an **advisor** thinks
+    its human should take, recorded and never performed.
+
+    An advisor credential (`repository.Advisor`) is read-only by
+    construction: `game_access.py` refuses every mutating POST it makes
+    except this one and `/report`. So this is not a convenience - it is the
+    only way a buddy pod reaches the game it is watching at all, and the
+    reason it is a *ledger row* rather than anything held in memory is that
+    the api is multi-replica: a proposal kept in one process would be
+    invisible to the replica the human's next poll happens to hit.
+
+    `method`/`path`/`body` are the **request the human's client will post
+    verbatim** once it agrees, built by `seatkit` (which already knows how to
+    shape every action) rather than hand-written by a model - see
+    `seatkit.Seat._advise_answer`. `body` names the human as `player` and
+    carries no `dry_run`: an approved proposal is a real action.
+
+    There is deliberately no `summary` field here. What the proposal *says*
+    is derived server-side from `body` and the live game
+    (`records.advice_summary`), so it cannot disagree with the request it
+    describes - an agent-written summary naming a different card from the one
+    `body` would actually cast is exactly the failure that shape invites.
+
+    `reasoning` is the half that *is* the agent's own words, and the half the
+    human actually reads before deciding. Required and non-blank: a proposal
+    with no argument for it is a button, not advice.
+    """
+
+    player: Stated
+    """The human seat being advised - the `player` an approved `body` acts
+    as, and (via `visibility.resolve_viewer`) the only viewer other than that
+    seat's own advisor who may read this row back."""
+    method: Stated
+    """The HTTP method of the request being proposed - `POST` for every
+    action shape there is; carried rather than assumed so the row stays a
+    complete, replayable description of a request."""
+    path: Stated
+    """The request path, e.g. `/api/games/{id}/actions/cast`."""
+    body: dict[str, Any] = Field(default_factory=dict)
+    """The exact ready-to-post request body: `player` is the human, and
+    `dry_run` is absent."""
+    reasoning: Stated
+    """Why, in the advisor's own words. This is the rationale the human
+    reads."""
+    validated: bool = False
+    """Whether the engine itself has already agreed this action is legal.
+    `True` only for the 7 of 12 action shapes that carry `dry_run`
+    (`seatkit.DRY_RUN_SHAPES`), which an advisor probes before proposing.
+    `False` says "nobody has checked this" - the honest answer for the other
+    5, whose shapes have no way to ask, and which an advisor therefore must
+    not send at all."""
+
+
+class AdviceResponse(BaseModel):
+    """`POST .../advice`'s answer. No state view: recording a proposal
+    mutates no `Game`, so there is nothing about the board it could have
+    changed - the same reason `DeclarePlanResponse` carries none."""
+
+    proposed: bool
+    log_seq: int
+    """The `records` row this proposal became - the `seq` the human's client
+    passes back to `POST .../advice/{seq}/approve`."""
+    player: str
+    summary: str
+    """What the server read this proposal as (`records.advice_summary`) -
+    returned as well as recorded so the advisor can see whether the body it
+    built says what it meant."""
+    validated: bool
+    based_on_seq: int
+    """The ledger head this proposal was recorded against. A command that
+    landed between the advisor's read and this row makes the proposal
+    born-stale, which is the safe direction: the human's own action carries
+    `expected_seq` and is refused rather than applied to a board that moved."""
+
+
+class AdviceApproveIn(RequestModel):
+    """`POST /api/games/{game_id}/advice/{seq}/approve` - the human saying
+    yes to one proposal, by its ledger `seq`.
+
+    Human uid only. An advisor's own uid is refused by `game_access.py`
+    before this route ever runs (the path is neither `/advice` nor `/report`
+    and the body claims no `dry_run`), and the route checks the same thing
+    again against `store.player_for_uid`: an advisor must never be able to
+    approve its own advice, and that must hold whether or not the gate is
+    the thing enforcing it on any given day.
+    """
+
+    player: Stated
+    """The approving human - must be the advised `player` of the row at
+    `seq`, and must be the seat the caller's own uid opens."""
+
+
+class AdviceApprovedResponse(BaseModel):
+    """`POST .../advice/{seq}/approve`'s answer. Mutates no `Game` either."""
+
+    recorded: bool
+    log_seq: int
+    """The `advice_approved` row this became."""
+    advice_seq: int
+    """The `advice` row it approves."""
+    player: str
+
+
 class ReportProblemRequest(RequestModel):
     player: str
     text: str = Field(min_length=1)

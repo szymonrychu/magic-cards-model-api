@@ -57,6 +57,10 @@ from .schemas import (
     ActorRequest,
     AdvanceRequest,
     AdvanceResponse,
+    AdviceApprovedResponse,
+    AdviceApproveIn,
+    AdviceIn,
+    AdviceResponse,
     AffordancesResponse,
     AttackRequest,
     CardLookupResponse,
@@ -2738,6 +2742,154 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         "player": req.player,
         "turn_number": turn.turn_number if turn is not None else None,
     }
+
+
+@app.post(
+    "/api/games/{game_id}/advice", response_model=AdviceResponse, response_model_exclude_unset=True
+)
+def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[str, Any]:
+    """Record one action an advisor thinks `req.player` should take
+    (`schemas.AdviceIn`), and record nothing else.
+
+    **This mutates no `Game`, exactly like `declare_plan`** - which is the
+    prior art this is modelled on, down to the shape of this docstring. It
+    calls `audit.record` and nothing else: no `store.replace`, no
+    compare-and-swap, no version bump. A proposal is a statement *about* the
+    game, and the whole point of advise mode is that the advisor never moves
+    it; a route that quietly committed one would hand a read-only credential
+    the authority its own gate exists to deny.
+
+    **The summary is derived here, not taken from the caller.**
+    `records.advice_summary` reads `req.body` against the live game - card
+    ids resolved to names, targets and cost spelled out - so what the human
+    reads can never disagree with the request it describes. `schemas.AdviceIn`
+    has no `summary` field at all, so an advisor cannot try.
+
+    **`based_on_seq` is read immediately before the row is written, under no
+    lock.** A command landing in between makes this proposal born-stale, and
+    that is the safe direction: the human's own action carries its own
+    `expected_seq` (`records.require_current_board`) and is refused against a
+    board that moved, so a stale proposal costs a refusal rather than a wrong
+    move. Taking the game's lock here would instead let a buddy pod's
+    thinking block the seat it is advising.
+
+    `legal_actions_before` is computed the same way every acting route
+    computes it, for `req.player` - what *else* was legal at the moment the
+    advice was given, which is the comparison a retrospective needs and
+    cannot reconstruct afterwards. It is hidden information (it names cards
+    in that player's hand), which is why it rides in the row rather than the
+    response, and `visibility.redact_log_entry` keeps it - and the whole
+    proposal - out of the opponent's read of the same log.
+
+    Authorised on whoever may already *see* `req.player`'s hand: this game's
+    advisor for that seat (`visibility.resolve_viewer` resolves an advisor
+    uid to its human's username), the seat itself, or the admin key. A
+    proposal names hidden information, so nobody else may write one into that
+    seat's name - the same rule, and the same 404, `declare_plan` enforces.
+    """
+    game = game_or_404(game_id)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer is not visibility.ADMIN and viewer != req.player:
+        raise KeyError("that uid does not advise that seat in this game")
+    game.player(req.player)  # 400 for a player who is not in this game at all
+    legal_before = records.legal_actions_before(
+        game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
+    )
+    summary = records.advice_summary(game, req.method, req.path, req.body)
+    based_on_seq = audit.last_seq(game_id)
+    seq = audit.record(
+        game_id,
+        audit.ADVICE_ACTION,
+        player=req.player,
+        method=req.method,
+        path=req.path,
+        body=req.body,
+        summary=summary,
+        reasoning=req.reasoning,
+        based_on_seq=based_on_seq,
+        validated=req.validated,
+        legal_actions_before=legal_before,
+    )
+    return {
+        "proposed": True,
+        "log_seq": seq,
+        "player": req.player,
+        "summary": summary,
+        "validated": req.validated,
+        "based_on_seq": based_on_seq,
+    }
+
+
+@app.post(
+    "/api/games/{game_id}/advice/{seq}/approve",
+    response_model=AdviceApprovedResponse,
+    response_model_exclude_unset=True,
+)
+def approve_advice(
+    game_id: str, seq: int, req: AdviceApproveIn, uid: str | None = None
+) -> dict[str, Any]:
+    """Record that the advised human said yes to the `advice` row at `seq`.
+
+    **Mutates no `Game`** - one more `audit.record` call, for the same
+    reasons `record_advice` above makes none.
+
+    **The human's client calls this BEFORE sending the action itself**, and
+    must not send the action if this fails. That ordering is the whole
+    purpose of the row: an `advice_approved` row sitting immediately before
+    the action in the same ledger is what lets a retrospective say "this move
+    came from the buddy" rather than inferring it from adjacency, and a
+    refused approval leaves no row at all, so an action taken anyway is
+    visibly unpaired. (The browser half of that is a later task; the contract
+    it must honour is pinned by this repo's own tests now, not then.)
+
+    **Human uid only, checked twice.** `game_access.py` already refuses an
+    advisor uid here - this path is neither `/advice` nor `/report`, and the
+    body claims no `dry_run` - and that is correct and deliberate: an advisor
+    approving its own advice would make the human's agreement a formality.
+    This route checks it again itself, against `store.player_for_uid` (a
+    *seat* credential, never `resolve_viewer`, which an advisor uid passes by
+    design), because a rule this load-bearing should not rest on one gate
+    remembering to run.
+    """
+    game_or_404(game_id)
+    advised = _advice_player_at(game_id, seq)
+    if advised is None:
+        raise KeyError(f"no advice at {seq} in this game")
+    if advised != req.player:
+        raise KeyError("that advice was not given to that player")
+    if not uid or (
+        store.player_for_uid(game_id, uid) != req.player and not store.is_admin(game_id, uid)
+    ):
+        raise KeyError("that uid is not that seat in this game")
+    approved_seq = audit.record(
+        game_id,
+        audit.ADVICE_APPROVED_ACTION,
+        player=req.player,
+        advice_seq=seq,
+    )
+    return {
+        "recorded": True,
+        "log_seq": approved_seq,
+        "advice_seq": seq,
+        "player": req.player,
+    }
+
+
+def _advice_player_at(game_id: str, seq: int) -> str | None:
+    """Whom the `advice` row at `seq` was given to, or `None` when `seq` is
+    not an `advice` row of this game at all.
+
+    Reads from `seq` forward (`audit.entries_since(game_id, seq - 1)`) rather
+    than the whole ledger: the approval follows its proposal within seconds
+    in the one flow that calls this, so the tail it walks is short, and the
+    ledger's full-snapshot rows make reading all of them genuinely expensive
+    (see `audit.entries`' own docstring)."""
+    for entry in audit.entries_since(game_id, seq - 1):
+        if entry["seq"] == seq:
+            if entry["action"] != audit.ADVICE_ACTION:
+                return None
+            return (entry.get("detail") or {}).get("player")
+    return None
 
 
 @app.post(

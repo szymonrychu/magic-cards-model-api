@@ -244,6 +244,37 @@ PROTOCOL_VERSION = "seatkit-14"
 #: misbehaviour this check exists to catch is a seat missing a reasoning cue
 #: it did not know to look for, not a broken call.
 #:
+#: (6) **Advise mode: the action tools' answer shape, for an advisor uid
+#: only.** `GET /api/seats/{uid}` now reports a `role` (`"seat"` or
+#: `"advisor"`, wave 1), `Seats.seat_for` reads it - on every transport,
+#: including the `--game`-pinned stdio branch, which did not consult that
+#: endpoint at all before - and an advisor gets `Seat(advise=True)`. For such
+#: a seat every *committing* POST is answered `{"proposed": true, "log_seq":
+#: int, "summary": str, "outcome": ..., "state": ...}` instead of an action
+#: outcome: the action is validated with `dry_run: true` where the request
+#: shape has the field (exactly 7 of the 12 action shapes -
+#: `DRY_RUN_SHAPES`), recorded as one `advice` ledger row, and never
+#: performed. The other 5 shapes send no mutating request at all and are
+#: marked `validated: false`. `run_action` stops before its auto-pass for an
+#: advise seat (`held_priority: null`, `wake_reason` saying nothing moved),
+#: `pass_until` is refused outright, and `declare_plan` returns the server's
+#: own seat-only refusal. Nothing about a *seat* uid's answers moves.
+#:
+#: (7) **New api surface: `POST /api/games/{id}/advice` and
+#: `POST /api/games/{id}/advice/{seq}/approve`** (`schemas.AdviceIn`,
+#: `AdviceApproveIn`). Both record one ledger row and mutate no game.
+#: `/advice` derives its own `summary` server-side from the request body it
+#: is handed, so what a human reads can never disagree with what it would
+#: send, and requires a non-blank `reasoning`; `/advice/{seq}/approve` is
+#: human-uid only. The `advice` row is redacted to `{player}` for anyone but
+#: its author (`visibility.redact_log_entry`) - a proposal names cards in
+#: that player's hand.
+#:
+#: Items (6) and (7) are the *same* protocol version as (1)-(5) on purpose:
+#: wave 1 (the advisor credential and its gate) and wave 2 (what the toolset
+#: does with it) ship together, so there is no build in between for a
+#: separate number to describe.
+#:
 #: An MCP process built before this bump neither sends `generation` nor knows
 #: the new keys: it reads an answer whose action entries, `board` and
 #: `pending_decision` carry keys it does not know, and goes on making the
@@ -570,6 +601,136 @@ UNKNOWN_OUTCOME = (
 )
 
 
+# ------------------------------------------------------------- advise mode --
+#
+# An advisor is a *role of the uid*, not a separate toolset: a buddy pod is
+# the seat Job with a different uid, gets the same 19 MCP tools an opponent
+# pod gets, and nothing about its dispatch (no CLI flag, no MCP config, no new
+# Job placeholder) says which it is. `GET /api/seats/{uid}` does - `role` is
+# `"seat"` or `"advisor"` - and `Seats.seat_for` turns that into
+# `Seat(advise=True)`.
+#
+# Everything the role changes is enforced in `Seat._advise_answer`, because
+# `Seat.call`/`Seat.call_json` are the one place every HTTP request this
+# module makes leaves. Enforcing it per tool would mean 19 places to forget
+# it, and the 20th tool written next month would not be covered at all.
+#
+# The server refuses an advisor's mutating POST anyway (`game_access.py`), so
+# none of this is the only line of defence - but "refused, one action at a
+# time, with nothing to say why" is a useless thing to hand an agent, and the
+# gate's own `dry_run: true` carve-out is exactly as wide as the request
+# shapes that *have* that field. See `DRY_RUN_SHAPES` for why that matters.
+
+#: Every game-mutating action path a seat's own tools POST to, and the request
+#: shape each one takes (`schemas.py`). Fourteen paths, twelve shapes - the
+#: three CR 116.2 special actions share `SpecialActionRequest`.
+#:
+#: Frozen here, and pinned against `openapi.json` by
+#: `tests/test_advise_mode.py`, so the split below cannot drift silently: a
+#: shape that gains or loses `dry_run` changes which of an advisor's calls get
+#: validated before they are proposed, and - far worse - which of them would
+#: start being *sent*.
+ACTION_REQUEST_SHAPES: dict[str, str] = {
+    "actions/activate": "ActivateRequest",
+    "actions/attack": "AttackRequest",
+    "actions/cast": "CastRequest",
+    "actions/concede": "ConcedeRequest",
+    "actions/crew": "CrewRequest",
+    "actions/cycle": "CycleRequest",
+    "actions/declare-blockers": "DeclareBlockersRequest",
+    "actions/foretell": "SpecialActionRequest",
+    "actions/pass-priority": "PassPriorityRequest",
+    "actions/play-land": "PlayLandRequest",
+    "actions/plot": "SpecialActionRequest",
+    "actions/suspend": "SpecialActionRequest",
+    "advance": "AdvanceRequest",
+    "decide": "DecideRequest",
+}
+
+#: The 7 of those 12 shapes that carry `dry_run` - the ones an advisor can ask
+#: the engine to *validate* before proposing, against an isolated probe copy
+#: of the game (`engine_api.dry_run_copy`) that commits nothing.
+#:
+#: The other 5 (`DecideRequest`, `DeclareBlockersRequest`,
+#: `PassPriorityRequest`, `ConcedeRequest`, `AdvanceRequest`) are the
+#: dangerous case, and the reason this set is a frozen constant rather than a
+#: runtime check. `game_access._advisor_may` authorises a POST whose raw body
+#: says `dry_run: true`; a shape with no such field either drops it as an
+#: unknown key or refuses the body outright, and then the route commits for
+#: real. So an advise `Seat` must never lean on that carve-out for these five:
+#: it sends **no mutating request at all** for them, builds the proposal from
+#: `available_actions` instead, and marks it `validated: false`.
+DRY_RUN_SHAPES = frozenset(
+    {
+        "ActivateRequest",
+        "AttackRequest",
+        "CastRequest",
+        "CrewRequest",
+        "CycleRequest",
+        "PlayLandRequest",
+        "SpecialActionRequest",
+    }
+)
+
+#: The POST paths an advise `Seat` sends exactly as a seat would. All four are
+#: ways of *saying* something about a game rather than doing something to it,
+#: and the server already decides which of them an advisor may use: `/advice`
+#: is advise mode's own channel (proposing through it must not recurse),
+#: `/report` files a problem, and `/plan`/`/reflection` are seat-only - their
+#: own refusal is the honest answer to give, not a proposal dressed up as one.
+ADVISE_PASSTHROUGH_SUFFIXES = ("/advice", "/report", "/plan", "/reflection")
+
+#: Why an advise `Seat` cannot run an auto-pass. A `pass_until` run gives up
+#: priority over and over until a named point in the turn - which is not
+#: advising, it is playing: the seat it advises would arrive at its own next
+#: window to find the turn already spent.
+ADVISE_NO_PASS_UNTIL = (
+    "advisors propose one action at a time; use pass - a run that keeps "
+    "passing priority until a named step is driving the game, not advising "
+    "it, and the seat you advise is the one who gets to decide whether its "
+    "turn is over"
+)
+
+#: What an advise `Seat` says in place of `run_action`'s wake reason. There is
+#: nothing to wake for: nothing was performed, priority never moved, and the
+#: board below is the same board the proposal was built against.
+ADVISE_WAKE_REASON = (
+    "proposed, not performed: this is recorded in the game log for the seat "
+    "you advise to approve or ignore. Nothing has moved - it is still their "
+    "move, and you still hold no priority of your own"
+)
+
+#: The reason carried by a proposal nobody validated - the 5 shapes with no
+#: `dry_run` to ask with. Said out loud in the answer *and* recorded in the
+#: ledger row (`validated: false`), because "the engine agreed this is legal"
+#: and "seatkit thinks this is the shape of a legal action" are different
+#: claims and a human approving one should know which they were handed.
+ADVISE_UNVALIDATED_REASON = (
+    "NOT validated: this action's request shape has no `dry_run`, so there "
+    "is no way to ask the engine whether it is legal without actually doing "
+    "it - and an advisor never does. The proposal was built from "
+    "`available_actions` below; the seat you advise will find out for certain "
+    "when it sends it"
+)
+
+
+def _action_key(path: str) -> str | None:
+    """Which `ACTION_REQUEST_SHAPES` entry `path` names, or `None` for a path
+    that is not one of them. Matched on the tail, so it is independent of the
+    game id in the middle and of whichever router owns the route."""
+    tail = path.rstrip("/")
+    for key in ACTION_REQUEST_SHAPES:
+        if tail.endswith("/" + key):
+            return key
+    return None
+
+
+def _status_line(status: int | None) -> str:
+    """The first line of `Seat.call`'s text answer. `None` is the ambiguous
+    timeout case, which has no status to report - see `UNKNOWN_OUTCOME`."""
+    return "HTTP TIMEOUT" if status is None else f"HTTP {status}"
+
+
 def _reason_from_detail(detail: Any) -> str:
     """A human sentence out of whatever shape a non-2xx body's `detail`
     carries. Every exception handler in `app.py` writes `detail` as a plain
@@ -672,11 +833,24 @@ class Seat:
         api: str,
         game_id: str | None,
         timeout: float | httpx.Timeout | None = None,
+        *,
+        advise: bool = False,
     ) -> None:
         self.player = player
         self.uid = uid
         self.api = api.rstrip("/")
         self._game_id = game_id
+        #: Advise mode: this uid is an *advisor* of `player` rather than
+        #: `player`'s own seat (`GET /api/seats/{uid}`'s `role`, read by
+        #: `Seats.seat_for` - never a flag a caller sets by hand, and never
+        #: anything the agent holding this uid gets to choose).
+        #:
+        #: It reads exactly what `player` reads (the server resolves an
+        #: advisor uid to that username - `visibility.resolve_viewer`) and it
+        #: never moves the game: every committing POST becomes a proposal
+        #: instead (`_advise_answer`), `run_action` stops before its auto-pass
+        #: and `pass_until` is refused outright.
+        self.advise = advise
         #: `timeout` is normally `Seats.http.timeout` - `Seats.seat_for`
         #: passes it down so the many `Seat` objects it mints all share one
         #: value. `None` (a `Seat` built directly, outside `Seats`) falls
@@ -750,7 +924,17 @@ class Seat:
         that carries a state view is already filtered to this uid by the time
         it gets here. This only trims image URLs, pure token weight with no
         bearing on what may be seen.
+
+        For an advise `Seat` a committing POST never leaves this method as
+        itself - see `_advise_answer`, which is asked first and, when it
+        answers, has already recorded the proposal this returns instead.
         """
+        advised = self._advise_answer(method, path, body)
+        if advised is not None:
+            status, payload = advised
+            if isinstance(payload, dict):
+                _trim_images(payload)
+            return f"{_status_line(status)}\n{json.dumps(payload, indent=1, sort_keys=True)}"
         try:
             response = self.http.request(method, path, json=body, params={"uid": self.uid})
             try:
@@ -787,12 +971,33 @@ class Seat:
         `unknown_outcome`, which `_refused`/`_paused`/`_unknown_outcome` all
         missed and `run_action` read as a completed action. See this
         module's own defect writeup (2026-09-08) for the live reproduction.
+
+        For an advise `Seat` a committing POST is answered by
+        `_advise_answer` - asked before `expected_seq` is folded in, so the
+        body recorded in the proposal is the one the human's own client will
+        post rather than one naming a board position somebody else read.
         """
+        advised = self._advise_answer(method, path, body)
+        if advised is not None:
+            return advised[1]
         body = self._with_expected_seq(method, body)
+        return self._request_json(method, path, body)[1]
+
+    def _request_json(
+        self, method: str, path: str, body: dict[str, Any] | None
+    ) -> tuple[int | None, Any]:
+        """`(status, body)` for one request, the body already normalised into
+        the tri-state shape `call_json` promises. `status` is `None` for the
+        ambiguous-timeout case, which never had one.
+
+        Split out of `call_json` so `_advise_answer` can make requests of its
+        own (the `dry_run` probe, the `/advice` record) through exactly the
+        same normalisation as every other call, and still report the real
+        status code back to `Seat.call`'s text form."""
         try:
             response = self.http.request(method, path, json=body, params={"uid": self.uid})
         except _AMBIGUOUS_TIMEOUTS as exc:
-            return {
+            return None, {
                 "allowed": False,
                 "reason": f"{UNKNOWN_OUTCOME} ({exc})",
                 "unknown_outcome": True,
@@ -802,10 +1007,99 @@ class Seat:
         except ValueError:
             parsed = None
         if response.status_code >= 400:
-            return _normalise_non_2xx(response.status_code, parsed, response.text)
+            return response.status_code, _normalise_non_2xx(
+                response.status_code, parsed, response.text
+            )
         if parsed is None:
-            return {"allowed": False, "reason": f"HTTP {response.status_code}: {response.text}"}
-        return parsed
+            return response.status_code, {
+                "allowed": False,
+                "reason": f"HTTP {response.status_code}: {response.text}",
+            }
+        return response.status_code, parsed
+
+    def _advise_answer(
+        self, method: str, path: str, body: dict[str, Any] | None
+    ) -> tuple[int | None, Any] | None:
+        """`None` when this request may be sent as it is; `(status, answer)`
+        when this is an advise `Seat` making a committing call, in which case
+        the proposal has already been recorded by the time this returns.
+
+        The one choke point advise mode is enforced at - `call` and
+        `call_json` both ask it, and between them they are every HTTP request
+        this module makes. The order of the guards below is the contract:
+
+        1. **Not an advise seat, or not a POST.** Sent. A read is a read, and
+           an advisor reads exactly what its human reads.
+        2. **A path that is a channel for saying something**
+           (`ADVISE_PASSTHROUGH_SUFFIXES`). Sent. `/plan` and `/reflection`
+           are seat-only and the server's own refusal is the right answer to
+           hand back; `/report` is allowed; `/advice` is this method's own
+           output and must not recurse.
+        3. **A body that already says `dry_run: true`.** Sent. That is
+           already a question rather than a move - an advisor probing the
+           engine on purpose gets exactly what a seat would.
+        4. **A shape that supports `dry_run`** (`DRY_RUN_SHAPES`). Probed with
+           `dry_run: true`; an outcome the engine refuses is handed straight
+           back, verbatim and unrecorded, so the advisor tries something else
+           rather than proposing something illegal.
+        5. **Anything else.** *Nothing is sent.* The proposal is built from
+           `available_actions` and marked `validated: false` - see
+           `DRY_RUN_SHAPES` for why leaning on the gate's own `dry_run`
+           carve-out here would be a way to commit a real action by accident.
+
+        The `/advice` POST itself can be refused (a blank `reasoning`, most
+        likely - the route requires the advisor's own words), and that
+        refusal is returned rather than swallowed: a proposal nobody recorded
+        must never read as one that was.
+        """
+        if not self.advise or method.upper() != "POST":
+            return None
+        if path.rstrip("/").endswith(ADVISE_PASSTHROUGH_SUFFIXES):
+            return None
+        sending = dict(body or {})
+        if sending.get("dry_run") is True:
+            return None
+        shape = ACTION_REQUEST_SHAPES.get(_action_key(path) or "")
+        validated = shape in DRY_RUN_SHAPES
+        outcome: Any
+        if validated:
+            status, outcome = self._request_json(method, path, {**sending, "dry_run": True})
+            if not (isinstance(outcome, dict) and outcome.get("allowed") is True):
+                return status, outcome
+        else:
+            outcome = {
+                "allowed": None,
+                "validated": False,
+                "reason": ADVISE_UNVALIDATED_REASON,
+            }
+        # The body the human's own client will post verbatim once it agrees:
+        # the human as `player`, and no `dry_run` left in it (the probe above
+        # was ours, not theirs). No `expected_seq` either - the row carries
+        # `based_on_seq`, read server-side at the moment it is written, and
+        # the human's client names its own board when it finally acts.
+        ready = {key: value for key, value in sending.items() if key != "dry_run"}
+        ready["player"] = self.player
+        status, advice = self._request_json(
+            "POST",
+            f"/api/games/{self.game_id()}/advice",
+            {
+                "player": self.player,
+                "method": method.upper(),
+                "path": path,
+                "body": ready,
+                "reasoning": ready.get("reasoning") or "",
+                "validated": validated,
+            },
+        )
+        if not (isinstance(advice, dict) and advice.get("proposed") is True):
+            return status, advice
+        return status, {
+            "proposed": True,
+            "log_seq": advice["log_seq"],
+            "summary": advice.get("summary"),
+            "outcome": outcome,
+            "state": self.fetch_state(),
+        }
 
     def fetch_state(self) -> dict[str, Any]:
         """This seat's filtered view of the game, right now (`battlefield_state`'s
@@ -978,7 +1272,12 @@ class Seats:
         #: from the process itself being dead.
         self._pinned_game_id = game_id
         self._last_seen_game_id: str | None = None
-        self._by_uid: dict[str, str] = {}
+        #: uid -> what `GET /api/seats/{uid}` said about it: `(player, role,
+        #: game_id)`. One lookup per uid for the life of this process - a
+        #: buddy pod or a seat pod makes thousands of tool calls and the
+        #: answer cannot change for a uid that is still valid (a uid is
+        #: never reissued for a different seat, game or role).
+        self._by_uid: dict[str, tuple[str, str, str]] = {}
         #: 2b T11: the http transport is one long-running process that may
         #: serve several concurrently-live games at once - "the one live
         #: game" (`game_id()` below) stops being a coherent idea for it, and
@@ -1022,34 +1321,83 @@ class Seats:
         return current
 
     def seat_for(self, uid: str) -> Seat | None:
-        """The seat this uid opens, or None when the uid is nobody's."""
-        if self._resolve_by_uid:
-            return self._seat_for_any_game(uid)
-        game_id = self.game_id()
-        player = self._by_uid.get(uid)
-        if player is None:
-            response = self.http.get(f"/api/games/{game_id}/seat", params={"uid": uid.strip()})
-            if response.status_code != 200:
-                return None
-            player = response.json()["player"]
-            self._by_uid[uid.strip()] = player
-        return Seat(player, uid.strip(), self.api, game_id, timeout=self.http.timeout)
+        """The seat this uid opens, or `None` when the uid is nobody's - an
+        **advise** `Seat` when the uid is an advisor's rather than a seat's.
 
-    def _seat_for_any_game(self, uid: str) -> Seat | None:
-        """`resolve_by_uid=True` path: one round trip to `GET
-        /api/seats/{uid}` finds this uid's game and player with no game id
-        assumed up front - what the http transport needs to serve several
-        live games from one process. No `_by_uid` caching here: unlike the
-        single/pinned-game path, there is no one "current live game" whose
-        restart would tell this process to drop a stale cache (see
-        `game_id`'s docstring) - every call simply asks fresh."""
-        response = self.http.get(f"/api/seats/{uid.strip()}")
+        One lookup for both, `GET /api/seats/{uid}` (`app.find_seat`), for
+        every transport. That endpoint is the only place a uid's *role* is
+        answered at all, and a buddy pod is dispatched as the seat Job with a
+        different uid - no flag, no MCP config change, no new placeholder
+        says which it is - so asking here is what makes advise mode work
+        identically for stdio, shared-HTTP and `mcp-seat` subprocess mode.
+
+        The pinned (`--game`) path used to ask `GET /api/games/{id}/seat`
+        instead, which knows nothing about roles and 404s an advisor uid
+        outright, so a buddy pinned to its game was simply nobody. It now
+        asks the same question as everyone else and keeps its own isolation
+        by *checking* the answer: a uid whose own game is not the pinned one
+        is still nobody here, which is what `--game` is for.
+        """
+        uid = uid.strip()
+        # Asked first, and only on the single-game path: it is what drops a
+        # `_by_uid` cache belonging to a game that has since been replaced
+        # (see `game_id`), so it has to run before `_lookup` reads that cache.
+        expected_game = None if self._resolve_by_uid else self.game_id()
+        found = self._lookup(uid)
+        if found is None:
+            return None
+        player, role, uid_game = found
+        if expected_game is not None and expected_game != uid_game:
+            # `--game` pins this process to one game on purpose, and the
+            # unpinned single-game path follows whichever one is live.
+            # Resolving through the global uid lookup must not turn either
+            # into a hint: a uid minted for another live game is nobody here,
+            # exactly as it was when this path asked that game directly.
+            return None
+        return Seat(
+            player,
+            uid,
+            self.api,
+            uid_game,
+            timeout=self.http.timeout,
+            advise=role == "advisor",
+        )
+
+    def _lookup(self, uid: str) -> tuple[str, str, str] | None:
+        """`(player, role, game_id)` for `uid` from `GET /api/seats/{uid}`,
+        cached in `_by_uid` - `None` for a uid no live game recognises.
+
+        Cached because it is on the path of every single tool call and the
+        answer cannot change while the uid is still valid. It can stop being
+        valid (the game it belongs to ends), and the cache is dropped for
+        that: `game_id()` clears `_by_uid` the moment the live game id
+        changes under an unpinned process, which is why `seat_for` asks it
+        before calling this.
+
+        The `resolve_by_uid` (shared-HTTP) path has no such trigger - it
+        serves several live games at once, so there is no single "current"
+        one whose replacement would signal a stale cache - and it used to ask
+        fresh every call for exactly that reason. It now caches too, and the
+        cost of that is narrow and visible: a uid whose game has since ended
+        resolves to a `Seat` pointed at a game that is gone, and every call
+        it makes answers 404 rather than the cleaner "no such seat". That is
+        the right trade for a transport whose whole job is thousands of tool
+        calls per uid, and the failure is loud either way."""
+        cached = self._by_uid.get(uid)
+        if cached is not None:
+            return cached
+        response = self.http.get(f"/api/seats/{uid}")
         if response.status_code != 200:
             return None
         body = response.json()
-        return Seat(
-            body["player"], uid.strip(), self.api, body["game_id"], timeout=self.http.timeout
-        )
+        # `role` is T11/wave-1's own field. Defaulted rather than required so
+        # a toolset built after an api that predates it still resolves seats:
+        # "no role reported" can only mean the api has none to report, and an
+        # ordinary seat is the safe reading (an advisor uid would be refused
+        # by that api's routes anyway, having no advisor support at all).
+        found = (body["player"], body.get("role") or "seat", body["game_id"])
+        self._by_uid[uid] = found
+        return found
 
 
 def _trim_images(state: dict[str, Any]) -> None:
@@ -1630,6 +1978,10 @@ def run_action(
     nothing here would know how to fill in honestly.
     """
     before = seat.fetch_state()
+    # Read by `answered` below, and set here rather than beside the retry
+    # that flips it: every return path goes through `answered`, the advise
+    # short-circuit included, so it has to be bound before any of them.
+    stale_retry = False
 
     def answered(state: dict[str, Any], **fields: Any) -> dict[str, Any]:
         """One answer shape for all eight of this function's returns, so a
@@ -1653,6 +2005,34 @@ def run_action(
             answer["stale_retry"] = True
         return answer
 
+    if seat.advise:
+        # Advise mode short-circuits **before** the auto-pass and the wake
+        # check below, and that is the whole point: an advisor releasing
+        # priority, or sitting in `block_until_wake` on the strength of an
+        # action it did not take, would be driving the game rather than
+        # advising it. `perform()` itself does not move the game either -
+        # `Seat._advise_answer` turns it into a recorded proposal - so there
+        # is nothing here to wake for and nothing to hold.
+        #
+        # None of the machinery above is reached either: no `expected_seq` is
+        # armed (the proposal carries the server's own `based_on_seq`), no
+        # stale retry is possible (nothing was committed to be stale against)
+        # and `_call_watching_for_self_decision` has no in-flight mutation to
+        # watch for a self-addressed decision behind.
+        proposal = perform()
+        state = proposal.get("state") if isinstance(proposal, dict) else None
+        outcome = (
+            {key: value for key, value in proposal.items() if key != "state"}
+            if isinstance(proposal, dict)
+            else proposal
+        )
+        return answered(
+            state if isinstance(state, dict) else seat.fetch_state(),
+            outcome=outcome,
+            held_priority=None,
+            wake_reason=ADVISE_WAKE_REASON,
+        )
+
     # P4: name the board this action was decided against - the newest ledger
     # position this seat has been handed (`Seat.last_seq`, set by every
     # `recent_log` this function's own answers already carry). One-shot, so
@@ -1660,7 +2040,6 @@ def run_action(
     # ledger - names nothing and is never refused as stale.
     seat.send_expected_seq_once(seat.last_seq)
     outcome, self_decision = _call_watching_for_self_decision(seat, perform)
-    stale_retry = False
     if self_decision is None and is_stale(outcome):
         # The board moved between this seat's read and this call - a lost
         # race, not a misread. Ask the board what it actually is (the house
@@ -2202,6 +2581,20 @@ def pass_until(
     the exact log noise the owner reported. This is that same bounded wait,
     on this tool too.
     """
+    if seat.advise:
+        # Refused up front, before a single priority is passed: see
+        # `ADVISE_NO_PASS_UNTIL`. The answer keeps `_pass_until_once`'s own
+        # shape so a caller reads this refusal the one way it already knows.
+        state = seat.fetch_state()
+        return {
+            "stopped_because": ADVISE_NO_PASS_UNTIL,
+            "passes": 0,
+            "finished": True,
+            "until": {"step": until_step, "whose_turn": whose_turn},
+            "state": state,
+            "available_actions": available_actions(seat, state),
+            "recent_log": seat.recent_log(),
+        }
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {

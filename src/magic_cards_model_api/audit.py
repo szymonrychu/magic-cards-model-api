@@ -69,38 +69,48 @@ GAME_OVER_ACTION = "game_over"
 #: starts reaching the ledger rather than needing the page changed again.
 REFLECTION_ACTION = "game_reflection"
 
-#: One proposal from the "mtg-buddy" advisor watching a human seat's own
-#: view: a suggested request (`method`/`path`/`body`), the server-derived
-#: `summary` of it (card names resolved from ids, targets, cost), the
-#: agent's own `reasoning` for proposing it, `based_on_seq` (the ledger
-#: position the proposal was made against), and `validated` (whether the
-#: shape could be probed with `dry_run` before ever reaching the human -
-#: `False` for a request shape with no `dry_run` support, per `game_access.
-#: DRY_RUN_ROUTES`). Written by the advice route itself - a later, separate
-#: task - and defined here ahead of it landing so this constant, and
-#: `review.py`'s reading of it, meet that task's write side cleanly rather
-#: than drifting into a second spelling of the same action name.
+#: An advisor's proposal: one action it says its human should take, validated
+#: against the engine where the request shape allowed it, recorded but never
+#: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row
+#: carries the suggested request (`method`/`path`/`body`), the server-derived
+#: `summary` of it (card names resolved from ids, targets, cost), the agent's
+#: own `reasoning` for proposing it, `based_on_seq` (the ledger position the
+#: proposal was made against), and `validated` (whether the shape could be
+#: probed with `dry_run` before ever reaching the human - `False` for a
+#: request shape with no `dry_run` support, per
+#: `game_access.DRY_RUN_ROUTES`).
+#:
+#: The advisor credential is read-only by construction (`game_access.py`), so
+#: this row is the *only* way a buddy pod reaches the game at all - and,
+#: because the api is multi-replica and `AiSeatRegistry`/`K8sSeats._seats`
+#: are process-local caches, the ledger is the only place a proposal can live
+#: and still be visible to the replica the human's next poll happens to hit.
 ADVICE_ACTION = "advice"
 
-#: The human's one-click approval of an `ADVICE_ACTION` row, detail carrying
-#: `advice_seq` - the approved row's own `seq`, which is how `review.py`
-#: pairs the two (by seq, never by comparing bodies: `mana_sources` and
-#: similar fields legitimately differ between what was proposed and what the
-#: engine actually taps). Like `ADVICE_ACTION`, mutates no game state - the
-#: approval is a marker; the real attempt that follows, if any, is its own
-#: ordinary action row with its own `allowed`.
+#: The human saying yes to one `ADVICE_ACTION` row, by its `seq`
+#: (`POST /api/games/{id}/advice/{seq}/approve`). `detail` carries
+#: `advice_seq` - the approved row's own `seq`, which is how `review.py` pairs
+#: the two (by seq, never by comparing bodies: `mana_sources` and similar
+#: fields legitimately differ between what was proposed and what the engine
+#: actually taps). Recorded *before* the action itself is sent, so the
+#: retrospective can pair a proposal with the move it actually produced
+#: rather than guessing from adjacency. Like `ADVICE_ACTION`, mutates no game
+#: state - the approval is a marker; the real attempt that follows, if any, is
+#: its own ordinary action row with its own `allowed`.
 ADVICE_APPROVED_ACTION = "advice_approved"
 
 #: The actions that get a banner at WARNING rather than one compact line.
-LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION)
+LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION, ADVICE_ACTION)
 
 #: The heading each loud action's banner carries, preposition included: one
-#: is something the seat did, the next something done to it, the last
-#: something the seat said it was about to do.
+#: is something the seat did, the next something done to it, the third
+#: something the seat said it was about to do, the last something somebody
+#: else is suggesting it do.
 _LOUD_HEADINGS = {
     PROBLEM_ACTION: "PROBLEM REPORTED by",
     OVERRULE_ACTION: "PREGAME DECISION OVERRULED for",
     PLAN_ACTION: "PLAN DECLARED by",
+    ADVICE_ACTION: "ADVICE PROPOSED for",
 }
 
 logger = logging.getLogger("mcm.audit")
@@ -299,7 +309,10 @@ def _loud_block(entry: dict[str, Any]) -> str:
     turn = entry["turn"] if entry["turn"] is not None else "?"
     step = entry["step"] or "?"
     who = detail.get("player") or "?"
-    text = str(detail.get("text") or _plan_text(detail) or "").strip() or "(no text)"
+    text = (
+        str(detail.get("text") or _plan_text(detail) or _advice_text(entry) or "").strip()
+        or "(no text)"
+    )
     heading = _LOUD_HEADINGS.get(entry["action"], f"{entry['action'].upper()} by")
     lines = [
         "=" * 72,
@@ -331,6 +344,34 @@ def _plan_text(detail: dict[str, Any]) -> str | None:
         f"because: {prediction.get('because') or '?'}",
     ]
     return "\n".join(lines)
+
+
+def _advice_text(entry: dict[str, Any]) -> str | None:
+    """An `ADVICE_ACTION` entry rendered for the console banner - `None` for
+    any other entry, so `_loud_block`'s ordinary `text` path is untouched.
+
+    Both halves, on purpose. `summary` is what the proposal *is*, derived
+    server-side from the request body so it cannot disagree with it
+    (`records.advice_summary`); `reasoning` is the advisor's own words, which
+    is the half a person watching the log actually wants to judge. Printing
+    only one of them would either hide what was proposed or hide why.
+
+    Takes the whole `entry`, not only its `detail`, because those two halves
+    live in different places: the summary is detail this route wrote, while
+    the reasoning is `record`'s own top-level `reasoning` field - the same one
+    every acting route's reasoning lands in, so an advisor's words are
+    redacted, reviewed and read back by exactly the mechanisms a seat's
+    already are rather than by a second set written for this row alone."""
+    detail = entry.get("detail") or {}
+    if entry.get("action") != ADVICE_ACTION:
+        return None
+    validated = "validated" if detail.get("validated") else "NOT validated"
+    return "\n".join(
+        [
+            f"proposes: {detail.get('summary') or '?'} ({validated})",
+            f"because : {entry.get('reasoning') or '?'}",
+        ]
+    )
 
 
 def _console_line(entry: dict[str, Any]) -> str:

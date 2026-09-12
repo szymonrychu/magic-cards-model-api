@@ -1409,6 +1409,132 @@
         "title": "AdvanceResponse",
         "type": "object"
       },
+      "AdviceApproveIn": {
+        "description": "`POST /api/games/{game_id}/advice/{seq}/approve` - the human saying\nyes to one proposal, by its ledger `seq`.\n\nHuman uid only. An advisor's own uid is refused by `game_access.py`\nbefore this route ever runs (the path is neither `/advice` nor `/report`\nand the body claims no `dry_run`), and the route checks the same thing\nagain against `store.player_for_uid`: an advisor must never be able to\napprove its own advice, and that must hold whether or not the gate is\nthe thing enforcing it on any given day.",
+        "properties": {
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player"
+        ],
+        "title": "AdviceApproveIn",
+        "type": "object"
+      },
+      "AdviceApprovedResponse": {
+        "description": "`POST .../advice/{seq}/approve`'s answer. Mutates no `Game` either.",
+        "properties": {
+          "advice_seq": {
+            "title": "Advice Seq",
+            "type": "integer"
+          },
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "advice_seq",
+          "player"
+        ],
+        "title": "AdviceApprovedResponse",
+        "type": "object"
+      },
+      "AdviceIn": {
+        "description": "`POST /api/games/{game_id}/advice` - one action an **advisor** thinks\nits human should take, recorded and never performed.\n\nAn advisor credential (`repository.Advisor`) is read-only by\nconstruction: `game_access.py` refuses every mutating POST it makes\nexcept this one and `/report`. So this is not a convenience - it is the\nonly way a buddy pod reaches the game it is watching at all, and the\nreason it is a *ledger row* rather than anything held in memory is that\nthe api is multi-replica: a proposal kept in one process would be\ninvisible to the replica the human's next poll happens to hit.\n\n`method`/`path`/`body` are the **request the human's client will post\nverbatim** once it agrees, built by `seatkit` (which already knows how to\nshape every action) rather than hand-written by a model - see\n`seatkit.Seat._advise_answer`. `body` names the human as `player` and\ncarries no `dry_run`: an approved proposal is a real action.\n\nThere is deliberately no `summary` field here. What the proposal *says*\nis derived server-side from `body` and the live game\n(`records.advice_summary`), so it cannot disagree with the request it\ndescribes - an agent-written summary naming a different card from the one\n`body` would actually cast is exactly the failure that shape invites.\n\n`reasoning` is the half that *is* the agent's own words, and the half the\nhuman actually reads before deciding. Required and non-blank: a proposal\nwith no argument for it is a button, not advice.",
+        "properties": {
+          "body": {
+            "additionalProperties": true,
+            "title": "Body",
+            "type": "object"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "minLength": 1,
+            "title": "Reasoning",
+            "type": "string"
+          },
+          "validated": {
+            "default": false,
+            "title": "Validated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "player",
+          "method",
+          "path",
+          "reasoning"
+        ],
+        "title": "AdviceIn",
+        "type": "object"
+      },
+      "AdviceResponse": {
+        "description": "`POST .../advice`'s answer. No state view: recording a proposal\nmutates no `Game`, so there is nothing about the board it could have\nchanged - the same reason `DeclarePlanResponse` carries none.",
+        "properties": {
+          "based_on_seq": {
+            "title": "Based On Seq",
+            "type": "integer"
+          },
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "proposed": {
+            "title": "Proposed",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "validated": {
+            "title": "Validated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "proposed",
+          "log_seq",
+          "player",
+          "summary",
+          "validated",
+          "based_on_seq"
+        ],
+        "title": "AdviceResponse",
+        "type": "object"
+      },
       "Affordability": {
         "description": "Whether an action's cost could be paid right now - reported\n*alongside* legality, never used to decide it. CR 118.6: \"Attempting to\ncast a spell, activate an ability, or take a special action that has an\nunpayable cost is a legal action.\" Casting with no red mana in play is\nstill casting; this is what tells the difference between \"legal and\npayable\" and \"legal and not\".",
         "enum": [
@@ -11814,6 +11940,147 @@
           }
         },
         "summary": "Advance"
+      }
+    },
+    "/api/games/{game_id}/advice": {
+      "post": {
+        "description": "Record one action an advisor thinks `req.player` should take\n(`schemas.AdviceIn`), and record nothing else.\n\n**This mutates no `Game`, exactly like `declare_plan`** - which is the\nprior art this is modelled on, down to the shape of this docstring. It\ncalls `audit.record` and nothing else: no `store.replace`, no\ncompare-and-swap, no version bump. A proposal is a statement *about* the\ngame, and the whole point of advise mode is that the advisor never moves\nit; a route that quietly committed one would hand a read-only credential\nthe authority its own gate exists to deny.\n\n**The summary is derived here, not taken from the caller.**\n`records.advice_summary` reads `req.body` against the live game - card\nids resolved to names, targets and cost spelled out - so what the human\nreads can never disagree with the request it describes. `schemas.AdviceIn`\nhas no `summary` field at all, so an advisor cannot try.\n\n**`based_on_seq` is read immediately before the row is written, under no\nlock.** A command landing in between makes this proposal born-stale, and\nthat is the safe direction: the human's own action carries its own\n`expected_seq` (`records.require_current_board`) and is refused against a\nboard that moved, so a stale proposal costs a refusal rather than a wrong\nmove. Taking the game's lock here would instead let a buddy pod's\nthinking block the seat it is advising.\n\n`legal_actions_before` is computed the same way every acting route\ncomputes it, for `req.player` - what *else* was legal at the moment the\nadvice was given, which is the comparison a retrospective needs and\ncannot reconstruct afterwards. It is hidden information (it names cards\nin that player's hand), which is why it rides in the row rather than the\nresponse, and `visibility.redact_log_entry` keeps it - and the whole\nproposal - out of the opponent's read of the same log.\n\nAuthorised on whoever may already *see* `req.player`'s hand: this game's\nadvisor for that seat (`visibility.resolve_viewer` resolves an advisor\nuid to its human's username), the seat itself, or the admin key. A\nproposal names hidden information, so nobody else may write one into that\nseat's name - the same rule, and the same 404, `declare_plan` enforces.",
+        "operationId": "record_advice_api_games__game_id__advice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdviceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Advice"
+      }
+    },
+    "/api/games/{game_id}/advice/{seq}/approve": {
+      "post": {
+        "description": "Record that the advised human said yes to the `advice` row at `seq`.\n\n**Mutates no `Game`** - one more `audit.record` call, for the same\nreasons `record_advice` above makes none.\n\n**The human's client calls this BEFORE sending the action itself**, and\nmust not send the action if this fails. That ordering is the whole\npurpose of the row: an `advice_approved` row sitting immediately before\nthe action in the same ledger is what lets a retrospective say \"this move\ncame from the buddy\" rather than inferring it from adjacency, and a\nrefused approval leaves no row at all, so an action taken anyway is\nvisibly unpaired. (The browser half of that is a later task; the contract\nit must honour is pinned by this repo's own tests now, not then.)\n\n**Human uid only, checked twice.** `game_access.py` already refuses an\nadvisor uid here - this path is neither `/advice` nor `/report`, and the\nbody claims no `dry_run` - and that is correct and deliberate: an advisor\napproving its own advice would make the human's agreement a formality.\nThis route checks it again itself, against `store.player_for_uid` (a\n*seat* credential, never `resolve_viewer`, which an advisor uid passes by\ndesign), because a rule this load-bearing should not rest on one gate\nremembering to run.",
+        "operationId": "approve_advice_api_games__game_id__advice__seq__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "title": "Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdviceApproveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceApprovedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Advice"
       }
     },
     "/api/games/{game_id}/affordances/{card_id}": {

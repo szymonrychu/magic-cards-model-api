@@ -55,6 +55,8 @@ LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
 _DUMMY_PATH_PARAMS = {
     "card_id": "00000000-0000-0000-0000-000000000000",
     "username": "nobody",
+    # `POST .../advice/{seq}/approve`: a ledger `seq`, so an integer.
+    "seq": "1",
 }
 
 

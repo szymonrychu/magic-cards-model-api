@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import PendingDecision
@@ -352,3 +353,164 @@ def legal_actions_before(
     return LegalActionsBefore(
         player=player, actions=[action.model_dump(mode="json") for action in actions]
     )
+
+
+# -- what a proposal actually says -------------------------------------------
+#
+# `POST /api/games/{id}/advice` records what an advisor thinks its human
+# should do. The *body* of that proposal is machine-shaped - card ids, mana
+# source ids, target tokens - which is exactly right for the browser that
+# will post it verbatim, and useless to the human deciding whether to.
+#
+# The one-line rendering below is therefore derived **here, server-side, from
+# the body and the live game**, never taken from the advisor. An agent-supplied
+# summary is a second description of the same action that nothing keeps honest:
+# it can name a different card from the one the body would actually cast, and a
+# human reading only the summary would approve something else entirely. A
+# server-derived one cannot disagree with the body it describes, because it is
+# computed from it.
+
+#: The request-body keys that carry a *cost* being paid rather than the thing
+#: being done, with the preposition each one reads naturally with. Every one
+#: of them is a list of card ids (`CastRequest.sacrificing`/`.discarding`/
+#: `.exiling`/`.choosing`/`.tapping`, `ActivateRequest`'s same four,
+#: `CrewRequest.crewing`).
+_COST_KEYS = (
+    ("crewing", "crewing with"),
+    ("sacrificing", "sacrificing"),
+    ("discarding", "discarding"),
+    ("exiling", "exiling"),
+    ("choosing", "choosing"),
+    ("tapping", "tapping"),
+)
+
+
+def _named(game: Game, token: Any) -> str:
+    """`token` as a human would read it: a card id resolved to the card's own
+    name, a player's username left alone, anything else stringified.
+
+    Resolution is best effort on purpose. A proposal is recorded against the
+    board as it stood when the advisor read it, and this runs a moment later:
+    a card that has since moved zones (or a body naming an id this game never
+    had) must still produce a readable line rather than raise and lose the
+    whole row."""
+    text = str(token)
+    try:
+        card = game.find_by_id(UUID(text))
+    except Exception:
+        card = None
+    if card is not None:
+        return card.card.name
+    if any(player.username == text for player in game.players):
+        return text
+    return text
+
+
+def _names(game: Game, tokens: Any) -> list[str]:
+    return [_named(game, token) for token in tokens] if isinstance(tokens, list) else []
+
+
+def _action_name(path: str) -> str:
+    """The action a proposal's `path` names, in words - `".../actions/play-
+    land"` reads `"play land"`. Derived from the path rather than taken as a
+    field, for the same reason the summary as a whole is."""
+    tail = path.rstrip("/").rsplit("/", 1)[-1]
+    return tail.replace("-", " ") or "act"
+
+
+def advice_summary(game: Game, method: str, path: str, body: dict[str, Any]) -> str:
+    """One line saying what this proposal would actually do, card names and
+    targets resolved against `game` - see this section's own comment for why
+    the advisor never gets to write it.
+
+    Deliberately built from a fixed list of well-known body keys rather than
+    by dumping the body: the point is a sentence a human can read at a glance
+    while the game is running, and an unknown key is far more likely to be
+    noise (`expected_seq`, `reasoning`) than the thing being proposed. The
+    exact body is recorded alongside this, in full, so nothing is lost by
+    this line being short.
+    """
+    player = str(body.get("player") or "?")
+    parts = [f"{player}: {_action_name(path)}"]
+
+    card = body.get("card_id") or body.get("card")
+    if card:
+        parts.append(_named(game, card))
+    if isinstance(body.get("ability_index"), int) and "activate" in path:
+        parts.append(f"ability #{body['ability_index']}")
+    if body.get("keyword"):
+        parts.append(f"via {body['keyword']}")
+    if body.get("from_zone") and body["from_zone"] != "hand":
+        parts.append(f"from {body['from_zone']}")
+    if isinstance(body.get("modes"), list) and body["modes"]:
+        parts.append("modes " + ", ".join(str(mode) for mode in body["modes"]))
+    if isinstance(body.get("x_value"), int):
+        parts.append(f"X={body['x_value']}")
+
+    targets = _names(game, body.get("targets"))
+    if targets:
+        parts.append("targeting " + ", ".join(targets))
+    attackers = body.get("attackers")
+    if isinstance(attackers, list) and attackers:
+        parts.append(
+            "attacking "
+            + ", ".join(
+                f"{_named(game, pair.get('card_id'))} -> {_named(game, pair.get('defender'))}"
+                for pair in attackers
+                if isinstance(pair, dict)
+            )
+        )
+    elif isinstance(attackers, list):
+        parts.append("attacking with nobody")
+    blocks = body.get("blocks")
+    if isinstance(blocks, list) and blocks:
+        parts.append(
+            "blocking "
+            + ", ".join(
+                f"{_named(game, pair.get('blocker'))} blocks {_named(game, pair.get('blocked'))}"
+                for pair in blocks
+                if isinstance(pair, dict)
+            )
+        )
+    elif isinstance(blocks, list):
+        parts.append("blocking with nobody")
+    pairs = body.get("pairs")
+    if isinstance(pairs, list) and pairs:
+        parts.append(
+            "pairs "
+            + ", ".join(
+                f"{_named(game, pair.get('creature'))} -> {_named(game, pair.get('defender'))}"
+                for pair in pairs
+                if isinstance(pair, dict)
+            )
+        )
+
+    for key, preposition in _COST_KEYS:
+        named = _names(game, body.get(key))
+        if named:
+            parts.append(f"{preposition} " + ", ".join(named))
+    sources = body.get("mana_sources")
+    if isinstance(sources, list) and sources:
+        parts.append(f"paying with {len(sources)} source(s)")
+
+    # `decide`'s own answers (`schemas.DecideRequest`) - one kind per field,
+    # so whichever one the body carries is the answer being proposed.
+    if body.get("accept") is not None:
+        parts.append("yes" if body["accept"] else "no")
+    if body.get("choice"):
+        parts.append(f"choosing {body['choice']}")
+    for key, label in (("energy_amount", "energy"), ("life_amount", "life")):
+        if isinstance(body.get(key), int):
+            parts.append(f"paying {body[key]} {label}")
+    for key, label in (("card_ids", "cards"), ("moved", "moving")):
+        named = _names(game, body.get(key))
+        if named:
+            parts.append(f"{label} " + ", ".join(named))
+    if isinstance(body.get("top_order"), list) and body["top_order"]:
+        parts.append("top order " + ", ".join(_names(game, body["top_order"])))
+
+    # The action and the thing it is done to read as one phrase ("alice: cast
+    # Lightning Bolt"); every qualifier after that is its own clause.
+    head = " ".join(parts[:2])
+    qualifiers = parts[2:]
+    return f"{head}, {', '.join(qualifiers)}" if qualifiers else head
