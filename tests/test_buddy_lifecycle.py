@@ -1116,3 +1116,52 @@ def test_the_advisor_wrapper_prose_forbids_both_reads_its_wait_answers() -> None
         "the prose never names `recent_log`, the key that rides the advisor's "
         "own wake loop and replaces a `game_log` call"
     )
+
+
+# ---------------------------------------------------------------------------
+# the lobby's own create path, end to end
+# ---------------------------------------------------------------------------
+
+
+@requires_node
+def test_a_game_created_through_the_lobby_form_with_the_buddy_registers_an_advisor(
+    client: TestClient,
+) -> None:
+    """The real `ui/render/lobby.js` builds the create body from its form (the
+    buddy toggled on), and that exact body - not a hand-written one - is what
+    the server gets. It must mint an advisor for the human, holding the
+    settings the form chose, and nothing under the name-keyed agent map."""
+    from test_ui_lobby import FAKE_DOM, LOBBY_FORM
+
+    captured = run_module(
+        "render/lobby.js",
+        FAKE_DOM + LOBBY_FORM + "submitCreate(opts)",
+        opts={
+            "youName": "you",
+            "aiName": "bot",
+            "youDeck": LEGAL_DECK,
+            "aiDeck": LEGAL_DECK_B,
+            "buddy": True,
+            "buddyModel": "fable",
+            "buddyEffort": "high",
+        },
+    )
+    assert len(captured["posted"]) == 1, f"the lobby sent no create request: {captured}"
+    response = client.post("/api/lobby/games", json=captured["posted"][0])
+    assert response.status_code == 200, response.text
+    created = response.json()
+    assert list(created["advisor_uids"]) == ["you"]
+    uid = created["advisor_uids"]["you"]
+    advisors = store.advisor_uids(created["game_id"])
+    assert list(advisors) == [uid]
+    assert advisors[uid].player == "you"
+    assert advisors[uid].agent == AgentSettings(model="fable", effort="high")
+    assert set(store.agent_settings(created["game_id"])) == {"bot"}
+
+
+def test_a_buddy_with_no_settings_runs_as_opus(client: TestClient) -> None:
+    created = boot(client)
+    uid = created["advisor_uids"]["you"]
+    advisor = store.advisor_uids(created["game_id"])[uid]
+    assert advisor.agent is not None
+    assert advisor.agent.model == "opus"

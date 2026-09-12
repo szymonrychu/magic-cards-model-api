@@ -9,7 +9,10 @@
 // need. `agentFrom` turns the AI deck picker's three raw fields (`#ai-model`,
 // `#ai-effort`, `#ai-thinking`) into the `agent` body `POST /api/lobby/games`
 // sends for the AI player, the same shape `AgentSettings` (the API's pydantic
-// model) accepts.
+// model) accepts. `seatEntry` builds each `players[]` entry of that request,
+// including the human seat's opt-in buddy (`buddy` plus `buddy_agent`, read
+// from `#you-buddy-*` through the same `agentFrom`), and `buddyControlState`
+// says which buddy controls a seat may use.
 
 export const MODEL_SUGGESTIONS = ["sonnet", "opus", "haiku", "fable"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -31,12 +34,42 @@ export function thinkingTokensAreValid(raw) {
   return Number.isInteger(parsed) && parsed >= 0;
 }
 
+/** The model a blank model field means - the same spelling, and the same
+ * default, as the server's own `AgentSettings.default`. */
+export const DEFAULT_MODEL = "opus";
+
 export function agentFrom(fields) {
-  const model = (fields.model || "").trim() || "sonnet";
+  const model = (fields.model || "").trim() || DEFAULT_MODEL;
   const effort = EFFORTS.includes(fields.effort) ? fields.effort : "medium";
   const thinking = String(fields.thinking === undefined || fields.thinking === null ? "" : fields.thinking).trim();
   const max_thinking_tokens = thinkingTokensAreValid(thinking) && thinking !== "" ? Number(thinking) : null;
   return { model, effort, max_thinking_tokens };
+}
+
+/** One `players[]` entry of `POST /api/lobby/games`, decided by whether the
+ * seat is an AI seat - never by which controls happen to exist on the page.
+ * An AI seat carries `agent` and nothing else: the server refuses a buddy on
+ * one (`decks_api.NewUiPlayer.buddy`), since it plays through its own uid and
+ * never reads advice, so a `buddy` asked for on an AI seat is dropped here
+ * rather than sent to be refused. A human seat carries `buddy: true` plus
+ * its `buddy_agent` only when opted in, and neither field otherwise - the
+ * server also refuses `buddy_agent` without `buddy`. */
+export function seatEntry({ username, decklistText, ai, agent, buddy, buddyAgent }) {
+  const entry = { username, decklist_text: decklistText, ai: Boolean(ai) };
+  if (entry.ai) {
+    entry.agent = agentFrom(agent || {});
+  } else if (buddy) {
+    entry.buddy = true;
+    entry.buddy_agent = agentFrom(buddyAgent || {});
+  }
+  return entry;
+}
+
+/** Which buddy controls are usable for a seat: on an AI seat neither is,
+ * whatever the toggle says; on a human seat the toggle is, and the buddy's
+ * settings are only while it is on. */
+export function buddyControlState({ ai, buddy }) {
+  return { toggleDisabled: Boolean(ai), settingsDisabled: Boolean(ai) || !buddy };
 }
 
 /** The first 8 hex chars of a `game_id` (a bare `uuid4().hex`, `app.py`'s
