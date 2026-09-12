@@ -653,6 +653,26 @@ def test_end_game_releases_the_advisor_uid(
     assert store.advisor_uids(game_id) == {}
 
 
+def test_deleting_the_game_outright_releases_the_advisor_uid_too(
+    client: TestClient, spawnable: None, fresh_registry: ai_seat.AiSeatRegistry
+) -> None:
+    """`DELETE /api/games/{id}` ends a game just as End game does, and it used
+    to release nothing at all - so a buddy started for that game kept its
+    process (or, in `wrapper` mode, the driver's assignment, which then 409s
+    every later dispatch for the life of that container) and kept answering
+    `registry.status` for a game that no longer exists. Both routes go
+    through `lobby.reset_game` now."""
+    created = boot(client)
+    game_id, uid = created["game_id"], created["advisor_uids"]["you"]
+    assert fresh_registry.status(uid) is not None
+    deleted = client.delete(f"/api/games/{game_id}", params={"key": created["admin_key"]})
+    assert deleted.status_code == 200, deleted.text
+    assert fresh_registry.status(uid) is None, (
+        "the registry still answers for an advisor of a deleted game"
+    )
+    assert store.advisor_uids(game_id) == {}
+
+
 # ---------------------------------------------------------------------------
 # 6. what the buddy is told
 # ---------------------------------------------------------------------------

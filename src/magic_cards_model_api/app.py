@@ -39,6 +39,7 @@ from . import (
     decks_api,
     engine_api,
     game_access,
+    lobby,
     oidc,
     opening,
     protocol,
@@ -1284,7 +1285,14 @@ def delete_game(game_id: str, uid: str | None = None, key: str | None = None) ->
     lobby-booted one) and `GET /api/ui/games` publishes every lobby-booted
     game's id with no credential required to read the list itself; without
     this check, reading the list would be enough to delete a game nobody
-    handed the caller a seat or an admin key for."""
+    handed the caller a seat or an admin key for.
+
+    The deletion itself is `lobby.reset_game`, the same release End game
+    runs, under this route's own audit action - see `lobby.py` for why
+    deleting without releasing left a watcher polling, a seat process alive,
+    a registry answering for uids of a game that no longer existed, and (in
+    `wrapper` mode) a driver that 409s every later dispatch for the life of
+    its container."""
     game = store.get(game_id)
     if game is None:
         raise KeyError(f"no game {game_id}")
@@ -1293,8 +1301,7 @@ def delete_game(game_id: str, uid: str | None = None, key: str | None = None) ->
     )
     if not allowed:
         raise KeyError("that uid is no seat in this game")
-    audit.record(game_id, "delete_game")  # before the game leaves the store
-    store.delete(game_id)
+    lobby.reset_game(game_id, reason="deleted outright", action="delete_game")
     return {"deleted": game_id}
 
 

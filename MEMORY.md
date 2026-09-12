@@ -2827,3 +2827,19 @@ whoever works on the repo itself.
   need to diff against each other explicitly, not just against their own
   base, or a base-truth instruction can survive in one branch after the
   other branch made it wrong.
+- **2026-09-12: `DELETE /api/games/{id}` recorded the deletion and released
+  nothing, and in `wrapper` mode that leak is PERMANENT, not merely untidy.**
+  The route did `audit.record` + `store.delete`, never `lobby.reset_game`, so
+  the pregame watcher kept polling, the seat's process stayed alive, and the
+  registry kept answering `status()` for uids of a game that no longer
+  existed. The non-obvious consequence is the wrapper mechanism: the driver
+  holds one assignment per container and 409s a second dispatch ("it plays
+  one match per container and is free again once that game ends"), and the
+  only thing that ever tells it a game ended is the release this route
+  skipped - so one delete wedged that container for its whole life. Subprocess
+  mode leaked a live `claude`; kubernetes mode leaked the Job until reconcile
+  noticed, up to 60s. Fixed by delegating to `lobby.reset_game`, which also
+  closed the pre-existing seat half. `reset_game` gained an `action` argument
+  rather than the route losing its own audit name: the payload is identical
+  either way, but the ended game's transcript still says which of the two
+  routes ended it, and `scripts/eval_report.py` already knew both names.
