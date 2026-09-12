@@ -207,7 +207,7 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
 
 
 @app.exception_handler(records.BoardMoved)
-def _board_moved(request: Request, exc: records.BoardMoved) -> JSONResponse:
+async def _board_moved(request: Request, exc: records.BoardMoved) -> JSONResponse:
     """409: this seat decided against a board that has since moved, and the
     action was refused before the engine ran - see `records.BoardMoved`.
 
@@ -228,15 +228,28 @@ def _board_moved(request: Request, exc: records.BoardMoved) -> JSONResponse:
 
     **`since` is the ledger, re-read through `GET .../log` itself** rather
     than through a second, differently-redacted read of the same rows: the
-    same function, with the same `uid` this request already carried on its
-    query string (exactly how `_version_conflict` above resolves its own
-    viewer). A caller is therefore handed precisely what a log read of its
-    own would have given it and never a byte more - the redaction argument
-    for this body is `game_log`'s argument, unchanged - and it is handed it
-    without spending the round trip.
+    same function, with the same credential this request actually carried. A
+    caller is therefore handed precisely what a log read of its own would
+    have given it and never a byte more - the redaction argument for this
+    body is `game_log`'s argument, unchanged - and it is handed it without
+    spending the round trip.
+
+    "The same credential" is `game_access._credentials`, the one function
+    that already knows every slot a credential arrives in - the query
+    string first, then the JSON body's own `uid`/`key` for the routes that
+    carry theirs there. Reading `request.query_params["uid"]` by hand, which
+    is what this did, sees neither a body-borne uid nor a `key=`, and the
+    consequence here is not under-redaction but the *maximum*: `game_log`'s
+    uid-less default is deliberately the debugger's eye, so a credential
+    this handler failed to see bought both players' hands rather than
+    neither (`serialize.state_view`'s `"hands"`). The reason that was
+    reachable at all was a mutating route answering a caller who presented
+    nothing, which `game_access.py`'s positive rule now refuses outright -
+    this is the second of the two locks, and the one that keeps holding if
+    a credential ever arrives somewhere new.
     """
-    uid = request.query_params.get("uid")
-    since = game_log(exc.game_id, uid=uid, since=exc.expected_seq)
+    uid, key = await game_access._credentials(request)
+    since = game_log(exc.game_id, uid=uid or key, since=exc.expected_seq)
     # Bounded at `current_seq`, the position the board had actually moved to
     # when this call was refused - which excludes the refusal's own row,
     # written a moment before this handler ran. "What moved while I was
@@ -260,7 +273,7 @@ def _board_moved(request: Request, exc: records.BoardMoved) -> JSONResponse:
 
 
 @app.exception_handler(VersionConflict)
-def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
+async def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
     """409: another writer's `replace()` committed a newer version first
     (`repository_postgres.py`'s own module docstring - optimistic
     concurrency, no server-side retry). The body carries the game's current
@@ -268,9 +281,17 @@ def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
     same `uid` this request itself carried - the loser is never handed more
     than it was already entitled to see - so the loser can re-read and
     recompute its attempt against what is actually committed, rather than
-    retrying blind against the state it already knows is stale."""
-    uid = request.query_params.get("uid")
-    viewer = visibility.resolve_viewer(exc.game_id, uid)
+    retrying blind against the state it already knows is stale.
+
+    The credential is resolved through `game_access._credentials` for the
+    same reason `_board_moved` above does it: every slot one can arrive in,
+    in one place. This handler already failed *closed* on a credential it
+    could not see (`visibility.resolve_viewer(None)` is the viewer that sees
+    nothing hidden), so there was nothing leaking here - but the two
+    handlers answering the same question two ways is how one of them ends up
+    wrong."""
+    uid, key = await game_access._credentials(request)
+    viewer = visibility.resolve_viewer(exc.game_id, uid or key)
     return JSONResponse(
         status_code=409,
         content={

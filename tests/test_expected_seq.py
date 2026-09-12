@@ -649,3 +649,100 @@ def test_an_armed_call_that_pauses_still_recognises_its_own_retry(client, game) 
     retried = retry.json()
     assert retried["paused"] is True, retried
     assert retried["pending_decision"]["kind"] == "choose_cards", retried
+
+
+# ---------------------------------------------------------------------------
+# the 409 body is a log read, and it must be THIS caller's log read
+# ---------------------------------------------------------------------------
+#
+# `_board_moved` builds `since` by calling `game_log` with the caller's own
+# `uid`, which is the right idea: the caller is handed precisely what a log
+# read of its own would have given it. But it read that uid only off the
+# query string, and `game_log`'s uid-less default is deliberately the
+# *debugger's* eye - full snapshots, every hand, both seats
+# (`serialize.state_view`'s `"hands"`). So a caller whose credential the
+# handler failed to see was not merely under-redacted, it was handed the
+# maximum: `{"hands": {"alice": [...], "bob": [...]}}`, both players' cards,
+# on any stale `expected_seq`. Verified before the fix on
+# `POST .../actions/pass-priority` with no credential at all.
+#
+# It resolves the credential through `game_access._credentials` now - the
+# one function that already knows every slot a credential arrives in
+# (query string first, then the JSON body's own `uid`/`key`) - instead of
+# re-implementing half of it.
+
+
+@pytest.mark.no_harness_credential
+def test_a_stale_call_with_no_credential_never_reaches_the_409_at_all(
+    client, game, admin_key
+) -> None:
+    """The leak's actual path, closed twice over. `game_access.py`'s positive
+    rule refuses an uncredentialed mutation before the route runs, so the
+    handler that used to answer it with both hands is never reached.
+
+    Marked `no_harness_credential` so `conftest.py` does not hand this call
+    the admin key it is the whole point of this test not to have.
+    """
+    stale = client.get(f"/api/games/{game}/log").json()["last_seq"]
+    stocked = client.post(
+        f"/api/games/{game}/cards",
+        params={"key": admin_key},
+        json={"card": "Island", "player": "bob", "zone": "hand"},
+    )
+    assert stocked.status_code == 200, stocked.text
+
+    response = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        json={"player": "alice", "expected_seq": stale},
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == f"no game {game}", response.text
+    assert "Island" not in response.text
+
+
+def test_a_seats_own_stale_409_carries_only_its_own_hand(client, game) -> None:
+    uids = seats_for(game)
+    add_card(client, game, "Mountain", "alice", "hand")
+    add_card(client, game, "Island", "bob", "hand")
+    stale = last_seq_of(client, game)
+    add_card(client, game, "Forest", "bob", "battlefield")
+
+    response = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "expected_seq": stale},
+    )
+
+    assert response.status_code == 409, response.text
+    hands = [row["snapshot"]["hands"] for row in response.json()["since"] if row.get("snapshot")]
+    assert hands, response.text
+    for hand in hands:
+        assert hand["alice"] == ["Mountain"], hand
+        # `<hidden>`, not absent: `visibility.redact_snapshot` keeps the
+        # *count* of the opponent's hand public (CR 402.3 hides the cards,
+        # not how many there are) and replaces each identity.
+        assert hand["bob"] == ["<hidden>"], hand
+
+
+def test_the_admin_key_in_its_own_slot_is_recognised_by_the_stale_handler(
+    client, game, admin_key
+) -> None:
+    """`key=` is a credential slot too, and the handler used to look only at
+    `uid=`. The admin key is the one identity entitled to the full board
+    (`visibility.ADMIN`), so what it gets back is unchanged - but it gets it
+    because the handler resolved the credential it was actually given, not
+    because it failed to find one and defaulted to everything."""
+    add_card(client, game, "Island", "bob", "hand")
+    stale = last_seq_of(client, game)
+    add_card(client, game, "Forest", "bob", "battlefield")
+
+    response = client.post(
+        f"/api/games/{game}/actions/pass-priority",
+        params={"key": admin_key},
+        json={"player": "alice", "expected_seq": stale},
+    )
+
+    assert response.status_code == 409, response.text
+    hands = [row["snapshot"]["hands"] for row in response.json()["since"] if row.get("snapshot")]
+    assert hands and all(hand["bob"] == ["Island"] for hand in hands), response.text
