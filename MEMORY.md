@@ -2139,3 +2139,27 @@ whoever works on the repo itself.
   bounded game reaching a real terminal state within its own bounds, not
   "ten concurrent games finish in a given wall-clock time" - the latter is
   a throughput property of this machine, tunable, and unproven at n=10.
+
+- **2026-09-12 - the retrospective half of mtg-buddy, against a write side
+  (B2) that had not landed yet.** `audit.ADVICE_ACTION`/`ADVICE_APPROVED_
+  ACTION` did not exist, so both constants are defined here to the contract
+  given (`"advice"`/`"advice_approved"`), for B2 to meet rather than
+  reinvent. One deliberate deviation from that contract's literal wording:
+  `reasoning` is read off the entry's own top-level field first (falling
+  back to `detail["reasoning"]`), not out of `detail`, because every action
+  route in this codebase already passes `reasoning` as `audit.record`'s own
+  keyword argument, which lands top-level - the contract's `detail: {...,
+  reasoning, ...}` reads as the logical field set, not literally which key
+  it lives under.
+  `_advice`'s `did` is deliberately never a row the engine refused
+  (`detail.allowed is False`) - a refusal is a failed attempt, not "what
+  happened". This makes "approved but refused" and "never approved, did
+  nothing" collapse to the same `did: None`, distinguished only by the
+  `approved` flag - intentional, not an oversight: the alternative (showing
+  the refusal as `did`) would make `followed` ambiguous (does "followed"
+  mean "attempted the same thing" or "successfully did the same thing"?).
+  Verified `_declarations` is unaffected: its marks are `PLAN_ACTION`-only,
+  `_advice`'s are `ADVICE_ACTION`-only, and an advice row still shows up
+  inside a declaration's own `did`/`opponent_did` list like any other row by
+  that seat (test: `test_advice_rows_do_not_disturb_the_declaration_
+  windows`).

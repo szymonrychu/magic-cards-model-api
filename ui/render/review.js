@@ -50,6 +50,7 @@ import {
   perspectiveOf,
   reflectionOf,
   collapseRoutine,
+  adviceOf,
 } from "../review_model.js";
 
 /** How many printings to look up at once. The lookups are one HTTP call per
@@ -183,7 +184,9 @@ function exileRow(cards) {
  * reads end to end. A frame the agent gave a reason for opens by default -
  * those are the moments the page exists for. */
 function frameNode(frame, you, catalogue) {
-  const el = h("div", { class: `frame${frame.routine ? " routine" : ""}${frame.refused ? " refused" : ""}` });
+  const el = h("div", {
+    class: `frame${frame.routine ? " routine" : ""}${frame.refused ? " refused" : ""}${frame.isApproval ? " approval" : ""}`,
+  });
   const head = h(
     "div",
     { class: "frame-head" },
@@ -382,6 +385,63 @@ function declarationContext(declared) {
   return box;
 }
 
+// ------------------------------------------------------------------ advice --
+
+/** One piece of mtg-buddy advice: what it proposed, why, whether the human
+ * approved it, and what actually happened - three distinguishable outcomes,
+ * never a verdict on whether the advice was *good* (`review.py`'s stand on
+ * that, restated for the same reason as the declaration pairing above).
+ *
+ * - **approved and followed** - `did` is drawn as a normal `frameNode`, so
+ *   the reader sees the same evidence (reasoning, refusal if any, board) any
+ *   other row gets.
+ * - **approved but then refused** - `did` is `None` (a refusal is a failed
+ *   attempt, never handed back as "what happened"), so this reads as the
+ *   "approved" tag over the empty-outcome line; the distinction from the
+ *   next case is the tag, not the line.
+ * - **ignored** - the tag reads "ignored", and `did` is either a real frame
+ *   (the human did something else) or the same empty-outcome line (the
+ *   human did nothing before the next piece of advice).
+ */
+function adviceNode(advice, you, catalogue) {
+  const el = h("div", { class: "advice" });
+  el.appendChild(
+    h(
+      "div",
+      { class: "advice-label" },
+      h("span", { class: "tag" }, "advice"),
+      `${text(advice.player)} was advised at `,
+      h("span", { class: "seq" }, seqLabel(advice.seq)),
+      advice.ts ? `, ${stamp(advice.ts)}` : ""
+    )
+  );
+  el.appendChild(h("div", { class: "advice-summary" }, text(advice.summary)));
+  if (advice.reasoning) {
+    el.appendChild(h("blockquote", { class: "advice-reasoning" }, text(advice.reasoning)));
+  }
+  el.appendChild(
+    h(
+      "div",
+      { class: `advice-tag ${advice.approved ? "approved" : "ignored"}` },
+      advice.approved
+        ? `approved at ${seqLabel(advice.approvedSeq)}`
+        : "never approved"
+    )
+  );
+  if (advice.did) {
+    el.appendChild(frameNode(advice.did, you, catalogue));
+  } else {
+    el.appendChild(
+      h(
+        "div",
+        { class: "advice-outcome-empty" },
+        `nothing before ${text(advice.player)}'s next piece of advice`
+      )
+    );
+  }
+  return el;
+}
+
 // ----------------------------------------------------------------- turns --
 
 /** The turn's own name. `turn 0` is the engine's own stamp for CR 103.5 and
@@ -415,6 +475,9 @@ function turnNode(group, you, catalogue, expectDeclarations) {
   // exempts it for exactly that reason).
   if (!group.declarations.length && expectDeclarations && group.turn) {
     section.appendChild(h("div", { class: "no-declaration" }, "No plan was declared for this turn."));
+  }
+  for (const advice of group.advice || []) {
+    section.appendChild(adviceNode(advice, you, catalogue));
   }
   const frames = h("div", { class: "frames" });
   for (const item of collapseRoutine(group.frames)) {
@@ -499,12 +562,14 @@ function headNode(review, handlers, onBack) {
   // covers, and the answer is "all of it" - so it is said in numbers.
   const rows = (review.entries || []).length;
   const declarations = (review.declarations || []).length;
+  const advice = adviceOf(review).length;
   head.appendChild(
     h(
       "div",
       { class: "review-counts" },
       `${rows} recorded action${rows === 1 ? "" : "s"}, `,
-      `${declarations} declaration${declarations === 1 ? "" : "s"}`,
+      `${declarations} declaration${declarations === 1 ? "" : "s"}, `,
+      `${advice} piece${advice === 1 ? "" : "s"} of advice`,
       rows ? `, ledger ${seqLabel(review.entries[0].seq)} to ${seqLabel(review.entries[rows - 1].seq)}` : ""
     )
   );
