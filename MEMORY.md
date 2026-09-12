@@ -2023,3 +2023,52 @@ whoever works on the repo itself.
   decision for you" (11 measured) instead of the diagnostic naming both
   generations. `seatkit-14` covers both halves - additive on the request,
   additive on the response.**
+
+- **2026-09-12 - never infer intent from the raw request body. The advisor
+  gate permitted a POST carrying `dry_run: true`, read straight off the JSON,
+  and only nine routes declare that field: on every other shape pydantic
+  DISCARDS an unexpected key without a word, so the gate said "probe" and the
+  route committed for real. Twenty mutating routes were reachable this way,
+  and `POST .../seats` was not a stray mutation but privilege escalation -
+  `mint_seat` takes no uid, checks nothing beyond the gate, and hands back a
+  fresh unrestricted seat credential, so one extra key let a read-only
+  credential upgrade itself out of its own restriction. The gate reads the
+  matched route's own declared shape now (`game_access.DRY_RUN_ROUTES`,
+  asserted against `openapi.json` so it cannot drift) and every request body
+  inherits `schemas.RequestModel`'s `extra="forbid"`, so an undeclared field
+  is a 422 instead of a discarded key. `POST .../cards/{card_id}/tap` takes a
+  raw `dict[str, bool]` that no `model_config` can protect - the gate is its
+  only guard. Route matching is on `request.scope["route"].path`, the
+  template, never on `request.url.path`'s tail, which a caller can spell.**
+
+- **2026-09-12 - visibility is not authorization, and `visibility.
+  resolve_viewer` answers only the first. It resolves an advisor uid to the
+  human seat it watches, which is exactly right for the read filter and
+  exactly wrong as "does this uid open the seat this request names" - four
+  routes asked it that (`decide`, `_answer_declaration` behind
+  attack/declare-blockers, `_pregame_seat` behind mulligan and opening-hand),
+  so with the gate stood down in a test an advisor declared alice's attackers
+  and got `{"allowed": true}`. Acting-seat checks call
+  `game_access.seat_for_uid`, which never resolves an advisor; redaction and
+  GET-visibility questions (`advance`, `get_legal_actions`) keep
+  `resolve_viewer`. The two have deliberately different names because the two
+  questions were being asked with one function.**
+
+- **2026-09-12 - a deny-list keyed on a credential cannot restrict a caller
+  who omits the credential. The advisor restriction only ran `if uid and
+  ...`; with no uid the code fell through to "this game has no owner, so
+  yes", and no bearer token has ever reached this deployment, so that is
+  every game. Dropping one query parameter passed a real priority and minted
+  a real seat. `game_access.can_access_game` now carries a POSITIVE rule -
+  POST/PUT/PATCH/DELETE on a `{game_id}` route requires a seat uid of that
+  game, its admin key (accepted in EITHER slot, since `resolve_viewer` and
+  `pregame/settle` have always taken it in `uid=`), or an owner bearer token.
+  Reads are untouched; an ownerless game stays world-readable, which is the
+  migration story. `seat_for_uid` consults `store.archived` when the live
+  lookup misses, because a lobby-ended game is soft-deleted while its seat
+  uid is still that seat's credential and `POST .../reflection` is written
+  exactly then. 469 uncredentialled call sites in the suite are covered by
+  `conftest._harness_credential` (the admin key of a game the harness itself
+  created, patched onto `TestClient.request`, skipping DELETE, opt-out via
+  `@pytest.mark.no_harness_credential`) - which is also the one hazard here:
+  a new security test that forgets the marker passes for the wrong reason.**

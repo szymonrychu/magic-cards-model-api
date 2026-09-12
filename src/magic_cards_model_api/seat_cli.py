@@ -900,8 +900,10 @@ def run(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
     elif args.command == "attackers":
+        # No `player` - see `mcp.py`'s `declare_attackers`: the route
+        # resolves the declaring seat from the uid and `AttackRequest` has no
+        # such field to put it in.
         body = {
-            "player": seat.player,
             "attackers": [
                 {"card_id": pair["card"], "defender": pair["defender"]}
                 for pair in _parse_pairs(args.pairs)

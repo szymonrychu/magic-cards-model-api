@@ -41,12 +41,18 @@ from magic_cards_model_api.store import store
 #: Every mutating POST the acceptance conditions name by hand, with a body
 #: that is at least structurally plausible - the gate refuses before any of
 #: them is ever validated, so the body only has to be JSON.
+#: Bodies that name only fields their own route declares. They used not to -
+#: `decide` was sent an `answer` object and `attack` a `player`, neither of
+#: which exists on `DecideRequest`/`AttackRequest`, and pydantic threw both
+#: away without a word. That is the same silent discard the `dry_run`
+#: escalation rode in on, so `schemas.RequestModel` refuses it now and these
+#: bodies had to become real ones.
 MUTATING_POSTS = [
     ("actions/cast", {"player": "alice", "card": "Lightning Bolt"}),
     ("actions/pass-priority", {"player": "alice"}),
-    ("decide", {"player": "alice", "answer": {"kind": "may", "value": True}}),
-    ("actions/attack", {"player": "alice", "attackers": []}),
-    ("actions/declare-blockers", {"player": "alice", "blockers": []}),
+    ("decide", {"player": "alice", "choice": "G"}),
+    ("actions/attack", {"attackers": []}),
+    ("actions/declare-blockers", {"player": "alice", "blocks": []}),
 ]
 
 
@@ -766,7 +772,7 @@ def test_decide_refuses_an_advisor_uid_with_the_gate_stood_down(
     response = client.post(
         f"/api/games/{game}/decide",
         params={"uid": uid},
-        json={"player": "alice", "answer": {"kind": "may", "value": True}},
+        json={"player": "alice", "choice": "G"},
     )
 
     assert response.status_code == 200, response.text
@@ -799,7 +805,7 @@ def test_a_declaration_refuses_an_advisor_uid_with_the_gate_stood_down(
     response = client.post(
         f"/api/games/{game}/actions/attack",
         params={"uid": uid},
-        json={"player": "alice", "attackers": []},
+        json={"attackers": []},
     )
 
     assert response.status_code == 200, response.text
@@ -910,3 +916,84 @@ def test_the_admin_key_still_files_a_report_for_the_player_it_names(
     log = client.get(f"/api/games/{game}/log", params={"uid": admin_key}).json()["log"]
     row = next(entry for entry in log if entry["action"] == "report_problem")
     assert row["detail"]["player"] == "bob", row
+
+
+# ---------------------------------------------------------------------------
+# a field a route cannot honour is a 422, not a discarded key
+# ---------------------------------------------------------------------------
+
+
+def test_a_request_model_refuses_a_field_it_does_not_declare(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    """`schemas.RequestModel`'s whole reason for existing.
+
+    Pydantic's default is to discard an undeclared key silently, which is how
+    a `dry_run` the route could not honour became a real mutation: the gate
+    believed the body and the route never saw the field at all.
+    `MintSeatRequest.model_validate({"player": "alice", "dry_run": True})`
+    answered `player='alice'`. Now the caller is told."""
+    response = client.post(
+        f"/api/games/{game}/seats",
+        params={"key": admin_key},
+        json={"player": "alice", "dry_run": True},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"][0]["loc"] == ["body", "dry_run"], response.text
+
+
+def test_every_request_body_in_the_contract_forbids_undeclared_fields() -> None:
+    """The invariant, checked against the contract rather than a list kept by
+    hand: every schema `openapi.json` names as a request body (transitively -
+    a nested `ManaSource` is as much a request shape as the `CastRequest`
+    holding it) must say `additionalProperties: false`, which is how pydantic
+    renders `extra="forbid"`. A request model added tomorrow that forgets the
+    base class fails here."""
+    spec = _openapi()
+    schemas = spec["components"]["schemas"]
+
+    def refs(node: object) -> list[str]:
+        if isinstance(node, dict):
+            found = []
+            for key, value in node.items():
+                if key == "$ref" and isinstance(value, str):
+                    found.append(value.split("/")[-1])
+                else:
+                    found += refs(value)
+            return found
+        if isinstance(node, list):
+            return [name for item in node for name in refs(item)]
+        return []
+
+    pending = []
+    for operations in spec["paths"].values():
+        for operation in operations.values():
+            body = (operation or {}).get("requestBody")
+            if body:
+                pending += refs(body["content"].get("application/json", {}).get("schema", {}))
+    seen: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        pending += refs(schemas.get(name, {}))
+
+    assert seen, "no request bodies found in the contract - the reader is wrong, not the api"
+    #: The one deliberate exemption, argued in full at `schemas.
+    #: ActivateRequest`: the browser sends `shares` for a divided activated
+    #: ability, this shape has never declared it, and honouring it needs a
+    #: change in the engine repo - so it is accepted and dropped as it always
+    #: was, rather than becoming a 422 for a human player mid-game.
+    exempt = {"ActivateRequest"}
+    permissive = sorted(
+        name
+        for name in seen - exempt
+        if schemas.get(name, {}).get("additionalProperties") is not False
+    )
+    assert exempt <= seen, "the exemption names a shape that is no longer a request body"
+    assert permissive == [], (
+        "these request shapes still discard an undeclared field instead of refusing it - "
+        f"inherit `schemas.RequestModel`: {permissive}"
+    )

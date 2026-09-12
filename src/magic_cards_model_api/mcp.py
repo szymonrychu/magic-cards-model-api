@@ -1430,8 +1430,12 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
+        # No `player`: `AttackRequest` carries no such field, on purpose -
+        # `app.action_attack` resolves the declaring seat from the uid and
+        # refuses to trust a name off the body (CR 608.2d's "the player
+        # announces"). Pydantic used to drop this key without a word; it is
+        # a 422 now, so it goes.
         body: dict[str, Any] = {
-            "player": seat.player,
             "attackers": [
                 {"card_id": pair["card"], "defender": pair["defender"]}
                 for pair in _parse_pairs(attackers)

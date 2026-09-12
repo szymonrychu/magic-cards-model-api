@@ -1169,7 +1169,10 @@ def declare_gargaroth_attacking(client: TestClient, game_id: str, uids: dict[str
     attack = client.post(
         f"/api/games/{game_id}/actions/attack",
         params={"uid": uids["alice"]},
-        json={"player": "alice", "attackers": [{"card_id": gargaroth, "defender": "bob"}]},
+        # No `player`: `AttackRequest` does not declare one, and the seat is
+        # resolved from `uid`. Pydantic discarded the key silently before
+        # `schemas.RequestModel`.
+        json={"attackers": [{"card_id": gargaroth, "defender": "bob"}]},
     )
     assert attack.status_code == 200, attack.text
     assert attack.json()["allowed"] is True, attack.json()

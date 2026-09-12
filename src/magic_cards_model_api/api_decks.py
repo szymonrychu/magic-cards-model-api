@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import scryfall
 from .decks import parse_decklist
+from .schemas import RequestModel
 
 router = APIRouter(prefix="/api", tags=["decks"])
 
@@ -48,7 +49,7 @@ class BundledDeckText(BaseModel):
     text: str
 
 
-class ValidateRequest(BaseModel):
+class ValidateRequest(RequestModel):
     text: str = Field(min_length=1)
 
 

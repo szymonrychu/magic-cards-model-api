@@ -14,7 +14,46 @@ from magic_cards_model.models import Action, Card
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
-class NewPlayer(BaseModel):
+class RequestModel(BaseModel):
+    """The base every request body in this api is built on, and it exists for
+    one line: `extra="forbid"`.
+
+    Pydantic's default is to **discard** a key a model does not declare,
+    silently, and that turned a request field into something a caller could
+    claim without the route ever honouring it. `game_access._advisor_may`
+    permitted a POST carrying `dry_run: true` - a probe, changing nothing -
+    but only nine routes declare `dry_run`, so on every other shape pydantic
+    threw the key away and the route committed for real. `MintSeatRequest.
+    model_validate({"player": "alice", "dry_run": True})` produced
+    `player='alice'` and nothing else, and `POST .../seats` then handed the
+    caller a fresh, unrestricted seat credential.
+
+    The gate reads the route's own declared shape now rather than the body
+    (`game_access.DRY_RUN_ROUTES`), and that is the fix for *that* hole.
+    This is the invariant that catches the next one: a caller that sends a
+    field the route cannot honour gets a 422 saying so, instead of a 200
+    that did something other than what it asked for. It applies to the
+    shape a route added tomorrow declares, without anybody listing it
+    anywhere.
+
+    Two things it cannot cover, both worth knowing:
+
+    - `POST .../cards/{card_id}/tap` takes a raw `dict[str, bool]`, not a
+      model, so no `model_config` reaches it. `{"dry_run": true}` there
+      simply defaults `tapped` to `True` and taps for real - the gate is the
+      only thing that can refuse it.
+    - `uid`/`key` are read off the raw request by `game_access._credentials`
+      rather than declared as parameters, precisely so no route's OpenAPI
+      shape changes because of the gate. A body-borne credential therefore
+      *is* an undeclared field on most shapes - so the four models whose
+      route carries one (`DeclarePlanIn`, `ReflectionIn`, and
+      `ai_seat_api.StartAiSeat`) declare `uid` for real, and always did.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NewPlayer(RequestModel):
     username: str = Field(min_length=1)
     life: int = 20
     is_agent: bool = False
@@ -27,7 +66,7 @@ class NewPlayer(BaseModel):
     mutating action needs `reasoning`."""
 
 
-class NewGame(BaseModel):
+class NewGame(RequestModel):
     players: list[NewPlayer] = Field(min_length=1)
     active_player: str | None = None
     """Defaults to the first player listed."""
@@ -35,7 +74,7 @@ class NewGame(BaseModel):
     """Step the game starts in. Any Step value."""
 
 
-class PutCard(BaseModel):
+class PutCard(RequestModel):
     card: str
     """A card name. Always fetched from Scryfall (cache first)."""
     player: str
@@ -46,7 +85,7 @@ class PutCard(BaseModel):
     face_up: bool = True
 
 
-class MoveCard(BaseModel):
+class MoveCard(RequestModel):
     to_zone: str
     player: str | None = None
     """The player whose zone receives the card (their hand, library, ...)."""
@@ -57,7 +96,7 @@ class MoveCard(BaseModel):
     face_up: bool | None = None
 
 
-class PatchCard(BaseModel):
+class PatchCard(RequestModel):
     tapped: bool | None = None
     face_up: bool | None = None
     damage: int | None = None
@@ -66,13 +105,13 @@ class PatchCard(BaseModel):
     """Counter kind (e.g. "+1/+1", "loyalty") -> count to set."""
 
 
-class PatchPlayer(BaseModel):
+class PatchPlayer(RequestModel):
     life: int | None = None
     counters: dict[str, int] | None = None
     """Counter kind (e.g. "poison", "energy") -> count to set."""
 
 
-class ManaPoolUpdate(BaseModel):
+class ManaPoolUpdate(RequestModel):
     empty: bool = False
     add: dict[str, int] | None = None
     """Color letter ("W", "U", "B", "R", "G", "C") -> amount."""
@@ -80,7 +119,7 @@ class ManaPoolUpdate(BaseModel):
     """Replace the whole pool with this."""
 
 
-class BoardRead(BaseModel):
+class BoardRead(RequestModel):
     """P4: the ledger position a seat decided against, named by the seat.
 
     **Optional, and it stays optional.** Every caller that existed before
@@ -140,7 +179,7 @@ class ActorRequest(BoardRead):
 Stated = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class OpponentPrediction(BaseModel):
+class OpponentPrediction(RequestModel):
     """What a seat expects its opponent to do next, and why.
 
     The prediction is the part of a declaration that makes it evidence
@@ -161,7 +200,7 @@ class OpponentPrediction(BaseModel):
     will argue with a 65% far harder than with a "medium"."""
 
 
-class DeclarePlanIn(BaseModel):
+class DeclarePlanIn(RequestModel):
     """`POST /api/games/{game_id}/plan` - a seat's declaration, made before
     it acts, of how it reads this turn.
 
@@ -209,7 +248,7 @@ class DeclarePlanResponse(BaseModel):
     """The turn this plan is for, as the ledger stamped it."""
 
 
-class ReflectionIn(BaseModel):
+class ReflectionIn(RequestModel):
     """`POST /api/games/{game_id}/reflection` - a seat's own post-game
     write-up, filed once the result is already known.
 
@@ -244,13 +283,13 @@ class ReflectionResponse(BaseModel):
     player: str
 
 
-class ReportProblemRequest(BaseModel):
+class ReportProblemRequest(RequestModel):
     player: str
     text: str = Field(min_length=1)
     """What the player thinks is wrong, written by the player."""
 
 
-class ManaSource(BaseModel):
+class ManaSource(RequestModel):
     card_id: UUID
     colors: list[str] | None = None
     """Which colors to tap it for; defaults to the ability's own production."""
@@ -408,7 +447,7 @@ class CastRequest(BoardRead):
     (`records.require_reasoning`), optional for a human one."""
 
 
-class ConvokeChoice(BaseModel):
+class ConvokeChoice(RequestModel):
     """One creature tapped to pay one symbol of a convoke spell's cost.
 
     CR 702.51b: convoke "isn't an additional or alternative cost and applies
@@ -483,7 +522,7 @@ class SpecialActionRequest(BoardRead):
     optional for a human one."""
 
 
-class TargetRequest(BaseModel):
+class TargetRequest(RequestModel):
     source_id: UUID
     """A spell on the stack, a card in hand, or a permanent."""
     ability_index: int | None = None
@@ -494,6 +533,29 @@ class TargetRequest(BaseModel):
 
 
 class ActivateRequest(BoardRead):
+    # The ONE request shape exempt from `RequestModel`'s `extra="forbid"`,
+    # and the exemption is about `shares`.
+    #
+    # `ui/actions.js`'s `bodyFor` sends `shares` for any targeting action
+    # whose affordance carries a division, an activated ability included
+    # (`tests/test_ui_actions.py::
+    # test_an_activated_abilitys_division_sends_shares_too` asserts it does),
+    # and this shape has never declared the field - so pydantic has always
+    # dropped it and `engine_api.activate_ability` has never seen one. Making
+    # that a 422 would turn a silent wrong answer into a human player unable
+    # to activate a divided ability at all, mid-game, and honouring it needs
+    # division support on the activation path in `magic-cards-model` (the
+    # engine's `announce_division` lives on `Casting`, i.e. the cast path
+    # only) - a change in the other repo, not this one.
+    #
+    # So: accepted and dropped, exactly as before, with a note rather than a
+    # pretence. This costs nothing here, because the advisor gate no longer
+    # reads the body at all - it reads this route's own declared shape
+    # (`game_access.DRY_RUN_ROUTES`), and `dry_run` below is a real field, so
+    # a probe on this route is the permitted case and any other extra key is
+    # inert.
+    model_config = ConfigDict(extra="ignore")
+
     player: str
     card_id: UUID
     ability_index: int = 0
@@ -540,7 +602,7 @@ class ActivateRequest(BoardRead):
     optional for a human one."""
 
 
-class AttackPair(BaseModel):
+class AttackPair(RequestModel):
     card_id: UUID
     defender: str
     """A player name or a planeswalker card id."""
@@ -603,7 +665,7 @@ class AdvanceRequest(BoardRead):
     optional for a human one."""
 
 
-class BlockPair(BaseModel):
+class BlockPair(RequestModel):
     blocker: UUID
     """The creature declaring the block."""
     blocked: UUID
@@ -627,7 +689,7 @@ class DeclareBlockersRequest(BoardRead):
     above."""
 
 
-class DeclaredPairRequest(BaseModel):
+class DeclaredPairRequest(RequestModel):
     """One `(creature, defender)` pair for the `declare_attackers`/
     `declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the
     request-side twin of the engine's `machines.decisions.DeclaredPair`.
@@ -742,7 +804,7 @@ class DecideRequest(BoardRead):
     optional for a human one."""
 
 
-class MulliganRequest(BaseModel):
+class MulliganRequest(RequestModel):
     """One seat's CR 103.5 declaration: "a player who is dissatisfied with
     their initial hand may take a mulligan"."""
 
@@ -763,7 +825,7 @@ class MulliganRequest(BaseModel):
     """
 
 
-class OpeningHandActionRequest(BaseModel):
+class OpeningHandActionRequest(RequestModel):
     """One CR 103.6 action with a card in this seat's own opening hand -
     "some cards allow a player to take actions with them from their opening
     hand"."""
@@ -1411,7 +1473,7 @@ class SeatResponse(BaseModel):
     player: str
 
 
-class MintSeatRequest(BaseModel):
+class MintSeatRequest(RequestModel):
     """2b's T8, the seat back door's mint half. `player` must already be
     registered on the game (`Game.players`) - this mints a fresh credential
     for an existing seat, it does not add a player to the game."""

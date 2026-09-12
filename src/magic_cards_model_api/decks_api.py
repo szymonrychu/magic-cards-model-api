@@ -41,6 +41,7 @@ from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
 from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
+from .schemas import RequestModel
 from .store import known_players, new_seat_uids, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
@@ -60,7 +61,7 @@ def max_live_games() -> int:
     return int(os.environ.get("MAX_LIVE_GAMES", "4") or 4)
 
 
-class NewUiPlayer(BaseModel):
+class NewUiPlayer(RequestModel):
     username: str = Field(min_length=1)
     decklist_text: str = Field(min_length=1)
     ai: bool = False
@@ -72,7 +73,7 @@ class NewUiPlayer(BaseModel):
     absent, the server's defaults apply (`AgentSettings.default`)."""
 
 
-class NewUiGame(BaseModel):
+class NewUiGame(RequestModel):
     players: list[NewUiPlayer] = Field(min_length=2, max_length=2)
     seed: int | None = None
 

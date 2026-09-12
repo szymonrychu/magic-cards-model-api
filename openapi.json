@@ -686,6 +686,7 @@
         "type": "object"
       },
       "ActorRequest": {
+        "additionalProperties": false,
         "description": "An optional body for endpoints that take no other input: just who is\ncalling, so the audit log can attribute the action.",
         "properties": {
           "expected_seq": {
@@ -760,6 +761,7 @@
         "type": "object"
       },
       "AdvanceRequest": {
+        "additionalProperties": false,
         "description": "Who is advancing the turn - required, unlike `ActorRequest`, because\n`Game.advance` now authorizes the call against the active player (or\ntheir controller, CR 723.5) rather than merely logging who asked.",
         "properties": {
           "expected_seq": {
@@ -1213,6 +1215,7 @@
         "type": "object"
       },
       "AgentSettings": {
+        "additionalProperties": false,
         "properties": {
           "effort": {
             "default": "medium",
@@ -1335,6 +1338,7 @@
         "type": "object"
       },
       "AttackPair": {
+        "additionalProperties": false,
         "properties": {
           "card_id": {
             "format": "uuid",
@@ -1354,6 +1358,7 @@
         "type": "object"
       },
       "AttackRequest": {
+        "additionalProperties": false,
         "properties": {
           "attackers": {
             "items": {
@@ -1394,6 +1399,7 @@
         "type": "object"
       },
       "BlockPair": {
+        "additionalProperties": false,
         "properties": {
           "blocked": {
             "format": "uuid",
@@ -2434,6 +2440,7 @@
         "type": "object"
       },
       "CastRequest": {
+        "additionalProperties": false,
         "properties": {
           "alternative_cost": {
             "anyOf": [
@@ -2789,6 +2796,7 @@
         "type": "string"
       },
       "ConcedeRequest": {
+        "additionalProperties": false,
         "description": "CR 104.3a: a player may concede at any time, and leaves the game\nimmediately. No priority is required and nothing can refuse it, so unlike\nevery other action request this one has no `dry_run` - there is nothing to\nask permission for.",
         "properties": {
           "expected_seq": {
@@ -2880,6 +2888,7 @@
         "type": "object"
       },
       "ConvokeChoice": {
+        "additionalProperties": false,
         "description": "One creature tapped to pay one symbol of a convoke spell's cost.\n\nCR 702.51b: convoke \"isn't an additional or alternative cost and applies\nonly after the total cost of the spell with convoke is determined\", so\nthis is not part of the announcement - it is which objects the payer\noffers against the already-determined cost.",
         "properties": {
           "card_id": {
@@ -2953,6 +2962,7 @@
         "type": "object"
       },
       "CrewRequest": {
+        "additionalProperties": false,
         "description": "CR 702.122a: \"Crew N\" means \"Tap any number of other untapped\ncreatures you control with total power N or greater: This permanent\nbecomes an artifact creature until end of turn.\"\n\nCrew is an activated ability of the Vehicle, not of the creatures, and it\nhas no `{T}` symbol of its own - so this is not an `ActivateRequest`\nagainst an ability index. The creatures are the cost.",
         "properties": {
           "card_id": {
@@ -3010,6 +3020,7 @@
         "type": "object"
       },
       "CycleRequest": {
+        "additionalProperties": false,
         "description": "CR 702.29a: \"[Cost], Discard this card: Draw a card.\" An activated\nability, but one `Game.begin_activating`/`activate_ability` cannot reach -\nthey only ever activate a battlefield permanent's ability, and cycling\n\"functions only while the card... is in a player's hand\" (CR 702.29b) - so\nit gets its own request shape and endpoint rather than reusing\n`ActivateRequest`.",
         "properties": {
           "ability_index": {
@@ -3125,6 +3136,7 @@
         "type": "object"
       },
       "DecideRequest": {
+        "additionalProperties": false,
         "properties": {
           "accept": {
             "anyOf": [
@@ -3401,6 +3413,7 @@
         "type": "object"
       },
       "DeclareBlockersRequest": {
+        "additionalProperties": false,
         "properties": {
           "blocks": {
             "items": {
@@ -3443,6 +3456,7 @@
         "type": "object"
       },
       "DeclarePlanIn": {
+        "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/plan` - a seat's declaration, made before\nit acts, of how it reads this turn.\n\nDeliberately five fields and no more. Each one is something the post-game\nreview has to show and cannot reconstruct from the board: what the seat\nsaw (`board_read`), where it thought it stood in the matchup\n(`my_role`), what it meant to do (`plan`), and what it expected back\n(`prediction`, with its own reason and confidence). Anything longer and\nan agent fills it in with filler; anything shorter and the review is\nnarrative again rather than evidence.\n\n`uid` is the seat's own credential, carried in the body beside `player`\nrather than in the query string: a plan is hidden information about how\na seat intends to play, so the server checks that the caller *is* the\nseat it is declaring for before writing anything into its name.",
         "properties": {
           "board_read": {
@@ -3521,6 +3535,7 @@
         "type": "object"
       },
       "DeclaredPairRequest": {
+        "additionalProperties": false,
         "description": "One `(creature, defender)` pair for the `declare_attackers`/\n`declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the\nrequest-side twin of the engine's `machines.decisions.DeclaredPair`.\n\n`defender` is a card id (UUID string) or a player's username, the same\ntoken shape `CastRequest.targets`/`ActivateRequest.targets`/\n`DecideRequest.targets` already use for \"a card or a player\" - told apart\nthe same way (`decisions.declared_pairs_answer`). A blocker always blocks\na creature (CR 509.1a), so `defender` is a card id for every\n`declare_blockers` pair; an attacker's defender is overwhelmingly a\nplayer (CR 508.1b) but can also be a planeswalker or a battle's card id.",
         "properties": {
           "creature": {
@@ -4495,6 +4510,7 @@
         "type": "object"
       },
       "ManaPoolUpdate": {
+        "additionalProperties": false,
         "properties": {
           "add": {
             "anyOf": [
@@ -4574,6 +4590,7 @@
         "type": "object"
       },
       "ManaSource": {
+        "additionalProperties": false,
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -4613,6 +4630,7 @@
         "type": "object"
       },
       "MintSeatRequest": {
+        "additionalProperties": false,
         "description": "2b's T8, the seat back door's mint half. `player` must already be\nregistered on the game (`Game.players`) - this mints a fresh credential\nfor an existing seat, it does not add a player to the game.",
         "properties": {
           "player": {
@@ -4728,6 +4746,7 @@
         "type": "object"
       },
       "MoveCard": {
+        "additionalProperties": false,
         "properties": {
           "controller": {
             "anyOf": [
@@ -5083,6 +5102,7 @@
         "type": "object"
       },
       "MulliganRequest": {
+        "additionalProperties": false,
         "description": "One seat's CR 103.5 declaration: \"a player who is dissatisfied with\ntheir initial hand may take a mulligan\".",
         "properties": {
           "bottom": {
@@ -5157,6 +5177,7 @@
         "type": "object"
       },
       "NewGame": {
+        "additionalProperties": false,
         "properties": {
           "active_player": {
             "anyOf": [
@@ -5462,6 +5483,7 @@
         "type": "object"
       },
       "NewPlayer": {
+        "additionalProperties": false,
         "properties": {
           "is_agent": {
             "default": false,
@@ -5486,6 +5508,7 @@
         "type": "object"
       },
       "NewUiGame": {
+        "additionalProperties": false,
         "properties": {
           "players": {
             "items": {
@@ -5563,6 +5586,7 @@
         "type": "object"
       },
       "NewUiPlayer": {
+        "additionalProperties": false,
         "properties": {
           "agent": {
             "anyOf": [
@@ -5703,6 +5727,7 @@
         "type": "object"
       },
       "OpeningHandActionRequest": {
+        "additionalProperties": false,
         "description": "One CR 103.6 action with a card in this seat's own opening hand -\n\"some cards allow a player to take actions with them from their opening\nhand\".",
         "properties": {
           "card_id": {
@@ -5825,6 +5850,7 @@
         "type": "object"
       },
       "OpponentPrediction": {
+        "additionalProperties": false,
         "description": "What a seat expects its opponent to do next, and why.\n\nThe prediction is the part of a declaration that makes it evidence\nrather than commentary: it is checkable against what the opponent then\nactually did, and `review.py` puts the two side by side without grading\neither. `because` is required for the same reason - a call with no read\nbehind it is a guess, and a guess that happens to land proves nothing.",
         "properties": {
           "because": {
@@ -5856,6 +5882,7 @@
         "type": "object"
       },
       "PassPriorityRequest": {
+        "additionalProperties": false,
         "properties": {
           "expected_seq": {
             "anyOf": [
@@ -5979,6 +6006,7 @@
         "type": "object"
       },
       "PatchCard": {
+        "additionalProperties": false,
         "properties": {
           "counters": {
             "anyOf": [
@@ -6306,6 +6334,7 @@
         "type": "object"
       },
       "PatchPlayer": {
+        "additionalProperties": false,
         "properties": {
           "counters": {
             "anyOf": [
@@ -6566,6 +6595,7 @@
         "type": "object"
       },
       "PlayLandRequest": {
+        "additionalProperties": false,
         "properties": {
           "card": {
             "anyOf": [
@@ -6775,6 +6805,7 @@
         "type": "object"
       },
       "PregameSettleRequest": {
+        "additionalProperties": false,
         "description": "Admin-only: run the whole pregame (CR 103.5's mulligan process, CR\n103.6's opening-hand actions) forward, all at once, over every seat.\n\n`BoardRead` for the same reason every other mutating request carries it:\nthis is a command like any other (`commands._run_pregame_settle`), it\nreaches the same `records.legal_actions_before` sites, and an operator\nsettling a pregame against a board that has since moved is owed the news\nthat it moved rather than a settled game they did not ask for.",
         "properties": {
           "expected_seq": {
@@ -7168,6 +7199,7 @@
         "type": "object"
       },
       "PutCard": {
+        "additionalProperties": false,
         "properties": {
           "card": {
             "title": "Card",
@@ -7486,6 +7518,7 @@
         "type": "string"
       },
       "ReflectionIn": {
+        "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/reflection` - a seat's own post-game\nwrite-up, filed once the result is already known.\n\nDeliberately the only shape this ever takes: one seat, one block of\nfree text. Unlike `DeclarePlanIn`'s five structured fields, there is\nnothing here a post-game review has to show and cannot reconstruct from\nthe board - the whole point of a reflection is that it is the agent's\nown words, in its own shape, written after the game rather than during\nit. Splitting it into board-read/plan/prediction fields the way a\ndeclaration is split would dress up a narrative as evidence it never\nwas; `review.py`'s reflection section already says in words that\nnothing here is evidence of anything the review pairs above it.\n\n`uid` mirrors `DeclarePlanIn.uid`: the seat's own credential, carried in\nthe body, so nobody may write a reflection into another seat's name.",
         "properties": {
           "player": {
@@ -7566,6 +7599,7 @@
         "type": "object"
       },
       "ReportProblemRequest": {
+        "additionalProperties": false,
         "properties": {
           "player": {
             "title": "Player",
@@ -8583,6 +8617,7 @@
         "type": "object"
       },
       "SpecialActionRequest": {
+        "additionalProperties": false,
         "description": "A CR 116.2 special action that exiles a card from hand to cast later:\nsuspend (CR 116.2f), plot (CR 116.2k), or foretell (CR 116.2h). All three\nshare this shape - locate the card, pay its special-action cost, exile it\ninto its own marked pile - so one request body serves all three actions.",
         "properties": {
           "card": {
@@ -9175,6 +9210,7 @@
         "type": "object"
       },
       "StartAiSeat": {
+        "additionalProperties": false,
         "properties": {
           "uid": {
             "title": "Uid",
@@ -9510,6 +9546,7 @@
         "type": "object"
       },
       "StepUpdate": {
+        "additionalProperties": false,
         "properties": {
           "expected_seq": {
             "anyOf": [
@@ -9656,6 +9693,7 @@
         "type": "object"
       },
       "TargetRequest": {
+        "additionalProperties": false,
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -9911,6 +9949,7 @@
         "type": "object"
       },
       "ValidateRequest": {
+        "additionalProperties": false,
         "properties": {
           "text": {
             "minLength": 1,

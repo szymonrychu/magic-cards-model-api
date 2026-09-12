@@ -73,7 +73,14 @@ DEFAULT_MODEL_ENV = "AGENT_DEFAULT_MODEL"
 
 
 class AgentSettings(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    # `extra="forbid"` to match this model's own committed contract, which
+    # already says `additionalProperties: false`
+    # (`contract/agent-settings.schema.json`) - and so that a caller naming a
+    # setting this build does not have is told, rather than silently running
+    # with the default. `schemas.RequestModel` is the same rule for every
+    # request body; this class predates it and is a cross-service wire type
+    # rather than a request shape, so it carries its own config.
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     model: str = Field(min_length=1)
     effort: Effort = "medium"
