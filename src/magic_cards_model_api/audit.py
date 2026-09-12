@@ -141,11 +141,12 @@ def _with_stale(detail: dict[str, Any], named_a_current_board: bool) -> dict[str
       - see `records.named_a_current_board` for why that third state is kept
       rather than folded into `False`.
 
-    Done here, once, rather than at each of this api's refusal-writing sites,
-    because the version of this feature that asked each site to pass the flag
-    got `False` written by none of them: the bucket existed and was
-    structurally always zero while every rate in the report still read
-    healthy (MEMORY.md 2026-09-12).
+    Done here, once, rather than at each of the six places this api writes a
+    refusal row (enumerated in `records._NAMED_A_CURRENT_BOARD`), because the
+    version of this feature that left each site to pass the flag got `False`
+    written by none of them: the bucket existed and was structurally always
+    zero while every rate in the report still read healthy
+    (MEMORY.md 2026-09-12).
     """
     if not named_a_current_board:
         return detail

@@ -203,21 +203,26 @@ def require_plan(game_id: str, player: str | None, *, game: Game | None = None) 
 #:
 #: **A ContextVar rather than a parameter threaded through every route, and
 #: that is the point.** `stale` has to reach a refusal row wherever one is
-#: written, and this api writes them in eleven places: `app.audit_outcome`
-#: (every route that goes through `_respond`), `action_declare_blockers`'s
-#: and `decide`'s own local `refuse()`, `pass_priority`'s and `advance`'s
-#: `except` arms, `opening.finish_opening_hand_actions`, and more to come.
-#: Threading an argument into each is how the first version of this shipped
-#: with `stale: False` written from nowhere at all: the flag existed, the
-#: report had a bucket for it, and the bucket was structurally always zero
-#: (MEMORY.md 2026-09-12). One write site at the guard and one read site in
-#: `audit.record` cannot drift that way - a route that records a refusal
-#: gets the stamp by construction, including routes nobody has written yet.
+#: written, and this api writes them in six separate places:
+#: `app.audit_outcome` (every route that reaches `_respond`),
+#: `_answer_declaration`'s local `refuse()` (shared by `actions/attack` and
+#: `actions/declare-blockers`),
+#: `decide`'s own `refuse()`, `action_pass_priority`'s `except` arm,
+#: `advance`'s `except` arm, and `opening._overruled`. Threading an argument
+#: into each is how the first version of this shipped with `stale: False`
+#: written from nowhere at all: the flag existed, the report had a bucket for
+#: it, and the bucket was structurally always zero (MEMORY.md 2026-09-12).
+#: One write site at the guard and one read site in `audit.record` cannot
+#: drift that way - a route that records a refusal gets the stamp by
+#: construction, including routes nobody has written yet.
 #:
-#: Request isolation comes free and is pinned by a test
-#: (`test_expected_seq.py`): FastAPI runs each `def` route in a worker thread
-#: over `contextvars.copy_context()`, so a `set` here lands in that request's
-#: own copy and is never visible to the next one.
+#: **Request isolation is pinned by a test rather than assumed**
+#: (`test_expected_seq.py::test_the_flag_does_not_leak_from_one_request_into_
+#: the_next`): a request that named a current board is followed immediately,
+#: on the same client, by one that named none, and the second row must carry
+#: no `stale` key. That ordering is the test - a leak is invisible when the
+#: un-flagged call happens to go first, which is how every other case here
+#: is shaped.
 _NAMED_A_CURRENT_BOARD: ContextVar[bool] = ContextVar("named_a_current_board", default=False)
 
 
@@ -329,6 +334,13 @@ def require_current_board(
     decided against" - and the seat has just been told that board is gone.
     Writing the current one under the same key would quietly change what the
     key means for exactly the rows a race analysis reads most.
+
+    **A matching seq is recorded too, not just a mismatching one.** The
+    match sets `_NAMED_A_CURRENT_BOARD`, which is what lets `audit.record`
+    stamp `stale: False` on whatever this request goes on to refuse - "the
+    engine ruled on a current board" is the other half of the split, and
+    without it every genuine rules refusal is indistinguishable from an
+    unmeasured one. See `named_a_current_board`.
 
     `dry_run` refuses the same way and writes nothing. A dry run is a probe
     that changes nothing and is deliberately unlogged (`app.audit_outcome` -
