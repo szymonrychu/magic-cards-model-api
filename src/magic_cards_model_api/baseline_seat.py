@@ -1009,8 +1009,15 @@ class BaselineSeat:
         changed the board every round and cleared this seat's memory of the
         last refusal. `refused` is the same set a real refusal feeds, so one
         pass through this loop cannot revisit a card it has already declined.
+
+        It also never hands back an answer this board has already had
+        refused (`answer_fingerprint`). For a move with an enumerated row
+        behind it that means stepping to the next row; for one without - a
+        pass, a decision, a combat declaration already narrowed to the empty
+        answer - there is nothing to step to, and this seat says it has
+        nothing to do rather than post the identical body again.
         """
-        for _ in range(len(actions) + self.narrowing + 2):
+        for _ in range(len(actions) + 1):
             move = choose_move(
                 state, actions, self.player, refused=self.refused, narrowing=self.narrowing
             )
