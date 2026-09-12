@@ -17,9 +17,16 @@ simply stop - worse than slow. The per-game lobby dropdown can still choose
 `high` for a combo-heavy deck; this only changes the default.
 
 `MAX_THINKING_TOKENS`/`max_thinking_tokens` is honoured only by models with a
-fixed (non-adaptive) reasoning budget. The default model, Sonnet 5, uses
+fixed (non-adaptive) reasoning budget. The default model, Opus, uses
 adaptive reasoning and silently ignores it - `effort` is the only control
 that bites there. The field is kept for models that still honour it.
+
+The default model is `opus` (the owner's call, 2026-09-13), for an AI
+opponent seat and a buddy alike - both fall back to `default()` when the
+create-game request names no settings, and the lobby's `agentFrom` falls back
+to the same spelling for a blank model field. `AGENT_DEFAULT_MODEL` still
+overrides it per deployment. The wire contract carries no default: `model`
+is required there, so this only ever travels as a value.
 
 This crossed four repos in three spellings (T13, phase 2b): a snake_case
 pydantic model, the `MODEL`/`EFFORT`/`MAX_THINKING_TOKENS` environment
@@ -70,6 +77,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
 DEFAULT_MODEL_ENV = "AGENT_DEFAULT_MODEL"
+DEFAULT_MODEL = "opus"
 
 
 class AgentSettings(BaseModel):
@@ -92,7 +100,7 @@ class AgentSettings(BaseModel):
 
     @classmethod
     def default(cls, env: Mapping[str, str]) -> AgentSettings:
-        return cls(model=(env.get(DEFAULT_MODEL_ENV) or "sonnet").strip() or "sonnet")
+        return cls(model=(env.get(DEFAULT_MODEL_ENV) or DEFAULT_MODEL).strip() or DEFAULT_MODEL)
 
     def env(self) -> dict[str, str]:
         out = {"MODEL": self.model, "EFFORT": self.effort}

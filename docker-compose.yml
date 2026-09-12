@@ -128,7 +128,7 @@ services:
       # each other.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
-      - MODEL=${CLAUDE_MODEL:-sonnet}
+      - MODEL=${CLAUDE_MODEL:-opus}
       - EFFORT=${CLAUDE_EFFORT:-high}
       - MAX_THINKING_TOKENS=${CLAUDE_MAX_THINKING_TOKENS:-}
       - HTTP_ADDR=:8080

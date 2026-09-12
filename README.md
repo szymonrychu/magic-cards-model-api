@@ -299,7 +299,7 @@ argv, the wrapper dispatch, or a Job's env), and shown back on `GET
 
 - `model`: any non-empty string. The UI suggests `sonnet`, `opus`, `haiku`,
   `fable`; the default when `agent` is omitted comes from `AGENT_DEFAULT_MODEL`
-  (env, default `sonnet`).
+  (env, default `opus`, for an AI seat and a buddy alike).
 - `effort`: one of `low`, `medium`, `high`, `xhigh`, `max`. Default `high`.
 - `max_thinking_tokens`: a non-negative integer, or `null`/omitted to leave
   Claude Code's own default. `0` disables thinking where the model allows it.

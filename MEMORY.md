@@ -7,6 +7,16 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-13 - the default model for an AI opponent seat and a buddy is
+  `opus`.** The owner's call. Spelled as the codebase already spells
+  `AgentSettings.model` (`opus`, never a versioned id), and set in the three
+  places a default is decided: `AgentSettings.default` (the server, when a
+  create request names no `agent`/`buddy_agent`), `lobby_model.js`'s
+  `DEFAULT_MODEL` (a blank lobby model field), and compose's `CLAUDE_MODEL`
+  fallback. `contract/agent-settings.schema.json` is unchanged on purpose: it
+  has no default - `model` is required on the wire - so the default only ever
+  travels as a value; `test_the_wire_shape_of_the_server_default_validates`
+  pins that. `AGENT_DEFAULT_MODEL` still overrides it per deployment.
 - **2026-09-12 - a 5xx is not a refusal, and the baseline must never
   remember one as if it were.** `api_client.act` mapped every status >= 400
   to `{"allowed": False}`, and the anti-stall memory then fingerprinted it:

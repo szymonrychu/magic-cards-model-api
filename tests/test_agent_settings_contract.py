@@ -42,6 +42,17 @@ def test_the_wire_shape_of_a_default_agent_validates(schema):
     assert payload == {"model": "sonnet", "effort": "medium", "maxThinkingTokens": None}
 
 
+def test_the_wire_shape_of_the_server_default_validates(schema):
+    """The settings a seat or buddy actually runs as when the request named
+    none (`AgentSettings.default`, no `AGENT_DEFAULT_MODEL` set) - Opus. The
+    schema carries no default of its own: `model` is required on the wire,
+    so the default is decided here and only ever travels as a value."""
+    payload = AgentSettings.default({}).to_wire()
+    jsonschema.validate(payload, schema)
+    assert payload == {"model": "opus", "effort": "medium", "maxThinkingTokens": None}
+    assert "default" not in schema["properties"]["model"]
+
+
 def test_the_wire_shape_with_a_thinking_budget_validates(schema):
     payload = AgentSettings(model="opus", effort="max", max_thinking_tokens=4096).to_wire()
     jsonschema.validate(payload, schema)
