@@ -84,6 +84,311 @@
         "title": "AbilityView",
         "type": "object"
       },
+      "Action": {
+        "description": "The arguments one engine entry point takes - a serializable call spec.\n\nBuilt so \"what a seat took\" and \"what else was legal at that moment\" are\nthe same type, directly comparable, and replayable from a log row long\nafter the `Game` that produced it is gone. Every reference to something in\nthe game is an id (`card_id`, `decision_candidates`, `attacker_id`) rather\nthan a live object - see the module docstring for why that is load-bearing\nrather than a style preference.",
+        "properties": {
+          "ability_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ability Index"
+          },
+          "affordable": {
+            "$ref": "#/components/schemas/Affordability",
+            "default": "unknown"
+          },
+          "alternative_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Cost"
+          },
+          "attacker_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attacker Id"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          },
+          "color_choice_count": {
+            "default": 0,
+            "title": "Color Choice Count",
+            "type": "integer"
+          },
+          "color_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Color"
+            },
+            "title": "Color Options",
+            "type": "array"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "decision_candidates": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Decision Candidates",
+            "type": "array"
+          },
+          "decision_option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Option"
+          },
+          "decision_player_candidates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Decision Player Candidates",
+            "type": "array"
+          },
+          "decision_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Seq"
+          },
+          "defender": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defender"
+          },
+          "from_zone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Zone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActionKind"
+          },
+          "land_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Face"
+          },
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "modes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "pays_with": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ManaPlanEntry"
+            },
+            "title": "Pays With",
+            "type": "array"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "produces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produces"
+          },
+          "restriction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction"
+          },
+          "restriction_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction Understood"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
+          },
+          "splice_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SpliceOption"
+            },
+            "title": "Splice Options",
+            "type": "array"
+          },
+          "target_slots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TargetSlot"
+            },
+            "title": "Target Slots",
+            "type": "array"
+          },
+          "unaffordable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unaffordable Reason"
+          },
+          "x_range": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Range"
+          }
+        },
+        "required": [
+          "kind",
+          "player",
+          "rule"
+        ],
+        "title": "Action",
+        "type": "object"
+      },
       "ActionKind": {
         "description": "What kind of call spec this is - one entry point per engine action a\nseat (or `legal_actions`) can name.",
         "enum": [
@@ -225,7 +530,7 @@
         "type": "object"
       },
       "ActionWithTargets": {
-        "description": "The engine's own `Action`, plus the candidates the api enumerates for\nit (`app._attach_target_candidates`). A subclass rather than a re-shape:\nevery field of `Action` is passed through untouched and by inheritance,\nso a field the engine adds arrives here without this file changing.",
+        "description": "The engine's own `Action`, plus the candidates the api enumerates for\nit (`app._attach_target_candidates`). A subclass rather than a re-shape:\nevery field of `Action` is passed through untouched and by inheritance,\nso a field the engine adds arrives here without this file changing.\n\n`targets` is **required**, which is what makes this a distinguishable\nbranch of `LegalActionsResponse.actions` rather than a replacement for\n`Action` - see there.",
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -482,14 +787,7 @@
             "type": "array"
           },
           "targets": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ActionTargets"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/ActionTargets"
           },
           "unaffordable_reason": {
             "anyOf": [
@@ -534,7 +832,8 @@
         "required": [
           "kind",
           "player",
-          "rule"
+          "rule",
+          "targets"
         ],
         "title": "ActionWithTargets",
         "type": "object"
@@ -4329,11 +4628,18 @@
         "type": "string"
       },
       "LegalActionsResponse": {
-        "description": "`GET .../legal-actions` (T11) - the engine's own `Action` model,\nreused as-is rather than re-shaped: `get_legal_actions` returns exactly\n`[action.model_dump(mode=\"json\") for action in actions]`, and\n`records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as\n`LogEntry.legal_actions_before`) is the identical dump - now with the\nlegal candidates for each targeting action folded in alongside.",
+        "description": "`GET .../legal-actions` (T11) - the engine's own `Action` model,\nreused as-is rather than re-shaped: `get_legal_actions` returns exactly\n`[action.model_dump(mode=\"json\") for action in actions]`, and\n`records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as\n`LogEntry.legal_actions_before`) is the identical dump - now with the\nlegal candidates for each targeting action folded in alongside.\n\n**Both names stay in `#/components/schemas`, and the union is why.**\nTyping this `list[ActionWithTargets]` alone read as an enrichment and was\none: every `Action` field is still there, by inheritance. But FastAPI\nnames a component only where a route references it, and the subclass was\nthe only thing referenced - so the engine's `Action`, which downstream\nrepos validate against **by name** (`tests/test_openapi_drift.py`'s own\ndocstring), silently stopped being published at all. The union restores\nit without touching the wire, because it is also the truth about the\nanswer: `candidates=false` (the default, and what `ui/app.js` asks for)\nanswers plain engine `Action` rows, and `candidates=true` adds `targets`\nto the targeting ones - `_attach_target_candidates` sets that key or\nleaves it off, never sets it to null. `targets` being required on the\nsubclass is what keeps the two branches apart: a row carrying candidates\nmatches `ActionWithTargets` and only it, a row without matches `Action`\nand only it, so neither branch is decoration and a client can tell which\nit is holding by the one key that differs.",
         "properties": {
           "actions": {
             "items": {
-              "$ref": "#/components/schemas/ActionWithTargets"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ActionWithTargets"
+                },
+                {
+                  "$ref": "#/components/schemas/Action"
+                }
+              ]
             },
             "title": "Actions",
             "type": "array"

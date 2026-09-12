@@ -1935,9 +1935,14 @@ class ActionWithTargets(Action):
     """The engine's own `Action`, plus the candidates the api enumerates for
     it (`app._attach_target_candidates`). A subclass rather than a re-shape:
     every field of `Action` is passed through untouched and by inheritance,
-    so a field the engine adds arrives here without this file changing."""
+    so a field the engine adds arrives here without this file changing.
 
-    targets: ActionTargets | None = None
+    `targets` is **required**, which is what makes this a distinguishable
+    branch of `LegalActionsResponse.actions` rather than a replacement for
+    `Action` - see there.
+    """
+
+    targets: ActionTargets
 
 
 class LegalActionsResponse(BaseModel):
@@ -1946,9 +1951,27 @@ class LegalActionsResponse(BaseModel):
     `[action.model_dump(mode="json") for action in actions]`, and
     `records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as
     `LogEntry.legal_actions_before`) is the identical dump - now with the
-    legal candidates for each targeting action folded in alongside."""
+    legal candidates for each targeting action folded in alongside.
 
-    actions: list[ActionWithTargets]
+    **Both names stay in `#/components/schemas`, and the union is why.**
+    Typing this `list[ActionWithTargets]` alone read as an enrichment and was
+    one: every `Action` field is still there, by inheritance. But FastAPI
+    names a component only where a route references it, and the subclass was
+    the only thing referenced - so the engine's `Action`, which downstream
+    repos validate against **by name** (`tests/test_openapi_drift.py`'s own
+    docstring), silently stopped being published at all. The union restores
+    it without touching the wire, because it is also the truth about the
+    answer: `candidates=false` (the default, and what `ui/app.js` asks for)
+    answers plain engine `Action` rows, and `candidates=true` adds `targets`
+    to the targeting ones - `_attach_target_candidates` sets that key or
+    leaves it off, never sets it to null. `targets` being required on the
+    subclass is what keeps the two branches apart: a row carrying candidates
+    matches `ActionWithTargets` and only it, a row without matches `Action`
+    and only it, so neither branch is decoration and a client can tell which
+    it is holding by the one key that differs.
+    """
+
+    actions: list[ActionWithTargets | Action]
 
 
 class CandidateView(BaseModel):

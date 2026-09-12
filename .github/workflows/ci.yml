@@ -18,6 +18,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: magic-cards-model-api
+          # `fetch-depth: 0` so `origin/main` is a resolvable ref here:
+          # tests/test_openapi_drift.py's
+          # test_no_named_component_disappears_from_the_contract reads
+          # `git show origin/main:openapi.json` as its baseline, and on the
+          # default depth-1 checkout it would fall back to `HEAD` - which on
+          # a pushed branch is the already-regenerated file, so a dropped
+          # public component would compare clean against itself.
+          fetch-depth: 0
 
       # The engine is a PATH dependency: pyproject.toml has
       # [tool.uv.sources] magic-cards-model = { path = "../magic-cards-model", editable = true }.
