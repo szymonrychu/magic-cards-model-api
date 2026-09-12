@@ -1,0 +1,822 @@
+"""The greedy baseline seat: a deterministic, zero-LLM opponent.
+
+Every test here drives the real API - the same `GET .../legal-actions`
+enumeration a live seat reads, and the same mutating routes it posts to -
+because the whole claim the baseline makes is "this policy is expressible in
+what the engine already offers a seat". A policy asserted against a
+hand-written action list would prove nothing about that.
+
+The last test is the one the measuring stick actually rests on: two baselines
+play a bounded game and it *ends*. A baseline that can stall is not a
+measuring stick, it is a second source of unfinished games.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from conftest import add_card, find, force_turn_position, state
+from fastapi.testclient import TestClient
+from magic_cards_model.machines import Step
+from magic_cards_model.machines.decisions import Decision, DecisionKind
+from magic_cards_model.models.card_state import TargetRef
+
+from magic_cards_model_api import baseline_seat
+from magic_cards_model_api.api_client import HttpSeatApiClient
+from magic_cards_model_api.decisions import PendingDecision
+from magic_cards_model_api.store import store
+
+# -- harness -----------------------------------------------------------------
+
+
+def seats_for(game_id: str) -> dict[str, str]:
+    return {name: uid for uid, name in store.seat_uids(game_id).items()}
+
+
+def api(client: TestClient) -> HttpSeatApiClient:
+    """The seat seam (`api_client.py`) pointed at the in-process app."""
+    return HttpSeatApiClient(http=client)
+
+
+def look(client: TestClient, game_id: str, player: str) -> tuple[dict, list[dict]]:
+    """What the policy is given: this seat's own filtered state view and its
+    own `GET .../legal-actions` enumeration, both read through the seam."""
+    uid = seats_for(game_id)[player]
+    seam = api(client)
+    return seam.game_state(game_id, uid), seam.legal_actions(game_id, player, uid)
+
+
+def decide(client: TestClient, game_id: str, player: str, **kwargs: Any):
+    board, actions = look(client, game_id, player)
+    return baseline_seat.choose_move(board, actions, player, **kwargs)
+
+
+def pending_view(decision: Decision) -> dict[str, Any]:
+    """A real engine `Decision` in the exact shape the wire carries it."""
+    return PendingDecision.from_engine(decision).to_view()
+
+
+def battlefield_creature(
+    client: TestClient, game_id: str, name: str, controller: str, *, sick: bool = False
+) -> str:
+    """Add one creature and hand back *its own* id.
+
+    By id and not by name: two copies of one card are a real board, and
+    `conftest.find` answers with the first match - so a helper that looked
+    the card up by name handed the same id back twice and the second attack
+    declaration named a creature that was already attacking.
+    """
+    before = {card["id"] for card in state(client, game_id)["battlefield"]}
+    add_card(client, game_id, name, controller, "battlefield")
+    added = [card for card in state(client, game_id)["battlefield"] if card["id"] not in before]
+    assert len(added) == 1, added
+    client.patch(f"/api/games/{game_id}/cards/{added[0]['id']}", json={"summoning_sick": sick})
+    return added[0]["id"]
+
+
+def into_declare_attackers(client: TestClient, game_id: str, attacker: str) -> dict:
+    """Walk `attacker` into CR 508.1's own pause, the real way."""
+    force_turn_position(game_id, Step.BEGINNING_OF_COMBAT, attacker)
+    paused = client.post(f"/api/games/{game_id}/advance", json={"player": attacker})
+    body = paused.json()
+    assert body.get("paused") is True, body
+    assert body["pending_decision"]["kind"] == "declare_attackers", body
+    return body
+
+
+def into_declare_blockers(
+    client: TestClient, game_id: str, attacker: str, pairs: list[dict[str, str]]
+) -> dict:
+    into_declare_attackers(client, game_id, attacker)
+    declared = client.post(
+        f"/api/games/{game_id}/actions/attack",
+        params={"uid": seats_for(game_id)[attacker]},
+        json={"attackers": pairs},
+    )
+    assert declared.json()["allowed"] is True, declared.json()
+    defender = next(p for p in ("alice", "bob") if p != attacker)
+    advanced = client.post(f"/api/games/{game_id}/advance", json={"player": attacker})
+    body = advanced.json()
+    assert body.get("paused") is True, body
+    assert body["pending_decision"]["kind"] == "declare_blockers", body
+    assert body["pending_decision"]["player"] == defender, body
+    return body
+
+
+def set_life(client: TestClient, game_id: str, player: str, life: int) -> None:
+    response = client.patch(f"/api/games/{game_id}/players/{player}", json={"life": life})
+    assert response.status_code == 200, response.text
+
+
+# -- one rule at a time ------------------------------------------------------
+
+
+def test_plays_a_land_when_one_is_legal(client, game):
+    add_card(client, game, "Forest", "alice", "hand")
+    forest = state(client, game)["hands"]["alice"][0]["id"]
+
+    move = decide(client, game, "alice")
+
+    assert move is not None
+    assert move.label == "play_land"
+    assert move.path == "actions/play-land"
+    assert move.body["card_id"] == forest
+
+
+def test_the_land_comes_before_any_cast(client, game):
+    """A land drop is free and never comes back this turn; a spell can wait
+    for the mana the land just added."""
+    for _ in range(2):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "play_land"
+
+
+def test_casts_the_highest_cost_affordable_permanent(client, game):
+    for _ in range(4):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")  # {1}{G}
+    add_card(client, game, "Lupine Harbingers", "alice", "hand")  # {3}{G}
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "cast_permanent"
+    assert move.path == "actions/cast"
+    hand = state(client, game)["hands"]["alice"]
+    assert move.body["card_id"] == find(hand, "Lupine Harbingers")["id"]
+
+
+def test_skips_a_permanent_it_cannot_pay_for(client, game):
+    """CR 118.6 keeps an unpayable cast *legal*, so the enumeration still
+    offers it - `affordable` is the only thing that tells the two apart, and
+    a greedy policy that read legality alone would burn every turn refused."""
+    for _ in range(2):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")  # {1}{G} - payable
+    add_card(client, game, "Lupine Harbingers", "alice", "hand")  # {3}{G} - not
+
+    move = decide(client, game, "alice")
+
+    hand = state(client, game)["hands"]["alice"]
+    assert move.body["card_id"] == find(hand, "Grizzly Bears")["id"]
+
+
+def test_permanents_come_before_spells_whatever_they_cost(client, game):
+    """The rule is "the highest-cost affordable *permanent*, then the
+    highest-cost affordable spell" - a board beats a one-shot even when the
+    one-shot is the more expensive card."""
+    for _ in range(4):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Savannah Lions", "alice", "hand")  # {W} - unpayable
+    add_card(client, game, "Mind Stone", "alice", "hand")  # {2}, a permanent
+    add_card(client, game, "Mind Rot", "alice", "hand")  # {2}{B} - unpayable
+    add_card(client, game, "Lightning Bolt", "alice", "hand")  # {R}, a spell
+
+    move = decide(client, game, "alice")
+
+    hand = state(client, game)["hands"]["alice"]
+    assert move.label == "cast_permanent"
+    assert move.body["card_id"] == find(hand, "Mind Stone")["id"]
+
+
+def test_casts_the_highest_cost_affordable_spell_when_no_permanent_is_left(client, game):
+    for _ in range(4):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Shock", "alice", "hand")  # {R}
+    add_card(client, game, "Tablet of Discovery", "alice", "hand")  # {2}{R} permanent
+
+    # With the permanent gone from hand, the spell is the only cast left.
+    hand = state(client, game)["hands"]["alice"]
+    tablet = find(hand, "Tablet of Discovery")["id"]
+    client.post(f"/api/games/{game}/cards/{tablet}/move", json={"to_zone": "graveyard"})
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "cast_spell"
+    assert move.body["card_id"] == find(state(client, game)["hands"]["alice"], "Shock")["id"]
+
+
+def test_passes_priority_when_nothing_is_worth_doing(client, game):
+    move = decide(client, game, "alice")
+
+    assert move.label == "pass_priority"
+    assert move.path == "actions/pass-priority"
+    assert move.body["player"] == "alice"
+
+
+def test_passes_priority_rather_than_advancing_while_the_stack_is_busy(client, game):
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    mountain = find(state(client, game)["battlefield"], "Mountain")["id"]
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = state(client, game)["hands"]["alice"][0]["id"]
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": bolt,
+            "targets": ["bob"],
+            "mana_sources": [mountain],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.json()
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "pass_priority"
+
+
+def test_advances_when_the_step_gives_nobody_priority(client, game):
+    """CR 703.2's turn-based actions are nobody's move, so a seat waiting for
+    priority in untap waits forever - `advance` is the only way out."""
+    force_turn_position(game, Step.UNTAP, "alice")
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "advance"
+    assert move.path == "advance"
+    assert move.body["player"] == "alice"
+
+
+def test_has_nothing_to_do_on_the_opponents_priority(client, game):
+    move = decide(client, game, "bob")
+
+    assert move is None
+
+
+def test_stops_once_the_game_is_over(client, game):
+    client.post(f"/api/games/{game}/actions/concede", json={"player": "bob"})
+
+    assert decide(client, game, "alice") is None
+
+
+# -- combat ------------------------------------------------------------------
+
+
+def test_attacks_when_the_attacker_survives_every_block(client, game):
+    """4/4 into a 2/2: nothing bob controls both kills it and lives, so the
+    attack is free."""
+    harbingers = battlefield_creature(client, game, "Lupine Harbingers", "alice")
+    battlefield_creature(client, game, "Grizzly Bears", "bob")
+    into_declare_attackers(client, game, "alice")
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "attack"
+    assert move.path == "actions/attack"
+    assert move.body["attackers"] == [{"card_id": harbingers, "defender": "bob"}]
+
+
+def test_holds_back_an_attacker_the_defender_would_eat(client, game):
+    """2/2 into a 4/4: the block kills the attacker and the blocker lives, so
+    a greedy-but-not-suicidal policy declares nobody (CR 508.1a's "if any")."""
+    battlefield_creature(client, game, "Grizzly Bears", "alice")
+    battlefield_creature(client, game, "Lupine Harbingers", "bob")
+    into_declare_attackers(client, game, "alice")
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "attack"
+    assert move.body["attackers"] == []
+
+
+def test_a_tapped_blocker_is_not_a_block_to_fear(client, game):
+    bears = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    big = battlefield_creature(client, game, "Lupine Harbingers", "bob")
+    tapped = client.post(f"/api/games/{game}/cards/{big}/tap", json={"tapped": True})
+    assert tapped.json()["tapped"] is True, tapped.json()
+    into_declare_attackers(client, game, "alice")
+
+    move = decide(client, game, "alice")
+
+    assert move.body["attackers"] == [{"card_id": bears, "defender": "bob"}]
+
+
+def test_alpha_strikes_when_the_race_is_lethal(client, game):
+    """Two 2/2s into a 4/4 blocker is a bad attack card by card - and the
+    right one anyway at 3 life, because the damage that gets through wins."""
+    first = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    second = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    battlefield_creature(client, game, "Lupine Harbingers", "bob")
+    set_life(client, game, "bob", 3)
+    into_declare_attackers(client, game, "alice")
+
+    move = decide(client, game, "alice")
+
+    assert move.label == "attack"
+    assert sorted(pair["card_id"] for pair in move.body["attackers"]) == sorted([first, second])
+
+
+def test_declines_to_block_when_the_hit_is_survivable(client, game):
+    """ "Block only to prevent lethal" - at 20 life a 4/4 is not lethal, and a
+    2/2 chump for nothing is exactly what the rule forbids."""
+    attacker = battlefield_creature(client, game, "Lupine Harbingers", "alice")
+    battlefield_creature(client, game, "Grizzly Bears", "bob")
+    into_declare_blockers(client, game, "alice", [{"card_id": attacker, "defender": "bob"}])
+
+    move = decide(client, game, "bob")
+
+    assert move.label == "block"
+    assert move.path == "actions/declare-blockers"
+    assert move.body["blocks"] == []
+
+
+def test_blocks_to_prevent_lethal(client, game):
+    attacker = battlefield_creature(client, game, "Lupine Harbingers", "alice")
+    blocker = battlefield_creature(client, game, "Grizzly Bears", "bob")
+    set_life(client, game, "bob", 3)
+    into_declare_blockers(client, game, "alice", [{"card_id": attacker, "defender": "bob"}])
+
+    move = decide(client, game, "bob")
+
+    assert move.label == "block"
+    assert move.body["blocks"] == [{"blocker": blocker, "blocked": attacker}]
+    assert move.body["player"] == "bob"
+
+
+def test_blocks_no_more_than_lethal_demands(client, game):
+    """Two 2/2s attacking into 3 life: one block takes the incoming damage
+    below the life total, and the second blocker stays home."""
+    first = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    second = battlefield_creature(client, game, "Grizzly Bears", "alice")
+    battlefield_creature(client, game, "Grizzly Bears", "bob")
+    battlefield_creature(client, game, "Savannah Lions", "bob")
+    set_life(client, game, "bob", 3)
+    into_declare_blockers(
+        client,
+        game,
+        "alice",
+        [{"card_id": first, "defender": "bob"}, {"card_id": second, "defender": "bob"}],
+    )
+
+    move = decide(client, game, "bob")
+
+    assert len(move.body["blocks"]) == 1
+
+
+# -- decisions, on the engine's own default_answer terms ----------------------
+
+
+def _decision(kind: DecisionKind, **fields: Any) -> Decision:
+    return Decision(player="alice", kind=kind, prompt="?", **fields)
+
+
+def test_a_may_question_takes_the_affirmative_when_it_is_legal():
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.MAY, affirmative_is_legal=True)), "alice"
+    )
+    assert body["accept"] is True
+
+
+def test_a_may_question_declines_when_the_affirmative_is_illegal():
+    """CR 608.2d: `default_answer` never returns an illegal option, and
+    neither does this."""
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.PAY_LIFE, affirmative_is_legal=False)), "alice"
+    )
+    assert body["accept"] is False
+
+
+def test_a_mulligan_question_keeps_the_dealt_hand():
+    body = baseline_seat.decide_body(pending_view(_decision(DecisionKind.MULLIGAN)), "alice")
+    assert body["accept"] is False
+
+
+def test_an_amount_question_pays_nothing():
+    life = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.PAY_LIFE_AMOUNT, amount=7)), "alice"
+    )
+    energy = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.PAY_ENERGY_AMOUNT, amount=4)), "alice"
+    )
+    assert life["life_amount"] == 0
+    assert energy["energy_amount"] == 0
+
+
+def test_put_on_top_or_bottom_keeps_it_on_top():
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.PUT_ON_TOP_OR_BOTTOM)), "alice"
+    )
+    assert body["top"] is True
+
+
+def test_a_scry_keeps_everything_on_top():
+    from uuid import uuid4
+
+    cards = (uuid4(), uuid4())
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.SCRY, cards=cards, amount=2)), "alice"
+    )
+    assert body["moved"] == []
+    assert body["top_order"] is None
+
+
+def test_trigger_order_keeps_the_order_they_triggered_in():
+    from uuid import uuid4
+
+    cards = (uuid4(), uuid4(), uuid4())
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.ORDER_TRIGGERS, cards=cards)), "alice"
+    )
+    assert body["order"] == [str(card) for card in cards]
+
+
+def test_an_exact_choose_cards_takes_the_back_of_the_offered_cards():
+    from uuid import uuid4
+
+    cards = tuple(uuid4() for _ in range(4))
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.CHOOSE_CARDS, cards=cards, amount=2, exact=True)),
+        "alice",
+    )
+    assert body["card_ids"] == [str(cards[2]), str(cards[3])]
+
+
+def test_an_any_number_choose_cards_takes_none():
+    from uuid import uuid4
+
+    cards = tuple(uuid4() for _ in range(3))
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.CHOOSE_CARDS, cards=cards, amount=3, exact=False)),
+        "alice",
+    )
+    assert body["card_ids"] == []
+
+
+def test_a_choose_cards_with_a_stated_default_takes_it():
+    """CR 701.23b's declinable search stamps its own default - finding
+    nothing would sacrifice a fetchland for no land at all."""
+    from uuid import uuid4
+
+    cards = tuple(uuid4() for _ in range(3))
+    body = baseline_seat.decide_body(
+        pending_view(
+            _decision(
+                DecisionKind.CHOOSE_CARDS,
+                cards=cards,
+                amount=1,
+                exact=False,
+                default_cards=(cards[1],),
+            )
+        ),
+        "alice",
+    )
+    assert body["card_ids"] == [str(cards[1])]
+
+
+def test_choose_targets_names_exactly_the_mandatory_minimum():
+    from uuid import uuid4
+
+    targets = (TargetRef.to_card(uuid4()), TargetRef.to_player("bob"))
+    body = baseline_seat.decide_body(
+        pending_view(
+            _decision(
+                DecisionKind.CHOOSE_TARGETS, targets=targets, target_minimum=1, target_maximum=1
+            )
+        ),
+        "alice",
+    )
+    assert body["targets"] == [str(targets[0].card_id)]
+
+
+def test_an_optional_target_requirement_names_nobody():
+    from uuid import uuid4
+
+    targets = (TargetRef.to_card(uuid4()),)
+    body = baseline_seat.decide_body(
+        pending_view(
+            _decision(
+                DecisionKind.CHOOSE_TARGETS, targets=targets, target_minimum=0, target_maximum=1
+            )
+        ),
+        "alice",
+    )
+    assert body["targets"] == []
+
+
+def test_an_enumerated_quality_takes_the_first_printed_option():
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.CHOOSE_A_QUALITY, options=("W", "U", "B", "R", "G"))),
+        "alice",
+    )
+    assert body["choice"] == "W"
+
+
+def test_an_open_quality_names_the_asking_card():
+    """`default_answer` returns `""` for "choose a card name"/"choose a
+    creature type", and the wire refuses an empty `choice` outright - so the
+    one place the default is unsendable names the card that asked, which is
+    a real answer and never a stall."""
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.CHOOSE_A_QUALITY, source="Pithing Needle")), "alice"
+    )
+    assert body["choice"] == "Pithing Needle"
+
+
+def test_a_modal_question_takes_the_first_printed_mode():
+    body = baseline_seat.decide_body(
+        pending_view(_decision(DecisionKind.CHOOSE_A_MODE, options=("draw a card", "gain 3 life"))),
+        "alice",
+    )
+    assert body["choice"] == "draw a card"
+
+
+def test_every_answerable_decision_kind_has_a_default_body():
+    """A kind with no branch here is a kind the baseline stalls on."""
+    from magic_cards_model_api.decisions import ANSWER_FIELD_FOR_KIND
+
+    missing = [
+        kind.value
+        for kind in ANSWER_FIELD_FOR_KIND
+        if kind not in (DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS)
+        and not baseline_seat.answers_kind(kind.value)
+    ]
+    assert missing == []
+
+
+def test_the_decision_body_carries_the_generation_it_answers():
+    view = pending_view(_decision(DecisionKind.MAY))
+    view["generation"] = 4
+    body = baseline_seat.decide_body(view, "alice")
+    assert body["generation"] == 4
+
+
+def test_a_decision_addressed_to_the_other_seat_is_not_ours(client, game):
+    attacker = battlefield_creature(client, game, "Lupine Harbingers", "alice")
+    into_declare_blockers(client, game, "alice", [{"card_id": attacker, "defender": "bob"}])
+
+    assert decide(client, game, "alice") is None
+
+
+# -- the pregame -------------------------------------------------------------
+
+
+def test_keeps_the_dealt_hand_in_the_mulligan_step(client):
+    """CR 103.5 rests the game before its first turn and nobody has priority
+    there - a seat that only knows how to pass would wait out the clock."""
+    response = client.post(
+        "/api/games",
+        json={"players": [{"username": "alice"}, {"username": "bob"}], "step": "mulligan"},
+    )
+    game_id = response.json()["game_id"]
+    try:
+        board, actions = look(client, game_id, "alice")
+        move = baseline_seat.choose_move(board, actions, "alice")
+        assert move is not None
+        assert move.label == "mulligan_keep"
+        assert move.path == "pregame/mulligan"
+        assert move.body["take"] is False
+    finally:
+        store.delete(game_id)
+
+
+# -- refusals must not become loops ------------------------------------------
+
+
+def test_a_refused_action_is_not_offered_again(client, game):
+    for _ in range(4):
+        add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    add_card(client, game, "Lupine Harbingers", "alice", "hand")
+
+    first = decide(client, game, "alice")
+    again = decide(client, game, "alice", refused={first.key})
+
+    assert again.key != first.key
+    hand = state(client, game)["hands"]["alice"]
+    assert again.body["card_id"] == find(hand, "Grizzly Bears")["id"]
+
+
+def test_every_option_refused_falls_through_to_passing(client, game):
+    add_card(client, game, "Forest", "alice", "hand")
+    board, actions = look(client, game, "alice")
+    every_key = {baseline_seat.action_key(action) for action in actions}
+
+    move = baseline_seat.choose_move(board, actions, "alice", refused=every_key)
+
+    assert move.label == "pass_priority"
+
+
+# -- and the whole point: it never stalls ------------------------------------
+
+
+@pytest.mark.parametrize("seed_life", [3, 20])
+def test_two_baselines_play_a_bounded_game_to_an_end_state(client, seed_life):
+    """The anti-stall guarantee, exercised rather than asserted.
+
+    An empty library is deliberate: nothing here is trying to be a real game
+    of Magic, it is trying to prove the loop terminates. Both seats draw from
+    an empty library (CR 104.3c) within a few turns, so the run ends on the
+    engine's own terms rather than on the harness's bound - and the bound is
+    still there, and still asserted, because a policy that needed it would
+    be exactly the defect this test is for.
+    """
+    response = client.post(
+        "/api/games",
+        json={
+            "players": [
+                {"username": "alice", "life": seed_life},
+                {"username": "bob", "life": seed_life},
+            ],
+            "step": "precombat_main",
+        },
+    )
+    info = response.json()
+    game_id = info["game_id"]
+    try:
+        add_card(client, game_id, "Grizzly Bears", "alice", "hand")
+        add_card(client, game_id, "Forest", "alice", "hand")
+        add_card(client, game_id, "Savannah Lions", "bob", "hand")
+        add_card(client, game_id, "Plains", "bob", "hand")
+        seam = api(client)
+        seats = [
+            baseline_seat.BaselineSeat(seam, game_id, player, uid)
+            for uid, player in store.seat_uids(game_id).items()
+        ]
+        outcome = baseline_seat.play_out(seats, max_steps=800)
+
+        assert outcome["over"] is True, outcome
+        assert outcome["ended_by"] == "play", outcome
+        assert outcome["winner"] or outcome["drawn"], outcome
+        assert outcome["steps"] < 800, outcome
+        board = state(client, game_id)
+        assert board["winner"] or board["drawn"]
+    finally:
+        store.delete(game_id)
+
+
+def test_the_stall_guard_ends_a_game_the_policy_cannot_finish(client, game, monkeypatch):
+    """The backstop, on its own. With the policy forced to have nothing to
+    say, `play_out` must still reach an end state rather than spin: a seat
+    that runs out of moves concedes (CR 104.3a), which is a real ending and
+    an honest one - it shows up in the scorecard as a loss.
+    """
+    monkeypatch.setattr(baseline_seat, "choose_move", lambda *a, **k: None)
+    seam = api(client)
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+
+    outcome = baseline_seat.play_out(seats, max_steps=200)
+
+    assert outcome["over"] is True, outcome
+    assert outcome["ended_by"] == "stall_guard", outcome
+    assert state(client, game)["winner"] is not None
+
+
+def test_play_out_stops_when_the_watcher_says_so(client, game):
+    """The gauntlet drives one baseline against an agent it does not control,
+    and the watcher (`scripts/watch_game.py`) is what decides that game is
+    finished with - a report filed, a stall, a timeout. `should_stop` is how
+    that decision reaches the seat loop, rather than the loop having a second
+    opinion about when a game is over."""
+    seam = api(client)
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+    calls = {"n": 0}
+
+    def stop() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 2
+
+    outcome = baseline_seat.play_out(seats, max_steps=500, should_stop=stop)
+
+    assert outcome["ended_by"] == "stopped", outcome
+    assert outcome["over"] is False
+    assert state(client, game)["winner"] is None
+
+
+def test_a_long_quiet_opponent_does_not_trip_the_stall_guard(client, game, monkeypatch):
+    """`stall_rounds` is the knob that makes the guard usable in a mixed
+    game: an agent seat thinking for a minute is not a stalled game, and a
+    guard tuned for two baselines would concede out from under it."""
+    monkeypatch.setattr(baseline_seat, "choose_move", lambda *a, **k: None)
+    seam = api(client)
+    seats = [
+        baseline_seat.BaselineSeat(seam, game, player, uid)
+        for uid, player in store.seat_uids(game).items()
+    ]
+
+    outcome = baseline_seat.play_out(seats, max_steps=20, stall_rounds=1000)
+
+    assert outcome["ended_by"] == "bound", outcome
+    assert state(client, game)["winner"] is None
+
+
+# -- targets it cannot name --------------------------------------------------
+
+
+def test_a_cast_whose_targets_cannot_be_filled_is_skipped_not_attempted(client, game):
+    """CR 601.2c: a spell needs its targets announced, and `legal_actions`
+    lists the cast whether or not the board offers any (CR 118.6 - legality
+    is not payability, and it is not targetability either).
+
+    Galvanic Discharge chooses target creature or planeswalker, and an empty
+    board offers neither. Attempting it anyway is a refusal, and a run that
+    does it every priority is exactly what a live gauntlet produced: 547
+    identical "too few targets" rows in one game, because the opponent's own
+    move changed the board each round and cleared the memory of the last
+    refusal. The seat has to decline in-process instead.
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Galvanic Discharge", "alice", "hand")
+    seam = api(client)
+    uid = seats_for(game)["alice"]
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", uid)
+
+    move = seat.step()
+
+    assert move is not None
+    assert move.label == "pass_priority", move
+    assert seat.refusals == 0, "nothing was attempted, so nothing was refused"
+
+
+def test_a_cast_whose_targets_can_be_filled_names_the_opponent(client, game):
+    """The other half: an "any target" spell always has a legal target - the
+    opponent's face - and the greedy policy takes it."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    seam = api(client)
+    uid = seats_for(game)["alice"]
+    seat = baseline_seat.BaselineSeat(seam, game, "alice", uid)
+
+    move = seat.step()
+
+    assert move.label == "cast_spell", move
+    assert move.body["targets"] == ["bob"], move
+    assert seat.refusals == 0
+    board = state(client, game)
+    assert [card["name"] for card in board["stack"]] == ["Lightning Bolt"]
+    assert board["stack"][0]["targets"] == ["bob"]
+
+
+# -- what it costs the server ------------------------------------------------
+
+
+class CountingSeam:
+    """A `SeatApiClient` that records what was asked of it.
+
+    A legitimate test double here (this is the api repo, not the engine - see
+    the workbench's own rule about where "no mocks" binds): the point is to
+    count calls, and every call still goes through to the real app underneath.
+    """
+
+    def __init__(self, inner: HttpSeatApiClient) -> None:
+        self.inner = inner
+        self.calls: list[str] = []
+
+    def game_state(self, game_id, uid):
+        self.calls.append("state")
+        return self.inner.game_state(game_id, uid)
+
+    def legal_actions(self, game_id, player, uid):
+        self.calls.append("legal_actions")
+        return self.inner.legal_actions(game_id, player, uid)
+
+    def affordances(self, game_id, card_id, player, uid):
+        self.calls.append("affordances")
+        return self.inner.affordances(game_id, card_id, player, uid)
+
+    def act(self, game_id, path, body, uid):
+        self.calls.append(f"act:{path}")
+        return self.inner.act(game_id, path, body, uid)
+
+
+def test_it_asks_for_nothing_it_cannot_act_on(client, game):
+    """While the opponent takes their whole turn, a seat that fetched its own
+    legal actions every round would pay for an enumeration over its whole hand
+    to be told, again, that it is not its move. A ten-game gauntlet is one
+    python process serving every one of those reads."""
+    seam = CountingSeam(api(client))
+    bob = baseline_seat.BaselineSeat(seam, game, "bob", seats_for(game)["bob"])
+
+    assert bob.step() is None
+    assert seam.calls == ["state"], seam.calls
+
+
+def test_it_reads_the_board_once_per_move(client, game):
+    """`play_out` already has this seat's state in hand; reading it again
+    inside `step` doubled every round's cost for nothing."""
+    add_card(client, game, "Forest", "alice", "hand")
+    seam = CountingSeam(api(client))
+    alice = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
+    board = seam.game_state(game, alice.uid)
+    seam.calls.clear()
+
+    move = alice.step(state=board)
+
+    assert move.label == "play_land"
+    assert seam.calls == ["legal_actions", "act:actions/play-land"], seam.calls
+
+
+def test_has_turn_is_the_one_rule_for_whether_it_is_our_move(client, game):
+    board, _ = look(client, game, "alice")
+    assert baseline_seat.has_turn(board, "alice") is True
+    assert baseline_seat.has_turn(board, "bob") is False
