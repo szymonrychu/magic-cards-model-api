@@ -566,8 +566,11 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   the row's `spell_face` back exactly as you read it
   (`cast(card="Wear // Tear", spell_face="Tear", targets="<an enchantment>")`)
   and leave it out for the front half, which is every ordinary card. An
-  adventurer card is enumerated the same way, and its Adventure row is refused
-  for now with a reason saying why - cast the creature half meanwhile.
+  adventurer card works the same way: send its Adventure row's `spell_face`
+  (`spell_face="Swift End"`) to cast the Adventure, which costs and targets
+  what the Adventure does and is exiled as it resolves instead of going to
+  your graveyard - you may cast the creature half from exile later. Leave
+  `spell_face` out to cast the creature half now.
 
   Any of those - and `pass` and `pass_until` too, since a pass is exactly
   where a spell or ability on the stack resolves - can hand back a `notices`

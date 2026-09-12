@@ -56,19 +56,47 @@ whoever works on the repo itself.
   Before this the api was advertising an action it could not perform: the
   engine enumerated Wear // Tear as two `cast` rows and the api cast Wear for
   both of them. `baseline_seat._plain_cast`'s skip of `spell_face` rows was
-  the workaround, and it stays - now as a stated policy choice (a face is an
-  announcement like a mode or an X) rather than a capability gap, because
-  `Action.target_slots` is still face-blind engine-side and the Adventure half
-  is refused.
+  the workaround, and it stayed on for one more change as a stated policy
+  choice, because `Action.target_slots` was still face-blind engine-side and
+  the Adventure half was refused. **Superseded by the entry below.**
 
-  CR 715.3's Adventure is **refused**, not announced:
-  `Casting.cast_as_adventure` charges the right cost and stamps `face_played`,
-  but `Casting.targeting` reads the whole printing for every layout except a
-  split card, so Stomp is announced with no target requirement at all -
-  measured, a target is refused with "too many targets: 1 chosen where the
-  spell takes at most 0" and a targetless Stomp resolves dealing no damage.
-  `engine_api.adventure_face_refusal` says so in words and names where the fix
-  belongs. Open it up when the engine reads the announced face.
+  CR 715.3's Adventure was **refused**, not announced, and the refusal was
+  right when it was written: `Casting.cast_as_adventure` charged the right
+  cost and stamped `face_played`, but `Casting.targeting` read the whole
+  printing for every layout except a split card, so Stomp was announced with
+  no target requirement at all - measured, a target came back "too many
+  targets: 1 chosen where the spell takes at most 0" and a targetless Stomp
+  resolved dealing no damage. **Superseded by the entry below.**
+
+- **2026-09-12 - the Adventure refusal is gone, and it was a measured
+  refusal rather than a missing feature.** `engine_api.adventure_face_refusal`
+  existed because an Adventure announced against the whole printing's profile
+  had zero target requirements: measured both ways, a targeted Stomp was
+  refused "too many targets: 1 chosen where the spell takes at most 0" and a
+  targetless one resolved dealing no damage, so a refusal a seat could read
+  beat a spell that cost {1}{R} and did nothing. **Engine commit `fd28021`
+  "Evaluate the chosen face, not the front one, on every casting path (CR
+  601.3e)" closed it**: CR 715.3a/715.3b turned out to be CR 709.3a/709.3b
+  word for word, CR 601.3e is the general rule both instance ("these
+  alternative characteristics replace the object's characteristics for this
+  determination"), and `Casting.targeting`, `Game._announcement_profile` and
+  `Game._resolution_profile` all key on the chosen face now rather than on
+  `Layout.SPLIT`.
+
+  What that changed here, all in one branch: `_announce_the_face` routes the
+  inset face to `Casting.cast_as_adventure` (the engine's own door, and the
+  stamp CR 715.3d's exile-on-resolution reads); `affordances._face_profile`
+  stops being split-only and reads any face the printing carries through
+  `machines.casting.face_being_cast`, so an Adventure row's candidates are
+  the Adventure's; and `baseline_seat._plain_cast` stops skipping face rows,
+  which is what the old docstring said to do once the engine read the
+  announced face into `target_slots`. Face rows are their own pool in
+  `choose_move`, tried after permanents and faceless spells - the state view
+  carries one `type_line` per printing, so `_is_permanent` cannot classify a
+  named half and must not try. `PROTOCOL_VERSION` stays `seatkit-15`: no
+  request or response shape moved, only the value space a parameter that
+  version already added will accept (argued in full in `seatkit.py`'s own
+  changelog entry).
 
 - **2026-09-12 - two audit gaps: a public component vanished from
   `openapi.json`, and the baseline paid a round trip this branch existed to

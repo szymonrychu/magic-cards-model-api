@@ -175,12 +175,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--spell-face",
         default="",
         help=(
-            "which half of a split card this cast announces (CR 709.3), by that "
-            "half's printed name - --spell-face Tear for Wear // Tear's back half. "
+            "which face this cast announces - a half of a split card (CR 709.3) "
+            "or an adventurer card's Adventure (CR 715.3) - by that face's "
+            "printed name: --spell-face Tear for Wear // Tear's back half, "
+            "--spell-face 'Swift End' for Murderous Rider's Adventure. "
             "The value is the engine's own: it is the `spell_face` string on the "
             "action row you are taking, handed back unchanged. Omit it for the "
-            "front half, which is every single-faced card. An adventurer card's "
-            "Adventure half (CR 715) is refused for now, with the reason why"
+            "front half, which is every single-faced card and an adventurer "
+            "card's own creature half"
         ),
     )
     cast.add_argument("--target", default="", help="comma-separated card ids or player names")

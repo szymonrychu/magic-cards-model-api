@@ -922,12 +922,14 @@ def build_server(seats: Seats) -> MCPServer:
                 {W} where Wear takes an artifact and costs {1}{R}, so sending the
                 wrong one is refused on the target rather than silently cast.
 
-                An adventurer card (CR 715) is enumerated the same way - the
-                creature as a faceless row, its Adventure as a `spell_face` one -
-                but the Adventure row is refused for now, with a reason saying why:
-                CR 715.3a evaluates only the Adventure's alternative
-                characteristics, and this engine does not read them for targeting
-                yet. Cast the creature half (no `spell_face`) meanwhile.
+                An adventurer card (CR 715) works the same way - the creature as a
+                faceless row, its Adventure as a `spell_face` one. Take the
+                Adventure by sending its row's `spell_face`
+                (`spell_face="Swift End"`): CR 715.3a evaluates only the
+                Adventure's own characteristics, so it costs what the Adventure
+                costs, targets what the Adventure targets, and CR 715.3d exiles
+                the card as it resolves rather than putting it in your graveyard -
+                from where you may later cast the creature half.
 
                 A card sitting in your graveyard or exile is castable too, but only
                 under a *named* permission (CR 601.3: "a player can begin to cast a

@@ -575,9 +575,9 @@ UNREADABLE_TARGETING = (
 #: `understood: false`, no slots, a note - so every reader branching on
 #: `understood` is unaffected.
 UNREADABLE_FACE_TARGETING = (
-    "this action announces one named face of a multi-face card and the candidates for that "
-    "face alone cannot be determined here, so they will not be guessed at - this is NOT "
-    "'nothing is legal'. Read the announced face's printed text and name targets yourself; "
+    "this action announces a face this printing does not carry, so the candidates for it "
+    "cannot be determined and will not be guessed at - this is NOT 'nothing is legal'. Take "
+    "the face string from the row's own `spell_face`, unmodified, or name targets yourself; "
     "the engine still checks them (CR 601.2c)"
 )
 

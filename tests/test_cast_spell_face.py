@@ -1,4 +1,4 @@
-"""Announcing which half of a card is being cast (CR 709.3, CR 715.3).
+"""Announcing which face of a card is being cast (CR 709.3, CR 715.3).
 
 The defect this file was written for: the engine's own enumeration offers a
 split card as **two** `CAST` actions, one per half, each carrying
@@ -13,13 +13,29 @@ was advertising an action it could not perform.
 The property that makes the field usable is the **round trip**: the string a
 caller sends in `spell_face` is the same string the engine put in
 `Action.spell_face`, so a seat can hand back exactly what it was offered
-without transforming it.
+without transforming it. It is asserted here for both layouts that name a
+face.
 
-Every CR number here was verified in the session that wrote this file, against
-the Comprehensive Rules text on disk (`mise run rules:find 709.3`,
-`rules:find 715.3` in the engine repo - the file `mise run rules:pull`
-downloads). Every card is a real Scryfall printing out of the engine's own
-packaged corpus and every board is played through the real API.
+**CR 715.3's Adventure was refused by this api, and the refusal was correct
+when it was written.** Measured, not assumed: the engine's `Casting.targeting`
+was scoped to `Layout.SPLIT`, so an Adventure was announced against the whole
+printing's profile - a targeted Stomp came back "too many targets: 1 chosen
+where the spell takes at most 0" and a targetless one resolved dealing no
+damage. A refusal a seat could read beat a spell that cost {1}{R} and did
+nothing. Engine commit `fd28021`, "Evaluate the chosen face, not the front
+one, on every casting path (CR 601.3e)", made the chosen face the
+discriminator on every path instead of the layout - CR 715.3a/715.3b being CR
+709.3a/709.3b word for word, and CR 601.3e the general rule both instance -
+so the refusal tests that used to sit here are replaced by their positive
+cases rather than deleted. The history is kept because a test that is simply
+removed leaves no record that the behaviour was ever considered.
+
+Every CR number here was verified in the session that wrote or changed this
+file, against the Comprehensive Rules text on disk (`mise run rules:find
+709.3`, `rules:find 715.3`, `rules:find 601.3` in the engine repo - the file
+`mise run rules:pull` downloads, effective August 7, 2026). Every card is a
+real Scryfall printing out of the engine's own packaged corpus and every board
+is played through the real API.
 """
 
 from __future__ import annotations

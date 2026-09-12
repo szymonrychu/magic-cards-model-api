@@ -194,12 +194,35 @@ PROTOCOL_VERSION = "seatkit-15"
 #: anywhere, additive and optional, and absent still means the plain front
 #: face on every card. No response shape moved. Deliberately not folded in:
 #: fuse (CR 702.102, casting both halves as one spell, `Casting.cast_fused`),
-#: which is a second announcement with its own field and its own tests, and
-#: CR 715.3's Adventure, which this api refuses with a reason rather than
-#: announces - the engine's `Casting.targeting` reads the whole printing for
-#: every layout except a split card, so an Adventure that targets would be
-#: announced with no target requirement at all (see
-#: `engine_api.adventure_face_refusal`).
+#: which is a second announcement with its own field and its own tests.
+#:
+#: **Widened in place, deliberately not a bump to `seatkit-16`.** This entry
+#: used to end by excluding CR 715.3's Adventure, which this api refused with
+#: a reason of its own: the engine's `Casting.targeting` was scoped to
+#: `Layout.SPLIT`, so an Adventure was announced against the whole printing's
+#: profile and a targeted Stomp came back "too many targets: 1 chosen where
+#: the spell takes at most 0" while a targetless one resolved dealing no
+#: damage. Engine commit fd28021 made the chosen face the discriminator on
+#: every casting path (CR 601.3e: alternative characteristics "replace the
+#: object's characteristics for this determination", the general rule CR
+#: 709.3a and CR 715.3a both instance), so `spell_face` now accepts an
+#: adventurer card's Adventure face too and `Action.target_slots` on that row
+#: describes the Adventure rather than the printing's creature front.
+#:
+#: That is a widening of the accepted *value space* of a parameter that has
+#: existed since this very version, with no request or response shape moved -
+#: and this constant's own rule is "bump alongside any change to a tool's
+#: request/response shape". A bump would make every `seatkit-15` MCP process
+#: announce PROTOCOL MISMATCH and stop playing over a change that costs it
+#: nothing: it already has the parameter, already forwards whatever
+#: `Action.spell_face` string it read, and gains only that one more string now
+#: works. The mismatch sentence exists for the opposite case - a build that
+#: *cannot express* what the api now expects, which is why `seatkit-8`,
+#: `seatkit-12` and `seatkit-15` itself were all bumps: each added a parameter
+#: an older build had no way to send. Nothing here is unsendable by a
+#: `seatkit-15` build. A newer build talking to an older api gets the old
+#: api's refusal in its own words, which is diagnosable prose rather than a
+#: silent wrong cast.
 #:
 #: `seatkit-14` is an **additive request** change and a **response** shape
 #: change, and every half of it is one thing: handing a seat everything it
