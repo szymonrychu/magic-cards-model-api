@@ -1410,6 +1410,7 @@
         "type": "object"
       },
       "AdviceApproveIn": {
+        "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/advice/{seq}/approve` - the human saying\nyes to one proposal, by its ledger `seq`.\n\nHuman uid only. An advisor's own uid is refused by `game_access.py`\nbefore this route ever runs (the path is neither `/advice` nor `/report`\nand the body claims no `dry_run`), and the route checks the same thing\nagain against `store.player_for_uid`: an advisor must never be able to\napprove its own advice, and that must hold whether or not the gate is\nthe thing enforcing it on any given day.",
         "properties": {
           "player": {
@@ -1454,6 +1455,7 @@
         "type": "object"
       },
       "AdviceIn": {
+        "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/advice` - one action an **advisor** thinks\nits human should take, recorded and never performed.\n\nAn advisor credential (`repository.Advisor`) is read-only by\nconstruction: `game_access.py` refuses every mutating POST it makes\nexcept this one and `/report`. So this is not a convenience - it is the\nonly way a buddy pod reaches the game it is watching at all, and the\nreason it is a *ledger row* rather than anything held in memory is that\nthe api is multi-replica: a proposal kept in one process would be\ninvisible to the replica the human's next poll happens to hit.\n\n`method`/`path`/`body` are the **request the human's client will post\nverbatim** once it agrees, built by `seatkit` (which already knows how to\nshape every action) rather than hand-written by a model - see\n`seatkit.Seat._advise_answer`. `body` names the human as `player` and\ncarries no `dry_run`: an approved proposal is a real action.\n\nThere is deliberately no `summary` field here. What the proposal *says*\nis derived server-side from `body` and the live game\n(`records.advice_summary`), so it cannot disagree with the request it\ndescribes - an agent-written summary naming a different card from the one\n`body` would actually cast is exactly the failure that shape invites.\n\n`reasoning` is the half that *is* the agent's own words, and the half the\nhuman actually reads before deciding. Required and non-blank: a proposal\nwith no argument for it is a button, not advice.",
         "properties": {
           "body": {
