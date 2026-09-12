@@ -184,6 +184,7 @@ REASONS = {
     "play_land": "baseline: a land drop is free and does not come back this turn",
     "cast_permanent": "baseline: the most expensive permanent I can pay for",
     "cast_spell": "baseline: the most expensive spell I can pay for",
+    "cast_face": "baseline: the most expensive named half I can pay for (CR 709.3, CR 715.3)",
     "attack": "baseline: attackers that survive the profitable block, or a lethal race",
     "block": "baseline: block only what would otherwise be lethal",
     "decide": "baseline: the engine's own default answer for this question",
@@ -310,34 +311,38 @@ def _plain_cast(action: dict[str, Any]) -> bool:
     """A printed cast from hand and nothing more exotic.
 
     Every field ruled out here is an announcement this policy does not make -
-    an alternative cost (CR 118.9), a keyword cast, a chosen face (CR 709.3,
-    CR 715.3), a mode (CR 700.2), an X (CR 107.3a), a splice (CR 702.47) -
-    and announcing one badly is a refusal, which the scorecard would then
-    report as a rules error the agent never made.
+    an alternative cost (CR 118.9), a keyword cast, a mode (CR 700.2), an X
+    (CR 107.3a), a splice (CR 702.47) - and announcing one badly is a
+    refusal, which the scorecard would then report as a rules error the agent
+    never made.
 
-    `spell_face` stays on that list now that `CastRequest.spell_face` exists
-    and the api can genuinely cast a split card's back half: the skip is this
-    policy's own choice, not the capability gap it used to be, and
-    `tests/test_cast_spell_face.py` pins both halves of that sentence by
-    posting the very row this passes over. Two live facts keep the choice the
-    right one. The engine's `Action.target_slots` is still face-blind
-    (`legal_actions._cast_action` derives it from `Game._announcement_profile`,
-    which takes no face), so both of a split card's rows report the FRONT
-    half's phrase - "target artifact" on the Tear row - and `_fill_targets`
-    reads exactly that, plus the candidates the api enriched it with from the
-    same face-blind profile: this policy would announce an artifact for a
-    spell that destroys enchantments and earn a refusal in the ledger. And an
-    adventurer card's Adventure row (CR 715.3) is refused outright by the api,
-    for the reason `engine_api.adventure_face_refusal` spells out; nothing on
-    an enumerated row tells these two layouts apart without going back to the
-    card. Take face rows here when the engine reads the announced face into
-    `target_slots`, and not before.
+    **`spell_face` is no longer on that list**, and the condition its old
+    comment named as the price of admission - "take face rows here when the
+    engine reads the announced face into `target_slots`, and not before" - is
+    what came true. Engine commit fd28021 made the chosen face the
+    discriminator on every casting path (CR 601.3e), so
+    `Game._announcement_profile` takes a `spell_face` and both the
+    `target_slots` shape on a row and the candidates the api folds into it
+    (`app._attach_target_candidates`, `affordances._face_profile`) are that
+    face's own: the Tear row says "target enchantment" rather than Wear's
+    "target artifact", and an Adventure row says what the Adventure targets
+    rather than nothing at all. `_fill_targets` therefore reads a description
+    of the announcement it is about to make, which is the one thing it needs.
+    A chosen face is also not a choice this policy invents - it is the row's
+    own `Action.spell_face`, handed back verbatim - so it is unlike the five
+    fields above in kind as well as in risk.
+
+    Keeping the skip after both reasons closed would have left CR 709's split
+    cards uncastable by this policy entirely (every row a split card offers
+    names a face) and CR 715's Adventures unreachable for every agent seat
+    that plays through it - the gap moved rather than closed. The face pool is
+    tried last instead (`choose_move`), so a plain printed cast is still
+    preferred and a named half is taken when it is the row on offer.
     """
     return (
         action.get("from_zone") == "hand"
         and not action.get("alternative_cost")
         and not action.get("keyword")
-        and not action.get("spell_face")
         and not action.get("modes")
         and not action.get("x_range")
         and not action.get("splice_options")
@@ -881,28 +886,46 @@ def _priority_move(
         )
 
     casts = [action for action in usable(("cast",)) if _affordable(action) and _plain_cast(action)]
+    # A row that names a face (CR 709.3's split half, CR 715.3's Adventure) is
+    # its own pool, tried last. Two reasons, and neither is a rules doubt: a
+    # plain printed cast is the announcement this policy prefers to make, and
+    # `_is_permanent` cannot classify a named half at all - the state view
+    # carries one `type_line` for the whole printing, so Swift End would be
+    # filed under "the most expensive permanent I can pay for" on the strength
+    # of Murderous Rider's Creature line. Its own label says what it is
+    # instead of guessing which of the other two it belongs in.
+    faces = [action for action in casts if action.get("spell_face")]
+    plain = [action for action in casts if not action.get("spell_face")]
     permanents = [
-        action for action in casts if _is_permanent(_card_view(state, str(action.get("card_id"))))
+        action for action in plain if _is_permanent(_card_view(state, str(action.get("card_id"))))
     ]
-    spells = [action for action in casts if action not in permanents]
-    for pool, label in ((permanents, "cast_permanent"), (spells, "cast_spell")):
+    spells = [action for action in plain if action not in permanents]
+    for pool, label in (
+        (permanents, "cast_permanent"),
+        (spells, "cast_spell"),
+        (faces, "cast_face"),
+    ):
         if not pool:
             continue
         # Most expensive first; ties broken by the card id so two runs of one
-        # seed cast the same card in the same order.
+        # seed cast the same card in the same order. On a face row the cost is
+        # that face's own (`legal_actions._base_cost_options`), never the
+        # printing's joined "{1}{R} // {W}".
         best = max(pool, key=lambda action: (mana_value(action), str(action.get("card_id"))))
-        return Move(
-            label,
-            "actions/cast",
-            {
-                "player": player,
-                "card_id": str(best.get("card_id")),
-                "mana_sources": untapped_mana_sources(state, player),
-                "targets": None,
-                "reasoning": REASONS[label],
-            },
-            key=action_key(best),
-        )
+        body: dict[str, Any] = {
+            "player": player,
+            "card_id": str(best.get("card_id")),
+            "mana_sources": untapped_mana_sources(state, player),
+            "targets": None,
+            "reasoning": REASONS[label],
+        }
+        if best.get("spell_face"):
+            # The engine's own string, posted back unmodified - the round trip
+            # `CastRequest.spell_face` documents. Transforming it here is how a
+            # seat gets it wrong; there is no second place to look the spelling
+            # up.
+            body["spell_face"] = str(best["spell_face"])
+        return Move(label, "actions/cast", body, key=action_key(best))
 
     return _pass(player)
 
@@ -1081,7 +1104,7 @@ class BaselineSeat:
         `default_answer`'s own CR 601.2c answer, preferring the opponent: a
         control that picked its targets cleverly would stop being a control.
         """
-        if move.label not in ("cast_permanent", "cast_spell"):
+        if move.label not in ("cast_permanent", "cast_spell", "cast_face"):
             return move
         action = next(
             (candidate for candidate in actions if action_key(candidate) == move.key), None

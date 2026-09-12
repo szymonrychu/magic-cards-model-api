@@ -502,45 +502,89 @@ def test_the_seat_cli_can_announce_a_face():
 # -- the baseline seat's own choice ------------------------------------------
 
 
-def test_the_baseline_still_announces_no_face_even_though_the_api_would_take_one(client, game):
-    """`baseline_seat._plain_cast` skips a `spell_face` row, and keeps doing
-    so after this change - deliberately, and no longer because the api cannot
-    act on one.
-
-    The policy is "a printed cast from hand and nothing more exotic": it
-    announces no alternative cost, no keyword, no mode, no X and no splice,
-    because announcing one badly is a refusal the scorecard would report as a
-    rules error the agent never made. A chosen face is an announcement of
-    exactly that kind (CR 709.3, CR 715.3), so it stays out for the same
-    reason the other five do. Two live facts back that up: the engine's
-    `Action.target_slots` still reports the FRONT half's phrase on both of a
-    split card's rows, so the row a policy would reason from misdescribes what
-    the back half needs; and an Adventure face is refused outright (CR 715.3a).
-
-    The second half of this test is what keeps the first half honest: the same
-    row the policy passes over is accepted by the api when it is posted.
-    """
+def baseline(client: TestClient, game: str, player: str = "alice"):
+    """The zero-LLM policy driving the real api through the real seam - the
+    same `GET .../legal-actions` enumeration and the same POST a live seat
+    uses, because the claim being tested is that the policy can act on a face
+    row it was offered."""
+    from magic_cards_model_api.api_client import HttpSeatApiClient
     from magic_cards_model_api.store import store
 
-    wear_and_tear(client, game)
-    uid = next(uid for uid, who in store.seat_uids(game).items() if who == "alice")
-    board = client.get(f"/api/games/{game}", params={"uid": uid}).json()
-    actions = client.get(
-        f"/api/games/{game}/legal-actions", params={"player": "alice", "uid": uid}
-    ).json()["actions"]
+    uid = next(uid for uid, who in store.seat_uids(game).items() if who == player)
+    return baseline_seat.BaselineSeat(HttpSeatApiClient(http=client), game, player, uid)
 
-    move = baseline_seat.choose_move(board, actions, "alice")
 
-    assert move.label == "pass_priority", move
-    assert [row["spell_face"] for row in actions if row["kind"] == "cast"] == ["Wear", "Tear"]
+def test_the_baseline_announces_the_half_the_row_names(client, game):
+    """`baseline_seat._plain_cast` used to skip every `spell_face` row, which
+    made a split card entirely uncastable by this policy - both of its rows
+    name a face. The two live facts that justified the skip are both closed:
+    engine commit fd28021 reads the announced face into `Action.target_slots`
+    and into `Game.legal_targets` (so the row describes the half it is about,
+    not the printing's front), and this api no longer refuses an Adventure.
 
-    row = next(row for row in actions if row.get("spell_face") == "Tear")
-    outcome = cast(
-        client,
-        game,
-        card_id=row["card_id"],
-        spell_face=row["spell_face"],
-        targets=[target(client, game, "Rest in Peace")],
-        reasoning="the row the baseline passed over is castable",
-    )
-    assert outcome["allowed"] is True, outcome
+    One Plains is the whole board, so Tear ({W}, destroys an enchantment) is
+    affordable and Wear ({1}{R}) is not - the policy has exactly one row to
+    take, and taking it means announcing `spell_face="Tear"`, aiming it at
+    the enchantment the Adventure's own text asks for, and resolving as Tear.
+    """
+    add_card(client, game, "Wear // Tear", "alice", "hand")
+    lands(client, game, "Plains", 1)
+    add_card(client, game, "Pithing Needle", "bob", "battlefield")
+    add_card(client, game, "Rest in Peace", "bob", "battlefield")
+    enchantment = target(client, game, "Rest in Peace")
+
+    move = baseline(client, game).step()
+
+    assert move is not None and move.label == "cast_face", move
+    assert move.body["spell_face"] == "Tear", move.body
+    assert move.body["targets"] == [enchantment], move.body
+    assert [card["name"] for card in state(client, game)["stack"]] == ["Tear"]
+
+    client.post(f"/api/games/{game}/resolve-top")
+    names = board_names(client, game)
+    assert "Rest in Peace" not in names, names
+    assert "Pithing Needle" in names, names
+
+
+def test_the_baseline_announces_an_adventure_when_that_is_the_row_it_can_pay_for(client, game):
+    """The same policy on CR 715.3's layout, which was unreachable for every
+    agent seat while the api refused it: two Islands make Petty Theft ({1}{U},
+    "Return target nonland permanent an opponent controls to its owner's
+    hand") affordable and Brazen Borrower itself ({1}{U}{U}) not, so the
+    Adventure is the only row on offer and the policy takes it.
+    """
+    add_card(client, game, "Brazen Borrower", "alice", "hand")
+    lands(client, game, "Island", 2)
+    add_card(client, game, "Llanowar Elves", "bob", "battlefield")
+    elves = target(client, game, "Llanowar Elves")
+
+    move = baseline(client, game).step()
+
+    assert move is not None and move.label == "cast_face", move
+    assert move.body["spell_face"] == "Petty Theft", move.body
+    assert move.body["targets"] == [elves], move.body
+
+    client.post(f"/api/games/{game}/resolve-top")
+    board = state(client, game)
+    assert "Llanowar Elves" not in board_names(client, game), board_names(client, game)
+    # CR 715.3d again, this time reached by the policy rather than by a test
+    # posting the body itself.
+    assert [card["name"] for card in board["exile"]] == ["Brazen Borrower"], board["exile"]
+
+
+def test_the_baseline_prefers_a_plain_printed_cast_over_a_named_half(client, game):
+    """The face pool is tried *last*, after permanents and after faceless
+    spells. A named half is still an announcement this policy makes only when
+    it is the announcement on offer: with mana for both, Murderous Rider's own
+    creature half (no face named at all, CR 715.3's other branch) is what gets
+    cast, and Swift End waits.
+    """
+    add_card(client, game, "Murderous Rider", "alice", "hand")
+    lands(client, game, "Swamp", 4)
+    add_card(client, game, "Llanowar Elves", "bob", "battlefield")
+
+    move = baseline(client, game).step()
+
+    assert move is not None and move.label == "cast_permanent", move
+    assert "spell_face" not in move.body, move.body
+    assert [card["name"] for card in state(client, game)["stack"]] == ["Murderous Rider"]
