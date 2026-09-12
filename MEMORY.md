@@ -161,6 +161,45 @@ whoever works on the repo itself.
   byte-identical to its human's by construction. `tests/
   test_game_access_advisor.py`.
 
+- **2026-09-10 - the measuring stick: a greedy baseline seat and a
+  records-derived scorecard.** Three findings worth keeping, all of them found
+  by running the thing rather than by reading it.
+
+  (1) **`legal_actions` cannot offer the combat pairs at the moment the api
+  accepts them.** `machines.legal_actions._attacker_actions`/`_blocker_actions`
+  both gate on `game.turn.step is Step.DECLARE_ATTACKERS`/`DECLARE_BLOCKERS`,
+  but while the corresponding decision *stands* the committed board is still a
+  step behind (the `advance` that asked the question paused before committing),
+  so the enumeration is nothing but `answer_decision: declare_nobody`. The
+  baseline therefore reads its own candidate pairs off the board - exactly what
+  `ui/combat.js` already does, with its own "nothing here enforces a rule"
+  note - and narrows a refused declaration one pair at a time until the engine
+  accepts, bottoming out at the always-legal empty answer. Fixing the step gate
+  is an engine change and was out of scope for this pass.
+
+  (2) **A legal cast is not a targetable one, and the difference cost 547 rows
+  in one game.** `legal_actions` lists a cast whether or not the board offers a
+  legal target - CR 118.6 is about cost, and nothing there consults the board
+  for CR 601.2c - so Galvanic Discharge against an empty board is *legal*,
+  refused at announcement, and offered again on the next priority. The refused
+  set did not save it: the opponent's own move changes the board every round,
+  which correctly clears the memory of the refusal. The seat now names its
+  targets (via `GET .../affordances/{card_id}`, the only place the candidate
+  list lives) *before* acting, and declines in-process when it cannot fill
+  every requirement. Refusal rate fell from 87% to 0 on the same matchup.
+
+  (3) **`GET /api/games` is not "the games I booted".** With `DATABASE_URL`
+  set it lists every live game in the database, including ones an earlier
+  gauntlet left behind - so a run that trusted it adopted two strangers, drove
+  them with its own baselines, and printed a four-game scorecard for a two-game
+  run. `scripts/eval_gauntlet.py` reads `serve`'s own printed summary instead,
+  which names exactly what that process created.
+
+  Also: `PATCH /api/games/{id}/cards/{card_id}` accepts a `tapped` field and
+  silently ignores it (`patch_card` applies `face_up`/`damage`/
+  `summoning_sick`/`counters` and never `tapped`); `POST .../cards/{id}/tap` is
+  the route that works. Noted, not fixed here.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.

@@ -327,6 +327,82 @@ Deploying and operating the cluster - the ServiceAccount and RBAC, the
 immutable once bound), the NetworkPolicy, and the image tags - is all in
 `deploy/k8s/README.md`.
 
+## Measuring play strength
+
+There was no way to say whether a change made the agent play better: no
+self-play runner, no scripted opponent, no win-rate script anywhere in either
+repo, and 2 of the 15 recorded games had ever reached an end state. This is
+the measuring stick - a control to play against, and a scorecard to read.
+
+```sh
+mise run eval:gauntlet                            # 10 seeded games, agent vs baseline
+mise run eval:gauntlet -- --seeds 20 --agent baseline   # a zero-LLM control run
+mise run eval:gauntlet -- --seed 7 --decks a=decks/x.txt,b=decks/y.txt
+```
+
+The task brings postgres up itself and migrates it, then boots the seeded
+matchups with `python -m magic_cards_model_api.serve --match ...` (one process,
+one `--match` per seed - every game replayable by passing its seed back), plays
+them, and prints the scorecard. It refuses to run without a database: `serve`
+would otherwise record into an in-process store that dies with the server, and
+ten games played with nothing recorded is worse than not running.
+
+### The baseline seat
+
+`src/magic_cards_model_api/baseline_seat.py` is a deterministic, zero-LLM
+opponent driven by `GET .../legal-actions`. Play a land if one is legal; cast
+the highest-cost affordable permanent, then the highest-cost affordable spell;
+attack when the attacker survives the profitable block or when the race is
+lethal; block only to prevent lethal; answer every other question with the
+engine's own `machines/decisions.default_answer`. No randomness and no memory,
+so two runs of one seed produce the same games and any difference between arms
+belongs to the arm.
+
+It lives here and not in the engine on purpose. CR 118.6 makes an unpayable
+action a *legal* one, so the enumeration deliberately offers moves nobody
+would make - choosing among them is a seat's business, and the engine stays a
+stateless rules library.
+
+It cannot stall, which matters more than it sounds: a stalling baseline
+manufactures the very unfinished games the scorecard exists to count. Every
+answerable decision kind has a default, a refused action is not retried until
+the board moves, and a game where nothing has a move for long enough ends in a
+concession (CR 104.3a) rather than a hang - a real ending, scored as a loss.
+
+### The scorecard
+
+`scripts/eval_report.py` reads the `games` and `records` tables and prints,
+per seat: finish rate, record, turns to end, actions per game, reasoning
+coverage (twice - `records.require_reasoning` exempts a pass, so the overall
+share and the share over everything else are both shown), and refusal rate
+split into **rules errors** and **stale races**. That split is the point: a
+refusal because the seat misread a rule is a defect in how it plays, and one
+because the board moved under a decision it had already read is a defect in
+the harness that improving the agent will never fix. The split reads
+`detail.stale`; a ledger recorded before that flag existed carries none, and
+those are reported as unsplit rather than counted as rules errors.
+
+```sh
+uv run python scripts/eval_report.py --ledger run.json   # a captured run, no database
+uv run python scripts/eval_report.py --json              # the configured database
+```
+
+**Every rate carries a 95 percent interval and no bare percentage is ever
+printed**, because the numbers a small run produces are not what they look
+like. Roughly 20 games gives about +/-20pp on a win rate, 50 gives about
++/-14pp, and resolving a 10pp A/B difference needs roughly 200 games *per
+arm*. Refusal rate and finish rate are the exception, and the reason a 10-game
+run is worth doing at all: each carries hundreds of attempts rather than one
+outcome per game, so their intervals are tight immediately. Those two can gate
+a change today; a win rate is something to accumulate towards. The report says
+so in its own output.
+
+Nothing here grades a declared plan. `review.py` refuses to, and this refuses
+with it - a `plan_declared` row is not an action, not an attempt, and
+contributes to no metric. Grading outcomes (who won, how many turns, how many
+attempts were refused) is arithmetic over what the server wrote down; grading a
+prediction would be a judgement dressed as arithmetic.
+
 ## Run it
 
 One command, from this repo:
