@@ -453,17 +453,28 @@ def test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_emitted(
     server = build_server(seats)
     monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 400)
     busy_board(client, game)
-    names = {card["name"] for card in state(client, game)["battlefield"]}
+    permanents = state(client, game)["battlefield"]
 
     result = call_tool(server, "pass", {"player_uid": uids["alice"], "reasoning": "look around"})
-    board = answer(result)["board"]
-    text = json.dumps(board)
-    digest = board["battlefield_digest"]
+    payload = answer(result)
+    board = json.dumps(payload["board"])
+    digest = payload["board"]["battlefield_digest"]
 
     assert isinstance(digest, str), digest
     assert "battlefield_state" in digest
-    for name in names:
-        assert f'"{name}' not in text, f"{name} leaked out of a digest that did not fit"
+    # A digest line is `"<id> <name> ..."` (`mcp._digest_line`), so that
+    # prefix is what a half-emitted digest would leave behind - scanned
+    # across the whole board block, which is where the digest lives and
+    # the only place a board summary may come from. Deliberately NOT
+    # scanned across the whole answer: a card's bare name is not the
+    # digest's to own, and the action enumeration alongside it names cards
+    # for reasons of its own that this cap says nothing about - a target
+    # candidate line, and `Action.pays_with` naming the land an affordable
+    # cast would tap. Those have their own budget
+    # (`MAX_CANDIDATE_BYTES`, below) and their own contract.
+    for card in permanents:
+        line = f"{card['id']} {card['name']}"
+        assert line not in board, f"{card['name']} leaked out of a digest that did not fit"
 
 
 def test_the_digest_survives_a_board_with_nothing_on_it(client, game, monkeypatch):
