@@ -2684,3 +2684,48 @@ whoever works on the repo itself.
   construction. The `unknown` bucket stays honest: absent still means the
   caller named no board position, and collapsing it into `False` would make
   `stale_split` report `"measured"` over data that measured nothing.
+
+- **2026-09-12 - "Why it cannot stall" was false, and the module said it in
+  prose. Never restate that claim without a test that would see it break.**
+  `baseline_seat.play_out` set `acted = True` whenever `seat.step(state)`
+  returned a `Move`, and `step` returns the move whether the api ACCEPTED or
+  REFUSED it. So `idle_rounds` reset every round for as long as any seat kept
+  attempting anything, the `idle_rounds >= stall_rounds` concession backstop
+  could never fire, and a game spun until `max_steps` (100,000 in the
+  gauntlet) and was reported as a `timeout` - the unfinished game the
+  scorecard exists to count. Two tests passed straight through it:
+  `test_two_baselines_play_a_bounded_game_to_an_end_state` (a healthy game
+  never refuses anything) and
+  `test_the_stall_guard_ends_a_game_the_policy_cannot_finish` (which forces
+  `choose_move` to `None`, so the seat attempts nothing at all). The path
+  that shipped broken is the third one - a seat that keeps ATTEMPTING and has
+  every attempt refused - and it now has its own test with a seam that
+  refuses every action. A round is idle when no seat *advanced*
+  (`BaselineSeat.advanced`: an accepted move, or a refusal that was new
+  against this board), the guard checks that its own concession was accepted
+  (`stall_guard_refused`), and the module's prose now names the one case the
+  guarantee does not cover - a board that keeps changing without the game
+  getting anywhere - instead of listing five defences of which two did not
+  hold. A move with no enumerated row behind it (`Move.key == ""`: a pass, a
+  decision, a pregame or combat declaration) could not be remembered by
+  `action_key`, and what it did instead - dropping `self.signature` - made
+  the loop worse, because the re-derive threw away this board's refusal
+  memory and produced the identical move. Those are remembered by
+  `answer_fingerprint` (path plus body, minus the seat's own `reasoning`
+  prose) and `_pick` never posts an answer this board has already refused.
+
+- **2026-09-12 - a narrowing sequence is only a termination argument if you
+  check the arithmetic and the fixed point.** `attack_declaration`/
+  `block_declaration` narrowed a refused declaration with `chosen[:
+  len(chosen) - drop]`, whose docstring claimed "at `drop >= len(pairs)` this
+  is the empty declaration ... so the narrowing always terminates". Both
+  halves were wrong. A negative slice re-GROWS the list: with two pairs,
+  `drop == 3` is `chosen[:-1]`, so the sequence went 2, 1, 0, 1, 0 and
+  oscillated instead of bottoming out (`max(len(chosen) - drop, 0)` now). And
+  the empty declaration is a FIXED POINT, so if the engine refuses it - a
+  CR 508.1d attacking or CR 509.1a blocking requirement does, and narrowing
+  moves away from a requirement rather than towards it - `step` incremented
+  `narrowing` forever and re-posted a byte-identical body. Narrowing to empty
+  is now the end of what the policy has to say, not a guarantee of
+  acceptance; the stall guard is what ends such a game, and both docstrings
+  say so.
