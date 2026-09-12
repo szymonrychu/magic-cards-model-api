@@ -27,15 +27,23 @@ claiming a change made the agent play better:
 - **`scripts/eval_report.py`** prints the scorecard off the `games` and
   `records` tables.
 
-## Seat uids come from the api, not from the console
+## Seat uids come from the console, and the gaps are minted over HTTP
 
-`serve` prints each game's seat uids, and parsing that block would work until
-the day the block is reworded. `POST /api/games/{id}/seats` exists for exactly
-this caller - it is the api's own "seat back door", added so "a test harness or
-a shared mcp server can call this instead" of reading `store.seat_uids` out of
-a process it is not in. So the games are booted by `serve` and the credentials
-are minted over HTTP. `serve`'s console output is still captured to a log, so
-the seeds and the uids it printed stay on the record.
+`serve` prints each game's seat uids, and parsing that block works until the
+day the block is reworded - so `POST /api/games/{id}/seats` backs it up. That
+route is the api's own "seat back door", added so "a test harness or a shared
+mcp server can call this instead" of reading `store.seat_uids` out of a
+process it is not in.
+
+**The back door needs a credential, and this harness holds one.** Minting a
+seat is a mutating call on a `{game_id}` route, so `game_access.py` requires
+a seat uid, the game's admin key, or its owner's bearer token - a seat
+credential minted for a caller who proved nothing is privilege escalation,
+and `tests/test_mutation_needs_a_credential.py` pins the refusal. Any one
+seat uid opens the game, so `resolve_uids` mints the missing seats with one
+of the uids the console did carry, and says so loudly if the console carried
+none at all. `serve`'s console output is captured to a log either way, so the
+seeds and the uids it printed stay on the record.
 
 ## Why this needs a database
 
@@ -88,6 +96,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +123,18 @@ DEFAULT_DECKS = "agent=decks/boros_energy.txt,baseline=decks/dimir_frog.txt"
 #: guard that fired on that would concede games the agent was winning. At the
 #: one-second poll below this is roughly twenty minutes of total silence.
 AGENT_STALL_ROUNDS = 1200
+
+#: How long `play_one` waits for the baseline driver thread to stop once the
+#: watcher's edge has fired, before calling it abandoned.
+#:
+#: `baseline_seat.play_out` consults `should_stop` before every seat rather
+#: than once a round, so the longest it can stay busy after the edge is one
+#: in-flight api call - the seam's own http timeout, 30s
+#: (`api_client.HttpSeatApiClient`) - plus its one-second poll. Four times
+#: that, so an overrun means something is genuinely wrong rather than merely
+#: slow. It replaces a flat 60s, which a two-seat round could exceed while
+#: perfectly healthy.
+DRIVER_GRACE_SECONDS = 120.0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -279,12 +300,67 @@ def booted_games(log_path: Path) -> list[tuple[str, dict[str, str]]]:
     return found
 
 
-def mint_seat(api: str, game_id: str, player: str) -> str:
-    """A seat credential for `player`, from the api's own back door."""
+def mint_seat(api: str, game_id: str, player: str, credential: str) -> str:
+    """A seat credential for `player`, from the api's own back door,
+    presenting `credential` as this caller's own way in.
+
+    `POST /api/games/{id}/seats` is a mutating call on a `{game_id}` route,
+    so `game_access.can_access_game` requires a credential *for that game*:
+    a uid that opens one of its seats, its admin key, or a bearer token
+    naming its owner. Presenting none - which is what this did - is a 404
+    indistinguishable from the game never existing, and
+    `response.raise_for_status()` then aborted the whole run.
+    `tests/test_mutation_needs_a_credential.py` pins that refusal
+    deliberately (an unrestricted seat credential minted for a caller who
+    proved nothing is the privilege escalation it closes), so the refusal is
+    right and this caller was the thing that was wrong.
+
+    Any one seat uid of the game is enough (`game_access.seat_for_uid`) - a
+    seat's authority is not per-route - and seat uids are exactly what this
+    harness holds: `serve` prints them before uvicorn accepts a request.
+    """
     with httpx.Client(base_url=api, timeout=30.0) as client:
-        response = client.post(f"/api/games/{game_id}/seats", json={"player": player})
+        response = client.post(
+            f"/api/games/{game_id}/seats", json={"player": player}, params={"uid": credential}
+        )
         response.raise_for_status()
         return str(response.json()["uid"])
+
+
+def resolve_uids(
+    api: str, game_id: str, players: list[str], printed_uids: dict[str, str]
+) -> dict[str, str]:
+    """Every player's seat uid for `game_id`: what `serve` printed, plus a
+    freshly minted one for anything its block did not carry.
+
+    The minting half is the fragility `_SEAT_UID` was written to absorb - it
+    reads a console block, and a reworded block simply stops matching - so it
+    has to work on the day it is reached. It needs a credential for the game
+    (see `mint_seat`), and the only kind this harness ever holds is a seat
+    uid, so at least one has to have come off the console for the rest to be
+    mintable.
+
+    With none at all there is nothing to present, and that is said here,
+    once, rather than discovered as a 404 out of `raise_for_status` halfway
+    through a ten-game boot.
+    """
+    uids = {name: printed_uids[name] for name in players if printed_uids.get(name)}
+    missing = [name for name in players if name not in uids]
+    if not missing:
+        return uids
+    credential = next(iter(uids.values()), None)
+    if credential is None:
+        raise SystemExit(
+            f"eval:gauntlet: `serve`'s console block for game {game_id} carried no seat "
+            f"uid at all (wanted one for each of {players}), so there is nothing to mint "
+            f"the missing ones with: POST /api/games/{{id}}/seats requires a seat uid, "
+            f"the game's admin key, or the game's owner token, and this harness holds "
+            f"only seat uids. Read `serve`'s console: either the summary block was "
+            f"reworded (fix `_SEAT_UID`) or the games did not boot."
+        )
+    for name in missing:
+        uids[name] = mint_seat(api, game_id, name, credential)
+    return uids
 
 
 def start_agent_seat(api: str, game_id: str, uid: str) -> dict[str, Any]:
@@ -342,9 +418,21 @@ def play_one(
     args: argparse.Namespace,
     *,
     stall_rounds: int,
+    driver_grace: float = DRIVER_GRACE_SECONDS,
 ) -> dict[str, Any]:
     """One game: the baseline seat(s) in one thread, `watch_game` in another,
-    and the watcher's first edge is what ends both."""
+    and the watcher's first edge is what ends both.
+
+    Returns `driver`: `"stopped"` when the baseline thread actually finished,
+    `"abandoned"` when it was still running `driver_grace` seconds after the
+    edge. That distinction is not bookkeeping. The driver thread is a daemon,
+    so a join that gives up does not stop it - it keeps driving the game
+    while `run`'s `finally` block archives that game and terminates the
+    server process it lives in, and while, under `--serial`, the next game
+    starts alongside it. A silent overlap invalidates the per-game timings
+    this harness exists to produce, so it is named and printed rather than
+    left to be inferred from a suspiciously fast second game.
+    """
     done = threading.Event()
     edge: dict[str, Any] = {}
     played: dict[str, Any] = {}
@@ -378,8 +466,37 @@ def play_one(
     watcher.start()
     driver.start()
     watcher.join()
-    driver.join(timeout=60.0)
-    return {"game": game_id, "edge": edge, "baseline": played}
+    driver.join(timeout=driver_grace)
+    if driver.is_alive():
+        print(
+            f"eval:gauntlet: {game_id}: the baseline driver was abandoned - it did not stop "
+            f"within {driver_grace:.0f}s of the watcher's edge and is still issuing calls. "
+            f"This game's timings, and anything played after it, are not independent.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return {"game": game_id, "edge": edge, "baseline": played, "driver": "abandoned"}
+    return {"game": game_id, "edge": edge, "baseline": played, "driver": "stopped"}
+
+
+def play_serially(
+    plans: list[tuple[str, list[baseline_seat.BaselineSeat]]],
+    one: Callable[[str, list[baseline_seat.BaselineSeat]], dict[str, Any]],
+) -> list[str]:
+    """Play each plan to its edge before starting the next, and return the
+    game ids that were *not* played.
+
+    "One game at a time" is the whole claim `--serial` makes, and a driver
+    that outlived its join breaks it: the next game would start while the
+    previous one's baselines were still issuing calls, which is the
+    concurrency `--serial` exists to remove. So the run stops there and names
+    what it did not play, rather than quietly overlapping two games and
+    reporting their timings as if it had not.
+    """
+    for index, (game_id, seats) in enumerate(plans):
+        if one(game_id, seats).get("driver") == "abandoned":
+            return [remaining for remaining, _ in plans[index + 1 :]]
+    return []
 
 
 def run(args: argparse.Namespace) -> int:
@@ -417,9 +534,7 @@ def run(args: argparse.Namespace) -> int:
             )
         seam = HttpSeatApiClient(api)
         for game_id, printed_uids in games:
-            uids = {
-                name: printed_uids.get(name) or mint_seat(api, game_id, name) for name in players
-            }
+            uids = resolve_uids(api, game_id, players, printed_uids)
             # Any one seat's uid is enough to archive this game later
             # (`DELETE /api/games/{id}` accepts either seat's credential) -
             # this is not a per-seat action, just a way in the door.
@@ -446,8 +561,9 @@ def run(args: argparse.Namespace) -> int:
         threads: list[threading.Thread] = []
         collected: dict[str, dict[str, Any]] = {}
 
-        def one(game_id: str, seats: list[baseline_seat.BaselineSeat]) -> None:
+        def one(game_id: str, seats: list[baseline_seat.BaselineSeat]) -> dict[str, Any]:
             collected[game_id] = play_one(api, game_id, seats, args, stall_rounds=stall_rounds)
+            return collected[game_id]
 
         if args.serial:
             # One game to its edge before the next starts. Still through
@@ -455,8 +571,14 @@ def run(args: argparse.Namespace) -> int:
             # one of those pairs live at a time - see `--serial`'s own help
             # for why a machine bottlenecked on the shared server/database
             # can finish sooner this way than with every game racing at once.
-            for game_id, seats in plans:
-                one(game_id, seats)
+            unplayed = play_serially(plans, one)
+            if unplayed:
+                print(
+                    f"eval:gauntlet: --serial stopped after an abandoned driver; "
+                    f"{len(unplayed)} game(s) were not played: {unplayed}",
+                    file=sys.stderr,
+                    flush=True,
+                )
         else:
             for game_id, seats in plans:
                 thread = threading.Thread(target=one, args=(game_id, seats), name=f"game-{game_id}")

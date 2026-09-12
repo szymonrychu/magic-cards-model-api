@@ -204,3 +204,201 @@ def test_a_run_archives_the_games_it_booted_so_they_do_not_accumulate(
 
 def _tail_for_failure(log_path: Path) -> str:
     return "\n".join(log_path.read_text().splitlines()[-40:])
+
+
+# ---------------------------------------------------------------------------
+# the seat back door, and the credential the gate now requires
+# ---------------------------------------------------------------------------
+
+
+class _InProcess:
+    """`httpx.Client`'s context-manager shape, over the in-process app.
+
+    `mint_seat` builds its own client against a booted server's URL, which is
+    right there and useless here - so what is swapped out is the client, not
+    the function under test. Every call still reaches the real app, and so
+    the real `game_access.GameAccessRoute` gate.
+    """
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    def __enter__(self) -> object:
+        return self._client
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+@pytest.fixture()
+def in_process(client, monkeypatch: pytest.MonkeyPatch):
+    """`eval_gauntlet`'s `httpx`, answering in-process.
+
+    Marked `no_harness_credential` at every call site below, and that marker
+    is the whole point: `conftest._harness_credential` otherwise staples this
+    process's admin key onto any mutating game-scoped request that carries
+    none, so a test of "does this caller present a credential" would pass
+    without the caller presenting anything.
+    """
+    import types
+
+    import httpx
+
+    monkeypatch.setattr(
+        eval_gauntlet,
+        "httpx",
+        types.SimpleNamespace(
+            Client=lambda **kwargs: _InProcess(client), HTTPError=httpx.HTTPError
+        ),
+    )
+    return client
+
+
+@pytest.mark.no_harness_credential
+def test_minting_a_seat_presents_the_credential_the_gate_requires(in_process, game) -> None:
+    """`POST /api/games/{id}/seats` is a mutating call on a `{game_id}` route,
+    so `game_access.can_access_game` requires a credential *for that game* -
+    a seat uid, the admin key, or the owner's bearer token. This caller
+    presented none, so the back door this harness is documented to rely on
+    answered 404 and `raise_for_status` aborted the whole run.
+    `tests/test_mutation_needs_a_credential.py` pins that refusal
+    deliberately; the refusal is right and the caller was wrong.
+
+    Any one seat uid opens the game (`seat_for_uid`), and this harness holds
+    them: `serve` prints them before uvicorn accepts a request.
+    """
+    from magic_cards_model_api.store import store
+
+    alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+
+    minted = eval_gauntlet.mint_seat("http://in-process", game, "bob", alice_uid)
+
+    assert store.player_for_uid(game, minted) == "bob"
+    assert minted != alice_uid
+
+
+@pytest.mark.no_harness_credential
+def test_a_printed_block_that_lost_a_uid_is_minted_with_one_this_run_holds(
+    in_process, game
+) -> None:
+    """The fallback exists because `_SEAT_UID` reads a console block and a
+    reworded block stops matching - so it has to work when it is reached.
+    Any one seat uid opens the game for the gate, and one is what `serve`
+    printed."""
+    from magic_cards_model_api.store import store
+
+    alice_uid = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+
+    uids = eval_gauntlet.resolve_uids(
+        "http://in-process", game, ["alice", "bob"], {"alice": alice_uid}
+    )
+
+    assert uids["alice"] == alice_uid
+    assert store.player_for_uid(game, uids["bob"]) == "bob"
+
+
+@pytest.mark.no_harness_credential
+def test_a_printed_block_with_no_uid_at_all_is_a_loud_refusal(in_process, game) -> None:
+    """With nothing off the console there is no credential to present, and
+    `POST .../seats` is a mutating call on a `{game_id}` route. Said here,
+    once, rather than discovered as a 404 out of `raise_for_status` halfway
+    through a ten-game boot."""
+    with pytest.raises(SystemExit) as refused:
+        eval_gauntlet.resolve_uids("http://in-process", game, ["alice", "bob"], {})
+
+    assert "seat uid" in str(refused.value)
+    assert game in str(refused.value)
+
+
+# ---------------------------------------------------------------------------
+# one game at a time actually means one game at a time
+# ---------------------------------------------------------------------------
+
+
+def _edge(game_id: str) -> dict[str, str]:
+    return {"edge": "game_over", "game": game_id}
+
+
+def test_play_one_waits_for_its_driver_and_says_it_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The watcher's edge is what ends the game, and the driver stops on the
+    same signal (`play_out(should_stop=...)`). `play_one` reports whether it
+    actually did, because everything the `finally` block does next -
+    `archive_game`, `process.terminate()` - races a driver that is still
+    issuing calls."""
+    import threading
+    import time
+
+    monkeypatch.setattr(eval_gauntlet.watch_game, "watch", lambda *a, **k: _edge("g"))
+    stopped = threading.Event()
+
+    def play_out(seats, **kwargs):
+        while not kwargs["should_stop"]():
+            time.sleep(0.01)
+        stopped.set()
+        return {"ended_by": "stopped"}
+
+    monkeypatch.setattr(eval_gauntlet.baseline_seat, "play_out", play_out)
+
+    result = eval_gauntlet.play_one(
+        "http://in-process", "g", [], eval_gauntlet.parse_args([]), stall_rounds=3
+    )
+
+    assert stopped.is_set(), "the driver was left running"
+    assert result["driver"] == "stopped", result
+    assert result["baseline"] == {"ended_by": "stopped"}, result
+
+
+def test_play_one_reports_a_driver_it_could_not_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`driver.join(timeout=60.0)` gave up after a minute and said nothing.
+    The thread is a daemon and kept driving the game, so in `--serial` the
+    next game started alongside it and the `finally` block's cleanup ran
+    while those baselines were still issuing calls - cleanup racing a driver
+    that was abandoned rather than stopped, and per-game timings this harness
+    exists to produce that no longer mean anything. Abandonment is now
+    explicit, named, and reported."""
+    import threading
+
+    monkeypatch.setattr(eval_gauntlet.watch_game, "watch", lambda *a, **k: _edge("g"))
+    release = threading.Event()
+
+    def play_out(seats, **kwargs):
+        release.wait(30.0)
+        return {"ended_by": "stopped"}
+
+    monkeypatch.setattr(eval_gauntlet.baseline_seat, "play_out", play_out)
+
+    try:
+        result = eval_gauntlet.play_one(
+            "http://in-process",
+            "g",
+            [],
+            eval_gauntlet.parse_args([]),
+            stall_rounds=3,
+            driver_grace=0.2,
+        )
+    finally:
+        release.set()
+
+    assert result["driver"] == "abandoned", result
+    assert "abandoned" in capsys.readouterr().err
+
+
+def test_serial_does_not_start_a_game_alongside_an_abandoned_driver() -> None:
+    """ "Play one game to its edge before starting the next" is the whole
+    claim `--serial` makes, and a driver that outlived its join breaks it.
+    The run stops there and names the games it did not play, rather than
+    quietly overlapping two of them."""
+    played: list[str] = []
+
+    def one(game_id: str, seats: list[object]) -> dict[str, str]:
+        played.append(game_id)
+        return {"driver": "abandoned" if game_id == "b" else "stopped"}
+
+    unplayed = eval_gauntlet.play_serially([("a", []), ("b", []), ("c", [])], one)
+
+    assert played == ["a", "b"]
+    assert unplayed == ["c"]
