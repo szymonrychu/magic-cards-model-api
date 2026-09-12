@@ -26,10 +26,11 @@ transcript (`mtg-seat-3b6613e0`, 65 tool calls in one agent activation):
 2. **"What happened, and what can I do" was two calls.** Every answer that
    carries a state view already carries `available_actions` - what this
    seat can do now - but not one line of what just happened, so the seat
-   had to spend a second call on `game_log` to find out. `prompt.py` says
+   had to spend a second call on `game_log` to find out. `prompt.py` said
    so outright ("read `battlefield_state`, read `game_log`"), and the live
    transcript shows the seat doing exactly that mid-loop. The log tail now
-   rides along on the same answer.
+   rides along on the same answer, and that instruction is gone from both
+   briefs - `tests/test_prompt_matches_tools.py` keeps it gone.
 
 The third candidate collapse - "have an action-submitting tool return the
 resulting state" - needed no work: `seatkit.run_action` has always returned

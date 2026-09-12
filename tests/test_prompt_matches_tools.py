@@ -66,6 +66,18 @@ NON_TOOL_VOCABULARY = {
     "board",
     "pending_decision",
     "cast_options",
+    # wave 1's own additions to that answer, and the keys the two-tool loop
+    # points a seat at instead of a second call: the board summary that
+    # replaces `battlefield_state`, a target slot's honesty about its own
+    # cap and where the rest are, the paste-ready answer to a pending
+    # decision and the parameter it names, and the payment plan an action
+    # reports. All answer shape; none is a tool or a parameter.
+    "battlefield_digest",
+    "truncated",
+    "more_with",
+    "answer_with",
+    "answer_field",
+    "pays_with",
     # the fail-closed notice list every action/pass tool can now carry
     # (commands._attach_notices) and two of its own per-entry fields - answer
     # shape, none of them a tool or a parameter
@@ -174,4 +186,160 @@ def test_every_how_you_act_bullet_token_is_a_real_tool_or_parameter():
         assert token in known_tools or token in all_params, (
             f"prompt.py's '## How you act' section names `{token}`, which is "
             f"neither a tool nor a parameter in contract/tools.json"
+        )
+
+
+# -- M4: the two-tool loop is the default doctrine, in both briefs ----------
+#
+# Wave 1 made every answer carry what a seat needs to *issue* its next action,
+# not merely to choose one (`mcp._action_answer`'s `board.battlefield_digest`,
+# `available_actions.actions[].targets.slots[].candidates`,
+# `pending_decision.answer_with`, `recent_log`). The prose taught the
+# opposite, and `tests/test_seat_round_trips.py`'s own docstring names that
+# instruction as a measured cause of a 65-tool-call agent activation: "read
+# `battlefield_state`, read `game_log`". These two tests pin the replacement -
+# that the loop is stated in terms of the real tools, and that the retired
+# instruction cannot silently come back.
+
+BRIEF = REPO_ROOT / "src" / "magic_cards_model_api" / "docs" / "ai_seat_brief.md"
+
+#: Every word an agent seat is given about what it may do, and in whose
+#: spelling. `prompt.py` drives MCP tools; the brief drives `mcp-seat`
+#: subcommands (`ai_seat.command_for` allows the agent `Bash` and nothing
+#: else), so the same doctrine has to be stated twice, in two vocabularies.
+DOCTRINE_SOURCES = {
+    "src/mtg_agent/driver/prompt.py": PROMPT_SOURCE,
+    "src/magic_cards_model_api/docs/ai_seat_brief.md": BRIEF,
+}
+
+#: The loop, per source: the wait verb(s) first, then every committing verb.
+#: A wait then EXACTLY ONE of these, and nothing in between.
+LOOP_VERBS = {
+    "src/mtg_agent/driver/prompt.py": (
+        ("pass_until", "pass"),
+        ("cast", "decide", "activate", "play_land", "declare_attackers", "declare_blockers"),
+    ),
+    "src/magic_cards_model_api/docs/ai_seat_brief.md": (
+        ("pass-until", "pass"),
+        ("cast", "decide", "activate", "play-land", "attackers", "blockers"),
+    ),
+}
+
+#: The answer key that replaces each call the loop forbids, per source. The
+#: two transports genuinely differ here and the prose has to be true of the
+#: one it is written for: `mcp._action_answer` narrows the board to
+#: `board.battlefield_digest`, while `seat_cli` prints `run_action`/
+#: `pass_until`'s own dict, which carries `state` whole. Both carry
+#: `recent_log`, both carry `pending_decision.answer_with`, and both carry a
+#: target slot's `truncated`.
+ANSWER_KEYS_THAT_REPLACE_A_CALL = {
+    "src/mtg_agent/driver/prompt.py": (
+        "battlefield_digest",
+        "recent_log",
+        "answer_with",
+        "truncated",
+    ),
+    "src/magic_cards_model_api/docs/ai_seat_brief.md": (
+        "state",
+        "recent_log",
+        "answer_with",
+        "truncated",
+    ),
+}
+
+#: The instruction wave 1 exists to remove, in both spellings, plus the
+#: framing that made an unconditional board read read as the right thing to
+#: do. None of these may appear in either brief again.
+RETIRED_ROUTINE_READS = (
+    "read `battlefield_state`, read `game_log`",
+    "read `battlefield_state` and then `game_log`",
+    "read `state`, read the `log`",
+    "read `state`, read the `log` for everything",
+    "which is the right default",
+)
+
+
+def _flat(path: Path) -> str:
+    return " ".join(path.read_text().split())
+
+
+def _loop_section(text: str) -> str:
+    """The prose stating the loop - `## The loop` through the next heading."""
+    start = text.index("## The loop")
+    return text[start : text.index("\n## ", start + len("## The loop"))]
+
+
+def test_neither_brief_instructs_a_routine_board_or_log_read():
+    """The measured defect: `mtg-seat-3b6613e0` spent 65 tool calls on one
+    agent activation, and "what happened, and what can I do" was two of every
+    three of them because the brief said to read the board and then the log.
+    Both facts ride every answer now (`board.battlefield_digest`,
+    `recent_log`), so the instruction is not merely redundant - it is the
+    behaviour wave 1 was built to delete."""
+    for name, path in DOCTRINE_SOURCES.items():
+        flat = _flat(path)
+        for retired in RETIRED_ROUTINE_READS:
+            assert retired not in flat, (
+                f"{name} still tells a seat to read the board and the log as a "
+                f"matter of course ({retired!r}) - that instruction is the "
+                "measured cause of the 65-call activation in "
+                "tests/test_seat_round_trips.py"
+            )
+
+
+def test_both_briefs_forbid_the_calls_every_answer_already_answers():
+    """Not enough that the old instruction is gone: a seat with no
+    instruction either way reaches for the board, because reading the board
+    before acting is what a player does. The prohibition has to be explicit,
+    and it has to name the key that replaces each call."""
+    for name, path in DOCTRINE_SOURCES.items():
+        flat = _flat(path)
+        for key in ANSWER_KEYS_THAT_REPLACE_A_CALL[name]:
+            assert key in flat, f"{name} never names `{key}`, the answer key that replaces a call"
+        assert flat.count("Do NOT") >= 4, (
+            f"{name} does not state the loop's prohibitions as prohibitions"
+        )
+        assert "mana_sources" in flat or "--sources" in flat, (
+            f"{name} never tells a seat to leave the mana sources empty"
+        )
+        assert "sources_or_all" in flat, (
+            f"{name} never says which code offers every untapped source on the seat's behalf"
+        )
+        assert "verbatim" in flat, f"{name} never says to use the answer_with template verbatim"
+
+
+def test_both_briefs_state_the_loop_in_terms_of_the_real_verbs():
+    """The loop is a wait then EXACTLY ONE committing call, and it has to be
+    stated with the names a seat actually types - pinned against
+    `contract/tools.json` for the MCP driver and against `seat_cli`'s own
+    subparsers for the brief, so neither can name a verb that does not
+    exist."""
+    from magic_cards_model_api import seat_cli
+
+    contract = _load_contract()
+    subcommands = set(
+        next(
+            action
+            for action in seat_cli.build_parser()._actions
+            if getattr(action, "choices", None)
+        ).choices
+    )
+    surfaces = {
+        "src/mtg_agent/driver/prompt.py": set(contract),
+        "src/magic_cards_model_api/docs/ai_seat_brief.md": subcommands,
+    }
+    for name, path in DOCTRINE_SOURCES.items():
+        section = _loop_section(path.read_text())
+        flat = " ".join(section.split())
+        waits, committing = LOOP_VERBS[name]
+        for verb in (*waits, *committing):
+            assert verb in surfaces[name], (
+                f"the loop test names `{verb}`, which is not a real verb of {name}'s surface"
+            )
+            assert verb in flat, f"{name}'s '## The loop' section never names `{verb}`"
+        assert "EXACTLY ONE" in section, (
+            f"{name}'s loop section does not say exactly one committing call"
+        )
+        assert "nothing in between" in flat, (
+            f"{name}'s loop section never says there is no third call between the two"
         )
