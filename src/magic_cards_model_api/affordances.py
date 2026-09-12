@@ -100,7 +100,7 @@ from magic_cards_model.machines.targeting import (
     profile_for_text,
     targeting_profile,
 )
-from magic_cards_model.models import CardState, Game, Player, Zone
+from magic_cards_model.models import Card, CardState, Game, Layout, Player, Zone
 
 from .engine_api import dry_run_copy
 
@@ -362,6 +362,55 @@ def _label(thing: Any) -> dict[str, Any]:
     }
 
 
+class FaceNotRead(ValueError):
+    """Raised by `_profile_for` when an announcement names a face whose own
+    targeting this cannot derive - see `_face_profile`.
+
+    A `ValueError` subclass so it lands in the same `except` every other
+    undecidable announcement already lands in, and its own class so
+    `target_candidates` can say *which* of the two happened: "the targeting
+    phrase is unreadable" and "the phrase is readable but belongs to a face
+    nobody may attribute to this announcement" are different sentences to a
+    seat, and only the second one is fixed by asking again.
+    """
+
+
+def _face_profile(card: Card, face: str) -> TargetingProfile:
+    """The profile for the one named face of a multi-face card, or
+    `FaceNotRead` when this cannot be derived.
+
+    **Split cards only** (CR 709.3b: "while it's on the stack, a split card
+    has only the characteristics of the half being cast"), read the same way
+    `Casting.targeting` and `Game._spell_targeting_profile` read it - the
+    chosen half's own `oracle_text` through `profile_for_text`, never
+    `targeting_profile(card)`, which resolves `Card.front_oracle_text` and so
+    answers the *front* half's question for both halves.
+
+    Every other layout raises. CR 715.3's Adventure half is the engine's own
+    documented open gap (`docs/engine-coverage.md`): `Casting.targeting`
+    scopes its face reading to `Layout.SPLIT` alone and deliberately leaves
+    Adventure reading the whole printing, so there is no face-specific
+    profile here that the announcement downstream would agree with. This
+    module derives nothing from printed text that the engine has declined to
+    read (same boundary the `activate` rows keep - see
+    `test_legal_actions_endpoint.py`), so the honest answer is to say which
+    face could not be read and let the seat name targets itself.
+    """
+    if card.layout is not Layout.SPLIT:
+        raise FaceNotRead(
+            f"the announced face {face!r} of {card.name} is not one whose own targeting this "
+            "can derive - only CR 709's split halves are read per face, so no candidate list "
+            "here could be trusted to match the announcement"
+        )
+    for candidate in card.card_faces or ():
+        if candidate.name == face:
+            return profile_for_text(candidate.oracle_text or "")
+    raise FaceNotRead(
+        f"the announced face {face!r} is not a face of {card.name}, whose faces are "
+        f"{[one.name for one in card.card_faces or ()]}"
+    )
+
+
 def _profile_for(
     game: Game,
     state: CardState,
@@ -369,13 +418,17 @@ def _profile_for(
     ability_index: int | None,
     modes: list[int] | None,
     x_value: int | None,
+    face: str | None = None,
 ) -> tuple[TargetingProfile, list[tuple[int | None, str | None]] | None]:
     """The profile that governs this particular announcement.
 
-    Three shapes, in the order the engine itself would reach them:
+    Four shapes, in the order the engine itself would reach them:
 
     - an activated ability's own effect text (CR 602.2b), when `ability_index`
       names one;
+    - one named face of a multi-face card, when `face` names one - CR 709.3b's
+      split half reads its own text and nothing else can be derived at all
+      (`_face_profile`);
     - a modal spell's chosen modes (CR 700.2f), when `modes` names them - the
       only way a modal card's targeting is answerable at all, which is why
       `targeting_profile` refuses on its own;
@@ -410,6 +463,8 @@ def _profile_for(
         ability = game.activated_abilities(state)[ability_index]
         effect = getattr(ability, "effect", None) or getattr(ability, "text", "")
         return profile_for_text(substitute_x(effect, x_value)), None
+    if face is not None:
+        return _face_profile(state.card, face), None
     modal = modal_profile(state.card)
     if modes and modal is not None:
         chosen = modal.resolve(modes)
@@ -508,6 +563,21 @@ UNREADABLE_TARGETING = (
     "targets yourself; the engine still checks them (CR 601.2c)"
 )
 
+#: What is said instead of a candidate list when the announcement names a
+#: face this cannot derive a profile for (`_face_profile`/`FaceNotRead`).
+#: Deliberately a different sentence from `UNREADABLE_TARGETING`: the phrase
+#: is perfectly readable here, it just belongs to a face nobody may attribute
+#: to this announcement, and telling a seat the parser failed would send it
+#: looking for a defect that is not there. Same contract either way -
+#: `understood: false`, no slots, a note - so every reader branching on
+#: `understood` is unaffected.
+UNREADABLE_FACE_TARGETING = (
+    "this action announces one named face of a multi-face card and the candidates for that "
+    "face alone cannot be determined here, so they will not be guessed at - this is NOT "
+    "'nothing is legal'. Read the announced face's printed text and name targets yourself; "
+    "the engine still checks them (CR 601.2c)"
+)
+
 
 def candidate_line(thing: Any) -> str:
     """One legal candidate as a single string.
@@ -538,6 +608,7 @@ def target_candidates(
     caster: str,
     *,
     ability_index: int | None = None,
+    face: str | None = None,
     targetables: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Every object this announcement could legally name, per requirement
@@ -563,9 +634,18 @@ def target_candidates(
       seat has announced anything, so there is nothing to substitute; the
       browser's `/affordances` endpoint is where a half-announced spell is
       re-asked with the modes and the X the player has picked so far.
+    - **`face` IS taken**, unlike the two above, because it is not a choice
+      still to be made: `Action.spell_face` is part of the row being
+      described, so a row for CR 709.3's second half must be enumerated
+      against that half's own text or not at all (`_face_profile`). A
+      whole-printing candidate list under a face's name is the one answer
+      this must never give - `seatkit.TARGETS_NOTE` tells a seat to hand a
+      candidate straight back, so a wrong list costs it the action.
     """
     try:
-        profile, _ = _profile_for(game, state, caster, ability_index, None, None)
+        profile, _ = _profile_for(game, state, caster, ability_index, None, None, face=face)
+    except FaceNotRead as exc:
+        return {"understood": False, "note": f"{UNREADABLE_FACE_TARGETING} ({exc})"}
     except (IndexError, ValueError) as exc:
         return {"understood": False, "note": f"{UNREADABLE_TARGETING} ({exc})"}
     if not profile.understood:

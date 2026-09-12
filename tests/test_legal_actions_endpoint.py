@@ -18,6 +18,7 @@ shape, built on top of it.
 from __future__ import annotations
 
 import time
+from uuid import UUID
 
 import httpx
 from conftest import _ADMIN_KEYS, add_card, find, state
@@ -531,3 +532,127 @@ def test_candidate_enumeration_stays_within_its_measured_budget(client, game):
         f"candidates added {added * 1000:.1f} ms "
         f"({without * 1000:.1f} -> {with_ * 1000:.1f}), budget {CANDIDATES_TIME_BUDGET}"
     )
+
+
+# ---------------------------------------------------------------------------
+# the announced face, not the whole printing
+# ---------------------------------------------------------------------------
+#
+# CR 709.3b: "while it's on the stack, a split card has only the
+# characteristics of the half being cast". The engine enumerates one `cast`
+# row per half (`legal_actions._base_cost_options`), each carrying its own
+# `spell_face` - so the candidates hung on the Tear row have to be Tear's
+# own, never Wear's. `seatkit.TARGETS_NOTE` tells a seat to "hand one
+# straight back as `targets`", which makes a wrong list worse than no list:
+# the seat follows the instruction it was given and loses its action to an
+# announcement refusal it had no way to see coming.
+
+
+def split_halves(client, game_id: str) -> tuple[dict, dict]:
+    """The two `cast` rows Wear // Tear offers, `(wear, tear)`.
+
+    Wear destroys target artifact for `{1}{R}`, Tear destroys target
+    enchantment for `{W}` - two halves whose legal targets share no object at
+    all, which is what makes a swapped candidate list visible rather than
+    merely suspicious.
+    """
+    casts = [
+        action
+        for action in with_candidates(client, game_id)
+        if action["kind"] == "cast" and action.get("spell_face") in ("Wear", "Tear")
+    ]
+    by_face = {action["spell_face"]: action for action in casts}
+    assert set(by_face) == {"Wear", "Tear"}, casts
+    return by_face["Wear"], by_face["Tear"]
+
+
+def split_board(client, game_id: str) -> dict[str, str]:
+    """Wear // Tear in hand and payable either way, with one artifact and one
+    enchantment on the board to point either half at."""
+    for _ in range(2):
+        add_card(client, game_id, "Mountain", "alice", "battlefield")
+    add_card(client, game_id, "Plains", "alice", "battlefield")
+    add_card(client, game_id, "Wear // Tear", "alice", "hand")
+    add_card(client, game_id, "Sol Ring", "bob", "battlefield")
+    add_card(client, game_id, "Pacifism", "bob", "battlefield")
+    board = state(client, game_id)["battlefield"]
+    return {name: find(board, name)["id"] for name in ("Sol Ring", "Pacifism")}
+
+
+def test_a_split_card_half_gets_its_own_faces_candidates(client, game):
+    """Wear's row names the artifact; Tear's row names the enchantment.
+
+    Before this, both rows were derived from `targeting_profile(card)`, which
+    reads `Card.front_oracle_text` - Wear's text alone - so the Tear row came
+    back offering Sol Ring, and a seat that handed it straight back as
+    `seatkit.TARGETS_NOTE` tells it to lost the action."""
+    ids = split_board(client, game)
+    wear, tear = split_halves(client, game)
+
+    assert wear["targets"]["understood"] is True, wear["targets"]
+    (wear_slot,) = wear["targets"]["slots"]
+    assert [line.split()[0] for line in wear_slot["candidates"]] == [ids["Sol Ring"]], wear_slot
+
+    assert tear["targets"]["understood"] is True, tear["targets"]
+    (tear_slot,) = tear["targets"]["slots"]
+    assert [line.split()[0] for line in tear_slot["candidates"]] == [ids["Pacifism"]], tear_slot
+
+
+def test_the_face_is_read_on_a_second_split_card_with_a_different_phrase(client, game):
+    """Generality, proved on a card that is not the one above and whose two
+    halves ask for entirely different kinds of object: Repudiate counters
+    "target activated or triggered ability" (nothing on this board) and
+    Replicate copies "target creature you control" (alice's own Bears, and
+    never bob's Lions). Both rows reported Repudiate's phrase and Repudiate's
+    empty list before this - the whole printing's front half, twice."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    for _ in range(2):
+        add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Repudiate // Replicate", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Savannah Lions", "bob", "battlefield")
+    bears = find(state(client, game)["battlefield"], "Grizzly Bears")
+
+    casts = {
+        action["spell_face"]: action
+        for action in with_candidates(client, game)
+        if action["kind"] == "cast" and action.get("spell_face")
+    }
+    assert set(casts) == {"Repudiate", "Replicate"}, casts
+
+    (repudiate_slot,) = casts["Repudiate"]["targets"]["slots"]
+    assert repudiate_slot["candidates"] == [], "no ability is on the stack to counter"
+
+    (replicate_slot,) = casts["Replicate"]["targets"]["slots"]
+    assert [line.split()[0] for line in replicate_slot["candidates"]] == [bears["id"]], (
+        replicate_slot
+    )
+
+
+def test_a_face_this_cannot_read_says_so_instead_of_naming_the_front_faces_targets(client, game):
+    """CR 715.3's Adventure half is the engine's own documented open gap -
+    `Casting.targeting` scopes its face reading to `Layout.SPLIT` alone, and
+    `Game._announcement_profile` reads the whole printing regardless - so
+    this repo will not re-derive from printed text what the engine declined
+    to read. A face it cannot honour comes back `understood: false` with a
+    note naming the face, which a seat is already told to read as "name
+    targets yourself" (`seatkit.TARGETS_NOTE`).
+
+    Asked of `affordances.target_candidates` directly rather than through the
+    endpoint because the engine's `Action.target_slots` is empty for every
+    Adventure row in the bundled pool, so `_attach_target_candidates` skips
+    them before a face is ever considered - the honest refusal has to hold
+    for whenever that stops being true."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
+
+    live = store.get(game)
+    source = affordances.find_source(live, UUID(giant["id"]))
+
+    answer = affordances.target_candidates(live, source, "alice", face="Stomp")
+
+    assert answer["understood"] is False, answer
+    assert "Stomp" in answer["note"], answer
+    assert "slots" not in answer, answer
