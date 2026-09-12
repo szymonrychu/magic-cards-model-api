@@ -1539,11 +1539,14 @@ def test_an_opponent_seats_wait_still_fetches_no_legal_actions(
 def test_an_advisor_woken_with_the_legal_actions_still_cannot_move_the_game(
     client: TestClient, game: str, wired: None, sent: list[tuple[str, str]]
 ) -> None:
-    """The board, not a status code. Wake the buddy repeatedly on a live
-    priority window, then try the one auto-pass tool an advisor is refused:
-    the whole admin view of the game, every zone and the turn position
-    included, and the ledger are exactly as they were, and nothing but reads
-    went on the wire."""
+    """The board, not a status code. The buddy's first wait on a live
+    priority window gets the legal actions; repeating it on that same
+    unchanged board must not manufacture a second wake (the busy-spin fix -
+    `wait_for_priority` no longer wakes an advisor for a board it was already
+    shown). Then try the one auto-pass tool an advisor is refused: the whole
+    admin view of the game, every zone and the turn position included, and
+    the ledger are exactly as they were, and nothing but reads went on the
+    wire."""
     uid = advisor_uid(game)
     stock_a_bolt(client, game)
     server = mcp_server(game)
@@ -1551,9 +1554,12 @@ def test_an_advisor_woken_with_the_legal_actions_still_cannot_move_the_game(
     ledger = len(audit.entries(game))
     sent.clear()
 
-    for _ in range(3):
+    first = json.loads(tool_text(server, "wait_for_priority", {"player_uid": uid}))
+    assert first["available_actions"]["actions"], first["available_actions"]
+    for _ in range(2):
         woken = json.loads(tool_text(server, "wait_for_priority", {"player_uid": uid}))
-        assert woken["available_actions"]["actions"], woken["available_actions"]
+        assert woken["wake_reason"] == seatkit.NOTHING_NEW_YET, woken["wake_reason"]
+        assert "available_actions" not in woken, woken
     refused = tool_text(
         server,
         "pass_until",

@@ -931,6 +931,7 @@ class Seat:
         timeout: float | httpx.Timeout | None = None,
         *,
         advise: bool = False,
+        wake_signatures: dict[str, Any] | None = None,
     ) -> None:
         self.player = player
         self.uid = uid
@@ -981,6 +982,21 @@ class Seat:
         #: after that action landed, would be stale by construction if this
         #: stayed armed.
         self._expect_seq_once: int | None = None
+        #: `uid` -> the `board_signature` this seat last saw on a genuine
+        #: wake, read and written by `block_until_wake` alone. `Seats.seat_for`
+        #: mints a brand new `Seat` on every single tool call (only the
+        #: `(player, role, game_id)` lookup persists, on `Seats` itself), so
+        #: this dict is handed down from there rather than owned outright: an
+        #: instance attribute on this ephemeral `Seat` would reset to nothing
+        #: on the very next call and could never remember anything across
+        #: separate MCP tool invocations, which is exactly the case that
+        #: matters (see `block_until_wake`). A bare `Seat` built directly
+        #: (tests, `seat_cli`'s one-shot process) gets its own private dict -
+        #: correct there too, since nothing else ever calls in with the same
+        #: uid for it to share.
+        self._wake_signatures: dict[str, Any] = (
+            wake_signatures if wake_signatures is not None else {}
+        )
 
     def send_expected_seq_once(self, seq: int | None) -> None:
         """Arm the next mutating call this seat makes to name `seq` as the
@@ -1374,6 +1390,11 @@ class Seats:
         #: answer cannot change for a uid that is still valid (a uid is
         #: never reissued for a different seat, game or role).
         self._by_uid: dict[str, tuple[str, str, str]] = {}
+        #: uid -> last-woken `board_signature`, shared by reference into
+        #: every `Seat` this mints (`seat_for`) so it survives exactly as
+        #: long as `_by_uid` does - the cross-call watermark `block_until_wake`
+        #: needs, since a `Seat` itself is remade fresh on every call.
+        self._wake_signatures: dict[str, Any] = {}
         #: 2b T11: the http transport is one long-running process that may
         #: serve several concurrently-live games at once - "the one live
         #: game" (`game_id()` below) stops being a coherent idea for it, and
@@ -1457,6 +1478,7 @@ class Seats:
             uid_game,
             timeout=self.http.timeout,
             advise=role == "advisor",
+            wake_signatures=self._wake_signatures,
         )
 
     def _lookup(self, uid: str) -> tuple[str, str, str] | None:
@@ -1687,6 +1709,12 @@ MAX_WAIT_SECONDS = 25.0
 #: to hammer the game API with a read every few milliseconds.
 WAIT_POLL_SECONDS = 1.0
 
+#: `Seat._wake_signatures.get(seat.uid, ...)`'s "nothing cached yet" default -
+#: never a real `board_signature`, which is always a `dict` (possibly empty),
+#: so `is` against this tells "never woken" apart from "last woken on a board
+#: whose signature happened to be falsy".
+_NO_CACHED_WAKE_SIGNATURE = object()
+
 
 def block_until_wake(
     seat: Seat, before: dict[str, Any] | None, max_seconds: float = 0.0
@@ -1724,7 +1752,31 @@ def block_until_wake(
     Never touches `store.locked` even while waiting - see the module
     docstring's "why this cannot deadlock": every iteration is an ordinary
     read, and `time.sleep` between them holds nothing.
+
+    `before=None` is not "no baseline" any more - it is "no baseline *for
+    this call*", and falls back to `seat`'s own cached `board_signature` from
+    the last time a wait woke it (`seat._wake_signatures`, keyed by
+    `seat.uid`; empty the first time this uid is ever seen). Without that
+    fallback, `compute_wake_reason`'s priority branch treats `before is None`
+    as "always different", so a caller with nothing to hand in - `wait_for_
+    priority`, `seat_cli wait` - woke on *every* call merely because its
+    player held priority, board unchanged or not: an advisor sitting on its
+    human's decision spun forever, burning an inference each time. A caller
+    that DOES have a real prior board (`run_action`) still passes it
+    explicitly and this cache is never consulted for it - only ever a
+    fallback for "nothing to compare against", never a second opinion on top
+    of one the caller already has.
+
+    The cache is written back on every genuine wake (`reason is not None`),
+    regardless of which `before` produced it - `run_action`'s own explicit-
+    `before` wake refreshes it too, so a seat's next *bare* wait always diffs
+    against the most recent board this seat has actually been shown, whoever
+    last saw it.
     """
+    if before is None:
+        cached = seat._wake_signatures.get(seat.uid, _NO_CACHED_WAKE_SIGNATURE)
+        if cached is not _NO_CACHED_WAKE_SIGNATURE:
+            before = cached
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     while True:
@@ -1732,6 +1784,8 @@ def block_until_wake(
         reason = compute_wake_reason(state, before, seat.player)
         remaining = deadline - time.monotonic()
         if reason is not None or remaining <= 0:
+            if reason is not None:
+                seat._wake_signatures[seat.uid] = board_signature(state)
             # `recent_log` is a sibling of `state`, never a key inside it:
             # callers hand this very `state` back as the next call's `before`
             # (`run_action`, and `test_action_flow.py`), and `board_signature`

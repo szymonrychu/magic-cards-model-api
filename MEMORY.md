@@ -2931,3 +2931,23 @@ whoever works on the repo itself.
   would silently answer without it, which is the case PROTOCOL MISMATCH exists
   for. The fetch is one GET on a path that was already a GET; no POST path was
   added and `pass_until` stays refused.
+- **2026-09-13 - the MCP wait path busy-spun because `Seats.seat_for` mints a
+  brand new `Seat` on every single tool call, so a naive "remember it on the
+  `Seat` instance" fix would have been a no-op.** `block_until_wake(seat,
+  before=None, ...)` - what `mcp.wait_for_priority` and `seat_cli wait` both
+  call, since neither performed the action a real `before` would come from -
+  fed `compute_wake_reason` a permanent `None`, whose priority branch treats
+  `before is None` as "always different": a seat holding priority woke on
+  *every* call, board unchanged or not. An advisor sitting on its human's
+  decision spun forever. The fix caches `board_signature` per uid in
+  `Seats._wake_signatures` (shared by reference into every `Seat` it mints,
+  parallel to `_by_uid`) rather than as a plain `Seat` attribute, precisely
+  because `Seat` itself does not survive between tool calls - only `Seats`
+  does. `block_until_wake` reads that cache only when `before is None` (so
+  `run_action`'s own real `before` is never second-guessed) and writes it back
+  on every genuine wake, whoever's `before` produced it. Confirmed a naive
+  per-`Seat` cache would have masked nothing: `test_advise_mode.py`'s
+  `test_an_advisor_woken_with_the_legal_actions_still_cannot_move_the_game`
+  had been looping `wait_for_priority` 3 times on an unchanged board asserting
+  a real wake every time - it was pinning the bug as a feature - and needed
+  updating alongside the fix.
