@@ -18,19 +18,31 @@ and see other's games."
 py`) is the OIDC subject (`oidc.AuthenticatedUser.sub`) of whoever created it
 through a request that carried a valid bearer token - set once, at creation,
 by `app.create_game`/`decks_api.start_game_from_decklists`, never
-reassigned. **A game with no owner is exactly as unrestricted as every game
-was before this module existed** - this is the whole migration story: no
-bearer token has ever reached this deployment (this api has no OIDC issuer
-configured yet, and even once oauth2-proxy fronts the play UI - GitHub PR
-#18 - the play UI itself does not forward a token to this api, and the api's
-own ingress carries no bypass past the proxy at all yet; see `oidc.py`'s own
+reassigned. **A game with no owner is as READABLE as every game was before
+this module existed** - this is the whole migration story: no bearer token
+has ever reached this deployment (this api has no OIDC issuer configured
+yet, and even once oauth2-proxy fronts the play UI - GitHub PR #18 - the
+play UI itself does not forward a token to this api, and the api's own
+ingress carries no bypass past the proxy at all yet; see `oidc.py`'s own
 note on what that bypass needs before it is safe), so every game created
-today gets no owner, and this module changes nothing about it. The moment a
-caller *does* start sending a valid bearer token -
-this task's own manual verification does, and a real OIDC-integrated
-frontend eventually will - every game it creates is owned, and this module's
-gate activates for exactly those games, immediately, with no further
-deployment change required.
+today gets no owner, and no read of one changed. The moment a caller *does*
+start sending a valid bearer token - this task's own manual verification
+does, and a real OIDC-integrated frontend eventually will - every game it
+creates is owned, and this module's ownership gate activates for exactly
+those games, immediately, with no further deployment change required.
+
+**Writing is the exception, and it is not about ownership at all.** Every
+mutating request - POST, PUT, PATCH, DELETE (`MUTATING_METHODS`) - requires
+a credential *for that game*, owned or not: a seat uid, the admin key, or
+the owner's own bearer token. An ownerless game used to be world-*writable*
+along with world-readable, and that is what made the advisor's read-only-ness
+unenforceable rather than merely undocumented: `_advisor_may` is a deny-list
+keyed on a credential, and a deny-list keyed on a credential cannot restrict
+a caller who omits the credential. With no `uid` the advisor branch never
+ran and the owner check answered `True`, so the buddy - which already knows
+the `game_id`, since it needs it to read - walked past its own restriction
+by dropping one query parameter. See
+`tests/test_mutation_needs_a_credential.py`.
 
 **A game that has an owner is reachable three ways, and three ways only:**
 
@@ -68,9 +80,19 @@ map) is a fourth kind of credential, and the only one whose verdict depends
 on what the request is *doing* rather than only on who is asking. It reads
 its human's game - `visibility.resolve_viewer` resolves it to that human's
 username, so its view is byte-identical to the seat's - and it may not act:
-`_advisor_may` lets through any GET, a POST to `/advice` or `/report`, and a
-POST carrying `dry_run: true`, and refuses everything else through the same
-404 as any other denial.
+`_advisor_may` lets through any GET, a POST whose *matched route template*
+ends in `/advice` or `/report`, and a POST carrying `dry_run: true` to a
+route that actually declares a `dry_run` field (`DRY_RUN_ROUTES`), and
+refuses everything else through the same 404 as any other denial.
+
+Both of those read the route, never the caller's own spelling of the
+request. That is not fastidiousness: matching `request.url.path`'s tail is a
+trap for the first mutating route that ends in a path parameter, and reading
+`dry_run` off the raw body was the hole itself - pydantic discards an
+undeclared key silently, so on every shape that does not declare the field
+the gate said "probe" while the route committed for real. `schemas.
+RequestModel`'s `extra="forbid"` is the independent second half of that
+fix.
 
 That check runs *before* the ownership question, not after it, because the
 restriction is a property of the uid rather than of the game: an ownerless
