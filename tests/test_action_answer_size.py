@@ -341,16 +341,27 @@ def test_a_real_enriched_answer_is_nowhere_near_the_cap(client, game, monkeypatc
 # those two caps rather than by a second budget, which the test below proves.
 
 
+def advisor_server(client: TestClient, game: str, monkeypatch) -> Any:
+    """A fresh MCP server - a fresh `Seats`, so an empty wake-signature cache
+    (`seatkit.Seats._wake_signatures`) - pointed at whatever board `game`
+    already carries. Split out of `advisor_on_the_busy_board` so the caps
+    test below can take two independent first-ever-wait measurements of the
+    identical board: since the busy-spin fix, a second wake through the SAME
+    `Seats` would see nothing new and stop carrying `available_actions`
+    altogether, which is correct there and simply the wrong tool here."""
+    seats, _ = wired(client, monkeypatch, game)
+    return build_server(seats)
+
+
 def advisor_on_the_busy_board(client: TestClient, game: str, monkeypatch) -> Any:
     from magic_cards_model_api.repository import Advisor
     from magic_cards_model_api.store import store
 
-    seats, _ = wired(client, monkeypatch, game)
     busy_board(client, game)
     add_card(client, game, "Solitude", "alice", "hand")
     add_card(client, game, "Savannah Lions", "alice", "hand")
     store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
-    return build_server(seats)
+    return advisor_server(client, game, monkeypatch)
 
 
 def advisor_wake(server: Any) -> str:
@@ -387,14 +398,20 @@ def test_an_advisors_wake_list_grows_only_inside_the_action_answers_own_caps(
     with them at full value. Everything the second answer carries beyond the
     first is candidate names and `pays_with` names, so it can never exceed
     the two caps added together - and the starved answer says out loud that
-    its candidates were cut rather than handing over less and staying quiet."""
-    server = advisor_on_the_busy_board(client, game, monkeypatch)
-    full = len(advisor_wake(server))
+    its candidates were cut rather than handing over less and staying quiet.
+
+    Two independent `Seats` (`advisor_server`), not one wake called twice: the
+    busy-spin fix means a second bare wait on an unchanged board through the
+    same `Seats` sees nothing new and drops `available_actions` altogether -
+    correct there, but this test wants two first looks at one board, not a
+    look and then a spin."""
+    board = advisor_on_the_busy_board(client, game, monkeypatch)
+    full = len(advisor_wake(board))
 
     caps = mcp_module.MAX_CANDIDATE_BYTES + mcp_module.MAX_PAYS_WITH_BYTES
     monkeypatch.setattr(mcp_module, "MAX_CANDIDATE_BYTES", 0)
     monkeypatch.setattr(mcp_module, "MAX_PAYS_WITH_BYTES", 0)
-    starved_text = advisor_wake(server)
+    starved_text = advisor_wake(advisor_server(client, game, monkeypatch))
     starved = json.loads(starved_text)["available_actions"]["actions"]
 
     trimmed = [
