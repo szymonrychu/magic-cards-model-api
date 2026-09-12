@@ -789,6 +789,28 @@ def test_a_cast_whose_targets_can_be_filled_names_the_opponent(client, game):
 # -- what it costs the server ------------------------------------------------
 
 
+class RecordingHttp:
+    """The `httpx`-shaped client `HttpSeatApiClient` talks through, with every
+    request it makes written down.
+
+    One level below `CountingSeam`: that counts what the *policy* asked the
+    seam for, this counts what actually went over the wire, which is where a
+    round trip is a round trip. Every call still reaches the real app.
+    """
+
+    def __init__(self, inner: TestClient) -> None:
+        self.inner = inner
+        self.requests: list[tuple[str, str, dict]] = []
+
+    def get(self, url, **kwargs):
+        self.requests.append(("GET", url, dict(kwargs.get("params") or {})))
+        return self.inner.get(url, **kwargs)
+
+    def post(self, url, **kwargs):
+        self.requests.append(("POST", url, dict(kwargs.get("params") or {})))
+        return self.inner.post(url, **kwargs)
+
+
 class CountingSeam:
     """A `SeatApiClient` that records what was asked of it.
 
@@ -838,7 +860,8 @@ def test_a_cast_names_its_targets_out_of_the_enumeration_it_already_read(client,
     gauntlet, for a list it was already holding."""
     add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Lightning Bolt", "alice", "hand")
-    seam = CountingSeam(api(client))
+    wire = RecordingHttp(client)
+    seam = CountingSeam(HttpSeatApiClient(http=wire))
     seat = baseline_seat.BaselineSeat(seam, game, "alice", seats_for(game)["alice"])
 
     move = seat.step()
@@ -847,6 +870,13 @@ def test_a_cast_names_its_targets_out_of_the_enumeration_it_already_read(client,
     assert move.body["targets"] == ["bob"], move
     assert seam.calls == ["state", "legal_actions", "act:actions/cast"], seam.calls
     assert not [call for call in seam.calls if call.startswith("affordances")], seam.calls
+    # And the same claim on the wire, which is where a round trip costs
+    # something: three requests for a targeted cast, and not one of them the
+    # per-card affordances probe this used to need.
+    assert [url for _, url, _ in wire.requests if "/affordances/" in url] == [], wire.requests
+    assert len(wire.requests) == 3, wire.requests
+    (enumeration,) = [request for request in wire.requests if request[1].endswith("/legal-actions")]
+    assert enumeration[2].get("candidates") == "true", enumeration
 
 
 def test_it_asks_for_nothing_it_cannot_act_on(client, game):
