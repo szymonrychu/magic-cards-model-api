@@ -2296,3 +2296,29 @@ whoever works on the repo itself.
   enrichment that channel exists for. `pays_with` still got its own real
   byte budget (`mcp.MAX_PAYS_WITH_BYTES`, independent of `MAX_DIGEST_BYTES`)
   since it had never had one at all.
+- **2026-09-12 - the two-tool loop's prohibitions are safe everywhere except
+  one answer: `wait` (`seatkit.block_until_wake`) is the ONE answer carrying
+  neither `available_actions` nor `recent_log`, so the loop's wait is
+  `pass-until <step> --max-seconds 20` and a bare `wait` is reserved for the
+  single case where `pass` is refused for want of priority.** Narrowing the
+  agent prose to "a wait, then exactly one committing call, nothing in
+  between" means forbidding `state`/`battlefield_state` and `log`/`game_log`
+  outright, and that is only honest where the wait's own answer really does
+  replace them. `block_until_wake` returns `recent_log` as a *sibling* of
+  `state` (its docstring says why it can never be a key inside it) and never
+  computes `available_actions` at all, and `seat_cli`'s `wait` branch prints
+  `woken["state"]` alone - so the brief's older advice ("run `wait
+  --max-seconds 20`" whenever an action woke with "nothing new yet") plus the
+  new prohibitions left a seat holding an answer with no action list, no log
+  tail, and no sanctioned way to get either. `pass-until` goes through
+  `seatkit.pass_until` and carries all three, which is why it, not `wait`, is
+  the loop's wait; what a bare `wait` *is* good for is that `pending_decision`
+  is part of the state itself, so the paste-ready `answer_with` rides it. The
+  MCP transport differs and the prose had to differ with it:
+  `wait_for_priority` merges `recent_log` into its state view (so "`recent_log`
+  rides every answer" is true there) but still carries no `available_actions`,
+  which is now said out loud where the tool is introduced. The brief's `wait`
+  bullet and `tests/test_prompt_matches_tools.py` keep the three facts and
+  the prose in step - the tests read the shape off the running CLI and MCP
+  server first, then pin the sentences against it, so a future change to
+  either answer fails on the behaviour rather than on the prose.
