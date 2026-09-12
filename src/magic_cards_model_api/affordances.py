@@ -381,20 +381,23 @@ def _face_profile(card: Card, face: str) -> TargetingProfile:
 
     **Split cards only** (CR 709.3b: "while it's on the stack, a split card
     has only the characteristics of the half being cast"), read the same way
-    `Casting.targeting` and `Game._spell_targeting_profile` read it - the
-    chosen half's own `oracle_text` through `profile_for_text`, never
-    `targeting_profile(card)`, which resolves `Card.front_oracle_text` and so
-    answers the *front* half's question for both halves.
+    the engine's own `Casting.targeting` and `Game._resolution_profile` read
+    it - the chosen half's own `oracle_text` through `profile_for_text`,
+    never `targeting_profile(card)`, which resolves `Card.front_oracle_text`
+    and so answers the *front* half's question for both halves. Matching the
+    engine call for call is the whole contract `target_candidates` keeps:
+    this list can never disagree with the CR 601.2c check that follows it.
 
-    Every other layout raises. CR 715.3's Adventure half is the engine's own
-    documented open gap (`docs/engine-coverage.md`): `Casting.targeting`
-    scopes its face reading to `Layout.SPLIT` alone and deliberately leaves
-    Adventure reading the whole printing, so there is no face-specific
-    profile here that the announcement downstream would agree with. This
-    module derives nothing from printed text that the engine has declined to
-    read (same boundary the `activate` rows keep - see
-    `test_legal_actions_endpoint.py`), so the honest answer is to say which
-    face could not be read and let the seat name targets itself.
+    Every other layout raises, and CR 715.3's Adventure half is the one that
+    matters. `Casting.targeting`'s own docstring scopes its face reading to
+    `Layout.SPLIT` alone - "so Adventure's own still-open gap is untouched" -
+    and `Game._announcement_profile`, which is what fills the `Action.
+    target_slots` this decorates, takes no face at all. There is therefore no
+    face-specific profile to derive that the announcement downstream would
+    agree with, and this module derives nothing from printed text the engine
+    has declined to read (the same boundary the `activate` rows keep - see
+    `test_legal_actions_endpoint.py`). The honest answer is to name the face
+    that could not be read and let the seat name targets itself.
     """
     if card.layout is not Layout.SPLIT:
         raise FaceNotRead(
