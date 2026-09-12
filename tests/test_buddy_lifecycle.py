@@ -703,6 +703,7 @@ def test_the_advisor_prose_says_what_reasoning_is_for(prose: str) -> None:
     risk - in both mechanisms' prose, since a buddy runs under either."""
     from pathlib import Path
 
+    from mtg_agent.driver.guides import NONE, Identification
     from mtg_agent.driver.prompt import Assignment, advisor_turn_zero
 
     if prose == "brief":
@@ -715,8 +716,7 @@ def test_the_advisor_prose_says_what_reasoning_is_for(prose: str) -> None:
             opponent="bot",
             api_base="http://api",
             decklist={},
-            guide=None,
-            match_score=0.0,
+            identification=Identification(NONE),
             role="advisor",
         )
         text = advisor_turn_zero(assignment, Path("/workspace/current-game.md"), "briefing")
@@ -736,6 +736,7 @@ def test_the_advisor_prose_says_what_reasoning_is_for(prose: str) -> None:
 def test_advisor_turn_zero_is_its_own_function_and_never_the_seats() -> None:
     from pathlib import Path
 
+    from mtg_agent.driver.guides import NONE, Identification
     from mtg_agent.driver.prompt import Assignment, advisor_turn_zero, turn_zero
 
     assignment = Assignment(
@@ -745,8 +746,7 @@ def test_advisor_turn_zero_is_its_own_function_and_never_the_seats() -> None:
         opponent="bot",
         api_base="http://api",
         decklist={},
-        guide=None,
-        match_score=0.0,
+        identification=Identification(NONE),
         role="advisor",
     )
     path = Path("/workspace/current-game.md")
@@ -885,6 +885,7 @@ def test_the_advisor_wrapper_prose_never_claims_every_tool_takes_dry_run() -> No
     import re
     from pathlib import Path
 
+    from mtg_agent.driver.guides import NONE, Identification
     from mtg_agent.driver.prompt import Assignment, advisor_turn_zero
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -905,8 +906,7 @@ def test_the_advisor_wrapper_prose_never_claims_every_tool_takes_dry_run() -> No
             opponent="bot",
             api_base="http://api",
             decklist={},
-            guide=None,
-            match_score=0.0,
+            identification=Identification(NONE),
             role="advisor",
         ),
         Path("/workspace/current-game.md"),
