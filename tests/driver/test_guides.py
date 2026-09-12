@@ -568,6 +568,28 @@ def test_a_signature_cannot_be_satisfied_out_of_the_sideboard(corpus):
         '{"archetype": "x", "signature": [{"cards": [], "min": 4}]}',
         '{"archetype": "x", "signature": [{"cards": ["Psychic Frog"]}]}',
         '{"archetype": "x", "signature": [{"cards": ["Psychic Frog"], "min": "four"}]}',
+        # The shapes that used to RAISE rather than degrade, each one
+        # reproduced before it was closed. `cards` was checked element by
+        # element and never checked for being iterable at all, so a scalar
+        # or a mapping there came out of `json.loads` and straight into a
+        # `for` loop: `TypeError: 'int' object is not iterable`, out of
+        # `load_signature`, whose own docstring says it never raises.
+        '{"archetype": "x", "signature": [{"cards": 5, "min": 1}]}',
+        '{"archetype": "x", "signature": [{"cards": {"Psychic Frog": 4}, "min": 1}]}',
+        '{"archetype": "x", "signature": [{"cards": [5], "min": 1}]}',
+        '{"archetype": "x", "signature": {"cards": ["Psychic Frog"], "min": 4}}',
+        '{"archetype": "x", "signature": 5}',
+        # ... and the same hole in the `exclude` branch, which reads through
+        # the identical helper.
+        '{"archetype": "x", "signature": [{"cards": ["Psychic Frog"], "min": 4}],'
+        ' "exclude": [{"cards": 5, "min": 1}]}',
+        '{"archetype": "x", "signature": [{"cards": ["Psychic Frog"], "min": 4}],'
+        ' "exclude": "Ragavan, Nimble Pilferer"}',
+        '{"archetype": "x", "signature": [{"cards": ["Psychic Frog"], "min": 4}], "exclude": null}',
+        # An `exclude` row with no `min` at all: the file said "a list
+        # holding Psychic Frog is not me" and half-said how many.
+        '{"archetype": "x", "signature": [{"cards": ["Psychic Frog"], "min": 4}],'
+        ' "exclude": [{"cards": ["Psychic Frog"]}]}',
     ],
 )
 def test_a_malformed_archetype_file_degrades_to_none_without_raising(tmp_path, content):
@@ -606,6 +628,138 @@ def test_one_broken_file_does_not_hide_the_decks_that_are_fine(tmp_path):
         identify_text(library, (CORPUS / "living-end" / "decklist.txt").read_text()).confidence
         == NONE
     )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{ broken",
+        '{"archetype": "zz", "signature": [{"cards": 5, "min": 1}]}',
+        '{"archetype": "zz", "signature": 5}',
+        '{"archetype": "zz", "signature": [{"cards": ["Psychic Frog"], "min": 4}],'
+        ' "exclude": [{"cards": 5, "min": 1}]}',
+    ],
+)
+def test_one_broken_file_does_not_stop_identify_answering_for_the_rest(tmp_path, content):
+    """The blast radius, which is what made this HIGH rather than cosmetic.
+
+    `identify` asks EVERY archetype in the corpus about the same mainboard,
+    and `driver/app.py`'s `/dispatch` calls it unguarded - so a single
+    malformed file anywhere in a third repo used to raise out of the loop and
+    500 the dispatch for BOTH seats and EVERY deck. Turn 0 never rendered and
+    neither agent ever played, over one file that had nothing to do with
+    either list.
+    """
+    library = _corpus_library(tmp_path)
+    broken = library.root / "decks" / "zz-broken"
+    broken.mkdir(parents=True)
+    (broken / "decklist.txt").write_text("4 Psychic Frog\n")
+    (broken / "archetype.json").write_text(content)
+
+    for slug in CORPUS_SLUGS:
+        result = identify_text(library, (CORPUS / slug / "decklist.txt").read_text())
+        assert result.confidence == CONFIDENT, slug
+        assert result.guide.slug == slug
+    assert library.get("zz-broken").signature() is None
+
+
+# ---- degradation must never make a match EASIER ---------------------------
+#
+# The non-obvious half of the hardening, and the one worth a test each.
+# `_clauses` used to drop an unusable clause and leave the rest of the file
+# standing, while `Candidate.clauses` counts only the survivors - so a
+# half-broken signature was a SHORTER signature, and a shorter signature is a
+# cheaper one to satisfy in full. Malformation bought a confident answer.
+
+
+#: A one-card list, and a two-clause archetype the second clause of which it
+#: cannot answer. Enough to measure "how much of the signature did the list
+#: actually answer" going the wrong way.
+RAGAVAN = "4 Ragavan, Nimble Pilferer\n"
+TWO_CLAUSES = [
+    {"cards": ["Ragavan, Nimble Pilferer"], "min": 4, "why": "the one-drop"},
+    {"cards": ["Slickshot Show-Off"], "min": 3, "why": "the payoff"},
+]
+
+
+def _one_deck_library(tmp_path: Path, name: str, spec: dict) -> GuideLibrary:
+    """A library holding exactly one guide, whose `archetype.json` is `spec`.
+    `name` keeps two of them apart inside one test's `tmp_path`."""
+    root = tmp_path / name
+    deck = root / "decks" / "e"
+    deck.mkdir(parents=True)
+    (deck / "decklist.txt").write_text(RAGAVAN)
+    (deck / "archetype.json").write_text(json.dumps(spec))
+    return GuideLibrary(root)
+
+
+def test_a_malformed_clause_does_not_make_the_signature_easier_to_satisfy(tmp_path):
+    """Measured, same list and same archetype: intact, `4 Ragavan` answered
+    1 of 2 clauses and got `low`; with the second clause malformed it
+    answered 1 of 1 and got `confident`. Breaking the file promoted the
+    answer.
+
+    So a signature with any unusable row loses the whole signature, and the
+    deck degrades to unclassifiable - which is what `load_signature`'s
+    docstring already promised ("a malformed or half-written one must cost
+    that deck its signature").
+    """
+    intact = _one_deck_library(tmp_path, "intact", {"archetype": "e", "signature": TWO_CLAUSES})
+    assert identify_text(intact, RAGAVAN).confidence == LOW
+
+    broken = _one_deck_library(
+        tmp_path,
+        "broken",
+        {"archetype": "e", "signature": [TWO_CLAUSES[0], {"cards": [], "min": 3}]},
+    )
+    assert broken.get("e").signature() is None
+    assert identify_text(broken, RAGAVAN).confidence == NONE
+
+
+def test_a_malformed_exclude_clause_does_not_un_disown_a_list(tmp_path):
+    """The same defect on the `exclude` side, and the worse half of it.
+
+    An `exclude` clause is the file saying "a list holding these is playing
+    the other deck, not me". Dropping the row deletes the disavowal, so the
+    archetype comes back into contention and - with its one signature clause
+    answered - is handed over CONFIDENTLY. Measured: `none` (correctly
+    disowned) became `confident` with the wrong guide attached.
+    """
+    disowned = _one_deck_library(
+        tmp_path,
+        "disowned",
+        {
+            "archetype": "e",
+            "signature": [TWO_CLAUSES[0]],
+            "exclude": [{"cards": ["Ragavan, Nimble Pilferer"], "min": 1}],
+        },
+    )
+    assert identify_text(disowned, RAGAVAN).confidence == NONE
+
+    broken = _one_deck_library(
+        tmp_path,
+        "broken",
+        {
+            "archetype": "e",
+            "signature": [TWO_CLAUSES[0]],
+            "exclude": [{"cards": ["Ragavan, Nimble Pilferer"]}],
+        },
+    )
+    result = identify_text(broken, RAGAVAN)
+    assert result.confidence == NONE
+    assert result.guide is None
+
+
+def test_an_empty_cards_list_never_vacuously_matches(tmp_path):
+    """Already safe before the hardening and it must stay safe: a clause
+    naming no cards sums to 0, which never reaches a `min` of 1 or more, and
+    the clause is unusable anyway - so it costs the file its signature rather
+    than matching every list ever pasted."""
+    library = _one_deck_library(
+        tmp_path, "empty", {"archetype": "e", "signature": [{"cards": [], "min": 1}]}
+    )
+    assert library.get("e").signature() is None
+    assert identify_text(library, RAGAVAN).confidence == NONE
 
 
 # ---- a card the list holds, whichever way either side spells it -----------

@@ -216,21 +216,44 @@ class ArchetypeSignature:
     parent: str | None = None
 
 
-def _clauses(rows: object) -> tuple[SignatureClause, ...]:
-    """Whatever of `rows` is a usable clause. Anything else is dropped
-    rather than raised on - see `load_signature`."""
+def _clause(row: object) -> SignatureClause | None:
+    """`row` as a clause, or `None` when it is not a usable one.
+
+    Every level is type-checked, not just the leaves: `cards` has to BE a
+    list before its elements can be inspected, or a scalar there comes out of
+    `json.loads` and straight into a `for` loop - which is a `TypeError`
+    raised from inside a function documented never to raise.
+    """
+    if not isinstance(row, dict):
+        return None
+    cards = row.get("cards")
+    if not isinstance(cards, list) or not cards:
+        return None
+    if not all(isinstance(name, str) and name for name in cards):
+        return None
+    minimum = row.get("min")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
+        return None
+    why = row.get("why")
+    return SignatureClause(tuple(cards), minimum, why if isinstance(why, str) else "")
+
+
+def _clauses(rows: object) -> tuple[SignatureClause, ...] | None:
+    """`rows` as clauses, or `None` when ANY row of it is unusable.
+
+    All of them or none of them, deliberately - see `load_signature`. Dropping
+    the unusable rows one at a time and keeping the rest is what made a
+    half-broken file a CHEAPER file to match, because `Candidate.clauses`
+    counts the survivors.
+    """
     if not isinstance(rows, list):
-        return ()
+        return None
     clauses = []
     for row in rows:
-        if not isinstance(row, dict):
-            continue
-        cards = tuple(name for name in row.get("cards") or () if isinstance(name, str) and name)
-        minimum = row.get("min")
-        if not cards or isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
-            continue
-        why = row.get("why")
-        clauses.append(SignatureClause(cards, minimum, why if isinstance(why, str) else ""))
+        clause = _clause(row)
+        if clause is None:
+            return None
+        clauses.append(clause)
     return tuple(clauses)
 
 
@@ -241,6 +264,30 @@ def load_signature(path: Path) -> ArchetypeSignature | None:
     schedule: a malformed or half-written one must cost that deck its
     signature - it degrades to unclassifiable, which is `NONE` - and must not
     take a live game down with it, nor hide the twelve guides that are fine.
+
+    It is the WHOLE file that is lost, never a clause at a time, and that is
+    the load-bearing half of the rule rather than a tidiness preference.
+    Degradation must never make a match EASIER, and dropping one unusable row
+    did exactly that in both directions:
+
+    - a signature is satisfied "in full" when every clause it declares is
+      answered, and `Candidate.clauses` counts what survived parsing - so a
+      two-clause archetype with one clause broken became a one-clause
+      archetype, and a list answering half of it was promoted from `LOW` to
+      `CONFIDENT`;
+    - an `exclude` clause is the file saying "a list holding these is playing
+      the other deck, not me". Dropping the row deletes the disavowal, so a
+      list the archetype had correctly disowned came back into contention and
+      was handed the wrong guide, confidently.
+
+    Both produce a confidently wrong answer, which is strictly worse than no
+    answer: the agent plays someone else's gameplan instead of its own list.
+    Keeping an unusable row as an unsatisfiable clause would be safe for
+    `signature` and useless for `exclude` (an exclude nobody can satisfy is
+    an exclude that is not there), so it would need opposite treatments for
+    the two halves of one file - the asymmetry that let these drift apart in
+    the first place. One rule: any malformation costs the deck its signature,
+    and the other twelve guides answer as before.
     """
     try:
         raw = json.loads(Path(path).read_text())
@@ -251,12 +298,19 @@ def load_signature(path: Path) -> ArchetypeSignature | None:
     clauses = _clauses(raw.get("signature"))
     if not clauses:
         return None
+    # `in`, not `get`: an absent `exclude` is a file that claims nothing, and
+    # claiming nothing is well-formed. A `null` or a scalar under the key is
+    # a half-written disavowal, and is as uninformative as a row with no
+    # `min` - so it costs the file its signature like any other malformation.
+    exclude = _clauses(raw["exclude"]) if "exclude" in raw else ()
+    if exclude is None:
+        return None
     name = raw.get("archetype")
     parent = raw.get("parent")
     return ArchetypeSignature(
         name=name if isinstance(name, str) and name else Path(path).parent.name,
         signature=clauses,
-        exclude=_clauses(raw.get("exclude")),
+        exclude=exclude,
         parent=parent if isinstance(parent, str) and parent else None,
     )
 
