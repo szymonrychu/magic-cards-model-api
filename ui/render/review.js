@@ -404,19 +404,51 @@ function adviceRefusalNode(frame) {
   );
 }
 
+/** Whether what the seat actually did is what was proposed, drawn as its own
+ * line above the `did` frame.
+ *
+ * `review.py` computes `followed` (same action kind for the proposal's
+ * `path`, same card where its `body` names one) and `review_model.js`
+ * mirrors it, and for a while no renderer read it - so "they approved it and
+ * did exactly that" and "they approved it and then did something else"
+ * rendered byte-identically, both an `approved` tag over a `did` frame. The
+ * second is the one a trainer most needs to see.
+ *
+ * Deliberately independent of `approved`, because `followed` is: a human can
+ * do exactly what the buddy proposed without ever pressing approve, and the
+ * tag and this line compose to say so. Only rendered where `did` exists - a
+ * "they did something else" line over no move at all would be a claim about
+ * a move nobody made, and those two outcomes are already told apart by the
+ * refusal box and the empty-outcome line.
+ */
+function adviceFollowThroughNode(advice) {
+  return h(
+    "div",
+    { class: `advice-followthrough ${advice.followed ? "followed" : "diverged"}` },
+    advice.followed
+      ? "and that is what they did:"
+      : "but they did something else:"
+  );
+}
+
 /** One piece of mtg-buddy advice: what it proposed, why, whether the human
  * approved it, and what actually happened - four distinguishable outcomes,
  * never a verdict on whether the advice was *good* (`review.py`'s stand on
  * that, restated for the same reason as the declaration pairing above).
  *
- * - **approved and followed** - `did` is drawn as a normal `frameNode`, so
- *   the reader sees the same evidence (reasoning, refusal if any, board) any
+ * - **approved and followed** - the follow-through line says "and that is
+ *   what they did", and `did` is drawn as a normal `frameNode`, so the
+ *   reader sees the same evidence (reasoning, refusal if any, board) any
  *   other row gets.
+ * - **approved, then something else** - the same `approved` tag and a real
+ *   `did` frame, with the follow-through line saying "but they did something
+ *   else". That line is the whole of what separates this from the outcome
+ *   above (`adviceFollowThroughNode`).
  * - **approved, attempted, and refused by the engine** - `did` is `None` (a
  *   refusal is a failed attempt, never handed back as "what happened"), but
  *   `advice.refused` is not empty, so an `adviceRefusalNode` renders the
- *   engine's own words in place of the empty-outcome line. This is the
- *   fourth outcome, and it is never left as an ambiguous blank.
+ *   engine's own words in place of the empty-outcome line. It is never left
+ *   as an ambiguous blank.
  * - **ignored, something else instead** - the tag reads "never approved",
  *   and `did` is a real frame.
  * - **ignored, nothing at all** - `did` is `None` and `advice.refused` is
@@ -452,6 +484,7 @@ function adviceNode(advice, you, catalogue) {
     el.appendChild(adviceRefusalNode(refused));
   }
   if (advice.did) {
+    el.appendChild(adviceFollowThroughNode(advice));
     el.appendChild(frameNode(advice.did, you, catalogue));
   } else if (!(advice.refused && advice.refused.length)) {
     el.appendChild(

@@ -1796,6 +1796,11 @@ class ReviewAdvice(BaseModel):
     nothing is lost); never approved and the seat did something else (`did`
     is that row); or never approved and the seat did nothing before the next
     piece of advice (`did` is `None`, `refused` is empty).
+
+    `approved` and `followed` are independent, and the pair a reader is most
+    often after is `approved: true, followed: false` - the seat agreed to
+    this and then did something else. That takes BOTH fields to see: `did`
+    alone cannot say it, and `approved` alone cannot either.
     """
 
     seq: int
@@ -1831,7 +1836,12 @@ class ReviewAdvice(BaseModel):
     approved attempt was refused, or nothing followed at all."""
     followed: bool = False
     """Whether `did` actually matches the proposal - same action kind for
-    `path`, and the same card where `body` names one."""
+    `path`, and the same card where `body` names one. Independent of
+    `approved`: a human can do exactly what was proposed without ever
+    approving it, and can approve a proposal and then do something else.
+    Rendered as its own line above the `did` frame (`ui/render/review.js`'s
+    `adviceFollowThroughNode`), because without it the two approved outcomes
+    are the same page."""
     refused: list[ReviewEntry] = Field(default_factory=list)
     """Every row by this seat, in the same window, that the engine refused -
     carrying its verbatim `reason` inside each row's own `detail`, exactly as

@@ -1441,6 +1441,15 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .advice-tag.approved { color: var(--good); border: 1px solid var(--good); }
 .advice-tag.ignored { color: var(--ink-faint); border: 1px solid var(--line); }
 .advice-outcome-empty { color: var(--ink-dim); font-size: 13px; font-style: italic; }
+/* Whether the move below this line is the move that was proposed. Both
+   outcomes carry the same `approved` tag over the same kind of frame, so this
+   line is the only thing separating "they did exactly that" from "they
+   approved it and then did something else" - and the second is the one a
+   trainer is reading the page for, so it is coloured as the divergence it is
+   rather than left as quiet prose. */
+.advice-followthrough { font-size: 12px; font-style: italic; padding: 2px 0; }
+.advice-followthrough.followed { color: var(--good); }
+.advice-followthrough.diverged { color: var(--warn); font-style: normal; }
 /* The engine's own words for an approved-but-refused proposal - the single
    most instructive line the review can show, so it is never a quiet blank. */
 .advice-refusal { font-size: 12px; color: var(--ink-dim); padding: 4px 0; }

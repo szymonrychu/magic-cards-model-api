@@ -2843,3 +2843,19 @@ whoever works on the repo itself.
   rather than the route losing its own audit name: the payload is identical
   either way, but the ended game's transcript still says which of the two
   routes ended it, and `scripts/eval_report.py` already knew both names.
+- **2026-09-12: `review.py` computed `followed`, `review_model.js` mirrored
+  it, and NO renderer read it - so "approved and followed" and "approved, then
+  did something else" rendered byte-identically.** Server-side field, mirrored
+  twice through the view model, and dead at the last hop. The second state is
+  the one a trainer reads the retrospective for, and "four distinct outcomes,
+  each rendered distinctly" was an explicit acceptance condition of that work.
+  It survived a green suite because the test named
+  `test_advice_approved_and_followed_...` set `followed=True` in its fixture
+  and all five of its assertions passed identically with `False` - a fixture
+  field asserted by nothing reads as coverage. Fixed with an
+  `advice-followthrough` line above the `did` frame, independent of
+  `approved` (a human can do exactly what was proposed without approving it),
+  and the test now asserts the line and fails when the flag is flipped.
+  Lesson: a computed field is not delivered until something reads it, and the
+  cheap check is to flip the fixture value and see whether any assertion
+  moves.
