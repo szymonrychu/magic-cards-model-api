@@ -31,6 +31,21 @@ trust, which is its own way of nothing failing:
    tool (prose does not always repeat which tool a shared parameter such as
    `hold_priority` belongs to at the point it names it).
 
+A call example's own *name* is checked too, and separately, because for a
+while it was not: (1) reads every `name(...)` in the whole module, so most of
+what it finds is this file's Python, and the test that consumes it skips every
+name absent from the contract - which is exactly what a drifted name looks
+like. Renaming `battlefield_state` in `contract/tools.json` therefore produced
+zero failures here, on the one tool this file's whole doctrine is about, and a
+fabricated `board_snapshot(player_uid, deep=True)` in `## How you act` failed
+nothing either. `extract_call_examples` is the narrowed extraction whose names
+*can* be asserted (see `_CALL_EXAMPLE_RE`), and
+`test_every_call_example_names_a_tool_that_exists` asserts them.
+
+Every extraction here is also asserted non-empty by the test that reads it. A
+prose guard that silently matches nothing is worse than no guard at all,
+because a green run gets read as evidence that the prose was checked.
+
 Expect this to fail the first time a tool or a parameter it names actually
 drifts from `contract/tools.json` - fix the prose, not this parsing.
 """
@@ -107,6 +122,23 @@ _CALL_RE = re.compile(rf"\b({_IDENT})\(([^()]*)\)")
 _KWARG_RE = re.compile(rf"\b({_IDENT})\s*=")
 _INLINE_KWARG_RE = re.compile(rf"`({_IDENT})=")
 _BACKTICK_IDENT_RE = re.compile(rf"`({_IDENT})`")
+#: A call example, narrowed enough that its *name* can be asserted against
+#: the contract rather than skipped. `_CALL_RE` cannot be: it runs over the
+#: whole module, so two thirds of what it finds is this file's own Python
+#: (`guide_paths.rglob(...)`, `len(...)`, `_clause_count(text)`), which is why
+#: `test_every_call_example_names_a_real_tool_and_real_parameters` skips every
+#: name absent from the contract - and skipping exactly the names that drifted
+#: is the one thing a drift guard must not do. A tool-call example in prose is
+#: never an attribute access and never a private name, so both are excluded
+#: here; `_looks_like_a_call_example` does the rest.
+_CALL_EXAMPLE_RE = re.compile(r"(?<![.\w])([a-zA-Z][a-zA-Z0-9_]*)\(([^()]*)\)")
+#: A backticked span, and the whole tokens inside one - `-` and `_` are part
+#: of a token, so containment is exact. A loose `verb in text` let `pass` be
+#: satisfied by `pass_until` and by the English "Do NOT **pass**
+#: `mana_sources`" two bullets down, and `cast` by `casting`; a verb the
+#: prose actually teaches is always backticked.
+_BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
+_VERB_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 
 
 def _load_contract() -> dict[str, set[str]]:
@@ -149,6 +181,46 @@ def extract_bullet_tokens(source: str) -> list[str]:
     return tokens
 
 
+def _looks_like_a_call_example(args: str, params: set[str]) -> bool:
+    """Whether `name(<args>)` is prose showing a call, rather than this
+    module's own Python. Every argument has to read like one: a `keyword=`,
+    an elided `...`, or a bare parameter name of some real tool. That rejects
+    `card(s)` (prose: "1 card(s) chosen"), `is_file()` and `join(parts)`,
+    and accepts `battlefield_state(player_uid)` and
+    `cast(player_uid=..., card="...", dry_run=True)`."""
+    args = args.strip()
+    if not args:
+        # `foo()` is Python here (`readouterr()`, `to_wire()`), never a tool
+        # example: every tool takes `player_uid` at least.
+        return False
+    for part in args.split(","):
+        part = part.strip()
+        if not part:
+            return False
+        if part == "..." or part in params or re.match(rf"^{_IDENT}\s*=", part):
+            continue
+        return False
+    return True
+
+
+def extract_call_examples(source: str, params: set[str]) -> list[tuple[str, list[str]]]:
+    """Every call example whose name is worth asserting against the contract
+    - (tool name, kwarg names). See `_CALL_EXAMPLE_RE`."""
+    return [
+        (match.group(1), _KWARG_RE.findall(match.group(2)))
+        for match in _CALL_EXAMPLE_RE.finditer(source)
+        if _looks_like_a_call_example(match.group(2), params)
+    ]
+
+
+def _verbs(text: str) -> set[str]:
+    """Every whole token the prose backticks - the verbs it actually teaches,
+    for exact containment. See `_BACKTICK_SPAN_RE`."""
+    return {
+        token for span in _BACKTICK_SPAN_RE.findall(text) for token in _VERB_TOKEN_RE.findall(span)
+    }
+
+
 def test_prompt_source_is_readable():
     assert PROMPT_SOURCE.is_file()
 
@@ -156,11 +228,16 @@ def test_prompt_source_is_readable():
 def test_every_call_example_names_a_real_tool_and_real_parameters():
     source = PROMPT_SOURCE.read_text()
     contract = _load_contract()
-    for name, kwargs in extract_tool_calls(source):
+    calls = extract_tool_calls(source)
+    assert calls, "extract_tool_calls found nothing - this guard is asserting on an empty list"
+    for name, kwargs in calls:
         if name not in contract:
             # Not every `name(...)` in prose is a tool call (e.g. a Python
             # builtin used in an aside) - only assert on names that are
             # backticked or indented as a tool-call example elsewhere too.
+            # The *names* are asserted by
+            # `test_every_call_example_names_a_tool_that_exists`, which is
+            # what this `continue` used to leave to nobody.
             continue
         for kwarg in kwargs:
             assert kwarg in contract[name], (
@@ -170,11 +247,41 @@ def test_every_call_example_names_a_real_tool_and_real_parameters():
             )
 
 
+def test_every_call_example_names_a_tool_that_exists():
+    """The hole this test closes, measured: renaming `battlefield_state` in
+    `contract/tools.json` produced ZERO failures in this whole file. That
+    name appears in the prose only as `battlefield_state(player_uid)`, and a
+    call example's *name* was checked by nothing - `:160` skipped every name
+    absent from the contract (which is exactly a drifted one) and the
+    bullet-token scan skipped every name a call example had already claimed.
+    So the one tool this file's entire doctrine is about was the one with no
+    name check, and a fabricated `board_snapshot(player_uid, deep=True)`
+    dropped into `## How you act` failed nothing either."""
+    contract = _load_contract()
+    params = {name for names in contract.values() for name in names}
+    calls = extract_call_examples(PROMPT_SOURCE.read_text(), params)
+    assert calls, (
+        "extract_call_examples found no call example at all in prompt.py - "
+        "either the prose stopped showing calls or _CALL_EXAMPLE_RE stopped "
+        "matching them, and either way this guard is now vacuous"
+    )
+    for name, _ in calls:
+        assert name in contract, (
+            f"prompt.py shows `{name}(...)` as a call the agent can make, but "
+            f"`{name}` is not a tool in contract/tools.json (real tools: "
+            f"{sorted(contract)})"
+        )
+
+
 def test_every_inline_kwarg_mention_is_a_real_parameter():
     source = PROMPT_SOURCE.read_text()
     contract = _load_contract()
     all_params = {name for names in contract.values() for name in names}
-    for kwarg in extract_inline_kwargs(source):
+    mentions = extract_inline_kwargs(source)
+    assert mentions, (
+        "extract_inline_kwargs found nothing - this guard is asserting on an empty list"
+    )
+    for kwarg in mentions:
         assert kwarg in all_params, (
             f"prompt.py mentions `{kwarg}=...`, but `{kwarg}` is not a real "
             f"parameter of any tool in contract/tools.json"
@@ -186,7 +293,12 @@ def test_every_how_you_act_bullet_token_is_a_real_tool_or_parameter():
     contract = _load_contract()
     known_tools = set(contract)
     all_params = {name for names in contract.values() for name in names}
-    for token in extract_bullet_tokens(source):
+    tokens = extract_bullet_tokens(source)
+    assert tokens, (
+        "extract_bullet_tokens found nothing in '## How you act' - this guard "
+        "is asserting on an empty list"
+    )
+    for token in tokens:
         assert token in known_tools or token in all_params, (
             f"prompt.py's '## How you act' section names `{token}`, which is "
             f"neither a tool nor a parameter in contract/tools.json"
@@ -336,11 +448,15 @@ def test_both_briefs_state_the_loop_in_terms_of_the_real_verbs():
         section = _loop_section(path.read_text())
         flat = " ".join(section.split())
         waits, committing = LOOP_VERBS[name]
+        # Exact tokens, never substrings: `verb in flat` let `pass` be
+        # satisfied by `pass_until` and `cast` by `casting`, so a loop
+        # section that had stopped naming the bare wait still passed.
+        named = _verbs(flat)
         for verb in (*waits, *committing):
             assert verb in surfaces[name], (
                 f"the loop test names `{verb}`, which is not a real verb of {name}'s surface"
             )
-            assert verb in flat, f"{name}'s '## The loop' section never names `{verb}`"
+            assert verb in named, f"{name}'s '## The loop' section never names `{verb}`"
         assert "EXACTLY ONE" in section, (
             f"{name}'s loop section does not say exactly one committing call"
         )
