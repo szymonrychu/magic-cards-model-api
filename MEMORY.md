@@ -2431,3 +2431,16 @@ whoever works on the repo itself.
   legitimately. Any engine pointer move that touches an `Action` field needs
   `mise run openapi:dump` re-run as well; the dump is only as current as the
   pointer it was taken against.**
+- **2026-09-12: an engine pointer advance reddens this repo's committed
+  artifacts, and `mise run test` is where it shows up - not just `test:pg`.**
+  `magic-cards-model` landing `Action.pays_with` made `openapi.json` stale
+  (`ActionWithTargets` subclasses the engine's `Action` on purpose, so an
+  engine field arrives with no code change here) and broke
+  `test_answer_enrichment.py`'s digest-cap test, which had been scanning the
+  whole answer for `"<name>` - a pattern that never matched a digest line
+  (`"<id> <name> ..."`) and only ever passed because nothing else in the
+  answer named a card as a bare string value. Two lessons: after
+  `git submodule update --remote` on the engine, run `mise run openapi:dump`
+  before believing a red suite belongs to the branch in hand; and a leak
+  assertion must match the shape of the thing it is guarding, or it is
+  asserting nothing until an unrelated field makes it fire.
