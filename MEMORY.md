@@ -2921,8 +2921,8 @@ whoever works on the repo itself.
   not `NOTHING_NEW_YET` - an idle poll never pays the ~106 ms read, and a seat
   uid's wait is unchanged (its list already rides its actions, so adding it
   there is pure redundant cost). Measured on `test_action_answer_size.py`'s busy
-  board: +7,911 bytes, 59,470 in all - but the wake answer was ALREADY 51,255
-  bytes before, over `MAX_ANSWER_BYTES` (45,000), which bounds action answers
+  board: roughly +8 KB on a wake answer that was ALREADY about 51 KB
+  before (the exact split was not re-measured), over `MAX_ANSWER_BYTES` (45,000), which bounds action answers
   only; the whole state view is what that tool is for and an advisor test pins
   it whole, so the list is bounded by the existing candidate and `pays_with`
   caps (proved by starving both) rather than by narrowing the board. Bumped
