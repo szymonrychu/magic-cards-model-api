@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from conftest import add_card, find, state
+from conftest import add_card, find, life_of, state
 from fastapi.testclient import TestClient
 from test_mcp_input_required import call_tool, wired
 
@@ -277,42 +277,122 @@ def test_a_different_split_card_announces_its_own_back_half_too(client, game):
     assert [card["name"] for card in state(client, game)["stack"]] == ["Replicate"]
 
 
-# -- CR 715.3's Adventure: refused, not guessed at ---------------------------
+# -- CR 715.3's Adventure, cast as the Adventure -----------------------------
 
 
-def test_an_adventure_face_is_refused_rather_than_cast_without_its_targeting(client, game):
+def adventurer(client: TestClient, game: str, card: str, land: str, count: int = 4) -> None:
+    """One adventurer card in alice's hand, mana for either half, and a
+    creature of bob's for the Adventure to aim at."""
+    add_card(client, game, card, "alice", "hand")
+    lands(client, game, land, count)
+    add_card(client, game, "Llanowar Elves", "bob", "battlefield")
+
+
+def test_an_adventure_face_is_cast_as_the_adventure(client, game):
     """CR 715.3a: "When casting an adventurer card as an Adventure, only the
     alternative characteristics are evaluated to see if it can be cast."
+    CR 715.3b: "While on the stack as an Adventure, the spell has only its
+    alternative characteristics."
 
-    The engine does not do that yet. `Casting.cast_as_adventure` charges the
-    Adventure's own mana cost and stamps `CardState.face_played`, but
-    `Casting.targeting` reads the *whole printing* for every layout except a
-    split card - its own docstring says so - so Stomp ("Stomp deals 2 damage
-    to any target") is announced with **no** target requirement at all: any
-    target named is refused with "too many targets: 1 chosen where the spell
-    takes at most 0", and a Stomp cast with none resolves dealing no damage.
-
-    So the api refuses the announcement instead of making it. A refusal a seat
-    can read beats a spell that costs mana and does nothing, and the refusal
-    says where the gap is rather than guessing at the rule on the engine's
-    behalf.
+    Swift End is `Instant - Adventure`, {1}{B}{B}, "Destroy target creature or
+    planeswalker. You lose 2 life." - printed on Murderous Rider, a {1}{B}{B}
+    Creature that targets nothing. Every claim CR 715.3a/715.3b make is
+    therefore separately observable on this one cast: the Adventure's own cost
+    is charged, its own target requirement is enforced (the creature half has
+    none at all), its own effect resolves, and CR 715.3d exiles the card
+    instead of putting it into a graveyard.
     """
-    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
-    lands(client, game, "Mountain", 3)
+    adventurer(client, game, "Murderous Rider // Swift End", "Swamp")
+    elves = find(state(client, game)["battlefield"], "Llanowar Elves")["id"]
 
     outcome = cast(
         client,
         game,
-        card="Bonecrusher Giant // Stomp",
-        spell_face="Stomp",
-        reasoning="casting the Adventure half",
+        card="Murderous Rider // Swift End",
+        spell_face="Swift End",
+        targets=[elves],
+        reasoning="killing the mana creature with the Adventure half",
     )
 
-    assert outcome["allowed"] is False, outcome
-    reason = outcome["reason"] or ""
-    assert "Stomp" in reason and "CR 715.3a" in reason, outcome
-    assert state(client, game)["stack"] == []
-    assert find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
+    assert outcome["allowed"] is True, outcome
+    assert outcome["cost"] == "{1}{B}{B}", outcome
+    assert [card["name"] for card in state(client, game)["stack"]] == ["Swift End"], state(
+        client, game
+    )["stack"]
+
+    client.post(f"/api/games/{game}/resolve-top")
+    board = state(client, game)
+    assert "Llanowar Elves" not in board_names(client, game), board_names(client, game)
+    assert life_of(board, "alice") == 18, board["players"]
+    # CR 715.3d: "Instead of putting a spell that was cast as an Adventure
+    # into its owner's graveyard as it resolves, its controller exiles it."
+    assert [card["name"] for card in board["exile"]] == ["Murderous Rider"], board["exile"]
+    assert not [
+        card for card in board["graveyards"]["alice"] if card["name"].startswith("Murderous")
+    ], board["graveyards"]["alice"]
+
+
+def test_a_second_adventurer_card_casts_its_adventure_too(client, game):
+    """Generality: Brazen Borrower // Petty Theft, a different adventurer card
+    with a different Adventure ({1}{U}, "Return target nonland permanent an
+    opponent controls to its owner's hand") printed on a {1}{U}{U} creature.
+    The fix is CR 715.3's, not one printing's.
+    """
+    adventurer(client, game, "Brazen Borrower // Petty Theft", "Island")
+    elves = find(state(client, game)["battlefield"], "Llanowar Elves")["id"]
+
+    outcome = cast(
+        client,
+        game,
+        card="Brazen Borrower // Petty Theft",
+        spell_face="Petty Theft",
+        targets=[elves],
+        reasoning="bouncing the mana creature with the Adventure half",
+    )
+
+    assert outcome["allowed"] is True, outcome
+    assert outcome["cost"] == "{1}{U}", outcome
+
+    client.post(f"/api/games/{game}/resolve-top")
+    board = state(client, game)
+    assert "Llanowar Elves" not in board_names(client, game), board_names(client, game)
+    assert find(board["hands"]["bob"], "Llanowar Elves"), board["hands"]["bob"]
+    assert [card["name"] for card in board["exile"]] == ["Brazen Borrower"], board["exile"]
+
+
+def test_the_adventure_face_the_enumeration_offers_is_accepted_back_verbatim(client, game):
+    """The round-trip property, on the layout that used to be refused: the
+    `spell_face` string `GET .../legal-actions` puts on the Adventure row is
+    posted back unmodified and accepted, and the row's own `mana_cost` is what
+    the cast is charged.
+
+    `Action.target_slots` on that row is now the Adventure's own requirement
+    rather than the printing's front face - which is the engine change that
+    made this castable at all - so the row a seat reasons from describes the
+    spell it would actually announce.
+    """
+    adventurer(client, game, "Murderous Rider // Swift End", "Swamp")
+    elves = find(state(client, game)["battlefield"], "Llanowar Elves")["id"]
+
+    rows = [row for row in enumerated(client, game) if row["kind"] == "cast"]
+    faces = [row.get("spell_face") for row in rows]
+    assert faces == [None, "Swift End"], faces
+    adventure = next(row for row in rows if row.get("spell_face") == "Swift End")
+    assert [slot["phrase"] for slot in adventure["target_slots"]] == [
+        "target creature or planeswalker"
+    ], adventure["target_slots"]
+
+    outcome = cast(
+        client,
+        game,
+        card_id=adventure["card_id"],
+        spell_face=adventure["spell_face"],
+        targets=[elves],
+        reasoning="posting back exactly the Adventure row I was handed",
+    )
+
+    assert outcome["allowed"] is True, outcome
+    assert outcome["cost"] == adventure["mana_cost"], (outcome, adventure["mana_cost"])
 
 
 def test_the_creature_half_of_an_adventurer_card_is_unaffected(client, game):
@@ -330,24 +410,28 @@ def test_the_creature_half_of_an_adventurer_card_is_unaffected(client, game):
     assert [card["name"] for card in state(client, game)["stack"]] == ["Bonecrusher Giant"]
 
 
-def test_a_second_adventurer_card_is_refused_the_same_way(client, game):
-    """Generality again: Brazen Borrower // Petty Theft, a different adventurer
-    card with a different Adventure, refused for the mechanic rather than for
-    the card."""
-    add_card(client, game, "Brazen Borrower", "alice", "hand")
-    lands(client, game, "Island", 3)
+def test_a_face_an_adventurer_card_does_not_print_is_refused(client, game):
+    """The Adventure branch fails closed the same way the split branch does.
+    An adventurer card names exactly two things - its creature half, cast with
+    no face at all, and its Adventure - so any other string is not a face this
+    cast could name, and the engine says so in its own words rather than
+    quietly casting the creature.
+    """
+    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
+    lands(client, game, "Mountain", 3)
 
     outcome = cast(
         client,
         game,
-        card="Brazen Borrower // Petty Theft",
-        spell_face="Petty Theft",
-        reasoning="casting the Adventure half",
+        card="Bonecrusher Giant // Stomp",
+        spell_face="Shock",
+        reasoning="naming a face this card does not print",
     )
 
     assert outcome["allowed"] is False, outcome
-    assert "Petty Theft" in (outcome["reason"] or ""), outcome
+    assert outcome["reason"] == "Bonecrusher Giant is not a split card (CR 709)", outcome
     assert state(client, game)["stack"] == []
+    assert find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
 
 
 # -- the surfaces a seat actually calls --------------------------------------

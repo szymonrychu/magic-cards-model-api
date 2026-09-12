@@ -637,67 +637,46 @@ def _announce_printed_additional_costs(game: Game, req: CastRequest, casting: Ca
             setattr(casting, name, [find_card(game, card_id) for card_id in ids])
 
 
-def adventure_face_refusal(face: str) -> str:
-    """Why this api will not announce an Adventure (CR 715.3), in as much of
-    the engine's own words as the engine has for it.
-
-    Marked as one of this module's own refusals (see the module docstring):
-    the engine raises nothing here, because it will happily *perform* the
-    announcement. `Casting.cast_as_adventure` charges the Adventure's own mana
-    cost and stamps `CardState.face_played`, and `up_face` then reads the
-    inset face for as long as the spell is on the stack (CR 715.3b), so the
-    cost and the characteristics are right. What is missing is the one thing
-    CR 715.3a makes the test of whether the spell can be cast at all: "When
-    casting an adventurer card as an Adventure, only the alternative
-    characteristics are evaluated to see if it can be cast."
-
-    `Casting.targeting` does not evaluate them. Its own docstring scopes the
-    chosen-face read to `Layout.SPLIT` alone ("so Adventure's own still-open
-    gap is untouched"), so an Adventure is announced against the *whole
-    printing's* profile - which for Bonecrusher Giant // Stomp is the
-    creature's triggered ability and no target requirement at all. Measured,
-    not assumed: naming a target is refused with the engine's "too many
-    targets: 1 chosen where the spell takes at most 0", and casting Stomp
-    with none resolves dealing no damage to anybody.
-
-    So the choice here is between a refusal a seat can read and a spell that
-    costs {1}{R}, leaves the caster's hand and does nothing. Failing closed
-    with a notice is the project's own rule, and the notice names where the
-    fix belongs rather than guessing at the rule on the engine's behalf.
-    """
-    return (
-        f"{face} is an Adventure (CR 715.1), and this engine cannot announce one yet: "
-        "CR 715.3a evaluates only the Adventure's alternative characteristics to see "
-        "whether it can be cast, but the engine's Casting.targeting reads the whole "
-        "printing for every layout except a split card - so an Adventure that targets "
-        "would be put on the stack with no target requirement at all and resolve doing "
-        "nothing (CR 715.3b). Refused rather than cast wrong. Name no face to cast the "
-        "creature half instead (CR 715.3)."
-    )
-
-
 def _announce_the_face(req: CastRequest, casting: Casting) -> None:
     """CR 709.3's choice of which half is being cast: "A player chooses which
     half of a split card they are casting before putting it onto the stack."
+    CR 715.3 puts the same choice on an adventurer card: "As a player plays an
+    adventurer card, the player chooses whether they play the card normally or
+    as an Adventure."
 
-    Before the stack is where the rule puts it, and `Casting`'s own proposal
+    Before the stack is where both rules put it, and `Casting`'s own proposal
     has already made CR 601.2a's move by the time any of `_drive_cast` runs -
     so the earliest this api can name the face is here, first, ahead of every
-    step that reads it. All three do: `base_cost` (the chosen half's own
-    `mana_cost`, CR 709.3a/709.4b), `targeting` (the chosen half's own text,
-    CR 709.3b) and `determine_cost`.
+    step that reads it. All three do: `base_cost` (the chosen face's own
+    `mana_cost`, CR 709.3a/709.4b/715.3b), `targeting` (the chosen face's own
+    text, CR 709.3b/715.3b) and `determine_cost`.
 
-    `Casting.cast_as_split_half` is the engine's one door for this, and it
-    refuses a face the card does not print and a card that has no halves, both
-    in its own words. The Adventure branch is ours - see
-    `adventure_face_refusal`.
+    Two engine doors, because the engine has two: `cast_as_adventure` for the
+    inset Adventure face (it enters CR 715.3's own branch and stamps
+    `CardState.face_played`, which is what CR 715.3d's exile-on-resolution
+    then reads), `cast_as_split_half` for a half of a split card. Both refuse
+    in the engine's own words - a face the card does not print, and a face
+    named on a card that has no halves to name - and neither refusal is
+    invented here.
+
+    This api used to refuse the Adventure branch itself, with a reason of its
+    own (`adventure_face_refusal`), because `Casting.targeting` was scoped to
+    `Layout.SPLIT` and announced an Adventure against the whole printing's
+    profile: measured, a targeted Stomp was refused "too many targets: 1
+    chosen where the spell takes at most 0" and a targetless one resolved
+    dealing no damage. Engine commit fd28021 made the chosen face - not the
+    layout - the discriminator on every casting path (CR 601.3e: alternative
+    characteristics "replace the object's characteristics for this
+    determination"), so the refusal now blocks something the engine performs
+    correctly, and the door is simply opened.
     """
     if req.spell_face is None:
         return
     card = casting.spell.card
     inset = adventure_face(card) if card.layout is Layout.ADVENTURE else None
     if inset is not None and req.spell_face == inset.name:
-        raise ValueError(adventure_face_refusal(req.spell_face))
+        casting.cast_as_adventure()
+        return
     casting.cast_as_split_half(req.spell_face)
 
 

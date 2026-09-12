@@ -91,7 +91,7 @@ from typing import Any
 from uuid import UUID
 
 from magic_cards_model.machines import AbilityOnStack
-from magic_cards_model.machines.casting import Casting
+from magic_cards_model.machines.casting import Casting, face_being_cast
 from magic_cards_model.machines.cost import spend_restriction
 from magic_cards_model.machines.modes import modal_profile, substitute_x
 from magic_cards_model.machines.targeting import (
@@ -100,7 +100,7 @@ from magic_cards_model.machines.targeting import (
     profile_for_text,
     targeting_profile,
 )
-from magic_cards_model.models import Card, CardState, Game, Layout, Player, Zone
+from magic_cards_model.models import Card, CardState, Game, Player, Zone
 
 from .engine_api import dry_run_copy
 
@@ -377,41 +377,41 @@ class FaceNotRead(ValueError):
 
 def _face_profile(card: Card, face: str) -> TargetingProfile:
     """The profile for the one named face of a multi-face card, or
-    `FaceNotRead` when this cannot be derived.
+    `FaceNotRead` when the card prints no such face.
 
-    **Split cards only** (CR 709.3b: "while it's on the stack, a split card
-    has only the characteristics of the half being cast"), read the same way
-    the engine's own `Casting.targeting` and `Game._resolution_profile` read
-    it - the chosen half's own `oracle_text` through `profile_for_text`,
-    never `targeting_profile(card)`, which resolves `Card.front_oracle_text`
-    and so answers the *front* half's question for both halves. Matching the
-    engine call for call is the whole contract `target_candidates` keeps:
-    this list can never disagree with the CR 601.2c check that follows it.
+    The named face's own `oracle_text` through `profile_for_text`, never
+    `targeting_profile(card)`, which resolves `Card.front_oracle_text` and so
+    answers the *front* face's question for every face. Matching the engine
+    call for call is the whole contract `target_candidates` keeps: this list
+    can never disagree with the CR 601.2c check that follows it.
 
-    Every other layout raises, and CR 715.3's Adventure half is the one that
-    matters. `Casting.targeting`'s own docstring scopes its face reading to
-    `Layout.SPLIT` alone - "so Adventure's own still-open gap is untouched" -
-    and `Game._announcement_profile`, which is what fills the `Action.
-    target_slots` this decorates, takes no face at all. There is therefore no
-    face-specific profile to derive that the announcement downstream would
-    agree with, and this module derives nothing from printed text the engine
-    has declined to read (the same boundary the `activate` rows keep - see
-    `test_legal_actions_endpoint.py`). The honest answer is to name the face
-    that could not be read and let the seat name targets itself.
+    **Layout-blind, because the engine is** - the discriminator is the face
+    that was named, not the layout it is printed under. CR 709.3b ("while
+    it's on the stack, a split card has only the characteristics of the half
+    being cast") and CR 715.3b ("while on the stack as an Adventure, the
+    spell has only its alternative characteristics") are the same sentence
+    about two layouts, CR 601.3e being the general rule both instance:
+    "these alternative characteristics replace the object's characteristics
+    for this determination". This read was scoped to `Layout.SPLIT` while the
+    engine's own was, so an Adventure row came back `understood: false`; the
+    engine's `Casting.targeting`, `Game._announcement_profile` and
+    `Game._resolution_profile` all now key on the chosen face through
+    `machines.casting.face_being_cast`, which is what this calls, so the
+    three engine reads and this decoration are one reading rather than three
+    that agree and one that does not.
+
+    A name the card does not print raises: the engine's own announcement would
+    refuse it (`Casting.cast_as_split_half`, `cast_as_adventure`), so the
+    honest answer is to name the face that could not be read rather than hand
+    back the whole card's candidates for a cast that cannot happen.
     """
-    if card.layout is not Layout.SPLIT:
+    chosen = face_being_cast(card, face)
+    if chosen is None:
         raise FaceNotRead(
-            f"the announced face {face!r} of {card.name} is not one whose own targeting this "
-            "can derive - only CR 709's split halves are read per face, so no candidate list "
-            "here could be trusted to match the announcement"
+            f"the announced face {face!r} is not a face of {card.name}, whose faces are "
+            f"{[one.name for one in card.card_faces or ()]}"
         )
-    for candidate in card.card_faces or ():
-        if candidate.name == face:
-            return profile_for_text(candidate.oracle_text or "")
-    raise FaceNotRead(
-        f"the announced face {face!r} is not a face of {card.name}, whose faces are "
-        f"{[one.name for one in card.card_faces or ()]}"
-    )
+    return profile_for_text(chosen.oracle_text or "")
 
 
 def _profile_for(

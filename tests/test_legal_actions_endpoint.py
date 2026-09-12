@@ -629,20 +629,49 @@ def test_the_face_is_read_on_a_second_split_card_with_a_different_phrase(client,
     )
 
 
-def test_a_face_this_cannot_read_says_so_instead_of_naming_the_front_faces_targets(client, game):
-    """CR 715.3's Adventure half is the engine's own documented open gap -
-    `Casting.targeting` scopes its face reading to `Layout.SPLIT` alone, and
-    `Game._announcement_profile` reads the whole printing regardless - so
-    this repo will not re-derive from printed text what the engine declined
-    to read. A face it cannot honour comes back `understood: false` with a
-    note naming the face, which a seat is already told to read as "name
-    targets yourself" (`seatkit.TARGETS_NOTE`).
+def test_an_adventure_faces_own_targets_are_named_on_its_own_row(client, game):
+    """CR 715.3b: "While on the stack as an Adventure, the spell has only its
+    alternative characteristics." That is CR 709.3b's sentence about the other
+    layout that names a face, and CR 601.3e is the rule both instance:
+    "these alternative characteristics replace the object's characteristics
+    for this determination".
 
-    Asked of `affordances.target_candidates` directly rather than through the
-    endpoint because the engine's `Action.target_slots` is empty for every
-    Adventure row in the bundled pool, so `_attach_target_candidates` skips
-    them before a face is ever considered - the honest refusal has to hold
-    for whenever that stops being true."""
+    This decoration used to answer `understood: false` for an Adventure row
+    and say so in a note, because the engine's own reads were scoped to
+    `Layout.SPLIT` and there was no face-specific profile a candidate list
+    could be trusted against. Engine commit fd28021 keys all three of them on
+    the chosen face instead, so Stomp's "any target" is now both what
+    `Action.target_slots` advertises and what this enumerates - bob, alice and
+    bob's Bears, and never Bonecrusher Giant's own front-face trigger, which
+    targets nothing at all.
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
+    bears = find(state(client, game)["battlefield"], "Grizzly Bears")
+
+    live = store.get(game)
+    source = affordances.find_source(live, UUID(giant["id"]))
+
+    answer = affordances.target_candidates(live, source, "alice", face="Stomp")
+
+    assert answer["understood"] is True, answer
+    (slot,) = answer["slots"]
+    lines = " ".join(slot["candidates"])
+    assert bears["id"] in lines, slot
+    assert "alice" in lines and "bob" in lines, slot
+
+
+def test_a_face_the_card_does_not_print_says_so_instead_of_naming_the_cards_targets(client, game):
+    """The refusal that survives, and the only one left: a face name that is
+    no face of this printing. The engine's own announcement would refuse it
+    (`Casting.cast_as_split_half` / `cast_as_adventure` both do, in their own
+    words), so handing back the whole card's candidates would be enumerating
+    targets for a cast that cannot happen. `understood: false` plus a note
+    naming the face is what a seat is already told to read as "name targets
+    yourself" (`seatkit.TARGETS_NOTE`).
+    """
     add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Bonecrusher Giant", "alice", "hand")
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
@@ -651,8 +680,8 @@ def test_a_face_this_cannot_read_says_so_instead_of_naming_the_front_faces_targe
     live = store.get(game)
     source = affordances.find_source(live, UUID(giant["id"]))
 
-    answer = affordances.target_candidates(live, source, "alice", face="Stomp")
+    answer = affordances.target_candidates(live, source, "alice", face="Shock")
 
     assert answer["understood"] is False, answer
-    assert "Stomp" in answer["note"], answer
+    assert "Shock" in answer["note"], answer
     assert "slots" not in answer, answer
