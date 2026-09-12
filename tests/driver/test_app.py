@@ -98,6 +98,45 @@ def test_dispatch_of_an_unguided_deck_still_starts_the_game(world):
     assert submitted[0]["text"]
 
 
+@pytest.mark.parametrize(
+    "archetype",
+    [
+        # Every shape that was reproduced raising out of the guide readers.
+        # The corpus is a SEPARATE repo (github.com/szymonrychu/mtg-decks),
+        # cloned read-only by an initContainer at a ref that is not pinned by
+        # default, so any of these can appear under a running driver between
+        # two games without anything in this repo changing.
+        '{"archetype": "zz", "signature": [{"cards": 5, "min": 1}]}',
+        '{"archetype": "zz", "signature": 5}',
+        '{"archetype": "zz", "signature": [{"cards": {"a": 1}, "min": 1}]}',
+        '{"archetype": "zz", "signature": [{"cards": ["Psychic Frog"], "min": 4}],'
+        ' "exclude": [{"cards": 5, "min": 1}]}',
+        "{ half written",
+    ],
+)
+def test_one_malformed_archetype_in_the_corpus_does_not_five_hundred_the_dispatch(world, archetype):
+    """The blast radius, at the level where it cost a game.
+
+    `/dispatch` calls `library.identify(decklist)` unguarded and `identify`
+    asks EVERY archetype in the corpus - so a malformed file belonging to a
+    deck neither seat is playing used to raise out of the loop and 500 the
+    dispatch for BOTH seats and EVERY deck. Turn 0 never rendered and neither
+    agent ever played.
+
+    The seat is still identified: the broken deck is the only one that loses
+    anything.
+    """
+    broken = world.settings.guides_root / "decks" / "zz-broken"
+    broken.mkdir(parents=True)
+    (broken / "decklist.txt").write_text("4 Psychic Frog\n")
+    (broken / "archetype.json").write_text(archetype)
+
+    response = dispatch(world.client)
+    assert response.status_code == 202, response.text
+    assert response.json()["deck"] == "dimir-frog"
+    assert world.submitted[0]["text"]
+
+
 def test_a_second_dispatch_for_the_same_uid_does_not_push_a_second_turn_zero(world):
     client = world.client
     submitted = world.submitted

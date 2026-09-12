@@ -7,6 +7,29 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-12 - degradation must never make a match EASIER.** The
+  non-obvious half of hardening the deck-guide readers, and the one that must
+  not be reintroduced. `guides._clauses` dropped an unusable clause from an
+  `archetype.json` and left the rest of the file standing, which looks like
+  the forgiving thing to do and is not: `Candidate.clauses` counts the
+  survivors, so a signature with one clause broken is a SHORTER signature,
+  and a shorter signature is a cheaper one to satisfy in full. Measured on
+  one list against one two-clause archetype - intact it answered 1 of 2 and
+  got `low`; with the second clause malformed it answered 1 of 1 and got
+  `confident`. The `exclude` side is worse: an `exclude` clause is the file
+  saying "a list holding these is playing the other deck, not me", so
+  dropping the unusable row deletes the disavowal and a correctly disowned
+  list is handed that wrong guide confidently. Both are a confidently wrong
+  answer, which is strictly worse for the agent than no answer at all,
+  because it plays someone else's gameplan instead of its own list. So a
+  malformed file costs the deck its WHOLE signature and the other twelve
+  guides answer as before. Keeping an unusable row as an unsatisfiable clause
+  was considered and rejected: safe for `signature`, useless for `exclude`
+  (an exclude nobody can satisfy is an exclude that is not there), so it
+  needs opposite treatments for the two halves of one file - and asymmetry
+  between two readers of this corpus is exactly what let `signature_index`
+  and `load_signature` drift apart in the first place.
+
 - **2026-09-12 - the card's byte budget is per card, and it is never
   divided.** `render_current_game` used to hand each branch of a family
   `CARD_TARGET_BYTES // len(offered)` with a shared cap, on the theory that a
