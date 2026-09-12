@@ -938,9 +938,12 @@ class BaselineSeat:
         legal candidates (`app._attach_target_candidates`) alongside the
         requirement *shape* `target_slots` reports - one answer, chosen from
         and acted on. A row with `target_slots` and no `targets` block is a
-        row this board cannot fill (an unreadable targeting phrase, or a
-        candidate list the answer's budget cut), and declining it in-process
-        is exactly what keeps a refusal out of the ledger.
+        row this seat declines: either the engine could not read the targeting
+        phrase (`understood: false`, which carries no slots and says why) or
+        the api did not enrich it at all, which it only skips for an
+        unaffordable cast - a row this policy was never going to choose.
+        Declining in-process is exactly what keeps a refusal out of the
+        ledger.
 
         It takes `minimum` targets per requirement, which is
         `default_answer`'s own CR 601.2c answer, preferring the opponent: a
