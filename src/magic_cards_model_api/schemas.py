@@ -1616,7 +1616,7 @@ class PendingDecisionView(BaseModel):
     for every other kind (`decisions.PendingDecision.lethal_damage`)."""
     trample: bool | None = None
     """`assign_combat_damage` only: whether the attacker has trample (CR
-    702.19c), so damage may reach the defending player or planeswalker once
+    702.19b), so damage may reach the defending player or planeswalker once
     every blocker has its own `lethal_damage`. `None` for every other kind."""
     card_details: list[CardView] | None = None
     """Only for the deciding player - the full view of exactly the ids

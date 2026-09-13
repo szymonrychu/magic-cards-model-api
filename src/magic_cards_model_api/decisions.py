@@ -493,7 +493,7 @@ class PendingDecision:
     #: it (CR 702.19b forbids it otherwise). Empty for every other kind.
     lethal_damage: tuple[int, ...] = ()
     #: `assign_combat_damage` only: whether the attacker has trample (CR
-    #: 702.19c), so damage may go past its blockers once each has lethal
+    #: 702.19b), so damage may go past its blockers once each has lethal
     #: damage. `False` for every other kind.
     trample: bool = False
 
