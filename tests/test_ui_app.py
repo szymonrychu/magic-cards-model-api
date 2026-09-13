@@ -805,6 +805,36 @@ ATTACKING_CREATURE = {
     "abilities": [],
 }
 
+EQUIPMENT = {
+    "id": "eq1",
+    "name": "Blade of the Bloodchief",
+    "type_line": "Artifact - Equipment",
+    "zone": "battlefield",
+    "controller": "alice",
+    "abilities": [],
+}
+
+
+def _equip_row(target_line: str = "bears1 Grizzly Bears (battlefield, alice)") -> dict:
+    """CR 702.6a's engine-provided row, shaped exactly as `GET .../legal-
+    actions?candidates=true` serves it (`action_rows.legal_action_rows`,
+    `schemas.ActionWithTargets`) - `ability_index: None` is what `action_rows.
+    is_equip_row` requires of it."""
+    return {
+        "card_id": "eq1",
+        "kind": "equip",
+        "ability_index": None,
+        "keyword": "Equip",
+        "rule": "CR 702.6a",
+        "cost": "{1}",
+        "affordable": "yes",
+        "target_slots": [{"minimum": 1, "maximum": 1}],
+        "targets": {
+            "understood": True,
+            "slots": [{"slot": 0, "count": 1, "candidates": [target_line]}],
+        },
+    }
+
 
 def base_app(**overrides: Any) -> dict:
     return {"action": None, "decisionDraft": {}, **overrides}
@@ -1042,6 +1072,23 @@ def test_a_vehicle_with_no_abilities_still_offers_a_crew_menu() -> None:
         state=base_state(),
     )
     assert plan == {"kind": "menu", "abilities": [], "vehicle": True}
+
+
+def test_an_equipment_with_no_abilities_still_routes_to_a_menu() -> None:
+    """CR 702.6a: equip has no entry in `card.abilities` (`Game.
+    activated_abilities` never synthesises it), so the single-ability
+    auto-activate and no-op branches must not swallow an Equipment the way
+    they would swallow an ordinary permanent with nothing printed. Whether
+    Equip actually belongs in the menu is `openPermanentMenu`'s own question,
+    answered from the engine rather than the card - this planner only routes
+    the click there."""
+    plan = run_app(
+        "m.planPermanentClick(equipment, app, state)",
+        equipment=EQUIPMENT,
+        app=base_app(),
+        state=base_state(),
+    )
+    assert plan == {"kind": "menu", "abilities": [], "vehicle": False, "equipment": True}
 
 
 def test_a_vehicle_with_an_ability_also_menus_rather_than_auto_activating() -> None:
@@ -2617,6 +2664,177 @@ def test_a_vehicle_still_reaches_crew_through_its_own_menu() -> None:
         vehicle=VEHICLE,
     )
     assert result["labels"] == ["Crew"]
+
+
+# -- equip (CR 702.6a): offer, target, post, refuse ---------------------------
+#
+# Equip is the one card-scoped menu that cannot be decided from local state:
+# it has no entry in `card.abilities` at all, so whether it belongs in the
+# menu is answered by the engine's own `GET .../legal-actions` rather than by
+# the card the way every other item on this menu already is. These drive the
+# real `onPermanent` through the same fake popover the tests above use, with
+# `globalThis.__respond` standing in for the server.
+
+
+def test_equip_is_offered_when_the_legal_actions_row_exists() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [equipRow], last_seq: 7 }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(equipment, { currentTarget: anchor });
+          return {
+            labels: options().map((o) => o.label),
+            hidden: globalThis.__popover.hidden,
+          };
+        """,
+        state=_click_state(battlefield=[EQUIPMENT, ATTACKING_CREATURE]),
+        equipment=EQUIPMENT,
+        equipRow=_equip_row(),
+    )
+    assert result["hidden"] is False
+    assert result["labels"] == ["Equip"]
+
+
+def test_equip_is_not_offered_outside_a_main_phase() -> None:
+    """CR 702.6a: "Activate only as a sorcery" makes the engine drop the row
+    entirely (`action_rows.legal_action_rows`'s own `functions_where_it_is`
+    filter) rather than mark it unaffordable - `rows == []` in the api's own
+    `test_equip_at_instant_speed_is_refused_with_the_engines_reason`. The menu
+    must stay just as silent: no popover, no option, and no engine request
+    made on the player's behalf beyond the one read that answered this."""
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [], last_seq: 7 }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(equipment, { currentTarget: anchor });
+          return {
+            hidden: globalThis.__popover.hidden,
+            options: options().length,
+            posts: globalThis.__calls.filter((c) => c.method === "POST"),
+          };
+        """,
+        state=_click_state(battlefield=[EQUIPMENT, ATTACKING_CREATURE]),
+        equipment=EQUIPMENT,
+    )
+    assert result["hidden"] is True
+    assert result["options"] == 0
+    assert result["posts"] == []
+
+
+def test_choosing_equip_offers_only_the_rows_own_candidates() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [equipRow], last_seq: 7 }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(equipment, { currentTarget: anchor });
+          const firstLabels = options().map((o) => o.label);
+          options()[0].click();
+          await settle();
+          return {
+            firstLabels,
+            targetLabels: options().map((o) => o.label),
+            posts: globalThis.__calls.filter((c) => c.method === "POST"),
+          };
+        """,
+        state=_click_state(battlefield=[EQUIPMENT, ATTACKING_CREATURE]),
+        equipment=EQUIPMENT,
+        equipRow=_equip_row(),
+    )
+    assert result["firstLabels"] == ["Equip"]
+    assert result["targetLabels"] == ["Equip Grizzly Bears"]
+    assert result["posts"] == [], "picking Equip only opens the target popover; nothing fires yet"
+
+
+def test_picking_the_target_posts_the_equip_route_with_the_expected_seq() -> None:
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [equipRow], last_seq: 7 }),
+              });
+            }
+            if (method === "POST" && path.includes("actions/equip")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ allowed: true, cost: "{1}" }),
+              });
+            }
+            return null;
+          };
+          await m.onPermanent(equipment, { currentTarget: anchor });
+          options()[0].click(); // "Equip"
+          await settle();
+          options()[0].click(); // the one candidate
+          await settle();
+          return { calls: globalThis.__calls };
+        """,
+        state=_click_state(battlefield=[EQUIPMENT, ATTACKING_CREATURE]),
+        equipment=EQUIPMENT,
+        equipRow=_equip_row(),
+    )
+    posts = [c for c in result["calls"] if c["method"] == "POST" and "actions/equip" in c["path"]]
+    assert len(posts) == 1, result["calls"]
+    assert posts[0]["body"] == {
+        "player": "alice",
+        "card_id": "eq1",
+        "target": "bears1",
+        "expected_seq": 7,
+    }
+
+
+def test_an_equip_refusal_shows_the_engines_reason() -> None:
+    reason = "Blade of the Bloodchief may only be activated as a sorcery (CR 702.6a)"
+    result = _click(
+        """
+          globalThis.__respond = (method, path) => {
+            if (method === "GET" && path.includes("legal-actions")) {
+              return Promise.resolve({
+                ok: true,
+                json: async () => ({ actions: [equipRow], last_seq: 7 }),
+              });
+            }
+            if (method === "POST" && path.includes("actions/equip")) {
+              return Promise.resolve({ ok: true, json: async () => ({ allowed: false, reason }) });
+            }
+            return null;
+          };
+          await m.onPermanent(equipment, { currentTarget: anchor });
+          options()[0].click();
+          await settle();
+          options()[0].click();
+          await settle();
+          return { toast: globalThis.__toast.textContent, toastHidden: globalThis.__toast.hidden };
+        """,
+        state=_click_state(battlefield=[EQUIPMENT, ATTACKING_CREATURE]),
+        equipment=EQUIPMENT,
+        equipRow=_equip_row(),
+        reason=reason,
+    )
+    assert result["toastHidden"] is False
+    assert result["toast"] == reason
 
 
 def test_a_card_with_no_available_action_stays_a_silent_no_op() -> None:
