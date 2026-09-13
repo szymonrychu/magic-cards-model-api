@@ -17,4 +17,5 @@
 - `guides_propose` - `mcp-seat guides propose`: a matchup plan edit and its
   regenerated guides as a pull request.
 - `gitwork` - the git and GitHub REST plumbing both share.
+- `report` - the compact per-script run table a handover prompt carries.
 """
