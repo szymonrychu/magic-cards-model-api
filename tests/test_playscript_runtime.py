@@ -1997,12 +1997,21 @@ def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrup
     bob_passes()
     assert state(client, game)["priority_holder"] == "alice"
 
+    passed_after: list[str] = []
+
     def after(method: str, path: str, body: Any) -> None:
         if method != "POST" or not path.endswith(("/actions/pass-priority", "/decide")):
             return
         board = other.get(f"/api/games/{game}", params={"uid": bob}).json()
-        if board["priority_holder"] == "bob" and board["stack"]:
+        # A standing surveil question is part of the resolution: nobody holds
+        # priority until it is answered, whatever the paused board names.
+        if (
+            board["pending_decision"] is None
+            and board["priority_holder"] == "bob"
+            and board["stack"]
+        ):
             bob_passes()
+            passed_after.append(path)
 
     seats = wired(monkeypatch, game)
     seat, _ = hooked_seat(seats, alice, after=after)
@@ -2015,3 +2024,4 @@ def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrup
     after_state = state(client, game)
     assert cards_named(after_state["battlefield"], "Undercity Sewers")
     assert cards_named(after_state["graveyards"]["alice"], "Island"), "the surveil was answered"
+    assert passed_after, "bob never held priority after the resolution, so nothing was tested"
