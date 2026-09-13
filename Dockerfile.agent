@@ -19,6 +19,10 @@ COPY magic-cards-model-api /app
 RUN uv sync --frozen --no-dev || uv sync --no-dev
 ENV PATH="/app/.venv/bin:${PATH}"
 
+# The seat Job's `guides` initContainer runs this (deploy/seat-job.yaml): a
+# writable, partial clone of the deck-guides repo.
+COPY --chmod=0755 magic-cards-model-api/deploy/guides-clone.sh /usr/local/bin/guides-clone.sh
+
 # claude gets its own layer so bumping it rebuilds only this step.
 ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \

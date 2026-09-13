@@ -1,5 +1,6 @@
 import json
 import stat
+import subprocess
 
 from mtg_agent.wrapper import bootstrap
 from mtg_agent.wrapper.config import Settings
@@ -141,6 +142,86 @@ def test_skills_are_copied_in_order_with_later_dirs_winning(tmp_path):
     root = s.workspace / ".claude" / "skills"
     assert (root / "play" / "SKILL.md").read_text() == "custom"
     assert (root / "extra" / "SKILL.md").read_text() == "extra"
+
+
+def _git_env(home):
+    return {
+        "HOME": str(home),
+        "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "",
+        "SSH_ASKPASS": "",
+    }
+
+
+def _credential_fill(home, host):
+    return subprocess.run(
+        ["git", "credential", "fill"],
+        input=f"protocol=https\nhost={host}\n\n",
+        env=_git_env(home),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_gitconfig_answers_github_credentials_from_the_token_file(tmp_path):
+    token = tmp_path / "GH_PAT"
+    token.write_text("github_pat_0123456789abcdefghijKLMNOP\n")
+    s = settings_in(tmp_path)
+    bootstrap.write_gitconfig(s, token_file=token)
+
+    filled = _credential_fill(s.home_dir, "github.com")
+    assert filled.returncode == 0, filled.stderr
+    lines = filled.stdout.splitlines()
+    assert "username=x-access-token" in lines
+    assert "password=github_pat_0123456789abcdefghijKLMNOP" in lines
+
+
+def test_gitconfig_never_contains_the_token_itself(tmp_path):
+    token = tmp_path / "GH_PAT"
+    token.write_text("github_pat_0123456789abcdefghijKLMNOP\n")
+    s = settings_in(tmp_path)
+    bootstrap.write_gitconfig(s, token_file=token)
+    text = (s.home_dir / ".gitconfig").read_text()
+    assert "github_pat_0123456789abcdefghijKLMNOP" not in text
+    assert str(token) in text
+
+
+def test_gitconfig_helper_is_scoped_to_github_and_trusts_the_guides_checkout(tmp_path):
+    token = tmp_path / "GH_PAT"
+    token.write_text("github_pat_0123456789abcdefghijKLMNOP\n")
+    s = settings_in(tmp_path)
+    bootstrap.write_gitconfig(s, token_file=token)
+    path = s.home_dir / ".gitconfig"
+
+    def get(*key):
+        return subprocess.run(
+            ["git", "config", "--file", str(path), *key],
+            capture_output=True,
+            text=True,
+            env=_git_env(s.home_dir),
+        )
+
+    assert get("--get", "credential.https://github.com.helper").stdout.strip()
+    assert get("--get-all", "credential.helper").stdout == ""
+    assert get("--get-all", "safe.directory").stdout.splitlines() == ["/guides"]
+    other = _credential_fill(s.home_dir, "gitlab.example.com")
+    assert "github_pat_" not in other.stdout
+
+
+def test_gitconfig_helper_stays_silent_without_a_token_file(tmp_path):
+    s = settings_in(tmp_path)
+    bootstrap.write_gitconfig(s, token_file=tmp_path / "absent")
+    filled = _credential_fill(s.home_dir, "github.com")
+    assert "password=" not in filled.stdout
+
+
+def test_render_writes_the_gitconfig_with_the_mounted_token_path(tmp_path):
+    s = settings_in(tmp_path)
+    bootstrap.render(s)
+    text = (s.home_dir / ".gitconfig").read_text()
+    assert "/var/run/mtg-decks-git/GH_PAT" in text
 
 
 def test_render_produces_every_file_in_one_call(tmp_path):

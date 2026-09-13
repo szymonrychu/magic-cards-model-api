@@ -131,16 +131,23 @@ spec:
             - name: API_SERVICE_URL
               value: http://mtg-stack.mtg-engine.svc.cluster.local:8000
             # Which revision of the deck-guides corpus every seat Job checks
-            # out (`__GUIDES_REF__` in `deploy/seat-job.yaml`): any branch,
-            # tag or commit sha. `main` - the latest guides - is the default
-            # and stays the default, because play wants current guides; an
-            # evaluation harness that needs two runs to have read the same
-            # corpus is the only caller that pins it. Whatever it resolves
-            # to is stamped into the agent's briefing and into the header of
-            # the game's plan file, so a game's artifacts always name the
-            # corpus they were played against.
+            # out (`__GUIDES_REF__` in `deploy/seat-job.yaml`). The checkout
+            # is writable - the agent commits on a local `main` tracking
+            # `origin/main` - so `deploy/guides-clone.sh` accepts only `main`
+            # and refuses anything else, saying so. What it checked out is
+            # stamped into the agent's briefing and into the header of the
+            # game's plan file, so a game's artifacts always name the corpus
+            # they were played against.
             - name: GUIDES_REF
               value: main
+            # The kill switch for agent-authored scripts and guide changes
+            # made through the writable guides checkout. "true" is the
+            # default; set it to "false" (`kubectl -n mtg-engine set env
+            # deployment/mtg-stack SCRIPTS_ENABLED=false`) to turn the feature
+            # off without a rebuild. Revoking the `mtg-decks-git` PAT is the
+            # harder stop - see deploy/k8s/README.md.
+            - name: SCRIPTS_ENABLED
+              value: "true"
             - name: SPELLSLINGER_MCP_URL
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES

@@ -2966,3 +2966,4 @@ whoever works on the repo itself.
   left alone here since nothing in this file's own scope called for an
   engine change, but any future work touching that path should know eleven
   tests in one file were enough to double CI's budget.
+- 2026-09-13 A13: the seat Job guides checkout is writable (deploy/guides-clone.sh: partial `--filter=blob:none` fetch of main, local main tracking origin/main), so GUIDES_REF is now main-only and the pinned-ref/sha path is gone - a harness wanting a fixed corpus has no knob until a read-only mode returns. The PAT is a file mount (/var/run/mtg-decks-git/GH_PAT, 0440 via fsGroup) read by a ~/.gitconfig credential helper, never an env var. SCRIPTS_ENABLED is only published/documented here; nothing reads it yet. preStop modules mtg_agent.driver.handover / mtg_agent.wrapper.handover_wait are named in the template but implemented by A14.

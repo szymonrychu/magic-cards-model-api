@@ -4,9 +4,10 @@
 # render from this one file, deliberately: same images, same driver sidecar,
 # same mcp-config, and the only differences are set in code by
 # `k8s_seats.build_job` - the `mtg-buddy-*` name, an extra `mtg/role=advisor`
-# label, and `role` inside `__ASSIGNMENT_JSON__`'s payload (which is why the
-# placeholder set below needs no entry for it, and why a seat's rendered
-# assignment is byte-identical to what it always was). `k8s_seats.build_job` reads this file (path from
+# label, `role` inside `__ASSIGNMENT_JSON__`'s payload (written only for an
+# advisor, so a seat's rendered assignment is byte-identical to what it always
+# was), and the agent container's `MTG_ROLE` through `__MTG_ROLE__`.
+# `k8s_seats.build_job` reads this file (path from
 # `SEAT_JOB_TEMPLATE_PATH`, default this path), substitutes the
 # `__X__` tokens below with this seat's per-render values, then sets
 # `metadata.name`, `metadata.namespace`, the identity labels
@@ -27,7 +28,8 @@
 #   __ASSIGNMENT_JSON__        - the driver's self-dispatch payload
 #   __MODEL__ / __EFFORT__ / __MAX_THINKING_TOKENS__ - this seat's AgentSettings
 #   __AGENT_IMAGE__ / __API_IMAGE__ - the pushed images this deploy pinned
-#   __GUIDES_REF__             - which deck-guides revision to check out
+#   __GUIDES_REF__             - which deck-guides revision to check out (must be main)
+#   __MTG_ROLE__ / __MTG_GAME_ID__ - the agent container's own role and game
 #
 # Everything else in this file is deliberately NOT a placeholder - it is
 # deploy-time configuration (secrets, the memory PVC name, the guides repo
@@ -97,6 +99,11 @@ spec:
         mtg/seat-uid: u1234567890
     spec:
       restartPolicy: Never
+      # Room for a clean handover when the Job is deleted mid-game: the
+      # driver's preStop gets 540s to hand the seat over, the agent's preStop
+      # waits up to 560s for that handover (and for its own last push), and
+      # both finish inside this grace before the kubelet sends SIGKILL.
+      terminationGracePeriodSeconds: 600
       automountServiceAccountToken: false
       imagePullSecrets:
       - name: regcred
@@ -117,66 +124,41 @@ spec:
         emptyDir: {}
       - name: mcp
         emptyDir: {}
+      # The GitHub PAT (Secret `mtg-decks-git`, key `GH_PAT`) as a FILE, never
+      # an env var: an env var is one `env` away from the agent's own log.
+      # 0440 is owner+group read; `fsGroup: 1000` above makes uid 1000 that
+      # group. Mounted into the `guides` initContainer (to fetch) and the
+      # `agent` container (git's credential helper reads it to push) - the
+      # driver gets no mount. A projected Secret file is updated in place
+      # when the Secret is rotated, so a running pod picks up a new token.
+      - name: mtg-decks-git
+        secret:
+          secretName: mtg-decks-git
+          defaultMode: 0440
+          items:
+          - key: GH_PAT
+            path: GH_PAT
       initContainers:
-      # GUIDES_REF reaches `git fetch` as a positional argument, and git reads
-      # a leading `--` as an option wherever one appears - `--upload-pack=
-      # <command>` is a git option that runs a command. The value is quoted,
-      # so there was never a *shell* injection here, and this is operator-set
-      # deployment config rather than anything a player can reach; one
-      # copy-pasted ref was still all it took. Two guards below: the ref is
-      # validated against `[A-Za-z0-9][A-Za-z0-9._/-]*` before anything runs,
-      # and `fetch ... origin -- "$ref"` fences it off from git's own option
-      # parsing regardless. `tests/test_k8s_seats.py` runs this script
-      # verbatim against a real local repo and pins both.
+      # A writable, partial clone of the deck-guides repo: `main` fetched with
+      # `--filter=blob:none` (full history, blobs on demand), checked out as a
+      # local `main` tracking `origin/main`, the token stripped back out of
+      # the remote URL, the revision stamped into `.guides-revision`. The
+      # script is `deploy/guides-clone.sh`, baked into the agent image by
+      # Dockerfile.agent; `tests/test_k8s_seats.py` runs that same file
+      # against a real local bare repo.
       - name: guides
         image: __AGENT_IMAGE__
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
-        - -euc
-        - 'test -n "${GH_PAT}" || { echo "GH_PAT is empty" >&2; exit 1; }
-
-          dir="${GUIDES_DIR:-/guides}"
-
-          ref="${GUIDES_REF:-main}"
-
-          printf %s "$ref" | grep -Eq "^[A-Za-z0-9][A-Za-z0-9._/-]*$" || { echo "GUIDES_REF is not a ref: $ref" >&2; exit 1; }
-
-          git config --global --add safe.directory "$dir"
-
-          find "$dir" -mindepth 1 -delete
-
-          git -c init.defaultBranch=main init -q "$dir"
-
-          git -C "$dir" remote add origin "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git"
-
-          git -C "$dir" fetch --depth 1 origin -- "$ref"
-
-          git -C "$dir" checkout -q --detach FETCH_HEAD
-
-          git -C "$dir" remote set-url origin https://github.com/szymonrychu/mtg-decks.git
-
-          rm -f "$dir/.git/FETCH_HEAD"
-
-          ! grep -rq "x-access-token" "$dir/.git/config"
-
-          git -C "$dir" rev-parse HEAD > "$dir/.guides-revision"
-
-          echo "guides $ref at $(cat "$dir/.guides-revision")"
-
-          '
+        - /usr/local/bin/guides-clone.sh
         env:
-        - name: GH_PAT
-          valueFrom:
-            secretKeyRef:
-              name: mtg-decks-git
-              key: GH_PAT
-        # Which revision of the corpus this seat plays against. `main` - the
-        # latest guides - is the default and stays the default: play wants
-        # current guides, and only an evaluation harness, which needs two
-        # runs to have read the same corpus, sets this to a fixed branch,
-        # tag or commit sha. Whatever it resolves to is written to
-        # `/guides/.guides-revision` above, where the driver reads it back
+        - name: GH_PAT_FILE
+          value: /var/run/mtg-decks-git/GH_PAT
+        # Which revision of the corpus this seat plays against. The checkout
+        # is writable, so the script accepts only `main` and refuses anything
+        # else with a message saying so. What it checked out is written to
+        # `/guides/.guides-revision`, where the driver reads it back
         # (`mtg_agent/driver/revision.py`) and stamps it into the briefing
         # and the game's plan file.
         - name: GUIDES_REF
@@ -188,6 +170,9 @@ spec:
         volumeMounts:
         - name: guides
           mountPath: /guides
+        - name: mtg-decks-git
+          mountPath: /var/run/mtg-decks-git
+          readOnly: true
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -277,18 +262,48 @@ spec:
           value: __EFFORT__
         - name: MAX_THINKING_TOKENS
           value: __MAX_THINKING_TOKENS__
+        # Who this agent is, for the branches and commits it makes in the
+        # writable guides checkout: `seat` or `advisor`, and its game.
+        - name: MTG_ROLE
+          value: __MTG_ROLE__
+        - name: MTG_GAME_ID
+          value: __MTG_GAME_ID__
+        - name: GIT_COMMITTER_NAME
+          value: mtg-agent
+        - name: GIT_COMMITTER_EMAIL
+          value: mtg-agent@mtg-trainer.invalid
         envFrom:
         - secretRef:
             name: mtg-agent
+        # `/guides` is writable here, and only here: the agent commits guide
+        # changes in it. The driver keeps it read-only. `~/.gitconfig`
+        # (written by the wrapper's bootstrap) points git's credential helper
+        # at the token file below and marks `/guides` a safe.directory.
         volumeMounts:
         - name: guides
           mountPath: /guides
-          readOnly: true
         - name: memory
           mountPath: /workspace/memory
         - name: mcp
           mountPath: /etc/mtg
           readOnly: true
+        - name: driver-workspace
+          mountPath: /driver-workspace
+          readOnly: true
+        - name: mtg-decks-git
+          mountPath: /var/run/mtg-decks-git
+          readOnly: true
+        # Waits (up to 560s, inside the 600s grace) for the driver's handover
+        # to finish before the wrapper is stopped.
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - python
+              - -m
+              - mtg_agent.wrapper.handover_wait
+              - --wait
+              - '560'
         startupProbe:
           httpGet:
             path: /healthz
@@ -361,6 +376,17 @@ spec:
           mountPath: /workspace/memory
         - name: driver-workspace
           mountPath: /driver-workspace
+        # Hands the seat over (up to 540s, inside the 600s grace) before the
+        # driver is stopped.
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - python
+              - -m
+              - mtg_agent.driver.handover
+              - --wait
+              - '540'
         readinessProbe:
           httpGet:
             path: /healthz

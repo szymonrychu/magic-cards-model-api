@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import shlex
 import shutil
 from pathlib import Path
 from typing import Any
@@ -134,9 +135,53 @@ def copy_skills(settings: Settings) -> None:
         shutil.copytree(source, root, dirs_exist_ok=True)
 
 
+#: Where the seat Job mounts Secret `mtg-decks-git`'s `GH_PAT` key
+#: (deploy/seat-job.yaml). A file, not an env var, so the token never sits in
+#: the agent's environment for a stray `env` to print.
+GH_TOKEN_FILE = Path("/var/run/mtg-decks-git/GH_PAT")
+
+#: The writable deck-guides checkout `deploy/guides-clone.sh` makes.
+GUIDES_DIR = "/guides"
+
+
+def _gitconfig_value(value: str) -> str:
+    """A gitconfig value, double-quoted. Quoting is not optional here: an
+    unquoted `;` or `#` starts a comment, and a shell helper is full of
+    both."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def write_gitconfig(settings: Settings, token_file: Path = GH_TOKEN_FILE) -> None:
+    """~/.gitconfig: a credential helper for https://github.com that reads the
+    token from `token_file` each time git asks, plus `safe.directory` for the
+    guides checkout. The token itself is never written - a rotated Secret is
+    picked up on the next push. The helper answers only `get`, and stays
+    silent when the file is absent (compose mounts no token), so git falls
+    through to its own failure rather than sending an empty password."""
+    quoted = shlex.quote(str(token_file))
+    helper = (
+        '!f() { test "$1" = get || exit 0; '
+        f"test -r {quoted} || exit 0; "
+        "echo username=x-access-token; "
+        f'printf "password=%s\\n" "$(cat {quoted})"; '
+        "}; f"
+    )
+    text = (
+        '[credential "https://github.com"]\n'
+        f"\thelper = {_gitconfig_value(helper)}\n"
+        "[safe]\n"
+        f"\tdirectory = {GUIDES_DIR}\n"
+    )
+    path = settings.home_dir / ".gitconfig"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    path.chmod(0o644)
+
+
 def render(settings: Settings) -> None:
     settings.workspace.mkdir(parents=True, exist_ok=True)
     settings.home_dir.mkdir(parents=True, exist_ok=True)
+    write_gitconfig(settings)
     write_claude_md(settings)
     merge_mcp(settings)
     write_settings_json(settings)

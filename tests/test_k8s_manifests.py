@@ -382,3 +382,15 @@ def test_the_api_publishes_a_guides_ref_defaulting_to_main() -> None:
     deploy = by_name(docs, "Deployment", "mtg-stack")
     env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert env["GUIDES_REF"]["value"] == "main"
+
+
+def test_the_api_publishes_the_scripts_kill_switch_defaulting_to_on() -> None:
+    """`SCRIPTS_ENABLED` is the operator's kill switch for agent-authored
+    changes to the writable guides checkout: flipping it to "false" on the
+    Deployment turns the feature off without an image rebuild. It is
+    published explicitly, with its default, so the switch is visible in the
+    manifest someone has to edit to pull it."""
+    docs = rendered()
+    deploy = by_name(docs, "Deployment", "mtg-stack")
+    env = {e["name"]: e for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["SCRIPTS_ENABLED"] == {"name": "SCRIPTS_ENABLED", "value": "true"}
