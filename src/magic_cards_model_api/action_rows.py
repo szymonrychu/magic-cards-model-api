@@ -33,6 +33,18 @@ each read off the engine rather than guessed:
   .../actions/activate` makes, and the row is `affordable: yes` naming the
   activations to make first only when the engine's own payment planner then
   pays the cost.
+- **`improvise`** on a cast row the engine left `affordable: unknown` because
+  "improvise could reduce this cost and is not evaluated". CR 702.126a taps an
+  untapped artifact the caster controls "rather than pay" one generic mana, so
+  the row is re-asked with the controller's untapped artifacts: the engine's
+  own `ObjectOffer.why_not` says which qualify, one generic symbol comes off
+  per artifact (`ManaCost.minus`), and `plan_mana_payment` pays the rest from
+  every other source - never from an artifact already improvising, which is
+  tapped once. A payable row reads `affordable: yes` naming the artifacts to
+  pass back as `CastRequest.improvise`; an unpayable one gets the engine's own
+  `no` back, without the "not evaluated" caveat.
+
+A finished game (CR 104.1) has no legal actions at all.
 
 Nothing here mutates the game it is handed.
 """
@@ -68,6 +80,7 @@ from magic_cards_model.machines.legal_actions import (
     _cost_strings,
     legal_actions,
 )
+from magic_cards_model.machines.objects_as_costs import has_improvise, improvise_offer
 from magic_cards_model.models import Action, CardState, Color, Game, Zone
 from magic_cards_model.models.action import ActionKind, Affordability, TargetSlot
 from magic_cards_model.models.mana import ManaCost, ManaSpend, ManaSymbol, SymbolKind
@@ -120,6 +133,13 @@ _OPTIONAL_COST_KEYWORDS: dict[str, tuple[str, bool]] = {
     "harmonize": ("CR 702.180b", False),
 }
 
+#: The caveat `legal_actions._widen_for_object_costs` appends when improvise
+#: is the only object cost it left unevaluated - removed once this module has
+#: evaluated it.
+_IMPROVISE_NOT_EVALUATED = (
+    "improvise could reduce this cost and is not evaluated by this affordability check"
+)
+
 #: How many sources with a costlier mana ability, and how many activation
 #: combinations of them, one enumeration tries. Every trial is a deep copy of
 #: the game, and a real board holds one or two such sources.
@@ -132,6 +152,8 @@ def legal_action_rows(
     """`player`'s legal actions, as engine `Action`s and as the JSON rows the
     api serves - the two lists index-aligned, so `app._attach_target_
     candidates` can still walk them together."""
+    if game.is_over:
+        return [], []
     actions = legal_actions(game, player, pending=pending)
     if pending is not None:
         return actions, [action.model_dump(mode="json") for action in actions]
@@ -157,6 +179,7 @@ def legal_action_rows(
     for action, view in zip(actions, views, strict=True):
         if action.kind is ActionKind.CAST:
             rows.offer_manual_mana(action, view)
+            rows.offer_improvise(action, view)
         if view.get("unaffordable_reason"):
             view["unaffordable_reason"] = without_loyalty_mana_advice(
                 game, view["unaffordable_reason"]
@@ -805,6 +828,67 @@ class _Rows:
                 view["unaffordable_reason"] = None
                 view["activate_first"] = steps
                 return
+
+    # -- a cast payable once untapped artifacts improvise (CR 702.126a) ---------
+
+    def offer_improvise(self, action: Action, view: dict[str, Any]) -> None:
+        reason = view.get("unaffordable_reason") or ""
+        if (
+            view.get("affordable") != Affordability.UNKNOWN.value
+            or _IMPROVISE_NOT_EVALUATED not in reason
+            or action.keyword is not None
+            or action.alternative_cost is not None
+            or not action.mana_cost
+            or action.cost != action.mana_cost
+        ):
+            return
+        card = self._card(action.card_id)
+        if card is None or not has_improvise(card.card):
+            return
+        engine_reason = reason.replace(f"; {_IMPROVISE_NOT_EVALUATED}", "").replace(
+            _IMPROVISE_NOT_EVALUATED, ""
+        )
+        cost = ManaCost.parse(action.mana_cost)
+        if cost.x_count:
+            cost = cost.with_x(0)  # CR 107.3: the row is the cheapest announcement
+        artifacts = self._improvisers()
+        spend = ManaSpend.casting(card.card, zone=card.zone)
+        for count in range(min(cost.generic, len(artifacts)), 0, -1):
+            chosen = artifacts[:count]
+            tapped = {artifact.id for artifact in chosen}
+            plan = plan_mana_payment(
+                cost.minus(ManaCost.parse(f"{{{count}}}")),
+                [source for source in self.game.battlefield if source.id not in tapped],
+                game=self.game,
+                payer=self.player,
+                spend=spend,
+            )
+            if plan is not None:
+                view["affordable"] = Affordability.YES.value
+                view["unaffordable_reason"] = None
+                view["improvise"] = [str(artifact.id) for artifact in chosen]
+                return
+        view["affordable"] = Affordability.NO.value
+        view["unaffordable_reason"] = engine_reason or (
+            f"neither your mana sources nor your untapped artifacts can pay {cost}"
+        )
+
+    def _improvisers(self) -> list[CardState]:
+        """The artifacts CR 702.126a lets this player tap for improvise, by the
+        engine's own `ObjectOffer.why_not`, those that make no mana first - an
+        artifact with a mana ability could pay a coloured symbol instead."""
+        offer = improvise_offer()
+        eligible = [
+            permanent
+            for permanent in self.game.permanents_controlled_by(self.player)
+            if offer.why_not(permanent, self.player, self.game) is None
+        ]
+        return sorted(
+            eligible,
+            key=lambda permanent: any(
+                ability.mana is not None for ability in self.game.activated_abilities(permanent)
+            ),
+        )
 
     def _manual_boards(self) -> list[tuple[Game, list[dict[str, Any]]]]:
         if self._boards is None:

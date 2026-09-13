@@ -561,6 +561,13 @@ class CastRequest(BoardRead):
     delve: list[UUID] | None = None
     """Cards exiled from the payer's graveyard for delve (CR 702.66a), one
     per generic mana in the total cost."""
+    improvise: list[UUID] | None = None
+    """Untapped artifacts you control, tapped for improvise (CR 702.126a), one
+    per generic mana in the total cost. Like convoke and delve it is applied
+    after the total cost is determined (CR 702.126b), never as part of the
+    announcement - `object_costs.improvise.candidates` on `GET
+    .../affordances/{card_id}` lists the artifacts that qualify, and a cast
+    row names a set that pays in its own `improvise`."""
     alternative_cost: int | str | None = None
     """The CR 118.9 alternative cost this spell is announced under, as either
     its `index` in `GET .../affordances/{card_id}`'s `alternative_costs` list
@@ -2284,6 +2291,11 @@ class ActionRow(Action):
     """A modal cast row's modes the engine cannot read (CR 700.2a): chosen,
     each would resolve doing nothing, so a cast naming one is refused with
     the same `notice`."""
+    improvise: list[str] | None = None
+    """A cast row whose cost is payable once these untapped artifacts are
+    tapped for improvise (CR 702.126a) and the rest is paid from mana. Such a
+    row reads `affordable: yes`; pass these ids back as
+    `CastRequest.improvise`."""
 
 
 class ActionWithTargets(ActionRow):
@@ -2328,7 +2340,7 @@ class LegalActionsResponse(BaseModel):
 
     actions: list[ActionWithTargets | ActionRow | Action]
     """`ActionRow` is the same engine `Action` with the api's own additions
-    (`optional_costs`, `printed_produces`, `activate_first`), each present only
+    (`optional_costs`, `printed_produces`, `activate_first`, `improvise`), each present only
     on a row it applies to - so a row carrying none of them is exactly an
     engine `Action`, and `Action` stays a published name."""
 
@@ -2426,6 +2438,11 @@ class DelveCostView(BaseModel):
     candidates: list[ObjectCostCandidateView]
 
 
+class ImproviseCostView(BaseModel):
+    rule: str
+    candidates: list[ObjectCostCandidateView]
+
+
 class CrewCostView(BaseModel):
     rule: str
     number: int
@@ -2439,6 +2456,7 @@ class ObjectCostsView(BaseModel):
 
     convoke: ConvokeCostView | None = None
     delve: DelveCostView | None = None
+    improvise: ImproviseCostView | None = None
     crew: CrewCostView | None = None
 
 

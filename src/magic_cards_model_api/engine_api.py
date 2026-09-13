@@ -1052,9 +1052,9 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             # determined, since a variable (X) division needs `x_value`
             # already settled - `announce_division`'s own docstring says so.
             casting.announce_division(req.shares)
-        # CR 702.51b/702.66a: convoke and delve are neither additional nor
-        # alternative costs - they "apply only after the total cost ... is
-        # determined" - so they are spliced in exactly here, between
+        # CR 702.51b/702.66a/702.126b: convoke, delve and improvise are neither
+        # additional nor alternative costs - they "apply only after the total
+        # cost ... is determined" - so they are spliced in exactly here, between
         # `determine_cost` and the mana payment, and `payment.cost` still
         # reads as the spell's real total cost afterwards.
         apply_object_costs(game, casting.spell, payment, req)
@@ -1107,16 +1107,18 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
 
 
 def apply_object_costs(game: Game, spell: CardState, payment: Any, req: CastRequest) -> None:
-    """Offer convoke creatures and delve cards against an open payment.
+    """Offer convoke creatures, delve cards and improvise artifacts against an
+    open payment.
 
-    Both keywords pay part of an already-determined cost by spending objects
-    rather than mana - tapping an untapped creature you control (CR 702.51a),
-    exiling a card from your graveyard (CR 702.66a) - which is why they share
+    All three keywords pay part of an already-determined cost by spending
+    objects rather than mana - tapping an untapped creature you control (CR
+    702.51a), exiling a card from your graveyard (CR 702.66a), tapping an
+    untapped artifact you control (CR 702.126a) - which is why they share
     `machines/objects_as_costs.py` in the engine and share this one hook here.
     The objects are spent when the payment is paid, and given back if it is
     rewound (CR 733.1), so a refusal after this point leaves no trace.
     """
-    from magic_cards_model.machines.objects_as_costs import convoke, delve
+    from magic_cards_model.machines.objects_as_costs import convoke, delve, improvise
 
     for choice in req.convoke or []:
         creature = find_card(game, choice.card_id)
@@ -1124,6 +1126,8 @@ def apply_object_costs(game: Game, spell: CardState, payment: Any, req: CastRequ
         convoke(payment, spell, creature, color)
     if req.delve:
         delve(payment, spell, *[find_card(game, card_id) for card_id in req.delve])
+    if req.improvise:
+        improvise(payment, spell, *[find_card(game, card_id) for card_id in req.improvise])
 
 
 # -- crewing a Vehicle (CR 702.122) ----------------------------------------
