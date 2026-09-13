@@ -4,10 +4,11 @@ The driver holds no game state. It learns of a game when ai_seat.py hands it
 a dispatched seat, reads that seat's decklist from the game server, works out
 which guided deck it is, writes `current-game.md`, and pushes turn 0. When a
 turn finishes it asks the game server whether the game ended; if it did, it
-pushes exactly one reflection turn.
+pushes exactly one reflection turn, then the handover turn.
 
-One agent container plays exactly one match. Once the reflection turn is in,
-the driver sends `DELETE /v1/session` and forgets the assignment: the agent
+One agent container plays exactly one match. Once the handover is in (see
+`start_handover`), the driver sends `DELETE /v1/session` and forgets the
+assignment: the agent
 process exits, its restart policy brings up a fresh container with a fresh
 conversation, and the next game starts from the notes on disk rather than
 from a session that remembers the last one. The driver itself is not
@@ -20,6 +21,7 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Literal
@@ -28,11 +30,24 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from magic_cards_model_api.playscripts.report import script_run_table
+
 from .config import DriverSettings
 from .guides import DeckGuide, GuideLibrary, ScriptsRegistration, parse_decklist
+from .handover import (
+    HANDOVER_BUDGET_SECONDS,
+    MARKER_NAME,
+    NUDGE_AFTER_SECONDS,
+    POLL_SECONDS,
+    clear_marker,
+    conflict_warnings,
+    write_marker,
+)
 from .prompt import (
     Assignment,
     advisor_turn_zero,
+    handover_nudge,
+    handover_turn,
     plan_header,
     plan_path,
     reflection_turn,
@@ -80,6 +95,14 @@ class DispatchIn(BaseModel):
     Defaulted, so a dispatch body written before roles existed - and
     `k8s_seats`' own `DRIVER_ASSIGNMENT_JSON`, which writes the key only for
     a non-default role - reads back as a seat, unchanged."""
+
+
+class HandoverIn(BaseModel):
+    """`outcome` names how the seat's game ended for the handover turn. Left
+    empty, the driver reads the game: a winner or a draw if there is one,
+    otherwise `killed` - which is what the Job's preStop sends."""
+
+    outcome: str = ""
 
 
 class ReleaseIn(BaseModel):
@@ -138,17 +161,23 @@ class AgentUnavailable(RuntimeError):
     clear on its own - a container mid-restart, or one still draining a turn
     from its previous life."""
 
-    def __init__(self, detail: str, *, retryable: bool) -> None:
+    def __init__(self, detail: str, *, retryable: bool, status: int | None = None) -> None:
         super().__init__(detail)
         self.retryable = retryable
+        #: The agent's HTTP status, or None when nothing answered.
+        self.status = status
 
 
 def build_app(
     settings: DriverSettings,
     *,
     client_factory: Callable[[str], httpx.Client] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> FastAPI:
+    """`clock` is the monotonic clock the handover's nudge and budget read."""
     app = FastAPI(title="mtg-agent-driver")
+    now = clock or time.monotonic
+    marker_path = settings.workspace / MARKER_NAME
     # False for the whole life of a compose-style driver that just sits and
     # takes dispatches; a per-game Job container flips this in `retire` once
     # `exit_after_match` says the container's one match is over, and
@@ -172,6 +201,12 @@ def build_app(
         # is still running is an agent that gave up, not a healthy idle.
         "turnActive": False,
         "lastError": None,
+        # How the game ended, kept from the reflection push for the handover.
+        "outcome": None,
+        # The running handover for this assignment (`start_handover`), and the
+        # latest one this driver ran, which a preStop after retirement joins.
+        "handover": None,
+        "lastHandover": None,
     }
 
     def clear_locked() -> None:
@@ -182,6 +217,8 @@ def build_app(
             reflected=False,
             pending=False,
             turnActive=False,
+            outcome=None,
+            handover=None,
         )
 
     def seed_plan_file(assignment: Assignment) -> None:
@@ -224,6 +261,7 @@ def build_app(
             raise AgentUnavailable(
                 f"the agent answered {response.status_code}",
                 retryable=response.status_code in BOOTING_STATUSES,
+                status=response.status_code,
             )
         turn_id = response.json()["turnId"]
         # Named seat and game, because the compose log interleaves three
@@ -385,6 +423,201 @@ def build_app(
             log.info("match over, exiting")
         log.info("match %s retired, agent stopped=%s", assignment.game_id, stopped)
         return stopped
+
+    def ended_outcome(assignment: Assignment) -> str | None:
+        """How the game ended, when it has; None while it runs or when the
+        game server does not answer."""
+        try:
+            state = game_state(assignment.game_id, assignment.uid)
+        except httpx.HTTPError as exc:
+            log.warning("could not read game %s for the handover: %s", assignment.game_id, exc)
+            return None
+        winner = state.get("winner")
+        if winner:
+            return f"{winner} won"
+        return "the game was a draw" if state.get("drawn") else None
+
+    def script_runs(assignment: Assignment) -> str:
+        """`script_run_table` for this game and seat, from the log the dispatched
+        uid reads (an advisor uid resolves to its human, so a buddy reads the
+        same rows). Read as the handover starts: a lobby that released the seat
+        deletes the game right after."""
+        try:
+            with make_client(settings.game_api) as client:
+                response = client.get(
+                    f"/api/games/{assignment.game_id}/log", params={"uid": assignment.uid}
+                )
+            if response.status_code >= 400:
+                return f"no script run table: the game server answered {response.status_code}"
+            rows = response.json().get("log") or []
+        except Exception as exc:  # noqa: BLE001 - a missing table never stops a handover
+            return f"no script run table: the game server did not answer ({exc})"
+        return script_run_table(rows, assignment.game_id, assignment.player)
+
+    def wrapper_post(path: str, body: dict | None = None) -> bool:
+        """POST a best-effort control message to the wrapper; False if it failed."""
+        try:
+            with make_client(settings.wrapper_api) as client:
+                response = client.post(path, json=body, headers=wrapper_headers())
+        except Exception as exc:  # noqa: BLE001 - a control message never fails a handover
+            log.warning("could not reach the agent at %s: %s", path, exc)
+            return False
+        if response.status_code >= 400:
+            log.warning("the agent refused %s: %s", path, response.status_code)
+            return False
+        return True
+
+    def push_handover(text: str, started: float) -> str | None:
+        """Push the handover turn, or None when the budget ran out first. Only a
+        409 - the interrupted turn still draining - is waited out: an agent that
+        is gone or refuses cannot hand anything over, so that is raised."""
+        while True:
+            try:
+                return push_turn(text)
+            except AgentUnavailable as exc:
+                if exc.status != 409:
+                    raise
+            if now() - started >= HANDOVER_BUDGET_SECONDS:
+                return None
+            time.sleep(POLL_SECONDS)
+
+    def await_handover_turn(assignment: Assignment, handover: dict, started: float) -> str:
+        """`done` once the turn's `/turn-done` lands, `timeout` at the budget.
+        One "push now" nudge goes out at `NUDGE_AFTER_SECONDS`, through
+        `/v1/probe`, the one wrapper route that writes into a busy turn."""
+        nudged = False
+        while not handover["done"].wait(POLL_SECONDS):
+            elapsed = now() - started
+            if elapsed >= HANDOVER_BUDGET_SECONDS:
+                return "timeout"
+            if elapsed >= NUDGE_AFTER_SECONDS and not nudged:
+                nudged = True
+                with lock:
+                    handover["status"]["nudged"] = True
+                wrapper_post("/v1/probe", {"text": handover_nudge(assignment)})
+        return "done"
+
+    def run_handover(
+        assignment: Assignment,
+        handover: dict,
+        prepared: str | Exception,
+        interrupt: bool,
+        started: float,
+    ) -> None:
+        """The handover's background half: interrupt, push, wait, then write the
+        marker whatever happened, and only then retire."""
+        state, error = "failed", None
+        try:
+            if isinstance(prepared, Exception):
+                raise prepared
+            if interrupt:
+                interrupted = wrapper_post("/v1/interrupt")
+                with lock:
+                    handover["status"]["interrupted"] = interrupted
+            turn_id = push_handover(prepared, started)
+            if turn_id is None:
+                state = "timeout"
+            else:
+                with lock:
+                    handover["turnId"] = turn_id
+                    handover["status"]["turnId"] = turn_id
+                    if turn_id in handover["finished"]:
+                        handover["done"].set()
+                    if current["assignment"] is assignment:
+                        current.update(lastTurnId=turn_id, turnActive=not handover["done"].is_set())
+                state = await_handover_turn(assignment, handover, started)
+        except Exception as exc:  # noqa: BLE001 - every failure still writes the marker
+            state, error = "failed", str(exc)
+            log.error("handover for game %s failed: %s", assignment.game_id, exc)
+        with lock:
+            handover["status"].update(state=state, error=error)
+            status = dict(handover["status"])
+        try:
+            write_marker(marker_path, status)
+        except OSError as exc:
+            log.error("could not write the handover marker %s: %s", marker_path, exc)
+        log.info("handover %s for game %s: %s", status["handoverId"], assignment.game_id, state)
+        with lock:
+            ours = current["assignment"] is assignment
+        if ours:
+            retire(assignment)
+
+    def start_handover(outcome: str = "") -> dict[str, Any]:
+        """Start this assignment's handover, or join the one already started.
+
+        The first call claims it under the lock, so concurrent callers - the
+        release, a natural end, the Job's preStop - all get the same
+        `handoverId` and exactly one handover turn is pushed; a later call
+        gets its current status. The outcome, the run table and the conflict
+        warnings are read here, before the answer; the turn itself runs in the
+        background (`run_handover`), bounded by `HANDOVER_BUDGET_SECONDS`.
+
+        With nothing assigned there is nothing to hand over: the latest
+        handover's status is answered if there was one, otherwise an `idle`
+        status is written as the marker at once, so a waiting preStop returns.
+        """
+        with lock:
+            active = current["handover"]
+            if active is not None:
+                return dict(active["status"])
+            assignment = current["assignment"]
+            if assignment is None and current["lastHandover"] is not None:
+                return dict(current["lastHandover"]["status"])
+            started = now()
+            handover: dict[str, Any] = {
+                "status": {
+                    "handoverId": uuid.uuid4().hex,
+                    "state": "starting" if assignment is not None else "idle",
+                    "outcome": outcome or None,
+                    "gameId": assignment.game_id if assignment is not None else None,
+                    "player": assignment.player if assignment is not None else None,
+                    "role": assignment.role if assignment is not None else None,
+                    "turnId": None,
+                    "interrupted": False,
+                    "nudged": False,
+                    "error": None,
+                    "marker": str(marker_path),
+                },
+                "done": threading.Event(),
+                "turnId": None,
+                # Turns that finished before the handover turn's id was known.
+                "finished": set(),
+            }
+            current["lastHandover"] = handover
+            if assignment is not None:
+                current["handover"] = handover
+            interrupt = bool(current["turnActive"])
+            status = dict(handover["status"])
+        if assignment is None:
+            try:
+                write_marker(marker_path, status)
+            except OSError as exc:
+                log.error("could not write the handover marker %s: %s", marker_path, exc)
+            return status
+
+        clear_marker(marker_path)
+        prepared: str | Exception
+        try:
+            resolved = outcome or ended_outcome(assignment) or "killed"
+            with lock:
+                handover["status"].update(outcome=resolved, state="running")
+            prepared = handover_turn(
+                assignment,
+                resolved,
+                script_runs(assignment),
+                conflict_warnings(assignment.scripts, assignment.deck_slug),
+            )
+        except Exception as exc:  # noqa: BLE001 - the background half records it
+            prepared = exc
+        log.info("handing over game %s (%s)", assignment.game_id, assignment.player)
+        threading.Thread(
+            target=run_handover,
+            args=(assignment, handover, prepared, interrupt, started),
+            daemon=True,
+            name="driver-handover",
+        ).start()
+        with lock:
+            return dict(handover["status"])
 
     def push_turn_when_reachable(assignment: Assignment, text: str) -> None:
         """Keep offering turn 0 to an agent that is restarting.
@@ -619,6 +852,9 @@ def build_app(
                 pending=True,
                 turnActive=False,
                 lastError=None,
+                outcome=None,
+                handover=None,
+                lastHandover=None,
             )
 
         sync_agent_settings(body.agent)
@@ -706,26 +942,43 @@ def build_app(
     @app.post("/turn-done", status_code=202)
     def turn_done(record: dict) -> dict:
         log_turn_result(record)
+        finished = record.get("turnId")
         with lock:
-            # The turn the agent just finished is no longer in flight. Set
-            # before anything else here, so a reflection push below can turn
-            # it back on and a game that is still running reports the truth:
-            # nothing is playing this seat at the moment.
-            current["turnActive"] = False
             assignment = current["assignment"]
             reflected = current["reflected"]
             reflection_id = current["reflectionTurnId"]
+            active = current["handover"]
+            if active is None:
+                # The turn the agent just finished is no longer in flight. Set
+                # before anything else here, so a reflection push below can
+                # turn it back on and a game that is still running reports the
+                # truth: nothing is playing this seat at the moment.
+                current["turnActive"] = False
+            elif active["turnId"] is not None and finished == active["turnId"]:
+                current["turnActive"] = False
+                active["done"].set()
+            elif active["turnId"] is None and finished:
+                active["finished"].add(finished)
+            handing_over = dict(active["status"]) if active is not None else None
         if assignment is None:
             return {"ignored": "no assignment"}
-        if reflection_id is not None and record.get("turnId") == reflection_id:
+        if handing_over is not None:
+            # Every turn ending during a handover - the interrupted one, the
+            # reflection, the handover turn itself - belongs to it.
+            return {"handover": handing_over}
+        if reflection_id is not None and finished == reflection_id:
             # The notes are written, on disk, in this container only. Post
             # what the agent said while writing them into the game's own
-            # ledger before it is too late to say anything at all - then
-            # stop the agent, forget the game, and let the restart policy
-            # give the next dispatch a container with no memory of this one.
+            # ledger, then hand over; the handover retires the agent once its
+            # marker is written.
             post_reflection(assignment, str(record.get("finalText") or ""))
-            stopped = retire(assignment)
-            return {"retired": True, "gameId": assignment.game_id, "agentStopped": stopped}
+            with lock:
+                ended = current["outcome"] or ""
+            return {
+                "handover": start_handover(ended),
+                "gameId": assignment.game_id,
+                "reflected": True,
+            }
         if reflected:
             return {"ignored": "already reflected"}
 
@@ -751,7 +1004,9 @@ def build_app(
             retire(assignment)
             return {"retired": True, "gameId": assignment.game_id, "reflected": False}
         with lock:
-            current.update(reflected=True, reflectionTurnId=turn_id, turnActive=True)
+            current.update(
+                reflected=True, reflectionTurnId=turn_id, turnActive=True, outcome=outcome
+            )
         log.info("game %s over (%s), reflection turn %s", assignment.game_id, outcome, turn_id)
         return {"reflectionTurnId": turn_id, "outcome": outcome}
 
@@ -765,14 +1020,14 @@ def build_app(
         second game had no opponent at all until the container was restarted
         by hand.
 
-        It runs the same `retire` the end of a match runs - the assignment is
-        dropped and the agent's session ends, so the next dispatch starts on a
-        fresh conversation instead of one full of the abandoned game. Nothing
-        under `MEMORY_ROOT` is touched: what the continuous agent learned is
-        on a mounted volume that neither this endpoint nor `retire` writes to,
-        and it is still there for the next match. The one thing lost is the
-        reflection turn, because the game was abandoned rather than played to
-        an outcome - said here, in the log, rather than left to be inferred.
+        It does not end the agent's session itself. It starts the handover
+        with outcome `released` (`start_handover`), which interrupts the turn
+        in flight and has the agent land what it learned; once the marker is
+        written, the handover runs the same `retire` the end of a match runs.
+        The answer is immediate and the handover runs behind it, bounded by
+        `HANDOVER_BUDGET_SECONDS`. Nothing under `MEMORY_ROOT` is touched. The
+        one thing skipped is the reflection turn, because the game was
+        abandoned rather than played to an outcome.
         """
         with lock:
             assignment = current["assignment"]
@@ -792,19 +1047,23 @@ def build_app(
                 detail=f"this agent is playing game {assignment.game_id}, not {body.game_id}",
             )
         log.info(
-            "releasing game %s (%s) without a reflection turn: %s",
+            "releasing game %s (%s) without a reflection turn, handing over first: %s",
             assignment.game_id,
             assignment.player,
             body.reason or "no reason given",
         )
-        stopped = retire(assignment)
         return {
             "released": True,
             "gameId": assignment.game_id,
             "player": assignment.player,
-            "agentStopped": stopped,
+            "handover": start_handover("released"),
             "reflected": False,
         }
+
+    @app.post("/handover", status_code=202)
+    def handover_route(body: HandoverIn) -> dict:
+        """Start the handover, or join the one running; see `start_handover`."""
+        return start_handover(body.outcome)
 
     def agent_activity() -> dict[str, Any] | None:
         """What the agent is doing right now, read off the wrapper.

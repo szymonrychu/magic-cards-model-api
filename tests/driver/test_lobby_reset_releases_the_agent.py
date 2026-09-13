@@ -26,6 +26,7 @@ exactly as it found it.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import httpx
@@ -37,6 +38,8 @@ from magic_cards_model_api import ai_seat
 from magic_cards_model_api.main import app as game_app
 from mtg_agent.driver.app import build_app
 from mtg_agent.driver.config import DriverSettings
+from mtg_agent.driver.prompt import HANDOVER_OPENING
+from tests.driver.test_app import wait_for
 
 LEGAL_DECK = "52 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
 LEGAL_DECK_B = "52 Forest\n4 Grizzly Bears\n4 Lightning Bolt"
@@ -60,7 +63,13 @@ def world(tmp_path, monkeypatch):
     @agent.post("/v1/messages", status_code=202)
     def post_message(body: dict) -> dict:
         agent_state["turns"].append(body)
-        return {"turnId": f"turn-{len(agent_state['turns'])}"}
+        turn_id = f"turn-{len(agent_state['turns'])}"
+        if body["text"].startswith(HANDOVER_OPENING):
+            # The release hands over before it retires: this agent finishes
+            # its handover turn at once, over the callback a real wrapper uses.
+            done = {"turnId": turn_id, "state": "complete", "finalText": "handed over"}
+            threading.Timer(0.05, lambda: driver_client.post("/turn-done", json=done)).start()
+        return {"turnId": turn_id}
 
     @agent.delete("/v1/session", status_code=202)
     def delete_session() -> dict:
@@ -144,8 +153,8 @@ def test_the_next_games_seat_reaches_the_agent_after_end_game(world) -> None:
     assert driver_client.get("/status").json()["gameId"] == first["game_id"]
 
     end(game_client, first)
-    # The driver let go of the old game as part of the release.
-    assert driver_client.get("/status").json()["gameId"] is None
+    # The driver lets go of the old game once the release's handover is in.
+    wait_for(lambda: driver_client.get("/status").json()["gameId"] is None)
     assert agent_state["deleted"] == 1
 
     second = boot(game_client, seed=2)
