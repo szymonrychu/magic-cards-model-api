@@ -1305,4 +1305,545 @@ def test_the_exit_vocabulary_is_closed() -> None:
         "already_ran",
         "advised",
         "needs_input",
+        "invalid_input",
     ]
+
+
+# -- cast.cost ------------------------------------------------------------------
+
+
+def one_move_script(script_id: str, move: dict[str, Any]) -> dict[str, Any]:
+    return land_script(script_id, true=[], moves=[move])
+
+
+def test_a_cast_cost_is_announced_as_the_alternative_cost_and_the_engine_casts_for_it(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Overlord of the Mistmoors costs {5}{W}{W}; four Plains only pay its
+    impending {2}{W}{W} (CR 702.176a), so a cast that lands paid for impending."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "impend",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Creature"]}},
+            "cost": "impending",
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Overlord of the Mistmoors", "alice", "hand")
+    for _ in range(4):
+        add_card(client, board, "Plains", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="impend", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["alternative_cost"] == "impending"
+    [overlord] = cards_named(state(client, board)["battlefield"], "Overlord of the Mistmoors")
+    assert overlord["counters"] == {"time": 4}, "entered with impending's time counters"
+    assert finished(board)[0]["exit"] == "chain_complete"
+
+
+def test_a_cast_cost_the_card_does_not_offer_is_refused_with_the_engines_text(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "bolt-flashback",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "cost": "flashback",
+            "targets": [{"player": "opponent"}],
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Lightning Bolt", "alice", "hand")
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="bolt-flashback", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    out = result.script_exit
+    assert out.exit is Exit.REFUSED, result.to_dict()
+    assert out.refusal_source == "server"
+    assert "alternative cost for Lightning Bolt" in out.refusal
+    [body] = hook.posts("/actions/cast")
+    assert body["alternative_cost"] == "flashback"
+    assert finished(board)[0]["refusal_text"] == out.refusal
+
+
+def test_a_printed_cost_is_announced_by_the_cards_own_name(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`printed` is the card's own CR 118.9 cost, which the engine names by the
+    spell's name; Force of Negation's pitch is refused on its caster's own turn
+    in the engine's words."""
+    alice = seat_uid(board, "alice")
+    script = one_move_script(
+        "pitch",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "cost": "printed",
+        },
+    )
+    register(client, board, alice, script)
+    add_card(client, board, "Force of Negation", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(seat, script_id="pitch", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert result.script_exit.refusal_source == "server"
+    [body] = hook.posts("/actions/cast")
+    assert body["alternative_cost"] == "Force of Negation"
+
+
+# -- targets --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("player", "hit", "cost"), [("opponent", "bob", "normal"), ("me", "alice", None)]
+)
+def test_a_player_target_is_sent_as_that_players_name(
+    client: TestClient,
+    board: str,
+    monkeypatch: pytest.MonkeyPatch,
+    player: str,
+    hit: str,
+    cost: str | None,
+) -> None:
+    alice = seat_uid(board, "alice")
+    move: dict[str, Any] = {
+        "kind": "cast",
+        "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+        "targets": [{"player": player}],
+    }
+    if cost is not None:
+        move["cost"] = cost
+    register(client, board, alice, one_move_script("bolt", move))
+    add_card(client, board, "Lightning Bolt", "alice", "hand")
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="bolt", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/cast")
+    assert body["targets"] == [hit]
+    assert "alternative_cost" not in body, "normal (or no cost) casts for the mana cost"
+    after = state(client, board)
+    assert next(p for p in after["players"] if p["username"] == hit)["life"] == 17
+
+
+def bolt_a_creature(client: TestClient, board: str) -> dict[str, Any]:
+    script = one_move_script(
+        "bolt-creature",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "targets": [{"select": {"types_all": ["Creature"]}, "side": "opponent"}],
+        },
+    )
+    register(client, board, seat_uid(board, "alice"), script)
+    add_card(client, board, "Lightning Bolt", "alice", "hand")
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    return script
+
+
+def test_a_card_target_matching_nothing_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bolt_a_creature(client, board)
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    result = run_script(
+        seat, script_id="bolt-creature", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert "target 1" in result.script_exit.stop_reason
+    assert hook.posts("/actions/cast") == []
+
+
+def test_different_card_targets_tied_exit_ambiguous(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bolt_a_creature(client, board)
+    add_card(client, board, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, board, "Savannah Lions", "bob", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    result = run_script(
+        seat, script_id="bolt-creature", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.AMBIGUOUS, result.to_dict()
+    assert result.script_exit.ambiguous_names == ["Grizzly Bears", "Savannah Lions"]
+    assert hook.posts("/actions/cast") == []
+
+
+# -- activate: targets and sacrifice ---------------------------------------------
+
+
+def bombard(target: dict[str, Any], sacrifice: Any) -> dict[str, Any]:
+    move: dict[str, Any] = {
+        "kind": "activate",
+        "source": {"zone": "battlefield", "select": {"types_all": ["Enchantment"]}},
+        "ability_text_has": "Sacrifice a creature",
+        "targets": [target],
+    }
+    if sacrifice is not None:
+        move["sacrifice"] = sacrifice
+    return one_move_script("bombard", move)
+
+
+def test_an_activation_sacrifices_by_selector_and_targets_a_player(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        bombard({"player": "opponent"}, {"select": {"types_all": ["Creature"]}}),
+    )
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    bears = cards_named(state(client, board)["battlefield"], "Grizzly Bears")[0]
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["sacrificing"] == [bears["id"]] and body["targets"] == ["bob"]
+    after = state(client, board)
+    assert cards_named(after["graveyards"]["alice"], "Grizzly Bears")
+    assert next(p for p in after["players"] if p["username"] == "bob")["life"] == 19
+
+
+def test_an_activation_targets_a_card_by_selector_and_side(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        bombard(
+            {"select": {"types_all": ["Creature"]}, "side": "opponent"},
+            {"select": {"types_all": ["Creature"]}},
+        ),
+    )
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, board, "Savannah Lions", "bob", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    lions = cards_named(state(client, board)["battlefield"], "Savannah Lions")[0]
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["targets"] == [lions["id"]]
+    assert cards_named(state(client, board)["graveyards"]["bob"], "Savannah Lions")
+
+
+def test_sacrifice_none_names_nothing_and_the_engine_refuses_the_cost(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, bombard({"player": "opponent"}, "none"))
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.REFUSED, result.to_dict()
+    assert "sacrifice needs 1 card(s) chosen, 0 given" in result.script_exit.refusal
+    [body] = hook.posts("/actions/activate")
+    assert "sacrificing" not in body
+
+
+def test_a_sacrifice_choice_matching_nothing_exits_unforeseen(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(
+        client,
+        board,
+        alice,
+        bombard({"player": "opponent"}, {"select": {"types_all": ["Creature"]}}),
+    )
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "bob", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert "sacrifice" in result.script_exit.stop_reason
+    assert hook.posts("/actions/activate") == []
+
+
+def test_a_sacrifice_choice_tied_between_different_cards_exits_ambiguous_unless_preferred(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    choice: dict[str, Any] = {"select": {"types_all": ["Creature"]}}
+    register(client, board, alice, bombard({"player": "opponent"}, choice))
+    add_card(client, board, "Goblin Bombardment", "alice", "battlefield")
+    add_card(client, board, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, board, "Savannah Lions", "alice", "battlefield")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    tied = run_script(seat, script_id="bombard", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert tied.script_exit.exit is Exit.AMBIGUOUS, tied.to_dict()
+    assert tied.script_exit.ambiguous_names == ["Grizzly Bears", "Savannah Lions"]
+    assert hook.posts("/actions/activate") == []
+
+    store.get(board).turn.turn_number += 1
+    preferred = {**choice, "prefer": [{"toughness": {"op": "<=", "n": 1}}]}
+    register(client, board, alice, bombard({"player": "opponent"}, preferred))
+    seat, hook = hooked_seat(seats, alice)
+    with opponent_passes(board):
+        chosen = run_script(seat, script_id="bombard", reasoning=REASONING, corpora={})
+    assert chosen.script_exit.exit is Exit.CHAIN_COMPLETE, chosen.to_dict()
+    lions = cards_named(state(client, board)["graveyards"]["alice"], "Savannah Lions")
+    assert lions and hook.posts("/actions/activate")[0]["sacrificing"] == [lions[0]["id"]]
+
+
+def test_the_fetch_sacrifices_its_own_source(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, fetch_shock())
+    strand_board(client, board)
+    strand = cards_named(state(client, board)["battlefield"], "Flooded Strand")[0]
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=FETCH_SHOCK["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    [body] = hook.posts("/actions/activate")
+    assert body["sacrificing"] == [strand["id"]]
+
+
+@pytest.mark.parametrize(
+    ("cost", "count"),
+    [
+        ("Sacrifice a creature", 1),
+        ("{T}, Sacrifice another creature", 1),
+        ("{2}, Sacrifice two artifacts", 2),
+        ("Sacrifice three lands", 3),
+        ("{1}, {T}", 1),
+    ],
+)
+def test_a_sacrifice_count_left_out_is_the_costs_own_number(cost: str, count: int) -> None:
+    assert runtime.sacrifice_count({"cost": cost}) == count
+
+
+# -- pay-amount answers ----------------------------------------------------------
+
+
+def discharge_script(amount: Any) -> dict[str, Any]:
+    return one_move_script(
+        "discharge",
+        {
+            "kind": "cast",
+            "card": {"zone": "hand", "select": {"types_all": ["Instant"]}},
+            "targets": [{"select": {"types_all": ["Creature"]}, "side": "opponent"}],
+            "answers": [{"decision": "pay_energy_amount", "amount": amount}],
+        },
+    )
+
+
+def discharge_board(client: TestClient, board: str, amount: Any) -> None:
+    register(client, board, seat_uid(board, "alice"), discharge_script(amount))
+    add_card(client, board, "Mountain", "alice", "battlefield")
+    add_card(client, board, "Galvanic Discharge", "alice", "hand")
+    add_card(client, board, "Grizzly Bears", "bob", "battlefield")
+
+
+@pytest.mark.parametrize(("amount", "paid"), [(1, 1), ("max", 3)])
+def test_an_amount_answer_is_posted_on_the_decisions_answer_field(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, amount: Any, paid: int
+) -> None:
+    discharge_board(client, board, amount)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="discharge", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    # The opponent's pass can move the board between the runner's read and its
+    # post, so a stale refusal and `run_action`'s one retry may add a post.
+    answers = hook.posts("/decide")
+    assert answers and all(body["energy_amount"] == paid for body in answers), answers
+    assert all(isinstance(body["generation"], int) for body in answers)
+    [accepted] = [row["detail"] for row in rows(board, "decide") if row["detail"]["allowed"]]
+    assert accepted["kind"] == "pay_energy_amount" and accepted["energy_amount"] == paid
+    after = state(client, board)
+    alice = next(p for p in after["players"] if p["username"] == "alice")
+    assert alice["counters"].get("energy", 0) == 3 - paid, "a spent-out counter is left out"
+    bears = cards_named(after["battlefield"], "Grizzly Bears")
+    if paid >= 2:
+        assert not bears, "three damage killed the Bears"
+    else:
+        assert bears[0]["damage"] == paid
+
+
+def test_an_amount_the_engine_refuses_exits_refused(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    discharge_board(client, board, 9)
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id="discharge", reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    out = result.script_exit
+    assert out.exit is Exit.REFUSED, result.to_dict()
+    assert out.refusal_source == "server" and out.refusal
+    assert {body["energy_amount"] for body in hook.posts("/decide")} == {9}
+    refusals = [
+        row["detail"]
+        for row in rows(board, "decide")
+        if row["detail"]["allowed"] is False and not row["detail"].get("stale")
+    ]
+    assert [refusal["reason"] for refusal in refusals] == [out.refusal]
+    assert finished(board)[0]["refusal_text"] == out.refusal
+    client.post(
+        f"/api/games/{board}/decide",
+        params={"uid": seat_uid(board, "alice")},
+        json={"player": "alice", "energy_amount": 0},
+    )
+
+
+# -- invalid inputs --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("inputs", "declared", "name", "value"),
+    [
+        ({"prefer_tmepo": True}, [PREFERENCE], "prefer_tmepo", True),
+        (
+            {"threat": "burn"},
+            [{"name": "threat", "type": "enum", "values": ["tempo", "combo"], "description": "x"}],
+            "threat",
+            "burn",
+        ),
+        (
+            {"turns_left": 9},
+            [{"name": "turns_left", "type": "int", "min": 0, "max": 5, "description": "x"}],
+            "turns_left",
+            9,
+        ),
+    ],
+)
+def test_an_invalid_input_exits_invalid_input_naming_it(
+    client: TestClient,
+    board: str,
+    monkeypatch: pytest.MonkeyPatch,
+    inputs: dict[str, Any],
+    declared: list[dict[str, Any]],
+    name: str,
+    value: Any,
+) -> None:
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat,
+        script_id="drop",
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        inputs={"opposing_archetype": "dimir-frog", **inputs},
+        declared_inputs=declared,
+    )
+
+    out = result.script_exit
+    assert out.exit is Exit.INVALID_INPUT, result.to_dict()
+    assert out.invalid_input["name"] == name and out.invalid_input["value"] == value
+    assert out.invalid_input["reason"]
+    assert out.failing_condition is None
+    assert hook.posts("/actions/play-land") == []
+    [finish] = finished(board)
+    assert finish["exit"] == "invalid_input"
+    assert name in finish["stop_reason"] and repr(value) in finish["stop_reason"]
+
+
+def test_an_invalid_input_met_by_a_next_play_after_a_resume_exits_invalid_input(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run skips its own conditions (its moves already started), so
+    the first evaluation of the new inputs is the `next` play's."""
+    script = fetch_shock(next=["drop"])
+    alice = seat_uid(board, "alice")
+    seats, token = capped_fetch(client, board, monkeypatch, script)
+    register(client, board, alice, script, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seat, _ = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat,
+            script_id=script["id"],
+            reasoning=REASONING,
+            corpora=seats.script_corpora,
+            inputs={"bogus": 1},
+            resume=token,
+        )
+
+    assert result.script_exit.exit is Exit.INVALID_INPUT, result.to_dict()
+    assert result.script_exit.invalid_input["name"] == "bogus"
+    assert finished(board)[-1]["exit"] == "invalid_input"

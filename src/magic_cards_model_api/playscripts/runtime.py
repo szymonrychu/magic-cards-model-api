@@ -18,7 +18,8 @@ One run, in order (D1 steps 1-7):
    `pass_until` there with every stop toggle forced on, and exit `unforeseen`
    with the stop reason on any stop short of it;
 4. evaluate `true`/`false` over the redacted view (`include=contents` only
-   when a condition needs it) and exit `not_applicable` or `needs_input`;
+   when a condition needs it) and exit `not_applicable`, `needs_input`, or
+   `invalid_input` for a supplied input the catalog refuses;
 5. make each move: build the request from the state view with the
    selectors, send it through `run_action` holding priority (so
    `expected_seq` is re-armed per move, never one watermark for the chain),
@@ -48,6 +49,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -56,6 +58,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from ..decisions import TOOL_FIELD_FOR_KIND
 from ..seatkit import (
     AUTOPASS_STEPS,
     MAX_WAIT_SECONDS,
@@ -70,8 +73,15 @@ from ..seatkit import (
 )
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
-from .schema import WILDCARD, Play
+from .schema import AMOUNT_DECISION_KINDS, WILDCARD, Play
 from .selectors import matches
+
+#: The tool parameter each decision kind is answered on, by kind value - the
+#: fallback for a pending decision that does not name its `answer_field`.
+ANSWER_FIELDS = {kind.value: name for kind, name in TOOL_FIELD_FOR_KIND.items()}
+#: How many permanents an activation cost's "Sacrifice <n> ..." piece names.
+SACRIFICE_NUMBER = re.compile(r"\bsacrifice (an?|another|one|two|three|four|five|\d+)\b", re.I)
+NUMBER_WORDS = {"a": 1, "an": 1, "another": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 MAX_SCRIPTS_PER_RUN = 3
 MAX_MOVES_PER_RUN = 6
@@ -116,6 +126,7 @@ class Exit(StrEnum):
     ALREADY_RAN = "already_ran"
     ADVISED = "advised"
     NEEDS_INPUT = "needs_input"
+    INVALID_INPUT = "invalid_input"
 
 
 @dataclass
@@ -130,6 +141,7 @@ class ScriptExit:
     moves_total: int = 0
     failing_condition: dict[str, Any] | None = None
     needs_input: str | None = None
+    invalid_input: dict[str, Any] | None = None
     stop_reason: str | None = None
     refusal: str | None = None
     refusal_source: Literal["server", "runner"] | None = None
@@ -511,7 +523,7 @@ def _next(ctx: _Context, run: _Run, play: dict[str, Any]) -> RunResult:
         if not _in_when(state, candidate["when"], ctx.me):
             continue
         result = _evaluate(ctx, candidate, state)
-        if result["needs_input"] is not None:
+        if result["needs_input"] is not None or result["invalid_input"] is not None:
             return _end(ctx, run, play, _condition_exit(result))
         if result["applies"]:
             applicable.append((next_id, candidate, script_sha(raw)))
@@ -784,49 +796,103 @@ def _activate_request(
     candidates = [
         card
         for card in _zone_cards(state, move["source"]["zone"], me)
-        if _ability_index(card, phrase) is not None
+        if _ability(card, phrase) is not None
     ]
     chosen = _pick(candidates, move["source"]["select"], "the source to activate")
     if isinstance(chosen, ScriptExit):
         return chosen
     source = chosen[0]
+    ability = _ability(source, phrase) or {}
     body: dict[str, Any] = {
         "player": me,
         "card_id": source["id"],
-        "ability_index": _ability_index(source, phrase),
+        "ability_index": ability.get("index"),
         "reasoning": reasoning,
     }
+    targets = _targets(move, state, me)
+    if isinstance(targets, ScriptExit):
+        return targets
+    if targets:
+        body["targets"] = targets
+    sacrifice = move.get("sacrifice")
+    if sacrifice == "source":
+        body["sacrificing"] = [source["id"]]
+    elif isinstance(sacrifice, dict):
+        sacrificed = _pick(
+            _zone_cards(state, "battlefield", me),
+            sacrifice["select"],
+            "the permanent to sacrifice",
+            sacrifice.get("prefer"),
+            sacrifice.get("count") or sacrifice_count(ability),
+        )
+        if isinstance(sacrificed, ScriptExit):
+            return sacrificed
+        body["sacrificing"] = [card["id"] for card in sacrificed]
     sources = [card_id for card_id in untapped_mana_sources(state, me) if card_id != source["id"]]
     if sources:
         body["mana_sources"] = sources
     return "actions/activate", body
 
 
+def sacrifice_count(ability: dict[str, Any]) -> int:
+    """How many permanents the ability's cost sacrifices: the number its
+    "Sacrifice <n> ..." piece names, one for `a`/`another` or no such piece."""
+    found = SACRIFICE_NUMBER.search(str(ability.get("cost") or ""))
+    if found is None:
+        return 1
+    word = found.group(1).lower()
+    return int(word) if word.isdigit() else NUMBER_WORDS[word]
+
+
+def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] | ScriptExit:
+    """The route's `targets` for a move, in order: a card target is the id
+    its selector picks on its side of the battlefield and stack, a player
+    target that player's name. Both use `_pick`'s rules."""
+    chosen = []
+    for index, target in enumerate(move.get("targets") or []):
+        if "player" in target:
+            names = [str(player.get("username")) for player in state.get("players") or []]
+            pool = [
+                {"id": name, "name": name} for name in names if _on_side(name, target["player"], me)
+            ]
+            select: dict[str, Any] = {}
+        else:
+            pool = [
+                card
+                for card in [*(state.get("battlefield") or []), *(state.get("stack") or [])]
+                if _on_side(card.get("controller"), target["side"], me)
+            ]
+            select = target["select"]
+        picked = _pick(pool, select, f"target {index + 1}")
+        if isinstance(picked, ScriptExit):
+            return picked
+        chosen.append(picked[0]["id"])
+    return chosen
+
+
 def cast_body(
     move: dict[str, Any], state: dict[str, Any], me: str, reasoning: str
 ) -> dict[str, Any] | ScriptExit:
-    """`POST .../actions/cast`'s body for a `cast` move, read off the view."""
+    """`POST .../actions/cast`'s body for a `cast` move, read off the view.
+    A `cost` other than `normal` is the alternative cost it is announced
+    under: the keyword, or for `printed` the card's name, which is how the
+    engine names a card's own CR 118.9 cost."""
     zone = move["card"]["zone"]
     chosen = _pick(_zone_cards(state, zone, me), move["card"]["select"], "the card to cast")
     if isinstance(chosen, ScriptExit):
         return chosen
-    targets = []
-    for index, target in enumerate(move.get("targets") or []):
-        pool = [
-            card
-            for card in [*(state.get("battlefield") or []), *(state.get("stack") or [])]
-            if _on_side(card.get("controller"), target["side"], me)
-        ]
-        picked = _pick(pool, target["select"], f"target {index + 1}")
-        if isinstance(picked, ScriptExit):
-            return picked
-        targets.append(picked[0]["id"])
+    targets = _targets(move, state, me)
+    if isinstance(targets, ScriptExit):
+        return targets
     body: dict[str, Any] = {
         "player": me,
         "card_id": chosen[0]["id"],
         "from_zone": zone,
         "reasoning": reasoning,
     }
+    cost = move.get("cost")
+    if cost is not None and cost != "normal":
+        body["alternative_cost"] = chosen[0]["name"] if cost == "printed" else cost
     if targets:
         body["targets"] = targets
     sources = untapped_mana_sources(state, me)
@@ -848,6 +914,10 @@ def decide_body(
     body: dict[str, Any] = {"player": me, "reasoning": reasoning}
     if pending.get("generation") is not None:
         body["generation"] = pending["generation"]
+    if kind in AMOUNT_DECISION_KINDS and "amount" in item:
+        answer_field = pending.get("answer_field") or ANSWER_FIELDS[kind]
+        body[answer_field] = pending.get("amount") if item["amount"] == "max" else item["amount"]
+        return body
     cards = _decision_cards(pending, state, me)
     pick = item.get("pick")
     if pick is not None:
@@ -973,12 +1043,16 @@ def _zone_cards(state: dict[str, Any], zone: str, me: str) -> list[dict[str, Any
     return []
 
 
-def _ability_index(card: dict[str, Any], phrase: str) -> int | None:
+def _ability(card: dict[str, Any], phrase: str) -> dict[str, Any] | None:
     folded = phrase.casefold()
-    for ability in card.get("abilities") or []:
-        if folded in str(ability.get("text") or "").casefold():
-            return ability.get("index")
-    return None
+    return next(
+        (
+            ability
+            for ability in card.get("abilities") or []
+            if folded in str(ability.get("text") or "").casefold()
+        ),
+        None,
+    )
 
 
 def _on_side(controller: str | None, side: str, me: str) -> bool:
@@ -1000,6 +1074,15 @@ def _evaluate(ctx: _Context, play: dict[str, Any], state: dict[str, Any]) -> dic
 def _condition_exit(result: dict[str, Any]) -> ScriptExit | None:
     """The exit one `conditions.evaluate` result forces, or None when the
     script applies."""
+    invalid = result.get("invalid_input")
+    if invalid is not None:
+        return ScriptExit(
+            Exit.INVALID_INPUT,
+            invalid_input=invalid,
+            stop_reason=(
+                f"input {invalid['name']!r} = {invalid['value']!r} is invalid: {invalid['reason']}"
+            ),
+        )
     failing = {
         "list": result["failing_list"],
         "index": result["failing_index"],

@@ -121,6 +121,43 @@ the api can pend. A value outside it (a typo such as `choose_cardz`) is
 - Decision kinds: `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
 - Never answered: `declare_attackers`, `declare_blockers`, `mulligan`
 
+## How the runner builds a move
+
+`playscripts/runtime.py` turns each move into the request a seat would send,
+read off the redacted state view:
+
+- `cast.cost` other than `normal` goes out as `CastRequest.alternative_cost`:
+  the lowercased keyword (`evoke`, `impending`, ...), or for `printed` the
+  card's own name, which is how the engine names a printed CR 118.9 cost. A
+  cost the card has no live option for is refused in the engine's words.
+- A `{select, side}` target resolves over the battlefield and the stack to one
+  id; a `{player: me|opponent}` target resolves to that player's name. Both go
+  out in the route's `targets`, for `cast` and `activate` alike.
+- `activate.sacrifice` goes out as `ActivateRequest.sacrificing`: `source` is
+  the source's own id, `none` sends nothing, and a sacrifice choice picks from
+  the permanents the seat controls, `count` of them (left out, the number the
+  ability's cost names, `a`/`another` being one).
+- An `amount` answer goes to `/decide` on the pending decision's own
+  `answer_field` (`energy_amount`, `life_amount`) with its `generation`; `max`
+  is the decision's own `amount`.
+- Every selection follows one pick rule: nothing matching is `unforeseen`, and
+  different cards still tied after `prefer` are `ambiguous`.
+
+## Exits
+
+A run ends on one exit from a closed set, and a caller branches on it, never on
+prose:
+
+- Exits: `chain_complete`, `not_applicable`, `unforeseen`, `interrupted`, `ambiguous`, `refused`, `stale`, `unknown_outcome`, `needs_plan`, `already_ran`, `advised`, `needs_input`, `invalid_input`
+
+`needs_input` is a required input the agent did not supply. `invalid_input` is
+a supplied input the deck's catalog refuses: a name neither declared nor
+`opposing_archetype`, or a value outside its enum, not a bool, or outside its
+int range. It carries `{name, value, reason}` and names both in its
+`stop_reason`, and it is never reported as `not_applicable`, because nothing
+about the board was judged. The asserted `opposing_archetype` is always one of
+its own enum's values; the play's `opposing_archetypes` judges it.
+
 ## Not in the vocabulary
 
 Attack, block, mulligan, concede, pass, and any iteration field.

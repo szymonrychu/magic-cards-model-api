@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from magic_cards_model_api.playscripts.runtime import Exit
 from magic_cards_model_api.playscripts.schema import (
     AMOUNT_DECISION_KINDS,
     CAST_COSTS,
@@ -68,6 +69,15 @@ def test_activate_move_line_carries_targets_and_the_sacrifice_choice() -> None:
 def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
     assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
     assert "amount?: >=0|max}`" in DOC.read_text()
+
+
+def test_doc_names_every_runner_exit_in_enum_order() -> None:
+    assert _listed("- Exits:") == [exit.value for exit in Exit]
+
+
+def test_doc_says_an_invalid_input_exits_invalid_input_naming_it() -> None:
+    text = DOC.read_text()
+    assert "`invalid_input`" in text and "`{name, value, reason}`" in text
 
 
 def test_doc_names_the_closed_color_vocabulary() -> None:
