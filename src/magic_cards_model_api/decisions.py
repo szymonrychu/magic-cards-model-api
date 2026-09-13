@@ -593,7 +593,26 @@ class PendingDecision:
             moved = self.moved_label or (
                 "the bottom of your library" if kind is DecisionKind.SCRY else "your graveyard"
             )
-            return f'"<any of pending_decision.cards, comma-separated; these go to {moved}>"'
+            # `amount`/`exact` are not a `CHOOSE_CARDS`-only shape (see that
+            # field's own docstring caveat): `Game.ask`/`validate_answer`
+            # enforce the identical count check on every `CardSplit`, scry's
+            # own "any number" included (CR 107.1c, exact=False, amount equal
+            # to the whole look), Waker of Waves/Codecracker Hound's "put one
+            # of them" (exact=True, amount=1), and Devourer of Destiny's
+            # "may put one back" (exact=False, amount=1, a real ceiling
+            # rather than "any"). Saying "any of pending_decision.cards"
+            # regardless was silent about a count the engine actually
+            # refuses an answer for - see `validate_answer`'s own SCRY/
+            # SURVEIL branch, which this mirrors word for word.
+            if self.exact:
+                span = f"exactly {self.amount}"
+            elif self.amount == 1:
+                span = "up to 1"
+            elif self.amount == len(self.cards):
+                span = "any number, including none,"
+            else:
+                span = f"up to {self.amount}"
+            return f'"<{span} of pending_decision.cards, comma-separated; these go to {moved}>"'
         if kind is DecisionKind.CHOOSE_TARGETS:
             floor = self.target_minimum or 0
             ceiling = self.target_maximum

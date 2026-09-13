@@ -514,6 +514,38 @@ def test_the_cli_moved_help_sends_a_seat_to_the_labels_too():
     assert "Only when both labels are absent" in help_text
 
 
+def test_the_cli_moved_help_states_the_count_too():
+    """L1a: `--moved`'s help named the destinations but never how many cards
+    may go there - `pending_decision.amount`/`.exact` govern that count the
+    same way `card_ids`'s own help already explains for `choose_cards`
+    (compare the `card_ids` argument's help, above), and `validate_answer`
+    refuses an answer outside it (PR #31)."""
+    help_text = moved_help()
+
+    assert "pending_decision.exact" in help_text
+    assert "pending_decision.amount" in help_text
+
+
+def test_the_decide_docstring_states_the_count_for_a_split():
+    r"""L1a: the MCP `decide` tool's scry/surveil bullet is the analogue of
+    the CLI help above - it explained `moved_label`/`kept_label` but never
+    `pending_decision.amount`/`.exact`, so an agent reading it had no way to
+    know a split answered with the wrong count would be refused.
+
+    Scoped to the bullet itself (`- \`scry\` and \`surveil\`` up to the next
+    bullet, `- \`opening_hand_action\``), not the whole docstring - the
+    `choose_cards` bullet already explains `exact`/`amount` for its own kind,
+    and a whole-docstring search would pass without the scry/surveil bullet
+    ever mentioning either."""
+    docstring = decide_docstring()
+    start = docstring.index("`scry` and `surveil`")
+    end = docstring.index("`opening_hand_action`")
+    section = docstring[start:end]
+
+    assert "pending_decision.exact" in section
+    assert "pending_decision.amount" in section
+
+
 def test_the_cli_state_prints_the_devourer_splits_two_destinations(client, monkeypatch, capsys):
     """Telling a seat the fields exist is not the same as showing them. A CLI
     seat gets a whole state dump; two short strings inside it are exactly what

@@ -999,7 +999,14 @@ class DecideRequest(BoardRead):
     """For the `scry` and `surveil` kinds: which of `pending_decision.cards`
     move off the top - to the bottom of the library for a scry (CR 701.22a),
     to the graveyard for a surveil (CR 701.25a). Every card not named here
-    goes back on top. Empty is a real answer: "keep everything on top"."""
+    goes back on top. Empty is a real answer: "keep everything on top".
+    How many may be named is `pending_decision.exact`/`.amount`, the same
+    count `choose_cards` is held to: `exact=True` means exactly `amount`
+    (Codecracker Hound's "put one into your hand and the other into your
+    graveyard"), `exact=False` means zero up to `amount` (CR 107.1c) - a
+    plain scry/surveil's `amount` is every card looked at, while Devourer of
+    Destiny's "may put one of those cards back" is `amount=1`, a real
+    ceiling rather than "any"."""
     top_order: list[str] | None = None
     """For `scry`/`surveil`: the order the cards that stay on top go back,
     topmost first. `None` (the default) keeps them in the order they were

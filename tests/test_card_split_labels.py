@@ -182,6 +182,14 @@ def test_the_devourer_decision_says_exile_and_never_says_bottom(client: TestClie
             "nothing about this decision puts a card on the bottom of a library"
         )
 
+        # L1a: "may put one of those cards back" is exact=False, amount=1 -
+        # a real ceiling of one, not CR 701.22a's own "any number" scry uses,
+        # and the hint must say so rather than the old blanket "any of".
+        assert pending.get("exact") is False
+        assert pending.get("amount") == 1
+        assert "up to 1" in pending["answer_with"]
+        assert "any of pending_decision.cards" not in pending["answer_with"]
+
         # And the labels told the truth: the one card named stayed on top, the
         # other three were exiled (CR 406.1), none went to the bottom.
         game = store.get(game_id)
