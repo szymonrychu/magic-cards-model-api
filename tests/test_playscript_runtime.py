@@ -644,6 +644,30 @@ def test_two_different_sources_exit_ambiguous_naming_both(
     assert hook.posts("/actions/activate") == []
 
 
+def test_prefer_breaks_a_tie_between_different_candidates(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(board, "alice")
+    script = fetch_shock()
+    register(client, board, alice, script)
+    strand_board(client, board, "Hallowed Fountain", "Steam Vents")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+
+    with opponent_passes(board):
+        result = run_script(
+            seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+        )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    after = state(client, board)
+    assert cards_named(after["battlefield"], "Steam Vents"), "prefer Mountain chose the Vents"
+    assert not cards_named(after["battlefield"], "Hallowed Fountain")
+    vents = cards_named(after["battlefield"], "Steam Vents")[0]
+    searches = [body["card_ids"] for body in hook.posts("/decide") if body.get("card_ids")]
+    assert searches and all(ids == [vents["id"]] for ids in searches), searches
+
+
 def test_different_candidates_tied_after_prefer_exit_ambiguous(
     client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1111,6 +1135,81 @@ def test_resume_re_checks_that_nothing_foreign_happened(
     )
 
     assert result.script_exit.exit is Exit.INTERRUPTED, result.to_dict()
+
+
+def test_another_players_non_pass_action_interrupts_with_nothing_on_the_stack(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The log check on its own: bob taps a Mountain for mana while the
+    run's fetch waits on the stack. A mana ability never uses the stack, so
+    only the log since the run's watermark shows it. The Mountain is added
+    before the run, so its `add_card` row is under the watermark."""
+    script = fetch_shock()
+    add_card(client, board, "Mountain", "bob", "battlefield")
+    seats, token = capped_fetch(client, board, monkeypatch, script)
+    bob = seat_uid(board, "bob")
+    mountain = cards_named(state(client, board, uid=bob)["battlefield"], "Mountain")[0]
+    tapped = client.post(
+        f"/api/games/{board}/actions/activate",
+        params={"uid": bob},
+        json={"player": "bob", "card_id": mountain["id"]},
+    )
+    assert tapped.status_code == 200 and tapped.json()["allowed"] is True, tapped.text
+    assert tapped.json()["mana_ability"] is True
+    assert [obj["controller"] for obj in state(client, board)["stack"]] == ["alice"]
+    seat, hook = hooked_seat(seats, seat_uid(board, "alice"))
+
+    result = run_script(
+        seat,
+        script_id=script["id"],
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        resume=token,
+    )
+
+    assert result.script_exit.exit is Exit.INTERRUPTED, result.to_dict()
+    assert "bob acted (activate" in result.script_exit.stop_reason
+    assert hook.posts("/decide") == [] and hook.posts("/actions/pass-priority") == []
+
+
+def test_a_foreign_object_on_the_stack_interrupts_when_the_log_shows_nothing_new(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stack check on its own: bob's Bolt is on the stack, but the token's
+    watermark is already past the cast, so the log since it holds nothing."""
+    script = fetch_shock()
+    seats, token = capped_fetch(client, board, monkeypatch, script)
+    alice = seat_uid(board, "alice")
+    bob = seat_uid(board, "bob")
+    add_card(client, board, "Mountain", "bob", "battlefield")
+    add_card(client, board, "Lightning Bolt", "bob", "hand")
+    bob_board = state(client, board, uid=bob)
+    cast = client.post(
+        f"/api/games/{board}/actions/cast",
+        params={"uid": bob},
+        json={
+            "player": "bob",
+            "card_id": cards_named(bob_board["hands"]["bob"], "Lightning Bolt")[0]["id"],
+            "targets": ["alice"],
+            "mana_sources": [cards_named(bob_board["battlefield"], "Mountain")[0]["id"]],
+        },
+    )
+    assert cast.status_code == 200 and cast.json()["allowed"] is True, cast.text
+    log = client.get(f"/api/games/{board}/log", params={"uid": alice}).json()["log"]
+    token = {**token, "last_seq": max(int(entry["seq"]) for entry in log)}
+    seat, hook = hooked_seat(seats, alice)
+
+    result = run_script(
+        seat,
+        script_id=script["id"],
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        resume=token,
+    )
+
+    assert result.script_exit.exit is Exit.INTERRUPTED, result.to_dict()
+    assert result.script_exit.stop_reason == "bob put Lightning Bolt on the stack"
+    assert hook.posts("/decide") == [] and hook.posts("/actions/pass-priority") == []
 
 
 # -- the pause-slot race --------------------------------------------------------
