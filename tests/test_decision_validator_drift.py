@@ -257,11 +257,14 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
             player="alice",
             prompt="scry 3",
             amount=3,
+            # `Game.scry`'s own shape: CR 701.22a's "any number of them".
+            exact=False,
             cards=tuple(library_ids),
         ),
         [
             CardSplit(moved=(library_ids[0],), top_order=(library_ids[1], library_ids[2])),
             CardSplit(),
+            CardSplit(moved=tuple(library_ids)),
             CardSplit(moved=(stray_id,)),
             "not a cardsplit",
         ],
@@ -272,6 +275,8 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
             player="alice",
             prompt="surveil 3",
             amount=3,
+            # `Game.surveil`'s own shape: CR 701.25a's "any number of them".
+            exact=False,
             cards=tuple(library_ids),
         ),
         [
@@ -486,4 +491,35 @@ def test_choose_cards_any_number_ceiling_matches(
         exact=False,
     )
     for value in ((), (library_ids[0],), (library_ids[0], library_ids[1]), tuple(library_ids)):
+        _check_parity(engine_game, decision, value)
+
+
+@pytest.mark.parametrize(
+    ("exact", "label"),
+    [(True, "put exactly one into your hand"), (False, "put up to one back on top")],
+)
+def test_look_split_count_matches(
+    client: TestClient, game: str, board: dict[str, Any], exact: bool, label: str
+) -> None:
+    """A look-and-split publishes how many cards may be moved (`amount`) and
+    whether that count is exact - Waker of Waves' "put one of them" versus
+    Devourer of Destiny's "one of those cards" - and `Game.ask` refuses a
+    split outside it (CR 608.2d). Both validators must hold the same count,
+    duplicates counted once."""
+    engine_game = _game(game)
+    library_ids = board["library_ids"]
+    decision = Decision(
+        kind=DecisionKind.SCRY,
+        player="alice",
+        prompt=label,
+        amount=1,
+        exact=exact,
+        cards=tuple(library_ids),
+    )
+    for value in (
+        CardSplit(),
+        CardSplit(moved=(library_ids[0],)),
+        CardSplit(moved=(library_ids[0], library_ids[0])),
+        CardSplit(moved=(library_ids[0], library_ids[1])),
+    ):
         _check_parity(engine_game, decision, value)
