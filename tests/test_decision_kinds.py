@@ -1152,14 +1152,10 @@ def test_choose_a_quality_missing_choice_is_refused_not_defaulted(client, game):
 
 
 def declare_gargaroth_attacking(client: TestClient, game_id: str, uids: dict[str, str]) -> None:
-    """Elder Gargaroth attacking bob puts its own "attacks or blocks, choose
-    one -" trigger on the stack (CR 603.3c) - foreground calls only, since
-    declaring an attacker never itself asks a `choose_a_mode` question; the
-    ability is put on the stack with its mode not yet chosen (CR 603.3c
-    chooses the mode "as part of putting that ability on the stack", but
-    this engine reads it at resolution instead - see `machines/effects.py`'s
-    `_resolve_modal_triggered_ability_clause`), so the question only shows up
-    once something resolves the trigger."""
+    """Elder Gargaroth attacking bob triggers its "attacks or blocks, choose
+    one -" ability. CR 603.3c announces the mode as the ability is put on the
+    stack, so the engine asks `choose_a_mode` then, before anything resolves
+    (`_put_pending_triggers_on_stack`)."""
     gargaroth = add_card(client, game_id, "Elder Gargaroth", "alice", "battlefield")["added"][
         "card_id"
     ]
@@ -1187,8 +1183,6 @@ def test_choose_a_mode_picks_the_named_mode(client, game):
     uids = seats_for(client, game)
     declare_gargaroth_attacking(client, game, uids)
 
-    resolved = resolve_top(game)
-    assert resolved["paused"] is True
     pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
     assert pending["kind"] == "choose_a_mode"
     assert pending["player"] == "alice"
@@ -1201,6 +1195,9 @@ def test_choose_a_mode_picks_the_named_mode(client, game):
     )
     assert answer.status_code == 200, answer.text
     assert answer.json()["accepted"] is True
+    assert life_of(state(client, game), "alice") == 20, "the mode is chosen, not yet resolved"
+
+    resolve_top(game)
 
     final = state(client, game)
     assert life_of(final, "alice") == 23, "the chosen mode - gain 3 life - actually happened"
@@ -1219,7 +1216,6 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
     uids = seats_for(client, game)
     declare_gargaroth_attacking(client, game, uids)
 
-    resolve_top(game)
     pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
     assert set(pending["options"]) == {
         "Create a 3/3 green Beast creature token.",
@@ -1246,6 +1242,7 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
     )
     assert legal.status_code == 200, legal.text
     assert legal.json()["accepted"] is True
+    resolve_top(game)
 
     final = state(client, game)
     assert life_of(final, "alice") == 23, "the offered mode - gain 3 life - actually happened"
