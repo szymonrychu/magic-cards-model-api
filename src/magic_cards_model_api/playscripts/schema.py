@@ -10,12 +10,16 @@ names its cost from `CAST_COSTS` (the engine's own cast option kinds), and an
 answer names its decision from `DECISION_KINDS` (the api's pending decision
 kinds, less the combat declarations and the mulligan a script never makes).
 `when.steps` names each step once, and `opposing_archetypes` is either `["*"]`
-or named keys, never both.
+or named keys, never both. An answer's fields fit its decision kind: a
+pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount` alone,
+and no other kind takes one (`answer-shape-mismatch`). A `cast` or `activate`
+target is a card by selector and side, or a player; an `activate` sacrifices
+its source, nothing, or permanents chosen by selector.
 
 `play_errors` is the same judgement as coded errors - one `PlaysError` per
 refused shape - using the codes shared verbatim with mtg-decks'
 `scripts/check_plays.py`. Pydantic stops judging a list's items once the list
-is too long, and skips a model's own check once a field of it failed; the two
+is too long, and skips a model's own check once a field of it failed; the
 supplements below keep reporting what the stdlib gate reports in those cases.
 """
 
@@ -28,7 +32,9 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -36,7 +42,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from ..decisions import ANSWERABLE_KINDS
+from ..decisions import ANSWER_FIELD_FOR_KIND, ANSWERABLE_KINDS
 from ..seatkit import AUTOPASS_STEPS
 
 SCHEMA_VERSION = 1
@@ -124,6 +130,18 @@ DECISION_KINDS = tuple(sorted(kind.value for kind in ANSWERABLE_KINDS))
 #: Pending decision kinds a script never answers: scripts do not attack, block
 #: or mulligan, the same reason the combat declaration steps are forbidden.
 FORBIDDEN_DECISION_KINDS = ("declare_attackers", "declare_blockers", "mulligan")
+#: The decision kinds answered with a number rather than yes/no or cards: the
+#: kinds `decisions.ANSWER_FIELD_FOR_KIND` answers on the engine's `amount`
+#: field (`pay_energy_amount`, `pay_life_amount` - an integer from 0 up to the
+#: decision's own `amount`, the payer's energy or life). Their answer item
+#: carries `amount` and nothing else.
+AMOUNT_DECISION_KINDS = tuple(
+    sorted(kind.value for kind, field in ANSWER_FIELD_FOR_KIND.items() if field == "amount")
+)
+#: `amount: "max"` pays the most the decision allows (its own `amount`).
+AMOUNT_POLICIES = ("max",)
+#: The answer fields an amount decision never takes.
+NON_AMOUNT_ANSWER_FIELDS = ("pick", "accept", "to_graveyard", "to_bottom")
 
 CODES = (
     "malformed-play",
@@ -147,6 +165,7 @@ CODES = (
     "unknown-cast-cost",
     "duplicate-step",
     "wildcard-with-keys",
+    "answer-shape-mismatch",
 )
 
 
@@ -336,14 +355,63 @@ class Pick(_Strict):
     prefer: Annotated[list[Selector], Field(max_length=MAX_PREFER)] = None
 
 
+def _amount_tag(value: Any) -> str:
+    return (
+        "amount-count"
+        if isinstance(value, int) and not isinstance(value, bool)
+        else "amount-policy"
+    )
+
+
+#: How much to pay on a pay-amount decision: a count from 0, or a policy.
+Amount = Annotated[
+    Annotated[AtLeastZero, Tag("amount-count")]
+    | Annotated[Literal[AMOUNT_POLICIES], Tag("amount-policy")],
+    Discriminator(_amount_tag),
+]
+
+
+def answer_shape_problem(answer: Any) -> str | None:
+    """Why this answer item's fields do not fit its decision kind, or None.
+
+    A pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount`
+    and nothing else; no other decision kind takes an `amount`. A decision
+    outside `DECISION_KINDS` is judged by `unknown-decision-kind` instead."""
+    if not isinstance(answer, dict) or answer.get("decision") not in DECISION_KINDS:
+        return None
+    decision = answer["decision"]
+    if decision in AMOUNT_DECISION_KINDS:
+        others = [field for field in NON_AMOUNT_ANSWER_FIELDS if field in answer]
+        if others:
+            return f"'{decision}' is answered with an amount, not {', '.join(others)}"
+        if "amount" not in answer:
+            return f"'{decision}' is answered with an amount; name one"
+        return None
+    if "amount" in answer:
+        return f"only {', '.join(AMOUNT_DECISION_KINDS)} take an amount, not '{decision}'"
+    return None
+
+
 class Answer(_Strict):
-    """How to answer one pending decision of kind `decision`."""
+    """How to answer one pending decision of kind `decision`. A pay-amount
+    decision takes `amount` alone; every other kind takes `pick`, `accept`,
+    `to_graveyard` or `to_bottom`."""
 
     decision: DecisionKind
     pick: Pick = None
     accept: bool = None
     to_graveyard: Selector = None
     to_bottom: Selector = None
+    amount: Amount = None
+
+    @model_validator(mode="after")
+    def _fields_fit_the_decision(self) -> Answer:
+        problem = answer_shape_problem(
+            {**{name: True for name in self.model_fields_set}, "decision": self.decision}
+        )
+        if problem is not None:
+            raise PydanticCustomError("answer_shape_mismatch", problem)
+        return self
 
     @field_validator("decision")
     @classmethod
@@ -363,20 +431,59 @@ class ZonedCard(_Strict):
     select: Selector
 
 
-class CastTarget(_Strict):
+class CardTarget(_Strict):
+    """A card or permanent target: what `select` matches, on `side`."""
+
     select: Selector
     side: Side
+
+
+class PlayerTarget(_Strict):
+    """A player target: the viewer or an opponent."""
+
+    player: Literal["me", "opponent"]
+
+
+def _target_tag(value: Any) -> str:
+    return "player-target" if isinstance(value, dict) and "player" in value else "card-target"
+
+
+#: One target a cast or an activation announces, in order.
+Target = Annotated[
+    Annotated[CardTarget, Tag("card-target")] | Annotated[PlayerTarget, Tag("player-target")],
+    Discriminator(_target_tag),
+]
 
 
 class LandCard(_Strict):
     select: Selector
 
 
+class SacrificeChoice(Pick):
+    """What an activation cost's own "Sacrifice a ..." piece sacrifices:
+    permanents the activating player controls matching `select`, `count` of
+    them (the cost's own number when left out), best first by `prefer`."""
+
+
+def _sacrifice_tag(value: Any) -> str:
+    return "sacrifice-choice" if isinstance(value, dict) else "sacrifice-keyword"
+
+
+#: `source` sacrifices the ability's own source, `none` nothing; an object
+#: chooses what to sacrifice by selector.
+Sacrifice = Annotated[
+    Annotated[Literal["source", "none"], Tag("sacrifice-keyword")]
+    | Annotated[SacrificeChoice, Tag("sacrifice-choice")],
+    Discriminator(_sacrifice_tag),
+]
+
+
 class ActivateMove(_Strict):
     kind: Literal["activate"]
     source: ZonedCard
     ability_text_has: NonBlank
-    sacrifice: Literal["source", "none"] = None
+    targets: list[Target] = Field(default_factory=list, max_length=MAX_TARGETS)
+    sacrifice: Sacrifice = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 
 
@@ -384,7 +491,7 @@ class CastMove(_Strict):
     kind: Literal["cast"]
     card: ZonedCard
     cost: CastCost = None
-    targets: list[CastTarget] = Field(default_factory=list, max_length=MAX_TARGETS)
+    targets: list[Target] = Field(default_factory=list, max_length=MAX_TARGETS)
     mana: Literal["auto"] = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 
@@ -481,7 +588,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "answers": TypeAdapter(Answer),
     "next": TypeAdapter(NonBlank),
     "steps": TypeAdapter(StepName),
-    "targets": TypeAdapter(CastTarget),
+    "targets": TypeAdapter(Target),
     "prefer": TypeAdapter(Selector),
     "opposing_archetypes": TypeAdapter(ArchetypeKey),
     **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
@@ -500,20 +607,28 @@ _CUSTOM_CODES = {
     "forbidden_decision": "forbidden-kind",
     "duplicate_step": "duplicate-step",
     "wildcard_with_keys": "wildcard-with-keys",
+    "answer_shape_mismatch": "answer-shape-mismatch",
 }
 #: A value outside a closed Literal, by the field it is in.
 _LITERAL_CODES = {"decision": "unknown-decision-kind", "cost": "unknown-cast-cost"}
+#: The tags of the unions discriminated by shape rather than by `kind`. They
+#: hold a hyphen, so no key of a document is ever spelled like one.
+_SHAPE_TAGS = frozenset(
+    {"amount-count", "amount-policy", "card-target", "player-target"}
+    | {"sacrifice-keyword", "sacrifice-choice"}
+)
 _MISSING = object()
 
 
 def _walk(doc: Any, loc: tuple[Any, ...]) -> tuple[str, Any]:
     """The dotted location of `loc` in `doc`, and the value found there.
 
-    Pydantic puts a discriminated union's tag into the location after the
-    list index; it names no key of the document, so it is skipped."""
+    Pydantic puts a discriminated union's tag into the location: after the
+    list index for a `kind` union, after the field for a shape union
+    (`_SHAPE_TAGS`). A tag names no key of the document, so it is skipped."""
     text, node = "", doc
     for part in loc:
-        if (
+        if part in _SHAPE_TAGS or (
             isinstance(node, dict)
             and isinstance(part, str)
             and part not in node
@@ -530,7 +645,10 @@ def _walk(doc: Any, loc: tuple[Any, ...]) -> tuple[str, Any]:
 
 
 def _last_field(loc: tuple[Any, ...]) -> str | None:
-    return next((part for part in reversed(loc) if isinstance(part, str)), None)
+    return next(
+        (part for part in reversed(loc) if isinstance(part, str) and part not in _SHAPE_TAGS),
+        None,
+    )
 
 
 def _code(error: dict[str, Any], loc: tuple[Any, ...]) -> str:
@@ -613,6 +731,23 @@ def _hidden_zone_side_any(doc: Any) -> Iterator[tuple[str, str, str]]:
                 )
 
 
+def _answer_shape_mismatches(doc: Any) -> Iterator[tuple[str, str, str]]:
+    """Every answer item whose fields do not fit its decision kind, whatever
+    else is wrong with it - pydantic runs `Answer`'s own check only once every
+    field of the answer validated."""
+    if not isinstance(doc, dict) or not isinstance(doc.get("moves"), list):
+        return
+    for move_index, move in enumerate(doc["moves"]):
+        answers = move.get("answers") if isinstance(move, dict) else None
+        if not isinstance(answers, list):
+            continue
+        for answer_index, answer in enumerate(answers):
+            problem = answer_shape_problem(answer)
+            if problem is not None:
+                where = f"moves[{move_index}].answers[{answer_index}]"
+                yield "answer-shape-mismatch", where, problem
+
+
 def play_errors(doc: Any, path: str = "play") -> list[PlaysError]:
     """Every structural refusal of one play document, as coded errors."""
     found: list[tuple[str, str, str]] = []
@@ -621,6 +756,7 @@ def play_errors(doc: Any, path: str = "play") -> list[PlaysError]:
     except ValidationError as exc:
         found.extend(_translate(exc.errors(), doc, ()))
     found.extend(_hidden_zone_side_any(doc))
+    found.extend(_answer_shape_mismatches(doc))
     reported: set[tuple[str, str]] = set()
     errors = []
     for code, where, message in found:

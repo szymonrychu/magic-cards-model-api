@@ -220,6 +220,8 @@ def ability(text: str, *, mana: bool = False) -> dict[str, Any]:
         "cost": None,
         "needs_x": False,
         "is_mana_ability": mana,
+        "mana_amount": 1 if mana else None,
+        "mana_cost_value": 0 if mana else None,
         "targeting": {"targets_anything": False, "understood": True, "requirements": []},
     }
 

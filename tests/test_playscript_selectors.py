@@ -78,6 +78,32 @@ def test_colors_any_reads_the_views_colors_by_letter_or_name():
     assert not matches({"colors_any": ["R"]}, fetchland()), "a land with no colors matches none"
 
 
+def test_colorless_matches_a_card_with_no_color_and_never_a_colored_one():
+    # CR 105.2c: "A colorless object has no color." The view's `colors` is empty.
+    spawner = card("Spawner", type_line="Creature — Eldrazi Drone", colors=(), mana_value=4.0)
+    helix = card("Helix", type_line="Instant", colors=("R", "W"), mana_value=2.0)
+    for word in ("colorless", "Colorless", "C", "c"):
+        assert matches({"colors_any": [word]}, spawner), word
+        assert matches({"colors_any": [word]}, fetchland()), word
+        assert not matches({"colors_any": [word]}, helix), word
+    assert matches({"colors_any": ["colorless", "red"]}, helix), "any of them: red matches"
+    assert matches({"colors_any": ["colorless", "red"]}, spawner), "any of them: colorless"
+    assert not matches({"colors_any": ["red"]}, spawner)
+
+
+def test_the_color_vocabulary_is_the_five_colors_and_colorless():
+    from magic_cards_model_api.playscripts.selectors import COLOR_LETTERS
+
+    assert COLOR_LETTERS == {
+        "white": "w",
+        "blue": "u",
+        "black": "b",
+        "red": "r",
+        "green": "g",
+        "colorless": "c",
+    }
+
+
 @pytest.mark.parametrize(
     ("op", "n", "expected"),
     [

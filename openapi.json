@@ -37,6 +37,28 @@
             "title": "Mana",
             "type": "boolean"
           },
+          "mana_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Amount"
+          },
+          "mana_cost_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost Value"
+          },
           "mana_options": {
             "anyOf": [
               {

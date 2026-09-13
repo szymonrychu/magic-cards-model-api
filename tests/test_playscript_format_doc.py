@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from magic_cards_model_api.playscripts.schema import (
+    AMOUNT_DECISION_KINDS,
     CAST_COSTS,
     DECISION_KINDS,
     FORBIDDEN_DECISION_KINDS,
@@ -19,6 +20,7 @@ from magic_cards_model_api.playscripts.schema import (
     MAX_PREFER,
     MAX_TARGETS,
 )
+from magic_cards_model_api.playscripts.selectors import COLOR_LETTERS
 
 DOC = (
     Path(__file__).resolve().parents[1]
@@ -50,6 +52,29 @@ def test_cast_move_line_carries_the_optional_cost_and_bounds() -> None:
     text = DOC.read_text()
     assert (
         f"`cast {{card: {{zone, select}}, cost?: <cast cost>, "
-        f"targets: [0-{MAX_TARGETS} {{select, side}}], mana?: auto, answers: [0-{MAX_ANSWERS}]}}`"
+        f"targets: [0-{MAX_TARGETS} <target>], mana?: auto, answers: [0-{MAX_ANSWERS}]}}`"
     ) in text
     assert f"prefer?: [0-{MAX_PREFER} select]" in text
+
+
+def test_activate_move_line_carries_targets_and_the_sacrifice_choice() -> None:
+    assert (
+        f"`activate {{source: {{zone, select}}, ability_text_has, "
+        f"targets: [0-{MAX_TARGETS} <target>], sacrifice?: source|none|<sacrifice choice>, "
+        f"answers: [0-{MAX_ANSWERS}]}}`"
+    ) in DOC.read_text()
+
+
+def test_doc_names_the_amount_decision_kinds_and_the_amount_field() -> None:
+    assert _listed("- Amount decision kinds:") == list(AMOUNT_DECISION_KINDS)
+    assert "amount?: >=0|max}`" in DOC.read_text()
+
+
+def test_doc_names_the_closed_color_vocabulary() -> None:
+    assert _listed("- Colors:") == list(COLOR_LETTERS)
+
+
+def test_doc_defines_the_untapped_mana_counting_rule() -> None:
+    text = DOC.read_text()
+    for phrase in ("`untapped_mana`", "mana_amount", "mana_cost_value", "Restricted mana counts"):
+        assert phrase in text

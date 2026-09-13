@@ -194,6 +194,16 @@ PROTOCOL_VERSION = "seatkit-17"
 #: process reads both as it read the fields before: `faces` is an extra key,
 #: and a known record is the same shape whenever it arrives.
 #:
+#: Also folded in, not a bump: every `AbilityView` carries `mana_amount` and
+#: `mana_cost_value`, `null` for an ability that is not a mana ability. A mana
+#: ability's `mana_amount` is what it adds if activated now, board-resolved
+#: (Urza's Tower beside a Mine and a Power Plant adds 3, CR 605.1a) and 0 when
+#: it cannot be activated now (CR 602.5, CR 302.6) or its type is undefined
+#: (CR 106.5); `mana_cost_value` is the mana value of its own cost's mana
+#: pieces (1 for a `{1}, {T}` filter). The play-script `untapped_mana`
+#: condition counts mana from them. A seatkit-17 process reads both as extra
+#: keys; no request moved.
+#:
 #: What did NOT change: no existing field moved, `hands`
 #: still holds only the viewer's own cards, and `libraries`/`sideboards` are
 #: still stripped for every viewer but the admin.

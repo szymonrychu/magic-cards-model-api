@@ -1296,6 +1296,20 @@ class AbilityView(BaseModel):
     The read-only half of `ManaPoolView.restricted`, one step earlier: a seat
     deciding *which* ability to tap a two-ability source for needs to know what
     the mana would be tied to before it taps, not after."""
+    mana_amount: int | None = None
+    """How much mana this mana ability adds if activated now, or `None` for an
+    ability that is not a mana ability.
+
+    Board-resolved (CR 605.1a's "add X instead" clauses: Urza's Tower beside
+    a Mine and a Power-Plant adds 3), and 0 when it cannot be activated now
+    (CR 602.5, CR 302.6's summoning sickness) or its mana type is undefined
+    (CR 106.5). A restricted ability (`restriction`) carries its full amount:
+    CR 106.6 restricts how the mana is spent, not whether it is made."""
+    mana_cost_value: int | None = None
+    """The mana value of the mana part of this mana ability's own activation
+    cost - 1 for a `{1}, {T}` or `{W/U}, {T}` filter, 0 for a bare `{T}` - or
+    `None` for an ability that is not a mana ability. Read with `mana_amount`,
+    it is what a filter adds net of the mana it consumes."""
 
 
 class OpeningHandOptionView(BaseModel):

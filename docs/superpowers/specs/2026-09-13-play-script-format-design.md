@@ -25,18 +25,59 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   `supertypes_any`, `colors_any`, `keywords_any` (each 0-15 words);
   `mana_value {op, n}`; `power {op, n}`; `toughness {op, n}`; `tapped`;
   `counters {name, op, n}`; `ability_text_has`; `oracle_has`.
+- `colors_any` reads the card's `colors` by name or letter, any case, from a
+  closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
+  matches a card whose color set is empty (CR 105.2c, "A colorless object has
+  no color"), a devoid Eldrazi included, and never a colored card.
+- Colors: `white`, `blue`, `black`, `red`, `green`, `colorless`
 - Condition kinds (7): `count`, `zone_size`, `life`, `stack_top`,
   `land_drop_available`, `untapped_mana`, `input` (an `in`/`not_in` value list
   holds 0-32 values).
+
+### `untapped_mana`
+
+`{kind: untapped_mana, op, n}` compares `n` with the most mana the viewer can
+make right now from untapped sources, not the number of sources:
+
+- The sources are the untapped permanents the viewer controls with a mana
+  ability (`seatkit.untapped_mana_sources`). Each is activated at most once,
+  for one of its mana abilities.
+- An ability adds its card view's `abilities[].mana_amount`: the engine's
+  board-resolved count, so Urza's Tower beside a Mine and a Power Plant adds 3
+  (CR 605.1a's "add X instead"). It is 0 when the ability cannot be activated
+  now (CR 602.5, a summoning-sick creature under CR 302.6) or its mana type is
+  undefined (CR 106.5).
+- Restricted mana counts in full (Eldrazi Temple's `{C}{C}` counts 2): CR 106.6
+  restricts how mana is spent, not whether it is made, and the condition names
+  no spell to judge a restriction against.
+- A filter (`abilities[].mana_cost_value` above 0: `{1}, {T}` or `{W/U}, {T}`)
+  consumes that much of the mana already made. It is activated only when the
+  pool holds its cost, filters in ascending cost order, so it counts
+  `mana_amount - mana_cost_value` and is never double-counted. Its cost's colors
+  are not judged.
+- The count is the largest pool over every choice of one ability, or none, per
+  source. Tron assembled is 7; with Eldrazi Temple 9; an Island and Mystic Gate
+  are 2; Captivating Cave and an Island are 2.
 
 ## Moves
 
 Move kinds (4), each with `answers: [0-3]` (an `answer` move needs 1-3):
 
-- `activate {source: {zone, select}, ability_text_has, sacrifice?: source|none, answers: [0-3]}`
-- `cast {card: {zone, select}, cost?: <cast cost>, targets: [0-6 {select, side}], mana?: auto, answers: [0-3]}`
+- `activate {source: {zone, select}, ability_text_has, targets: [0-6 <target>], sacrifice?: source|none|<sacrifice choice>, answers: [0-3]}`
+- `cast {card: {zone, select}, cost?: <cast cost>, targets: [0-6 <target>], mana?: auto, answers: [0-3]}`
 - `play_land {card: {select}, answers: [0-3]}`
 - `answer {answers: [1-3]}`, for a decision already pending
+
+A target is `{select, side}` (a card or permanent matching `select`, on that
+side) or `{player: me|opponent}`, one per target the spell or ability
+announces, in order. Anything else is `malformed-play`, and a key beside
+either shape is `unknown-field`.
+
+A sacrifice choice is `{select, count?: >=1, prefer?: [0-4 select]}`: the
+permanents the activating player controls matching `select`, for an
+activation cost's own "Sacrifice a ..." piece (Goblin Bombardment's "Sacrifice
+a creature"). `count` left out is the cost's own number. `source` sacrifices
+the ability's own source, `none` nothing.
 
 ### `cast.cost`
 
@@ -59,7 +100,17 @@ and then this doc's test until it is listed here.
 
 ### `answers[]`
 
-Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select]}, accept?: bool, to_graveyard?: select, to_bottom?: select}`.
+Answer item: `{decision, pick?: {select, count?, prefer?: [0-4 select]}, accept?: bool, to_graveyard?: select, to_bottom?: select, amount?: >=0|max}`.
+
+An answer's fields must fit its decision kind, or it is
+`answer-shape-mismatch`. A pay-amount decision (Galvanic Discharge's
+`pay_energy_amount`, Necrodominance's `pay_life_amount`) is answered with
+`amount` alone: an integer from 0, or `max` for the most the decision allows.
+`accept`, `pick`, `to_graveyard` or `to_bottom` on it, or no `amount`, is
+`answer-shape-mismatch`, and so is an `amount` on any other kind. A negative
+`amount` is `bounds-exceeded`; any other value is `malformed-play`.
+
+- Amount decision kinds: `pay_energy_amount`, `pay_life_amount`
 
 `decision` is a closed set equal to the api's pending decision kinds: the
 values of `decisions.ANSWERABLE_KINDS`, which are the engine `DecisionKind`s

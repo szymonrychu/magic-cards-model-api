@@ -17,6 +17,7 @@ from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, play
 from pydantic import ValidationError
 
 from magic_cards_model_api.playscripts.schema import (
+    AMOUNT_DECISION_KINDS,
     CAST_COSTS,
     CODES,
     CONDITION_KINDS,
@@ -91,6 +92,7 @@ def test_the_error_codes_are_the_shared_contract_in_order():
         "unknown-cast-cost",
         "duplicate-step",
         "wildcard-with-keys",
+        "answer-shape-mismatch",
     )
 
 
@@ -474,7 +476,9 @@ def test_the_decision_kinds_are_the_apis_pending_decision_kinds():
     assert set(FORBIDDEN_DECISION_KINDS) == {"declare_attackers", "declare_blockers", "mulligan"}
 
 
-@pytest.mark.parametrize("kind", sorted(set(DECISION_KINDS) - set(FORBIDDEN_DECISION_KINDS)))
+@pytest.mark.parametrize(
+    "kind", sorted(set(DECISION_KINDS) - set(FORBIDDEN_DECISION_KINDS) - set(AMOUNT_DECISION_KINDS))
+)
 def test_every_answerable_decision_kind_validates(kind):
     assert play_errors(mutate("moves.0.answers.1.decision", kind)) == []
 

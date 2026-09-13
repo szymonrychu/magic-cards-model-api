@@ -16,7 +16,7 @@ information by construction:
   nor a known record's position is order, and nothing here reads one.
 - `zone_size` reads the public `*_count`; `life`, `stack_top`,
   `land_drop_available` (the viewer's turn, a land play left) and
-  `untapped_mana` (`seatkit.untapped_mana_sources`) read the public board.
+  `untapped_mana` (`untapped_mana` below) read the public board.
 - `input` reads the caller's `inputs`. A missing required input makes the
   script unevaluable (`needs_input`); a missing optional one does not hold.
   Every supplied input is first checked against the catalog: a name it does
@@ -29,6 +29,7 @@ count or size sums over them; `life` holds when any of them satisfies it.
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 from pydantic import BaseModel
@@ -146,6 +147,61 @@ def _zone_size(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> 
     )
 
 
+def _mana_options(view: dict[str, Any], viewer: str) -> list[list[tuple[int, int]]]:
+    """Per untapped mana source the viewer controls, each mana ability's
+    `(mana_amount, mana_cost_value)` that adds anything now."""
+    by_id = {card["id"]: card for card in view.get("battlefield") or []}
+    sources = []
+    for card_id in untapped_mana_sources(view, viewer):
+        options = [
+            (ability["mana_amount"], ability.get("mana_cost_value") or 0)
+            for ability in by_id[card_id]["abilities"]
+            if ability.get("mana") and (ability.get("mana_amount") or 0) > 0
+        ]
+        if options:
+            sources.append(options)
+    return sources
+
+
+def untapped_mana(view: dict[str, Any], viewer: str) -> int:
+    """The most mana `viewer` can make from their untapped sources right now.
+
+    Each source (`seatkit.untapped_mana_sources`) is activated at most once,
+    for one of its mana abilities, adding that ability's `mana_amount` (the
+    engine's board-resolved count, 0 when it cannot be activated now;
+    restricted mana counts in full). A free ability (`mana_cost_value` 0) adds
+    to the pool outright. A filter consumes `mana_cost_value` of the mana
+    already made, so it is activated only when the pool holds its cost; filters
+    are activated after every free ability, in ascending cost order. The answer
+    is the largest pool over every choice of one ability, or none, per source.
+    Filter cost colors are not judged.
+
+    Only the choices that can change that answer are enumerated: a source's
+    best free ability is never worse than none, nor than a filter netting no
+    more than it, so a source without a better filter simply adds its best free
+    amount, and only sources with one are tried both ways.
+    """
+    pool = 0
+    choices: list[list[tuple[int, int]]] = []
+    for options in _mana_options(view, viewer):
+        free = max((amount for amount, cost in options if cost == 0), default=0)
+        filters = [(amount, cost) for amount, cost in options if cost and amount - cost > free]
+        if filters:
+            choices.append([(free, 0), *filters])
+        else:
+            pool += free
+    best = pool
+    for picked in itertools.product(*choices):
+        made = pool + sum(amount for amount, cost in picked if cost == 0)
+        for amount, cost in sorted((p for p in picked if p[1]), key=lambda p: p[1]):
+            if made < cost:
+                break
+            made += amount - cost
+        else:
+            best = max(best, made)
+    return best
+
+
 def _player(view: dict[str, Any], name: str) -> dict[str, Any]:
     return next((p for p in view.get("players") or [] if p["username"] == name), {})
 
@@ -212,7 +268,7 @@ def _check(
         )
         return available is condition["value"], available, None
     if kind == "untapped_mana":
-        seen = len(untapped_mana_sources(view, viewer))
+        seen = untapped_mana(view, viewer)
         return compare(seen, condition["op"], condition["n"]), seen, None
     if kind == "input":
         name = condition["name"]

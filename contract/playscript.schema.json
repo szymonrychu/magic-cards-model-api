@@ -23,15 +23,37 @@
         },
         "sacrifice": {
           "default": null,
-          "enum": [
-            "source",
-            "none"
+          "oneOf": [
+            {
+              "enum": [
+                "source",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/SacrificeChoice"
+            }
           ],
-          "title": "Sacrifice",
-          "type": "string"
+          "title": "Sacrifice"
         },
         "source": {
           "$ref": "#/$defs/ZonedCard"
+        },
+        "targets": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CardTarget"
+              },
+              {
+                "$ref": "#/$defs/PlayerTarget"
+              }
+            ]
+          },
+          "maxItems": 6,
+          "title": "Targets",
+          "type": "array"
         }
       },
       "required": [
@@ -44,12 +66,26 @@
     },
     "Answer": {
       "additionalProperties": false,
-      "description": "How to answer one pending decision of kind `decision`.",
+      "description": "How to answer one pending decision of kind `decision`. A pay-amount\ndecision takes `amount` alone; every other kind takes `pick`, `accept`,\n`to_graveyard` or `to_bottom`.",
       "properties": {
         "accept": {
           "default": null,
           "title": "Accept",
           "type": "boolean"
+        },
+        "amount": {
+          "default": null,
+          "oneOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "const": "max",
+              "type": "string"
+            }
+          ],
+          "title": "Amount"
         },
         "decision": {
           "enum": [
@@ -120,6 +156,30 @@
       "title": "AnswerMove",
       "type": "object"
     },
+    "CardTarget": {
+      "additionalProperties": false,
+      "description": "A card or permanent target: what `select` matches, on `side`.",
+      "properties": {
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select",
+        "side"
+      ],
+      "title": "CardTarget",
+      "type": "object"
+    },
     "CastMove": {
       "additionalProperties": false,
       "properties": {
@@ -173,7 +233,14 @@
         },
         "targets": {
           "items": {
-            "$ref": "#/$defs/CastTarget"
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CardTarget"
+              },
+              {
+                "$ref": "#/$defs/PlayerTarget"
+              }
+            ]
           },
           "maxItems": 6,
           "title": "Targets",
@@ -185,29 +252,6 @@
         "card"
       ],
       "title": "CastMove",
-      "type": "object"
-    },
-    "CastTarget": {
-      "additionalProperties": false,
-      "properties": {
-        "select": {
-          "$ref": "#/$defs/Selector"
-        },
-        "side": {
-          "enum": [
-            "me",
-            "opponent",
-            "any"
-          ],
-          "title": "Side",
-          "type": "string"
-        }
-      },
-      "required": [
-        "select",
-        "side"
-      ],
-      "title": "CastTarget",
       "type": "object"
     },
     "Comparison": {
@@ -513,6 +557,54 @@
         "card"
       ],
       "title": "PlayLandMove",
+      "type": "object"
+    },
+    "PlayerTarget": {
+      "additionalProperties": false,
+      "description": "A player target: the viewer or an opponent.",
+      "properties": {
+        "player": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Player",
+          "type": "string"
+        }
+      },
+      "required": [
+        "player"
+      ],
+      "title": "PlayerTarget",
+      "type": "object"
+    },
+    "SacrificeChoice": {
+      "additionalProperties": false,
+      "description": "What an activation cost's own \"Sacrifice a ...\" piece sacrifices:\npermanents the activating player controls matching `select`, `count` of\nthem (the cost's own number when left out), best first by `prefer`.",
+      "properties": {
+        "count": {
+          "default": null,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 4,
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "SacrificeChoice",
       "type": "object"
     },
     "Selector": {

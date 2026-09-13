@@ -11,7 +11,11 @@ card name (design D3):
   and on the battlefield the engine's computed `type_line` and up-face
   `oracle_text` (CR 712.8d-f);
 - `colors_any` and `mana_value` read the engine's own `colors` and
-  `mana_value` on the view, so no rule about either is re-derived here;
+  `mana_value` on the view, so no rule about either is re-derived here. The
+  color vocabulary is `COLOR_LETTERS`: the five colors and `colorless`, by
+  name or letter (`C` for colorless), any case. `colorless` matches a view
+  whose `colors` is empty (CR 105.2c: "A colorless object has no color") and
+  never a colored one; an unknown word matches nothing;
 - `ability_text_has` reads each `AbilityView.text` (and a stack ability's own
   `text`), `oracle_has` reads `oracle_text` (a double-faced card's face
   text, as above), both as case-insensitive substrings.
@@ -37,6 +41,7 @@ COLOR_LETTERS = {
     "green": "g",
     "colorless": "c",
 }
+COLORLESS = COLOR_LETTERS["colorless"]
 
 _COMPARE: dict[str, Callable[[Any, Any], bool]] = {
     ">=": operator.ge,
@@ -113,7 +118,7 @@ def matches(selector: BaseModel | dict[str, Any], card: dict[str, Any]) -> bool:
     if wanted.get("supertypes_any") and not _folded(wanted["supertypes_any"]) & supertypes:
         return False
     if wanted.get("colors_any"):
-        have = {_color(str(color)) for color in card.get("colors") or []}
+        have = {_color(str(color)) for color in card.get("colors") or []} or {COLORLESS}
         if not {_color(color) for color in wanted["colors_any"]} & have:
             return False
     for field in ("mana_value", "power", "toughness"):
