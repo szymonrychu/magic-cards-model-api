@@ -37,8 +37,8 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 RUN groupadd -g "${AGENT_GID}" agent \
  && useradd -u "${AGENT_UID}" -g "${AGENT_GID}" -m -s /bin/bash agent \
- && mkdir -p /workspace /agent-home \
- && chown -R agent:agent /workspace /agent-home /app
+ && mkdir -p /workspace /agent-home /guides \
+ && chown -R agent:agent /workspace /agent-home /app /guides
 
 ENV HOME=/agent-home \
     HOME_DIR=/agent-home \

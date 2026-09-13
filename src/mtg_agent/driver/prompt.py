@@ -1326,3 +1326,70 @@ changes.
   archetype allow, and say plainly that that is what you are doing.
 
 Begin."""
+
+
+#: The first words of every handover turn.
+HANDOVER_OPENING = "Hand over now: this game is finished for you."
+
+
+def handover_turn(
+    assignment: Assignment, outcome: str, run_table: str, conflict_warnings: str
+) -> str:
+    """The one handover turn, for a seat and a buddy alike: the same deck,
+    the same commands and the same limits, so one prose serves both roles.
+
+    `run_table` is `playscripts.report.script_run_table` for this game and
+    seat; `conflict_warnings` is `handover.conflict_warnings` over the corpus
+    the seat registered."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    return f"""{HANDOVER_OPENING}
+
+Outcome: {outcome}. Stop playing: whether you played this seat or advised on
+it, this turn is the handover, and it has a few minutes, not an hour. Land a
+first version early, then improve it.
+
+## What to do
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides.
+
+1. Update each script's priority with `mcp-seat plays priority` from this
+   game's evidence. The run table below counts each script's runs and exits:
+   `mcp-seat plays priority <play-id> --delta N --deck {slug}` (or `--set N`)
+   raises what worked and lowers what stopped or was refused. Nothing else in
+   the file changes.
+2. Hand the development to subagents: one per new script for a line you
+   played by hand more than once, and one per script to improve. Every
+   conflict warning below needs its conditions extended so that at most one
+   play applies; priority alone never resolves a conflict. Each subagent checks
+   its files with `mcp-seat plays check --root /guides --deck {slug}`.
+3. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
+   land guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
+   Read each command's `result`, fix what it names, and run it again.
+4. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
+   `matchups[].notes` in the deck's newest `boarding-plan.json`, plus
+   `decks/{slug}/NOTES.md`. Any other guide change is refused.
+
+End the turn once both commands have landed or said why they cannot.
+
+## Script runs this game
+
+{run_table}
+
+## Conflict warnings
+
+{conflict_warnings}
+"""
+
+
+def handover_nudge(assignment: Assignment) -> str:
+    """The one message a handover still running at seven minutes gets."""
+    slug = assignment.deck_slug
+    game = assignment.game_id
+    return (
+        "Seven minutes into the handover: push now. Stop developing, run "
+        f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
+        f"`mcp-seat guides propose --deck {slug} --game-id {game}` with what you "
+        "have, then end the turn."
+    )

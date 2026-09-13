@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mtg_agent.driver.config import DriverSettings
+from mtg_agent.driver.prompt import HANDOVER_OPENING
 from tests.driver.world import DECKLIST, build_world
 
 
@@ -42,12 +43,28 @@ def wait_for(predicate, timeout: float = 5.0):
     raise AssertionError("condition never became true")
 
 
-def play_out_the_match(client, state) -> None:
-    """Dispatch, win, and let the reflection turn complete."""
+def complete_handover(client, submitted: list[dict]) -> str:
+    """Wait for the handover turn to be pushed and finish it; its turn id."""
+    ids = wait_for(
+        lambda: [
+            f"turn-{index + 1}"
+            for index, turn in enumerate(submitted)
+            if turn["text"].startswith(HANDOVER_OPENING)
+        ]
+    )
+    client.post("/turn-done", json={"turnId": ids[0], "state": "complete", "finalText": "pushed"})
+    return ids[0]
+
+
+def play_out_the_match(client, state, submitted: list[dict]) -> None:
+    """Dispatch, win, let the reflection and the handover turns complete, and
+    wait for the retirement the handover ends with."""
     dispatch(client)
     state["winner"] = "bob"
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
+    complete_handover(client, submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
 
 
 def test_dispatch_identifies_the_deck_and_reports_it(world):
@@ -165,7 +182,9 @@ def test_turn_done_after_a_win_pushes_exactly_one_reflection_turn(world):
     assert "bob" in submitted[1]["text"]
 
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"})
-    assert len(submitted) == 2, "the reflection turn must not trigger another reflection"
+    assert complete_handover(client, submitted) == "turn-3"
+    reflections = [turn for turn in submitted if "The game is over" in turn["text"]]
+    assert len(reflections) == 1, "the reflection turn must not trigger another reflection"
 
 
 def test_status_reports_the_current_assignment(world):
@@ -242,7 +261,7 @@ def test_a_second_game_arriving_mid_match_is_refused_by_name(world):
 def test_the_completed_reflection_turn_stops_the_agent(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     assert state["deleted"] == 1
 
 
@@ -254,7 +273,7 @@ def test_the_completed_reflection_turn_posts_it_to_the_game_server(world):
     `POST /api/games/{id}/reflection` before the agent is retired."""
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     assert world.reflection_posts == [
         {
             "game_id": "g-1",
@@ -289,33 +308,35 @@ def test_an_unreachable_game_server_does_not_block_retirement(world):
     body = client.post(
         "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
     ).json()
-    assert body["retired"] is True
+    assert body["handover"]["outcome"] == "bob won"
+    complete_handover(client, world.submitted)
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
     assert world.reflection_posts == []
 
 
 def test_retiring_clears_the_assignment_so_the_next_dispatch_starts_clean(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     assert client.get("/status").json()["gameId"] is None
 
 
 def test_the_next_match_is_accepted_once_the_replacement_agent_is_up(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     state["agent"] = "up"  # the replacement container finished booting
     state["winner"] = None
     response = dispatch(client, uid="uid-2", game_id="g-2")
     assert response.status_code == 202
-    assert response.json()["turnId"] == "turn-3"
+    assert response.json()["turnId"] == "turn-4"
     assert client.get("/status").json()["gameId"] == "g-2"
 
 
 def test_the_agent_is_stopped_only_once_per_match(world):
     client = world.client
     state = world.state
-    play_out_the_match(client, state)
+    play_out_the_match(client, state, world.submitted)
     client.post("/turn-done", json={"turnId": "turn-2", "state": "complete"})
     assert state["deleted"] == 1
 
@@ -328,9 +349,9 @@ def test_a_match_is_retired_even_when_the_agent_is_already_gone(world):
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete"})
     state["agent"] = "down"
     body = client.post("/turn-done", json={"turnId": "turn-2", "state": "complete"}).json()
-    assert body["retired"] is True
-    assert body["agentStopped"] is False
-    assert client.get("/status").json()["gameId"] is None
+    assert body["handover"]["gameId"] == "g-1"
+    wait_for(lambda: client.get("/status").json()["gameId"] is None)
+    assert state["deleted"] == 0, "an agent that is gone could not be stopped"
 
 
 def test_a_game_that_ends_with_the_agent_already_dead_is_still_retired(world):
