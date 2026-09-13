@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 
-from .transcript import last_assistant, last_turn_marker, sum_turn_tokens
+from .transcript import last_assistant, last_turn_marker, pending_background_tasks, sum_turn_tokens
 
 MAX_POST_ATTEMPTS = 5
 POST_PER_ATTEMPT = 5.0
@@ -44,10 +44,15 @@ def build_result(payload: bytes, result_json_path: Path) -> dict:
         #: Which turn stopped, read off the transcript (`last_turn_marker`);
         #: "" when it names none. `Manager.complete` ignores a stale one.
         "turnId": "",
+        #: The subagents and background commands the turn launched that have
+        #: not reported back (`pending_background_tasks`): while any are
+        #: listed, `Manager.complete` keeps the turn in flight.
+        "pendingTasks": [],
     }
     if transcript_path:
         path = Path(transcript_path)
         result["turnId"] = last_turn_marker(path)
+        result["pendingTasks"] = pending_background_tasks(path)
         text, usage, stop = last_assistant(path)
         result["usage"] = usage
         result["stopReason"] = stop

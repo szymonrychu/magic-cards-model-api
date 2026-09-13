@@ -1363,6 +1363,8 @@ scripts through subagents, along with guides.
    its files with `mcp-seat plays check --root /guides --deck {slug}`.
 4. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
    propose guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
+   Each seat and buddy proposes on its own `seat/<game-id>-<deck>-<role>-guides`
+   branch, with its own pull request.
    A script lands on mtg-decks main the moment admit pushes it. A guide edit
    only opens a pull request: mtg-decks has no CI budget, so its ci and
    automerge workflows never run there, and the owner reviews and merges it
@@ -1376,8 +1378,11 @@ scripts through subagents, along with guides.
    discard. A stash is invisible to admit and propose, and dies with the pod;
    discard a change with `git restore <path>`.
 
-End the turn once scripts have landed and guides have been proposed, or each
-said why it could not - never wait on the guides pull request to merge.
+Wait for every subagent and background task you started to report back before
+you end the turn: the pod stops once this turn ends, and a subagent still
+running then loses its work. End the turn once scripts have landed and guides
+have been proposed, or each said why it could not - never wait on the guides
+pull request to merge.
 
 ## Script runs this game
 
@@ -1395,7 +1400,7 @@ def handover_nudge(assignment: Assignment) -> str:
     game = assignment.game_id
     return (
         f"{int(NUDGE_AFTER_SECONDS // 60)} minutes into the handover: push now. "
-        "Stop developing, run "
+        "Stop developing: stop any subagent or background task still running, run "
         f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
         f"`mcp-seat guides propose --deck {slug} --game-id {game}` with what you "
         "have, then end the turn."

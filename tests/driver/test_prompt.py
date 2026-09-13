@@ -844,6 +844,11 @@ HANDOVER_PINS = (
     "it is not live until the owner merges it",
     "Edit only `matchups[].play_plan` and `matchups[].notes`",
     "`decks/dimir-frog/NOTES.md`",
+    # Game 8a55cab7: both seats proposed on one branch, so one PR mixed decks.
+    "on its own `seat/<game-id>-<deck>-<role>-guides` branch",
+    # Game 8a55cab7: the turn ended with a script subagent still running.
+    "Wait for every subagent and background task you started to report back before you "
+    "end the turn",
 )
 
 #: Game 16a9cf8f: a seat lowered two fetch plays by 20 that never had a window
@@ -933,6 +938,19 @@ def test_briefs_name_the_priority_limit_refusal_and_the_game_id(brief):
     )
     assert "`priority_limit`" in section
     assert "mcp-seat plays priority <play-id> --delta N --deck SLUG --game-id GAME" in section
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_name_the_per_seat_guides_branch_and_the_subagent_wait(brief):
+    section = _flat(
+        _section((BRIEFS / brief).read_text(), "## Play scripts and guides, for handover")
+    )
+    assert "`seat/GAME-SLUG-ROLE-guides`" in section
+    assert "Wait for every subagent and background task you started to report back" in section
+
+
+def test_the_play_script_spec_names_the_per_seat_guides_branch():
+    assert "`seat/<game-id>-<deck>-<role>-guides`" in _flat(SPEC.read_text())
 
 
 @pytest.mark.parametrize("rule", PRIORITY_RULES)

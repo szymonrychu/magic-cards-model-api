@@ -88,12 +88,17 @@ def check_name(label: str, value: str) -> None:
         raise Outcome("refused", f"{label} {value!r} is not a plain name ([A-Za-z0-9._-])")
 
 
+def role() -> str:
+    """This container's MTG_ROLE, `seat` or `advisor` (`seat` when unset)."""
+    value = os.environ.get("MTG_ROLE", "").strip() or "seat"
+    if value not in ROLE_NAMES:
+        raise Outcome("refused", f"MTG_ROLE {value!r} is neither 'seat' nor 'advisor'")
+    return value
+
+
 def identity(deck: str) -> tuple[str, str]:
     """`mtg-<seat|buddy> <deck>` and `mtg-<seat|buddy>@mtg-trainer.invalid`."""
-    role = os.environ.get("MTG_ROLE", "").strip() or "seat"
-    if role not in ROLE_NAMES:
-        raise Outcome("refused", f"MTG_ROLE {role!r} is neither 'seat' nor 'advisor'")
-    who = f"mtg-{ROLE_NAMES[role]}"
+    who = f"mtg-{ROLE_NAMES[role()]}"
     return f"{who} {deck}", f"{who}@mtg-trainer.invalid"
 
 

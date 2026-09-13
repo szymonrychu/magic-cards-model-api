@@ -6,6 +6,9 @@ hook payload carries `last_assistant_message` authoritatively.
 `sum_turn_tokens` answers "what did this turn cost", summed across every
 assistant message of the last turn: the single last-message usage badly
 undercounts an agentic turn that made twenty tool calls.
+`pending_background_tasks` answers "is this turn's work still running": the
+subagents and background commands the turn launched that have not reported
+back.
 
 A turn boundary is a `user` line whose `content` is a plain string. Tool
 results arrive as `user` lines too, but carry an array `content`, so they do
@@ -135,3 +138,118 @@ def sum_turn_tokens(path: Path) -> list[TurnTokens]:
         totals.cache_read += int(usage.get("cache_read_input_tokens") or 0)
         totals.cache_creation += int(usage.get("cache_creation_input_tokens") or 0)
     return list(by_model.values())
+
+
+#: A task-notification status that is not an end: the task is still going.
+_RUNNING_STATUSES = frozenset({"running", "pending"})
+_NOTIFICATION_RE = re.compile(r"<task-notification>(.*?)</task-notification>", re.DOTALL)
+_TAG_RE = re.compile(r"<(task-id|tool-use-id|status)>\s*([^<]*?)\s*</\1>")
+_LAUNCH_TEXTS = (
+    "Async agent launched",
+    "running in background with ID",
+    "launched in background",
+)
+
+
+def _tool_result_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return ""
+
+
+def _launch_ids(block: dict, result: object) -> set[str] | None:
+    """The ids a background launch answers to (its task or agent id), or None
+    when this tool result is not a background launch."""
+    ids: set[str] = set()
+    launched = False
+    if isinstance(result, dict):
+        for key in ("backgroundTaskId", "agentId", "taskId"):
+            value = result.get(key)
+            if isinstance(value, str) and value:
+                ids.add(value)
+        launched = bool(result.get("isAsync") or result.get("backgroundTaskId")) or (
+            bool(result.get("taskId")) and "retrieval_status" not in result
+        )
+    text = _tool_result_text(block)
+    if any(needle in text for needle in _LAUNCH_TEXTS):
+        launched = True
+        ids.update(re.findall(r"(?:agentId|with ID|Task ID): ?([A-Za-z0-9_-]+)", text))
+    return ids if launched else None
+
+
+def _finished_by_tool(name: str, tool_input: dict, result: object) -> str:
+    """The task id a TaskStop, or a TaskOutput that got the task's end, finished."""
+    task_id = str(tool_input.get("task_id") or tool_input.get("bash_id") or "")
+    if not task_id or not isinstance(result, dict) or result.get("is_error"):
+        return ""
+    if name in ("TaskStop", "KillShell", "KillBash"):
+        return task_id
+    if name in ("TaskOutput", "BashOutput", "AgentOutputTool"):
+        task = result.get("task") if isinstance(result.get("task"), dict) else {}
+        status = str(task.get("status") or result.get("status") or "")
+        if result.get("retrieval_status") == "success" or (
+            status and status not in _RUNNING_STATUSES
+        ):
+            return task_id
+    return ""
+
+
+def pending_background_tasks(path: Path) -> list[str]:
+    """The tool-use ids of the subagents and background commands launched since
+    the last `TURN_MARKER` prompt that have not reported back, in launch order.
+
+    Claude Code answers a background launch at once (an `Agent` tool result
+    "Async agent launched successfully", a `Bash` with `backgroundTaskId`), and
+    reports its end as a `<task-notification>` prompt naming the launch's
+    `<tool-use-id>` and `<task-id>` with a terminal `<status>`, taken in as a
+    `user` prompt or a `queued_command` attachment. A `TaskStop`, or a
+    `TaskOutput` that retrieved the task's end, may get no notification after
+    it, so those finish a task too. Lines of a subagent's own sidechain are
+    not this turn's launches. Everything before the last marker belongs to an
+    earlier turn."""
+    lines = [line for line in _lines(path) if not line.get("isSidechain")]
+    start = 0
+    for index, line in enumerate(lines):
+        if any(TURN_MARKER_RE.search(text) for text in _prompt_texts(line)):
+            start = index
+    launched: dict[str, set[str]] = {}
+    tool_uses: dict[str, tuple[str, dict]] = {}
+    finished: set[str] = set()
+    for line in lines[start:]:
+        content = (line.get("message") or {}).get("content")
+        if line.get("type") == "assistant" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    tool_input = block.get("input")
+                    tool_uses[str(block.get("id"))] = (
+                        str(block.get("name") or ""),
+                        tool_input if isinstance(tool_input, dict) else {},
+                    )
+        elif line.get("type") == "user" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                tool_id = str(block.get("tool_use_id") or "")
+                result = line.get("toolUseResult")
+                name, tool_input = tool_uses.get(tool_id, ("", {}))
+                done = _finished_by_tool(name, tool_input, result)
+                if done:
+                    finished.add(done)
+                    continue
+                ids = _launch_ids(block, result)
+                if ids is not None:
+                    launched[tool_id] = ids | {tool_id}
+        for text in _prompt_texts(line):
+            for body in _NOTIFICATION_RE.findall(text):
+                tags = dict(_TAG_RE.findall(body))
+                if tags.get("status", "").lower() in _RUNNING_STATUSES:
+                    continue
+                finished.update(value for key, value in tags.items() if key != "status" and value)
+    return [tool_id for tool_id, ids in launched.items() if not ids & finished]

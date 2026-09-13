@@ -185,7 +185,8 @@ script's priority only for scripts that actually ran this game, with recorded
 exits, as shown in the run table. Never lower a script for `not_applicable`,
 or for having had no applicable window. Change a script's priority by at most
 5 per game. Never `git stash` in /guides: commit through the provided commands
-or discard.
+or discard. Wait for every subagent and background task you started to report
+back before you end the handover turn: the pod stops when that turn ends.
 
 You never act in the game, but after it you may hand over what you saw. These
 commands take no `--uid` and touch no game. They work the deck-guides
@@ -209,7 +210,8 @@ prints one JSON object, and its `result` says what happened:
 - `mcp-seat guides propose --deck SLUG --game-id GAME` handles matchup advice.
   Edit only `matchups[].play_plan` and `matchups[].notes` of the newest
   `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command regenerates
-  the guides, opens a pull request, and returns at once with its `pr_url` and
+  the guides, pushes your own `seat/GAME-SLUG-ROLE-guides` branch (ROLE is
+  `advisor` for you, so no seat shares it), opens a pull request, and returns at once with its `pr_url` and
   `awaiting_owner_review` - it never waits for checks or a merge. mtg-decks
   has no CI budget, so the owner reviews and merges the PR by hand; the edit
   is not live until then. Scripts are different: `plays admit` pushes

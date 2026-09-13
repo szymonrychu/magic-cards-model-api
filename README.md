@@ -219,7 +219,8 @@ pushed upstream, not to your local clone.
 
 **Handover.** The agent can edit a deck's guide mid-play (`boarding-plan.json`
 matchup notes, `NOTES.md`) and hand it over with `mcp-seat guides propose`:
-render, commit, push a `seat/<game-id>-guides` branch and open a pull request,
+render, commit, push the proposer's own `seat/<game-id>-<deck>-<role>-guides`
+branch and open a pull request,
 returning at once with `awaiting_owner_review` and the PR's URL. mtg-decks is
 a private repo with no GitHub Actions budget, so its `ci` and `automerge`
 workflows never run there - the command never waits on either, and the guide

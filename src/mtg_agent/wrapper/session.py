@@ -159,6 +159,9 @@ class Manager:
         #: while it holds, a completion naming no turn may be the escalated
         #: turn's late Stop hook, so it is not trusted (`complete`).
         self._escalated = False
+        #: Turn id -> the background tasks a deferred Stop hook named, kept
+        #: so the completion that follows can say they finished (`complete`).
+        self._deferred: dict[str, list[str]] = {}
         self._stall_suspected_since: float | None = None
         self._fatal_turn: str | None = None
         self._last_fatal: str = ""
@@ -467,8 +470,17 @@ class Manager:
         hook landing late) and is ignored. No id at all is trusted, as it
         always was, except after an escalation: then it may be the escalated
         turn's own late hook, and ending the next turn on it (the handover
-        turn) would report a handover that never ran."""
+        turn) would report a handover that never ran.
+
+        A Stop hook that lists `pendingTasks` - subagents or background
+        commands the turn launched that have not reported back - does not
+        complete the turn: claude stopped, but the turn's work is still
+        running, and it will take each task's notification as a prompt and
+        run the Stop hook again. The turn completes at the first Stop hook
+        that lists none. Nothing here bounds that wait: the driver's own
+        turn and handover budgets do."""
         claimed = str(result.get("turnId") or "")
+        pending = [str(task) for task in result.get("pendingTasks") or []]
         with self._lock:
             turn_id = self._current
             if turn_id is None:
@@ -482,6 +494,18 @@ class Manager:
                     turn_id,
                 )
                 return
+            if pending:
+                self._deferred[turn_id] = pending
+                self.store.touch(turn_id, self.now())
+                log.info(
+                    "turn stop deferred turn_id=%s: %d background task(s) still running (%s); "
+                    "the turn completes at the Stop hook after they report back",
+                    turn_id,
+                    len(pending),
+                    ", ".join(pending),
+                )
+                return
+            waited = self._deferred.pop(turn_id, None)
             self._escalated = False
             started = self._current_started
             self._cancel_timer_locked()
@@ -493,6 +517,12 @@ class Manager:
             if path:
                 self.transcript_path = path
 
+        if waited:
+            log.info(
+                "background tasks finished turn_id=%s: %s; completing the turn",
+                turn_id,
+                ", ".join(waited),
+            )
         record = self.store.complete(
             turn_id,
             final_text=result.get("finalText") or "",

@@ -277,7 +277,9 @@ resume token's own `moves_done` always agree.
 ## Guide edits: proposed by PR, merged by the owner (2026-09-13)
 
 `mcp-seat guides propose` renders and commits a matchup `play_plan`/`notes`
-edit plus `NOTES.md`, pushes `seat/<game-id>-guides` and opens a pull request
+edit plus `NOTES.md`, pushes the proposer's own branch,
+`seat/<game-id>-<deck>-<role>-guides` (role `seat` or `advisor`, so two seats
+or a seat and its buddy never share one), and opens a pull request
 against mtg-decks main, returning at once with `awaiting_owner_review` and the
 PR's URL. mtg-decks is a private repo with no GitHub Actions budget, so its
 `ci` and `automerge` workflows never run there: the command never polls for

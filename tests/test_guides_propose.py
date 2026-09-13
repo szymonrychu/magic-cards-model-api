@@ -38,7 +38,8 @@ from guides_git_testkit import (
 from playscript_testkit import SLUG
 
 NOTES = f"decks/{SLUG}/NOTES.md"
-BRANCH = f"seat/{GAME}-guides"
+BRANCH = f"seat/{GAME}-{SLUG}-seat-guides"
+ADVISOR_BRANCH = f"seat/{GAME}-{SLUG}-advisor-guides"
 
 
 @pytest.fixture
@@ -100,22 +101,22 @@ def test_render_runs_and_the_generated_guides_are_committed_on_a_pr_branch(
     rc, result, out, err = propose(capsys, root)
     assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
     assert result["pr_url"] == f"https://github.com/{REPO}/pull/1"
-    assert result["branch"] == BRANCH
+    assert result["branch"] == ADVISOR_BRANCH
 
     assert rendered_log(render_log) == [["write", [f"decks/{SLUG}"]], ["check", [f"decks/{SLUG}"]]]
     assert main_sha(bare) == main_before
-    assert BRANCH in branches(bare)
-    changed = git(bare, "diff", "--name-only", "main", BRANCH).splitlines()
+    assert ADVISOR_BRANCH in branches(bare)
+    changed = git(bare, "diff", "--name-only", "main", ADVISOR_BRANCH).splitlines()
     assert sorted(changed) == sorted([PLAN, NOTES, GAMEPLAN])
-    guide = git(bare, "show", f"{BRANCH}:{GAMEPLAN}")
+    guide = git(bare, "show", f"{ADVISOR_BRANCH}:{GAMEPLAN}")
     assert "go under the frog" in guide and "Board in all three." in guide
-    assert git(bare, "log", "-1", "--format=%an|%ae", BRANCH) == (
+    assert git(bare, "log", "-1", "--format=%an|%ae", ADVISOR_BRANCH) == (
         f"mtg-buddy {SLUG}|mtg-buddy@mtg-trainer.invalid"
     )
-    assert trailers(bare, BRANCH, "Game-Id") == [GAME]
+    assert trailers(bare, ADVISOR_BRANCH, "Game-Id") == [GAME]
 
     (pull,) = github.pulls()
-    assert (pull["body"]["head"], pull["body"]["base"]) == (BRANCH, "main")
+    assert (pull["body"]["head"], pull["body"]["base"]) == (ADVISOR_BRANCH, "main")
     assert pull["headers"]["authorization"] == f"Bearer {TOKEN}"
     # The PR body sends merging to a human - mtg-decks has no CI/automerge to
     # rely on - and the command never polls the fake server for anything else.
@@ -243,3 +244,55 @@ def test_the_newest_run_is_the_one_allowed(capsys, root, bare, render_log):
     assert result["result"] == "refused"
     assert result["files"] == [OLD_PLAN]
     assert branches(bare) == {"main"}
+
+
+# ---- one branch and one pull request per proposing seat -----------------------------------
+# Live, game 8a55cab7: the boros seat and the frog seat both proposed on
+# `seat/<game>-guides`, so mtg-decks PR #123 carried both decks' commits.
+
+
+def test_the_branch_names_the_game_the_deck_and_the_role():
+    from magic_cards_model_api.playscripts.guides_propose import guides_branch
+
+    assert guides_branch("g1", "boros-aggro", "seat") == "seat/g1-boros-aggro-seat-guides"
+    assert guides_branch("g1", "dimir-frog", "seat") == "seat/g1-dimir-frog-seat-guides"
+    assert guides_branch("g1", "dimir-frog", "advisor") == "seat/g1-dimir-frog-advisor-guides"
+
+
+def test_a_seat_and_a_buddy_of_one_game_each_open_their_own_pull_request(
+    capsys, monkeypatch, tmp_path, bare, github, render_log
+):
+    seat_clone = clone(bare, tmp_path / "seat-guides")
+    buddy_clone = clone(bare, tmp_path / "buddy-guides")
+
+    monkeypatch.setenv("MTG_ROLE", "seat")
+    edit_plan(seat_clone, good_edit)
+    rc, seat, _, _ = propose(capsys, seat_clone)
+    assert (rc, seat["result"]) == (0, "awaiting_owner_review"), seat
+
+    monkeypatch.setenv("MTG_ROLE", "advisor")
+    (buddy_clone / NOTES).write_text("# notes\n- the buddy saw a race\n", encoding="utf-8")
+    rc, buddy, _, _ = propose(capsys, buddy_clone)
+    assert (rc, buddy["result"]) == (0, "awaiting_owner_review"), buddy
+
+    assert (seat["branch"], buddy["branch"]) == (BRANCH, ADVISOR_BRANCH)
+    assert seat["pr_url"] != buddy["pr_url"]
+    assert [p["body"]["head"] for p in github.pulls()] == [BRANCH, ADVISOR_BRANCH]
+    assert {BRANCH, ADVISOR_BRANCH} <= branches(bare)
+    # Each branch carries its own proposer's one commit and nothing else.
+    for branch, author in ((BRANCH, "mtg-seat"), (ADVISOR_BRANCH, "mtg-buddy")):
+        log = git(bare, "log", "--format=%an", f"main..{branch}").splitlines()
+        assert log == [f"{author} {SLUG}"], (branch, log)
+
+
+def test_the_same_seat_proposing_again_reuses_its_own_branch(
+    capsys, root, bare, github, render_log
+):
+    edit_plan(root, good_edit)
+    rc, first, _, _ = propose(capsys, root)
+    assert (rc, first["result"]) == (0, "awaiting_owner_review"), first
+    rc, again, _, _ = propose(capsys, root)
+    assert (rc, again["result"]) == (0, "awaiting_owner_review"), again
+    assert first["branch"] == again["branch"] == BRANCH
+    assert [p["body"]["head"] for p in github.pulls()] == [BRANCH, BRANCH]
+    assert branches(bare) == {"main", BRANCH}

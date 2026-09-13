@@ -1021,8 +1021,8 @@ def build_parser() -> argparse.ArgumentParser:
         "propose",
         help=(
             "render and commit a matchups[].play_plan / notes edit of the newest boarding plan "
-            "and NOTES.md, push seat/<game-id>-guides and open a pull request the owner merges "
-            "by hand - returns at once, never waits on CI or automerge"
+            "and NOTES.md, push seat/<game-id>-<deck>-<role>-guides and open a pull request "
+            "the owner merges by hand - returns at once, never waits on CI or automerge"
         ),
     )
     _guides_target(propose, game=True)

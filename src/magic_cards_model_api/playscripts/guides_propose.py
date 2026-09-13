@@ -7,7 +7,9 @@ pinned), and `decks/<slug>/NOTES.md`. Anything else - another key of that
 file, the decklist, evidence, sim profiles, shell or archetype, an older run,
 a play, any other path - is `refused` before anything runs.
 
-Then, on a local `seat/<game>-guides` branch: `python3 scripts/render_guides.py
+Then, on a local `seat/<game>-<deck>-<role>-guides` branch (`guides_branch`),
+one per proposing seat or buddy, so two decks of one game never share a pull
+request: `python3 scripts/render_guides.py
 write` for the deck, `check` for it (`gate_failed` on either, the generated
 files put back), a commit of the edit and the regenerated guides with the
 admit identity and `Game-Id` trailer, a push of the branch (never main, never
@@ -30,11 +32,27 @@ from pathlib import Path
 from typing import Any
 
 from . import gitwork
-from .gitwork import MAIN, UPSTREAM, Git, Outcome, check_name, commit_message, identity, result
+from .gitwork import (
+    MAIN,
+    UPSTREAM,
+    Git,
+    Outcome,
+    check_name,
+    commit_message,
+    identity,
+    result,
+    role,
+)
 from .inputs import newest_run
 
 EDITABLE_MATCHUP_KEYS = ("play_plan", "notes")
 _MISSING = object()
+
+
+def guides_branch(game_id: str, deck: str, role: str) -> str:
+    """The proposer's own branch: a seat and a buddy, or the two seats of one
+    game, each get theirs, and the same proposer proposing again reuses it."""
+    return f"seat/{game_id}-{deck}-{role}-guides"
 
 
 def plan_path(root: Path, deck: str) -> str | None:
@@ -84,7 +102,7 @@ def _propose(root: Path, deck: str, game_id: str) -> dict[str, Any]:
     check_name("game id", game_id)
     git = Git(root, identity(deck))
     git.require_main_checkout()
-    branch = f"seat/{game_id}-guides"
+    branch = guides_branch(game_id, deck, role())
     has_branch = git.ok("rev-parse", "--verify", "-q", f"refs/heads/{branch}")
 
     changed = git.changed_paths()
