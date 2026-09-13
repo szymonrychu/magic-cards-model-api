@@ -3,7 +3,7 @@ natural end, by `/release` and by the Job's preStop.
 
 The world is `tests/driver/world.py`'s fake game server and fake wrapper, both
 real FastAPI apps over ASGI. The clock the handover reads is injected, so the
-420 s nudge and the budget are driven by moving a number rather than waiting.
+1380 s nudge and the budget are driven by moving a number rather than waiting.
 """
 
 from __future__ import annotations
@@ -223,7 +223,32 @@ def test_a_natural_end_reflects_then_posts_then_hands_over_then_retires(world, e
 # ---- the nudge and the budget ------------------------------------------------------
 
 
-def test_one_push_now_nudge_goes_out_at_420_seconds(world, clock):
+def test_the_budget_fits_a_handover_that_develops_through_subagents():
+    """Game 16a9cf8f: the boros seat's own handover (two subagents, admits,
+    a guides proposal) ran out a 510 s budget at 508 s. The budget is now
+    28 minutes, nudged at 23, inside the driver preStop's 1740 s; only the
+    409 retry keeps its 120 s bound, since an interrupted turn ends in 20 s."""
+    assert handover.HANDOVER_BUDGET_SECONDS == 1680.0
+    assert handover.NUDGE_AFTER_SECONDS == 1380.0
+    assert handover.HANDOVER_PUSH_BUDGET_SECONDS == 120.0
+    assert handover.HANDOVER_BUDGET_SECONDS < handover.PRESTOP_WAIT_SECONDS == 1740.0
+
+
+def test_the_prestop_module_waits_1740_seconds_by_default(tmp_path):
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    def unreachable(url: str, body: dict) -> None:
+        raise OSError("connection refused")
+
+    env = {"DRIVER_WORKSPACE": str(tmp_path), "HTTP_ADDR": ":8090"}
+    assert handover.main([], env=env, post=unreachable, clock=lambda: now[0], sleep=sleep) == 0
+    assert 1740 <= now[0] < 1742
+
+
+def test_one_push_now_nudge_goes_out_at_1380_seconds(world, clock):
     dispatch(world)
     world.client.post("/handover", json={})
     turn_id = handover_turn_id(world)
@@ -429,10 +454,10 @@ def test_the_prestop_module_gives_up_after_wait_seconds_and_still_exits_zero(tmp
 
     env = {"DRIVER_WORKSPACE": str(tmp_path), "HTTP_ADDR": ":8090"}
     code = handover.main(
-        ["--wait", "540"], env=env, post=unreachable, clock=lambda: now[0], sleep=sleep
+        ["--wait", "1740"], env=env, post=unreachable, clock=lambda: now[0], sleep=sleep
     )
     assert code == 0
-    assert now[0] >= 540
+    assert now[0] >= 1740
 
 
 def test_the_prestop_module_exits_zero_on_arguments_it_cannot_read(tmp_path):

@@ -179,14 +179,24 @@ proposed; shorten it and propose again.
 
 ## Play scripts and guides, for handover
 
+Finish the handover inside the time budget: do priority updates and admits
+first, then optional script or guide development through subagents. Change a
+script's priority only for scripts that actually ran this game, with recorded
+exits, as shown in the run table. Never lower a script for `not_applicable`,
+or for having had no applicable window. Change a script's priority by at most
+5 per game. Never `git stash` in /guides: commit through the provided commands
+or discard.
+
 You never act in the game, but after it you may hand over what you saw. These
 commands take no `--uid` and touch no game. They work the deck-guides
 checkout at `/guides`, and your commits are authored as `mtg-buddy`. Each
 prints one JSON object, and its `result` says what happened:
 
-- `mcp-seat plays priority <play-id> --delta N --deck SLUG` (or `--set N`)
-  changes one play's priority, clamped to 0..100. Nothing else in the file
-  changes.
+- `mcp-seat plays priority <play-id> --delta N --deck SLUG --game-id GAME`
+  (or `--set N`) changes one play's priority, clamped to 0..100. Nothing else
+  in the file changes. A change of more than 5 in one call, or more than 5
+  away from where this game found the priority, is refused with
+  `priority_limit`.
 - `mcp-seat plays admit --deck SLUG --game-id GAME` takes play-script changes
   under `decks/*/plays/` to mtg-decks main, through the plays gate. Results:
   - `admitted` or `pr_opened`: done.

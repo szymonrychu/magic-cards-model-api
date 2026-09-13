@@ -833,7 +833,9 @@ def test_buddy_prompt_checks_list_scripts_on_wake_and_proposes_with_run_script(t
 HANDOVER_PINS = (
     "Delegate repetitive actions to scripts.",
     "Develop new and improve existing scripts through subagents, along with guides.",
-    "Update each script's priority with `mcp-seat plays priority` from this game's evidence.",
+    "Update the priority of each script that ran with `mcp-seat plays priority` from this "
+    "game's evidence.",
+    "`mcp-seat plays priority <play-id> --delta N --deck dimir-frog --game-id g-1`",
     "Land scripts with `mcp-seat plays admit --deck dimir-frog --game-id g-1`",
     "propose guides with `mcp-seat guides propose --deck dimir-frog --game-id g-1`",
     "mtg-decks has no CI budget, so its ci and automerge workflows never run",
@@ -842,6 +844,31 @@ HANDOVER_PINS = (
     "it is not live until the owner merges it",
     "Edit only `matchups[].play_plan` and `matchups[].notes`",
     "`decks/dimir-frog/NOTES.md`",
+)
+
+#: Game 16a9cf8f: a seat lowered two fetch plays by 20 that never had a window
+#: that game, ran out its 510 s budget developing, and ran `git stash` in its
+#: own /guides clone. These rules go wherever a seat or buddy is told to hand
+#: over: the handover turn and both briefs.
+HANDOVER_RULES = (
+    "Change a script's priority only for scripts that actually ran this game, with recorded "
+    "exits, as shown in the run table.",
+    "Never lower a script for `not_applicable`, or for having had no applicable window.",
+    "Change a script's priority by at most 5 per game.",
+    "Finish the handover inside the time budget: do priority updates and admits first, then "
+    "optional script or guide development through subagents.",
+    "Never `git stash` in /guides: commit through the provided commands or discard.",
+)
+
+#: The subset the play-script spec carries where it describes `priority`.
+PRIORITY_RULES = HANDOVER_RULES[:3]
+
+SPEC = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "superpowers"
+    / "specs"
+    / "2026-09-13-play-script-format-design.md"
 )
 
 RUN_TABLE = "script | priority | runs | exits | reapplicable_after\nfetch-x | 50 | 2 | done=2 | 1"
@@ -873,6 +900,46 @@ def test_handover_embeds_the_outcome_the_run_table_and_the_conflicts(guide, role
     )
 
 
+@pytest.mark.parametrize("role", ["seat", "advisor"])
+@pytest.mark.parametrize("rule", HANDOVER_RULES)
+def test_handover_turn_carries_the_handover_rules(guide, role, rule):
+    assert rule in _flat(_handover(guide, role))
+
+
+def test_handover_turn_names_its_time_budget(guide):
+    """28 minutes: `HANDOVER_BUDGET_SECONDS`, not a number the prose invents."""
+    assert "28 minutes" in _flat(_handover(guide, "seat"))
+
+
+def test_handover_turn_orders_priority_and_admit_before_development(guide):
+    text = _flat(_section(_handover(guide, "seat"), "## What to do"))
+    assert text.index("mcp-seat plays priority") < text.index("subagents: one per new script")
+    assert text.index("mcp-seat plays admit") < text.index("subagents: one per new script")
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+@pytest.mark.parametrize("rule", HANDOVER_RULES)
+def test_briefs_carry_the_handover_rules(brief, rule):
+    section = _flat(
+        _section((BRIEFS / brief).read_text(), "## Play scripts and guides, for handover")
+    )
+    assert rule in section, f"{brief} is missing {rule!r}"
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_name_the_priority_limit_refusal_and_the_game_id(brief):
+    section = _flat(
+        _section((BRIEFS / brief).read_text(), "## Play scripts and guides, for handover")
+    )
+    assert "`priority_limit`" in section
+    assert "mcp-seat plays priority <play-id> --delta N --deck SLUG --game-id GAME" in section
+
+
+@pytest.mark.parametrize("rule", PRIORITY_RULES)
+def test_the_play_script_spec_carries_the_priority_rules(rule):
+    assert rule in _flat(SPEC.read_text())
+
+
 def test_the_seat_and_the_buddy_get_the_identical_handover(guide):
     assert _handover(guide, "seat") == _handover(guide, "advisor")
 
@@ -880,6 +947,7 @@ def test_the_seat_and_the_buddy_get_the_identical_handover(guide):
 def test_the_nudge_says_push_now(guide):
     text = handover_nudge(assignment(guide))
     assert "push now" in text.lower()
+    assert text.startswith("23 minutes into the handover")
     assert "mcp-seat plays admit --deck dimir-frog --game-id g-1" in text
 
 

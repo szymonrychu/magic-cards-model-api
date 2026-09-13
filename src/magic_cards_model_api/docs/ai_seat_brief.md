@@ -705,14 +705,24 @@ which is a legitimate stop.
 
 ## Play scripts and guides, for handover
 
+Finish the handover inside the time budget: do priority updates and admits
+first, then optional script or guide development through subagents. Change a
+script's priority only for scripts that actually ran this game, with recorded
+exits, as shown in the run table. Never lower a script for `not_applicable`,
+or for having had no applicable window. Change a script's priority by at most
+5 per game. Never `git stash` in /guides: commit through the provided commands
+or discard.
+
 These commands take no `--uid` and touch no game. They work the deck-guides
 checkout at `/guides`, and they are how what you learned this game reaches
 the next one. Run them once the game is over, or when you are told to hand
 over. Each prints one JSON object, and its `result` says what happened:
 
-- `mcp-seat plays priority <play-id> --delta N --deck SLUG` (or `--set N`)
-  changes that one play's `priority`, clamped to 0..100. Nothing else in the
-  file changes. Use it instead of hand-editing a priority, because the change
+- `mcp-seat plays priority <play-id> --delta N --deck SLUG --game-id GAME`
+  (or `--set N`) changes that one play's `priority`, clamped to 0..100.
+  Nothing else in the file changes. A change of more than 5 in one call, or
+  more than 5 away from where this game found the priority, is refused with
+  `priority_limit`. Use it instead of hand-editing a priority, because the change
   is recorded so that `admit` can replay it if someone else moved the same
   priority first.
 - `mcp-seat plays admit --deck SLUG --game-id GAME` takes your changes under

@@ -41,6 +41,13 @@ SURVEIL = f"decks/{SLUG}/plays/fetch-surveil-land.json"
 DELTAS = Path(".git") / "mtg-plays-deltas.json"
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_game(monkeypatch):
+    """`plays priority` reads MTG_GAME_ID for its per-game bound; a test sets
+    it when it means to."""
+    monkeypatch.delenv("MTG_GAME_ID", raising=False)
+
+
 @pytest.fixture
 def github(tmp_path, monkeypatch):
     fake = FakeGitHub()
@@ -76,24 +83,95 @@ def read_play(root: Path, rel: str = SHOCK) -> dict:
 
 def test_priority_changes_only_the_priority_line_and_records_the_delta(capsys, root):
     before = (root / SHOCK).read_text(encoding="utf-8")
-    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", "--delta", "10")
+    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
     assert rc == 0
-    assert (result["old"], result["new"]) == (60, 70)
+    assert (result["old"], result["new"]) == (60, 65)
     after = (root / SHOCK).read_text(encoding="utf-8")
-    assert after == before.replace('"priority": 60,', '"priority": 70,')
+    assert after == before.replace('"priority": 60,', '"priority": 65,')
     deltas = json.loads((root / DELTAS).read_text(encoding="utf-8"))
-    assert deltas[SHOCK]["delta"] == 10
-    assert (deltas[SHOCK]["old"], deltas[SHOCK]["new"]) == (60, 70)
+    assert deltas[SHOCK]["delta"] == 5
+    assert (deltas[SHOCK]["old"], deltas[SHOCK]["new"]) == (60, 65)
     # Recorded inside .git, so it is never part of the working-tree change.
     assert git(root, "status", "--porcelain") == f"M {SHOCK}"
 
 
-def test_priority_clamps_to_0_100_and_accumulates_one_delta_per_play(capsys, root):
-    assert priority(capsys, root, "fetch-untapped-shock", "--set", "150")[1]["new"] == 100
-    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "-500")[1]["new"] == 0
+def _hand_set(root: Path, value: int) -> None:
+    text = (root / SHOCK).read_text(encoding="utf-8")
+    (root / SHOCK).write_text(text.replace('"priority": 60,', f'"priority": {value},'), "utf-8")
+
+
+def test_priority_clamps_to_0_100(capsys, root):
+    _hand_set(root, 98)
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "5")[1]["new"] == 100
+    (root / DELTAS).unlink()
+    text = (root / SHOCK).read_text(encoding="utf-8")
+    (root / SHOCK).write_text(text.replace('"priority": 100,', '"priority": 2,'), "utf-8")
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "-5")[1]["new"] == 0
+
+
+def test_priority_accumulates_one_delta_per_play(capsys, root):
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "3")[1]["new"] == 63
+    assert priority(capsys, root, "fetch-untapped-shock", "--set", "58")[1]["new"] == 58
     deltas = json.loads((root / DELTAS).read_text(encoding="utf-8"))
-    assert (deltas[SHOCK]["old"], deltas[SHOCK]["new"], deltas[SHOCK]["delta"]) == (60, 0, -60)
-    assert read_play(root) == {**FETCH_SHOCK, "priority": 0}
+    assert (deltas[SHOCK]["old"], deltas[SHOCK]["new"], deltas[SHOCK]["delta"]) == (60, 58, -2)
+    assert read_play(root) == {**FETCH_SHOCK, "priority": 58}
+
+
+# Game 16a9cf8f: one handover lowered two fetch plays by 20 on no evidence.
+# A priority moves at most 5 per call, and - when the game is known, from
+# `--game-id` or the pod's MTG_GAME_ID - at most 5 per game.
+
+
+@pytest.mark.parametrize(
+    "flag", [("--delta", "6"), ("--delta", "-20"), ("--set", "66"), ("--set", "54")]
+)
+def test_priority_refuses_a_change_over_5_in_one_call(capsys, monkeypatch, root, flag):
+    monkeypatch.delenv("MTG_GAME_ID", raising=False)
+    before = (root / SHOCK).read_text(encoding="utf-8")
+    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", *flag)
+    assert rc == 1
+    assert result["result"] == "priority_limit"
+    assert result["limit"] == 5
+    assert "at most 5" in result["message"]
+    assert (root / SHOCK).read_text(encoding="utf-8") == before
+    assert not (root / DELTAS).exists()
+
+
+def test_priority_refuses_a_second_call_that_takes_one_game_past_5(capsys, monkeypatch, root):
+    monkeypatch.delenv("MTG_GAME_ID", raising=False)
+    game = ("--game-id", "g-1")
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "-3", *game)[1]["new"] == 57
+    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", "--delta", "-3", *game)
+    assert rc == 1
+    assert result["result"] == "priority_limit"
+    assert "this game" in result["message"]
+    assert read_play(root)["priority"] == 57
+    # Back up and past the start again is still within 5 of where the game began.
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "5", *game)[1]["new"] == 62
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "4", *game)[0] == 1
+    # Another game starts its own allowance from where the priority is now.
+    assert (
+        priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", "g-2")[1]["new"]
+        == 67
+    )
+
+
+def test_priority_reads_the_game_from_mtg_game_id(capsys, monkeypatch, root):
+    monkeypatch.setenv("MTG_GAME_ID", "g-env")
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "4")[0] == 0
+    rc, result, _, _ = priority(capsys, root, "fetch-untapped-shock", "--delta", "2")
+    assert (rc, result["result"]) == (1, "priority_limit")
+
+
+def test_the_per_game_allowance_survives_an_admit(capsys, monkeypatch, root, bare):
+    monkeypatch.delenv("MTG_GAME_ID", raising=False)
+    assert priority(capsys, root, "fetch-untapped-shock", "--delta", "5", "--game-id", GAME)[0] == 0
+    assert admit(capsys, root)[1]["result"] == "admitted"
+    rc, result, _, _ = priority(
+        capsys, root, "fetch-untapped-shock", "--delta", "1", "--game-id", GAME
+    )
+    assert (rc, result["result"]) == (1, "priority_limit")
+    assert git(root, "status", "--porcelain") == ""
 
 
 def test_priority_needs_exactly_one_of_delta_or_set(capsys, root):
@@ -118,7 +196,7 @@ def test_priority_of_an_unknown_play_fails(capsys, root):
 def test_clean_push_with_identity_and_trailers(capsys, monkeypatch, root, bare, role, who):
     monkeypatch.setenv("MTG_ROLE", role)
     priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
-    priority(capsys, root, "fetch-surveil-land", "--set", "20")
+    priority(capsys, root, "fetch-surveil-land", "--set", "45")
     rc, result, _, _ = admit(capsys, root)
     assert rc == 0, result
     assert result["result"] == "admitted"
@@ -128,7 +206,7 @@ def test_clean_push_with_identity_and_trailers(capsys, monkeypatch, root, bare, 
     )
     assert trailers(bare, "main", "Game-Id") == [GAME]
     assert sorted(trailers(bare, "main", "Script-Priority")) == [
-        "fetch-surveil-land 50->20",
+        "fetch-surveil-land 50->45",
         "fetch-untapped-shock 60->65",
     ]
     assert not (root / DELTAS).exists()
@@ -249,15 +327,15 @@ def test_three_non_fast_forwards_then_a_pull_request(
 def test_two_clones_changing_one_priority_are_auto_resolved_by_deltas(capsys, tmp_path, root, bare):
     other = clone(bare, tmp_path / "guides-b")
     original = (root / SHOCK).read_text(encoding="utf-8")
-    priority(capsys, root, "fetch-untapped-shock", "--delta", "10")
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
     assert admit(capsys, root)[1]["result"] == "admitted"
 
-    priority(capsys, other, "fetch-untapped-shock", "--delta", "-20")
+    priority(capsys, other, "fetch-untapped-shock", "--delta", "-3")
     rc, result, _, _ = admit(capsys, other)
     assert (rc, result["result"]) == (0, "admitted"), result
     merged = git(bare, "show", f"main:{SHOCK}") + "\n"
-    assert merged == original.replace('"priority": 60,', '"priority": 50,')
-    assert trailers(bare, "main", "Script-Priority") == ["fetch-untapped-shock 70->50"]
+    assert merged == original.replace('"priority": 60,', '"priority": 62,')
+    assert trailers(bare, "main", "Script-Priority") == ["fetch-untapped-shock 65->62"]
     assert not (other / DELTAS).exists()
 
 
@@ -326,7 +404,7 @@ def test_raising_a_disabled_duplicate_into_conflict_is_refused(capsys, tmp_path,
     bare = seed_guides(tmp_path, (FETCH_SHOCK, FETCH_SURVEIL, play(id="spare", priority=0)))
     root = clone(bare, tmp_path / "guides")
     before = main_sha(bare)
-    priority(capsys, root, "spare", "--set", "30")
+    priority(capsys, root, "spare", "--set", "5")
     rc, result, _, _ = admit(capsys, root)
     assert (rc, result["result"]) == (1, "conflict_regression"), result
     assert [sorted(c["plays"]) for c in result["new_conflicts"]] == [

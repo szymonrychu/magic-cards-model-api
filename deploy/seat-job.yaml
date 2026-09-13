@@ -99,11 +99,13 @@ spec:
         mtg/seat-uid: u1234567890
     spec:
       restartPolicy: Never
-      # Room for a clean handover when the Job is deleted mid-game: the
-      # driver's preStop gets 540s to hand the seat over, the agent's preStop
-      # waits up to 560s for that handover (and for its own last push), and
-      # both finish inside this grace before the kubelet sends SIGKILL.
-      terminationGracePeriodSeconds: 600
+      # Room for a clean handover when the Job is deleted mid-game, subagent
+      # development included: the driver's handover gives up at 1680s, its
+      # preStop waits 1740s for that, the agent's preStop waits up to 1760s
+      # for the marker (and for its own last push), and both finish inside
+      # this grace before the kubelet sends SIGKILL. activeDeadlineSeconds
+      # (14400) is far longer, so it never cuts the grace short.
+      terminationGracePeriodSeconds: 1800
       automountServiceAccountToken: false
       imagePullSecrets:
       - name: regcred
@@ -293,7 +295,7 @@ spec:
         - name: mtg-decks-git
           mountPath: /var/run/mtg-decks-git
           readOnly: true
-        # Waits (up to 560s, inside the 600s grace) for the driver's handover
+        # Waits (up to 1760s, inside the 1800s grace) for the driver's handover
         # to finish before the wrapper is stopped.
         lifecycle:
           preStop:
@@ -303,7 +305,7 @@ spec:
               - -m
               - mtg_agent.wrapper.handover_wait
               - --wait
-              - '560'
+              - '1760'
         startupProbe:
           httpGet:
             path: /healthz
@@ -376,7 +378,7 @@ spec:
           mountPath: /workspace/memory
         - name: driver-workspace
           mountPath: /driver-workspace
-        # Hands the seat over (up to 540s, inside the 600s grace) before the
+        # Hands the seat over (up to 1740s, inside the 1800s grace) before the
         # driver is stopped.
         lifecycle:
           preStop:
@@ -386,7 +388,7 @@ spec:
               - -m
               - mtg_agent.driver.handover
               - --wait
-              - '540'
+              - '1740'
         readinessProbe:
           httpGet:
             path: /healthz

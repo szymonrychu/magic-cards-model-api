@@ -20,6 +20,13 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   not declare_attackers/declare_blockers], stack: empty|any}` (a repeated step
   is `duplicate-step`), `true` (0-8 conditions), `false` (0-8 conditions, each
   must NOT hold), `moves` (1-4), `next` (0-3 ids).
+- Changing `priority` after a game goes through `mcp-seat plays priority`,
+  and `plays admit` records each change as a `Script-Priority` trailer.
+  Change a script's priority only for scripts that actually ran this game,
+  with recorded exits, as shown in the run table. Never lower a script for
+  `not_applicable`, or for having had no applicable window. Change a script's
+  priority by at most 5 per game. The command refuses a larger step, per call
+  and per game (`--game-id` or `MTG_GAME_ID`), with `priority_limit`.
 - Selector (all fields optional, combined with AND), evaluated on the face a
   card has in its current zone: `types_all`, `types_any`, `subtypes_any`,
   `supertypes_any`, `colors_any`, `keywords_any` (each 0-15 words);

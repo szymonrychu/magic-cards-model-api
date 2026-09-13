@@ -1294,20 +1294,40 @@ def test_role_and_game_id_reach_the_agent_through_their_own_placeholders() -> No
 
 @pytest.mark.parametrize("role", ROLES)
 def test_the_pod_gives_both_containers_time_to_hand_over(role: str) -> None:
-    """600s of grace; the driver's handover gets 540 of it and the agent
-    waits up to 560 for that handover, so both finish inside the grace."""
+    """1800 s of grace, sized for a handover that develops scripts and guides
+    through subagents (game 16a9cf8f ran out a 510 s budget doing exactly
+    that): the driver's preStop waits 1740 of it for the handover, the agent's
+    waits up to 1760 for that marker, so both finish inside the grace."""
     job = _build_role(role)
-    assert _pod(job)["terminationGracePeriodSeconds"] == 600
+    assert _pod(job)["terminationGracePeriodSeconds"] == 1800
     driver_stop = _container(job, "driver")["lifecycle"]["preStop"]["exec"]["command"]
-    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "540"]
+    assert driver_stop == ["python", "-m", "mtg_agent.driver.handover", "--wait", "1740"]
     agent_stop = _container(job, "agent")["lifecycle"]["preStop"]["exec"]["command"]
     assert agent_stop == [
         "python",
         "-m",
         "mtg_agent.wrapper.handover_wait",
         "--wait",
-        "560",
+        "1760",
     ]
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_the_handover_budget_nests_inside_the_prestops_and_the_grace(role: str) -> None:
+    """The marker is written (budget) before the driver preStop's wait ends,
+    that before the agent's hold, that before the grace - and the Job's
+    `activeDeadlineSeconds` is far longer than the grace, so it never cuts a
+    handover short."""
+    from mtg_agent.driver import handover
+    from mtg_agent.wrapper import handover_wait
+
+    job = _build_role(role)
+    grace = _pod(job)["terminationGracePeriodSeconds"]
+    driver_wait = float(_container(job, "driver")["lifecycle"]["preStop"]["exec"]["command"][-1])
+    agent_wait = float(_container(job, "agent")["lifecycle"]["preStop"]["exec"]["command"][-1])
+    assert handover.NUDGE_AFTER_SECONDS < handover.HANDOVER_BUDGET_SECONDS < driver_wait
+    assert driver_wait < agent_wait == handover_wait.DEFAULT_WAIT_SECONDS < grace
+    assert job["spec"]["activeDeadlineSeconds"] > grace
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -1327,7 +1347,7 @@ def test_the_role_job_still_validates_as_a_batch_v1_job(role: str) -> None:
     assert _leftover_placeholders(job) == []
     parsed = k8s_client.ApiClient()._ApiClient__deserialize(job, k8s_client.V1Job)
     spec = parsed.spec.template.spec
-    assert spec.termination_grace_period_seconds == 600
+    assert spec.termination_grace_period_seconds == 1800
     agent = next(c for c in spec.containers if c.name == "agent")
     assert agent.lifecycle.pre_stop._exec.command[2] == "mtg_agent.wrapper.handover_wait"
 

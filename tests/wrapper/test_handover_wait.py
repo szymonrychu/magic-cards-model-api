@@ -34,19 +34,25 @@ def test_it_returns_as_soon_as_the_marker_exists(tmp_path):
     assert time.monotonic() - started < 5
 
 
+def test_the_pty_hold_cap_outlasts_the_driver_prestop():
+    """The agent's preStop and its SIGTERM hold keep the PTY for 1760 s: past
+    the driver preStop's 1740 s, inside the Job's 1800 s grace."""
+    assert handover_wait.DEFAULT_WAIT_SECONDS == 1760.0
+
+
 def test_it_gives_up_after_the_wait(tmp_path):
     fake = FakeTime()
     found = handover_wait.wait_for_marker(
-        tmp_path / "handover.done", 560, clock=fake.clock, sleep=fake.sleep
+        tmp_path / "handover.done", 1760, clock=fake.clock, sleep=fake.sleep
     )
     assert found is False
-    assert 560 <= fake.now < 562
+    assert 1760 <= fake.now < 1762
 
 
 def test_main_exits_zero_when_the_marker_exists(tmp_path):
     marker = tmp_path / "handover.done"
     marker.write_text("{}")
-    assert handover_wait.main(["--wait", "560", "--marker", str(marker)]) == 0
+    assert handover_wait.main(["--wait", "1760", "--marker", str(marker)]) == 0
 
 
 def test_main_exits_zero_after_the_wait_runs_out(tmp_path):
@@ -76,6 +82,6 @@ def test_the_stop_path_does_not_wait_outside_a_seat_job(tmp_path):
     marker = tmp_path / "no-shared-workspace" / "handover.done"
     closed: list[bool] = []
     started = time.monotonic()
-    handover_wait.hold_until_handover(lambda: closed.append(True), marker, 560)
+    handover_wait.hold_until_handover(lambda: closed.append(True), marker, 1760)
     assert closed == [True]
     assert time.monotonic() - started < 1

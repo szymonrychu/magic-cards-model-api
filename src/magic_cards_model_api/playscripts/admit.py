@@ -3,7 +3,12 @@
 `priority` edits one play's top-level `priority` in place - clamped to
 0..100, every other byte of the file left alone - and records the change in
 the untracked `.git/mtg-plays-deltas.json`, so a rebase that meets someone
-else's priority change can replay this one on top of theirs.
+else's priority change can replay this one on top of theirs. It moves a
+priority at most `PRIORITY_STEP_LIMIT` (5) per call and, when the game is
+known, per game: `.git/mtg-plays-priority-games.json` keeps where each game
+first found each play, and survives `admit`. A larger step is refused as
+`priority_limit` with the file untouched (game 16a9cf8f lowered two plays by
+20 that never had a window).
 
 `admit` takes a checkout's play-script changes to mtg-decks main:
 
@@ -35,6 +40,7 @@ from typing import Any
 from . import gitwork
 from .gitwork import (
     MAIN,
+    PRIORITY_STEP_LIMIT,
     PUSH_ATTEMPTS,
     UPSTREAM,
     Git,
@@ -105,20 +111,41 @@ def _entry(path: str, old: int, new: int) -> dict[str, Any]:
 # -- plays priority ----------
 
 
+def _load_game_starts(git: Git) -> dict[str, Any]:
+    try:
+        doc = json.loads(git.git_path(gitwork.GAME_PRIORITY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def set_priority(
-    root: Path, deck: str, play_id: str, *, delta: int | None, value: int | None
+    root: Path,
+    deck: str,
+    play_id: str,
+    *,
+    delta: int | None,
+    value: int | None,
+    game_id: str | None = None,
 ) -> dict[str, Any]:
     try:
-        return _set_priority(Path(root).resolve(), deck, play_id, delta, value)
+        return _set_priority(Path(root).resolve(), deck, play_id, delta, value, game_id)
     except Outcome as outcome:
         return outcome.result
 
 
 def _set_priority(
-    root: Path, deck: str, play_id: str, delta: int | None, value: int | None
+    root: Path,
+    deck: str,
+    play_id: str,
+    delta: int | None,
+    value: int | None,
+    game_id: str | None = None,
 ) -> dict[str, Any]:
     check_name("deck", deck)
     check_name("play id", play_id)
+    if game_id:
+        check_name("game id", game_id)
     git = Git(root)
     if not root.is_dir() or not git.ok("rev-parse", "--is-inside-work-tree"):
         raise Outcome("error", f"{root} is not a git checkout")
@@ -130,11 +157,42 @@ def _set_priority(
     old = _priority_of(text)
     if old is None:
         raise Outcome("error", f"{rel} has no top-level integer priority")
-    new = clamp_priority(value if value is not None else old + (delta or 0))
+    requested = value if value is not None else old + (delta or 0)
+    if abs(requested - old) > PRIORITY_STEP_LIMIT:
+        raise Outcome(
+            "priority_limit",
+            f"{play_id}: a priority moves at most {PRIORITY_STEP_LIMIT} per call and per game; "
+            f"{old}->{requested} is {requested - old:+d}",
+            id=play_id,
+            path=rel,
+            old=old,
+            requested=requested,
+            limit=PRIORITY_STEP_LIMIT,
+        )
+    new = clamp_priority(requested)
+    starts = _load_game_starts(git) if game_id else {}
+    start = starts.get(game_id, {}).get(rel, old) if game_id else old
+    if abs(new - start) > PRIORITY_STEP_LIMIT:
+        raise Outcome(
+            "priority_limit",
+            f"{play_id}: a priority moves at most {PRIORITY_STEP_LIMIT} per game, and this game "
+            f"found it at {start}; {new} would move it {new - start:+d}",
+            id=play_id,
+            path=rel,
+            old=old,
+            requested=requested,
+            game_start=start,
+            limit=PRIORITY_STEP_LIMIT,
+        )
     updated = replace_top_level_int(text, "priority", new)
     if updated is None:
         raise Outcome("error", f"{rel} has no top-level integer priority")
     path.write_bytes(updated.encode("utf-8"))
+    if game_id:
+        starts.setdefault(game_id, {}).setdefault(rel, old)
+        git.git_path(gitwork.GAME_PRIORITY_FILE).write_text(
+            json.dumps(starts, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     deltas = _load_deltas(git)
     first = deltas.get(rel, {}).get("old", old)

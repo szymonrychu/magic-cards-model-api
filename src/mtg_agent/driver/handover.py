@@ -41,18 +41,26 @@ log = logging.getLogger("driver.handover")
 #: handover's status JSON whether it succeeded, timed out or failed.
 MARKER_NAME = "handover.done"
 
-#: When the one "push now" nudge goes out, in seconds since the handover began.
-NUDGE_AFTER_SECONDS = 420.0
+#: When the one "push now" nudge goes out, in seconds since the handover began:
+#: 23 minutes, five before the budget runs out.
+NUDGE_AFTER_SECONDS = 1380.0
 
-#: When a handover still waiting on its turn gives up and writes the marker.
-#: Inside the driver preStop's 540 s, itself inside the Job's 600 s grace, so
-#: the retire after the marker still fits before the kubelet's SIGTERM.
-HANDOVER_BUDGET_SECONDS = 510.0
+#: When a handover still waiting on its turn gives up and writes the marker:
+#: 28 minutes, sized for a handover that admits, then develops scripts and
+#: guides through subagents (game 16a9cf8f ran out 510 s doing that). Inside
+#: the driver preStop's `PRESTOP_WAIT_SECONDS`, itself inside the Job's 1800 s
+#: grace, so the retire after the marker still fits before the kubelet's
+#: SIGKILL.
+HANDOVER_BUDGET_SECONDS = 1680.0
+
+#: The driver container's preStop wait (`deploy/seat-job.yaml`), the default
+#: for `--wait`.
+PRESTOP_WAIT_SECONDS = 1740.0
 
 #: How long the handover turn's push is retried while the agent answers 409
 #: (its interrupted turn not ended yet) before the handover fails and writes
 #: the marker. The wrapper ends an interrupted turn `INTERRUPT_SETTLE_SECONDS`
-#: (20 s) after the interrupt, so this is several settles, and far inside 540 s.
+#: (20 s) after the interrupt, so this is several settles, and far inside 1740 s.
 HANDOVER_PUSH_BUDGET_SECONDS = 120.0
 
 #: The first wait after a 409, doubled after each further one up to the max.
@@ -150,7 +158,7 @@ def main(
     started = clock()
     try:
         parser = argparse.ArgumentParser(prog="python -m mtg_agent.driver.handover")
-        parser.add_argument("--wait", type=float, default=540.0)
+        parser.add_argument("--wait", type=float, default=PRESTOP_WAIT_SECONDS)
         args = parser.parse_args(argv)
         settings = DriverSettings.from_env(os.environ if env is None else env)
         try:

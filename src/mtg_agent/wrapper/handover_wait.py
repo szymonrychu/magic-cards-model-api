@@ -26,8 +26,10 @@ log = logging.getLogger("wrapper.handover")
 #: The driver's marker, on the emptyDir both seat Job containers mount.
 MARKER_PATH = Path("/driver-workspace") / MARKER_NAME
 
-#: The agent preStop's wait in the seat Job, inside its 600 s grace.
-DEFAULT_WAIT_SECONDS = 560.0
+#: The agent preStop's wait in the seat Job, and the cap on how long a SIGTERM
+#: keeps the PTY open: past the driver preStop's 1740 s, inside the Job's
+#: 1800 s grace.
+DEFAULT_WAIT_SECONDS = 1760.0
 
 
 def hold_until_handover(

@@ -32,6 +32,10 @@ DEFAULT_GITHUB_API = "https://api.github.com"
 #: Push attempts onto main before falling back to a branch and a pull request.
 PUSH_ATTEMPTS = 3
 DELTAS_FILE = "mtg-plays-deltas.json"
+#: Where each game first found each play's priority, for the per-game bound.
+GAME_PRIORITY_FILE = "mtg-plays-priority-games.json"
+#: How far one `plays priority` call, and one game, may move a priority.
+PRIORITY_STEP_LIMIT = 5
 PRIORITY_MIN, PRIORITY_MAX = 0, 100
 #: MTG_ROLE -> the name a commit is authored under.
 ROLE_NAMES = {"seat": "seat", "advisor": "buddy"}

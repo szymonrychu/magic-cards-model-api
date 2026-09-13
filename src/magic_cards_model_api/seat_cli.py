@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -982,8 +983,9 @@ def build_parser() -> argparse.ArgumentParser:
     reprioritise = plays_sub.add_parser(
         "priority",
         help=(
-            "change one play's priority, clamped to 0..100, touching nothing else in the "
-            "file; the delta is recorded in .git/mtg-plays-deltas.json for admit"
+            "change one play's priority, clamped to 0..100 and at most 5 per call and per "
+            "game, touching nothing else in the file; the delta is recorded in "
+            ".git/mtg-plays-deltas.json for admit"
         ),
     )
     reprioritise.add_argument("play_id", help="the play's id, its file stem")
@@ -991,6 +993,11 @@ def build_parser() -> argparse.ArgumentParser:
     amount.add_argument("--delta", type=int, help="add this (negative lowers it)")
     amount.add_argument("--set", dest="set_to", type=int, help="set it to this")
     _guides_target(reprioritise, game=False)
+    reprioritise.add_argument(
+        "--game-id",
+        default=None,
+        help="the game this change came out of, for the per-game bound (default: $MTG_GAME_ID)",
+    )
 
     admit = plays_sub.add_parser(
         "admit",
@@ -1051,7 +1058,12 @@ def run(argv: list[str] | None = None) -> int:
     if args.command == "plays" and args.plays_command == "priority":
         return _emit(
             playscripts_admit.set_priority(
-                args.root, args.deck, args.play_id, delta=args.delta, value=args.set_to
+                args.root,
+                args.deck,
+                args.play_id,
+                delta=args.delta,
+                value=args.set_to,
+                game_id=args.game_id or os.environ.get("MTG_GAME_ID", "").strip() or None,
             ),
             frozenset({"priority_set"}),
         )

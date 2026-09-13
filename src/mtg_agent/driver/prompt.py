@@ -27,6 +27,7 @@ from .guides import (
     Identification,
     ScriptsRegistration,
 )
+from .handover import HANDOVER_BUDGET_SECONDS, NUDGE_AFTER_SECONDS
 from .matchup_card import (
     guide_paths,
     matchup_note_key,
@@ -1331,28 +1332,36 @@ def handover_turn(
     the seat registered."""
     slug = assignment.deck_slug
     game = assignment.game_id
+    budget = int(HANDOVER_BUDGET_SECONDS // 60)
     return f"""{HANDOVER_OPENING}
 
 Outcome: {outcome}. Stop playing: whether you played this seat or advised on
-it, this turn is the handover, and it has a few minutes, not an hour. Land a
-first version early, then improve it.
+it, this turn is the handover, and it has {budget} minutes, not an hour.
+Finish the handover inside the time budget: do priority updates and admits
+first, then optional script or guide development through subagents.
 
 ## What to do
 
 Delegate repetitive actions to scripts. Develop new and improve existing
 scripts through subagents, along with guides.
 
-1. Update each script's priority with `mcp-seat plays priority` from this
-   game's evidence. The run table below counts each script's runs and exits:
-   `mcp-seat plays priority <play-id> --delta N --deck {slug}` (or `--set N`)
-   raises what worked and lowers what stopped or was refused. Nothing else in
-   the file changes.
-2. Hand the development to subagents: one per new script for a line you
-   played by hand more than once, and one per script to improve. Every
+1. Update the priority of each script that ran with `mcp-seat plays priority`
+   from this game's evidence. Change a script's priority only for scripts that
+   actually ran this game, with recorded exits, as shown in the run table.
+   Never lower a script for `not_applicable`, or for having had no applicable
+   window. Change a script's priority by at most 5 per game.
+   `mcp-seat plays priority <play-id> --delta N --deck {slug} --game-id {game}`
+   raises what worked and lowers what stopped or was refused, and refuses
+   more than 5 with `priority_limit`. Nothing else in the file changes.
+2. Admit those priority updates at once with
+   `mcp-seat plays admit --deck {slug} --game-id {game}`.
+3. Then, with the time left, hand optional development to subagents: one
+   per new script for a line you played by hand more than once, and one per
+   script to improve. Every
    conflict warning below needs its conditions extended so that at most one
    play applies; priority alone never resolves a conflict. Each subagent checks
    its files with `mcp-seat plays check --root /guides --deck {slug}`.
-3. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
+4. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
    propose guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
    A script lands on mtg-decks main the moment admit pushes it. A guide edit
    only opens a pull request: mtg-decks has no CI budget, so its ci and
@@ -1360,9 +1369,12 @@ scripts through subagents, along with guides.
    by hand. Do not wait for that pull request - it is not live until the
    owner merges it. Read each command's `result`, fix what it names, and run
    it again.
-4. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
+5. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
    `matchups[].notes` in the deck's newest `boarding-plan.json`, plus
    `decks/{slug}/NOTES.md`. Any other guide change is refused.
+6. Never `git stash` in /guides: commit through the provided commands or
+   discard. A stash is invisible to admit and propose, and dies with the pod;
+   discard a change with `git restore <path>`.
 
 End the turn once scripts have landed and guides have been proposed, or each
 said why it could not - never wait on the guides pull request to merge.
@@ -1378,11 +1390,12 @@ said why it could not - never wait on the guides pull request to merge.
 
 
 def handover_nudge(assignment: Assignment) -> str:
-    """The one message a handover still running at seven minutes gets."""
+    """The one message a handover still running at `NUDGE_AFTER_SECONDS` gets."""
     slug = assignment.deck_slug
     game = assignment.game_id
     return (
-        "Seven minutes into the handover: push now. Stop developing, run "
+        f"{int(NUDGE_AFTER_SECONDS // 60)} minutes into the handover: push now. "
+        "Stop developing, run "
         f"`mcp-seat plays admit --deck {slug} --game-id {game}` and "
         f"`mcp-seat guides propose --deck {slug} --game-id {game}` with what you "
         "have, then end the turn."
