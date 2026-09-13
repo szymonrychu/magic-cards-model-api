@@ -610,10 +610,56 @@ class CastRequest(BoardRead):
     tapping: list[UUID] | None = None
     """Same shape, for a printed "tap ..." additional cost - Swallow Whole's
     "tap an untapped creature you control"."""
+    optional_costs: list[OptionalCostChoice] | None = None
+    """The optional additional costs this cast pays (CR 118.8, announced at
+    CR 601.2b: "If the spell has alternative or additional costs that will be
+    paid as it's being cast such as buyback or kicker costs ..., the player
+    announces their intentions to pay any or all of those costs").
+
+    One entry per cost, named by its keyword - the `keyword` of an entry in
+    the cast row's own `optional_costs` (`GET .../legal-actions`), handed back
+    as read: `[{"keyword": "Kicker"}]` kicks Burst Lightning (CR 702.33a), and
+    CR 702.33d is what its "if this spell was kicked" reads afterwards.
+    Absent or empty pays none of them, which is every cast written before this
+    field existed.
+
+    Refused in the engine's own words: a keyword the card does not have
+    ("Lightning Bolt has no kicker ability (CR 702.33a)"), plain kicker paid
+    twice, and a kicked total the sources cannot pay."""
     dry_run: bool = False
     reasoning: str | None = None
     """T10: this cast's own reasoning - required for an agent seat
     (`records.require_reasoning`), optional for a human one."""
+
+
+class OptionalCostChoice(RequestModel):
+    """One optional cost a cast pays (`CastRequest.optional_costs`).
+
+    `keyword` is the cost's own keyword, case-insensitively: `Kicker` and
+    `Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`
+    (CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,
+    `Casting.pay_offspring`), `Blight` (CR 701.68a's "you may blight N",
+    `Casting.pay_blight`), `Gift` (CR 702.174a, `Casting.pay_gift`),
+    `Entwine` (CR 702.42a, `Casting.choose_modes(entwined=True)` - name every
+    mode in `modes` too), `Escalate` (CR 702.120a, `Casting.pay_escalate` -
+    charged for every mode beyond the first whether or not it is named; name
+    it to hand over the objects a non-mana escalate cost takes) and
+    `Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a
+    `keyword: Harmonize` cast taps to reduce its cost) - every optional cost
+    choice the engine charges."""
+
+    keyword: str
+    times: int = 1
+    """How many times it is paid. Only a repeatable cost (multikicker,
+    replicate) takes more than 1; the engine refuses a second payment of any
+    other."""
+    choosing: list[UUID] | None = None
+    """The objects the cost names: a kicker or replicate cost that is not only
+    mana, the one creature a blight cost puts its -1/-1 counters on, the cards
+    a non-mana escalate cost takes (one set per mode beyond the first), and the
+    at most one creature harmonize taps."""
+    opponent: str | None = None
+    """The opponent a gift is promised to (CR 702.174a)."""
 
 
 class ConvokeChoice(RequestModel):
@@ -2124,7 +2170,59 @@ class ActionTargets(BaseModel):
     """Why there are no candidates, present only when `understood` is false."""
 
 
-class ActionWithTargets(Action):
+class OptionalCostView(BaseModel):
+    """One optional additional cost a cast row's card offers (CR 118.8) -
+    `action_rows.legal_action_rows`. Its `keyword` is what
+    `CastRequest.optional_costs[].keyword` takes back."""
+
+    keyword: str
+    rule: str
+    cost: str | None = None
+    """The cost as printed after the keyword (`{4}` for Burst Lightning's
+    kicker), or `blight N`; `None` for gift, whose cost is choosing an
+    opponent, and for harmonize, whose choice is the creature tapped."""
+    repeatable: bool
+    """Whether it may be paid more than once (multikicker, replicate) -
+    `OptionalCostChoice.times`."""
+    affordable: str
+    """`yes`/`no`/`unknown` for this row's cost with this one added, in the
+    engine's own `Affordability` words."""
+    unaffordable_reason: str | None = None
+
+
+class ManualManaStepView(BaseModel):
+    """One mana ability to activate by hand before a cast row is payable
+    (`ActionRow.activate_first`) - `POST .../actions/activate` with these
+    `card_id`/`ability_index` (and `color`, when present)."""
+
+    card_id: str
+    name: str
+    ability_index: int
+    cost: str | None = None
+    adds: str
+    """The mana this activation added on a copy of the board."""
+    color: str | None = None
+
+
+class ActionRow(Action):
+    """The engine's own `Action` as `GET .../legal-actions` serves it, plus
+    what the api adds to a row (`action_rows.legal_action_rows`). Every field
+    here is left off a row it does not apply to."""
+
+    optional_costs: list[OptionalCostView] | None = None
+    """A cast row's optional costs - kicker and its siblings, entwine and
+    escalate on a modal row, harmonize's creature tap on a harmonize row."""
+    printed_produces: str | None = None
+    """A mana row whose `produces` was resolved on this board (Urza's Tower
+    making `{C}{C}{C}` beside Mine and Power-Plant) keeps the printed phrase
+    here."""
+    activate_first: list[ManualManaStepView] | None = None
+    """A cast row the engine's auto-tap cannot pay, but which is payable once
+    these mana abilities are activated by hand (CR 118.3c). Such a row reads
+    `affordable: yes`; cast it after activating them, in order."""
+
+
+class ActionWithTargets(ActionRow):
     """The engine's own `Action`, plus the candidates the api enumerates for
     it (`app._attach_target_candidates`). A subclass rather than a re-shape:
     every field of `Action` is passed through untouched and by inheritance,
@@ -2164,7 +2262,11 @@ class LegalActionsResponse(BaseModel):
     it is holding by the one key that differs.
     """
 
-    actions: list[ActionWithTargets | Action]
+    actions: list[ActionWithTargets | ActionRow | Action]
+    """`ActionRow` is the same engine `Action` with the api's own additions
+    (`optional_costs`, `printed_produces`, `activate_first`), each present only
+    on a row it applies to - so a row carrying none of them is exactly an
+    engine `Action`, and `Action` stays a published name."""
 
     last_seq: int = 0
     """The ledger position this enumeration was computed against

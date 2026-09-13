@@ -241,6 +241,13 @@
           "type_error": null
         },
         {
+          "default": "",
+          "has_default": true,
+          "name": "optional_costs",
+          "type": "str",
+          "type_error": null
+        },
+        {
           "default": false,
           "has_default": true,
           "name": "dry_run",

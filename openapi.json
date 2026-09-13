@@ -479,58 +479,8 @@
         "title": "ActionOutcome",
         "type": "object"
       },
-      "ActionTargets": {
-        "description": "What one action may legally name, per requirement slot.\n\n`understood: false` carries NO slots and a `note` saying why, which is\n`affordances.candidates`' existing contract kept intact: an empty\ncandidate list would read as \"nothing on this board is legal\", a\ndifferent and false statement, and `ui/app.js`'s `isPickingTargets`\nalready branches on exactly that difference.",
-        "properties": {
-          "more_with": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "More With"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "slots": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/TargetSlotCandidates"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Slots"
-          },
-          "understood": {
-            "title": "Understood",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "understood"
-        ],
-        "title": "ActionTargets",
-        "type": "object"
-      },
-      "ActionWithTargets": {
-        "description": "The engine's own `Action`, plus the candidates the api enumerates for\nit (`app._attach_target_candidates`). A subclass rather than a re-shape:\nevery field of `Action` is passed through untouched and by inheritance,\nso a field the engine adds arrives here without this file changing.\n\n`targets` is **required**, which is what makes this a distinguishable\nbranch of `LegalActionsResponse.actions` rather than a replacement for\n`Action` - see there.",
+      "ActionRow": {
+        "description": "The engine's own `Action` as `GET .../legal-actions` serves it, plus\nwhat the api adds to a row (`action_rows.legal_action_rows`). Every field\nhere is left off a row it does not apply to.",
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -542,6 +492,20 @@
               }
             ],
             "title": "Ability Index"
+          },
+          "activate_first": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ManualManaStepView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activate First"
           },
           "affordable": {
             "$ref": "#/components/schemas/Affordability",
@@ -710,6 +674,20 @@
             "title": "Modes",
             "type": "array"
           },
+          "optional_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OptionalCostView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optional Costs"
+          },
           "pays_with": {
             "default": [],
             "items": {
@@ -721,6 +699,411 @@
           "player": {
             "title": "Player",
             "type": "string"
+          },
+          "printed_produces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Produces"
+          },
+          "produces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produces"
+          },
+          "restriction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction"
+          },
+          "restriction_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction Understood"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
+          },
+          "splice_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SpliceOption"
+            },
+            "title": "Splice Options",
+            "type": "array"
+          },
+          "target_slots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TargetSlot"
+            },
+            "title": "Target Slots",
+            "type": "array"
+          },
+          "unaffordable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unaffordable Reason"
+          },
+          "x_range": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Range"
+          }
+        },
+        "required": [
+          "kind",
+          "player",
+          "rule"
+        ],
+        "title": "ActionRow",
+        "type": "object"
+      },
+      "ActionTargets": {
+        "description": "What one action may legally name, per requirement slot.\n\n`understood: false` carries NO slots and a `note` saying why, which is\n`affordances.candidates`' existing contract kept intact: an empty\ncandidate list would read as \"nothing on this board is legal\", a\ndifferent and false statement, and `ui/app.js`'s `isPickingTargets`\nalready branches on exactly that difference.",
+        "properties": {
+          "more_with": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "More With"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "slots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TargetSlotCandidates"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slots"
+          },
+          "understood": {
+            "title": "Understood",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "understood"
+        ],
+        "title": "ActionTargets",
+        "type": "object"
+      },
+      "ActionWithTargets": {
+        "description": "The engine's own `Action`, plus the candidates the api enumerates for\nit (`app._attach_target_candidates`). A subclass rather than a re-shape:\nevery field of `Action` is passed through untouched and by inheritance,\nso a field the engine adds arrives here without this file changing.\n\n`targets` is **required**, which is what makes this a distinguishable\nbranch of `LegalActionsResponse.actions` rather than a replacement for\n`Action` - see there.",
+        "properties": {
+          "ability_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ability Index"
+          },
+          "activate_first": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ManualManaStepView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activate First"
+          },
+          "affordable": {
+            "$ref": "#/components/schemas/Affordability",
+            "default": "unknown"
+          },
+          "alternative_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Cost"
+          },
+          "attacker_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attacker Id"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          },
+          "color_choice_count": {
+            "default": 0,
+            "title": "Color Choice Count",
+            "type": "integer"
+          },
+          "color_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Color"
+            },
+            "title": "Color Options",
+            "type": "array"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "decision_candidates": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Decision Candidates",
+            "type": "array"
+          },
+          "decision_option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Option"
+          },
+          "decision_player_candidates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Decision Player Candidates",
+            "type": "array"
+          },
+          "decision_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Seq"
+          },
+          "defender": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defender"
+          },
+          "from_zone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Zone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActionKind"
+          },
+          "land_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Face"
+          },
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "modes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "optional_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OptionalCostView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optional Costs"
+          },
+          "pays_with": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ManaPlanEntry"
+            },
+            "title": "Pays With",
+            "type": "array"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "printed_produces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Produces"
           },
           "produces": {
             "anyOf": [
@@ -3056,6 +3439,20 @@
             ],
             "title": "Modes"
           },
+          "optional_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OptionalCostChoice"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optional Costs"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -4781,6 +5178,9 @@
                   "$ref": "#/components/schemas/ActionWithTargets"
                 },
                 {
+                  "$ref": "#/components/schemas/ActionRow"
+                },
+                {
                   "$ref": "#/components/schemas/Action"
                 }
               ]
@@ -5109,6 +5509,57 @@
           "card_id"
         ],
         "title": "ManaSource",
+        "type": "object"
+      },
+      "ManualManaStepView": {
+        "description": "One mana ability to activate by hand before a cast row is payable\n(`ActionRow.activate_first`) - `POST .../actions/activate` with these\n`card_id`/`ability_index` (and `color`, when present).",
+        "properties": {
+          "ability_index": {
+            "title": "Ability Index",
+            "type": "integer"
+          },
+          "adds": {
+            "title": "Adds",
+            "type": "string"
+          },
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "name",
+          "ability_index",
+          "adds"
+        ],
+        "title": "ManualManaStepView",
         "type": "object"
       },
       "MintSeatRequest": {
@@ -6395,6 +6846,103 @@
           "because"
         ],
         "title": "OpponentPrediction",
+        "type": "object"
+      },
+      "OptionalCostChoice": {
+        "additionalProperties": false,
+        "description": "One optional cost a cast pays (`CastRequest.optional_costs`).\n\n`keyword` is the cost's own keyword, case-insensitively: `Kicker` and\n`Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`\n(CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,\n`Casting.pay_offspring`), `Blight` (CR 701.68a's \"you may blight N\",\n`Casting.pay_blight`), `Gift` (CR 702.174a, `Casting.pay_gift`),\n`Entwine` (CR 702.42a, `Casting.choose_modes(entwined=True)` - name every\nmode in `modes` too), `Escalate` (CR 702.120a, `Casting.pay_escalate` -\ncharged for every mode beyond the first whether or not it is named; name\nit to hand over the objects a non-mana escalate cost takes) and\n`Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a\n`keyword: Harmonize` cast taps to reduce its cost) - every optional cost\nchoice the engine charges.",
+        "properties": {
+          "choosing": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choosing"
+          },
+          "keyword": {
+            "title": "Keyword",
+            "type": "string"
+          },
+          "opponent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opponent"
+          },
+          "times": {
+            "default": 1,
+            "title": "Times",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "title": "OptionalCostChoice",
+        "type": "object"
+      },
+      "OptionalCostView": {
+        "description": "One optional additional cost a cast row's card offers (CR 118.8) -\n`action_rows.legal_action_rows`. Its `keyword` is what\n`CastRequest.optional_costs[].keyword` takes back.",
+        "properties": {
+          "affordable": {
+            "title": "Affordable",
+            "type": "string"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "keyword": {
+            "title": "Keyword",
+            "type": "string"
+          },
+          "repeatable": {
+            "title": "Repeatable",
+            "type": "boolean"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "unaffordable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unaffordable Reason"
+          }
+        },
+        "required": [
+          "keyword",
+          "rule",
+          "repeatable",
+          "affordable"
+        ],
+        "title": "OptionalCostView",
         "type": "object"
       },
       "PassPriorityRequest": {

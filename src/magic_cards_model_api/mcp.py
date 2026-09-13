@@ -121,6 +121,7 @@ from .seatkit import (
     _parse_pairs,
     card_reference,
     parse_convoke,
+    parse_optional_costs,
     run_action,
 )
 
@@ -913,6 +914,7 @@ def build_server(seats: Seats) -> MCPServer:
         tapping: str = "",
         delve: str = "",
         convoke: str = "",
+        optional_costs: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
         reasoning: str = "",
@@ -1027,6 +1029,20 @@ def build_server(seats: Seats) -> MCPServer:
                   Swallow Whole's untapped creature. Additional, not alternative -
                   the printed mana cost is still paid on top. Name as many ids as
                   the sentence asks for; too few is refused with the same count.
+                - `optional_costs` - the OPTIONAL additional costs you choose to
+                  pay (CR 601.2b): comma-separated keywords taken from the cast
+                  row's own `optional_costs` in `available_actions`.
+                  `optional_costs="Kicker"` kicks Burst Lightning for {4} more
+                  (CR 702.33a); a repeatable cost takes a count
+                  (`"Multikicker:2"`), a gift names the opponent (`"Gift:bob"`),
+                  and a cost naming objects takes their ids
+                  (`"Blight:<creature id>"`). `"Entwine"` chooses every mode
+                  (list them in `modes` too, CR 702.42a); escalate is charged
+                  for each mode beyond the first (CR 702.120a), and
+                  `"Escalate:<card id>"` names what a non-mana escalate cost
+                  discards; a `keyword="Harmonize"` cast taps the creature
+                  named by `"Harmonize:<creature id>"` to cut its cost by that
+                  creature's power (CR 702.180a). Leave it empty to pay none.
                 - `delve` - graveyard cards exiled to pay generic mana
                   (CR 702.66a), one per generic symbol.
                 - `convoke` - your untapped creatures tapped to pay (CR 702.51a).
@@ -1112,6 +1128,8 @@ def build_server(seats: Seats) -> MCPServer:
                 body[field] = _parse_ids(value)
         if convoke:
             body["convoke"] = parse_convoke(convoke)
+        if optional_costs:
+            body["optional_costs"] = parse_optional_costs(optional_costs)
         if reasoning:
             body["reasoning"] = reasoning
         if dry_run:

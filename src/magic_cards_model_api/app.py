@@ -22,7 +22,6 @@ from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
-from magic_cards_model.machines.legal_actions import legal_actions as compute_legal_actions
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 from starlette.convertors import Convertor, register_url_convertor
@@ -50,6 +49,7 @@ from . import (
     symbology,
     visibility,
 )
+from .action_rows import legal_action_rows
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -2041,8 +2041,7 @@ def get_legal_actions(
         )
     paused = store.paused_command(game_id)
     pending = paused[2] if paused is not None else None
-    actions = compute_legal_actions(game, player, pending=pending)
-    views = [action.model_dump(mode="json") for action in actions]
+    actions, views = legal_action_rows(game, player, pending)
     if candidates:
         _attach_target_candidates(game, player, actions, views)
     # The ledger position this enumeration describes, handed back with it

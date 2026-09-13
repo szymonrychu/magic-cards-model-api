@@ -160,7 +160,30 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-16"
+PROTOCOL_VERSION = "seatkit-17"
+#: `seatkit-17` is an **additive request** change and an **additive
+#: response** one: `cast` gained `optional_costs`, and a legal-action row
+#: gained `optional_costs`, `printed_produces` and `activate_first`.
+#:
+#: Battle 2 found kicker unreachable: Sowing Mycospawn's only row was `cast
+#: {3}{G}`, `CastRequest` had no field for the choice, and so the card's
+#: exile-a-land half, and every kicker card in the pool, could never be chosen
+#: by a seat - while the engine has charged kicker all along
+#: (`Casting.pay_kicker`, CR 702.33a). `optional_costs` is the CR 601.2b
+#: announcement of any optional cost the engine charges - kicker,
+#: multikicker, replicate, offspring, blight, gift, entwine, escalate and
+#: harmonize's creature tap - named by the keyword the
+#: row's own `optional_costs` entry carries (`parse_optional_costs` is the one
+#: parser both front ends use: `Kicker`, `Multikicker:2`, `Gift:bob`).
+#:
+#: A bump, the same reasoning as `seatkit-8`, `seatkit-12` and `seatkit-15`: an
+#: MCP process built before it has no parameter to send the choice with, so a
+#: seat told to kick would cast unkicked and believe otherwise. The response
+#: fields are additive and an older build passes them through untouched.
+#:
+#: What did NOT change: no default. Absent `optional_costs` pays none, which
+#: is every cast before this.
+#:
 #: `seatkit-16` is a **response** shape change: `wait_for_priority` answers an
 #: advisor uid with `available_actions` on a real wake.
 #:
@@ -1576,6 +1599,33 @@ def _parse_ids(value: str) -> list[str]:
     if value.startswith("["):
         return [str(entry) for entry in json.loads(value)]
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def parse_optional_costs(value: str) -> list[dict[str, Any]]:
+    """`OptionalCostChoice` objects out of a comma-separated string - the one
+    parser `seat_cli.py`'s `--optional-costs` and `mcp.py`'s `optional_costs`
+    share, so both front ends send the same body.
+
+    Each entry is a keyword (`Kicker`), optionally followed by `:`-separated
+    arguments: a number is how many times a repeatable cost is paid
+    (`Multikicker:2`), an id (or id fragment, which the API then refuses as a
+    malformed id) is an object the cost names (`Blight:<creature id>`), and
+    anything else is the opponent a gift is promised to (`Gift:bob`)."""
+    choices: list[dict[str, Any]] = []
+    for entry in value.split(","):
+        keyword, *arguments = [part.strip() for part in entry.split(":")]
+        if not keyword:
+            continue
+        choice: dict[str, Any] = {"keyword": keyword}
+        for argument in arguments:
+            if argument.isdigit():
+                choice["times"] = int(argument)
+            elif _UUID.match(argument) or _ID_FRAGMENT.match(argument):
+                choice.setdefault("choosing", []).append(argument)
+            elif argument:
+                choice["opponent"] = argument
+        choices.append(choice)
+    return choices
 
 
 def parse_convoke(value: str) -> list[dict[str, str]]:
