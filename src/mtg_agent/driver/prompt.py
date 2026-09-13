@@ -522,6 +522,12 @@ your next action, not merely to choose one, so a third call in the middle
 buys you nothing and costs you a whole turn of thinking. A seat was measured
 spending 65 tool calls on a single activation this way.
 
+A play script is the one call that is both halves at once: `run_script`
+counts as both your wait and your one committing call; read `script_exit` and
+do exactly one thing. It waits for its own `when`, makes its moves, and hands
+back `script_exit` beside the board - so what follows it is the single call
+that exit asks for (see "Scripts" below), never a look around first.
+
 What that means concretely, for the five calls you will be tempted to make:
 
 - **Do NOT call `battlefield_state`.** The answer you were just handed
@@ -564,6 +570,60 @@ What that means concretely, for the five calls you will be tempted to make:
   the eighteen decision kinds do not answer on the parameter their name
   suggests, and a guess there is a real parameter of `decide` that the server
   refuses.
+
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+Your deck's play scripts are listed in the briefing under "Your registered
+play scripts". They were registered once, at dispatch, and do not change for
+the rest of the game: a new play, or a sharper condition on an old one, is
+written after the game, with the guide it belongs to.
+
+**Pick one with `list_scripts`.** It judges every registered script against
+the board right now, highest priority first, and runs nothing:
+
+  list_scripts(player_uid=..., opposing_archetype="<your read>")
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition` - the list that stopped it and what it saw.
+`runtime_conflict` true means more than one applies right now, named in
+`applicable`: do not pick between them by priority. Play that window yourself,
+and extend their conditions after the game so that at most one applies.
+
+**Assert `opposing_archetype`.** Pass the matchup you have deduced, spelled
+exactly as your matchup card spells it. A script keyed to other archetypes
+does not apply, so asserting your read is what keeps another matchup's plays
+off this board. Leave it at `*`, the default, only while you genuinely do not
+know. Everything else your deck's scripts read that the board cannot show goes
+in `inputs`, by name - `inputs={{"prefer_tempo": true}}` - and `list_scripts`
+takes the same `opposing_archetype` and `inputs`, so a listing shows what a run
+with them would find.
+
+**Run it with `run_script`**, by the script's id, with your reason:
+
+  run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
+             reasoning="...", inputs=...)
+
+It waits for the script's `when`, makes each move through the same routes you
+would - so every refusal is the engine's own - and hands back `script_exit`
+beside the board. Read `script_exit.exit` and do exactly one thing:
+
+- `chain_complete`: the moves are done and no next script applies. Wait again.
+- `not_applicable`: `failing_condition` says why. Play the window yourself.
+- `needs_input` or `invalid_input`: run it again with that input given, as a
+  value your deck declares.
+- `needs_plan`: call `declare_plan`, then run it again.
+- `already_ran`: it already ran this turn and step. Do not run it again.
+- `refused`, `unforeseen`, `interrupted`, `ambiguous`, `stale` or
+  `unknown_outcome`: read `refusal` or `stop_reason`, and make the next call
+  yourself off the board it handed back.
+- `exit` null: the time cap came first. Call it again with
+  `script_exit.resume` passed back verbatim as `resume`.
 
 ## How you act
 
@@ -1133,6 +1193,39 @@ Every tool is on the `mtg` MCP server and takes your advisor uid as
   pending decision is exactly where advice matters most. Propose those
   unvalidated, and say in your `reasoning` which part you could not check.
 - `report_problem` files an engine bug.
+
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+{assignment.player}'s deck's play scripts are registered for you too, and
+they are listed in the briefing. When `wait_for_priority` wakes you, check
+`list_scripts` on wake, before working a line out by hand - it judges every
+script against the board right now, highest priority first, and runs nothing:
+
+  list_scripts(player_uid=..., opposing_archetype="<your read>")
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition`. Assert `opposing_archetype` as the matchup you have
+deduced, spelled exactly as the matchup card spells it, and leave it at `*`
+only while you genuinely do not know; anything else the deck's scripts read
+that the board cannot show goes in `inputs`, by name.
+
+When one applies, propose with `run_script`:
+
+  run_script(player_uid=..., script="<id>", opposing_archetype="<your read>",
+             reasoning="...", inputs=...)
+
+From your advisor uid it makes no move. Its `script_exit.exit` comes back
+`advised`: the script's first move is recorded as your advice and the rest are
+named in `unvalidated`, and `reasoning` is still the rationale your human
+reads. When `runtime_conflict` is true, more than one script applies right
+now: do not pick between them by priority - say it is close and propose the
+line you would take.
 
 ## When you think, and when you stay quiet
 

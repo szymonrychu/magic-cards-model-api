@@ -758,3 +758,81 @@ def test_the_briefing_keeps_the_boards_apart_for_the_classifier_claim(tmp_path, 
     assert "Maindeck:" in text
     assert text.index("4 Psychic Frog") < text.index("2 Dress Down")
     assert "maindeck" in text.lower()
+
+
+# ---- play scripts: the doctrine every agent is told ----------------------
+#
+# A6 gave a seat `run_script`/`list_scripts` and `mcp-seat script run|list`.
+# A tool nobody is told how to reach for is a tool nobody uses, so the doctrine
+# is pinned word for word in both turn-zero prompts and both CLI briefs.
+
+SCRIPT_DOCTRINE = (
+    "Delegate repetitive actions to scripts.",
+    "Develop new and improve existing scripts through subagents, along with guides.",
+    "Aim for deterministic scripts.",
+    "When plays conflict, resolve it by extending conditions, never by priority alone.",
+    "Pass inputs, such as the opposing archetype or your preferences, explicitly.",
+)
+
+LOOP_SCRIPT_DOCTRINE = (
+    "`run_script` counts as both your wait and your one committing call; "
+    "read `script_exit` and do exactly one thing."
+)
+
+BRIEFS = Path(__file__).resolve().parents[2] / "src" / "magic_cards_model_api" / "docs"
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _section(text: str, heading: str) -> str:
+    """`heading` through the line before the next `## ` heading."""
+    start = text.index(f"\n{heading}\n")
+    end = text.find("\n## ", start + len(heading) + 1)
+    return text[start : end if end != -1 else len(text)]
+
+
+@pytest.mark.parametrize("sentence", SCRIPT_DOCTRINE)
+def test_seat_prompt_scripts_section_carries_the_doctrine(tmp_path, guide, sentence):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+@pytest.mark.parametrize("sentence", SCRIPT_DOCTRINE)
+def test_buddy_prompt_carries_the_script_doctrine(tmp_path, guide, sentence):
+    text = advisor_turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert sentence in _flat(_section(text, "## Scripts"))
+
+
+def test_seat_prompt_loop_counts_run_script_as_wait_and_commit(tmp_path, guide):
+    text = turn_zero(assignment(guide), tmp_path / "current-game.md")
+    assert LOOP_SCRIPT_DOCTRINE in _flat(_section(text, "## The loop"))
+
+
+def test_seat_prompt_scripts_section_says_how_to_pick_a_script(tmp_path, guide):
+    """Pick with `list_scripts`, and say which archetype you read rather than
+    leaving the `*` default to stand in for a read you have made."""
+    section = _flat(_section(turn_zero(assignment(guide), tmp_path / "x.md"), "## Scripts"))
+    assert "list_scripts(" in section
+    assert "run_script(" in section
+    assert "opposing_archetype" in section
+    assert "inputs" in section
+
+
+def test_buddy_prompt_checks_list_scripts_on_wake_and_proposes_with_run_script(tmp_path, guide):
+    section = _flat(
+        _section(advisor_turn_zero(assignment(guide), tmp_path / "x.md"), "## Scripts")
+    )
+    assert "check `list_scripts` on wake" in section
+    assert "propose with `run_script`" in section
+
+
+@pytest.mark.parametrize("brief", ["ai_seat_brief.md", "ai_buddy_brief.md"])
+def test_briefs_describe_the_script_cli_and_carry_the_doctrine(brief):
+    text = (BRIEFS / brief).read_text()
+    section = _flat(_section(text, "## Scripts"))
+    for sentence in SCRIPT_DOCTRINE:
+        assert sentence in section, f"{brief} is missing {sentence!r}"
+    for needle in ("script run", "script list", "--input NAME=VALUE", "`inputs`"):
+        assert needle in section, f"{brief}'s Scripts section never names {needle!r}"

@@ -55,6 +55,41 @@ the flag is an argparse error rather than a dry run. Propose those
 unvalidated: work it out from the answer you are already holding, and say in
 your `reasoning` which part of it you could not check.
 
+## Scripts
+
+Delegate repetitive actions to scripts. Develop new and improve existing
+scripts through subagents, along with guides. Aim for deterministic scripts.
+When plays conflict, resolve it by extending conditions, never by priority
+alone. Pass inputs, such as the opposing archetype or your preferences,
+explicitly.
+
+Your human's deck's play scripts are registered for you too. Check them on
+every wake, before working a line out by hand - it judges every script
+against the board right now, highest priority first, and runs nothing:
+
+    ... script list --opposing-archetype KEY --input NAME=VALUE
+
+Each script says whether it `applies`, and when it does not, its
+`failing_condition`. When one applies, propose it with `script run`:
+
+    ... script run SCRIPT --reasoning "why now" --opposing-archetype KEY \
+        --input NAME=VALUE
+
+From your advisor uid it makes no move. Its `script_exit.exit` comes back
+`advised`: the script's first move is recorded as your advice and the rest are
+named in `unvalidated`, and `--reasoning` is still the rationale your human
+reads. When `runtime_conflict` is true, more than one script applies right
+now: do not pick between them by priority - say it is close and propose the
+line you would take.
+
+- `--opposing-archetype KEY` asserts the matchup you have read, spelled as the
+  matchup card spells it; leave it at `*`, the default, only while you
+  genuinely do not know.
+- `--input NAME=VALUE` is one input the deck's scripts read that the board
+  cannot show - repeat the flag once per input. VALUE is read as JSON where it
+  is JSON (`true`, `3`) and as text otherwise. It is the CLI spelling of the
+  `inputs` parameter `run_script` and `list_scripts` take over MCP.
+
 ## When you think, and when you stay quiet
 
 You run the same wake loop an opponent's agent runs, and you run it for your
