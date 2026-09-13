@@ -497,6 +497,16 @@ class PendingDecision:
     #: damage. `False` for every other kind.
     trample: bool = False
 
+    #: `pay_mana` only: the untapped permanents whose mana abilities the payer
+    #: may activate while paying (CR 608.2g, CR 605.3a), from the engine's own
+    #: `Decision.mana_sources` - engine PR #17 (B6-08). Empty for every other
+    #: kind, and empty here too where paying is only ever a floating-pool
+    #: yes/no (`affirmative_is_legal` false, or an engine older than this
+    #: field). A seat names a subset of these back in `decide`'s own
+    #: `mana_sources` to choose which lands pay rather than accepting the
+    #: engine's own pick (an `accept: true` naming none).
+    mana_sources: tuple[str, ...] = ()
+
     #: Which standing question this is, from `repository.GameRepository
     #: .pause_generation` - monotonic per game, bumped only when the pause
     #: slot's question is replaced. A seat echoes it back as `DecideRequest
@@ -546,6 +556,9 @@ class PendingDecision:
             ),
             lethal_damage=tuple(getattr(decision, "lethal_damage", ()) or ()),
             trample=bool(getattr(decision, "trample", False)),
+            mana_sources=tuple(
+                str(card_id) for card_id in getattr(decision, "mana_sources", ()) or ()
+            ),
         )
 
     def _answer_argument(self, kind: DecisionKind) -> str:
@@ -562,6 +575,16 @@ class PendingDecision:
         where it is an `int` or a `bool`, so the template is the shape the
         call actually takes rather than something a seat must retype.
         """
+        if kind is DecisionKind.PAY_MANA and self.affirmative_is_legal and self.mana_sources:
+            # CR 608.2g / CR 605.3a: paying may also name which untapped
+            # mana sources to activate, rather than leaving the engine to tap
+            # them all - `mana_sources` mirrors `pending_decision.mana_sources`
+            # itself (this same field, one call up), and is optional: omitting
+            # it is still `accept=true` alone, which taps every offered source.
+            return (
+                'true, mana_sources=["<any of pending_decision.mana_sources, to activate '
+                'while paying; omit to tap them all automatically>"]'
+            )
         if kind in (
             DecisionKind.MAY,
             DecisionKind.PAY_LIFE,
@@ -715,6 +738,7 @@ class PendingDecision:
             "default_cards": None if self.default_cards is None else list(self.default_cards),
             "lethal_damage": list(self.lethal_damage),
             "trample": self.trample,
+            "mana_sources": list(self.mana_sources),
             # The two fields that make this block answerable in one call
             # rather than in one call plus a docstring read - see
             # `answer_with` and `TOOL_FIELD_FOR_KIND`. Last in the dict on
@@ -737,6 +761,37 @@ def bool_answer(accept: bool | None) -> bool:
     if accept is None:
         raise ValueError("this decision needs a yes/no answer ('accept')")
     return accept
+
+
+def pay_mana_answer(accept: bool | None, mana_sources: list[str] | None) -> bool | tuple[UUID, ...]:
+    """A `decide` request body's `accept`/`mana_sources`, in the shape
+    `Game.ask` expects for `PAY_MANA` (CR 608.2g, CR 605.3a) - either a bare
+    `bool` (`bool_answer`'s own shape, still legal: `accept: true` alone taps
+    every offered source automatically) or, when `mana_sources` is given
+    (engine PR #17, B6-08), a `tuple[UUID, ...]` naming which of
+    `pending_decision.mana_sources` to activate instead.
+
+    `mana_sources` is `None` (the default) for the plain yes/no shape every
+    `pay_mana` answer had before this - `card_ids_answer`'s per-id parsing
+    runs the same way here, so a malformed id is refused with a 400 rather
+    than reaching the engine. An empty list is a real, distinct answer (pay
+    from the floating pool alone, activating none of the offered sources),
+    so it is not the same as omitting the field. Whether each id was actually
+    offered, and whether "yes" is legal at all, is `validate_answer`'s job,
+    matching `card_ids_answer`'s own division of labour.
+
+    Naming sources while declining is refused here, matching the engine's own
+    `Answer._check_one_value_field`: "a pay_mana answer names mana sources
+    only when it pays".
+    """
+    accepted = bool_answer(accept)
+    if mana_sources is None:
+        return accepted
+    if not accepted:
+        raise ValueError(
+            "this decision names mana sources only when it pays ('accept' must be true)"
+        )
+    return tuple(parse_id(source_id, "mana source id") for source_id in mana_sources)
 
 
 def energy_amount_answer(energy_amount: int | None) -> int:
@@ -998,6 +1053,26 @@ def damage_answer(
     return tuple(assigned)
 
 
+def _illegal_option_refusal(decision: Decision) -> str:
+    """`models/game.py`'s own `_illegal_option_refusal`, word for word - the
+    refusal for choosing an option CR 608.2d rules out. Shared by
+    `validate_answer`'s bool branch (`MAY`/`PAY_LIFE`/`PAY_ENERGY`/`PAY_MANA`
+    answered `True` or `False`) and its `PAY_MANA` tuple branch below, which
+    hits the identical "yes is not legal at all" case through a different
+    answer shape."""
+    refusal = (
+        f"{decision.prompt}: that option is illegal, so CR 608.2d does not allow choosing "
+        "it (\"The player can't choose an option that's illegal or impossible\")"
+    )
+    if decision.kind is DecisionKind.PAY_MANA:
+        refusal += (
+            " - the floating mana and the untapped mana sources available cannot pay it "
+            "(CR 118.3: \"A player can't pay a cost without having the necessary "
+            'resources to pay it fully")'
+        )
+    return refusal
+
+
 def validate_answer(decision: Decision, value: object) -> None:
     """Refuse `value` with a `ValueError` if the engine's own asker for
     `decision.kind` would refuse it too - run from `decide` *before* the
@@ -1046,6 +1121,25 @@ def validate_answer(decision: Decision, value: object) -> None:
     `Game.declare_blockers`'s own job, run when the paused command replays
     with the new answer, not this function's.
     """
+    if decision.kind is DecisionKind.PAY_MANA and isinstance(value, tuple):
+        # CR 608.2g / CR 605.3a: paying by naming which offered mana sources
+        # to activate, engine PR #17 (B6-08) - `Game.ask`'s own tuple branch,
+        # checked and worded identically, and checked *before* the plain
+        # yes/no branch below so a tuple answer never falls into "needs a
+        # bool answer" the way a stray non-bool would.
+        if not all(isinstance(card_id, UUID) for card_id in value):
+            raise ValueError(f"{decision.prompt}: needs a tuple of mana source ids")
+        offered = set(decision.mana_sources)
+        stray = [str(card_id) for card_id in value if card_id not in offered]
+        if stray:
+            raise ValueError(
+                f"{decision.prompt}: {', '.join(stray)} is not one of the mana sources "
+                f"{decision.player} can activate while paying (CR 605.3a)"
+            )
+        if True not in legal_options(decision):
+            raise ValueError(_illegal_option_refusal(decision))
+        return
+
     if decision.kind in (
         DecisionKind.MAY,
         DecisionKind.PAY_LIFE,
@@ -1055,18 +1149,7 @@ def validate_answer(decision: Decision, value: object) -> None:
         if not isinstance(value, bool):
             raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
         if value not in legal_options(decision):
-            # `models/game.py`'s `_illegal_option_refusal`, word for word.
-            refusal = (
-                f"{decision.prompt}: that option is illegal, so CR 608.2d does not allow "
-                "choosing it (\"The player can't choose an option that's illegal or impossible\")"
-            )
-            if decision.kind is DecisionKind.PAY_MANA:
-                refusal += (
-                    " - the floating mana and the untapped mana sources available cannot pay "
-                    "it (CR 118.3: \"A player can't pay a cost without having the necessary "
-                    'resources to pay it fully")'
-                )
-            raise ValueError(refusal)
+            raise ValueError(_illegal_option_refusal(decision))
         return
 
     if decision.kind is DecisionKind.MULLIGAN:

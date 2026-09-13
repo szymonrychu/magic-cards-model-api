@@ -1099,6 +1099,109 @@ def test_the_caster_cannot_answer_a_pay_mana_decision_asked_of_the_opponent(clie
     )
 
 
+def test_pay_mana_by_naming_untapped_lands(client, game):
+    """CR 608.2g / CR 605.3a: paying by naming untapped mana sources to
+    activate, rather than only spending what is already floating (engine PR
+    #17, B6-08) - the gap this task closes. alice pays Mystical Dispute's
+    "unless its controller pays {3}" by naming three untapped Mountains
+    through `decide`, with nothing floating in her pool at all."""
+    uids = seats_for(client, game)
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    stage_mystical_dispute_targeting_bears(client, game, {})
+
+    resolve_top(game)
+    pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert pending["kind"] == "pay_mana"
+    assert pending["affirmative_is_legal"] is True
+    mountains = [c["id"] for c in state(client, game)["battlefield"] if c["name"] == "Mountain"]
+    assert len(mountains) == 3
+    assert set(pending["mana_sources"]) == set(mountains), (
+        "the three untapped Mountains are exactly what CR 605.3a offers"
+    )
+
+    answer = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True, "mana_sources": mountains},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["accepted"] is True
+    resolve_top(game)  # Mystical Dispute is off the stack; Grizzly Bears, paid, resolves
+
+    final = state(client, game)
+    tapped_mountains = [c for c in final["battlefield"] if c["name"] == "Mountain"]
+    assert all(c["tapped"] for c in tapped_mountains), "all three named Mountains paid the {3}"
+    assert find(final["battlefield"], "Grizzly Bears")["zone"] == "battlefield", (
+        "paid, not countered"
+    )
+
+
+def test_pay_mana_naming_a_source_not_offered_is_refused(client, game):
+    """CR 605.3a: an id that is not one of `pending_decision.mana_sources` -
+    here, bob's own Island, which alice does not control - is refused rather
+    than silently ignored or partially applied."""
+    uids = seats_for(client, game)
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    stage_mystical_dispute_targeting_bears(client, game, {})
+
+    resolve_top(game)
+    wait_for_pending(client, game, uids["alice"])
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")["id"]
+    stray = next(c["id"] for c in board["battlefield"] if c["name"] == "Island")
+
+    refused = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": True, "mana_sources": [mountain, stray]},
+    )
+    assert refused.status_code == 200
+    body = refused.json()
+    assert body["accepted"] is False
+    assert "is not one of the mana sources" in body["reason"]
+    assert "CR 605.3a" in body["reason"]
+
+    still_pending = state(client, game, uid=uids["alice"])
+    assert still_pending.get("pending_decision") is not None
+
+    client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": False},
+    )
+
+
+def test_pay_mana_sources_without_accept_true_is_refused(client, game):
+    """Naming `mana_sources` while declining (`accept: false`) is refused
+    rather than silently accepted or silently ignored - the engine's own
+    `Answer` shape names sources only when it pays."""
+    uids = seats_for(client, game)
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    stage_mystical_dispute_targeting_bears(client, game, {})
+
+    resolve_top(game)
+    wait_for_pending(client, game, uids["alice"])
+    mountain = find(state(client, game)["battlefield"], "Mountain")["id"]
+
+    refused = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": False, "mana_sources": [mountain]},
+    )
+    assert refused.status_code == 200
+    body = refused.json()
+    assert body["accepted"] is False
+    assert "only when it pays" in body["reason"]
+
+    client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "accept": False},
+    )
+
+
 # -- choose_a_quality: "as this enters, choose a color" (CR 614.12a) --------
 
 

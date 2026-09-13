@@ -149,6 +149,7 @@
     "kept_label": "",
     "kind": "declare_attackers",
     "lethal_damage": [],
+    "mana_sources": [],
     "moved_label": "",
     "options": [],
     "player": "alice",
