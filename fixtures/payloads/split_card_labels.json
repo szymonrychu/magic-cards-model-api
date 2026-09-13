@@ -286,7 +286,7 @@
     "affirmative_is_legal": true,
     "amount": 1,
     "answer_field": "moved",
-    "answer_with": "decide(moved=\"<any of pending_decision.cards, comma-separated; these go to top of your library>\", generation=1)",
+    "answer_with": "decide(moved=\"<up to 1 of pending_decision.cards, comma-separated; these go to top of your library>\", generation=1)",
     "card_details": [
       {
         "abilities": [],

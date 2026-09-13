@@ -366,9 +366,16 @@ function splitMode(ctx) {
           updateSlot
         );
       }
+      // `countHint` (`decisions.js`'s `splitCount`) is the count
+      // `validate_answer` actually enforces (`pending.amount`/`.exact`,
+      // L1a) - stated here, not only in the Done button's enabled state,
+      // so a seat learns why a lane count is wrong instead of only that it
+      // is.
+      const hint = now.vm.controls[0].countHint;
+      const countNote = hint ? ` ${hint} may move to ${lanes.moved.label}.` : "";
       setText(
         f.status,
-        `${now.kept.length} to ${lanes.kept.label}, ${now.moved.length} to ${lanes.moved.label}. Drag cards between the lanes and along them, or use the buttons.`
+        `${now.kept.length} to ${lanes.kept.label}, ${now.moved.length} to ${lanes.moved.label}.${countNote} Drag cards between the lanes and along them, or use the buttons.`
       );
       aim(done, now.vm.submit.label, now.vm.submit.enabled, () => {
         const fresh = arrangement(store.get()).vm;

@@ -403,6 +403,76 @@ def test_surveil_moves_named_cards_to_the_graveyard(client, game):
     assert admin_final["libraries"]["alice"][0]["name"] == "Forest"
 
 
+# -- L1a: the count the engine enforces (`amount`/`exact`, `validate_answer`
+# since PR #31) must show up in the hint text every client reads, not only
+# in the fields a client would have to compute it from itself -------------
+
+
+def test_scry_answer_with_states_any_number_not_any_of(client, game):
+    """CR 701.22a's own 'any number of them' (`exact=False`, `amount` equal
+    to the whole look) - a real scry through the state view and through the
+    lifted MCP answer alike, never the old unqualified 'any of
+    pending_decision.cards' that was silent about the count `validate_answer`
+    actually enforces."""
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Preordain", "alice", "hand")
+    stock_library_top(client, game, "alice", ["Mountain", "Forest", "Grizzly Bears"])
+    uids = seats_for(client, game)
+    board = state(client, game, uid=uids["alice"])
+    island = find(board["battlefield"], "Island")
+    preordain = board["hands"]["alice"][0]
+
+    cast_and_resolve(game, "alice", preordain["id"], [island["id"]])
+    pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
+    assert pending["kind"] == "scry"
+    assert pending["exact"] is False
+    assert pending["amount"] == len(pending["cards"]) == 2
+
+    assert "any number, including none" in pending["answer_with"]
+    assert "any of pending_decision.cards" not in pending["answer_with"]
+
+    from magic_cards_model_api import mcp
+
+    lifted = mcp._action_answer(
+        {"outcome": {"accepted": True}, "state": {"pending_decision": pending}}
+    )
+    assert "any number, including none" in lifted["pending_decision"]["answer_with"]
+
+
+def test_look_and_split_exact_one_states_exactly_one(client, game):
+    """Codecracker Hound's 'put one into your hand and the other into your
+    graveyard' (CR 608.2d) is `exact=True, amount=1` on the same `SCRY` kind
+    a plain scry reuses (`tests/test_card_split_labels.py`'s own Devourer of
+    Destiny coverage is the `exact=False` sibling of this one) - the hint
+    must say 'exactly 1', never 'any of'."""
+    from magic_cards_model.machines.decisions import Decision, DecisionKind
+
+    from magic_cards_model_api import mcp
+
+    engine_decision = Decision(
+        kind=DecisionKind.SCRY,
+        player="alice",
+        prompt="look at the top two cards of your library",
+        amount=1,
+        exact=True,
+        cards=(
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ),
+        moved_label="your hand",
+        kept_label="your graveyard",
+    )
+    pending = decisions.PendingDecision.from_engine(engine_decision, generation=3).to_view()
+
+    assert "exactly 1" in pending["answer_with"]
+    assert "any of pending_decision.cards" not in pending["answer_with"]
+
+    lifted = mcp._action_answer(
+        {"outcome": {"accepted": True}, "state": {"pending_decision": pending}}
+    )
+    assert "exactly 1" in lifted["pending_decision"]["answer_with"]
+
+
 # -- surveil: the deciding player must be able to read what they are looking
 # at (CR 701.20e), the opponent must not (CR 701.20e names only the deciding
 # player) -----------------------------------------------------------------

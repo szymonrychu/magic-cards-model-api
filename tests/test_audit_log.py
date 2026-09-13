@@ -436,6 +436,204 @@ def test_an_implemented_instant_that_leaves_the_stack_records_changed_true(clien
     assert entry["detail"]["changed"] is True
 
 
+def test_an_until_end_of_turn_pump_records_changed_true(client, game):
+    """B7-11 (battle-7): `_card_fingerprint` used to carry zone stamp,
+    tapped, sickness, damage, counters and attachment only - no power or
+    toughness - so an until-end-of-turn pump (Craterhoof Behemoth's trigger,
+    a prowess trigger, Mutagenic Growth) read as `changed: false` even though
+    every creature on the board grew. Giant Growth is the simplest real card
+    with that exact shape: no zone move, no tap, no counter, just power and
+    toughness."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Giant Growth", "alice", "hand")
+    board = state(client, game)
+    forest = find(board["battlefield"], "Forest")
+    bears = find(board["battlefield"], "Grizzly Bears")
+    assert (bears["power"], bears["toughness"]) == (2, 2)
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Giant Growth",
+            "targets": [bears["id"]],
+            "mana_sources": [{"card_id": forest["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    resolving = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert resolving.json()["outcome"] == PriorityOutcome.RESOLVE_TOP.value
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["detail"]["resolved"] == "Giant Growth"
+    assert entry["detail"]["changed"] is True
+    pumped = find(state(client, game)["battlefield"], "Grizzly Bears")
+    assert (pumped["power"], pumped["toughness"]) == (5, 5)
+
+
+def test_resolve_top_endpoint_reports_changed_for_a_life_gain(client, game):
+    """B7-11 (battle-7): the direct `/resolve-top` route - used outside
+    `pass-priority`'s own auto-resolve, e.g. by a harness settling a paused
+    resolution - never carried a `changed` marker at all: only the
+    `pass_priority` path (`_run_pass_priority`) computed one, and
+    `engine_api.resolve_top` itself returns only `resolved`/`zone`/`reason`.
+    Lightning Helix's life gain is the reported shape: a real change that is
+    neither a zone move, a tap, nor a counter."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Lightning Helix", "alice", "hand")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")
+    plains = find(board["battlefield"], "Plains")
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Lightning Helix",
+            "targets": ["bob"],
+            "mana_sources": [{"card_id": mountain["id"]}, {"card_id": plains["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved["resolved"] == "Lightning Helix"
+    assert resolved["changed"] is True
+    alice = next(p for p in resolved["players"] if p["username"] == "alice")
+    bob = next(p for p in resolved["players"] if p["username"] == "bob")
+    assert alice["life"] == 23
+    assert bob["life"] == 17
+
+
+def test_resolve_top_reports_changed_for_a_control_change_alone(client, game, monkeypatch):
+    """A resolution whose only observable effect is who controls a permanent
+    is a change: `controller` is on every card view. Threaten would be the
+    real shape, but on an untapped hasty creature the API view does not show
+    its until-end-of-turn control yet, so this uses the `effect_for` seam
+    `test_an_unimplemented_instant_records_changed_false` uses: Shock's
+    effect hands Monastery Swiftspear to its caster through the engine's own
+    base-controller setter, and nothing else."""
+
+    def effect_for_taking_control(card_name, effect_text=None, *, x_value=None):
+        if card_name == "Shock":
+
+            def take_the_swiftspear(engine_game, spell):
+                swiftspear = next(
+                    card for card in engine_game.battlefield if card.name == "Monastery Swiftspear"
+                )
+                swiftspear.controller = spell.controller
+
+            return take_the_swiftspear
+        return real_effect_for(card_name, effect_text, x_value=x_value)
+
+    monkeypatch.setattr(game_module, "effect_for", effect_for_taking_control)
+
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Shock", "alice", "hand")
+    add_card(client, game, "Monastery Swiftspear", "bob", "battlefield")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")
+    assert find(board["battlefield"], "Monastery Swiftspear")["controller"] == "bob"
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Shock",
+            "targets": ["bob"],
+            "mana_sources": [mountain["id"]],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved["resolved"] == "Shock"
+    assert find(resolved["battlefield"], "Monastery Swiftspear")["controller"] == "alice"
+    assert [p["life"] for p in resolved["players"]] == [20, 20]
+    assert resolved["changed"] is True
+
+
+def _servant_trigger_on_the_stack(client, game) -> dict:
+    """Servant of the Conduit resolved, its enters trigger (you get two
+    energy counters) waiting on the stack. Returns the board."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Servant of the Conduit", "alice", "hand")
+    board = state(client, game)
+    forests = [c["id"] for c in board["battlefield"] if c["name"] == "Forest"]
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card": "Servant of the Conduit", "mana_sources": forests},
+    )
+    assert cast.json()["allowed"] is True, cast.text
+    assert (
+        client.post(f"/api/games/{game}/resolve-top").json()["resolved"] == "Servant of the Conduit"
+    )
+    board = state(client, game)
+    assert [obj["kind"] for obj in board["stack"]] == ["ability"], board["stack"]
+    return board
+
+
+def test_resolve_top_reports_changed_for_player_counters_alone(client, game):
+    """Energy is a counter on a player (CR 122.1), shown in each player's
+    `counters`. A trigger whose only effect is two energy counters changed
+    something."""
+    _servant_trigger_on_the_stack(client, game)
+
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    alice = next(p for p in resolved["players"] if p["username"] == "alice")
+    assert alice["counters"].get("energy") == 2, alice
+    assert resolved["changed"] is True
+
+
+def test_resolve_top_reports_changed_when_only_the_stack_changed(client, game, monkeypatch):
+    """A resolution that only puts a new object on the stack changed what a
+    seat sees. Copying a spell (CR 707.10) is that shape, but the pool's
+    copy effects all ask a target question first, so this uses the same
+    `effect_for` seam `test_an_unimplemented_instant_records_changed_false`
+    uses: Shock's effect becomes "copy the Lightning Bolt below", run through
+    the engine's own `Game.copy_spell`."""
+
+    def effect_for_copying_the_bolt(card_name, effect_text=None, *, x_value=None):
+        if card_name == "Shock":
+
+            def copy_the_bolt(engine_game, spell):
+                bolt = next(
+                    obj
+                    for obj in engine_game.stack
+                    if getattr(obj, "name", None) == "Lightning Bolt"
+                )
+                engine_game.copy_spell(bolt)
+
+            return copy_the_bolt
+        return real_effect_for(card_name, effect_text, x_value=x_value)
+
+    monkeypatch.setattr(game_module, "effect_for", effect_for_copying_the_bolt)
+
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    add_card(client, game, "Shock", "alice", "hand")
+    board = state(client, game)
+    first, second = [c["id"] for c in board["battlefield"] if c["name"] == "Mountain"]
+    for card, source in (("Lightning Bolt", first), ("Shock", second)):
+        cast = client.post(
+            f"/api/games/{game}/actions/cast",
+            json={"player": "alice", "card": card, "targets": ["bob"], "mana_sources": [source]},
+        )
+        assert cast.json()["allowed"] is True, cast.text
+
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved["resolved"] == "Shock"
+    assert [obj["name"] for obj in resolved["stack"]] == ["Lightning Bolt", "Lightning Bolt"]
+    assert [p["life"] for p in resolved["players"]] == [20, 20]
+    assert resolved["changed"] is True
+
+
 def test_dry_run_cast_is_not_audited(client, game):
     """A `dry_run` cast probe - what `seatkit.available_actions` used to
     issue per hand card, before T11 pointed it at the engine's own

@@ -219,6 +219,16 @@ PROTOCOL_VERSION = "seatkit-19"
 #: the same `seatkit-18` rather than a bump, so an MCP process built on the
 #: first `seatkit-18` (equip only) misses `improvise` the same way.
 #:
+#: Battle 7 added two more response fields, also riding `seatkit-18`. B7-13:
+#: a spell cast for X (Nature's Rhythm harmonized for X=8) showed `mana_value
+#: 2.0` and no X anywhere on the stack; a stack `CardView` now carries
+#: `mana_value` with the chosen X counted (CR 202.3e) and, when its cost has
+#: an `{X}`, `x_value`. B7-11: `resolve-top`'s own response gained `changed`,
+#: the marker `pass_priority`'s resolve outcome already carried, and that
+#: marker now sees power, toughness, keywords, controller, player counters
+#: and the stack. An older process passes the new fields through untouched,
+#: so a seat on it simply does not see them.
+#:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
 #: gained `optional_costs`, `printed_produces` and `activate_first`.

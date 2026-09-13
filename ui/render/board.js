@@ -347,7 +347,16 @@ export function mountBoard(root, store, handlers) {
         const opts = targetingOpts(app, obj.id);
         el.classList.toggle("targetable", opts.targetable);
         el.classList.toggle("chosen", opts.chosen);
-        setText(el.querySelector(".name"), `${obj.name}${obj.kind === "ability" ? " (ability)" : ""}`);
+        // `x_value` (CR 202.3e - only set at all when the spell's cost has
+        // an `{X}` to announce, see `serialize._card_view`) is the one thing
+        // about a stack object a player cannot re-derive from its name: a
+        // Nature's Rhythm harmonized for X=8 looks identical to one cast for
+        // X=2 without this (battle-7, B7-13).
+        const xNote = obj.x_value != null ? ` (X=${obj.x_value})` : "";
+        setText(
+          el.querySelector(".name"),
+          `${obj.name}${xNote}${obj.kind === "ability" ? " (ability)" : ""}`
+        );
         setText(el.querySelector(".targets"), (obj.targets || []).length ? `-> ${obj.targets.join(", ")}` : "");
         el.onclick = () => handlers.onStackObject(obj);
       }

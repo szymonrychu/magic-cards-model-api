@@ -612,7 +612,26 @@ class PendingDecision:
             moved = self.moved_label or (
                 "the bottom of your library" if kind is DecisionKind.SCRY else "your graveyard"
             )
-            return f'"<any of pending_decision.cards, comma-separated; these go to {moved}>"'
+            # `amount`/`exact` are not a `CHOOSE_CARDS`-only shape (see that
+            # field's own docstring caveat): `Game.ask`/`validate_answer`
+            # enforce the identical count check on every `CardSplit`, scry's
+            # own "any number" included (CR 107.1c, exact=False, amount equal
+            # to the whole look), Waker of Waves/Codecracker Hound's "put one
+            # of them" (exact=True, amount=1), and Devourer of Destiny's
+            # "may put one back" (exact=False, amount=1, a real ceiling
+            # rather than "any"). Saying "any of pending_decision.cards"
+            # regardless was silent about a count the engine actually
+            # refuses an answer for - see `validate_answer`'s own SCRY/
+            # SURVEIL branch, which this mirrors word for word.
+            if self.exact:
+                span = f"exactly {self.amount}"
+            elif self.amount == 1:
+                span = "up to 1"
+            elif self.amount == len(self.cards):
+                span = "any number, including none,"
+            else:
+                span = f"up to {self.amount}"
+            return f'"<{span} of pending_decision.cards, comma-separated; these go to {moved}>"'
         if kind is DecisionKind.CHOOSE_TARGETS:
             floor = self.target_minimum or 0
             ceiling = self.target_maximum
@@ -1036,10 +1055,18 @@ def validate_answer(decision: Decision, value: object) -> None:
         if not isinstance(value, bool):
             raise ValueError(f"{decision.prompt}: a yes-or-no question needs a bool answer")
         if value not in legal_options(decision):
-            raise ValueError(
-                f"{decision.prompt}: that option is illegal, so CR 608.2d "
-                f"does not allow choosing it"
+            # `models/game.py`'s `_illegal_option_refusal`, word for word.
+            refusal = (
+                f"{decision.prompt}: that option is illegal, so CR 608.2d does not allow "
+                "choosing it (\"The player can't choose an option that's illegal or impossible\")"
             )
+            if decision.kind is DecisionKind.PAY_MANA:
+                refusal += (
+                    " - the floating mana and the untapped mana sources available cannot pay "
+                    "it (CR 118.3: \"A player can't pay a cost without having the necessary "
+                    'resources to pay it fully")'
+                )
+            raise ValueError(refusal)
         return
 
     if decision.kind is DecisionKind.MULLIGAN:

@@ -546,7 +546,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Destiny's keeps the named card on TOP and exiles the rest. Only "
             "when both labels are absent may you assume the keyword's own pair: "
             "scry bottoms the named cards (CR 701.22a), surveil puts them in "
-            "the graveyard (CR 701.25a), each leaving the rest on top"
+            "the graveyard (CR 701.25a), each leaving the rest on top. "
+            "How many you must name is pending_decision.exact, exactly like a "
+            "choose_cards answer: true means exactly pending_decision.amount "
+            "ids (Codecracker Hound's 'put one into your hand and the other "
+            "into your graveyard' - CR 608.2d's only legal split), false means "
+            "any number from zero up to pending_decision.amount (CR 107.1c) - "
+            "a plain scry/surveil's amount equals every card looked at ('any "
+            "number of them'), while Devourer of Destiny's 'may put one of "
+            "those cards back' is exact=false with amount=1, a real ceiling of "
+            "one, not 'any'. validate_answer refuses a count outside it either way"
         ),
     )
     decide.add_argument(

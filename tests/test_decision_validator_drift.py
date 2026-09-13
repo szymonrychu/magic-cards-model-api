@@ -537,6 +537,25 @@ def test_pay_life_below_the_floor_is_illegal_on_both_sides(
         _check_parity(engine_game, decision, value)
 
 
+def test_pay_mana_the_sources_cannot_pay_is_illegal_on_both_sides(
+    client: TestClient, game: str, board: dict[str, Any]
+) -> None:
+    """The mana variant of the floor above: an "unless ... pays" payment the
+    floating pool and the untapped mana sources cannot cover (CR 608.2g,
+    CR 118.3). Its refusal carries a clause the other pay kinds do not, so it
+    is pinned separately."""
+    engine_game = _game(game)
+    decision = Decision(
+        kind=DecisionKind.PAY_MANA,
+        player="alice",
+        prompt="pay {3} or the spell is countered",
+        amount=3,
+        affirmative_is_legal=False,
+    )
+    for value in (True, False):
+        _check_parity(engine_game, decision, value)
+
+
 def test_choose_cards_any_number_ceiling_matches(
     client: TestClient, game: str, board: dict[str, Any]
 ) -> None:
