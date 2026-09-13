@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "fetch-untapped-shock",
-  "name": "Crack a fetch for an untapped shockland",
-  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland: Watery Grave first (black for Goryo's Vengeance, blue for Psychic Frog), then Godless Shrine, then Hallowed Fountain, with Breeding Pool as the last resort. Only at 8 life or more, because the fetch plus the shock costs 3.",
+  "name": "Crack a fetch for an untapped shockland when no Swamp is up",
+  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland carrying Swamp (black for Goryo's Vengeance and Thoughtseize) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Swamp is up, fetch-untapped-shock-second-color checks Island. It prefers a shock with Swamp, then a basic Swamp, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3, and only while a shock with Swamp is still in my library. With Swamp, Island and Plains all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Breeding Pool counts as an Island shock here; the deck casts no green card, so green is never needed. Limits: a colour counts as up only from an untapped land with its basic land type, so anything else that makes the colour is not seen, and this can pay for a colour it already makes; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
   "priority": 60,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,22 @@
       "side": "me",
       "op": ">=",
       "n": 8
+    },
+    {
+      "kind": "count",
+      "zone": "library",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "oracle_has": "you may pay 2 life",
+        "subtypes_any": [
+          "Swamp"
+        ]
+      }
     }
   ],
   "false": [
@@ -48,6 +64,22 @@
       "kind": "stack_top",
       "controller": "opponent",
       "select": {}
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "subtypes_any": [
+          "Swamp"
+        ]
+      }
     }
   ],
   "moves": [
@@ -72,24 +104,27 @@
             "select": {
               "types_all": [
                 "Land"
-              ],
-              "oracle_has": "you may pay 2 life"
+              ]
             },
             "count": 1,
             "prefer": [
               {
+                "oracle_has": "you may pay 2 life",
                 "subtypes_any": [
                   "Swamp"
                 ]
               },
               {
+                "supertypes_any": [
+                  "Basic"
+                ],
                 "subtypes_any": [
-                  "Island"
+                  "Swamp"
                 ]
               },
               {
-                "subtypes_any": [
-                  "Plains"
+                "supertypes_any": [
+                  "Basic"
                 ]
               }
             ]

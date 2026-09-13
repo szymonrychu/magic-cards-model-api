@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-surveil-land",
   "name": "Fetch a surveil land at their end step",
-  "intent": "At the opponent's end step, crack a fetch for a surveil land, Shadowy Backstreet first, then Meticulous Archive, then Undercity Sewers, and bin a land with the surveil. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "intent": "At the opponent's end step, crack a fetch for a surveil land, Shadowy Backstreet first, then Meticulous Archive, then Undercity Sewers, and bin a land with the surveil once I am flooding with five lands or more out. Twelve of the spells cost five to cast in full (Overlord of the Balemurk, Quantum Riddler, a hard-cast Solitude), so the fifth land is still a live draw and a land past it is not. Below five lands fetch-surveil-land-keep runs instead. Only at 6 life or more and while fewer than two surveil lands are out.",
   "priority": 50,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,18 @@
       "side": "me",
       "op": ">=",
       "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 5,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
     }
   ],
   "false": [

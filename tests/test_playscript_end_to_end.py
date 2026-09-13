@@ -1,0 +1,921 @@
+"""Play scripts end to end: the vendored mtg-decks corpus, registered through
+the API and run through the in-process MCP server against the real engine.
+
+Every script here is read from `tests/fixtures/guides/decks/<slug>/plays/`,
+the verbatim slice pinned by `MTG_DECKS_SHA` (see that directory's README),
+and registered as its deck's whole corpus with the real
+`PUT .../seats/{uid}/scripts` route. Boards are staged from real printings
+through `POST .../cards`; every move, pass and decision goes through the real
+routes into the real engine. Nothing in front of the engine is faked: the
+opponent's passes and its response are real HTTP calls from a second client.
+
+The seed sweep at the bottom stages a board for every play file in the slice
+out of that deck's own decklist, reading only what the play itself says it
+needs - its `when`, its conditions and its moves - so a play a later refresh
+adds is picked up without an edit here.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import threading
+from collections import Counter
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import pytest
+from conftest import add_card, force_turn_position, life_of, state
+from fastapi.testclient import TestClient
+from magic_cards_model.machines import Step
+from test_cast_cost_choices import answer
+from test_mcp_input_required import call_tool, wired
+from test_playscript_runtime import finished, opponent_passes, seat_uid
+
+from magic_cards_model_api import audit, scryfall, seatkit
+from magic_cards_model_api.main import app
+from magic_cards_model_api.mcp import build_server
+from magic_cards_model_api.playscripts import runtime
+from magic_cards_model_api.playscripts.selectors import compare, matches, parse_type_line
+from magic_cards_model_api.repository import Advisor
+from magic_cards_model_api.store import store
+from mtg_agent.driver.guides import parse_decklist
+
+TESTS = Path(__file__).resolve().parent
+GUIDES = TESTS / "fixtures" / "guides"
+#: Every deck's `decklist.txt` (the guides slice carries only six of them).
+DECKLISTS = TESTS / "driver" / "fixtures" / "mtg-decks"
+#: The pin both slices share, read from where it is written down.
+GUIDES_REVISION = re.search(
+    r'^MTG_DECKS_SHA = "([0-9a-f]{40})"$',
+    (TESTS / "driver" / "test_guides.py").read_text(),
+    re.MULTILINE,
+).group(1)
+
+ME, OPPONENT = "alice", "bob"
+REASONING = "thin the deck and fix my colours"
+PLAN = {
+    "board_read": "a fetchland up, no red source untapped, opponent empty-handed on board",
+    "my_role": "beatdown - I need both colours online to curve out",
+    "plan": "crack the fetch for the shock I am missing, then deploy threats",
+    "prediction": {
+        "expecting": "bob passes with nothing to do on my main phase",
+        "because": "bob has no untapped mana and nothing on the stack",
+        "confidence": "medium",
+    },
+}
+
+
+@pytest.fixture(autouse=True)
+def _never_available_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The runner builds every body from the state view and never pays for
+    `available_actions`, end to end as much as in its own tests."""
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a script tool called available_actions")
+
+    monkeypatch.setattr(seatkit, "available_actions", refuse)
+
+
+# -- the corpus -------------------------------------------------------------------
+
+
+def plays_of(slug: str) -> list[dict[str, Any]]:
+    return [
+        json.loads(path.read_text())
+        for path in sorted((GUIDES / "decks" / slug / "plays").glob("*.json"))
+        if path.name != "inputs.json"
+    ]
+
+
+def declared_inputs(slug: str) -> list[dict[str, Any]]:
+    path = GUIDES / "decks" / slug / "plays" / "inputs.json"
+    return list(json.loads(path.read_text())["inputs"]) if path.is_file() else []
+
+
+def play_of(slug: str, script_id: str) -> dict[str, Any]:
+    return next(doc for doc in plays_of(slug) if doc["id"] == script_id)
+
+
+def register_corpus(
+    client: TestClient,
+    game_id: str,
+    uid: str,
+    slug: str,
+    *extra: dict[str, Any],
+    inputs: list[dict[str, Any]] | None = None,
+) -> None:
+    """`slug`'s whole vendored corpus (plus `extra`), through the PUT route."""
+    body = {
+        "deck_slug": slug,
+        "guides_revision": GUIDES_REVISION,
+        "scripts": [*plays_of(slug), *extra],
+        "inputs": declared_inputs(slug) if inputs is None else inputs,
+    }
+    response = client.put(
+        f"/api/games/{game_id}/seats/{uid}/scripts", params={"uid": uid}, json=body
+    )
+    assert response.status_code == 200, response.text
+
+
+def seed_cases() -> list[Any]:
+    return [
+        pytest.param(
+            path.parent.parent.name, path.stem, id=f"{path.parent.parent.name}/{path.stem}"
+        )
+        for path in sorted(GUIDES.glob("decks/*/plays/*.json"))
+        if path.name != "inputs.json"
+    ]
+
+
+# -- the MCP surface ----------------------------------------------------------------
+
+
+def mcp_server(client: TestClient, monkeypatch: pytest.MonkeyPatch, game_id: str) -> Any:
+    seats, _ = wired(client, monkeypatch, game_id)
+    return build_server(seats)
+
+
+def run(server: Any, uid: str, script: str, **extra: Any) -> dict[str, Any]:
+    arguments = {"player_uid": uid, "script": script, "reasoning": REASONING, **extra}
+    return answer(call_tool(server, "run_script", arguments))
+
+
+def listing(server: Any, uid: str, **extra: Any) -> dict[str, Any]:
+    return answer(call_tool(server, "list_scripts", {"player_uid": uid, **extra}))
+
+
+# -- the board ----------------------------------------------------------------------
+
+
+def named(cards: list[dict[str, Any]], name: str) -> list[dict[str, Any]]:
+    return [card for card in cards if card["name"] == name]
+
+
+def printed_text(name: str) -> str:
+    raw = scryfall.load_cached(name) or scryfall.load_pooled(name)
+    assert raw is not None, f"no local printing of {name}"
+    return str((raw.get("card_faces") or [raw])[0].get("oracle_text") or raw["oracle_text"])
+
+
+def declare_plan(client: TestClient, game_id: str, player: str) -> None:
+    body = {"player": player, "uid": seat_uid(game_id, player), **PLAN}
+    response = client.post(f"/api/games/{game_id}/plan", json=body)
+    assert response.status_code == 200, response.text
+
+
+def set_life(game_id: str, player: str, life: int) -> None:
+    game = store.get(game_id)
+    assert game is not None
+    game.player(player).life = life
+
+
+def hand_priority_to_me(client: TestClient, game_id: str) -> None:
+    """On the opponent's own turn the opponent holds priority first; one real
+    pass on an empty stack hands it on without ending the step, which takes
+    every player passing in succession (CR 117.4)."""
+    uid = seat_uid(game_id, OPPONENT)
+    passed = client.post(
+        f"/api/games/{game_id}/actions/pass-priority",
+        params={"uid": uid},
+        json={"player": OPPONENT},
+    )
+    assert passed.status_code == 200, passed.text
+    assert state(client, game_id)["priority_holder"] == ME
+
+
+def fetch_shock_board(client: TestClient, game_id: str) -> None:
+    """Alice's precombat main, stack empty, plan declared: Arid Mesa untapped
+    and no untapped Mountain, so the refreshed play's red is the colour that
+    is missing; Sacred Foundry and six Galvanic Discharge in the library, so
+    the library is past the play's size guard and the shock is the one find."""
+    force_turn_position(game_id, Step.PRECOMBAT_MAIN, ME)
+    add_card(client, game_id, "Arid Mesa", ME, "battlefield")
+    add_card(client, game_id, "Sacred Foundry", ME, "library")
+    for _ in range(6):
+        add_card(client, game_id, "Galvanic Discharge", ME, "library")
+    declare_plan(client, game_id, ME)
+
+
+@contextmanager
+def opponent_responds_with_bolt(game_id: str) -> Iterator[list[dict[str, Any]]]:
+    """The opponent, the first time it holds priority over an object of
+    mine, casts its Lightning Bolt at me instead of passing."""
+    uid = seat_uid(game_id, OPPONENT)
+    other = TestClient(app)
+    casts: list[dict[str, Any]] = []
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.is_set() and not casts:
+            board = other.get(f"/api/games/{game_id}", params={"uid": uid}).json()
+            stack = board.get("stack") or []
+            if (
+                board.get("priority_holder") == OPPONENT
+                and board.get("pending_decision") is None
+                and stack
+                and stack[0].get("controller") == ME
+            ):
+                bolt = named(board["hands"][OPPONENT], "Lightning Bolt")[0]
+                mountain = [
+                    card
+                    for card in named(board["battlefield"], "Mountain")
+                    if card["controller"] == OPPONENT
+                ][0]
+                cast = other.post(
+                    f"/api/games/{game_id}/actions/cast",
+                    params={"uid": uid},
+                    json={
+                        "player": OPPONENT,
+                        "card_id": bolt["id"],
+                        "targets": [ME],
+                        "mana_sources": [mountain["id"]],
+                    },
+                )
+                casts.append({"status": cast.status_code, **cast.json()})
+            stop.wait(0.02)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    try:
+        yield casts
+    finally:
+        stop.set()
+        thread.join(5)
+
+
+# -- fetch-shock ------------------------------------------------------------------------
+
+
+def test_the_fetch_shock_seed_cracks_arid_mesa_for_an_untapped_sacred_foundry(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(game, ME)
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    register_corpus(client, game, alice, "boros-aggro")
+    fetch_shock_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+    fetch_life = int(re.search(r"Pay (\d+) life", printed_text("Arid Mesa")).group(1))
+    shock_life = int(re.search(r"pay (\d+) life", printed_text("Sacred Foundry")).group(1))
+    before = state(client, game)
+    watermark = audit.last_seq(game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, play["id"])
+
+    assert payload["script_exit"] == {
+        "exit": "chain_complete",
+        "script": play["id"],
+        "moves_done": 1,
+        "moves_total": 1,
+    }, payload["script_exit"]
+    after = state(client, game)
+    assert named(after["graveyards"][ME], "Arid Mesa")
+    [foundry] = named(after["battlefield"], "Sacred Foundry")
+    assert foundry["tapped"] is False, "the shock's 2 life was paid, so it entered untapped"
+    assert life_of(after, ME) == life_of(before, ME) - fetch_life - shock_life
+
+    rows = audit.entries_since(game, watermark)
+    activation = next(
+        index
+        for index, row in enumerate(rows)
+        if row["action"] == "activate" and row["detail"].get("player") == ME
+    )
+    resolved = next(
+        index for index in range(activation, len(rows)) if rows[index]["stack_size"] == 0
+    )
+    # CR 117.4: the ability resolves only once both players pass in succession,
+    # so bob held priority over it, and passed, before it resolved.
+    assert any(
+        row["action"] == "pass_priority"
+        and row["detail"].get("player") == OPPONENT
+        and row["stack_size"] >= 1
+        for row in rows[activation + 1 : resolved]
+    ), [(row["action"], row["detail"].get("player"), row["stack_size"]) for row in rows]
+
+    suffix = f"script {play['id']}@{runtime.script_sha(play)[:8]} move 1/1 (activate)"
+    moves = [
+        row
+        for row in rows
+        if row["detail"].get("player") == ME
+        and row["action"] in ("activate", "pass_priority", "decide")
+    ]
+    assert moves and all(
+        row["reasoning"] == f"{REASONING} | {suffix}" and row["reasoning"].endswith(suffix)
+        for row in moves
+    ), [row["reasoning"] for row in moves]
+    [record] = finished(game)
+    assert record["moves_done"] == 1 and record["exit"] == "chain_complete"
+
+
+# -- fetch-surveil ------------------------------------------------------------------------
+
+
+def test_the_fetch_surveil_seed_fetches_a_tapped_undercity_sewers_at_bobs_end_step(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Five lands out, so the play bins lands; every card left in the library
+    is a land, so whatever the shuffle leaves on top is one `to_graveyard`
+    names."""
+    alice = seat_uid(game, ME)
+    play = play_of("dimir-frog", "fetch-surveil-land")
+    register_corpus(client, game, alice, "dimir-frog")
+    force_turn_position(game, Step("end_step"), OPPONENT)
+    for name in ("Polluted Delta", "Island", "Island", "Swamp", "Watery Grave"):
+        add_card(client, game, name, ME, "battlefield")
+    add_card(client, game, "Undercity Sewers", ME, "library")
+    for _ in range(6):
+        add_card(client, game, "Island", ME, "library")
+    hand_priority_to_me(client, game)
+    server = mcp_server(client, monkeypatch, game)
+    watermark = audit.last_seq(game)
+
+    with opponent_passes(game):
+        payload = run(server, alice, play["id"])
+
+    assert payload["script_exit"]["exit"] == "chain_complete", payload["script_exit"]
+    after = state(client, game)
+    [sewers] = named(after["battlefield"], "Undercity Sewers")
+    assert sewers["tapped"] is True, "Undercity Sewers enters tapped"
+    graveyard = after["graveyards"][ME]
+    assert named(graveyard, "Polluted Delta")
+    assert len(named(graveyard, "Island")) == 1, "the surveilled land went to the graveyard"
+    me = next(player for player in after["players"] if player["username"] == ME)
+    assert me["library_count"] == 5
+    decisions = [
+        row
+        for row in audit.entries_since(game, watermark)
+        if row["action"] == "decide" and row["detail"].get("player") == ME
+    ]
+    assert len(decisions) >= 2, "the search and the surveil trigger were both answered"
+
+
+# -- interrupted, already_ran, advised, not_applicable ------------------------------------
+
+
+def test_bob_responding_to_the_fetch_interrupts_the_run_and_nothing_more_is_sent(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(game, ME)
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    register_corpus(client, game, alice, "boros-aggro")
+    fetch_shock_board(client, game)
+    add_card(client, game, "Mountain", OPPONENT, "battlefield")
+    add_card(client, game, "Lightning Bolt", OPPONENT, "hand")
+    server = mcp_server(client, monkeypatch, game)
+    watermark = audit.last_seq(game)
+
+    with opponent_responds_with_bolt(game) as casts:
+        out = run(server, alice, play["id"])["script_exit"]
+
+    assert [cast["status"] for cast in casts] == [200] and casts[0]["allowed"] is True, casts
+    assert out["exit"] == "interrupted", out
+    assert out["moves_done"] == 0 and out["moves_total"] - out["moves_done"] == 1, out
+    assert out["stop_reason"].startswith(f"{OPPONENT} acted (cast"), out
+    stack = state(client, game)["stack"]
+    assert [obj["controller"] for obj in stack] == [OPPONENT, ME], "the bolt sits unanswered"
+    rows = audit.entries_since(game, watermark)
+    cast_at = next(
+        index
+        for index, row in enumerate(rows)
+        if row["action"] == "cast" and row["detail"].get("player") == OPPONENT
+    )
+    assert [
+        row["action"] for row in rows[cast_at + 1 :] if row["action"] != audit.SCRIPT_RUN_ACTION
+    ] == [], "the run issued nothing after the response"
+
+
+def test_a_second_run_of_the_seed_in_the_same_turn_and_step_is_already_ran(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(game, ME)
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    register_corpus(client, game, alice, "boros-aggro")
+    fetch_shock_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+
+    with opponent_passes(game):
+        first = run(server, alice, play["id"])["script_exit"]
+        second = run(server, alice, play["id"])["script_exit"]
+
+    assert first["exit"] == "chain_complete", first
+    assert second["exit"] == "already_ran", second
+    assert second["prior_run_id"] == finished(game)[0]["run_id"]
+
+
+def test_the_advisor_running_the_seed_is_advised_and_the_board_does_not_move(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    advisor = "advisor-uid"
+    store.register_advisors(game, {advisor: Advisor(player=ME)})
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    register_corpus(client, game, advisor, "boros-aggro")
+    fetch_shock_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+    before = state(client, game)
+
+    out = run(server, advisor, play["id"])["script_exit"]
+
+    assert out["exit"] == "advised", out
+    assert out["proposal"]["proposed"] is True
+    after = state(client, game)
+    for section in ("battlefield", "stack", "graveyards", "players"):
+        assert after[section] == before[section], section
+
+
+def test_life_below_the_seeds_threshold_is_not_applicable_naming_that_condition(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(game, ME)
+    play = play_of("boros-aggro", "fetch-untapped-shock")
+    index, threshold = next(
+        (index, condition["n"])
+        for index, condition in enumerate(play["true"])
+        if condition["kind"] == "life"
+    )
+    register_corpus(client, game, alice, "boros-aggro")
+    fetch_shock_board(client, game)
+    set_life(game, ME, threshold - 1)
+    server = mcp_server(client, monkeypatch, game)
+
+    out = run(server, alice, play["id"])["script_exit"]
+
+    assert out["exit"] == "not_applicable", out
+    assert out["failing_condition"]["list"] == "true"
+    assert out["failing_condition"]["index"] == index
+    assert out["failing_condition"]["seen"] == threshold - 1
+    assert named(state(client, game)["battlefield"], "Arid Mesa")
+
+
+# -- needs_input and ambiguous --------------------------------------------------------------
+
+PREFER_TEMPO = {
+    "name": "prefer_tempo",
+    "type": "bool",
+    "description": "Whether this game is on the tempo half of the plan.",
+    "required": True,
+}
+
+
+def test_a_required_input_the_caller_omits_exits_needs_input_naming_it(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(game, ME)
+    seed = play_of("boros-aggro", "fetch-untapped-shock")
+    gated = {
+        **seed,
+        "id": "fetch-untapped-shock-on-tempo",
+        "true": [
+            *seed["true"],
+            {"kind": "input", "name": "prefer_tempo", "op": "eq", "value": True},
+        ],
+    }
+    register_corpus(client, game, alice, "boros-aggro", gated, inputs=[PREFER_TEMPO])
+    fetch_shock_board(client, game)
+    server = mcp_server(client, monkeypatch, game)
+
+    out = run(server, alice, gated["id"])["script_exit"]
+
+    assert out["exit"] == "needs_input", out
+    assert out["needs_input"] == "prefer_tempo"
+    assert out["failing_condition"]["list"] == "true"
+    assert out["failing_condition"]["index"] == len(seed["true"]), out
+    assert named(state(client, game)["battlefield"], "Arid Mesa"), "nothing was cracked"
+
+
+def test_two_next_plays_tied_at_the_same_decision_point_exit_ambiguous_naming_both(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice = seat_uid(game, ME)
+    seed = play_of("boros-aggro", "fetch-untapped-shock")
+    twin = {**seed, "id": "fetch-untapped-shock-twin"}
+    drop = {
+        "schema_version": 1,
+        "id": "drop-a-plains",
+        "name": "Play a basic Plains, then fetch",
+        "priority": 50,
+        "opposing_archetypes": ["*"],
+        "when": seed["when"],
+        "true": [{"kind": "land_drop_available", "value": True}],
+        "false": [],
+        "moves": [
+            {
+                "kind": "play_land",
+                "card": {
+                    "select": {
+                        "types_all": ["Land"],
+                        "supertypes_any": ["Basic"],
+                        "subtypes_any": ["Plains"],
+                    }
+                },
+            }
+        ],
+        "next": [seed["id"], twin["id"]],
+    }
+    register_corpus(client, game, alice, "boros-aggro", twin, drop)
+    fetch_shock_board(client, game)
+    add_card(client, game, "Plains", ME, "hand")
+    server = mcp_server(client, monkeypatch, game)
+
+    out = run(server, alice, drop["id"])["script_exit"]
+
+    assert out["exit"] == "ambiguous", out
+    assert out["applicable_next"] == [seed["id"], twin["id"]]
+    assert out["stop_reason"]
+    [mesa] = named(state(client, game)["battlefield"], "Arid Mesa")
+    assert mesa["tapped"] is False, "neither tied play was taken"
+
+
+# -- staging a board for any play -----------------------------------------------------
+
+#: Past every library-size guard in the slice, and enough for a draw.
+LIBRARY_FLOOR = 7
+ZONES = ("battlefield", "hand", "library", "graveyard")
+SEARCH_CLAUSE = re.compile(r"search your library for (?:an? |up to \w+ )?(.+?) cards?\b", re.I)
+MANA_LINE = re.compile(r"^\{T\}: Add ")
+SYMBOL = re.compile(r"\{([^}]+)\}")
+COLOURED = frozenset("WUBRGC")
+GROWING = (">=", ">", "==")
+
+
+def printing_view(name: str) -> dict[str, Any] | None:
+    """What a selector reads off a card, from its local printing: the front
+    face's type line, text, keywords, colours and mana value, and each line
+    of text holding a colon as an ability. None for a name with no local
+    printing, which the stager then never picks."""
+    raw = scryfall.load_cached(name) or scryfall.load_pooled(name)
+    if raw is None:
+        return None
+    face = (raw.get("card_faces") or [raw])[0]
+    text = str(face.get("oracle_text") or raw.get("oracle_text") or "")
+    lines = [line.strip().strip("()") for line in text.splitlines()]
+    return {
+        "name": raw["name"],
+        "type_line": str(face.get("type_line") or raw.get("type_line") or ""),
+        "oracle_text": text,
+        "mana_cost": str(face.get("mana_cost") or raw.get("mana_cost") or ""),
+        "keywords": list(raw.get("keywords") or []),
+        "colors": list(face.get("colors") or raw.get("colors") or []),
+        "mana_value": float(raw.get("cmc") or 0),
+        "tapped": False,
+        "counters": {},
+        "abilities": [{"text": line} for line in lines if ":" in line],
+    }
+
+
+def deck_pool(slug: str) -> list[dict[str, Any]]:
+    """Every card the deck's 75 names, in list order, as printing views."""
+    decklist = parse_decklist((DECKLISTS / slug / "decklist.txt").read_text())
+    names = dict.fromkeys([*decklist.mainboard, *decklist.sideboard])
+    return [view for view in map(printing_view, names) if view is not None]
+
+
+@dataclass
+class Board:
+    """A plan for my side of the board: cards by zone, and my life."""
+
+    cards: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    life: int = 20
+
+    def zone(self, zone: str) -> list[dict[str, Any]]:
+        return [view for where, view in self.cards if where == zone]
+
+    def plus(self, zone: str, view: dict[str, Any]) -> Board:
+        return Board([*self.cards, (zone, view)], self.life)
+
+    def describe(self) -> dict[str, Any]:
+        return {"life": self.life, **{z: [v["name"] for v in self.zone(z)] for z in ZONES}}
+
+
+def card_types(view: dict[str, Any]) -> set[str]:
+    return parse_type_line(view["type_line"])[1]
+
+
+def mana_sources(board: Board) -> list[dict[str, Any]]:
+    return [
+        view
+        for view in board.zone("battlefield")
+        if not view["tapped"] and any(MANA_LINE.match(a["text"]) for a in view["abilities"])
+    ]
+
+
+def produces(view: dict[str, Any], symbol: str) -> bool:
+    return any(
+        MANA_LINE.match(a["text"]) and f"{{{symbol}}}" in a["text"] for a in view["abilities"]
+    )
+
+
+def holds(board: Board, condition: dict[str, Any]) -> bool:
+    """Whether `condition` holds on the plan. The opponent's side is staged
+    empty and at 20 life; the stack is staged empty."""
+    kind = condition["kind"]
+    mine = condition.get("side", "me") in ("me", "any")
+    if kind == "count":
+        cards = board.zone(condition["zone"]) if mine else []
+        found = sum(matches(condition["select"], view) for view in cards)
+        return compare(found, condition["op"], condition["n"])
+    if kind == "zone_size":
+        size = len(board.zone(condition["zone"])) if mine else 0
+        return compare(size, condition["op"], condition["n"])
+    if kind == "life":
+        return compare(board.life if mine else 20, condition["op"], condition["n"])
+    if kind == "untapped_mana":
+        return compare(len(mana_sources(board)), condition["op"], condition["n"])
+    if kind == "stack_top":
+        return False
+    if kind == "land_drop_available":
+        return condition["value"] is True
+    pytest.fail(f"staging has no way to decide a {kind} condition: {condition}")
+
+
+def play_selectors(play: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every selector the play reads anywhere: its conditions, its moves'
+    cards, and its answers' picks, preferences and splits."""
+    found = [c["select"] for p in ("true", "false") for c in play[p] if c.get("select")]
+    for move in play["moves"]:
+        for key in ("source", "card"):
+            if isinstance(move.get(key), dict) and move[key].get("select"):
+                found.append(move[key]["select"])
+        for item in move.get("answers") or []:
+            pick = item.get("pick") or {}
+            found += [pick["select"]] if pick.get("select") else []
+            found += list(pick.get("prefer") or [])
+            found += [item[key] for key in ("to_graveyard", "to_bottom") if item.get(key)]
+    return found
+
+
+def finds(searcher: dict[str, Any], target: dict[str, Any]) -> bool:
+    """Whether `searcher`'s printed "search your library for ..." clause can
+    name `target`, read off the target's own type line; True for a card that
+    prints no such clause."""
+    clause = SEARCH_CLAUSE.search(searcher["oracle_text"])
+    if clause is None:
+        return True
+    supertypes, types, subtypes = parse_type_line(target["type_line"])
+    have = supertypes | types | subtypes
+    alternatives = [part for part in re.split(r",| or ", clause.group(1)) if part.strip()]
+    return any(set(part.casefold().split()) <= have for part in alternatives)
+
+
+def breaks(board: Board, play: dict[str, Any], zone: str, view: dict[str, Any]) -> bool:
+    after = board.plus(zone, view)
+    return any(
+        c["kind"] == "count" and holds(after, c) and not holds(board, c) for c in play["false"]
+    )
+
+
+def second_legend(board: Board, zone: str, view: dict[str, Any]) -> bool:
+    """A legendary permanent whose name is already on my battlefield: the
+    legend rule (CR 704.5j) would ask which to keep before the play runs."""
+    supertypes = parse_type_line(view["type_line"])[0]
+    return (
+        zone == "battlefield"
+        and "legendary" in supertypes
+        and any(card["name"] == view["name"] for card in board.zone(zone))
+    )
+
+
+def add_chosen(
+    board: Board,
+    play: dict[str, Any],
+    pool: list[dict[str, Any]],
+    zone: str,
+    wanted: Callable[[dict[str, Any]], bool],
+    what: str,
+    rank: Callable[[dict[str, Any]], int] | None = None,
+) -> None:
+    """Put into `zone` the deck's card that is `wanted`, breaks no false
+    condition, ranks best, and matches the fewest other selectors the play
+    reads - so it does not tie a pick or trip a guard it was not chosen for."""
+    selectors = play_selectors(play)
+    fits = [
+        (index, view)
+        for index, view in enumerate(pool)
+        if wanted(view)
+        and not breaks(board, play, zone, view)
+        and not second_legend(board, zone, view)
+    ]
+    if not fits:
+        pytest.fail(f"no card in the deck can be {what} without breaking a false condition")
+    _, view = min(
+        fits,
+        key=lambda item: (
+            rank(item[1]) if rank else 0,
+            sum(matches(selector, item[1]) for selector in selectors),
+            item[0],
+        ),
+    )
+    board.cards.append((zone, view))
+
+
+def move_card(move: dict[str, Any]) -> tuple[str, Callable[[dict[str, Any]], bool]]:
+    """The zone a move's card comes from, and what that card must be."""
+    if move["kind"] == "activate":
+        spec, phrase = move["source"], move["ability_text_has"].casefold()
+
+        def wanted(view: dict[str, Any]) -> bool:
+            return matches(spec["select"], view) and any(
+                phrase in a["text"].casefold() for a in view["abilities"]
+            )
+
+        return spec["zone"], wanted
+    spec = move["card"]
+    return spec.get("zone", "hand"), lambda view: matches(spec["select"], view)
+
+
+def move_cost(move: dict[str, Any], board: Board) -> list[str]:
+    """The move's mana symbols, one entry per mana: a cast card's mana cost,
+    or the cost half of the activated ability's own line."""
+    if move["kind"] not in ("cast", "activate"):
+        return []
+    zone, wanted = move_card(move)
+    card = next(view for view in board.zone(zone) if wanted(view))
+    if move["kind"] == "cast":
+        text = card["mana_cost"]
+    else:
+        phrase = move["ability_text_has"].casefold()
+        text = next(a["text"] for a in card["abilities"] if phrase in a["text"].casefold())
+        text = text.split(":", 1)[0]
+    symbols: list[str] = []
+    for symbol in SYMBOL.findall(text):
+        if symbol.isdigit():
+            symbols += ["1"] * int(symbol)
+        elif symbol in COLOURED:
+            symbols.append(symbol)
+    return symbols
+
+
+def zone_floors(play: dict[str, Any]) -> dict[str, int]:
+    floors = dict.fromkeys(ZONES, 0) | {"library": LIBRARY_FLOOR}
+    for polarity in ("true", "false"):
+        for c in play[polarity]:
+            if c["kind"] != "zone_size" or c.get("side", "me") != "me":
+                continue
+            if polarity == "true" and c["op"] in (">=", ">"):
+                floors[c["zone"]] = max(floors[c["zone"]], c["n"] + (c["op"] == ">"))
+            if polarity == "false" and c["op"] in ("<=", "<"):
+                floors[c["zone"]] = max(floors[c["zone"]], c["n"] + (c["op"] == "<="))
+    return floors
+
+
+def stage(play: dict[str, Any], pool: list[dict[str, Any]]) -> Board:
+    """A board, out of `pool`, on which every one of `play`'s true conditions
+    holds, none of its false ones does, and every move has what it needs: its
+    card, a card each search can find, mana for its cost, and a library past
+    every size guard."""
+    board = Board()
+    picks = [
+        item["pick"]
+        for move in play["moves"]
+        for item in move.get("answers") or []
+        if item.get("decision") == "choose_cards" and item.get("pick")
+    ]
+
+    def searchers() -> list[dict[str, Any]]:
+        found = []
+        for move in play["moves"]:
+            if move["kind"] in ("cast", "activate", "play_land"):
+                zone, wanted = move_card(move)
+                found += [view for view in board.zone(zone) if wanted(view)]
+        return found
+
+    def finds_every_pick(view: dict[str, Any]) -> int:
+        targets = [v for v in board.zone("library") if any(matches(p["select"], v) for p in picks)]
+        return 0 if all(finds(view, target) for target in targets) else 1
+
+    counts = [c for c in play["true"] if c["kind"] == "count"]
+    for condition in sorted(counts, key=lambda c: c["zone"] == "battlefield"):
+        if condition["op"] not in GROWING and not holds(board, condition):
+            pytest.fail(f"staging only adds cards, and {condition} needs fewer")
+        while not holds(board, condition):
+            add_chosen(
+                board,
+                play,
+                pool,
+                condition["zone"],
+                lambda view, c=condition: matches(c["select"], view),
+                f"counted by {condition}",
+                finds_every_pick,
+            )
+
+    for move in play["moves"]:
+        if move["kind"] in ("cast", "activate", "play_land"):
+            zone, wanted = move_card(move)
+            if not any(wanted(view) for view in board.zone(zone)):
+                add_chosen(board, play, pool, zone, wanted, f"the {move['kind']} move's card")
+
+    for pick in picks:
+
+        def findable(view: dict[str, Any], pick: dict[str, Any] = pick) -> bool:
+            return matches(pick["select"], view) and all(finds(s, view) for s in searchers())
+
+        if not any(findable(view) for view in board.zone("library")):
+            prefer = list(pick.get("prefer") or [])
+
+            def preferred(view: dict[str, Any], prefer: list[Any] = prefer) -> int:
+                return next((i for i, p in enumerate(prefer) if matches(p, view)), len(prefer))
+
+            add_chosen(board, play, pool, "library", findable, "a card the search finds", preferred)
+
+    cost = [symbol for move in play["moves"] for symbol in move_cost(move, board)]
+    for colour, needed in Counter(s for s in cost if s in COLOURED).items():
+        while sum(produces(view, colour) for view in mana_sources(board)) < needed:
+            add_chosen(
+                board,
+                play,
+                pool,
+                "battlefield",
+                lambda view, colour=colour: "land" in card_types(view) and produces(view, colour),
+                f"a land making {{{colour}}}",
+            )
+    mana = [c["n"] + (c["op"] == ">") for c in play["true"] if c["kind"] == "untapped_mana"]
+    while len(mana_sources(board)) < max([len(cost), *mana]):
+        add_chosen(
+            board,
+            play,
+            pool,
+            "battlefield",
+            lambda view: (
+                "land" in card_types(view) and bool(mana_sources(Board([("battlefield", view)])))
+            ),
+            "an untapped land that makes mana",
+        )
+
+    for condition in play["true"]:
+        if condition["kind"] == "life" and not holds(board, condition):
+            op, n = condition["op"], condition["n"]
+            board.life = n + (op == ">") if op in (">=", ">", "==") else n - (op == "<")
+
+    selectors = play_selectors(play)
+    for zone, floor in zone_floors(play).items():
+        while len(board.zone(zone)) < floor:
+            inert = [
+                view for view in pool if not any(matches(selector, view) for selector in selectors)
+            ]
+            spells = [view for view in inert if "land" not in card_types(view)]
+            chosen = (spells or inert or [None])[0]
+            if chosen is None:
+                pytest.fail(f"no card in the deck is filler the play never reads, for {zone}")
+            board.cards.append((zone, chosen))
+
+    unmet = [c for c in play["true"] if not holds(board, c)]
+    tripped = [c for c in play["false"] if holds(board, c)]
+    assert not unmet and not tripped, (unmet, tripped, board.describe())
+    return board
+
+
+def apply_board(client: TestClient, game_id: str, board: Board, play: dict[str, Any]) -> None:
+    """Put the plan onto the real game at the play's first step, and hand me
+    priority there."""
+    when = play["when"]
+    active = OPPONENT if when["whose_turn"] == "theirs" else ME
+    force_turn_position(game_id, Step(when["steps"][0]), active)
+    for zone, view in board.cards:
+        add_card(client, game_id, view["name"], ME, zone)
+    if board.life != 20:
+        set_life(game_id, ME, board.life)
+    if active == OPPONENT:
+        hand_priority_to_me(client, game_id)
+
+
+# -- every seed play ---------------------------------------------------------------------
+
+#: Seed plays the engine cannot yet carry to completion, each with the
+#: engine's own refusal. Empty means every play in the slice completes.
+ENGINE_GAPS: dict[str, str] = {}
+
+
+def with_gaps(cases: list[Any]) -> list[Any]:
+    return [
+        pytest.param(
+            *case.values,
+            id=case.id,
+            marks=pytest.mark.xfail(reason=ENGINE_GAPS[case.id], strict=True),
+        )
+        if case.id in ENGINE_GAPS
+        else case
+        for case in cases
+    ]
+
+
+@pytest.mark.parametrize(("slug", "script_id"), with_gaps(seed_cases()))
+def test_every_seed_play_completes_on_a_board_staged_from_its_decks_printings(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch, slug: str, script_id: str
+) -> None:
+    alice = seat_uid(game, ME)
+    play = play_of(slug, script_id)
+    board = stage(play, deck_pool(slug))
+    register_corpus(client, game, alice, slug)
+    apply_board(client, game, board, play)
+    server = mcp_server(client, monkeypatch, game)
+    [judged] = [entry for entry in listing(server, alice)["scripts"] if entry["id"] == script_id]
+    assert judged["applies"] is True, (judged, board.describe())
+
+    with opponent_passes(game):
+        out = run(server, alice, script_id)["script_exit"]
+
+    assert out["exit"] == "chain_complete", (out, board.describe())
+    assert out["moves_done"] == out["moves_total"] == len(play["moves"]), out

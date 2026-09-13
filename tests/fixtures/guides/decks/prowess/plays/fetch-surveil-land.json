@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-surveil-land",
   "name": "Fetch a surveil land at their end step",
-  "intent": "At the opponent's end step, crack a fetch for Thundering Falls, which enters tapped anyway, and surveil a land into the graveyard toward Dragon's Rage Channeler's delirium. Only at 6 life or more and while fewer than two surveil lands are out.",
+  "intent": "At the opponent's end step, crack a fetch for Thundering Falls, which enters tapped anyway, and surveil a land into the graveyard toward Dragon's Rage Channeler's delirium once I am flooding with three lands or more out. Nothing in the maindeck costs more than two, so a third land casts a two-drop beside a one-drop and a land past it is a dead draw. Below three lands fetch-surveil-land-keep runs instead. Only at 6 life or more and while fewer than two surveil lands are out.",
   "priority": 50,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,18 @@
       "side": "me",
       "op": ">=",
       "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 3,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
     }
   ],
   "false": [

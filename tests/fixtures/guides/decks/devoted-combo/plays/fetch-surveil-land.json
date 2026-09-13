@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-surveil-land",
   "name": "Fetch a surveil land at their end step",
-  "intent": "At the opponent's end step, crack a fetch for Underground Mortuary, which enters tapped anyway, and surveil a land away so the next draws are creatures and combo pieces. Only at 6 life or more and while fewer than two surveil lands are already out.",
+  "intent": "At the opponent's end step, crack a fetch for Underground Mortuary, which enters tapped anyway, and surveil a land away so the next draws are creatures and combo pieces, but only once I am flooding with four lands or more out. Leyline of Abundance at four tops the hard-cast curve, Devoted Druid and the dorks make the rest of the mana, and the keeps want two lands and three mana sources, so a land past the fourth is surplus. Below four lands fetch-surveil-land-keep runs instead. Only at 6 life or more and while fewer than two surveil lands are already out.",
   "priority": 50,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,18 @@
       "side": "me",
       "op": ">=",
       "n": 6
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 4,
+      "select": {
+        "types_all": [
+          "Land"
+        ]
+      }
     }
   ],
   "false": [

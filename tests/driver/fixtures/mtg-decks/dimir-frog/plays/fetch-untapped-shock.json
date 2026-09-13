@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "fetch-untapped-shock",
-  "name": "Crack a fetch for an untapped shockland",
-  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped Watery Grave, so Psychic Frog, Counterspell and Fatal Push are all castable this turn. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life.",
+  "name": "Crack a fetch for an untapped shockland when no Island is up",
+  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland carrying Island (blue for Psychic Frog and Counterspell) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Island is up, fetch-untapped-shock-second-color checks Swamp. It prefers a shock with Island, then a basic Island, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life, and only while a shock with Island is still in my library. With Island and Swamp all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Gloomlake Verge and Otawara, Soaring City and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
   "priority": 60,
   "opposing_archetypes": [
     "*"
@@ -34,6 +34,22 @@
       "side": "me",
       "op": ">=",
       "n": 8
+    },
+    {
+      "kind": "count",
+      "zone": "library",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "oracle_has": "you may pay 2 life",
+        "subtypes_any": [
+          "Island"
+        ]
+      }
     }
   ],
   "false": [
@@ -48,6 +64,22 @@
       "kind": "stack_top",
       "controller": "opponent",
       "select": {}
+    },
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "subtypes_any": [
+          "Island"
+        ]
+      }
     }
   ],
   "moves": [
@@ -72,14 +104,27 @@
             "select": {
               "types_all": [
                 "Land"
-              ],
-              "oracle_has": "you may pay 2 life"
+              ]
             },
             "count": 1,
             "prefer": [
               {
+                "oracle_has": "you may pay 2 life",
                 "subtypes_any": [
                   "Island"
+                ]
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
+                ],
+                "subtypes_any": [
+                  "Island"
+                ]
+              },
+              {
+                "supertypes_any": [
+                  "Basic"
                 ]
               }
             ]

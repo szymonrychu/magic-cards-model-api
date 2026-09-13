@@ -695,9 +695,12 @@ def _answer(
 
 def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | None:
     """`interrupted` when another player did something other than pass since
-    the run's watermark, passed at all while this run was mid-resolution, or
-    the stack holds an object this run did not make. A new object this seat
-    controls is the run's own (its trigger) and is tracked instead."""
+    the run's watermark, posted a pass that did not go through while this run
+    was mid-resolution, or the stack holds an object this run did not make. A
+    pass that did go through (`allowed`) means that player held priority, so
+    the resolution this run was answering is over (CR 117.3b gives the active
+    player priority after it) and nothing interrupted it. A new object this
+    seat controls is the run's own (its trigger) and is tracked instead."""
     seat = ctx.seat
     read = seat.call_json("GET", f"/api/games/{seat.game_id()}/log?since={run.last_seq}")
     if not isinstance(read, dict) or not isinstance(read.get("log"), list):
@@ -719,6 +722,9 @@ def _foreign(ctx: _Context, run: _Run, state: dict[str, Any]) -> ScriptExit | No
                 Exit.INTERRUPTED,
                 stop_reason=f"{player} acted ({entry.get('action')}, log seq {entry['seq']})",
             )
+        if run.mid_resolution and detail.get("allowed") is True:
+            run.mid_resolution = False
+            continue
         if run.mid_resolution:
             run.last_seq = int(entry["seq"])
             return ScriptExit(
@@ -947,9 +953,10 @@ def decide_body(
     if "accept" in item:
         body["accept"] = item["accept"]
         return body
-    moving = item.get("to_graveyard") if kind == "surveil" else item.get("to_bottom")
-    if kind in ("surveil", "scry") and moving is not None:
-        body["moved"] = [card["id"] for card in cards if matches(moving, card)]
+    if kind in ("surveil", "scry"):
+        # Naming no split moves nothing: every card looked at stays on top.
+        moving = item.get("to_graveyard") if kind == "surveil" else item.get("to_bottom")
+        body["moved"] = [] if moving is None else [c["id"] for c in cards if matches(moving, c)]
         body["top_order"] = None
         return body
     if kind == "put_on_top_or_bottom" and item.get("to_bottom") is not None and cards:
