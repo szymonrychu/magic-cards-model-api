@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "cantrip-scry",
+  "name": "Cast a scry-then-draw sorcery and bottom the lands it shows",
+  "intent": "Preordain shape: with three or more lands already in play, dig past extra lands toward threats, artifacts and interaction.",
+  "priority": 55,
+  "opposing_archetypes": ["*"],
+  "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+  "true": [
+    {"kind": "count", "zone": "hand", "side": "me", "op": ">=", "n": 1,
+     "select": {"types_all": ["Sorcery"], "oracle_has": "Scry 2"}},
+    {"kind": "count", "zone": "battlefield", "side": "me", "op": ">=", "n": 3,
+     "select": {"types_all": ["Land"]}},
+    {"kind": "untapped_mana", "op": ">=", "n": 1}
+  ],
+  "false": [],
+  "moves": [
+    {"kind": "cast",
+     "card": {"zone": "hand", "select": {"types_all": ["Sorcery"], "oracle_has": "Scry 2"}},
+     "mana": "auto",
+     "answers": [
+       {"decision": "scry", "to_bottom": {"types_all": ["Land"]}}
+     ]}
+  ],
+  "next": []
+}

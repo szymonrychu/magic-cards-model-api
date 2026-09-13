@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "id": "fetch-untapped-shock",
+  "name": "Crack a fetch for an untapped shockland",
+  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped Watery Grave, so Psychic Frog, Counterspell and Fatal Push are all castable this turn. Only at 8 life or more, since Orcish Bowmasters mirrors and aggro punish the 3 life.",
+  "priority": 60,
+  "opposing_archetypes": [
+    "*"
+  ],
+  "when": {
+    "whose_turn": "mine",
+    "steps": [
+      "precombat_main"
+    ],
+    "stack": "empty"
+  },
+  "true": [
+    {
+      "kind": "count",
+      "zone": "battlefield",
+      "side": "me",
+      "op": ">=",
+      "n": 1,
+      "select": {
+        "types_all": [
+          "Land"
+        ],
+        "tapped": false,
+        "ability_text_has": "Search your library for"
+      }
+    },
+    {
+      "kind": "life",
+      "side": "me",
+      "op": ">=",
+      "n": 8
+    }
+  ],
+  "false": [
+    {
+      "kind": "zone_size",
+      "zone": "library",
+      "side": "me",
+      "op": "<=",
+      "n": 5
+    },
+    {
+      "kind": "stack_top",
+      "controller": "opponent",
+      "select": {}
+    }
+  ],
+  "moves": [
+    {
+      "kind": "activate",
+      "source": {
+        "zone": "battlefield",
+        "select": {
+          "types_all": [
+            "Land"
+          ],
+          "tapped": false,
+          "ability_text_has": "Search your library for"
+        }
+      },
+      "ability_text_has": "Search your library for",
+      "sacrifice": "source",
+      "answers": [
+        {
+          "decision": "choose_cards",
+          "pick": {
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "oracle_has": "you may pay 2 life"
+            },
+            "count": 1,
+            "prefer": [
+              {
+                "subtypes_any": [
+                  "Island"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "decision": "pay_life",
+          "accept": true
+        }
+      ]
+    }
+  ],
+  "next": []
+}

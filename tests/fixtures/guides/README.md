@@ -1,12 +1,17 @@
 # Vendored slice of the deck-guides corpus
 
-Copied verbatim from `github.com/szymonrychu/mtg-decks` at commit `936b324`,
-the same corpus a seat Job clones to `/guides`. Not hand-written and not
+Copied verbatim from `github.com/szymonrychu/mtg-decks` at commit `9aff048`
+(`9aff048c5e7c3d6a15f8c99593a1dcb4156f4e89`), the same corpus a seat Job
+clones to `/guides`. That commit is the tip of the mtg-decks **`script-dsl`
+integration branch**, not of `main`: it carries the play scripts (M1, M1b,
+M2a, M2b, F4) that are not on mtg-decks `main` yet, so the pin names the
+integration branch until that branch merges, and moves to the `main` commit
+that carries it at the next refresh after. Not hand-written and not
 trimmed: `tests/driver/test_matchup_card.py` asserts a byte budget on what
 `matchup_card.render_matchup_card` produces, and a budget measured against an
-approximation of the input is worth nothing. Every file here is byte-identical
-at `936b324` and at the corpus tip `01fae6c`, so a figure measured against
-either root is a figure about this slice.
+approximation of the input is worth nothing. Every file the previous pin
+(`936b324`) vendored is byte-identical at `9aff048`; the refresh only added
+files.
 
 What is here, and why only this much:
 
@@ -46,12 +51,29 @@ What is here, and why only this much:
   "one small read once the opponent shows cards" path. The largest file in the
   corpus is in the slice (`living-end/.../matchups/devoted-combo.json`, 28492
   bytes), which is where that prose's "28 KB at the largest" comes from.
+- `decks/*/plays/*.json` - **every play script in the corpus**, for every
+  deck that has any (all thirteen at `9aff048`, 25 plays), including the
+  seven decks that are otherwise only an `archetype.json` here. Plays are
+  part of the slice so `mcp-seat plays check --root tests/fixtures/guides`
+  lints the real corpus rather than a hand-built root; at `9aff048` it
+  reports 25 plays in 13 decks with zero errors and zero warnings.
+- `decks/*/plays/inputs.json` - part of the slice wherever a deck declares
+  one. No deck does at `9aff048`, so none is vendored; a refresh copies each
+  one that appears.
+- `meta/card-data.json` - the card index the play lint's name and phrase rules
+  read from the guides root. Without it `plays check` cannot run over this
+  slice at all.
 
 ## What the card actually renders to
 
-Measured with the code at this commit, over **all thirteen** guides, with the
-corpus root at `~/Documents/mtg-decks` (`01fae6c`). None of the thirteen is
-truncated and none loses a field; the hard cap is 12288 bytes.
+Measured with the code at this commit, over **all thirteen** guides of
+`git archive 9aff048`, and quoted for the corpus root at `~/Documents/mtg-decks`
+(`/Users/szymonri/Documents/mtg-decks`; the archive was extracted elsewhere and
+its raw figures shifted by twice the difference in root length, the relation
+`test_a_raw_card_size_moves_by_exactly_twice_the_corpus_root` pins). Every
+figure is unchanged from the previous pin: the refresh added plays and card
+data, which the card does not read. None of the thirteen is truncated and
+none loses a field; the hard cap is 12288 bytes.
 
 | guide | boarding plan | rendered card |
 |---|---|---|
@@ -118,11 +140,22 @@ without reaching that last-resort cut.
 `tests/driver/fixtures/mtg-decks/` is a second slice of the same corpus at the
 same commit, vendored for the classifier's table test: thirteen
 `archetype.json` (byte-identical to the ones here) plus each deck's
-`decklist.txt`. Two copies because the two suites want different shapes - a
-guide root with real analysis runs here, a flat per-slug corpus there - so a
-refresh has to re-copy both. `test_guides.py`'s `MTG_DECKS_SHA` is the pin
-they share.
+`decklist.txt`, and each deck's `plays/*.json` (and `plays/inputs.json` where
+present) at `<slug>/plays/`, byte-identical to the ones here. Two copies
+because the two suites want different shapes - a guide root with real analysis
+runs here, a flat per-slug corpus there - so a refresh has to re-copy both.
+`test_guides.py`'s `MTG_DECKS_SHA` is the pin they share.
 
 Do not edit these files. They are generated in the source repo from the same
 `boarding-plan.json` the rendered markdown guides come from; refresh them by
-re-copying, and re-measure both tables above afterwards.
+re-copying, and re-measure both tables above afterwards. Copy from the commit,
+never from a working checkout: `git -C <mtg-decks> show <sha>:<path>` per file
+(or `git archive <sha>`), so an uncommitted edit over there cannot leak in.
+Then set `MTG_DECKS_SHA` to the full SHA and run
+`mcp-seat plays check --root tests/fixtures/guides --json`, which must report
+no errors and no warnings.
+
+The play-script conflict corpus, `tests/fixtures/conflict_corpus.json`, is
+**not** part of this slice and is not refreshed with it: it is a copy of
+mtg-decks' `scripts/tests/fixtures/conflict_corpus.json`, pinned by its own
+hash in `tests/test_playscript_conflict_corpus.py`, and is synced separately.

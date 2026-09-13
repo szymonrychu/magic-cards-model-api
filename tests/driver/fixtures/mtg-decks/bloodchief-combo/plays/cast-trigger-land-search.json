@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "cast-trigger-land-search",
+  "name": "Cast the creature whose cast trigger puts a land onto the battlefield",
+  "intent": "Sowing Mycospawn shape, unkicked: ramp a land onto the battlefield, preferring a land that makes colorless Eldrazi mana, then double colorless, then a basic.",
+  "priority": 60,
+  "opposing_archetypes": ["*"],
+  "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+  "true": [
+    {"kind": "count", "zone": "hand", "side": "me", "op": ">=", "n": 1,
+     "select": {"types_all": ["Creature"], "oracle_has": "library for a land card"}},
+    {"kind": "untapped_mana", "op": ">=", "n": 4},
+    {"kind": "zone_size", "zone": "library", "side": "me", "op": ">=", "n": 1}
+  ],
+  "false": [],
+  "moves": [
+    {"kind": "cast",
+     "card": {"zone": "hand", "select": {"types_all": ["Creature"], "oracle_has": "library for a land card"}},
+     "mana": "auto",
+     "answers": [
+       {"decision": "choose_cards",
+        "pick": {"select": {"types_all": ["Land"]}, "count": 1,
+                 "prefer": [
+                   {"types_all": ["Land"], "oracle_has": "colorless Eldrazi"},
+                   {"types_all": ["Land"], "oracle_has": "Add {C}{C}"},
+                   {"types_all": ["Land"], "supertypes_any": ["Basic"]}
+                 ]}}
+     ]}
+  ],
+  "next": []
+}
