@@ -294,38 +294,54 @@ def test_a_thoughtseize_reveal_is_known_while_its_discard_choice_is_pending(clie
     assert_matches_engine(client, game)
 
 
-def test_a_scry_look_is_recorded_as_the_engine_records_it_after_the_put_back(client, game):
-    """The boundary of the paused read: it surfaces only records the paused
-    game already holds. The engine's `Game.scry` records Opt's look (CR 701.22a,
-    a look shown to the scrier alone, CR 701.20e) after the put-back, against
-    the order that put-back makes - so while the scry is pending there is no
-    record to surface, the api invents none (the pending decision's own cards
-    show the scrier the card), and the record is there once answered - with
-    the Bolt sent to the bottom, so Opt's draw does not take it."""
-    add_card(client, game, "Island", "alice", "battlefield")
-    add_card(client, game, "Opt", "alice", "hand")
-    stage_library(client, game, "alice", ["Lightning Bolt", "Forest"])
+def _cast_a_library_look(client, game, spell: str, land: str, library: list[str]) -> dict:
+    """Cast `spell` for `land` and resolve it to its pending look-then-put
+    question, with alice's library staged top first."""
+    add_card(client, game, land, "alice", "battlefield")
+    add_card(client, game, spell, "alice", "hand")
+    stage_library(client, game, "alice", library)
     force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
-    opt = next(card for card in admin_view(client, game)["hands"]["alice"] if card["name"] == "Opt")
+    card = next(c for c in admin_view(client, game)["hands"]["alice"] if c["name"] == spell)
     cast = client.post(
         f"/api/games/{game}/actions/cast",
         json={
             "player": "alice",
-            "card_id": opt["id"],
-            "mana_sources": [battlefield_id(client, game, "Island", "alice")],
+            "card_id": card["id"],
+            "mana_sources": [battlefield_id(client, game, land, "alice")],
         },
     )
     assert cast.status_code == 200, cast.text
     resolved = client.post(f"/api/games/{game}/resolve-top").json()
     assert resolved.get("paused"), resolved
-    assert resolved["pending_decision"]["kind"] == "scry"
+    return resolved["pending_decision"]
+
+
+def _library_names(block: dict[str, Any]) -> list[tuple[int, str, str]]:
+    return [
+        (record["index_from_top"], record["card"]["name"], record["source"])
+        for record in block["library"]
+    ]
+
+
+def test_a_scry_look_is_known_while_the_scry_is_pending(client, game):
+    """CR 701.22a: "look at the top N cards of your library, then put" - the
+    look comes before the choice, so Opt's top card is known to alice (a look,
+    hers alone, CR 701.20e) while the scry is pending (battle 1, D13). Once
+    answered, the record is the one against the order she made - the Bolt on
+    the bottom, so Opt's draw does not take it."""
+    pending = _cast_a_library_look(client, game, "Opt", "Island", ["Lightning Bolt", "Forest"])
+    assert pending["kind"] == "scry"
     uids = seats_for(game)
     top = card_in(game, "Lightning Bolt", "alice", Zone.LIBRARY)
 
     pending_view = view(client, game, uids["alice"])
-    assert pending_view["known_cards"]["alice"]["library"] == []
+    assert _library_names(pending_view["known_cards"]["alice"]) == [(0, "Lightning Bolt", "Opt")]
     assert str(top.id) in pending_view["pending_decision"]["cards"]
-    assert "Lightning Bolt" not in str(view(client, game, uids["bob"])["known_cards"])
+    assert view(client, game, uids["bob"])["known_cards"] == {
+        "bob": {"hand": [], "library": [], "sideboard": []}
+    }
+    for nobody in (None, "garbage"):
+        assert str(top.id) not in str(view(client, game, nobody)["known_cards"])
 
     answered = client.post(
         f"/api/games/{game}/decide",
@@ -339,6 +355,50 @@ def test_a_scry_look_is_recorded_as_the_engine_records_it_after_the_put_back(cli
         for record in view(client, game, uids["alice"])["known_cards"]["alice"]["library"]
     ]
     assert "Lightning Bolt" in names
+    assert_matches_engine(client, game)
+
+
+def test_a_surveil_look_is_known_while_the_surveil_is_pending(client, game):
+    """CR 701.25a: "look at the top N cards of your library, then put any
+    number of them into your graveyard" - Otherworldly Gaze's three cards are
+    known to alice, where they sit, while the surveil is pending (battle 1,
+    D13's surveil case), and to nobody else. The one she keeps stays known on
+    top; the ones she bins are public in the graveyard (CR 400.2) and leave
+    no record."""
+    pending = _cast_a_library_look(
+        client, game, "Otherworldly Gaze", "Island", ["Lightning Bolt", "Forest", "Mountain"]
+    )
+    assert pending["kind"] == "surveil"
+    uids = seats_for(game)
+
+    as_alice = view(client, game, uids["alice"])
+    assert _library_names(as_alice["known_cards"]["alice"]) == [
+        (0, "Lightning Bolt", "Otherworldly Gaze"),
+        (1, "Forest", "Otherworldly Gaze"),
+        (2, "Mountain", "Otherworldly Gaze"),
+    ]
+    assert view(client, game, uids["bob"])["known_cards"] == {
+        "bob": {"hand": [], "library": [], "sideboard": []}
+    }
+    library_ids = {
+        str(card_in(game, name, "alice", Zone.LIBRARY).id)
+        for name in ("Lightning Bolt", "Forest", "Mountain")
+    }
+    for nobody in (None, "garbage"):
+        seen = str(view(client, game, nobody)["known_cards"])
+        assert not [card_id for card_id in library_ids if card_id in seen]
+
+    forest = card_in(game, "Forest", "alice", Zone.LIBRARY)
+    mountain = card_in(game, "Mountain", "alice", Zone.LIBRARY)
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "moved": [str(forest.id), str(mountain.id)]},
+    )
+    assert answered.status_code == 200, answered.text
+    assert not answered.json().get("paused"), answered.json()
+    after = view(client, game, uids["alice"])["known_cards"]["alice"]
+    assert _library_names(after) == [(0, "Lightning Bolt", "Otherworldly Gaze")]
     assert_matches_engine(client, game)
 
 
