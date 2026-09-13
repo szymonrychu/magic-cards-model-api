@@ -30,6 +30,7 @@
 import { h, clear } from "../dom.js";
 import { cardNode } from "../cards.js";
 import { withSymbols } from "../symbols.js";
+import { decisionCards } from "../decisions.js";
 import { targetingOpts } from "./board.js";
 import { STEPS, PHASE_OF } from "../priority.js";
 import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel } from "../store.js";
@@ -439,14 +440,19 @@ export function openZonesModal(root, app, handlers) {
 
 /** Every card a live seat's view can ever put a `.card[data-card-id]` node
  * on screen for - battlefield, stack, exile, your own hand, every
- * graveyard, and (CR 601.3) any card a play permission names - keyed by id,
- * fresh on each hover rather than kept live, so a card that only exists
- * because of a permission still previews correctly. */
+ * graveyard, (CR 601.3) any card a play permission names, and the cards of
+ * this seat's own pending decision (a library card a scry or a search shows
+ * exists nowhere else on the view) - keyed by id, fresh on each hover rather
+ * than kept live, so a card that only exists because of a permission still
+ * previews correctly. The decision's cards go in first, so a card that is
+ * also on the board previews as its board view. */
 function hoverableCards(state) {
   const lookup = {};
   const add = (card) => {
     if (card && card.id) lookup[card.id] = card;
   };
+  const pending = state.pending_decision;
+  if (pending && pending.player === state.you) decisionCards(pending).forEach(add);
   (state.battlefield || []).forEach(add);
   (state.stack || []).forEach(add);
   (state.exile || []).forEach(add);
@@ -515,11 +521,13 @@ function wireOn(root, boardEl, store) {
   });
 }
 
-/** Mount the hover preview onto `#mtg-board` and the zones popover's
- * `#modal` (its content is rebuilt fresh every time it opens, but the modal
- * element itself persists, so wiring it once here is enough). `store`
- * supplies both the card lookup and the mana-symbol map for oracle text. */
+/** Mount the hover preview onto `#mtg-board`, the zones popover's `#modal`
+ * (its content is rebuilt fresh every time it opens, but the modal element
+ * itself persists, so wiring it once here is enough), and the persistent
+ * `#decision-window`. `store` supplies both the card lookup and the
+ * mana-symbol map for oracle text. */
 export function mountHoverPreview(root, store) {
   wireOn(root, root.querySelector("#mtg-board"), store);
   wireOn(root, root.querySelector("#modal"), store);
+  wireOn(root, root.querySelector("#decision-window"), store);
 }

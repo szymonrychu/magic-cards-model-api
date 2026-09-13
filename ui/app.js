@@ -31,6 +31,12 @@ import {
   updatePopoverItems,
 } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
+import {
+  mountDecisionWindow,
+  minimizeDecisionWindow,
+  restoreDecisionWindow,
+  decisionWindowIsOpen,
+} from "./render/decision_window.js";
 import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
@@ -1662,8 +1668,15 @@ async function main() {
     onStackObject: (o) => tryTarget(o.id),
     onPermission,
   });
+  // One draft for both decision surfaces: the prompt box's small controls and
+  // the decision window's cards write the same `decisionDraft` keys.
+  const onDecisionDraft = (patch) => {
+    store.set((s) => ({ decisionDraft: { ...s.decisionDraft, ...patch } }));
+    refreshDecisionTargets();
+  };
   mountRibbon(document, store, {
     nameOf,
+    onShowDecisionWindow: () => restoreDecisionWindow(document),
     onToggleMode: (n) => {
       store.set((s) => ({ action: A.toggleMode(s.action, n) }));
       refreshAffordance();
@@ -1710,10 +1723,7 @@ async function main() {
     onCast: () => fire(),
     onCancel: cancel,
     onHoldPriority: (hold) => store.set((s) => ({ action: { ...s.action, holdPriority: hold } })),
-    onDecisionDraft: (patch) => {
-      store.set((s) => ({ decisionDraft: { ...s.decisionDraft, ...patch } }));
-      refreshDecisionTargets();
-    },
+    onDecisionDraft,
     onDecide: decide,
     onVerb: (verb) => {
       store.set({ concedeArmed: false });
@@ -1764,6 +1774,14 @@ async function main() {
     onPregame,
     onAdvance: advanceStep,
   });
+  // The complex decisions (scry, surveil, every `choose_cards`,
+  // `order_triggers`, this seat's own mulligan), answered with real cards in
+  // a floating window that posts through the same `decide` and `onPregame`.
+  mountDecisionWindow(document, store, {
+    onDecisionDraft,
+    onDecide: decide,
+    onPregame,
+  });
   mountLog(document, store);
   mountAdvice(document, store, { onApprove: approveAdvice });
   mountTopbar(document, store, {
@@ -1787,6 +1805,12 @@ async function main() {
     // rest of the page's life. It is only ever toggled.
     if (logModalIsOpen(document)) {
       closeLogModal(document);
+      return;
+    }
+    // A pending decision's window minimizes; it is never closed while the
+    // question is still standing.
+    if (decisionWindowIsOpen(document)) {
+      minimizeDecisionWindow(document);
       return;
     }
     cancel();

@@ -11,14 +11,16 @@ Both assert only that mounting does not throw and that the rendered
 `#prompt-box`/`#casting-strip` fakes contain the labels a player would need
 to see.
 
-Two more scenarios exercise an actual handler end to end: the fake DOM's
+One more scenario exercises an actual handler end to end: the fake DOM's
 `addEventListener` records the listener `h()` wires up, and `click(el)`
-(found via `findByText`) invokes it - a `choose_cards` decision's option
-button reports `{card_ids: [...]}` back through `onDecisionDraft`, and a
-scry's split control's "Move" button reports `{moved: [...]}`. Everything
+(found via `findByText`) invokes it - a `choose_a_mode` decision's option
+button reports `{choice: ...}` back through `onDecisionDraft`. The complex
+kinds (scry, surveil, `choose_cards`, `order_triggers`) are answered in
+`render/decision_window.js` now (`tests/test_ui_decision_window.py`); here
+the prompt box only points at it. Everything
 else about a control's own correctness (which draft field each kind reads
 back, `readyToFire`'s exact gating) belongs to `decisions.js`/`actions.js`/
-`targeting.js`'s own direct tests - these two just confirm the wiring
+`targeting.js`'s own direct tests - these just confirm the wiring
 between a rendered button and the handler it is supposed to call is real,
 not merely plausible-looking markup.
 """
@@ -627,14 +629,15 @@ def test_alt_cost_pitch_tray_says_so_plainly_when_nothing_is_eligible() -> None:
     assert "nothing eligible" in result.lower()
 
 
-def test_clicking_a_choose_cards_option_reports_card_ids() -> None:
-    calls = run_module(
+def test_a_choose_cards_decision_points_at_the_decision_window() -> None:
+    """Every `choose_cards` is answered with real card images in
+    `render/decision_window.js`'s floating window now; the prompt box only
+    says where the question went, and renders no option chips of its own."""
+    result = run_module(
         "render/ribbon.js",
         FAKE_DOM
         + """
         (() => {
-          const calls = [];
-          const handlers = { ...HANDLERS, onDecisionDraft: (patch) => calls.push(patch) };
           const pending = {
             kind: "choose_cards", player: "alice", source: "Merchant Scroll",
             prompt: "Search your library for an instant card.",
@@ -647,17 +650,26 @@ def test_clicking_a_choose_cards_option_reports_card_ids() -> None:
           };
           const state = baseState({ pending_decision: pending });
           const store = makeStore(baseApp(state));
-          m.mountRibbon(document, store, handlers);
+          m.mountRibbon(document, store, HANDLERS);
           store.set({});
-          click(findByText(document, "button", "Brainstorm"));
-          return calls;
+          const box = document.querySelector("#prompt-box");
+          return {
+            text: box.textContent,
+            chip: Boolean(findByText(box, "button", "Brainstorm")),
+            show: Boolean(findByText(box, "button", "Show decision window")),
+          };
         })()
         """,
     )
-    assert calls == [{"card_ids": ["c1"]}]
+    assert "Merchant Scroll" in result["text"]
+    assert "decision window" in result["text"]
+    assert result["chip"] is False
+    assert result["show"] is True
 
 
-def test_clicking_the_split_controls_move_button_reports_moved() -> None:
+def test_clicking_a_choose_a_mode_option_reports_choice() -> None:
+    """A small decision still renders in the prompt box, and its option
+    buttons still report through `onDecisionDraft`."""
     calls = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -665,6 +677,28 @@ def test_clicking_the_split_controls_move_button_reports_moved() -> None:
         (() => {
           const calls = [];
           const handlers = { ...HANDLERS, onDecisionDraft: (patch) => calls.push(patch) };
+          const pending = {
+            kind: "choose_a_mode", player: "alice", source: "Charm",
+            prompt: "Choose one.", options: ["Counter target spell", "Draw a card"],
+          };
+          const state = baseState({ pending_decision: pending });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          click(findByText(document, "button", "Draw a card"));
+          return calls;
+        })()
+        """,
+    )
+    assert calls == [{"choice": "Draw a card"}]
+
+
+def test_a_scry_decision_renders_no_split_rows_in_the_prompt_box() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
           const pending = {
             kind: "scry", player: "alice", source: "Scry", prompt: "Scry 2.",
             cards: ["a", "b"],
@@ -675,14 +709,15 @@ def test_clicking_the_split_controls_move_button_reports_moved() -> None:
           };
           const state = baseState({ pending_decision: pending });
           const store = makeStore(baseApp(state));
-          m.mountRibbon(document, store, handlers);
+          m.mountRibbon(document, store, HANDLERS);
           store.set({});
-          click(findByText(document, "button", "Move"));
-          return calls;
+          const box = document.querySelector("#prompt-box");
+          return { text: box.textContent, move: Boolean(findByText(box, "button", "Move")) };
         })()
         """,
     )
-    assert calls == [{"moved": ["a"]}]
+    assert result["move"] is False
+    assert "decision window" in result["text"]
 
 
 # --------------------------------------------------------- conceding safely

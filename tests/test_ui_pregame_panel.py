@@ -221,11 +221,52 @@ function hasAttr(el, name) {
 """
 
 
-def test_ticking_a_bottoming_checkbox_repaints_the_pregame_panel() -> None:
-    """The repaint that enables "Keep" is not skipped by the checkbox that
-    asked for it (CR 103.5's bottoming picker) - even though ticking it, in a
-    real browser, focuses it."""
+def test_a_focused_checkbox_does_not_block_a_repaint() -> None:
+    """A checkbox holds nothing typed, so focus on one must never freeze the
+    repaint - the original bug was CR 103.5's bottoming checkbox freezing
+    the repaint that would have enabled "Keep". That picker is clicked cards
+    in `render/decision_window.js` now, so a synthetic checkbox stands in
+    for it here, the same way the radio test below does."""
     result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const state = baseState({
+            pending_decision: {
+              kind: "may", player: "alice", source: "Fog",
+              prompt: "Prevent all combat damage this turn?",
+            },
+          });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers());
+          store.set({});
+
+          const box = document.querySelector("#prompt-box");
+          const checkbox = document.createElement("input");
+          checkbox.setAttribute("type", "checkbox");
+          box.appendChild(checkbox);
+          document.activeElement = checkbox;
+
+          store.set({});
+
+          return {
+            checkboxSurvived: document.querySelector("#prompt-box").contains(checkbox),
+            promptText: document.querySelector("#prompt-box").textContent,
+          };
+        })()
+        """,
+    )
+    assert result["checkboxSurvived"] is False, (
+        "a checkbox-focused repaint must go through - a checkbox holds nothing typed"
+    )
+    assert "Fog" in result["promptText"]
+
+
+def test_a_pregame_waiting_on_the_other_seat_still_renders_in_the_prompt_box() -> None:
+    """Only this seat's own mulligan moves to the decision window; while the
+    other seat is still deciding, the prompt box says so, as before."""
+    text = run_module(
         "render/ribbon.js",
         FAKE_DOM
         + """
@@ -233,44 +274,21 @@ def test_ticking_a_bottoming_checkbox_repaints_the_pregame_panel() -> None:
           const state = baseState({
             pregame: {
               step: "mulligan",
-              awaiting_mulligan: ["alice"],
-              cards_to_bottom: { alice: 1 },
-              can_mulligan: { alice: true },
-              mulligans_taken: {},
+              awaiting_mulligan: ["bob"],
+              cards_to_bottom: { alice: 0, bob: 0 },
+              can_mulligan: { alice: true, bob: true },
+              mulligans_taken: { alice: 1 },
             },
-            hands: { alice: [{ id: "c1", name: "Card A" }, { id: "c2", name: "Card B" }] },
           });
           const store = makeStore(baseApp(state));
-          const draft = {
-            onDecisionDraft: (patch) =>
-              store.set((s) => ({ decisionDraft: { ...s.decisionDraft, ...patch } })),
-          };
-          m.mountRibbon(document, store, handlers(draft));
+          m.mountRibbon(document, store, handlers());
           store.set({});
-
-          const box = () => document.querySelector("#prompt-box");
-          const before = {
-            checked: hasAttr(findByType(box(), "input", "checkbox"), "checked"),
-            disabled: hasAttr(findByText(box(), "button", "Keep"), "disabled"),
-          };
-
-          const checkbox = findByType(box(), "input", "checkbox");
-          document.activeElement = checkbox; // ticking it would focus it
-          checkbox.listeners.change();
-
-          const after = {
-            checked: hasAttr(findByType(box(), "input", "checkbox"), "checked"),
-            disabled: hasAttr(findByText(box(), "button", "Keep"), "disabled"),
-          };
-          return { before, after };
+          return document.querySelector("#prompt-box").textContent;
         })()
         """,
     )
-    assert result["before"] == {"checked": False, "disabled": True}
-    assert result["after"] == {"checked": True, "disabled": False}, (
-        "ticking the checkbox, with focus now on it, must still repaint the panel and "
-        "enable Keep - a checkbox holds nothing typed, so it must never block a repaint"
-    )
+    assert "waiting on bob" in text
+    assert "You have taken 1 mulligan" in text
 
 
 def test_a_radio_button_does_not_block_a_repaint_either() -> None:
