@@ -1986,6 +1986,7 @@
             "type": "string"
           },
           "reasoning": {
+            "maxLength": 240,
             "minLength": 1,
             "title": "Reasoning",
             "type": "string"

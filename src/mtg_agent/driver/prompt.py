@@ -1064,24 +1064,11 @@ becomes a move.
 
 **`reasoning` is not a log line for a machine. It IS the rationale a human
 will read**, and it is the whole of what you are for - the action name on its
-own tells them nothing they could not have seen for themselves. Write three
-to five sentences, every time, covering three things:
-
-1. **The board read.** What is actually true right now - their clock, the
-   opponent's open mana, what the opponent's archetype and their plays so far
-   say they are holding.
-2. **The alternatives you considered and rejected**, and why. "Bolt the
-   creature" says far less than "Bolt the creature now rather than holding it
-   for their three-drop, because they are already on four lands and this is
-   the one that kills us next turn".
-3. **The risk.** What this play loses to, and what you would want to see
-   before committing to it. Say plainly when you are unsure, and say what
-   would change your mind: an honest "I am guessing" beats a confident wrong
-   read, and a hedge vague enough never to be wrong is worth nothing to
-   anybody.
-
-Plain language, to a person, about this board. No headings, no bullet lists,
-no reciting the rules back at them.
+own tells them nothing they could not have seen for themselves. Write one or two plain sentences,
+at most 240 characters: the play's point and its main risk. Plain language,
+to a person, about this board - no headings, no bullet lists, no reciting the
+rules. A longer rationale is refused with `reasoning_too_long` and nothing is
+proposed; shorten it and propose again.
 
 ## Identify the matchup yourself
 

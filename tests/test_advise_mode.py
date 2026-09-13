@@ -1570,3 +1570,152 @@ def test_an_advisor_woken_with_the_legal_actions_still_cannot_move_the_game(
     assert state(client, game) == before
     assert len(audit.entries(game)) == ledger
     assert [method for method, _ in sent if method != "GET"] == [], sent
+
+
+# ---------------------------------------------------------------------------
+# 7. the rationale is short (bd1)
+# ---------------------------------------------------------------------------
+
+#: Well over the cap, and still a plausible rationale: the production buddy
+#: wrote ~1,000-character paragraphs before the cap existed.
+LONG_REASONING = " ".join(["Bolt the bird now, before it untaps and starts the clock."] * 6)
+
+
+def test_the_cap_is_one_number_on_both_sides_of_the_cut() -> None:
+    """`seatkit` cannot import the api's package once the repos split, so the
+    two literals are pinned together here the way `PROTOCOL_VERSION` is."""
+    from magic_cards_model_api import schemas
+
+    assert schemas.ADVICE_REASONING_MAX_CHARS == 240
+    assert seatkit.ADVICE_REASONING_MAX_CHARS == schemas.ADVICE_REASONING_MAX_CHARS
+    assert len(LONG_REASONING) > schemas.ADVICE_REASONING_MAX_CHARS
+
+
+def test_advice_refuses_an_overlong_rationale_with_a_typed_422_saying_shorten_it(
+    client: TestClient, game: str
+) -> None:
+    uid = advisor_uid(game)
+    before = audit.last_seq(game)
+
+    response = client.post(
+        f"/api/games/{game}/advice", params={"uid": uid}, json=advice_body(reasoning=LONG_REASONING)
+    )
+
+    assert response.status_code == 422, response.text
+    [error] = response.json()["detail"]
+    assert error["type"] == "reasoning_too_long", error
+    assert error["loc"][-1] == "reasoning", error
+    assert "240" in error["msg"] and "shorten" in error["msg"].lower(), error
+    assert audit.last_seq(game) == before, "an overlong proposal was recorded anyway"
+
+
+def test_advice_accepts_a_rationale_exactly_at_the_cap(client: TestClient, game: str) -> None:
+    uid = advisor_uid(game)
+
+    response = client.post(
+        f"/api/games/{game}/advice", params={"uid": uid}, json=advice_body(reasoning="x" * 240)
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_the_cap_is_written_into_the_advice_request_contract() -> None:
+    reasoning = _openapi()["components"]["schemas"]["AdviceIn"]["properties"]["reasoning"]
+    assert reasoning.get("maxLength") == 240, reasoning
+
+
+def test_an_advise_seat_refuses_an_overlong_rationale_before_sending_anything(
+    client: TestClient, game: str, wired: None, sent: list[tuple[str, str]]
+) -> None:
+    """Refused client-side, typed, and with nothing on the wire: not even the
+    `dry_run` probe, since a proposal that cannot be recorded is not worth
+    asking the engine about."""
+    seat = buddy(game)
+    bolt_id, mountain_id = stock_a_bolt(client, game)
+    sent.clear()
+
+    answer = seat.call_json(
+        "POST",
+        f"/api/games/{game}/actions/cast",
+        {
+            "player": "alice",
+            "card_id": bolt_id,
+            "targets": ["bob"],
+            "mana_sources": [mountain_id],
+            "reasoning": LONG_REASONING,
+        },
+    )
+
+    assert answer.get("proposed") is not True, answer
+    assert answer["allowed"] is False, answer
+    assert answer["type"] == "reasoning_too_long", answer
+    assert answer["max_chars"] == 240, answer
+    assert "shorten" in answer["reason"].lower(), answer
+    assert [call for call in sent if call[0] == "POST"] == [], sent
+    assert advice_rows(game) == []
+
+
+def test_an_ordinary_seats_long_reasoning_is_not_capped(
+    client: TestClient, game: str, wired: None
+) -> None:
+    """The cap is the buddy's rationale, read by a human in a small panel -
+    never a seat's own per-action reasoning."""
+    seat = player_seat(game)
+    add_card(client, game, "Mountain", "alice", "hand")
+    land = state(client, game)["hands"]["alice"][0]["id"]
+
+    answer = seat.call_json(
+        "POST",
+        f"/api/games/{game}/actions/play-land",
+        {"player": "alice", "card_id": land, "reasoning": LONG_REASONING},
+    )
+
+    assert answer.get("allowed") is True, answer
+
+
+def test_the_cast_tool_refuses_an_overlong_rationale_for_an_advisor(
+    client: TestClient, game: str, wired: None
+) -> None:
+    advisor_uid(game)
+    stock_a_bolt(client, game)
+
+    answer = tool_text(
+        mcp_server(game),
+        "cast",
+        {
+            "player_uid": ADVISOR_UID,
+            "card": "Lightning Bolt",
+            "targets": "bob",
+            "reasoning": LONG_REASONING,
+        },
+    )
+
+    assert "reasoning_too_long" in answer, answer
+    assert '"proposed": true' not in answer.lower(), answer
+    assert advice_rows(game) == []
+
+
+def test_the_seat_cli_refuses_an_overlong_rationale_for_an_advisor(
+    client: TestClient, game: str, wired: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from magic_cards_model_api import seat_cli
+
+    advisor_uid(game)
+    add_card(client, game, "Mountain", "alice", "hand")
+
+    seat_cli.run(
+        [
+            "--uid",
+            ADVISOR_UID,
+            "--game",
+            game,
+            "--reasoning",
+            LONG_REASONING,
+            "play-land",
+            "Mountain",
+        ]
+    )
+    printed = capsys.readouterr().out
+
+    assert "reasoning_too_long" in printed, printed
+    assert advice_rows(game) == []

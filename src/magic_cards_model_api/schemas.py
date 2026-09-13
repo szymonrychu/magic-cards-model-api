@@ -12,7 +12,8 @@ from uuid import UUID
 
 from magic_cards_model.models import Action, Card
 from magic_cards_model.models.action import ActionKind
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic_core import PydanticCustomError
 
 
 class RequestModel(BaseModel):
@@ -196,6 +197,38 @@ class ActorRequest(BoardRead):
 #: would satisfy the plan gate while telling a reviewer nothing.
 Stated = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
+#: The most characters an advisor's rationale may run to (bd1). The buddy's
+#: `reasoning` is read by a human in a small panel beside the game, and the
+#: production buddy was writing ~1,000-character paragraphs that nobody reads
+#: mid-turn. Enforced on `AdviceIn.reasoning` as a typed 422
+#: (`reasoning_too_long`) the buddy can act on, pre-checked client-side by
+#: `seatkit.ADVICE_REASONING_MAX_CHARS` (kept equal by hand, pinned by
+#: `tests/test_advise_mode.py`), and clipped to in the UI
+#: (`ui/advice_model.js`'s `RATIONALE_MAX_CHARS`) for rows older than the cap.
+ADVICE_REASONING_MAX_CHARS = 240
+
+
+def _short_rationale(value: str) -> str:
+    """Refuse a rationale over `ADVICE_REASONING_MAX_CHARS`, typed and saying
+    what to do about it - an agent's only feedback is the response body."""
+    if len(value) > ADVICE_REASONING_MAX_CHARS:
+        raise PydanticCustomError(
+            "reasoning_too_long",
+            "reasoning is {length} characters and an advice rationale is capped at "
+            "{max_chars}: shorten it to one or two plain sentences and propose again",
+            {"length": len(value), "max_chars": ADVICE_REASONING_MAX_CHARS},
+        )
+    return value
+
+
+#: A `Stated` rationale no longer than `ADVICE_REASONING_MAX_CHARS`, with the
+#: cap written into the contract as `maxLength`.
+Rationale = Annotated[
+    Stated,
+    AfterValidator(_short_rationale),
+    Field(json_schema_extra={"maxLength": ADVICE_REASONING_MAX_CHARS}),
+]
+
 
 class OpponentPrediction(RequestModel):
     """What a seat expects its opponent to do next, and why.
@@ -343,9 +376,11 @@ class AdviceIn(RequestModel):
     body: dict[str, Any] = Field(default_factory=dict)
     """The exact ready-to-post request body: `player` is the human, and
     `dry_run` is absent."""
-    reasoning: Stated
+    reasoning: Rationale
     """Why, in the advisor's own words. This is the rationale the human
-    reads."""
+    reads: one or two plain sentences, at most `ADVICE_REASONING_MAX_CHARS`
+    (240) characters. A longer one is refused with a 422 of type
+    `reasoning_too_long` and nothing is recorded."""
     validated: bool = False
     """Whether the engine itself has already agreed this action is legal.
     `True` only for the 7 of 12 action shapes that carry `dry_run`

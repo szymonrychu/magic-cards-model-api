@@ -771,9 +771,10 @@ def test_the_subprocess_prompt_selects_the_buddy_brief_by_role() -> None:
     ],
 )
 def test_the_advisor_prose_says_what_reasoning_is_for(prose: str) -> None:
-    """`reasoning` IS the rationale a human reads, and the prose must ask for
-    three to five sentences covering the board read, the alternatives and the
-    risk - in both mechanisms' prose, since a buddy runs under either."""
+    """`reasoning` IS the rationale a human reads in a small panel, and the
+    prose must ask for one or two plain sentences, at most 240 characters -
+    the cap `POST .../advice` enforces - in both mechanisms' prose, since a
+    buddy runs under either."""
     from pathlib import Path
 
     from mtg_agent.driver.guides import NONE, Identification
@@ -797,8 +798,9 @@ def test_the_advisor_prose_says_what_reasoning_is_for(prose: str) -> None:
     # names can legitimately straddle a newline.
     lowered = " ".join(text.lower().split())
     assert "reasoning" in lowered
-    assert "three to five sentences" in lowered
-    assert "alternative" in lowered
+    assert "one or two plain sentences" in lowered
+    assert "at most 240 characters" in lowered
+    assert "three to five sentences" not in lowered
     assert "risk" in lowered
     # Silent in the steps the human's autopilot crosses inside 1.2 seconds.
     for step in ("untap", "upkeep", "draw", "end step"):
@@ -848,7 +850,7 @@ def test_the_driver_picks_the_advisor_prose_for_an_advisor_dispatch(tmp_path) ->
     assert response.status_code == 202, response.text
     assert len(world.submitted) == 1
     text = " ".join(world.submitted[0]["text"].lower().split())
-    assert "three to five sentences" in text
+    assert "one or two plain sentences" in text
     assert "you are a buddy" in text
     assert "you are playing a real game" not in text
 

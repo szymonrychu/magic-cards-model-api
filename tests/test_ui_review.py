@@ -1053,3 +1053,86 @@ def test_no_follow_through_line_where_nothing_was_done() -> None:
             )
         )
         assert result["followedText"] == [], result["followedText"]
+
+
+# ------------------------------------------------ bd1: buddy rationale ----
+
+
+def _review_advice_why(review: dict[str, Any]) -> list[str]:
+    return drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return findAll(els.body, "advice-reasoning").map((el) => el.textContent);
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+
+
+def test_the_retrospective_never_renders_an_unbounded_rationale() -> None:
+    why = _review_advice_why(_advice_review(advice_item(200, reasoning="z" * 900)))
+    assert len(why) == 1
+    assert len(why[0]) <= 240, len(why[0])
+    assert why[0].endswith("...")
+
+
+def test_the_rationale_sent_through_the_real_route_reaches_the_retrospective(client) -> None:
+    """End to end: `POST .../advice` with the buddy's words, the game ends,
+    `GET .../review` is what the retrospective page reads, and the page
+    shows exactly those words for that advice entry."""
+    created = client.post(
+        "/api/games",
+        json={
+            "players": [
+                {"username": "bob", "is_agent": True},
+                {"username": "alice", "is_agent": False},
+            ],
+            "active_player": "bob",
+        },
+    )
+    assert created.status_code == 200, created.text
+    info = created.json()
+    game_id = info["game_id"]
+    try:
+        said = "Play the Forest: it keeps the curve on track."
+        added = client.post(
+            f"/api/games/{game_id}/cards", json={"card": "Forest", "player": "bob", "zone": "hand"}
+        )
+        assert added.status_code == 200, added.text
+        recorded = client.post(
+            f"/api/games/{game_id}/advice",
+            params={"uid": info["seat_uids"]["bob"]},
+            json={
+                "player": "bob",
+                "method": "POST",
+                "path": f"/api/games/{game_id}/actions/play-land",
+                "body": {"player": "bob", "card_id": added.json()["added"]["card_id"]},
+                "reasoning": said,
+                "validated": True,
+            },
+        )
+        assert recorded.status_code == 200, recorded.text
+        conceded = client.post(
+            f"/api/games/{game_id}/actions/concede",
+            json={"player": "alice", "reasoning": "no way back"},
+        )
+        assert conceded.status_code == 200, conceded.text
+        review = client.get(
+            f"/api/games/{game_id}/review", params={"uid": info["seat_uids"]["alice"]}
+        )
+        assert review.status_code == 200, review.text
+
+        assert _review_advice_why(review.json()) == [said]
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})

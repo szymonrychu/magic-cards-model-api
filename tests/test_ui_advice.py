@@ -20,7 +20,13 @@ one failure this codebase guards against everywhere else (`poll()`'s
 
 from __future__ import annotations
 
+from conftest import add_card, card_id
+from fastapi.testclient import TestClient
 from ui_node import requires_node, run_module
+
+from magic_cards_model_api import schemas
+from magic_cards_model_api.repository import Advisor
+from magic_cards_model_api.store import store
 
 pytestmark = requires_node
 
@@ -147,25 +153,40 @@ function makeStore(initial) {
   };
 }
 
-// One `action: "advice"` ledger row, as `audit.py` records it: the agent's
-// own words in `reasoning`, the server-derived `summary`, and the request it
-// wants performed spelled out as `{method, path, body}`.
+// One `action: "advice"` ledger row, as `audit.record` really writes it: the
+// agent's own words in the row's TOP-LEVEL `reasoning` (the keyword argument
+// every route passes, never a `detail` key), the server-derived `summary`,
+// and the request it wants performed spelled out as `{method, path, body}`.
+// `over` may still name `reasoning`; it is lifted out of `detail` here.
 function advice(seq, over) {
+  const detail = {
+    player: "alice",
+    method: "POST",
+    path: "/api/games/g1/actions/cast",
+    body: { card_id: "c1" },
+    summary: "Cast Lightning Bolt targeting Grizzly Bears",
+    reasoning: "Bears is their only blocker, and killing it now lets your two " +
+      "attackers through for six before they untap.",
+    based_on_seq: 10,
+    validated: true,
+    ...(over || {}),
+  };
+  const reasoning = detail.reasoning;
+  delete detail.reasoning;
   return {
     seq, action: "advice", turn: 4, step: "precombat_main", phase: "precombat_main",
-    detail: {
-      player: "alice",
-      method: "POST",
-      path: "/api/games/g1/actions/cast",
-      body: { card_id: "c1" },
-      summary: "Cast Lightning Bolt targeting Grizzly Bears",
-      reasoning: "Bears is their only blocker, and killing it now lets your two " +
-        "attackers through for six before they untap.",
-      based_on_seq: 10,
-      validated: true,
-      ...(over || {}),
-    },
+    reasoning, detail,
   };
+}
+
+function statusOf(box) {
+  const found = [];
+  const walk = (n) => {
+    if (n.className && String(n.className).split(" ").includes("advice-status")) found.push(n);
+    (n.children || []).forEach(walk);
+  };
+  walk(box);
+  return found.map((n) => ({ text: n.textContent, className: n.className }));
 }
 
 function passEntry(seq, player) {
@@ -190,12 +211,20 @@ const STALE_LOG = {
 """
 
 
-def model(expression: str) -> object:
-    return run_module("advice_model.js", FAKE_DOM + expression)
+#: The human-facing status per panel state (bd1). Distinct wording per
+#: state, never the internal verification or staleness sentences.
+READY = "Buddy is waiting for your call"
+UNVERIFIED = "Buddy is unsure about this play"
+BUSY = "Buddy is waiting for your play to finish"
+STALE = "Buddy is thinking"
 
 
-def panel(expression: str) -> object:
-    return run_module("render/advice.js", FAKE_DOM + expression)
+def model(expression: str, **bindings: object) -> object:
+    return run_module("advice_model.js", FAKE_DOM + expression, **bindings)
+
+
+def panel(expression: str, **bindings: object) -> object:
+    return run_module("render/advice.js", FAKE_DOM + expression, **bindings)
 
 
 # ------------------------------------------------------------ the model ----
@@ -398,6 +427,7 @@ def test_a_fresh_proposal_shows_the_summary_the_rationale_and_an_enabled_approve
                 ? null
                 : Boolean(approve.disabled || approve.attrs.disabled !== undefined),
             lines: box.children.length,
+            status: statusOf(box).map((x) => x.text),
           };
         })()
         """
@@ -411,6 +441,7 @@ def test_a_fresh_proposal_shows_the_summary_the_rationale_and_an_enabled_approve
     assert result["approveDisabled"] is False
     assert "unchecked" not in result["text"]
     assert "board moved" not in result["text"]
+    assert result["status"] == [READY], result["status"]
 
 
 def test_nothing_is_rendered_at_all_when_there_is_no_proposal() -> None:
@@ -437,7 +468,7 @@ def test_nothing_is_rendered_at_all_when_there_is_no_proposal() -> None:
     assert result["text"] == ""
 
 
-def test_a_stale_proposal_keeps_its_words_dims_them_and_disables_approve() -> None:
+def test_a_stale_proposal_keeps_its_words_dims_them_and_says_buddy_is_thinking() -> None:
     """Acceptance: keep the summary and the rationale readable (the thinking
     is still worth reading, and re-reading it is how the human decides
     whether it still applies), dim them, say the board moved and name the
@@ -466,14 +497,20 @@ def test_a_stale_proposal_keeps_its_words_dims_them_and_disables_approve() -> No
             ),
             approveCalls: calls.length,
             dismiss: findByText(box, "button", "Dismiss") !== null,
+            status: statusOf(box).map((x) => x.text),
           };
         })()
         """
     )
     assert "Cast Lightning Bolt targeting Grizzly Bears" in result["text"]
     assert "Bears is their only blocker" in result["text"]
-    assert "board moved" in result["text"]
-    assert "#12" in result["text"], "the stale line does not name the row that staled it"
+    # The owner's report: internal staleness wording ("The board moved after
+    # this was proposed - see entry #12") is not for the human panel. A short
+    # status replaces it.
+    assert "board moved" not in result["text"].lower()
+    assert "see entry" not in result["text"]
+    assert "#12" not in result["text"]
+    assert result["status"] == [STALE], result["status"]
     assert result["approveDisabled"] is True
     assert result["approveCalls"] == 0, "a disabled Approve still reached the handler"
     assert result["dismiss"] is False
@@ -501,6 +538,7 @@ def test_approve_is_disabled_while_one_of_this_seats_submissions_is_outstanding(
             ),
             approveCalls: calls.length,
             stillShowsSummary: box.textContent.includes("Lightning Bolt"),
+            status: statusOf(box).map((x) => x.text),
           };
         })()
         """
@@ -508,9 +546,10 @@ def test_approve_is_disabled_while_one_of_this_seats_submissions_is_outstanding(
     assert result["approveDisabled"] is True
     assert result["approveCalls"] == 0
     assert result["stillShowsSummary"] is True
+    assert result["status"] == [BUSY], result["status"]
 
 
-def test_a_shape_the_server_could_not_dry_run_says_so_in_the_panel() -> None:
+def test_a_shape_the_server_could_not_dry_run_shows_a_friendly_status() -> None:
     """`validated: false` means the server could not probe this request
     shape before recording it, so nobody has checked the engine would accept
     it. Saying "unchecked" out loud is the honest move - the alternative is a
@@ -530,13 +569,19 @@ def test_a_shape_the_server_could_not_dry_run_says_so_in_the_panel() -> None:
             approveDisabled: Boolean(
               approve.disabled || approve.attrs.disabled !== undefined
             ),
+            status: statusOf(box).map((x) => x.text),
           };
         })()
         """
     )
-    assert "unchecked" in result["text"]
-    # Unchecked is a warning, not a refusal: the human may still approve it,
-    # and the engine's own refusal is the backstop if it was wrong.
+    # The owner's report: the internal verification sentence ("unchecked -
+    # the server could not dry-run this shape...") is not for the human
+    # panel. `validated` stays in the payload for agents and logs.
+    assert "unchecked" not in result["text"]
+    assert "dry-run" not in result["text"]
+    assert result["status"] == [UNVERIFIED], result["status"]
+    # Still a warning, not a refusal: the human may still approve it, and the
+    # engine's own refusal is the backstop if it was wrong.
     assert result["approveDisabled"] is False
 
 
@@ -635,3 +680,154 @@ def test_the_panel_rerenders_when_busy_changes_even_though_the_log_did_not() -> 
     assert result["enabledBefore"] is True
     assert result["enabledAfter"] is False
     assert result["otherSeatSees"] == "", "the other seat was shown a proposal addressed to alice"
+
+
+# ----------------------------------------------------- bd1: rationale ----
+
+
+def test_the_rationale_sent_through_the_real_route_is_what_the_panel_shows(
+    client: TestClient, game: str
+) -> None:
+    """The owner's report, reproduced end to end: the buddy's rationale is in
+    the ledger, and the panel still said "(no rationale was recorded)".
+    `audit.record` lands `reasoning` top-level on the row; the panel read
+    `detail.reasoning`."""
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    add_card(client, game, "Mountain", "alice", "hand")
+    land = card_id(client, game, "Mountain", "alice", "hand")
+    said = "Land first: it turns on the bolt next turn."
+    recorded = client.post(
+        f"/api/games/{game}/advice",
+        params={"uid": "buddy-uid"},
+        json={
+            "player": "alice",
+            "method": "POST",
+            "path": f"/api/games/{game}/actions/play-land",
+            "body": {"player": "alice", "card_id": land},
+            "reasoning": said,
+            "validated": True,
+        },
+    )
+    assert recorded.status_code == 200, recorded.text
+    alice = next(uid for uid, name in store.seat_uids(game).items() if name == "alice")
+    read = client.get(f"/api/games/{game}/log", params={"uid": alice}).json()
+
+    result = panel(
+        """
+        (() => {
+          const STORE = {
+            log: { entries: LOG.log, lastSeq: LOG.last_seq }, busy: 0, state: { you: "alice" },
+          };
+        """
+        + MOUNT
+        + """
+          const why = [];
+          const walk = (n) => {
+            if (n.className === "advice-why") why.push(n.textContent);
+            (n.children || []).forEach(walk);
+          };
+          walk(box);
+          return { hidden: box.hidden, why };
+        })()
+        """,
+        LOG=read,
+    )
+
+    assert result["hidden"] is False
+    assert result["why"] == [said], result
+
+
+def test_the_placeholder_appears_only_when_the_buddy_truly_sent_no_rationale() -> None:
+    result = panel(
+        """
+        (() => {
+          const STORE = {
+            log: { entries: [passEntry(10, "bob"), advice(11, { reasoning: null })], lastSeq: 11 },
+            busy: 0, state: { you: "alice" },
+          };
+        """
+        + MOUNT
+        + """
+          return box.textContent;
+        })()
+        """
+    )
+    assert "(no rationale was recorded)" in result
+
+
+def test_a_rationale_still_read_from_detail_is_shown_too() -> None:
+    """Belt and braces with `review.py`, which reads top-level first and falls
+    back to `detail.reasoning`: the two readers agree on the field."""
+    result = model(
+        """
+        (() => {
+          const row = advice(11);
+          row.detail.reasoning = row.reasoning;
+          row.reasoning = null;
+          return m.currentAdvice([row], "alice").reasoning;
+        })()
+        """
+    )
+    assert result.startswith("Bears is their only blocker")
+
+
+def test_the_panel_never_renders_an_unbounded_rationale() -> None:
+    """Rows recorded before the cap (or by the admin key) can still be long;
+    the panel clips to the same 240 characters the route enforces."""
+    result = panel(
+        """
+        (() => {
+          const STORE = {
+            log: { entries: [passEntry(10, "bob"), advice(11, { reasoning: "y".repeat(900) })],
+                   lastSeq: 11 },
+            busy: 0, state: { you: "alice" },
+          };
+        """
+        + MOUNT
+        + """
+          const why = [];
+          const walk = (n) => {
+            if (n.className === "advice-why") why.push(n.textContent);
+            (n.children || []).forEach(walk);
+          };
+          walk(box);
+          return why;
+        })()
+        """
+    )
+    assert len(result) == 1
+    assert len(result[0]) <= 240, len(result[0])
+    assert result[0].endswith("...")
+
+
+def test_the_ui_cap_is_the_routes_cap() -> None:
+    assert model("m.RATIONALE_MAX_CHARS") == schemas.ADVICE_REASONING_MAX_CHARS
+
+
+def test_advice_status_names_each_state_distinctly() -> None:
+    result = model(
+        """
+        (() => {
+          const noBase = { entries: [passEntry(10, "bob"), advice(11, { based_on_seq: null })] };
+          const unverified = { entries: [passEntry(10, "bob"), advice(11, { validated: false })] };
+          const pick = (log, busy) => m.adviceStatus(m.currentAdvice(log, "alice"), log, busy);
+          return {
+            ready: pick(FRESH_LOG, 0),
+            busy: pick(FRESH_LOG, 2),
+            unverified: pick(unverified, 0),
+            stale: pick(STALE_LOG, 0),
+            staleBusy: pick(STALE_LOG, 1),
+            noBase: pick(noBase, 0),
+            none: m.adviceStatus(null, FRESH_LOG, 0),
+          };
+        })()
+        """
+    )
+    assert result["ready"] == {"state": "ready", "text": READY}
+    assert result["busy"] == {"state": "busy", "text": BUSY}
+    assert result["unverified"] == {"state": "unverified", "text": UNVERIFIED}
+    assert result["stale"] == {"state": "stale", "text": STALE}
+    assert result["staleBusy"] == {"state": "stale", "text": STALE}
+    assert result["noBase"] == {"state": "stale", "text": STALE}
+    assert result["none"] is None
+    assert len({READY, BUSY, UNVERIFIED, STALE}) == 4
