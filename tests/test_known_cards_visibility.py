@@ -496,20 +496,23 @@ def test_a_discard_ends_a_revealed_hand_card(client, game):
     assert_matches_engine(client, game)
 
 
-def test_a_revealed_battlefield_card_bounced_to_hand_is_not_known(client, game):
+def test_a_battlefield_card_bounced_to_hand_is_known_to_the_opponent(client, game):
+    """Engine knowledge policy, not a CR rule: every player saw the card in a
+    public zone (CR 400.2) and saw it go to the hand, so the move records it
+    as known to all until it leaves that hand. Listed only for the viewer who
+    cannot already see it."""
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     bears_id = battlefield_id(client, game, "Grizzly Bears", "bob")
-    with store.locked(game) as live:
-        live.reveal(next(card for card in live.battlefield if str(card.id) == bears_id))
     moved = client.post(
         f"/api/games/{game}/cards/{bears_id}/move", json={"to_zone": "hand", "player": "bob"}
     )
     assert moved.status_code == 200, moved.text
     uids = seats_for(game)
 
-    known = view(client, game, uids["alice"])["known_cards"]["alice"]
+    alice_known = view(client, game, uids["alice"])["known_cards"]["alice"]
 
-    assert known["hand"] == [], "CR 400.7: the card in hand is a new object nobody was shown"
+    assert names_in_hand(alice_known) == ["Grizzly Bears"]
+    assert view(client, game, uids["bob"])["known_cards"]["bob"]["hand"] == []
     assert_matches_engine(client, game)
 
 
