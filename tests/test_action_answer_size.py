@@ -487,3 +487,35 @@ def test_an_advisors_wake_list_grows_only_inside_the_action_answers_own_caps(
     for action in trimmed:
         assert all("count" in slot for slot in action["targets"]["slots"]), action
     assert full - len(starved_text) <= caps, f"full {full} - starved {len(starved_text)}"
+
+
+# -- the known-cards and contents blocks stay out of both answers ----------
+
+
+def test_known_cards_and_contents_never_ride_an_action_answer_or_a_wake(client, game, monkeypatch):
+    """`known_cards` is a section of the board like `hands`, so the action
+    answer's narrowing drops it; the contents blocks are fetched only when a
+    seat names them in `battlefield_state`, so neither the action answer nor
+    an advisor's wake ever carries them. That is what keeps both answers
+    inside the budgets above."""
+    from magic_cards_model_api.repository import Advisor
+
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    busy_board(client, game)
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Lightning Bolt", "alice", "library")
+    stage_card(game, "Mountain", "alice", "sideboard")
+    with store.locked(game) as live:
+        live.look(live.player("alice").library[0], "alice")
+    assert state(client, game, uid=uids["alice"])["known_cards"]["alice"]["library"]
+
+    board = json.loads(text_of(cast_solitude(server, uids["alice"], reasoning="evoking")))["board"]
+    for key in ("known_cards", "library_contents", "sideboard_contents"):
+        assert key not in board, f"`{key}` rode the action answer"
+        assert key in board["omitted_sections"], board["omitted_sections"]
+
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    wake = json.loads(advisor_wake(advisor_server(client, game, monkeypatch)))
+    assert "library_contents" not in wake and "sideboard_contents" not in wake

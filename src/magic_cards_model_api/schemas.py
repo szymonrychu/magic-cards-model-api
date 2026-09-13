@@ -1278,19 +1278,11 @@ class CastOptionView(BaseModel):
     granted_by: str | None = None
 
 
-class CardView(BaseModel):
-    """One card or permanent, wherever it sits (`serialize._card_view`).
+class _CardViewFields(BaseModel):
+    """Every field a card view can carry. `CardView` requires the `id`;
+    `ContentsCardView` is the same view that never names one."""
 
-    Almost everything past the first eight fields is `| None`, and that is
-    not laxness: `visibility._redact_facedown_card` replaces a face-down
-    exile/battlefield card's view with a stub carrying only `id`, `zone`,
-    `controller`, `owner`, `tapped`, `face_up`, `name` (`"a face-down card"`),
-    `card_name` (`None`) and `exile_pile` - every other key is simply absent
-    from that dict. A required field here would make FastAPI's own response
-    validation fail on exactly the redaction this api exists to perform.
-    """
-
-    id: str
+    id: str | None = None
     name: str
     card_name: str | None = None
     zone: str
@@ -1322,6 +1314,21 @@ class CardView(BaseModel):
     printed_type_line: str | None = None
     printed_power: int | None = None
     printed_toughness: int | None = None
+
+
+class CardView(_CardViewFields):
+    """One card or permanent, wherever it sits (`serialize._card_view`).
+
+    Almost everything past the first eight fields is `| None`, and that is
+    not laxness: `visibility._redact_facedown_card` replaces a face-down
+    exile/battlefield card's view with a stub carrying only `id`, `zone`,
+    `controller`, `owner`, `tapped`, `face_up`, `name` (`"a face-down card"`),
+    `card_name` (`None`) and `exile_pile` - every other key is simply absent
+    from that dict. A required field here would make FastAPI's own response
+    validation fail on exactly the redaction this api exists to perform.
+    """
+
+    id: str
 
 
 class StackSpellView(CardView):
@@ -1513,6 +1520,38 @@ class CombatView(BaseModel):
     attacks: list[CombatAttackView]
 
 
+class KnownLibraryCardView(BaseModel):
+    """One library card a player knows, with where it sits right now
+    (`serialize._known_cards_view`; CR 701.20d ends it on a reordering)."""
+
+    index_from_top: int
+    card: CardView
+
+
+class KnownCardsView(BaseModel):
+    """What one player knows about hidden cards (`Game.known_to`): cards in
+    another player's hand, library cards with their live position, and
+    sideboard cards. The player's own hand and sideboard are never listed."""
+
+    hand: list[CardView]
+    library: list[KnownLibraryCardView]
+    sideboard: list[CardView]
+
+
+class ContentsCardView(_CardViewFields):
+    """A card view with no `id` (`serialize._contents_view` never sets one) -
+    a contents entry names no single object, because naming one would pin it
+    to a place in an unordered zone."""
+
+
+class ContentsEntryView(BaseModel):
+    """One entry of `library_contents`/`sideboard_contents`: identical cards
+    counted together, with no id and no position (CR 401.2)."""
+
+    card: ContentsCardView
+    count: int
+
+
 class GameStateView(BaseModel):
     """The full board (`serialize.state_view`), as a viewer may see it after
     `visibility.redact_view` - see this section's own module-level note for
@@ -1540,6 +1579,16 @@ class GameStateView(BaseModel):
     graveyards: dict[str, list[CardView]]
     libraries: dict[str, list[CardView]] | None = None
     sideboards: dict[str, list[CardView]] | None = None
+    known_cards: dict[str, KnownCardsView] | None = None
+    """Keyed by the player who knows. `visibility.redact_view` keeps only the
+    viewer's own entry (the admin sees all, a viewer who is nobody gets
+    `{}`)."""
+    library_contents: dict[str, list[ContentsEntryView]] | None = None
+    """Only with `?include=contents`: each player's own library as an
+    unordered multiset, cut to the viewer's own entry by redaction."""
+    sideboard_contents: dict[str, list[ContentsEntryView]] | None = None
+    """Only with `?include=contents`: the sideboard, shaped like
+    `library_contents`."""
     winner: str | None = None
     drawn: bool
     losers: list[str]

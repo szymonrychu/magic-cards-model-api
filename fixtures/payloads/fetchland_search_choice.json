@@ -45,6 +45,13 @@
     "alice": [],
     "bob": []
   },
+  "known_cards": {
+    "alice": {
+      "hand": [],
+      "library": [],
+      "sideboard": []
+    }
+  },
   "log_seq": 6,
   "losers": [],
   "paused": true,

@@ -175,7 +175,17 @@ SECTION_KEYS: dict[str, tuple[str, ...]] = {
     "pregame": ("pregame",),
     "pending_decision": ("pending_decision",),
     "recent_log": ("recent_log",),
+    "known_cards": ("known_cards",),
+    "library_contents": ("library_contents",),
+    "sideboard_contents": ("sideboard_contents",),
 }
+
+#: Sections left out of the default whole board and served only when named.
+#: Each is the asking seat's own library or sideboard as an unordered
+#: `{card, count}` list (CR 401.2 keeps the order from everyone), fetched with
+#: the api's `?include=contents` - nothing a seat needs on every read, so no
+#: answer pays for them unless it asked.
+ON_REQUEST_SECTIONS: tuple[str, ...] = ("library_contents", "sideboard_contents")
 
 #: Sections whose entries are card views carrying whose they are - the two
 #: shared zones, the command zone, and the stack. `side` filters these on
@@ -184,7 +194,13 @@ SECTION_KEYS: dict[str, tuple[str, ...]] = {
 _CARD_LIST_KEYS = ("battlefield", "exile", "exile_pile", "command", "stack")
 
 #: Sections shaped `{username: [...]}` - `side` filters these by key.
-_BY_USERNAME_KEYS = ("hands", "graveyards", "play_permissions")
+_BY_USERNAME_KEYS = (
+    "hands",
+    "graveyards",
+    "play_permissions",
+    "library_contents",
+    "sideboard_contents",
+)
 
 #: What `side` accepts. Deliberately not usernames: the caller already
 #: identified itself with `player_uid`, and a mirror match - both seats on
@@ -222,7 +238,29 @@ def _narrow_to_side(view: dict[str, Any], allowed: set[str] | None) -> dict[str,
     players = narrowed.get("players")
     if isinstance(players, list):
         narrowed["players"] = [player for player in players if player.get("username") in allowed]
+    known = narrowed.get("known_cards")
+    if isinstance(known, dict):
+        narrowed["known_cards"] = {
+            knower: _known_block_for(block, allowed) for knower, block in known.items()
+        }
     return narrowed
+
+
+def _known_block_for(block: Any, allowed: set[str]) -> Any:
+    """One `known_cards` entry, keeping only records of cards owned by a
+    seat in `allowed`. The entry is keyed by the seat that *knows*, so the
+    side a record belongs to is the card's own owner, not that key."""
+    if not isinstance(block, dict):
+        return block
+    return {
+        "hand": [card for card in block.get("hand") or () if _owner_of(card) in allowed],
+        "library": [
+            record
+            for record in block.get("library") or ()
+            if _owner_of(record.get("card") or {}) in allowed
+        ],
+        "sideboard": [card for card in block.get("sideboard") or () if _owner_of(card) in allowed],
+    }
 
 
 def _select_sections(view: dict[str, Any], wanted: list[str]) -> dict[str, Any]:
@@ -795,9 +833,22 @@ def build_server(seats: Seats) -> MCPServer:
         what you read: `battlefield`, `hands`, `graveyards`, `exile` (which
         brings `exile_pile` with it), `command`, `stack`, `combat`,
         `players`, `play_permissions`, `pregame`, `pending_decision`,
-        `recent_log`. An empty `sections` - the default - is all of them. A
-        name that is not on that list is refused, with the list, rather than
-        quietly ignored.
+        `recent_log`, `known_cards`, `library_contents`, `sideboard_contents`.
+        An empty `sections` - the default - is all of them except the last
+        two, which come only when you name them. A name that is not on that
+        list is refused, with the list, rather than quietly ignored.
+
+        `known_cards` is what you know about hidden cards because an effect
+        showed them to you: `hand` lists cards in another player's hand that
+        were revealed to you or that you looked at (and still sit there),
+        `library` lists library cards you know with `index_from_top` (their
+        position right now - a shuffle ends it), and `sideboard` lists
+        sideboard cards revealed to you. Your own hand and sideboard are not
+        repeated there; a look at your own library is.
+
+        `library_contents` and `sideboard_contents` are your own library and
+        sideboard as `{card, count}` lists sorted by name - what is in them,
+        never in what order, and never the opponent's.
 
         `side` is `both` (the default), `mine`, or `opponent`, and it is
         resolved from the uid you passed, not from a username you have to get
@@ -807,7 +858,8 @@ def build_server(seats: Seats) -> MCPServer:
         resolved to (`you`, `opponents`), so you never have to infer it. It
         narrows every section whose entries say whose they are - the
         battlefield, hands, graveyards, exile, the command zone, the stack,
-        `players` and `play_permissions`. It does NOT narrow `combat` (an
+        `players`, `play_permissions`, the contents lists, and the records
+        inside `known_cards` (by whose card each one is). It does NOT narrow `combat` (an
         attack belongs to both sides at once), `pregame`, `pending_decision`
         or `recent_log`.
 
@@ -866,8 +918,10 @@ def build_server(seats: Seats) -> MCPServer:
                 f"{', '.join(_SIDES)} - resolved from your own uid, never a "
                 "username. Nothing was returned; ask again with one of those."
             )
-        wanted = sorted(asked) if asked else sorted(SECTION_KEYS)
-        state = seat.fetch_state()
+        wanted = sorted(asked) if asked else sorted(set(SECTION_KEYS) - set(ON_REQUEST_SECTIONS))
+        state = seat.fetch_state(
+            include_contents=any(section in ON_REQUEST_SECTIONS for section in wanted)
+        )
         # Only fetched when it was asked for: `recent_log` is its own HTTP
         # call to the API (`Seat.recent_log`), so a seat that narrowed it away
         # saves the round trip rather than merely hiding its answer.

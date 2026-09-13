@@ -279,6 +279,13 @@
     ],
     "bob": []
   },
+  "known_cards": {
+    "alice": {
+      "hand": [],
+      "library": [],
+      "sideboard": []
+    }
+  },
   "log_seq": 7,
   "losers": [],
   "paused": true,

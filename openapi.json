@@ -1206,6 +1206,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -1222,6 +1236,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "log_seq": {
             "anyOf": [
@@ -1312,6 +1343,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -3333,6 +3381,374 @@
         "title": "ConcedeResponse",
         "type": "object"
       },
+      "ContentsCardView": {
+        "description": "A card view with no `id` (`serialize._contents_view` never sets one) -\na contents entry names no single object, because naming one would pin it\nto a place in an unordered zone.",
+        "properties": {
+          "abilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AbilityView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abilities"
+          },
+          "art_crop": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Art Crop"
+          },
+          "attached_to": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetRefView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "card_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Name"
+          },
+          "cast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CastHintsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cast_options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CastOptionView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cast Options"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChoiceView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "controller": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controller"
+          },
+          "counters": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counters"
+          },
+          "damage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Damage"
+          },
+          "exile_pile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExilePileView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "face_up": {
+            "title": "Face Up",
+            "type": "boolean"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "oracle_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oracle Text"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "power": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power"
+          },
+          "printed_power": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Power"
+          },
+          "printed_toughness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Toughness"
+          },
+          "printed_type_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Type Line"
+          },
+          "small_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Small Image"
+          },
+          "special_actions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpecialActionsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summoning_sick": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summoning Sick"
+          },
+          "tapped": {
+            "title": "Tapped",
+            "type": "boolean"
+          },
+          "target_refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TargetRefView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Refs"
+          },
+          "targets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          },
+          "toughness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toughness"
+          },
+          "type_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type Line"
+          },
+          "zone": {
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "zone",
+          "tapped",
+          "face_up"
+        ],
+        "title": "ContentsCardView",
+        "type": "object"
+      },
+      "ContentsEntryView": {
+        "description": "One entry of `library_contents`/`sideboard_contents`: identical cards\ncounted together, with no id and no position (CR 401.2).",
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/ContentsCardView"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "card",
+          "count"
+        ],
+        "title": "ContentsEntryView",
+        "type": "object"
+      },
       "ConvokeChoice": {
         "additionalProperties": false,
         "description": "One creature tapped to pay one symbol of a convoke spell's cost.\n\nCR 702.51b: convoke \"isn't an additional or alternative cost and applies\nonly after the total cost of the spell with convoke is determined\", so\nthis is not part of the announcement - it is which objects the payer\noffers against the already-determined cost.",
@@ -4403,6 +4819,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -4419,6 +4849,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "losers": {
             "items": {
@@ -4485,6 +4932,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -4738,6 +5202,57 @@
           "protocol_version"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "KnownCardsView": {
+        "description": "What one player knows about hidden cards (`Game.known_to`): cards in\nanother player's hand, library cards with their live position, and\nsideboard cards. The player's own hand and sideboard are never listed.",
+        "properties": {
+          "hand": {
+            "items": {
+              "$ref": "#/components/schemas/CardView"
+            },
+            "title": "Hand",
+            "type": "array"
+          },
+          "library": {
+            "items": {
+              "$ref": "#/components/schemas/KnownLibraryCardView"
+            },
+            "title": "Library",
+            "type": "array"
+          },
+          "sideboard": {
+            "items": {
+              "$ref": "#/components/schemas/CardView"
+            },
+            "title": "Sideboard",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hand",
+          "library",
+          "sideboard"
+        ],
+        "title": "KnownCardsView",
+        "type": "object"
+      },
+      "KnownLibraryCardView": {
+        "description": "One library card a player knows, with where it sits right now\n(`serialize._known_cards_view`; CR 701.20d ends it on a reordering).",
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/CardView"
+          },
+          "index_from_top": {
+            "title": "Index From Top",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index_from_top",
+          "card"
+        ],
+        "title": "KnownLibraryCardView",
         "type": "object"
       },
       "Layout": {
@@ -5381,6 +5896,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -5397,6 +5926,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "log_seq": {
             "anyOf": [
@@ -5485,6 +6031,23 @@
               }
             ],
             "title": "Reason"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -5787,6 +6350,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -5803,6 +6380,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "losers": {
             "items": {
@@ -5876,6 +6470,23 @@
             },
             "title": "Seat Uids",
             "type": "object"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -6665,6 +7276,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -6681,6 +7306,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "losers": {
             "items": {
@@ -6751,6 +7393,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -7435,6 +8094,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -7451,6 +8124,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "log_seq": {
             "anyOf": [
@@ -7533,6 +8223,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -7841,6 +8548,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -7857,6 +8578,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "losers": {
             "items": {
@@ -7923,6 +8661,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -8238,6 +8993,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -8254,6 +9023,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "log_seq": {
             "anyOf": [
@@ -8366,6 +9152,23 @@
               }
             ],
             "title": "Resolved"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -9102,6 +9905,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -9118,6 +9935,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "losers": {
             "items": {
@@ -9184,6 +10018,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -10035,6 +10886,20 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/KnownCardsView"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cards"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -10051,6 +10916,23 @@
               }
             ],
             "title": "Libraries"
+          },
+          "library_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Contents"
           },
           "log_seq": {
             "anyOf": [
@@ -10141,6 +11023,23 @@
               }
             ],
             "title": "Priority Holder"
+          },
+          "sideboard_contents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContentsEntryView"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sideboard Contents"
           },
           "sideboards": {
             "anyOf": [
@@ -11164,7 +12063,7 @@
         "summary": "Delete Game"
       },
       "get": {
-        "description": "The board, filtered to what `uid` may see (`visibility.py`).\n\nNo uid, or one this game does not recognise, sees nothing hidden - the\nsame treatment as any other caller talking to the API directly instead\nof through a dispatched agent's seat. A valid seat uid sees its own hand\nand both public boards; the game's admin key sees everything.\n\nUsed to also mark this seat as watching/delivered on the game's decision\nmailbox, so a mutating request parked in `Game.ask` could tell a live\nseat apart from an unattended one. That whole mechanism is gone - a\nmutating request never blocks on a decision any more, so there is\nnothing here to be evidence for.",
+        "description": "The board, filtered to what `uid` may see (`visibility.py`).\n\n`include` is a comma-separated list of extra blocks. The only one is\n`contents`: `library_contents` and `sideboard_contents`, the caller's own\nlibrary and sideboard as unordered `{card, count}` lists (CR 401.2 keeps\nthe order from everyone). They are left off by default because the\nboard is polled constantly and nothing on that path needs them. A value\nthis route does not know is refused by name rather than ignored.\n\nNo uid, or one this game does not recognise, sees nothing hidden - the\nsame treatment as any other caller talking to the API directly instead\nof through a dispatched agent's seat. A valid seat uid sees its own hand\nand both public boards; the game's admin key sees everything.\n\nUsed to also mark this seat as watching/delivered on the game's decision\nmailbox, so a mutating request parked in `Game.ask` could tell a live\nseat apart from an unattended one. That whole mechanism is gone - a\nmutating request never blocks on a decision any more, so there is\nnothing here to be evidence for.",
         "operationId": "get_game_api_games__game_id__get",
         "parameters": [
           {
@@ -11190,6 +12089,22 @@
                 }
               ],
               "title": "Uid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Include"
             }
           }
         ],

@@ -58,3 +58,15 @@ def test_the_version_in_effect_has_a_changelog_entry() -> None:
         "see that module's own convention: each version says what shape changed "
         "and how a process built before it misbehaves"
     )
+
+
+def test_seatkit_17_names_the_known_cards_and_contents_blocks() -> None:
+    """The bump that added `known_cards` to the state view and the
+    own-only `library_contents`/`sideboard_contents` behind
+    `?include=contents`: its changelog paragraph names all four."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-17"
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-16`", 1)[0]
+    for term in ("known_cards", "library_contents", "sideboard_contents", "include=contents"):
+        assert term in paragraph, f"the seatkit-17 paragraph does not name {term}"

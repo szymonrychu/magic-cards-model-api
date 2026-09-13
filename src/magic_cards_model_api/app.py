@@ -1087,8 +1087,15 @@ async def list_games(request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/games/{game_id}", response_model=GameStateView, response_model_exclude_unset=True)
-def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
+def get_game(game_id: str, uid: str | None = None, include: str | None = None) -> dict[str, Any]:
     """The board, filtered to what `uid` may see (`visibility.py`).
+
+    `include` is a comma-separated list of extra blocks. The only one is
+    `contents`: `library_contents` and `sideboard_contents`, the caller's own
+    library and sideboard as unordered `{card, count}` lists (CR 401.2 keeps
+    the order from everyone). They are left off by default because the
+    board is polled constantly and nothing on that path needs them. A value
+    this route does not know is refused by name rather than ignored.
 
     No uid, or one this game does not recognise, sees nothing hidden - the
     same treatment as any other caller talking to the API directly instead
@@ -1101,9 +1108,17 @@ def get_game(game_id: str, uid: str | None = None) -> dict[str, Any]:
     mutating request never blocks on a decision any more, so there is
     nothing here to be evidence for.
     """
+    included = {part.strip() for part in (include or "").split(",") if part.strip()}
+    unknown = sorted(included - {"contents"})
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown include value(s) {unknown}; the only one is 'contents'",
+        )
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
-    return visibility.redact_view(state_view(game, game_id), viewer)
+    view = state_view(game, game_id, include_contents="contents" in included)
+    return visibility.redact_view(view, viewer)
 
 
 @app.get(

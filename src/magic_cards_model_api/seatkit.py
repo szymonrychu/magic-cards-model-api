@@ -160,7 +160,34 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-16"
+PROTOCOL_VERSION = "seatkit-17"
+#: `seatkit-17` is a **response** shape change plus one **additive request**
+#: option: the state view carries `known_cards`, and a seat can ask for its
+#: own `library_contents` and `sideboard_contents`.
+#:
+#: `known_cards` is a sibling of `hands`, keyed by the player who knows: the
+#: hidden cards the engine's `Game.known_to` says that seat was shown and that
+#: are still the same objects - another player's hand cards from a reveal or
+#: a look (CR 701.20a, CR 701.20e), library cards with their live
+#: `index_from_top` until a reordering ends them (CR 701.20d), and revealed
+#: sideboard cards. `visibility.redact_view` keeps only the viewer's own entry.
+#: `library_contents`/`sideboard_contents` are the viewer's own zones as
+#: unordered `{card, count}` lists with no ids and no positions (CR 401.2),
+#: returned only on `GET /api/games/{id}?include=contents` and through
+#: `battlefield_state(sections="library_contents")` or
+#: `sections="sideboard_contents"` - never in an action answer or a wake.
+#:
+#: Why a bump: `battlefield_state` gained three section names, and a stale
+#: seatkit-16 MCP process refuses `sections="known_cards"` as an unknown
+#: section while this build's prose tells a seat to ask for it. The same
+#: stale process also never sends `include=contents`, so a seat told its own
+#: library is one call away would get a refusal instead. That is the
+#: stale-process case the PROTOCOL MISMATCH sentence exists to make loud.
+#:
+#: What did NOT change: no existing field moved or lost a value, `hands`
+#: still holds only the viewer's own cards, and `libraries`/`sideboards` are
+#: still stripped for every viewer but the admin.
+#:
 #: `seatkit-16` is a **response** shape change: `wait_for_priority` answers an
 #: advisor uid with `available_actions` on a real wake.
 #:
@@ -1213,11 +1240,16 @@ class Seat:
             "state": self.fetch_state(),
         }
 
-    def fetch_state(self) -> dict[str, Any]:
+    def fetch_state(self, *, include_contents: bool = False) -> dict[str, Any]:
         """This seat's filtered view of the game, right now (`battlefield_state`'s
         answer, minus image trimming duplication - callers that print it do
-        that themselves)."""
-        state = self.http.get(f"/api/games/{self.game_id()}", params={"uid": self.uid}).json()
+        that themselves). `include_contents` asks the api for this seat's own
+        unordered `library_contents`/`sideboard_contents` too, which the
+        default read leaves off."""
+        params = {"uid": self.uid}
+        if include_contents:
+            params["include"] = "contents"
+        state = self.http.get(f"/api/games/{self.game_id()}", params=params).json()
         _trim_images(state)
         return state
 
@@ -1536,6 +1568,23 @@ def _trim_images(state: dict[str, Any]) -> None:
             for cards in entries.values():
                 for entry in cards or []:
                     _strip_card_weight(entry)
+    for key in ("library_contents", "sideboard_contents"):
+        entries = state.get(key)
+        if isinstance(entries, dict):
+            for counted in entries.values():
+                for entry in counted or []:
+                    if isinstance(entry, dict):
+                        _strip_card_weight(entry.get("card"))
+    known = state.get("known_cards")
+    if isinstance(known, dict):
+        for block in known.values():
+            if not isinstance(block, dict):
+                continue
+            for entry in [*(block.get("hand") or []), *(block.get("sideboard") or [])]:
+                _strip_card_weight(entry)
+            for record in block.get("library") or []:
+                if isinstance(record, dict):
+                    _strip_card_weight(record.get("card"))
 
 
 def _strip_card_weight(entry: dict[str, Any]) -> None:

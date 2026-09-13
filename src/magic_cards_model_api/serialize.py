@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from magic_cards_model.machines import AbilityOnStack, Step
@@ -845,7 +846,84 @@ def unloadable_game_summary(game_id: str, reason: str, *, seat_count: int) -> di
     }
 
 
-def state_view(game: Game, game_id: str) -> dict[str, Any]:
+def _known_cards_view(
+    game: Game, images: dict[str, dict[str, str]]
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """What each player knows about hidden cards, keyed by the player who knows.
+
+    Read live from `Game.known_to` - the engine decides what is known and for
+    how long (a look is the looker's alone, CR 701.20e; a library reordering
+    ends a library record, CR 701.20d; a zone change ends any record,
+    CR 400.7) - and this only shapes the answer. Only the hidden zones get a
+    list: a hand (CR 402.3), a library with the card's live position
+    (CR 401.2), and a sideboard (CR 400.11a). A record of a card sitting in a
+    public zone adds nothing to what the board already shows.
+
+    A player's own hand and own sideboard are dropped from that player's
+    entry, because they already see them. Their known records about their own
+    library are kept: `library_contents` gives no order, so "the top card is
+    a Lightning Bolt" is information nothing else carries.
+
+    Every player's entry is built here; `visibility.redact_view` hands each
+    viewer only its own.
+    """
+    known: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for player in game.players:
+        block: dict[str, list[dict[str, Any]]] = {"hand": [], "library": [], "sideboard": []}
+        for entry in game.known_to(player.username):
+            if entry.zone not in (Zone.HAND, Zone.LIBRARY, Zone.SIDEBOARD):
+                continue
+            if entry.zone is not Zone.LIBRARY and entry.owner == player.username:
+                continue
+            card = game.find_by_id(entry.card_id)
+            if card is None:
+                continue
+            card_view = _card_view(game, card, images)
+            if entry.zone is Zone.LIBRARY:
+                if entry.index_from_top is None:
+                    continue
+                block["library"].append({"index_from_top": entry.index_from_top, "card": card_view})
+            else:
+                block[entry.zone.value].append(card_view)
+        block["library"].sort(key=lambda record: record["index_from_top"])
+        known[player.username] = block
+    return known
+
+
+def _contents_view(
+    game: Game, cards: list[CardState], images: dict[str, dict[str, str]]
+) -> list[dict[str, Any]]:
+    """One hidden zone as an unordered multiset: `[{card, count}]`.
+
+    CR 401.2 - "Players can't look at or change the order of cards in a
+    library" - is why nothing here carries an id or a position: a player
+    knows what went into their own deck, never where any of it sits, and an
+    id would let a later view pin a card to a slot. Identical card views
+    (id aside) collapse into one entry with a count, sorted by card name and
+    then printing identity, so the answer is the same bytes however the
+    library is ordered.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for card in cards:
+        card_view = _card_view(game, card, images)
+        del card_view["id"]
+        signature = json.dumps(card_view, sort_keys=True, default=str)
+        group = groups.get(signature)
+        if group is None:
+            groups[signature] = {
+                "sort": (card.card.name, str(card.card.id), signature),
+                "card": card_view,
+                "count": 1,
+            }
+        else:
+            group["count"] += 1
+    return [
+        {"card": group["card"], "count": group["count"]}
+        for group in sorted(groups.values(), key=lambda group: group["sort"])
+    ]
+
+
+def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> dict[str, Any]:
     """T1: this dict's shape is formalised as `schemas.GameStateView` - see
     that class and the "Response views" section it opens for the field-by-
     field mapping, and `app.py`'s `response_model=` declarations for where it
@@ -892,7 +970,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # `PHASE_OF`. `phase` is therefore nullable, and a client that assumes a
     # string here must handle `null` (see `ui/app.js`'s phase track).
     phase = PHASE_OF.get(step)
-    return {
+    view = {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
         "turn_number": turn.turn_number if turn is not None else None,
@@ -925,6 +1003,8 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "graveyards": {player.username: views(player.graveyard) for player in game.players},
         "libraries": {player.username: views(player.library) for player in game.players},
         "sideboards": {player.username: views(player.sideboard) for player in game.players},
+        # A sibling of `hands`, never inside it - see `_known_cards_view`.
+        "known_cards": _known_cards_view(game, images),
         "winner": game.winner,
         "drawn": game.drawn,
         "losers": list(game.losers),
@@ -940,3 +1020,15 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
             ]
         },
     }
+    if include_contents:
+        # Only on request (`GET /api/games/{id}?include=contents`): a seat's
+        # own deck read back without its order, which nothing polling the
+        # board needs on every read - see `_contents_view`.
+        view["library_contents"] = {
+            player.username: _contents_view(game, player.library, images) for player in game.players
+        }
+        view["sideboard_contents"] = {
+            player.username: _contents_view(game, player.sideboard, images)
+            for player in game.players
+        }
+    return view

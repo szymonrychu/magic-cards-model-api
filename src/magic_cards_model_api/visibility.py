@@ -135,6 +135,11 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
         }
     view.pop("libraries", None)
     view.pop("sideboards", None)
+    if "known_cards" in view:
+        view["known_cards"] = _redact_known_cards(view["known_cards"], viewer)
+    for contents_key in _CONTENTS_KEYS:
+        if contents_key in view:
+            view[contents_key] = _own_entry_only(view[contents_key], viewer)
     if view.get("pending_decision") is not None:
         view["pending_decision"] = redact_pending_decision(
             view["pending_decision"], viewer, card_lookup
@@ -142,6 +147,76 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     if viewer is not None:
         view["you"] = viewer
     return view
+
+
+#: The own-only, unordered zone summaries `serialize.state_view` adds on
+#: request (`include_contents`), each shaped `{username: [{card, count}]}`.
+_CONTENTS_KEYS = ("library_contents", "sideboard_contents")
+
+
+def _own_entry_only(block: Any, viewer: Viewer) -> dict[str, Any]:
+    """A `{username: ...}` block cut to the viewer's own entry.
+
+    CR 401.2 keeps every library from every player, and the contents blocks
+    are only ever the owner's own deck read back without its order. A viewer
+    who is nobody gets `{}`, as does anything that is not the expected shape.
+    """
+    if not isinstance(block, dict) or not isinstance(viewer, str) or viewer not in block:
+        return {}
+    return {viewer: block[viewer]}
+
+
+def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
+    """`serialize._known_cards_view`, as `viewer` may see it: its own entry.
+
+    What one player knows is that player's alone. A look (CR 701.20e) is
+    "shown only to the specified player", and even a public reveal's memory
+    is a seat's own reasoning about the board, so an opponent never reads
+    another seat's entry and a viewer who is nobody reads none.
+
+    Fails closed. The entry is rebuilt from the parts this module
+    recognises - card views that are dicts, library records with an integer
+    `index_from_top` and a card view - and anything else is dropped rather
+    than passed along: a record whose shape says nothing trustworthy about
+    who was shown it is not shown to anyone. A hand or sideboard card is
+    trimmed the way a graveyard card is (`_redact_cast_options`), since its
+    affordances are its owner's.
+    """
+    if not isinstance(known, dict) or not isinstance(viewer, str):
+        return {}
+    block = known.get(viewer)
+    if not isinstance(block, dict):
+        return {}
+
+    def cards(key: str) -> list[dict[str, Any]]:
+        entries = block.get(key)
+        if not isinstance(entries, list):
+            return []
+        return [
+            _redact_known_card(card, viewer)
+            for card in entries
+            if isinstance(card, dict) and card.get("id")
+        ]
+
+    library: list[dict[str, Any]] = []
+    for record in block.get("library") or ():
+        if not isinstance(record, dict):
+            continue
+        index = record.get("index_from_top")
+        card = record.get("card")
+        if type(index) is not int or not isinstance(card, dict) or not card.get("id"):
+            continue
+        library.append({"index_from_top": index, "card": _redact_known_card(card, viewer)})
+    return {viewer: {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}}
+
+
+def _redact_known_card(card: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
+    """A known hidden card's view with its owner-only affordances removed."""
+    trimmed = _redact_cast_options(card, viewer)
+    owner = card.get("controller") or card.get("owner")
+    if "special_actions" in trimmed and owner != viewer:
+        trimmed = {key: value for key, value in trimmed.items() if key != "special_actions"}
+    return trimmed
 
 
 def _redact_player(player: dict[str, Any], viewer: Viewer) -> dict[str, Any]:

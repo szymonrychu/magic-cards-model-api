@@ -133,6 +133,13 @@
     "alice": [],
     "bob": []
   },
+  "known_cards": {
+    "alice": {
+      "hand": [],
+      "library": [],
+      "sideboard": []
+    }
+  },
   "log_seq": 9,
   "losers": [],
   "paused": true,
