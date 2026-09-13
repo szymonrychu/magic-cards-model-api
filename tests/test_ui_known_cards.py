@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from test_ui_board import FAKE_DOM
 from ui_node import requires_node, run_module
 
@@ -247,10 +248,65 @@ def test_known_opponent_hand_cards_are_hoverable() -> None:
     assert result == ["k1"]
 
 
-def test_the_known_style_is_set_for_both_light_and_dark_rendering() -> None:
+def _root_vars(block: str) -> dict[str, str]:
+    return dict(re.findall(r"(--[\w-]+):\s*(#[0-9a-fA-F]{6})\s*;", block))
+
+
+def _scheme_vars(css: str, scheme: str) -> dict[str, str]:
+    """The `:root` colour tokens a viewer whose OS prefers `scheme` renders with."""
+    base = re.search(r"(?:^|\n):root\s*\{(.*?)\n\}", css, re.S)
+    assert base is not None, "no :root token block"
+    tokens = _root_vars(base.group(1))
+    for media in re.finditer(
+        r"@media[^{]*prefers-color-scheme:\s*" + scheme + r"[^{]*\{(.*?)\n\}", css, re.S
+    ):
+        for root in re.finditer(r":root[^{]*\{(.*?)\}", media.group(1), re.S):
+            tokens.update(_root_vars(root.group(1)))
+    return tokens
+
+
+def _contrast(a: str, b: str) -> float:
+    def luminance(hex_colour: str) -> float:
+        channels = [int(hex_colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _rule(css: str, selector: str) -> str:
+    found = re.search(r"(?:^|\n)" + re.escape(selector) + r"\s*\{(.*?)\}", css, re.S)
+    assert found is not None, f"no {selector} rule"
+    return found.group(1)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_known_style_stands_out_on_the_board_in_both_colour_schemes(scheme: str) -> None:
+    """WCAG contrast of what each OS colour preference actually renders.
+
+    The chip's 11px name text needs 4.5:1 against the info row it sits on and
+    the "known" label ink the same against its known-hue badge; the 2px ring
+    is a non-text outline, so 3:1 against the board and against the card-back
+    border it sits beside. The board itself is whatever that scheme's tokens
+    make it - an override that only swaps the known hue is judged on the same
+    background as every other scheme.
+    """
     css = STYLE.read_text()
-    assert re.search(r"(^|\n)\.card--known\s*\{", css), "no base .card--known rule"
-    light = re.search(r"@media \(prefers-color-scheme: light\)\s*\{(.*?)\n\}", css, re.S)
-    assert light is not None, "no light colour-scheme block"
-    assert "--known" in light.group(1)
-    assert "var(--known" in css.split(".card--known", 1)[1].split("}", 1)[0]
+    tokens = _scheme_vars(css, scheme)
+    known, ink = tokens["--known"], tokens["--known-ink"]
+
+    assert "var(--known)" in _rule(css, ".card--known")
+    chip = _rule(css, ".info-row .known-top")
+    assert "color: var(--known)" in chip and "border: 1px solid var(--known)" in chip
+    badge = _rule(css, ".card--known::after")
+    assert "background: var(--known)" in badge and "color: var(--known-ink)" in badge
+    back_border = re.search(r"border:\s*\d+px solid (#[0-9a-fA-F]{6})", _rule(css, ".card-back"))
+    assert back_border is not None, "no .card-back border colour"
+
+    assert _contrast(known, tokens["--bg-raised"]) >= 4.5, (
+        f"known-top chip text on the info row ({scheme})"
+    )
+    assert _contrast(ink, known) >= 4.5, f"known label ink on its badge ({scheme})"
+    assert _contrast(known, tokens["--bg"]) >= 3, f"known ring on the board ({scheme})"
+    assert _contrast(known, back_border.group(1)) >= 3, f"known ring beside a card back ({scheme})"

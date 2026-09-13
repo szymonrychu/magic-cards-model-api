@@ -26,18 +26,12 @@
   --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   /* A hidden card this seat knows (`known_cards`): an opponent's hand card
      drawn face up, or the known top of a library. Its own hue, so it never
-     reads as a targeting, pinned, or combat outline. */
+     reads as a targeting, pinned, or combat outline. The board is this one
+     dark palette whatever the viewer's OS colour preference, so the hue is
+     not swapped under `prefers-color-scheme: light`: a darker purple there
+     would sit at about 2.4:1 on this same dark board. */
   --known: #c79bff;
   --known-ink: #1a1026;
-}
-
-/* A light colour scheme darkens the known hue so the known outline and chip
-   still stand apart from a normal card against a light page. */
-@media (prefers-color-scheme: light) {
-  :root {
-    --known: #6f35c4;
-    --known-ink: #ffffff;
-  }
 }
 
 * { box-sizing: border-box; }
