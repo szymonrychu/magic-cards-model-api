@@ -36,7 +36,7 @@ from magic_cards_model_api.playscripts.lint import (
 )
 
 CORPUS_PATH = Path(__file__).resolve().parent / "fixtures" / "conflict_corpus.json"
-CORPUS_SHA256 = "9f286f4f6c59b4e7b7a2acbd9cfb2c4f92fa1648b79fd9302a85735dc77a7adc"
+CORPUS_SHA256 = "95ba65dc55a62f13169ddcb5c16221bb3313e97fcf48e53b4894d0725a91f049"
 CORPUS = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
 CATALOG = input_catalog(CORPUS["inputs"], CORPUS["matchup_keys"])
 CASES = CORPUS["cases"]
@@ -95,6 +95,16 @@ def test_the_corpus_pins_errored_plays_and_the_archetype_dimension():
         "never-applicable",
     }
     assert all(code in CODES for case in errored for code in case["errors"])
+
+
+def test_the_corpus_pins_a_numeric_range_never_applicable_play():
+    # battle 4 B4-08: ranges on one key inside one play, a false condition negated
+    by_name = {case["name"]: case for case in CASES}
+    case = by_name["errored-never-applicable-numeric-range-in-one-play"]
+    assert case["verdict"] == "errored"
+    assert case["errors"] == ["never-applicable"]
+    assert case["proven_by"] == []
+    assert "numeric_range" in case["dimensions"]
 
 
 def _root_for(tmp_path: Path, first: dict[str, Any], second: dict[str, Any]) -> Path:

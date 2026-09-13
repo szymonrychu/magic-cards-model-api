@@ -672,6 +672,96 @@ def test_different_conditions_in_true_and_false_can_apply(root):
     assert check_report(root)[0] == []
 
 
+def life(side: str, op: str, n: int) -> dict[str, Any]:
+    return {"kind": "life", "side": side, "op": op, "n": n}
+
+
+def mana(op: str, n: int) -> dict[str, Any]:
+    return {"kind": "untapped_mana", "op": op, "n": n}
+
+
+def clock(op: str, value: Any) -> dict[str, Any]:
+    return {"kind": "input", "name": "clock", "op": op, "value": value}
+
+
+def lands(op: str, n: int, *, reordered: bool = False) -> dict[str, Any]:
+    select = {"types_all": ["Land"], "tapped": False}
+    condition = {
+        "kind": "count",
+        "zone": "battlefield",
+        "side": "me",
+        "op": op,
+        "n": n,
+        "select": select,
+    }
+    if reordered:
+        condition = {
+            k: dict(reversed(v.items())) if k == "select" else v for k, v in condition.items()
+        }
+        condition = dict(reversed(condition.items()))
+    return condition
+
+
+@pytest.mark.parametrize(
+    ("true", "false", "first", "second"),
+    [
+        ([life("me", ">=", 10), life("me", "<=", 5)], [], "true[0]", "true[1]"),
+        ([mana(">=", 4), mana("<", 2)], [], "true[0]", "true[1]"),
+        ([clock("eq", 3), clock(">=", 5)], [], "true[0]", "true[1]"),
+        ([life("me", ">=", 10)], [life("me", ">", 5)], "true[0]", "false[0]"),
+        ([lands(">=", 3)], [lands(">", 1, reordered=True)], "true[0]", "false[0]"),
+        ([clock("in", [1, 2])], [clock("<", 4)], "true[0]", "false[0]"),
+        ([], [mana("<", 4), mana(">=", 2)], "false[0]", "false[1]"),
+    ],
+    ids=[
+        "life-ge-and-le",
+        "untapped-mana-ge-and-lt",
+        "int-input-eq-and-ge",
+        "false-list-negated",
+        "count-same-selector-reordered",
+        "int-input-in-and-negated-lt",
+        "two-false-conditions",
+    ],
+)
+def test_never_applicable_for_numeric_ranges_that_cannot_overlap(root, true, false, first, second):
+    # battle 4 B4-08
+    put_inputs(root, INPUTS)
+    put(root, play(true=true, false=false))
+    (error,) = check_report(root)[0]
+    assert error.code == "never-applicable"
+    assert f"{first} and {second}" in error.message
+    placed = {f"true[{i}]": c for i, c in enumerate(true)}
+    placed |= {f"false[{i}]": c for i, c in enumerate(false)}
+    for where in (first, second):
+        assert json.dumps(placed[where], sort_keys=True) in error.message
+    assert "ranges cannot overlap" in error.message
+
+
+@pytest.mark.parametrize(
+    ("true", "false"),
+    [
+        ([life("me", ">=", 5), life("me", "<=", 10)], []),
+        ([life("me", ">=", 10), life("opponent", "<=", 5)], []),
+        ([mana(">=", 2)], [mana(">=", 4)]),
+        ([clock(">=", 3), clock("<=", 5)], []),
+        ([lands(">=", 3)], [{**lands(">", 1), "select": {"types_all": ["Creature"]}}]),
+        ([life("me", ">=", 5), life("me", "<=", 5)], []),
+    ],
+    ids=[
+        "life-5-to-10",
+        "different-sides",
+        "untapped-mana-2-to-3",
+        "int-input-3-to-5",
+        "different-selectors",
+        "one-point-range",
+    ],
+)
+def test_numeric_ranges_that_overlap_can_apply(root, true, false):
+    put_inputs(root, INPUTS)
+    put(root, play(true=true, false=false))
+    assert check_report(root)[0] == []
+
+
 def test_a_never_applicable_play_is_left_out_of_conflicts(root):
     put(root, play(id="a", when=when(stack="any")))
     put(root, play(id="b", when=when(stack="empty"), true=[STACK_TOP], false=[]))

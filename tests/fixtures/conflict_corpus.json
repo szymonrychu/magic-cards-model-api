@@ -2476,6 +2476,72 @@
           }
         ]
       }
+    },
+    {
+      "name": "errored-never-applicable-numeric-range-in-one-play",
+      "verdict": "errored",
+      "dimension": "errored",
+      "errors": [
+        "never-applicable"
+      ],
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "b needs life >= 10 and, its false condition negated, life <= 5: those ranges cannot overlap, so b can never apply",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 3
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 10
+          }
+        ],
+        "false": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">",
+            "n": 5
+          }
+        ]
+      }
     }
   ]
 }

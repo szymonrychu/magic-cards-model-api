@@ -38,7 +38,11 @@ Corpus rules (a deck's plays together), by code:
   `empty` while a `true` condition is a `stack_top` (named: the first such
   `true[i]`), or one normalized condition must both hold and not hold (named:
   the first two places, `true[i]`/`false[j]` or two indexes of one list after
-  the `land_drop_available` flip).
+  the `land_drop_available` flip), or two numeric conditions on one key (the
+  `numeric_range` key: count, zone_size, life or untapped_mana with the same
+  other fields, or one int input) have ranges that cannot overlap, a false
+  condition negated first (named: the first such pair, one error per key;
+  a pair that is one normalized condition is left to the rule before).
 
 A type-line field may hold a string that is also a card name when it is a
 type-line word on >= 3 cached cards (`Mountain`). `name` and `intent` are
@@ -366,7 +370,7 @@ def _placed(doc: dict[str, Any]):
                 yield f"{'true' if polarity else 'false'}[{index}]", polarity, condition
 
 
-def _never_applicable(doc: dict[str, Any], rel: str) -> list[PlaysError]:
+def _never_applicable(doc: dict[str, Any], rel: str, catalog: dict[str, Any]) -> list[PlaysError]:
     """A play whose own fields contradict, so no decision point satisfies it."""
     errors: list[PlaysError] = []
     placed = list(_placed(doc))
@@ -398,6 +402,33 @@ def _never_applicable(doc: dict[str, Any], rel: str) -> list[PlaysError]:
                 )
             )
         first.setdefault((holds, text), where)
+    ranges: list[tuple[str, str, tuple[Any, ...], str]] = []
+    ranged: set[str] = set()
+    for where, polarity, condition in placed:
+        numeric = _constraint(condition, polarity, catalog)[1]
+        if numeric is None:
+            continue
+        key, ints = numeric
+        text = json.dumps(_canon(condition), sort_keys=True)
+        for other_where, other_key, other_ints, other_text in ranges:
+            if (
+                key == other_key
+                and key not in ranged
+                and text != other_text
+                and _ints_disjoint(other_ints, ints)
+            ):
+                ranged.add(key)
+                errors.append(
+                    CorpusError(
+                        "never-applicable",
+                        rel,
+                        f"{other_where} and {where} contradict: {other_text} and {text} "
+                        "are on one key whose ranges cannot overlap (a false condition "
+                        "negated first), so the play can never apply",
+                    )
+                )
+                break
+        ranges.append((where, key, ints, text))
     return errors
 
 
@@ -447,38 +478,44 @@ def _ints_disjoint(x: tuple[Any, ...], y: tuple[Any, ...]) -> bool:
     return all(v in excluded for v in range(lo, hi + 1))
 
 
+def _constraint(condition: dict[str, Any], polarity: bool, catalog: dict[str, Any]):
+    """(input constraint or None, numeric constraint or None) of one condition,
+    a false one negated. An int input has both."""
+    kind = condition.get("kind")
+    if kind == "input" and _readable_input(condition):
+        spec = catalog.get(condition["name"])
+        if spec is None or input_value_problem(condition, spec):
+            return None, None
+        op = condition["op"] if polarity else NEGATED[condition["op"]]
+        value = condition["value"]
+        if spec["type"] == "int":
+            ints = _ints(op, value, spec.get("min"), spec.get("max"))
+            key = json.dumps({"kind": "input", "name": spec["name"]})
+            return (spec["name"], ("ints", ints)), (key, ints)
+        domain = frozenset(spec["values"] if spec["type"] == "enum" else (True, False))
+        chosen = frozenset(value if op in LIST_OPS else [value])
+        allowed = domain & chosen if op in ("eq", "in") else domain - chosen
+        return (spec["name"], ("values", allowed)), None
+    if kind in NUMERIC_KINDS and condition.get("op") in OPS and _is_int(condition.get("n")):
+        op = condition["op"] if polarity else NEGATED[condition["op"]]
+        key = json.dumps(
+            _canon({k: v for k, v in condition.items() if k not in ("op", "n")}), sort_keys=True
+        )
+        floor = None if kind == "life" else 0
+        return None, (key, _ints(op, condition["n"], floor, None))
+    return None, None
+
+
 def _constraints(doc: dict[str, Any], catalog: dict[str, Any]):
     """(input constraints, numeric constraints) of one play, false conditions
     negated. An int input lands in both."""
     inputs, numeric = [], []
-    for polarity in (True, False):
-        for condition in _conditions(doc, polarity):
-            kind = condition.get("kind")
-            if kind == "input" and _readable_input(condition):
-                spec = catalog.get(condition["name"])
-                if spec is None or input_value_problem(condition, spec):
-                    continue
-                op = condition["op"] if polarity else NEGATED[condition["op"]]
-                value = condition["value"]
-                if spec["type"] == "int":
-                    ints = _ints(op, value, spec.get("min"), spec.get("max"))
-                    inputs.append((spec["name"], ("ints", ints)))
-                    numeric.append((json.dumps({"kind": "input", "name": spec["name"]}), ints))
-                    continue
-                domain = frozenset(spec["values"] if spec["type"] == "enum" else (True, False))
-                chosen = frozenset(value if op in LIST_OPS else [value])
-                allowed = domain & chosen if op in ("eq", "in") else domain - chosen
-                inputs.append((spec["name"], ("values", allowed)))
-            elif (
-                kind in NUMERIC_KINDS and condition.get("op") in OPS and _is_int(condition.get("n"))
-            ):
-                op = condition["op"] if polarity else NEGATED[condition["op"]]
-                key = json.dumps(
-                    _canon({k: v for k, v in condition.items() if k not in ("op", "n")}),
-                    sort_keys=True,
-                )
-                floor = None if kind == "life" else 0
-                numeric.append((key, _ints(op, condition["n"], floor, None)))
+    for _, polarity, condition in _placed(doc):
+        found_input, found_numeric = _constraint(condition, polarity, catalog)
+        if found_input is not None:
+            inputs.append(found_input)
+        if found_numeric is not None:
+            numeric.append(found_numeric)
     return inputs, numeric
 
 
@@ -703,7 +740,7 @@ def check_deck(
         if not isinstance(doc, dict):
             continue
         errors.extend(_input_errors(doc, rel, catalog, declared_ok=declared is not None))
-        errors.extend(_never_applicable(doc, rel))
+        errors.extend(_never_applicable(doc, rel, catalog))
         docs.append((path.stem, rel, doc))
         archetypes = doc.get("opposing_archetypes")
         archetypes = (
