@@ -11448,8 +11448,17 @@
         "type": "object"
       },
       "TargetSlot": {
-        "description": "One targeting requirement's shape, without naming its candidates -\n`legal_targets` (`Game.legal_targets`) is where the actual candidate\nobjects for one specific requirement are enumerated; this is the summary\nthat says how many requirements there are and how many targets each\nwants, so a caller can tell \"this action targets\" from \"this action does\nnot\" without a second round trip.",
+        "description": "One targeting requirement of a cast or an activation (CR 601.2c, and\nCR 602.2b for an activation): its phrase, how many targets it takes, and\nwhich objects and players it could legally name right now.\n\nThe candidates are ids and usernames only, like `decision_candidates`/\n`decision_player_candidates`, and come from the same predicate the\nannouncement checks with (`TargetRequirement.rejects`), so a candidate\nlist cannot disagree with what announcing that target would accept. They\nare a snapshot of this moment, not a promise: CR 608.2b rechecks on\nresolution.",
         "properties": {
+          "candidates": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
           "maximum": {
             "anyOf": [
               {
@@ -11468,6 +11477,14 @@
           "phrase": {
             "title": "Phrase",
             "type": "string"
+          },
+          "player_candidates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Player Candidates",
+            "type": "array"
           }
         },
         "required": [
