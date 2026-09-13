@@ -67,12 +67,14 @@ def _conditions(doc: dict[str, Any]):
 
 
 def _missing_froms(node: Any):
-    """Every `missing_from` object anywhere in a play, a move or a selector."""
+    """Every `missing_from` object in a play, a move or an answer, but not in
+    what is built later from a fresh fetch: a play's `moves` or a move's
+    `answers`."""
     if isinstance(node, dict):
         for key, value in node.items():
             if key == "missing_from" and isinstance(value, dict):
                 yield value
-            else:
+            elif key not in ("moves", "answers"):
                 yield from _missing_froms(value)
     elif isinstance(node, list):
         for value in node:
@@ -81,8 +83,9 @@ def _missing_froms(node: Any):
 
 def needs_contents(script: BaseModel | dict[str, Any]) -> bool:
     """Must the caller fetch the view with `include=contents` to evaluate
-    this play (or build this move)? A count over the viewer's own library or
-    sideboard, or a `missing_from` reading either on side `me`, needs it."""
+    this play's conditions (or build this move, or this answer)? A count over
+    the viewer's own library or sideboard, or a `missing_from` reading either
+    on side `me`, needs it."""
     doc = _as_dict(script)
     return any(
         condition.get("kind") == "count"

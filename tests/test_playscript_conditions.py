@@ -736,5 +736,19 @@ def test_needs_contents_when_any_missing_from_reads_my_own_library_or_sideboard(
     assert not needs_contents(play(true=[count("hand", "me", ">=", 1, reading(["hand"]))]))
     move = copy.deepcopy(FETCH_SHOCK["moves"][0])
     move["answers"][0]["pick"]["prefer"] = [reading(["library"])]
+    assert needs_contents(move["answers"][0])
+    move["source"]["select"] = reading(["library"])
     assert needs_contents(move)
-    assert needs_contents(play(moves=[move]))
+
+
+def test_needs_contents_reads_only_what_the_caller_is_about_to_evaluate():
+    """A play's conditions are evaluated without its moves, a move is built
+    without its answers, and each answer fetches for itself: a `missing_from`
+    over my library in an answer never makes the play or the move fetch."""
+    move = copy.deepcopy(FETCH_SHOCK["moves"][0])
+    move["answers"][0]["pick"]["prefer"] = [
+        {"missing_from": {"zones": ["library"], "side": "me", "by": "name"}}
+    ]
+    assert needs_contents(move["answers"][0])
+    assert not needs_contents(move)
+    assert not needs_contents(play(moves=[move]))
