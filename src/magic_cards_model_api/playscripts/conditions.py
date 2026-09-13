@@ -149,14 +149,17 @@ def _zone_size(condition: dict[str, Any], view: dict[str, Any], viewer: str) -> 
 
 def _mana_options(view: dict[str, Any], viewer: str) -> list[list[tuple[int, int]]]:
     """Per untapped mana source the viewer controls, each mana ability's
-    `(mana_amount, mana_cost_value)` that adds anything now."""
+    `(mana_amount, mana_cost_value)` that adds anything now and whose mana
+    carries no spending restriction (`restriction` is None)."""
     by_id = {card["id"]: card for card in view.get("battlefield") or []}
     sources = []
     for card_id in untapped_mana_sources(view, viewer):
         options = [
             (ability["mana_amount"], ability.get("mana_cost_value") or 0)
             for ability in by_id[card_id]["abilities"]
-            if ability.get("mana") and (ability.get("mana_amount") or 0) > 0
+            if ability.get("mana")
+            and (ability.get("mana_amount") or 0) > 0
+            and ability.get("restriction") is None
         ]
         if options:
             sources.append(options)
@@ -168,8 +171,12 @@ def untapped_mana(view: dict[str, Any], viewer: str) -> int:
 
     Each source (`seatkit.untapped_mana_sources`) is activated at most once,
     for one of its mana abilities, adding that ability's `mana_amount` (the
-    engine's board-resolved count, 0 when it cannot be activated now;
-    restricted mana counts in full). A free ability (`mana_cost_value` 0) adds
+    engine's board-resolved count, 0 when it cannot be activated now). An
+    ability whose view carries a `restriction` (the engine's CR 106.6
+    `spend_restriction` over its own effect text, read or unread) is never
+    counted: the condition names no spell, so only mana spendable on anything
+    is mana a play's move can surely spend - Eldrazi Temple counts its plain
+    `{C}`, not its `{C}{C}`. A free ability (`mana_cost_value` 0) adds
     to the pool outright. A filter consumes `mana_cost_value` of the mana
     already made, so it is activated only when the pool holds its cost; filters
     are activated after every free ability, in ascending cost order. The answer

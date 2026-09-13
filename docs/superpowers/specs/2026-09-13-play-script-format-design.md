@@ -47,16 +47,27 @@ make right now from untapped sources, not the number of sources:
   (CR 605.1a's "add X instead"). It is 0 when the ability cannot be activated
   now (CR 602.5, a summoning-sick creature under CR 302.6) or its mana type is
   undefined (CR 106.5).
-- Restricted mana counts in full (Eldrazi Temple's `{C}{C}` counts 2): CR 106.6
-  restricts how mana is spent, not whether it is made, and the condition names
-  no spell to judge a restriction against.
+- Restricted mana is not counted. An ability whose card view carries
+  `abilities[].restriction` (the engine's `machines.cost.spend_restriction`
+  over the ability's own effect text: CR 106.6's mana whose spending is
+  restricted, "Spend this mana only to ...", understood or not) adds nothing,
+  and a restricted filter is never activated. The condition names no spell, so
+  the only mana a play's move can surely spend is mana spendable on anything;
+  counting restricted mana only when the move could spend it would make the
+  answer depend on which spell or ability a move resolves to at run time,
+  which a static check cannot see. Eldrazi Temple still counts its plain
+  `{T}: Add {C}` (1), never its `{C}{C}`; Tablet of Discovery counts its
+  `{R}`, never its instant-and-sorcery `{R}{R}`. Card names play no part: the
+  restriction is read off the ability, so every card printing the template is
+  judged alike.
 - A filter (`abilities[].mana_cost_value` above 0: `{1}, {T}` or `{W/U}, {T}`)
   consumes that much of the mana already made. It is activated only when the
   pool holds its cost, filters in ascending cost order, so it counts
   `mana_amount - mana_cost_value` and is never double-counted. Its cost's colors
   are not judged.
 - The count is the largest pool over every choice of one ability, or none, per
-  source. Tron assembled is 7; with Eldrazi Temple 9; an Island and Mystic Gate
+  source. Tron assembled is 7; with Eldrazi Temple 8; Eldrazi Temple and an
+  Island are 2; an Island and Mystic Gate
   are 2; Captivating Cave and an Island are 2.
 
 ## Moves

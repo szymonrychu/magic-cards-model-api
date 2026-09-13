@@ -21,13 +21,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from pydantic_core import PydanticCustomError
-
-from .schema import SCHEMA_VERSION, WILDCARD, NonBlank, PlaysError
+from .schema import SCHEMA_VERSION, WILDCARD, PlaysError
 
 INPUTS_FILE = "inputs.json"
 BUILTIN_INPUT = "opposing_archetype"
@@ -35,80 +33,12 @@ INPUT_OPS = ("eq", "ne", "in", "not_in", "<", "<=", ">", ">=")
 LIST_OPS = ("in", "not_in")
 EQUALITY_OPS = ("eq", "ne", "in", "not_in")
 OPS_BY_INPUT_TYPE = {"enum": EQUALITY_OPS, "bool": EQUALITY_OPS, "int": INPUT_OPS}
-
-
-class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-
-class _Input(_Strict):
-    name: NonBlank
-    description: NonBlank
-    required: bool
-
-
-class EnumInput(_Input):
-    type: Literal["enum"]
-    values: list[NonBlank] = Field(min_length=1)
-
-    @field_validator("values")
-    @classmethod
-    def _distinct(cls, values: list[str]) -> list[str]:
-        if len(set(values)) != len(values):
-            raise PydanticCustomError("repeated_value", "must not repeat a value")
-        return values
-
-
-class BoolInput(_Input):
-    type: Literal["bool"]
-
-
-class IntInput(_Input):
-    type: Literal["int"]
-    min: int = None
-    max: int = None
-
-    @model_validator(mode="after")
-    def _ordered(self) -> IntInput:
-        if self.min is not None and self.max is not None and self.min > self.max:
-            raise PydanticCustomError(
-                "min_above_max", "min {min} is above max {max}", {"min": self.min, "max": self.max}
-            )
-        return self
-
-
-InputSpec = Annotated[EnumInput | BoolInput | IntInput, Field(discriminator="type")]
-
-
-class InputsFile(_Strict):
-    schema_version: Literal[1]
-    inputs: list[InputSpec]
-
-    @field_validator("schema_version", mode="before")
-    @classmethod
-    def _version_is_not_a_bool(cls, value: Any) -> Any:
-        if isinstance(value, bool):
-            raise PydanticCustomError("literal_error", f"Input should be {SCHEMA_VERSION}")
-        return value
-
-    @model_validator(mode="after")
-    def _names(self) -> InputsFile:
-        seen: set[str] = set()
-        for index, entry in enumerate(self.inputs):
-            if entry.name == BUILTIN_INPUT:
-                raise PydanticCustomError(
-                    "builtin_redeclared",
-                    "inputs[{index}].name: {name!r} is built in and is never redeclared",
-                    {"index": index, "name": BUILTIN_INPUT},
-                )
-            if entry.name in seen:
-                raise PydanticCustomError(
-                    "duplicate_name",
-                    "inputs[{index}].name: {name!r} is declared twice",
-                    {"index": index, "name": entry.name},
-                )
-            seen.add(entry.name)
-        return self
+INPUT_KEYS = ("name", "type", "description", "required")
+INPUT_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "enum": ("values",),
+    "bool": (),
+    "int": ("min", "max"),
+}
 
 
 def _rel(path: Path, root: Path) -> str:
@@ -118,26 +48,76 @@ def _rel(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def _where(loc: tuple[Any, ...]) -> str:
-    text = ""
-    for part in loc:
-        if isinstance(part, int):
-            text += f"[{part}]"
-        elif part not in ("enum", "bool", "int"):
-            text = f"{text}.{part}" if text else str(part)
-    return text
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _problems(doc: Any) -> Iterator[str]:
+    if not isinstance(doc, dict):
+        yield "must be a JSON object"
+        return
+    for key in doc:
+        if key not in ("schema_version", "inputs"):
+            yield f"{key}: is not a field of {INPUTS_FILE}"
+    if not (_is_int(doc.get("schema_version")) and doc["schema_version"] == SCHEMA_VERSION):
+        yield f"schema_version must be {SCHEMA_VERSION}"
+    inputs = doc.get("inputs")
+    if not isinstance(inputs, list):
+        yield "inputs must be a list"
+        return
+    seen: set[str] = set()
+    for i, entry in enumerate(inputs):
+        where = f"inputs[{i}]"
+        if not isinstance(entry, dict):
+            yield f"{where}: must be an object"
+            continue
+        kind = entry.get("type")
+        if kind not in INPUT_KEYS_BY_TYPE:
+            yield f"{where}.type: must be one of {', '.join(INPUT_KEYS_BY_TYPE)}"
+        allowed = INPUT_KEYS + INPUT_KEYS_BY_TYPE.get(kind, ())
+        for key in entry:
+            if key not in allowed:
+                yield f"{where}.{key}: is not a field of a {kind!r} input"
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            yield f"{where}.name: must be a non-empty string"
+        elif name == BUILTIN_INPUT:
+            yield f"{where}.name: {BUILTIN_INPUT!r} is built in and is never redeclared"
+        elif name in seen:
+            yield f"{where}.name: {name!r} is declared twice"
+        else:
+            seen.add(name)
+        if not isinstance(entry.get("description"), str) or not entry["description"].strip():
+            yield f"{where}.description: must be a non-empty string"
+        if not isinstance(entry.get("required"), bool):
+            yield f"{where}.required: must be true or false"
+        if kind == "enum":
+            values = entry.get("values")
+            if not (
+                isinstance(values, list)
+                and values
+                and all(isinstance(v, str) and v.strip() for v in values)
+            ):
+                yield f"{where}.values: must be a non-empty list of non-empty strings"
+            elif len(set(values)) != len(values):
+                yield f"{where}.values: must not repeat a value"
+        elif kind == "int":
+            for bound in ("min", "max"):
+                if bound in entry and not _is_int(entry[bound]):
+                    yield f"{where}.{bound}: must be an integer"
+            if (
+                _is_int(entry.get("min"))
+                and _is_int(entry.get("max"))
+                and entry["min"] > entry["max"]
+            ):
+                yield f"{where}: min {entry['min']} is above max {entry['max']}"
 
 
 def inputs_problems(doc: Any) -> list[str]:
-    """Every way an inputs.json document misses its shape, as messages."""
-    try:
-        InputsFile.model_validate(doc)
-    except ValidationError as exc:
-        return [
-            f"{_where(error['loc'])}: {error['msg']}" if error["loc"] else error["msg"]
-            for error in exc.errors()
-        ]
-    return []
+    """Every way an inputs.json document misses its shape, as messages - all of
+    them, in document order, worded and ordered exactly as mtg-decks'
+    `scripts/check_plays.py` `_inputs_problems` reports them."""
+    return list(_problems(doc))
 
 
 def load_inputs(deck: Path, root: Path) -> tuple[list[dict[str, Any]] | None, list[PlaysError]]:
@@ -155,9 +135,7 @@ def load_inputs(deck: Path, root: Path) -> tuple[list[dict[str, Any]] | None, li
     problems = inputs_problems(doc)
     if problems:
         return None, [PlaysError("malformed-inputs", rel, problem) for problem in problems]
-    return [
-        entry.model_dump(exclude_none=True) for entry in InputsFile.model_validate(doc).inputs
-    ], []
+    return doc["inputs"], []
 
 
 def newest_run(deck: Path) -> Path | None:

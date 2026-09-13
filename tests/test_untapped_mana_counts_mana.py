@@ -13,8 +13,12 @@ The counting rule (MEMORY.md, the play-script format doc):
   count (CR 605.1a's "add X instead" clauses, so Tron's Tower adds 3), 0 when
   CR 602.5 forbids activating it now (CR 302.6's summoning sickness) or its
   type is undefined (CR 106.5);
-- restricted mana counts in full: CR 106.6 restricts how mana is spent, not
-  whether it is made, and the condition names no spell to judge it against;
+- restricted mana is not counted (battle 6, B6-07): an ability whose view
+  carries a `restriction` (the engine's `spend_restriction` over its own
+  effect text, CR 106.6's "restrict how that mana can be spent") adds nothing,
+  understood or not. The condition names no spell, so only mana spendable on
+  anything is mana a play's move can surely spend. Eldrazi Temple's plain
+  `{T}: Add {C}` still counts 1;
 - an ability whose cost includes mana (`mana_cost_value` > 0, a filter)
   consumes that much of the mana already made: the count is the largest pool
   reachable, activating filters in ascending cost order, each only when the
@@ -117,10 +121,26 @@ def test_tron_assembled_counts_seven_mana_from_three_lands(client, game):
     assert _seen(_board(client, game, "Urza's Power Plant")) == 7
 
 
-def test_tron_and_eldrazi_temple_count_the_temples_restricted_two(client, game):
+def test_tron_and_eldrazi_temple_count_only_the_temples_unrestricted_one(client, game):
     view = _board(client, game, "Urza's Tower", "Urza's Mine", "Urza's Power Plant")
     assert _seen(view) == 7
-    assert _seen(_board(client, game, "Eldrazi Temple")) == 9
+    assert _seen(_board(client, game, "Eldrazi Temple")) == 8
+
+
+def test_eldrazi_temple_and_a_basic_count_two_not_three(client, game):
+    view = _board(client, game, "Eldrazi Temple", "Island")
+    temple = _abilities(view, "Eldrazi Temple")
+    assert [a["restriction"] is not None for a in temple] == [False, True]
+    assert _seen(view) == 2, "Temple's {C} plus Island's {U}; the restricted {C}{C} is not counted"
+
+
+def test_an_off_pool_restricted_source_counts_only_its_free_mana(client, game):
+    view = _board(client, game, "Tablet of Discovery")
+    plain, restricted = _abilities(view, "Tablet of Discovery")
+    assert (plain["mana_amount"], plain["restriction"]) == (1, None)
+    assert restricted["mana_amount"] == 2 and restricted["restriction"]["understood"] is True
+    assert _seen(view) == 1, "{R}{R} spendable only on instants and sorceries is not counted"
+    assert _seen(_board(client, game, "Island")) == 2
 
 
 def test_a_filter_land_is_not_double_counted(client, game):
@@ -146,7 +166,7 @@ def test_tapped_sources_and_the_opponents_sources_are_not_counted(client, game):
     add_card(client, game, "Eldrazi Temple", "bob", "battlefield")
     view = _board(client, game, "Island")
     assert _seen(view) == 1
-    assert _seen(state(client, game, _uid(game, "bob")), "bob") == 2
+    assert _seen(state(client, game, _uid(game, "bob")), "bob") == 1, "the Temple's plain {C}"
 
 
 # -- the arithmetic on a hand-built view: filters need their cost in the pool ----------
@@ -167,7 +187,7 @@ def _mana(text: str, amount: int, cost: int) -> dict[str, Any]:
 
 
 def _source(*abilities: dict[str, Any], **kw: Any) -> dict[str, Any]:
-    built = card("Source", type_line="Artifact", **kw)
+    built = card(kw.pop("name", "Source"), type_line="Artifact", **kw)
     built["abilities"] = list(abilities)
     return built
 
@@ -203,6 +223,39 @@ def test_a_mana_ability_that_adds_nothing_now_contributes_nothing():
 
 def test_a_tapped_source_contributes_nothing():
     assert _seen(state_view(battlefield=[_source(PLAIN, tapped=True), _source(PLAIN)])) == 1
+
+
+def _restricted(ability: dict[str, Any], *, understood: bool = True) -> dict[str, Any]:
+    return {
+        **ability,
+        "restriction": {
+            "text": "Spend this mana only to cast artifact spells.",
+            "understood": understood,
+        },
+    }
+
+
+def test_restricted_free_mana_is_not_counted_whatever_the_source_is_called():
+    restricted = _source(_restricted(_mana("{T}: Add {C}{C}.", 2, 0)))
+    assert _seen(state_view(battlefield=[restricted])) == 0
+    assert _seen(state_view(battlefield=[_source(PLAIN), restricted])) == 1
+    named = _source(_mana("{T}: Add {C}{C}.", 2, 0), name="Eldrazi Temple")
+    assert _seen(state_view(battlefield=[named])) == 2, "the view's restriction decides, not a name"
+
+
+def test_an_unread_restriction_is_not_counted_either():
+    unread = _source(_restricted(_mana("{T}: Add {C}{C}.", 2, 0), understood=False))
+    assert _seen(state_view(battlefield=[_source(PLAIN), unread])) == 1
+
+
+def test_a_source_with_restricted_and_free_abilities_counts_its_free_one():
+    temple = _source(PLAIN, _restricted(_mana("{T}: Add {C}{C}.", 2, 0)))
+    assert _seen(state_view(battlefield=[temple])) == 1
+
+
+def test_a_restricted_filter_is_never_activated():
+    filt = _source(_restricted(_mana("{1}, {T}: Add {C}{C}{C}.", 3, 1)))
+    assert _seen(state_view(battlefield=[_source(PLAIN), _source(PLAIN), filt])) == 2
 
 
 def test_a_wide_board_is_counted_without_enumerating_every_land():

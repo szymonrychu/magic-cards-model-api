@@ -86,5 +86,12 @@ def test_doc_names_the_closed_color_vocabulary() -> None:
 
 def test_doc_defines_the_untapped_mana_counting_rule() -> None:
     text = DOC.read_text()
-    for phrase in ("`untapped_mana`", "mana_amount", "mana_cost_value", "Restricted mana counts"):
+    for phrase in (
+        "`untapped_mana`",
+        "mana_amount",
+        "mana_cost_value",
+        "Restricted mana is not counted",
+        "`abilities[].restriction`",
+    ):
         assert phrase in text
+    assert "Restricted mana counts" not in text
