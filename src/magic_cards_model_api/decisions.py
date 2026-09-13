@@ -1140,6 +1140,20 @@ def validate_answer(decision: Decision, value: object) -> None:
                 f"{decision.prompt}: cannot move a card that was not looked at "
                 f"(CR 701.22a, CR 701.25a): {', '.join(stray)}"
             )
+        # `amount`/`exact` are the printed count of cards the player may move:
+        # scry's "any number" (exact=False, amount = cards looked at), Waker of
+        # Waves' "put one of them" (exact). `Game.ask`'s own check, word for word.
+        chosen = len(set(value.moved))
+        if decision.exact and chosen != decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: exactly {decision.amount} card(s) must be chosen, "
+                f"{chosen} given (CR 608.2d)"
+            )
+        if chosen > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: at most {decision.amount} card(s) may be chosen, "
+                f"{chosen} given (CR 608.2d)"
+            )
         return
 
     if decision.kind in (DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS):
