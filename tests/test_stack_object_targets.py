@@ -82,11 +82,9 @@ def test_consign_to_memory_counters_a_trigger_named_by_its_stack_id(client, game
     assert cast.json()["allowed"] is True, cast.text
     on_stack = state(client, game)["stack"]
     assert on_stack[0]["name"] == "Consign to Memory"
-    assert (
-        on_stack[0]["target_refs"]
-        == [{"kind": "ability", "id": trigger["id"], "name": "Kitchen Finks"}]
-        or on_stack[0]["target_refs"][0]["id"] == trigger["id"]
-    )
+    assert on_stack[0]["target_refs"] == [
+        {"kind": "ability", "id": trigger["id"], "name": "ability from Kitchen Finks"}
+    ]
 
     client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
     client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
