@@ -212,4 +212,8 @@ prints one JSON object, and its `result` says what happened:
 - `mcp-seat guides propose --deck SLUG --game-id GAME` handles matchup advice.
   Edit only `matchups[].play_plan` and `matchups[].notes` of the newest
   `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command regenerates
-  the guides and opens a pull request, returning its `pr_url`. CI merges it.
+  the guides, opens a pull request, and returns at once with its `pr_url` and
+  `awaiting_owner_review` - it never waits for checks or a merge. mtg-decks
+  has no CI budget, so the owner reviews and merges the PR by hand; the edit
+  is not live until then. Scripts are different: `plays admit` pushes
+  straight to mtg-decks main.

@@ -835,7 +835,11 @@ HANDOVER_PINS = (
     "Develop new and improve existing scripts through subagents, along with guides.",
     "Update each script's priority with `mcp-seat plays priority` from this game's evidence.",
     "Land scripts with `mcp-seat plays admit --deck dimir-frog --game-id g-1`",
-    "land guides with `mcp-seat guides propose --deck dimir-frog --game-id g-1`",
+    "propose guides with `mcp-seat guides propose --deck dimir-frog --game-id g-1`",
+    "mtg-decks has no CI budget, so its ci and automerge workflows never run",
+    "the owner reviews and merges it by hand",
+    "Do not wait for that pull request",
+    "it is not live until the owner merges it",
     "Edit only `matchups[].play_plan` and `matchups[].notes`",
     "`decks/dimir-frog/NOTES.md`",
 )

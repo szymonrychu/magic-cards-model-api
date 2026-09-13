@@ -1365,13 +1365,19 @@ scripts through subagents, along with guides.
    play applies; priority alone never resolves a conflict. Each subagent checks
    its files with `mcp-seat plays check --root /guides --deck {slug}`.
 3. Land scripts with `mcp-seat plays admit --deck {slug} --game-id {game}`, and
-   land guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
-   Read each command's `result`, fix what it names, and run it again.
+   propose guides with `mcp-seat guides propose --deck {slug} --game-id {game}`.
+   A script lands on mtg-decks main the moment admit pushes it. A guide edit
+   only opens a pull request: mtg-decks has no CI budget, so its ci and
+   automerge workflows never run there, and the owner reviews and merges it
+   by hand. Do not wait for that pull request - it is not live until the
+   owner merges it. Read each command's `result`, fix what it names, and run
+   it again.
 4. Stay within the allowed guide fields. Edit only `matchups[].play_plan` and
    `matchups[].notes` in the deck's newest `boarding-plan.json`, plus
    `decks/{slug}/NOTES.md`. Any other guide change is refused.
 
-End the turn once both commands have landed or said why they cannot.
+End the turn once scripts have landed and guides have been proposed, or each
+said why it could not - never wait on the guides pull request to merge.
 
 ## Script runs this game
 

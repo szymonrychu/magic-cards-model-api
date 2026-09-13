@@ -38,7 +38,10 @@ ROLE_NAMES = {"seat": "seat", "advisor": "buddy"}
 
 #: The results a command prints. `error` is an infrastructure failure (no
 #: token, GitHub refused, git itself broke), never a verdict on the change.
-SUCCESS = frozenset({"admitted", "pr_opened", "nothing_to_admit"})
+#: `pr_opened` is `plays admit`'s own rare fallback (3 non-fast-forward
+#: pushes); `awaiting_owner_review` is every `guides propose` pull request -
+#: mtg-decks has no CI budget, so the owner merges guide PRs by hand.
+SUCCESS = frozenset({"admitted", "pr_opened", "awaiting_owner_review", "nothing_to_admit"})
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _INT = re.compile(r"-?(?:0|[1-9][0-9]*)(?![0-9.eE])")

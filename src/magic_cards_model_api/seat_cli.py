@@ -57,10 +57,12 @@ Two commands are not seat actions at all, and need no `--uid`:
   `scripts/check_plays.py`.
 - `plays priority`, `plays admit` and `guides propose` work the pod's guides
   clone (default `/guides`): edit a play's priority, take play-script changes
-  to mtg-decks main, and propose a matchup-plan edit as a pull request. Each
-  prints one JSON result and exits 0 on admitted / pr_opened /
-  nothing_to_admit (or a priority set), 1 otherwise; see
-  `playscripts.admit` and `playscripts.guides_propose`.
+  to mtg-decks main, and propose a matchup-plan edit as a pull request the
+  owner reviews and merges by hand (mtg-decks is private with no CI budget,
+  so its `ci`/`automerge` workflows never run; `guides propose` never waits
+  on either). Each prints one JSON result and exits 0 on admitted / pr_opened
+  / awaiting_owner_review / nothing_to_admit (or a priority set), 1
+  otherwise; see `playscripts.admit` and `playscripts.guides_propose`.
 """
 
 from __future__ import annotations
@@ -994,14 +996,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     guides = sub.add_parser(
         "guides",
-        help="CLI-only: propose a deck-guide edit as a pull request (no seat, no game, no API)",
+        help=(
+            "CLI-only: propose a deck-guide edit as a pull request the owner merges by hand "
+            "(no seat, no game, no API)"
+        ),
     )
     guides_sub = guides.add_subparsers(dest="guides_command", required=True)
     propose = guides_sub.add_parser(
         "propose",
         help=(
             "render and commit a matchups[].play_plan / notes edit of the newest boarding plan "
-            "and NOTES.md, push seat/<game-id>-guides and open a pull request"
+            "and NOTES.md, push seat/<game-id>-guides and open a pull request the owner merges "
+            "by hand - returns at once, never waits on CI or automerge"
         ),
     )
     _guides_target(propose, game=True)
