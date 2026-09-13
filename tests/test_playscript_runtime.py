@@ -26,7 +26,7 @@ import pytest
 from conftest import add_card, force_turn_position, state
 from fastapi.testclient import TestClient
 from magic_cards_model.machines import Step
-from playscript_testkit import FETCH_SHOCK, SLUG
+from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, SLUG
 
 from magic_cards_model_api import audit, seatkit
 from magic_cards_model_api.main import app
@@ -1940,3 +1940,78 @@ def test_an_invalid_input_met_by_a_next_play_after_a_resume_exits_invalid_input(
     assert result.script_exit.exit is Exit.INVALID_INPUT, result.to_dict()
     assert result.script_exit.invalid_input["name"] == "bogus"
     assert finished(board)[-1]["exit"] == "invalid_input"
+
+
+# -- answers that name no split, and the active opponent's own pass -------------
+
+
+@pytest.mark.parametrize("kind", ["surveil", "scry"])
+def test_an_answer_naming_no_split_keeps_every_card_on_top(kind: str) -> None:
+    """`{"decision": "surveil"}` with no `to_graveyard` (or a scry with no
+    `to_bottom`) moves nothing: every card looked at stays on top, in the
+    order it was looked at."""
+    pending = {
+        "kind": kind,
+        "player": "alice",
+        "generation": 3,
+        "amount": 1,
+        "cards": ["00000000-0000-4000-8000-000000000001"],
+        "card_labels": ["Island"],
+    }
+
+    body = runtime.decide_body({"decision": kind}, pending, {}, "alice", REASONING)
+
+    assert body == {
+        "player": "alice",
+        "reasoning": REASONING,
+        "generation": 3,
+        "moved": [],
+        "top_order": None,
+    }
+
+
+def test_the_active_opponent_passing_after_the_runs_resolution_does_not_interrupt(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the opponent's end step the opponent is the active player, so the
+    moment the fetch finishes resolving it holds priority over the fetched
+    land's own trigger, and passes. That pass comes after the resolution the
+    run answered, not inside it: bob passes here from inside alice's own
+    requests, before the runner has looked at the board again."""
+    force_turn_position(game, Step("end_step"), "bob")
+    alice = seat_uid(game, "alice")
+    bob = seat_uid(game, "bob")
+    script = copy.deepcopy(FETCH_SURVEIL)
+    register(client, game, alice, script)
+    add_card(client, game, "Polluted Delta", "alice", "battlefield")
+    add_card(client, game, "Undercity Sewers", "alice", "library")
+    add_card(client, game, "Island", "alice", "library")
+    other = TestClient(app)
+
+    def bob_passes() -> None:
+        passed = other.post(
+            f"/api/games/{game}/actions/pass-priority", params={"uid": bob}, json={"player": "bob"}
+        )
+        assert passed.status_code == 200, passed.text
+
+    bob_passes()
+    assert state(client, game)["priority_holder"] == "alice"
+
+    def after(method: str, path: str, body: Any) -> None:
+        if method != "POST" or not path.endswith(("/actions/pass-priority", "/decide")):
+            return
+        board = other.get(f"/api/games/{game}", params={"uid": bob}).json()
+        if board["priority_holder"] == "bob" and board["stack"]:
+            bob_passes()
+
+    seats = wired(monkeypatch, game)
+    seat, _ = hooked_seat(seats, alice, after=after)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    assert result.script_exit.exit is Exit.CHAIN_COMPLETE, result.to_dict()
+    after_state = state(client, game)
+    assert cards_named(after_state["battlefield"], "Undercity Sewers")
+    assert cards_named(after_state["graveyards"]["alice"], "Island"), "the surveil was answered"

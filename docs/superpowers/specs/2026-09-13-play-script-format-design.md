@@ -151,6 +151,10 @@ read off the redacted state view:
 - An `amount` answer goes to `/decide` on the pending decision's own
   `answer_field` (`energy_amount`, `life_amount`) with its `generation`; `max`
   is the decision's own `amount`.
+- A `surveil` or `scry` answer goes to `/decide` as `moved`: the cards looked
+  at that `to_graveyard` (surveil) or `to_bottom` (scry) matches, with the
+  rest kept on top in the order they were looked at. An answer naming neither
+  moves nothing, so every card stays on top.
 - Every selection follows one pick rule: nothing matching is `unforeseen`, and
   different cards still tied after `prefer` are `ambiguous`.
 
