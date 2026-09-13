@@ -63,6 +63,7 @@ from .seatkit import (
     block_until_wake,
     card_reference,
     parse_convoke,
+    parse_optional_costs,
     pass_until,
     run_action,
 )
@@ -279,6 +280,17 @@ def build_parser() -> argparse.ArgumentParser:
             "(CR 702.51a). A creature pays '{1} or one mana of that creature's "
             "color', so an entry is a bare id for the generic symbol or "
             "<id>:W to cover a coloured one"
+        ),
+    )
+    cast.add_argument(
+        "--optional-costs",
+        default="",
+        help=(
+            "comma-separated optional additional costs to pay (CR 601.2b), each "
+            "the keyword from the cast row's own optional_costs: 'Kicker' kicks "
+            "(CR 702.33a). A repeatable one takes a count ('Multikicker:2', "
+            "'Replicate:3'), a gift names the opponent ('Gift:bob'), and a cost "
+            "naming objects takes their ids ('Blight:<creature id>')"
         ),
     )
     priority_flag(cast)
@@ -839,6 +851,8 @@ def run(argv: list[str] | None = None) -> int:
                 body[field] = _parse_ids(value)
         if args.convoke:
             body["convoke"] = parse_convoke(args.convoke)
+        if args.optional_costs:
+            body["optional_costs"] = parse_optional_costs(args.optional_costs)
         if args.reasoning:
             body["reasoning"] = args.reasoning
         act(

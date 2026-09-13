@@ -166,18 +166,47 @@ def _narrowings(source: CardState, game: Game) -> tuple[frozenset[str], frozense
     Three of them are plain state on the `CardState` - its own counters,
     whether a card is imprinted on it, and CR 614.12a's chosen colour (passed
     separately, as a keyword) - the same three `machines.cost._mana_narrowings`
-    reads for the automatic path. The fourth is not reachable from here:
-    CR 106.7's "could produce" survey and the controller's land types both live
-    behind `Game`'s own private helpers, so they are left unset, and an ability
-    that needs them narrows to nothing and is refused with CR 106.5's wording
-    rather than answered with a guess. `CostPayment.tap_for_mana` re-validates
-    the production against the real board afterwards either way, so a
-    disagreement is refused there, never quietly accepted.
+    reads for the automatic path. The fourth is the controller's land types
+    (CR 205.3i), which Urza's Tower's "If you control an Urza's Mine and an
+    Urza's Power-Plant, add {C}{C}{C} instead" reads: `Game.activate_ability`
+    asks `Game._controlled_land_types` for them, so this does too. Left empty
+    (as it once was), a Tower named as a mana source was resolved to `{C}` and
+    `tap_for_mana` then refused it, because the board says it makes three.
+    CR 106.7's "could produce" survey is `effective_production`'s business;
+    `CostPayment.tap_for_mana` re-validates against the real board either way.
     """
     return (
-        frozenset(),
+        game._controlled_land_types(source.controller_or_owner),
         frozenset(source.counters.counts),
         game.card_imprinted_on(source.id) is not None,
+    )
+
+
+def effective_production(
+    game: Game, source: CardState, mana: Any
+) -> tuple[list[list[Color]], bool]:
+    """`ManaAbility.effective` for this source on this board: which productions
+    the ability offers right now, and whether it is on its "any colour" limb.
+
+    The same four narrowings `Game.mana_color_options` and `Game.activate_
+    ability`'s own mana fast path hand it - the land types this source's
+    controller controls (CR 205.3i, which Tron's "instead" clause reads), its
+    counters, whether a card is imprinted on it, CR 106.7's could-produce
+    survey and CR 614.12a's chosen colour - so a row that says what a source
+    makes and the mana an activation actually adds are one answer.
+    """
+    land_types, counters, imprinted = _narrowings(source, game)
+    surveyed = (
+        game._could_produce_survey(mana.could_produce, source.controller_or_owner)
+        if mana.could_produce is not None
+        else None
+    )
+    return mana.effective(
+        land_types,
+        counters,
+        imprinted,
+        could_produce_colors=surveyed,
+        chosen_color=_chosen_color(source),
     )
 
 
@@ -474,23 +503,63 @@ def tapped_view(payment: Any) -> list[dict[str, str]]:
 # -- casting ---------------------------------------------------------------
 
 
+class AmbiguousCardName(ValueError):
+    """A cast by name that more than one different card in the zone answers
+    to - refused naming each, so the caller can cast one by `card_id`."""
+
+    def __init__(self, name: str, matches: list[CardState], where: str) -> None:
+        self.candidates = [
+            {"card_id": str(state.id), "card_name": state.card.name} for state in matches
+        ]
+        named = "; ".join(f"{c['card_name']} ({c['card_id']})" for c in self.candidates)
+        super().__init__(
+            f"{name!r} names more than one different card in {where}: {named} - "
+            "cast the one you mean by its card_id"
+        )
+
+
+def answers_to_card_name(state: CardState, name: str) -> bool:
+    """Whether a card is one `name` can mean: its full printed name, or its
+    front face's name.
+
+    CR 712.8a gives a double-faced card outside the battlefield and stack
+    "only the characteristics of its front face", its name included, so Ajani,
+    Nacatl Pariah // Ajani, Nacatl Avenger in hand is named Ajani, Nacatl
+    Pariah. The front face is also what a split or adventurer card's plain
+    cast is (`CastRequest.spell_face` names any other half), so that face's
+    name means the same cast. A single-faced card has only its one name."""
+    card = state.card
+    front = card.front_face
+    return name == card.name or (front is not None and name == front.name)
+
+
+def _by_name(cards: list[Any], name: str, where: str) -> CardState:
+    matches = [
+        state
+        for state in cards
+        if isinstance(state, CardState) and answers_to_card_name(state, name)
+    ]
+    if not matches:
+        raise ValueError(f"no {name} in {where}")
+    if len({state.card.name for state in matches}) > 1:
+        raise AmbiguousCardName(name, matches, where)
+    return matches[0]
+
+
 def locate_castable(game: Game, req: CastRequest) -> CardState:
-    """The card to cast: by id, or the first name match in `from_zone`."""
+    """The card to cast: by id, or by name in `from_zone` - a card's full
+    printed name or its front face's (`answers_to_card_name`). Copies of one
+    card are the same answer and the first is cast; a name two different
+    cards answer to raises `AmbiguousCardName`."""
     if req.card_id is not None:
         return find_card(game, req.card_id)
     if not req.card:
         raise ValueError("give either card_id or card (a name)")
     zone = Zone(req.from_zone)
     if zone in SHARED_ZONES:
-        for state in game.shared_zones[zone]:
-            if isinstance(state, CardState) and state.card.name == req.card:
-                return state
-        raise ValueError(f"no {req.card} in the {zone.value}")
+        return _by_name(list(game.shared_zones[zone]), req.card, f"the {zone.value}")
     player = game.player(req.player)
-    for state in player.cards_in(zone):
-        if state.card.name == req.card:
-            return state
-    raise ValueError(f"no {req.card} in {req.player}'s {zone.value}")
+    return _by_name(list(player.cards_in(zone)), req.card, f"{req.player}'s {zone.value}")
 
 
 def rewind_unfinished(casting: Casting) -> None:
@@ -581,6 +650,12 @@ def cast_card(game: Game, req: CastRequest) -> Outcome:
     working_game = dry_run_copy(game) if req.dry_run else game
     try:
         spell = locate_castable(working_game, req)
+    except AmbiguousCardName as exc:
+        return Outcome(
+            False,
+            str(exc),
+            {"type": "ambiguous_card_name", "candidates": exc.candidates},
+        )
     except (KeyError, ValueError) as exc:
         return refused(exc)
     origin_zone = spell.zone
@@ -633,6 +708,52 @@ def _announce_printed_additional_costs(game: Game, req: CastRequest, casting: Ca
         ids = getattr(req, name)
         if ids:
             setattr(casting, name, [find_card(game, card_id) for card_id in ids])
+
+
+def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> None:
+    """CR 601.2b's announcement of the optional additional costs this cast
+    pays - "If the spell has alternative or additional costs that will be paid
+    as it's being cast such as buyback or kicker costs ..., the player
+    announces their intentions to pay any or all of those costs" - onto the
+    `Casting`, before anything determines the total cost (CR 601.2f).
+
+    One engine door per mechanic, each refusing in its own words: kicker and
+    multikicker (CR 702.33a/c) through `pay_kicker`, replicate (CR 702.56a),
+    offspring (CR 702.175a), blight (CR 701.68a) and gift (CR 702.174a).
+    `times` is passed to the two that take a count and repeats the call for
+    the rest, whose own second-payment refusal then speaks.
+    """
+    for choice in req.optional_costs or []:
+        keyword = choice.keyword.strip().lower()
+        chosen = [find_card(game, card_id) for card_id in choice.choosing or []]
+        if keyword in ("kicker", "multikicker"):
+            casting.pay_kicker(choice.times, choosing=chosen)
+        elif keyword == "replicate":
+            casting.pay_replicate(choice.times, choosing=chosen)
+        elif keyword == "offspring":
+            for _ in range(choice.times):
+                casting.pay_offspring()
+        elif keyword == "blight":
+            if len(chosen) != 1:
+                raise ValueError(
+                    "blight puts its counters on one creature you control (CR 701.68a) - "
+                    "name exactly that creature's id in choosing"
+                )
+            for _ in range(choice.times):
+                casting.pay_blight(chosen[0])
+        elif keyword == "gift":
+            if not choice.opponent:
+                raise ValueError(
+                    "a gift is promised to an opponent (CR 702.174a) - name them in opponent"
+                )
+            for _ in range(choice.times):
+                casting.pay_gift(choice.opponent)
+        else:
+            raise ValueError(
+                f"{choice.keyword} is not an optional additional cost this engine pays "
+                "(CR 118.8): name one of Kicker, Multikicker, Replicate, Offspring, Blight "
+                "or Gift"
+            )
 
 
 def _announce_the_face(req: CastRequest, casting: Casting) -> None:
@@ -731,6 +852,11 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
             # object, so this only decides *whether* to ask.
             casting.use_permission()
     except ValueError as exc:
+        return refused(exc)
+
+    try:
+        _announce_optional_costs(game, req, casting)
+    except (KeyError, ValueError) as exc:
         return refused(exc)
 
     try:

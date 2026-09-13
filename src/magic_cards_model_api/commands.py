@@ -672,24 +672,57 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     diff already covers the whole command, pause included - see
     `resume_command`'s own docstring). See `_new_notices`/`_attach_notices`.
     """
-    handler = COMMAND_HANDLERS.get(command.kind)
-    if handler is None:
-        raise KeyError(f"no command handler registered for kind={command.kind!r}")
-
-    working = _replay_copy(game)
-    working.decisions.pause_when_unanswered = True
-    working.decisions.begin_replay(tape)
-    before_notices = _notice_snapshot(working)
-    try:
-        outcome = handler(working, command.payload)
-    except DecisionPending as exc:
+    # `game` and the copy `_attempt` mints hold the same notice counts, so the
+    # "before" half is read off `game` itself.
+    before_notices = _notice_snapshot(game)
+    working, outcome, pending = _attempt(game, command, tape)
+    if pending is not None:
         return RunResult(
-            status=RunStatus.PAUSED, pending=exc.pending, tape=tuple(tape), board=working
+            status=RunStatus.PAUSED, pending=pending, tape=tuple(tape), board=working
         )
 
     working.decisions.finish_replay()
     _attach_notices(outcome, _new_notices(working, before_notices))
     return RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape))
+
+
+def _attempt(
+    game: Game, command: Command, tape: Sequence[Answer]
+) -> tuple[Game, Any, PendingDecision | None]:
+    """One replay of `command` against a fresh copy of `game`: the copy, the
+    handler's outcome, and the question it paused on (`None` when it ran to
+    completion). The one place in this module that catches `DecisionPending`
+    by name."""
+    handler = COMMAND_HANDLERS.get(command.kind)
+    if handler is None:
+        raise KeyError(f"no command handler registered for kind={command.kind!r}")
+    working = _replay_copy(game)
+    working.decisions.pause_when_unanswered = True
+    working.decisions.begin_replay(tape)
+    try:
+        outcome = handler(working, command.payload)
+    except DecisionPending as exc:
+        return working, None, exc.pending
+    return working, outcome, None
+
+
+def board_at_pause(game: Game, command: Command, tape: Sequence[Answer]) -> Game | None:
+    """The half-applied game a paused command is standing in, or `None` when
+    replaying it no longer pauses.
+
+    A pause is never committed - `game` is the board from before the command
+    - but what a player is being asked about happened after that: Galvanic
+    Discharge's "You get {E}{E}{E}, then you may pay any amount of {E}" asks
+    with the three energy already given. Replaying the tape is deterministic
+    (this module's docstring), so this is exactly the board the stored
+    question was raised on, and nothing here is kept or committed.
+    """
+    try:
+        working, _, pending = _attempt(game, command, tape)
+    except Exception:  # a read must survive a replay that no longer runs
+        logger.exception("replaying the paused %s command for a state view failed", command.kind)
+        return None
+    return working if pending is not None else None
 
 
 def run_command_to_completion(game: Game, command: Command) -> RunResult:

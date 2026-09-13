@@ -338,9 +338,14 @@ def _plain_cast(action: dict[str, Any]) -> bool:
     that plays through it - the gap moved rather than closed. The face pool is
     tried last instead (`choose_move`), so a plain printed cast is still
     preferred and a named half is taken when it is the row on offer.
+
+    `activate_first` rules a row out too: it is payable only once the mana
+    abilities it names have been activated by hand (CR 118.3c), and this
+    policy casts a row as it stands.
     """
     return (
         action.get("from_zone") == "hand"
+        and not action.get("activate_first")
         and not action.get("alternative_cost")
         and not action.get("keyword")
         and not action.get("modes")

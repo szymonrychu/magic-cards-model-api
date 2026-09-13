@@ -24,4 +24,4 @@ Bump this alongside any change to a tool's request/response shape - see
 
 from __future__ import annotations
 
-PROTOCOL_VERSION = "seatkit-16"
+PROTOCOL_VERSION = "seatkit-17"

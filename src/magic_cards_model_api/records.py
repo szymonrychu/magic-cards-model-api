@@ -49,9 +49,9 @@ from uuid import UUID
 
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import PendingDecision
-from magic_cards_model.machines.legal_actions import legal_actions as _legal_actions
 from magic_cards_model.models import CardState, Game
 
+from .action_rows import legal_action_rows
 from .audit import PLAN_ACTION
 from .repository import RECENT_RECORDS_WINDOW
 
@@ -562,10 +562,8 @@ def legal_actions_before(
     agreed with - see `LegalActionsBefore`."""
     if not player:
         return None
-    actions = _legal_actions(game, player, pending=pending)
-    return LegalActionsBefore(
-        player=player, actions=[action.model_dump(mode="json") for action in actions]
-    )
+    _, actions = legal_action_rows(game, player, pending)
+    return LegalActionsBefore(player=player, actions=actions)
 
 
 # -- what a proposal actually says -------------------------------------------
