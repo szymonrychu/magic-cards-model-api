@@ -373,7 +373,8 @@ def test_bob_responding_to_the_fetch_interrupts_the_run_and_nothing_more_is_sent
 
     assert [cast["status"] for cast in casts] == [200] and casts[0]["allowed"] is True, casts
     assert out["exit"] == "interrupted", out
-    assert out["moves_done"] == 0 and out["moves_total"] - out["moves_done"] == 1, out
+    # B7-14: the fetch was accepted before the Bolt interrupted it, so it counts.
+    assert out["moves_done"] == 1 == out["moves_total"], out
     assert out["stop_reason"].startswith(f"{OPPONENT} acted (cast"), out
     stack = state(client, game)["stack"]
     assert [obj["controller"] for obj in stack] == [OPPONENT, ME], "the bolt sits unanswered"
