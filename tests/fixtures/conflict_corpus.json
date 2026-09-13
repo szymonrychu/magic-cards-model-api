@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Tagged pairs for the play-conflict exclusivity algorithm shared by mtg-decks scripts/check_plays.py and the api's plays check. Each case is two play fragments (when, opposing_archetypes, true, false). An exclusive case lists every dimension that proves it (proven_by, in dimension order); a conflicting case proves none and lists the dimensions the pair overlaps on. The api copies this file byte-identical.",
+  "description": "Tagged pairs for the play-conflict exclusivity algorithm shared by mtg-decks scripts/check_plays.py and the api's plays check. Each case is two play fragments (when, opposing_archetypes, true, false). An exclusive case lists every dimension that proves it (proven_by, in dimension order); a conflicting case proves none and lists the dimensions the pair overlaps on. An errored case is judged by the same algorithm (proven_by, dimensions) but fragment b carries the error codes the gate raises against its file (errors); a play with any error is left out of conflict computation, so the gate reports those errors and no warning. Both repos hold this file byte-identical.",
   "dimensions": [
     {
       "letter": "a",
@@ -15,7 +15,7 @@
     {
       "letter": "c",
       "name": "opposing_archetypes",
-      "rule": "neither list holds * and the sets do not intersect"
+      "rule": "the plays' archetype sets do not intersect; a play's set is its opposing_archetypes list (every archetype when the list holds *) narrowed by each of its conditions on the built-in opposing_archetype input, a false-list condition negated first"
     },
     {
       "letter": "d",
@@ -718,6 +718,7 @@
       "verdict": "exclusive",
       "dimension": "input",
       "proven_by": [
+        "opposing_archetypes",
         "input"
       ],
       "note": "the built-in enum: * is a value of its own",
@@ -2125,6 +2126,353 @@
             "side": "me",
             "op": "<=",
             "n": 5
+          }
+        ]
+      }
+    },
+    {
+      "name": "archetypes-list-vs-built-in-input-disjoint",
+      "verdict": "exclusive",
+      "dimension": "opposing_archetypes",
+      "proven_by": [
+        "opposing_archetypes"
+      ],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "a list and the built-in input are one dimension: dimir-frog cannot be living-end",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir-frog"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "eq",
+            "value": "living-end"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "archetypes-list-vs-built-in-input-false-list-negated",
+      "verdict": "exclusive",
+      "dimension": "opposing_archetypes",
+      "proven_by": [
+        "opposing_archetypes"
+      ],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "false: eq dimir-frog leaves * and living-end, which miss the list",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir-frog"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "eq",
+            "value": "dimir-frog"
+          }
+        ]
+      }
+    },
+    {
+      "name": "archetypes-list-narrowed-by-its-own-built-in-input",
+      "verdict": "exclusive",
+      "dimension": "opposing_archetypes",
+      "proven_by": [
+        "opposing_archetypes"
+      ],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "a's list narrowed by its own ne living-end is dimir-frog alone",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir-frog",
+          "living-end"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "ne",
+            "value": "living-end"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "living-end"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "archetypes-list-vs-built-in-input-overlapping",
+      "verdict": "conflicting",
+      "dimension": "opposing_archetypes",
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "the input asserts the one archetype the list names",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir-frog"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "eq",
+            "value": "dimir-frog"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "errored-unknown-archetype-key-is-left-out-of-conflicts",
+      "verdict": "errored",
+      "dimension": "errored",
+      "errors": [
+        "unknown-archetype-key"
+      ],
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "a pattern-invalid key is unknown-archetype-key alone, and the errored play raises no conflict",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir_frog"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "errored-never-applicable-empty-stack-and-stack-top",
+      "verdict": "errored",
+      "dimension": "errored",
+      "errors": [
+        "never-applicable"
+      ],
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "an empty stack has no top: b can never apply",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {}
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "errored-never-applicable-one-condition-true-and-false",
+      "verdict": "errored",
+      "dimension": "errored",
+      "errors": [
+        "never-applicable"
+      ],
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "one normalized condition must both hold and not hold: b can never apply",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "land_drop_available",
+            "value": true
+          }
+        ],
+        "false": [
+          {
+            "kind": "land_drop_available",
+            "value": true
           }
         ]
       }

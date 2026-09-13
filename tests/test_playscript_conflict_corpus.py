@@ -1,14 +1,19 @@
 """The conflict corpus shared with mtg-decks M1b, run against this repo's gate.
 
-`tests/fixtures/conflict_corpus.json` is a byte-identical copy of mtg-decks'
-`scripts/tests/fixtures/conflict_corpus.json` (branch `script-dsl`, commit
-d67c7c4). Each case is two play fragments tagged exclusive (with every
-dimension that proves it) or conflicting (with the dimensions the pair
-overlaps on). mtg-decks asserts those verdicts against `check_plays.py`; this
-file asserts the same verdicts and the same dimension arrays against
-`playscripts.lint` and through `mcp-seat plays check`, which is what proves
-the two implementations agree on every case. A7 refreshes the copy (and the
-hash below) whenever mtg-decks moves.
+`tests/fixtures/conflict_corpus.json` is the corpus mtg-decks'
+`scripts/tests/fixtures/conflict_corpus.json` shares byte for byte. F2l
+(battle 1 D06, D10, D11) moved it ahead here first: the `errored` verdict, the
+never-applicable cases and the archetype list vs built-in input cases land in
+this copy, and the mtg-decks follow-up copies it back and mirrors the rules in
+`check_plays.py`. The hash below pins the copy both repos must hold.
+
+Each case is two play fragments. `exclusive` lists every dimension that proves
+it (`proven_by`); `conflicting` proves none and lists the dimensions the pair
+overlaps on; `errored` is judged by the pure algorithm like the others, but
+fragment `b` carries the `errors` the gate raises against its file, and a play
+with an error is left out of conflicts, so the gate warns about nothing. This
+file asserts those verdicts and dimension arrays against `playscripts.lint` and
+through `mcp-seat plays check`.
 """
 
 from __future__ import annotations
@@ -19,25 +24,26 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playscript_testkit import make_root, play, put, put_inputs
+from playscript_testkit import SLUG, make_root, play, put, put_inputs
 
 from magic_cards_model_api import seat_cli
 from magic_cards_model_api.playscripts.inputs import input_catalog
 from magic_cards_model_api.playscripts.lint import (
+    CODES,
     EXCLUSIVITY_DIMENSIONS,
     conflict_dimensions,
     exclusivity,
 )
 
 CORPUS_PATH = Path(__file__).resolve().parent / "fixtures" / "conflict_corpus.json"
-UPSTREAM_SHA256 = "d2b2f1a35aa50d2b79469a0c765f68f4769936d08808236a7ab5079c4eb9c03c"
+CORPUS_SHA256 = "9f286f4f6c59b4e7b7a2acbd9cfb2c4f92fa1648b79fd9302a85735dc77a7adc"
 CORPUS = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
 CATALOG = input_catalog(CORPUS["inputs"], CORPUS["matchup_keys"])
 CASES = CORPUS["cases"]
 
 
-def test_the_fixture_is_the_unedited_mtg_decks_copy():
-    assert hashlib.sha256(CORPUS_PATH.read_bytes()).hexdigest() == UPSTREAM_SHA256
+def test_the_fixture_is_the_pinned_shared_copy():
+    assert hashlib.sha256(CORPUS_PATH.read_bytes()).hexdigest() == CORPUS_SHA256
 
 
 def test_the_corpus_tags_both_verdicts_for_every_dimension_and_the_identical_set():
@@ -57,11 +63,38 @@ def test_every_case_is_judged_as_tagged_in_both_orders(case):
         proven = exclusivity(a, b, CATALOG)
         if case["verdict"] == "exclusive":
             assert case["dimension"] in proven
-            assert proven == case["proven_by"]
         else:
-            assert case["verdict"] == "conflicting"
-            assert proven == []
+            assert case["verdict"] in ("conflicting", "errored")
+        assert proven == case.get("proven_by", [])
+        if "dimensions" in case:
             assert conflict_dimensions(a, b, CATALOG) == case["dimensions"]
+
+
+#: The cases F2l added (battle 1 D06, D10, D11), each carrying both
+#: `proven_by` and `dimensions`.
+F2L_CASES = {
+    "archetypes-list-vs-built-in-input-disjoint": "exclusive",
+    "archetypes-list-vs-built-in-input-false-list-negated": "exclusive",
+    "archetypes-list-narrowed-by-its-own-built-in-input": "exclusive",
+    "archetypes-list-vs-built-in-input-overlapping": "conflicting",
+    "errored-unknown-archetype-key-is-left-out-of-conflicts": "errored",
+    "errored-never-applicable-empty-stack-and-stack-top": "errored",
+    "errored-never-applicable-one-condition-true-and-false": "errored",
+}
+
+
+def test_the_corpus_pins_errored_plays_and_the_archetype_dimension():
+    by_name = {case["name"]: case for case in CASES}
+    for name, verdict in F2L_CASES.items():
+        case = by_name[name]
+        assert case["verdict"] == verdict
+        assert "proven_by" in case and "dimensions" in case
+    errored = [case for case in CASES if case["verdict"] == "errored"]
+    assert {code for case in errored for code in case["errors"]} == {
+        "unknown-archetype-key",
+        "never-applicable",
+    }
+    assert all(code in CODES for case in errored for code in case["errors"])
 
 
 def _root_for(tmp_path: Path, first: dict[str, Any], second: dict[str, Any]) -> Path:
@@ -78,9 +111,18 @@ def test_plays_check_reports_every_case_as_tagged(case, swapped, tmp_path, capsy
     first, second = (case["b"], case["a"]) if swapped else (case["a"], case["b"])
     root = _root_for(tmp_path, first, second)
 
-    assert seat_cli.run(["plays", "check", "--root", str(root), "--json"]) == 0
+    exit_code = seat_cli.run(["plays", "check", "--root", str(root), "--json"])
     report = json.loads(capsys.readouterr().out)
 
+    if case["verdict"] == "errored":
+        errored = f"decks/{SLUG}/plays/{'a' if swapped else 'b'}.json"
+        assert exit_code == 1
+        assert sorted((e["code"], e["path"]) for e in report["errors"]) == sorted(
+            (code, errored) for code in case["errors"]
+        )
+        assert report["warnings"] == []
+        return
+    assert exit_code == 0
     assert report["errors"] == [], report["errors"]
     if case["verdict"] == "exclusive":
         assert report["warnings"] == []

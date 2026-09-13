@@ -53,13 +53,14 @@ def cli(*argv: str) -> int:
 
 def test_codes_and_warning_codes_are_the_shared_contract():
     assert CODES[14:17] == ("unknown-input", "invalid-input-value", "malformed-inputs")
-    assert CODES[17:] == (
+    assert CODES[17:21] == (
         "unknown-decision-kind",
         "unknown-cast-cost",
         "duplicate-step",
         "wildcard-with-keys",
     )
-    assert len(CODES) == 21
+    assert CODES[21:] == ("never-applicable",)
+    assert len(CODES) == 22
     assert WARNING_CODES == ("play-conflict", "next-conflict")
     assert EXCLUSIVITY_DIMENSIONS == (
         "whose_turn",
@@ -270,6 +271,44 @@ def test_unknown_archetype_key_reads_the_newest_analysis_run(tmp_path):
     assert check_report(root)[0] == []
     put(root, play(opposing_archetypes=["*", "living-end"]))
     assert error_codes(root) == ["wildcard-with-keys"]
+
+
+def test_a_cycle_does_not_mask_chain_depth_elsewhere(root):
+    # battle 1 D09: deck bt-graph, the cycle g-a/g-b beside the chain g-d..g-g
+    put(root, play(id="g-a", next=["g-b"], priority=0))
+    put(root, play(id="g-b", next=["g-a"], priority=0))
+    put(root, play(id="g-d", next=["g-e"], priority=0))
+    put(root, play(id="g-e", next=["g-f"], priority=0))
+    put(root, play(id="g-f", next=["g-g"], priority=0))
+    put(root, play(id="g-g", priority=0))
+    found = sorted((e.code, e.path.rsplit("/", 1)[-1]) for e in check_report(root)[0])
+    assert found == [
+        ("chain-too-deep", "g-d.json"),
+        ("next-cycle", "g-a.json"),
+        ("next-cycle", "g-b.json"),
+    ]
+
+
+def test_chain_depth_leaves_the_cyclic_plays_out(root):
+    put(root, play(id="a", next=["b"], priority=0))
+    put(root, play(id="b", next=["a"], priority=0))
+    put(root, play(id="x", next=["y"], priority=0))
+    put(root, play(id="y", next=["z", "a"], priority=0))
+    put(root, play(id="z", priority=0))
+    assert error_codes(root) == ["next-cycle", "next-cycle"]
+
+
+def test_a_pattern_invalid_archetype_key_is_only_unknown_archetype_key(root):
+    # battle 1 D06: bt-struct/s12-archetype-underscore, the stdlib gate's code
+    put(root, play(opposing_archetypes=["esper_blink"]))
+    (error,) = check_report(root)[0]
+    assert error.code == "unknown-archetype-key"
+    assert "'esper_blink'" in error.message
+
+
+def test_a_blank_archetype_key_is_malformed_and_unknown(root):
+    put(root, play(opposing_archetypes=["  "]))
+    assert error_codes(root) == ["malformed-play", "unknown-archetype-key"]
 
 
 # -- inputs.json and input conditions (M1b's three codes) ----------------------
@@ -550,6 +589,159 @@ def test_an_unreadable_play_is_left_out_of_conflicts(root):
     errors, warnings = check_report(root)
     assert [e.code for e in errors] == ["forbidden-kind"]
     assert warnings == []
+
+
+def test_a_play_with_any_error_is_left_out_of_conflicts(root):
+    # battle 1 D06: the errored play raised 25 extra warnings in the stdlib gate
+    put(root, play(id="a"))
+    put(root, play(id="b"))
+    put(root, play(id="s12", opposing_archetypes=["esper_blink"]))
+    put(root, {**with_input("plan", "eq", "aggro"), "id": "unknown-input"})
+    errors, warnings = check_report(root)
+    assert sorted(e.code for e in errors) == ["unknown-archetype-key", "unknown-input"]
+    assert [w.plays for w in warnings] == [["a", "b"]]
+
+
+def test_an_errored_play_is_left_out_of_next_conflicts(root):
+    put(root, play(id="a", priority=0))
+    put(root, {**with_input("plan", "eq", "aggro"), "id": "bad", "priority": 0})
+    put(root, play(id="c", priority=0, when=when("theirs"), next=["a", "bad"]))
+    errors, warnings = check_report(root)
+    assert [e.code for e in errors] == ["unknown-input"]
+    assert warnings == []
+
+
+# -- never-applicable: a play whose own conditions contradict ------------------
+
+STACK_TOP = {"kind": "stack_top", "controller": "opponent", "select": {}}
+
+
+def test_never_applicable_for_an_empty_stack_and_a_required_stack_top(root):
+    # battle 1 D10: bt-struct/s26
+    put(
+        root,
+        play(when=when(stack="empty"), true=[FETCH_SHOCK["true"][1], STACK_TOP], false=[]),
+    )
+    (error,) = check_report(root)[0]
+    assert error.code == "never-applicable"
+    assert "when.stack" in error.message and "true[1]" in error.message
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"when": when(stack="any"), "true": [STACK_TOP], "false": []},
+        {"when": when(stack="empty"), "true": [], "false": [STACK_TOP]},
+    ],
+    ids=["stack-any", "stack-top-in-false"],
+)
+def test_a_stack_top_can_apply_on_any_stack_or_when_it_must_not_hold(root, over):
+    put(root, play(**over))
+    assert check_report(root)[0] == []
+
+
+def test_never_applicable_for_one_condition_in_true_and_false(root):
+    life = {"kind": "life", "side": "me", "op": ">=", "n": 8}
+    reordered = {"n": 8, "op": ">=", "side": "me", "kind": "life"}
+    put(root, play(true=[life], false=[FETCH_SHOCK["false"][0], reordered]))
+    (error,) = check_report(root)[0]
+    assert error.code == "never-applicable"
+    assert "true[0]" in error.message and "false[1]" in error.message
+
+
+def test_never_applicable_for_a_land_drop_true_and_false_in_one_list(root):
+    drops = [
+        {"kind": "land_drop_available", "value": True},
+        {"kind": "land_drop_available", "value": False},
+    ]
+    put(root, play(true=drops, false=[]))
+    (error,) = check_report(root)[0]
+    assert error.code == "never-applicable"
+    assert "true[0]" in error.message and "true[1]" in error.message
+
+
+def test_different_conditions_in_true_and_false_can_apply(root):
+    put(
+        root,
+        play(
+            true=[{"kind": "life", "side": "me", "op": ">=", "n": 8}],
+            false=[{"kind": "life", "side": "opponent", "op": ">=", "n": 8}],
+        ),
+    )
+    assert check_report(root)[0] == []
+
+
+def test_a_never_applicable_play_is_left_out_of_conflicts(root):
+    put(root, play(id="a", when=when(stack="any")))
+    put(root, play(id="b", when=when(stack="empty"), true=[STACK_TOP], false=[]))
+    errors, warnings = check_report(root)
+    assert [e.code for e in errors] == ["never-applicable"]
+    assert warnings == []
+
+
+# -- opposing_archetypes and the built-in opposing_archetype: one dimension ----
+
+
+def archetype_input(op: str, value: Any) -> dict[str, Any]:
+    return {"kind": "input", "name": "opposing_archetype", "op": op, "value": value}
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        (
+            {"opposing_archetypes": ["dimir-frog"]},
+            {
+                "opposing_archetypes": ["*"],
+                "true": [*FETCH_SHOCK["true"], archetype_input("eq", "living-end")],
+            },
+        ),
+        (
+            {"opposing_archetypes": ["dimir-frog"]},
+            {
+                "opposing_archetypes": ["*"],
+                "false": [*FETCH_SHOCK["false"], archetype_input("eq", "dimir-frog")],
+            },
+        ),
+        (
+            {
+                "opposing_archetypes": ["dimir-frog", "living-end"],
+                "true": [*FETCH_SHOCK["true"], archetype_input("ne", "living-end")],
+            },
+            {"opposing_archetypes": ["living-end"]},
+        ),
+    ],
+    ids=["list-vs-input", "list-vs-negated-false-input", "list-narrowed-by-own-input"],
+)
+def test_an_archetype_list_and_the_built_in_input_are_one_dimension(root, a, b):
+    # battle 1 D11: deck cx-archetype-vs-input
+    put(root, play(id="a", **a))
+    put(root, play(id="b", **b))
+    assert check_report(root) == ([], [])
+
+
+def test_an_archetype_list_overlapping_the_built_in_input_still_conflicts(root):
+    put(root, play(id="a", opposing_archetypes=["dimir-frog"]))
+    put(
+        root,
+        play(
+            id="b",
+            opposing_archetypes=["*"],
+            true=[*FETCH_SHOCK["true"], archetype_input("eq", "dimir-frog")],
+        ),
+    )
+    errors, warnings = check_report(root)
+    assert errors == []
+    (warning,) = [w.to_dict() for w in warnings]
+    assert warning["plays"] == ["a", "b"]
+    assert warning["dimensions"] == [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "true_false",
+        "numeric_range",
+    ]
 
 
 # -- the CLI: mcp-seat plays check ---------------------------------------------

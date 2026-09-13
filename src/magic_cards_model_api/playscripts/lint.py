@@ -12,29 +12,44 @@ Corpus rules (a deck's plays together), by code:
 
 - `id-mismatch`: the file stem equals `id`.
 - `card-name-in-field`: no machine-read string equals a card-data card name.
+  A phrase (`ability_text_has`, `oracle_has`) equal to a card name is refused
+  too, basic land names included: `oracle_has: "Island"` fails although
+  "Island" is in many oracle texts. Select by subtype instead
+  (`subtypes_any: ["Island"]`), which is the intended form.
 - `phrase-too-narrow`: every `ability_text_has` / `oracle_has` phrase is in the
   oracle text of at least 3 cached cards.
 - `unknown-next`: every `next` id is a play of the same deck.
 - `next-cycle`: the `next` graph is acyclic, self-edges included.
-- `chain-too-deep`: the longest `next` chain is at most 3 plays.
+- `chain-too-deep`: the longest `next` chain is at most 3 plays, measured with
+  every play that can reach itself left out, so a cycle is reported once as
+  `next-cycle` and never masks the depth of the rest of the graph.
 - `too-many-plays`: at most 12 plays per deck.
 - `too-many-active-for-archetype`: at most 6 plays with priority > 0 per
   (deck, archetype key), a `*` play counting toward every key.
 - `unknown-archetype-key`: every archetype key is `*` or a matchup stem of the
-  deck's newest analysis run.
+  deck's newest analysis run. A non-blank key the schema's key pattern refuses
+  (`esper_blink`) is this code alone, never also `malformed-play`.
 - `unknown-input`: an `input` condition names a declared input or
   `opposing_archetype`.
 - `invalid-input-value`: an `input` op and value fit the input's type and range.
 - `malformed-inputs`: `inputs.json` has its shape and does not redeclare the
   built-in.
+- `never-applicable`: a play's own fields do not contradict. `when.stack` is
+  `empty` while a `true` condition is a `stack_top` (named: the first such
+  `true[i]`), or one normalized condition must both hold and not hold (named:
+  the first two places, `true[i]`/`false[j]` or two indexes of one list after
+  the `land_drop_available` flip).
 
 A type-line field may hold a string that is also a card name when it is a
 type-line word on >= 3 cached cards (`Mountain`). `name` and `intent` are
 prose and may name cards.
 
-Conflict warnings never fail the gate. Two plays are provably exclusive when
+Conflict warnings never fail the gate, and a play with any error reported
+against its own file is left out of them. Two plays are provably exclusive when
 at least one dimension holds: `whose_turn` (mine vs theirs), `steps`
-(disjoint), `opposing_archetypes` (disjoint, no `*`), `stack` (one empty, the
+(disjoint), `opposing_archetypes` (the archetype sets do not intersect: a
+play's set is its list, every archetype when it holds `*`, narrowed by each of
+its conditions on the built-in `opposing_archetype`), `stack` (one empty, the
 other needs a `stack_top` in `true`), `input` (same input, value sets that
 cannot both hold), `true_false` (one normalized condition in one play's
 `true` and the other's `false`), `numeric_range` (count, zone_size, life,
@@ -61,13 +76,15 @@ from .inputs import (
     load_inputs,
     newest_matchup_keys,
 )
-from .schema import CODES, OPS, WILDCARD, PlaysError, play_errors
+from .schema import CODES as SCHEMA_CODES
+from .schema import OPS, WILDCARD, PlaysError, play_errors
 
 __all__ = [
     "CODES",
     "EXCLUSIVITY_DIMENSIONS",
     "WARNING_CODES",
     "CardIndex",
+    "CorpusError",
     "PlaysError",
     "PlaysWarning",
     "check_deck",
@@ -79,6 +96,8 @@ __all__ = [
     "run_cli",
 ]
 
+#: The schema's codes, then the corpus rules this gate adds on top of them.
+CODES = (*SCHEMA_CODES, "never-applicable")
 WARNING_CODES = ("play-conflict", "next-conflict")
 EXCLUSIVITY_DIMENSIONS = (
     "whose_turn",
@@ -98,8 +117,6 @@ PROSE_KEYS = ("name", "intent")
 PHRASE_KEYS = ("ability_text_has", "oracle_has")
 TYPE_LINE_KEYS = ("types_all", "types_any", "subtypes_any", "supertypes_any")
 NUMERIC_KINDS = ("count", "zone_size", "life", "untapped_mana")
-#: The structural codes after which a play's fields cannot be read as typed.
-UNREADABLE_CODES = ("malformed-play", "forbidden-kind")
 NEGATED = {
     "eq": "ne",
     "ne": "eq",
@@ -112,6 +129,14 @@ NEGATED = {
     "<=": ">",
     ">": "<=",
 }
+
+
+class CorpusError(PlaysError):
+    """A `PlaysError` whose code may also be one this gate adds to the schema's."""
+
+    def __post_init__(self) -> None:
+        if self.code not in CODES:
+            raise ValueError(f"unknown play error code {self.code!r}")
 
 
 class PlaysWarning:
@@ -211,9 +236,23 @@ def _machine_strings(value: Any, where: str = "", field: str | None = None):
             yield from _machine_strings(entry, _join(where, key), key)
 
 
+def _refused_key_pattern(error: PlaysError, doc: Any) -> bool:
+    """The schema refusing a non-blank archetype key by its pattern alone: the
+    shared contract judges that key as `unknown-archetype-key`, nothing more."""
+    keys = doc.get("opposing_archetypes") if isinstance(doc, dict) else None
+    if error.code != "malformed-play" or not isinstance(keys, list):
+        return False
+    return any(
+        isinstance(key, str)
+        and bool(key.strip())
+        and error.message.startswith(f"opposing_archetypes[{index}]: ")
+        for index, key in enumerate(keys)
+    )
+
+
 def check_play(doc: Any, stem: str, rel: str, cards: CardIndex) -> list[PlaysError]:
     """One play's structural, id, card-name and phrase errors."""
-    errors = play_errors(doc, rel)
+    errors = [e for e in play_errors(doc, rel) if not _refused_key_pattern(e, doc)]
     if not isinstance(doc, dict):
         return errors
     if isinstance(doc.get("id"), str) and doc["id"] != stem:
@@ -305,15 +344,61 @@ def _canon(value: Any) -> Any:
     return value
 
 
+def _literal(condition: dict[str, Any], polarity: bool) -> tuple[bool, str]:
+    """(must hold, normalized text): `land_drop_available value false` in one
+    list reads as `value true` in the other."""
+    condition, holds = _canon(condition), polarity
+    if condition.get("kind") == "land_drop_available" and condition.get("value") is False:
+        condition, holds = {**condition, "value": True}, not polarity
+    return holds, json.dumps(condition, sort_keys=True)
+
+
 def _literals(doc: dict[str, Any]) -> set[tuple[bool, str]]:
-    found = set()
+    return {_literal(c, polarity) for polarity in (True, False) for c in _conditions(doc, polarity)}
+
+
+def _placed(doc: dict[str, Any]):
+    """(where, polarity, condition) for every object condition, true then false."""
     for polarity in (True, False):
-        for condition in _conditions(doc, polarity):
-            condition, holds = _canon(condition), polarity
-            if condition.get("kind") == "land_drop_available" and condition.get("value") is False:
-                condition, holds = {**condition, "value": True}, not polarity
-            found.add((holds, json.dumps(condition, sort_keys=True)))
-    return found
+        found = doc.get("true" if polarity else "false")
+        for index, condition in enumerate(found if isinstance(found, list) else []):
+            if isinstance(condition, dict):
+                yield f"{'true' if polarity else 'false'}[{index}]", polarity, condition
+
+
+def _never_applicable(doc: dict[str, Any], rel: str) -> list[PlaysError]:
+    """A play whose own fields contradict, so no decision point satisfies it."""
+    errors: list[PlaysError] = []
+    placed = list(_placed(doc))
+    if _when(doc).get("stack") == "empty":
+        for where, polarity, condition in placed:
+            if polarity and condition.get("kind") == "stack_top":
+                errors.append(
+                    CorpusError(
+                        "never-applicable",
+                        rel,
+                        f"when.stack is empty but {where} needs a stack_top; "
+                        "the play can never apply",
+                    )
+                )
+                break
+    first: dict[tuple[bool, str], str] = {}
+    reported: set[str] = set()
+    for where, polarity, condition in placed:
+        holds, text = _literal(condition, polarity)
+        other = first.get((not holds, text))
+        if other is not None and text not in reported:
+            reported.add(text)
+            errors.append(
+                CorpusError(
+                    "never-applicable",
+                    rel,
+                    f"{other} and {where} contradict: {text} must both hold and not hold, "
+                    "so the play can never apply",
+                )
+            )
+        first.setdefault((holds, text), where)
+    return errors
 
 
 def _tighter(a: Any, b: Any, pick: Any) -> Any:
@@ -417,6 +502,18 @@ def _needs_stack_top(doc: dict[str, Any]) -> bool:
     return any(c.get("kind") == "stack_top" for c in _conditions(doc, True))
 
 
+def _archetypes(doc: dict[str, Any], inputs: list[Any]) -> frozenset[str] | None:
+    """The archetypes a play can apply against, None for every one: its
+    `opposing_archetypes` (every one when it holds `*`) narrowed by each of its
+    constraints on the built-in input."""
+    listed = _string_set(doc.get("opposing_archetypes"))
+    found = None if not listed or WILDCARD in listed else frozenset(listed)
+    for name, (tag, values) in inputs:
+        if name == BUILTIN_INPUT and tag == "values":
+            found = values if found is None else found & values
+    return found
+
+
 def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
     """The dimensions, in EXCLUSIVITY_DIMENSIONS order, that prove a and b
     exclusive. An empty list means they could both apply: a conflict."""
@@ -426,16 +523,16 @@ def exclusivity(a: dict[str, Any], b: dict[str, Any], catalog: dict[str, Any]) -
     steps_a, steps_b = _string_set(_when(a).get("steps")), _string_set(_when(b).get("steps"))
     if steps_a and steps_b and not steps_a & steps_b:
         proven.append("steps")
-    arch_a = _string_set(a.get("opposing_archetypes"))
-    arch_b = _string_set(b.get("opposing_archetypes"))
-    if arch_a and arch_b and WILDCARD not in arch_a | arch_b and not arch_a & arch_b:
+    inputs_a, numeric_a = _constraints(a, catalog)
+    inputs_b, numeric_b = _constraints(b, catalog)
+    arch_a, arch_b = _archetypes(a, inputs_a), _archetypes(b, inputs_b)
+    shared = arch_b if arch_a is None else arch_a if arch_b is None else arch_a & arch_b
+    if shared is not None and not shared:
         proven.append("opposing_archetypes")
     if (_when(a).get("stack") == "empty" and _needs_stack_top(b)) or (
         _when(b).get("stack") == "empty" and _needs_stack_top(a)
     ):
         proven.append("stack")
-    inputs_a, numeric_a = _constraints(a, catalog)
-    inputs_b, numeric_b = _constraints(b, catalog)
     if any(na == nb and _values_disjoint(x, y) for na, x in inputs_a for nb, y in inputs_b):
         proven.append("input")
     literals_b = _literals(b)
@@ -536,23 +633,24 @@ def _graph_errors(plays: dict[str, tuple[str, list[str]]]) -> list[PlaysError]:
                 stack.extend(edges[node])
         return False
 
-    cyclic = [pid for pid in plays if reaches(pid, pid)]
-    for pid in cyclic:
-        errors.append(
-            PlaysError("next-cycle", plays[pid][0], f"play {pid!r} can reach itself through next")
-        )
-    if cyclic:
-        return errors
+    cyclic = {pid for pid in plays if reaches(pid, pid)}
+    for pid in plays:
+        if pid in cyclic:
+            errors.append(
+                PlaysError(
+                    "next-cycle", plays[pid][0], f"play {pid!r} can reach itself through next"
+                )
+            )
 
     depth: dict[str, int] = {}
 
     def longest(pid: str) -> int:
         if pid not in depth:
-            depth[pid] = 1 + max((longest(t) for t in edges[pid]), default=0)
+            depth[pid] = 1 + max((longest(t) for t in edges[pid] if t not in cyclic), default=0)
         return depth[pid]
 
     for pid in plays:
-        if longest(pid) > MAX_CHAIN:
+        if pid not in cyclic and longest(pid) > MAX_CHAIN:
             errors.append(
                 PlaysError(
                     "chain-too-deep",
@@ -593,7 +691,7 @@ def check_deck(
     catalog = input_catalog(declared or [], known_keys)
     graph: dict[str, tuple[str, list[str]]] = {}
     active: list[list[str]] = []
-    readable: list[tuple[str, str, dict[str, Any]]] = []
+    docs: list[tuple[str, str, dict[str, Any]]] = []
     for path in files:
         rel = _rel(path, root)
         try:
@@ -601,13 +699,12 @@ def check_deck(
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             errors.append(PlaysError("malformed-play", rel, f"not readable JSON: {exc}"))
             continue
-        play_errors_found = check_play(doc, path.stem, rel, cards)
-        errors.extend(play_errors_found)
+        errors.extend(check_play(doc, path.stem, rel, cards))
         if not isinstance(doc, dict):
             continue
         errors.extend(_input_errors(doc, rel, catalog, declared_ok=declared is not None))
-        if not any(e.code in UNREADABLE_CODES for e in play_errors_found):
-            readable.append((path.stem, rel, doc))
+        errors.extend(_never_applicable(doc, rel))
+        docs.append((path.stem, rel, doc))
         archetypes = doc.get("opposing_archetypes")
         archetypes = (
             [a for a in archetypes if isinstance(a, str)] if isinstance(archetypes, list) else []
@@ -645,7 +742,9 @@ def check_deck(
             )
 
     errors.extend(_graph_errors(graph))
-    return errors, _conflict_warnings(readable, catalog), len(files)
+    errored = {e.path for e in errors}
+    clean = [entry for entry in docs if entry[1] not in errored]
+    return errors, _conflict_warnings(clean, catalog), len(files)
 
 
 def _deck_dirs(root: Path, decks: list[str] | None) -> list[Path]:
