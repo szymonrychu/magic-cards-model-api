@@ -485,16 +485,17 @@ BOARD_JS_URL = (UI / "render" / "board.js").as_uri()
 
 
 def test_a_spell_on_the_stack_as_board_js_draws_it_previews() -> None:
-    """The stack is not drawn with `cardNode`: `render/board.js` builds each
-    stack object as a bare `div.stack-object` keyed by the object's id through
-    `data-key`, with no `.card` class and no `data-card-id`. This drives the
-    real `mountBoard`, so the element hovered and pressed is exactly the one
-    the live UI puts in `#stack-row`."""
+    """`render/board.js` draws each stack object as a `div.stack-object`
+    wrapper keyed by the object's id through `data-key` (no `data-card-id` of
+    its own), holding the object's `cardNode` and a caption. This drives the
+    real `mountBoard`, so the elements hovered and pressed are exactly the
+    ones the live UI puts in `#stack-row`: the mouse over the card inside,
+    the finger on the wrapper."""
     result = run(
         """
         (async () => {
           for (const id of ["opp-info", "opp-hand", "opp-lands", "opp-battlefield",
-                            "red-zone", "my-battlefield", "my-lands", "you-info"]) {
+                            "my-battlefield", "my-lands", "you-info"]) {
             box(id, BOARD);
           }
           const B = await import(BOARD_JS_URL);
@@ -521,13 +522,15 @@ def test_a_spell_on_the_stack_as_board_js_draws_it_previews() -> None:
           });
           const el = STACK.children[0];
           el.rect = { left: 500, top: 300, width: 120, height: 40 };
+          const card = el.querySelector(".card");
+          card.rect = { left: 500, top: 300, width: 120, height: 168 };
           const out = { drawnAs: el.className, cardId: el.dataset.cardId === undefined };
 
-          mouse(el.children[0], "pointerover");
+          mouse(card, "pointerover");
           out.hover = { shown: shown(), image: zoomImage() };
           store.set({ state: boardState([spell("Shock")]) });
           out.inPlace = { same: STACK.children[0] === el, shown: shown(), image: zoomImage() };
-          mouse(el, "pointerout", { relatedTarget: null });
+          mouse(card, "pointerout", { relatedTarget: null });
           out.left = shown();
 
           touch(el, "pointerdown");
@@ -833,8 +836,8 @@ def test_the_preview_paints_over_everything_but_the_toast_and_never_takes_a_clic
 def test_cards_suppress_the_callout_and_selection_but_still_scroll() -> None:
     css = (UI / "style.css").read_text()
     section = css[css.index("card preview (ui/preview.js)") :]
-    # A stack object stands for a card too (`render/board.js` draws it as a
-    # bare `.stack-object`), and a long press on it opens the preview.
+    # A stack object stands for a card too (`render/board.js` wraps its card
+    # and caption in a `.stack-object`), and a long press on it opens the preview.
     rule = re.search(r"^\.card,\s*\.stack-object \{(.*?)^\}", section, re.M | re.S)
     assert rule, "the preview section has no .card, .stack-object rule"
     body = rule.group(1)

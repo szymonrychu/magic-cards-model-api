@@ -42,8 +42,9 @@ export const PREVIEW_SOURCES =
   "#mtg-board, #zone-ribbon, #stack-row, #my-hand, #opp-hand, #permitted-row, #decision-window, #modal, #popover";
 
 /** Every element that stands for a card: a `cardNode` anywhere, or an object
- * on the stack, which `render/board.js` draws as a bare `.stack-object` keyed
- * by the object's id through `data-key` (for a spell, the card's own id) -
+ * on the stack, which `render/board.js` wraps (card plus caption) in a
+ * `.stack-object` keyed by the object's id through `data-key` (for a spell,
+ * the card's own id) -
  * the same pair `render/decision_popover.js` anchors to. */
 export const CARD_SELECTOR = ".card[data-card-id], .stack-object[data-key]";
 
