@@ -602,6 +602,40 @@ def test_a_zero_move_finish_does_not_burn_the_already_ran_slot(
     assert again.status_code == 200, again.text
 
 
+def test_a_started_run_that_finished_with_zero_moves_does_not_burn_the_slot(
+    client: TestClient, game: str
+) -> None:
+    """The runner always posts a start before its finish, and that start row
+    carries the same key: releasing the slot must cover the run's own start
+    too, or a zero-move run still blocks its retry."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, run(), uid=alice).status_code == 200
+    zero_moves = finish(moves_done=0, moves_total=1, exit="refused", reapplicable_after="true")
+    assert post_run(client, game, zero_moves, uid=alice).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 200, again.text
+
+
+def test_a_zero_move_finish_with_an_unknown_outcome_still_burns_the_slot(
+    client: TestClient, game: str
+) -> None:
+    """`unknown_outcome` means the engine may have taken the move even though
+    `moves_done` never counted it, so a retry could make the move twice."""
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    assert post_run(client, game, run(), uid=alice).status_code == 200
+    unknown = finish(moves_done=0, moves_total=1, exit="unknown_outcome")
+    assert post_run(client, game, unknown, uid=alice).status_code == 200
+
+    again = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["exit"] == "already_ran"
+
+
 def test_a_finish_that_did_move_still_burns_the_slot(client: TestClient, game: str) -> None:
     """The other half of B8-04's fix: a finish naming at least one move done
     still blocks a retry, exactly as before."""

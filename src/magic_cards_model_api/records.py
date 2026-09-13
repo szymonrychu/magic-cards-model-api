@@ -744,10 +744,13 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     once-per-turn-and-step slot and does not block a retry, consistent with
     that same finish's own `reapplicable_after: true`. A bare `start` with no
     matching `finish` yet (still in flight, or a crash) still blocks: this
-    check cannot tell whether it moved anything."""
+    check cannot tell whether it moved anything. The release covers that run's
+    own start row too (newest first, so its finish is always read before it),
+    and never an `unknown_outcome` finish, whose move may have landed uncounted."""
     from .store import store
 
     key = tuple(detail.get(name) for name in _SCRIPT_RUN_KEY)
+    released: set[Any] = set()
     for row in reversed(store.recent_records(game_id, RECENT_RECORDS_WINDOW)):
         payload = row["payload"]
         action = payload.get("action")
@@ -756,9 +759,17 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
         prior = payload.get("detail") or {}
         if tuple(prior.get(name) for name in _SCRIPT_RUN_KEY) != key:
             continue
-        if action == SCRIPT_RUN_ACTION and prior.get("moves_done") == 0:
+        run_id = prior.get("run_id")
+        if run_id in released:
             continue
-        return str(prior.get("run_id"))
+        if (
+            action == SCRIPT_RUN_ACTION
+            and prior.get("moves_done") == 0
+            and prior.get("exit") != "unknown_outcome"
+        ):
+            released.add(run_id)
+            continue
+        return str(run_id)
     return None
 
 
