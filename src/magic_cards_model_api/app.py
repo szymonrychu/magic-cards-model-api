@@ -247,6 +247,23 @@ def _invalid_scripts(_: Request, exc: records.InvalidScripts) -> JSONResponse:
     )
 
 
+@app.exception_handler(records.UnknownScript)
+def _unknown_script(_: Request, exc: records.UnknownScript) -> JSONResponse:
+    """404 with `code: unknown_script` and `script_id`: the start named a
+    script not registered under the uid that runs it, and nothing was
+    recorded. Registering a corpus that holds it is the only fix."""
+    return JSONResponse(
+        status_code=404,
+        content={
+            "detail": str(exc),
+            "allowed": False,
+            "reason": str(exc),
+            "code": exc.code,
+            "script_id": exc.script_id,
+        },
+    )
+
+
 @app.exception_handler(records.ScriptAlreadyRan)
 def _script_already_ran(_: Request, exc: records.ScriptAlreadyRan) -> JSONResponse:
     """409 with `exit: already_ran`: this seat already ran this script at
@@ -3255,6 +3272,14 @@ def read_scripts(game_id: str, uid: str, request: Request) -> dict[str, Any]:
     return {"uid": uid, "inputs": [], **corpus}
 
 
+def _uids_running(game_id: str, player: str, role: str) -> list[str]:
+    """The uids whose corpora a `role` run for `player` may start from: that
+    seat's uids for `seat`, that seat's advisors' uids for `advisor`."""
+    if role == "seat":
+        return [uid for uid, name in store.seat_uids(game_id).items() if name == player]
+    return [uid for uid, advisor in store.advisor_uids(game_id).items() if advisor.player == player]
+
+
 @app.post(
     "/api/games/{game_id}/script-runs",
     response_model=ScriptRunResponse,
@@ -3276,8 +3301,12 @@ def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[
     for the credential is a 400, so the ledger cannot claim an advisor's
     advice was a seat's own play.
 
-    `start` is behind the kill switch (`code: scripts_disabled`) and refuses
-    a second start of the same script by the same seat at the same turn and
+    `start` is behind the kill switch (`code: scripts_disabled`), refuses a
+    script not registered under the uid that runs it with `code:
+    unknown_script` (`records.require_registered_script`: a seat uid's own
+    corpus, an advisor uid's own, or for the admin key the named seat's uids
+    for role `seat` and its advisors' for role `advisor`), and refuses a
+    second start of the same script by the same seat at the same turn and
     step with exit `already_ran` (`records.record_script_run_start`).
     `finish` writes one `script_run` row with every field of the request and
     the `game_id`, and is recorded even with the switch off. Both rows are
@@ -3286,7 +3315,9 @@ def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[
     """
     game = game_or_404(game_id)
     caller, key = _query_credentials(request)
-    if not _presents_admin_key(game_id, caller, key):
+    if _presents_admin_key(game_id, caller, key):
+        runners = _uids_running(game_id, req.seat, req.role)
+    else:
         seat = store.player_for_uid(game_id, caller) if caller else None
         advised = player_for_advisor_uid(game_id, caller) if caller and seat is None else None
         if (seat or advised) != req.seat:
@@ -3294,10 +3325,12 @@ def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[
         role = "seat" if seat is not None else "advisor"
         if req.role != role:
             raise ValueError(f"a {role} uid reports its runs as role {role!r}, not {req.role!r}")
+        runners = [caller] if caller else []
     game.player(req.seat)  # 400 for a player who is not in this game at all
     detail = {**req.model_dump(exclude={"phase"}), "game_id": game_id}
     if req.phase == "start":
         records.require_scripts_enabled("starting a script run")
+        records.require_registered_script(game_id, runners, detail)
         seq = records.record_script_run_start(game_id, detail)
     else:
         seq = records.record_script_run_finish(game_id, detail)

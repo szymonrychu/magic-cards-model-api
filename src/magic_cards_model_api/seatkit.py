@@ -222,8 +222,9 @@ PROTOCOL_VERSION = "seatkit-18"
 #: script judged by `playscripts.schema` and refused as `invalid_scripts`
 #: with its codes), and `GET` of the same path reads it back to that uid, the
 #: seat's advisor and the admin key only. `POST /api/games/{id}/script-runs`
-#: reports a run: `phase: start` refuses a second start of one script at one
-#: turn and step with exit `already_ran`, and `phase: finish` writes one
+#: reports a run: `phase: start` refuses a script not registered under the uid
+#: that runs it with code `unknown_script` (404) and a second start of one
+#: script at one turn and step with exit `already_ran`, and `phase: finish` writes one
 #: `script_run` ledger row that no other seat's log read ever returns. With
 #: `SCRIPTS_ENABLED` off, registering and starting refuse with code
 #: `scripts_disabled`.

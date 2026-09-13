@@ -8,7 +8,9 @@ records each run of a script into the ledger.
   the admin key - nobody else.
 - `POST /api/games/{id}/script-runs` records `start` (refusing a second start
   of one script at one turn and step with exit `already_ran`) and `finish`
-  (one `script_run` row).
+  (one `script_run` row). A `start` names a script registered under the uid
+  that runs it - the seat's own corpus for role `seat`, the advisor's own for
+  role `advisor` - and is refused with `code: unknown_script` otherwise.
 - Neither the corpus nor a run row ever reaches the opponent.
 """
 
@@ -488,6 +490,7 @@ def test_the_kill_switch_refuses_a_start_but_still_records_a_finish(
 
 def test_a_start_is_recorded(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
 
     started = post_run(client, game, run(), uid=alice)
 
@@ -505,6 +508,7 @@ def test_a_second_start_of_the_same_script_at_the_same_turn_and_step_already_ran
     client: TestClient, game: str
 ) -> None:
     alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
     assert post_run(client, game, run(), uid=alice).status_code == 200
 
     again = post_run(client, game, run(run_id="run-2"), uid=alice)
@@ -529,6 +533,8 @@ def test_a_second_start_of_the_same_script_at_the_same_turn_and_step_already_ran
 def test_a_start_that_differs_in_any_part_of_the_key_is_not_already_ran(
     client: TestClient, game: str, admin_key: str, over: dict[str, Any]
 ) -> None:
+    for player in ("alice", "bob"):
+        assert register(client, game, seat_uid(game, player), key=admin_key).status_code == 200
     assert post_run(client, game, run(), key=admin_key).status_code == 200
 
     other = post_run(client, game, run(**{"run_id": "run-2", **over}), key=admin_key)
@@ -540,6 +546,7 @@ def test_a_finish_that_ran_without_a_start_still_counts_as_already_ran(
     client: TestClient, game: str
 ) -> None:
     alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
     assert post_run(client, game, finish(), uid=alice).status_code == 200
 
     again = post_run(client, game, run(run_id="run-2"), uid=alice)
@@ -592,6 +599,7 @@ def test_the_opponent_cannot_record_a_run_in_another_seats_name(
 
 def test_an_advisor_records_an_advise_run_for_its_human(client: TestClient, game: str) -> None:
     advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
 
     started = post_run(client, game, run(role="advisor", advise=True), uid=advisor)
 
@@ -628,6 +636,7 @@ def test_a_run_owes_no_reasoning_no_plan_and_no_board_position(
     store.register_ai_players(game, ["bob"])
     force_turn_position(game, Step.PRECOMBAT_MAIN, "bob")
     bob = seat_uid(game, "bob")
+    assert register(client, game, bob, uid=bob).status_code == 200
     refused = client.post(
         f"/api/games/{game}/actions/pass-priority", params={"uid": bob}, json={"player": "bob"}
     )
@@ -649,12 +658,153 @@ def test_a_run_body_with_expected_seq_is_refused_rather_than_ignored(
 
 
 # ---------------------------------------------------------------------------
+# a start names a script registered under the uid that runs it
+# ---------------------------------------------------------------------------
+
+
+def assert_unknown_script(response: Any, script_id: str) -> None:
+    assert response.status_code == 404, response.text
+    body = response.json()
+    assert body["code"] == "unknown_script"
+    assert body["allowed"] is False
+    assert body["script_id"] == script_id
+    assert repr(script_id) in body["reason"]
+
+
+def test_a_start_of_a_script_the_seat_did_not_register_is_refused(
+    client: TestClient, game: str
+) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    started = post_run(client, game, run(script_id="no-such-play"), uid=alice)
+
+    assert_unknown_script(started, "no-such-play")
+    assert script_rows(audit.entries(game)) == []
+
+
+def test_a_start_with_no_corpus_registered_is_refused(client: TestClient, game: str) -> None:
+    alice = seat_uid(game, "alice")
+
+    started = post_run(client, game, run(), uid=alice)
+
+    assert_unknown_script(started, FETCH_SHOCK["id"])
+    assert script_rows(audit.entries(game)) == []
+
+
+def test_a_refused_start_leaves_nothing_for_already_ran_to_find(
+    client: TestClient, game: str
+) -> None:
+    alice = seat_uid(game, "alice")
+    assert (
+        client.put(
+            f"/api/games/{game}/seats/{alice}/scripts",
+            params={"uid": alice},
+            json=corpus(FETCH_SURVEIL),
+        ).status_code
+        == 200
+    )
+    assert_unknown_script(post_run(client, game, run(), uid=alice), FETCH_SHOCK["id"])
+    assert register(client, game, alice, uid=alice).status_code == 200
+
+    started = post_run(client, game, run(run_id="run-2"), uid=alice)
+
+    assert started.status_code == 200, started.text
+
+
+def test_the_opponents_corpus_registers_nothing_for_this_seat(
+    client: TestClient, game: str
+) -> None:
+    bob = seat_uid(game, "bob")
+    assert register(client, game, bob, uid=bob).status_code == 200
+
+    started = post_run(client, game, run(), uid=seat_uid(game, "alice"))
+
+    assert_unknown_script(started, FETCH_SHOCK["id"])
+
+
+def test_an_advisor_start_is_checked_against_the_advisors_own_corpus(
+    client: TestClient, game: str
+) -> None:
+    alice = seat_uid(game, "alice")
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    advise = {"role": "advisor", "advise": True}
+
+    assert_unknown_script(post_run(client, game, run(**advise), uid=advisor), FETCH_SHOCK["id"])
+    assert (
+        client.put(
+            f"/api/games/{game}/seats/{advisor}/scripts",
+            params={"uid": advisor},
+            json=corpus(FETCH_SURVEIL),
+        ).status_code
+        == 200
+    )
+    assert_unknown_script(post_run(client, game, run(**advise), uid=advisor), FETCH_SHOCK["id"])
+
+    started = post_run(client, game, run(script_id=FETCH_SURVEIL["id"], **advise), uid=advisor)
+
+    assert started.status_code == 200, started.text
+
+
+def test_a_seat_start_is_not_satisfied_by_its_advisors_corpus(
+    client: TestClient, game: str
+) -> None:
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+
+    started = post_run(client, game, run(), uid=seat_uid(game, "alice"))
+
+    assert_unknown_script(started, FETCH_SHOCK["id"])
+
+
+def test_the_admin_keys_seat_start_is_checked_against_that_seats_corpus(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    alice = seat_uid(game, "alice")
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+    assert (
+        client.put(
+            f"/api/games/{game}/seats/{alice}/scripts",
+            params={"key": admin_key},
+            json=corpus(FETCH_SURVEIL),
+        ).status_code
+        == 200
+    )
+
+    assert_unknown_script(post_run(client, game, run(), key=admin_key), FETCH_SHOCK["id"])
+    started = post_run(client, game, run(script_id=FETCH_SURVEIL["id"]), key=admin_key)
+
+    assert started.status_code == 200, started.text
+
+
+def test_the_admin_keys_advisor_start_is_checked_against_that_seats_advisors(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
+    bobs = advisor_uid(game, "bob", uid="bobs-advisor")
+    assert register(client, game, bobs, uid=bobs).status_code == 200
+    advise = {"role": "advisor", "advise": True}
+
+    assert_unknown_script(post_run(client, game, run(**advise), key=admin_key), FETCH_SHOCK["id"])
+    advisor = advisor_uid(game, "alice")
+    assert register(client, game, advisor, uid=advisor).status_code == 200
+
+    started = post_run(client, game, run(**advise), key=admin_key)
+
+    assert started.status_code == 200, started.text
+
+
+# ---------------------------------------------------------------------------
 # the opponent never sees a run
 # ---------------------------------------------------------------------------
 
 
 def _played_runs(client: TestClient, game: str) -> None:
     alice = seat_uid(game, "alice")
+    assert register(client, game, alice, uid=alice).status_code == 200
     assert post_run(client, game, run(), uid=alice).status_code == 200
     assert post_run(client, game, finish(), uid=alice).status_code == 200
 
@@ -722,7 +872,13 @@ def test_script_runs_is_not_a_mutating_game_action() -> None:
 def test_the_seatkit_18_paragraph_names_the_script_routes() -> None:
     source = Path(seatkit.__file__).read_text()
     paragraph = source.split("PROTOCOL_VERSION = ", 1)[1].split("`seatkit-17`", 1)[0]
-    for term in ("/seats/{uid}/scripts", "/script-runs", "already_ran", "scripts_disabled"):
+    for term in (
+        "/seats/{uid}/scripts",
+        "/script-runs",
+        "already_ran",
+        "scripts_disabled",
+        "unknown_script",
+    ):
         assert term in paragraph, f"the seatkit-18 paragraph does not name {term}"
 
 

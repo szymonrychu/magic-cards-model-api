@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi.testclient import TestClient
+from playscript_testkit import FETCH_SHOCK, SLUG
 from test_unloadable_games import engine_refusal
 from test_unloadable_games import unloadable as unloadable  # noqa: PLC0414 - a fixture, re-exported
 
@@ -1004,7 +1005,7 @@ def _script_run(client: TestClient, game_id: str, uid: str, phase: str, **over: 
         "seat": "bob",
         "role": "advisor",
         "advise": True,
-        "script_id": "fetch-shock",
+        "script_id": FETCH_SHOCK["id"],
         "guides_revision": "0123abcd",
         "opposing_archetype_asserted": "dimir-frog",
         "turn": 1,
@@ -1021,6 +1022,12 @@ def _advised_run_then_the_real_move(client: TestClient) -> tuple[dict[str, Any],
     info = _agent_game(client, active="bob")
     game_id = info["game_id"]
     store.register_advisors(game_id, {"bobs-advisor": Advisor(player="bob")})
+    registered = client.put(
+        f"/api/games/{game_id}/seats/bobs-advisor/scripts",
+        params={"uid": "bobs-advisor"},
+        json={"deck_slug": SLUG, "guides_revision": "0123abcd", "scripts": [FETCH_SHOCK]},
+    )
+    assert registered.status_code == 200, registered.text
     assert _declare(client, info).status_code == 200
     card_id = _card_id(client, game_id, "Forest", "bob")
     advice_seq = _advise(client, game_id, body={"card_id": card_id}, summary="play the Forest")

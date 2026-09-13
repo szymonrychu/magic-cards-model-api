@@ -463,8 +463,10 @@ class ScriptRunIn(RequestModel):
     `records.require_current_board`, `require_reasoning` or `require_plan`
     applies, and there is no `expected_seq` or `reasoning` here to read.
 
-    `start` is refused with exit `already_ran` when this `seat` already
-    started (or finished) `script_id` at this `turn` and `step`. `finish`
+    `start` is refused with `code: unknown_script` when `script_id` is not
+    in the corpus registered under the uid that runs it, and with exit
+    `already_ran` when this `seat` already started (or finished) `script_id`
+    at this `turn` and `step`. `finish`
     writes one `script_run` row carrying every field below.
     """
 

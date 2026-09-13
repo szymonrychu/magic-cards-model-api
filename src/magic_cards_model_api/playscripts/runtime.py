@@ -442,7 +442,10 @@ def _drive(ctx: _Context, run: _Run, play: dict[str, Any], *, wait: bool) -> Run
                 return _end(ctx, run, play, waited)
             state = waited
         if not run.started:
-            refused = _start(ctx, run, play, state)
+            try:
+                refused = _start(ctx, run, play, state)
+            except _Unregistered as unregistered:
+                return _end(ctx, run, play, unregistered.out, record=False)
             if refused is not None:
                 return _end(ctx, run, play, refused)
         failed = _condition_exit(_evaluate(ctx, play, state))
@@ -1197,6 +1200,16 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
 # -- recording -----------------------------------------------------------------
 
 
+class _Unregistered(Exception):
+    """The start route refused the script as `unknown_script`: the corpus
+    this runner read is stale and the seat no longer registers it. No run
+    began on the ledger, so there is no finish to post for it."""
+
+    def __init__(self, out: ScriptExit) -> None:
+        super().__init__(out.refusal)
+        self.out = out
+
+
 def _start(
     ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any]
 ) -> ScriptExit | None:
@@ -1205,6 +1218,10 @@ def _start(
     if isinstance(answer, dict) and answer.get("recorded") is True:
         run.started = True
         return None
+    if isinstance(answer, dict) and answer.get("code") == "unknown_script":
+        raise _Unregistered(
+            ScriptExit(Exit.REFUSED, refusal=str(answer.get("reason")), refusal_source="server")
+        )
     if isinstance(answer, dict) and answer.get("exit") == Exit.ALREADY_RAN.value:
         run.started = True
         return ScriptExit(
@@ -1217,12 +1234,19 @@ def _start(
     return ScriptExit(Exit.REFUSED, refusal=str(reason), refusal_source="server")
 
 
-def _end(ctx: _Context, run: _Run, play: dict[str, Any] | None, out: ScriptExit) -> RunResult:
+def _end(
+    ctx: _Context,
+    run: _Run,
+    play: dict[str, Any] | None,
+    out: ScriptExit,
+    *,
+    record: bool = True,
+) -> RunResult:
     """Fill the run's fields into `out`, post the run's finish (and its start,
-    if it never got one), and hand the result back."""
+    if it never got one) unless `record` is off, and hand the result back."""
     seat = ctx.seat
     state = seat.fetch_state()
-    if not run.started:
+    if record and not run.started:
         run.turn, run.step = state.get("turn_number"), state.get("step")
         started = _post_run(ctx, {**_run_fields(ctx, run, play), "phase": "start"})
         run.started = True
@@ -1242,6 +1266,8 @@ def _end(ctx: _Context, run: _Run, play: dict[str, Any] | None, out: ScriptExit)
     out.script_id, out.run_id = run.script_id, run.run_id
     out.moves_done, out.moves_total = done, total
     out.scripts_run = list(run.scripts_run)
+    if not record:
+        return RunResult(True, out, state=state)
     reapplicable = None
     if play is not None:
         reapplicable = "true" if _evaluate(ctx, play, state)["applies"] else "false"

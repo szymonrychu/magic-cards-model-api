@@ -881,6 +881,36 @@ def test_already_ran_from_the_start_route_is_surfaced(
     assert hook.posts("/actions/play-land") == []
 
 
+def test_a_script_dropped_from_the_corpus_after_the_read_is_refused_at_its_start(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runner resolves a script from the corpus it read once per `Seats`,
+    so the start route's `unknown_script` refusal is reachable only when the
+    seat registers a corpus without that script after that read. The run
+    exits refused in the server's words, naming the script, makes no move,
+    and posts no finish for a run the ledger never started."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop"))
+    add_card(client, board, "Island", "alice", "hand")
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    seats.script_corpora[(board, alice)] = client.get(
+        f"/api/games/{board}/seats/{alice}/scripts", params={"uid": alice}
+    ).json()
+    register(client, board, alice, land_script("other"))
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    out = result.script_exit
+    assert out.exit is Exit.REFUSED, result.to_dict()
+    assert out.refusal_source == "server"
+    assert "'drop'" in (out.refusal or "")
+    assert out.script_id == "drop"
+    assert hook.posts("/actions/play-land") == []
+    assert [body["phase"] for body in hook.posts("/script-runs")] == ["start"]
+    assert started(board) == [] and finished(board) == []
+
+
 # -- waiting --------------------------------------------------------------------
 
 

@@ -632,6 +632,41 @@ def inputs_errors(inputs: list[Any]) -> list[dict[str, str]]:
     return [PlaysError("malformed-inputs", "inputs", problem).to_dict() for problem in problems]
 
 
+class UnknownScript(Exception):
+    """Raised by `require_registered_script` when a `start` names a script no
+    corpus registered under the uid that runs it holds. `app.py` answers 404
+    with `code: unknown_script` and the `script_id`, and nothing is recorded:
+    the ledger holds runs of scripts somebody declared, never of a name."""
+
+    code = "unknown_script"
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        script_id = detail["script_id"]
+        super().__init__(
+            f"no script {script_id!r} is registered for {detail['seat']}'s {detail['role']} - "
+            "a run starts a script from the corpus registered under the uid that runs it "
+            "(PUT .../seats/{uid}/scripts), so this start did nothing"
+        )
+        self.script_id = script_id
+
+
+def require_registered_script(game_id: str, uids: list[str], detail: dict[str, Any]) -> None:
+    """Refuse a start of `detail['script_id']` unless the corpus registered
+    under one of `uids` holds it. `uids` follows the role separation the
+    route already enforces: a seat's run is checked against its seat uid's
+    corpus and an advisor's against its advisor uid's, never the other's."""
+    from .store import store
+
+    for uid in uids:
+        corpus = store.scripts(game_id, uid) or {}
+        if any(
+            isinstance(script, dict) and script.get("id") == detail["script_id"]
+            for script in corpus.get("scripts") or []
+        ):
+            return
+    raise UnknownScript(detail)
+
+
 class ScriptAlreadyRan(Exception):
     """Raised by `record_script_run_start` when this seat already started or
     finished this script at this turn and step. `app.py` answers 409 with
