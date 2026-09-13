@@ -1261,16 +1261,6 @@ def stamp_exile_turns(before: Game, after: Game) -> None:
 # -- equipping (CR 702.6) ---------------------------------------------------
 
 
-def equip_target_requirements(activation: Any) -> list[Any]:
-    """The targeting requirements of an equip activation, read by the engine's
-    own targeting parser off the ability CR 702.6a expands equip into
-    ("Attach this permanent to target creature you control.")."""
-    from magic_cards_model.machines.targeting import profile_for_text
-
-    profile = profile_for_text(activation.ability.effect)
-    return list(profile.requirements) if profile.understood else []
-
-
 def equip_permanent(game: Game, req: EquipRequest) -> Outcome:
     """CR 702.6a's equip ability, activated: pay its cost and put "attach this
     permanent to target creature you control" on the stack.
@@ -1294,10 +1284,6 @@ def equip_permanent(game: Game, req: EquipRequest) -> Outcome:
     refusal = activation.why_not()
     if refusal is not None:
         return refused(refusal)
-    for requirement in equip_target_requirements(activation):
-        rejected = requirement.rejects(target, req.player, game, equipment.id)
-        if rejected is not None:
-            return refused(f"{rejected} ({activation.rule})")
 
     payment = None
     try:
@@ -1676,9 +1662,9 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
 
     payment = None
     try:
-        # CR 602.2b runs CR 601.2c before CR 601.2h: the named targets (a card,
-        # a player, or an ability on the stack) are announced and checked by
-        # `begin_activating` before anything is paid.
+        # CR 602.2b runs CR 601.2c before CR 601.2h: the targets (a card, a
+        # player, or an ability on the stack) are announced (asked for, when
+        # none are given) and checked before anything is paid.
         targets = (
             [target_thing(game, token) for token in req.targets]
             if req.targets is not None
@@ -1716,7 +1702,6 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
             permanent,
             req.ability_index,
             req.player,
-            targets=targets,
             color=color,
             x_value=req.x_value or 0,
         )

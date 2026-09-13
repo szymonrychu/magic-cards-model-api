@@ -18,7 +18,6 @@ shape, built on top of it.
 from __future__ import annotations
 
 import time
-from uuid import UUID
 
 import httpx
 from conftest import _ADMIN_KEYS, add_card, find, state
@@ -453,7 +452,7 @@ def test_an_activated_ability_carries_its_slots_and_candidates(client, game):
     nothing at all. Battle 5's B5-10 (Goblin Bombardment) showed what that
     costs a seat, and CR 602.2b applies CR 601.2c's target announcement to an
     activation, so `action_rows` fills the slots from the engine's own
-    `Game._announcement_profile` and the candidates follow. The `-2` still
+    `Game.announcement_profile`, candidates and all, on the engine's row. The `-2` still
     carries none."""
     add_card(client, game, "Karn, the Great Creator", "alice", "battlefield")
     add_card(client, game, "Sol Ring", "bob", "battlefield")
@@ -482,13 +481,11 @@ def test_an_activated_ability_carries_its_slots_and_candidates(client, game):
     assert "targets" not in minus_two, minus_two
 
 
-def test_the_board_is_walked_once_per_request_not_once_per_action(client, game, monkeypatch):
-    """The design's own tripwire. Candidate enumeration is the expensive half
-    of `affordances.py` by that module's own admission, and it is only
-    affordable at all because the board is walked once for the whole request
-    and reused across every action - never once per action, which is the
-    N-round-trip shape T11 removed at the HTTP layer creeping back in one
-    layer down."""
+def test_the_api_walks_no_board_for_row_candidates(client, game, monkeypatch):
+    """The engine's `legal_actions` names every slot's candidates on the row
+    itself, so folding them into `targets` reads those lists and walks no
+    board of its own - never once per action, and not once per request
+    either."""
     for _ in range(3):
         add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
@@ -506,7 +503,7 @@ def test_the_board_is_walked_once_per_request_not_once_per_action(client, game, 
     enriched = targets_of(with_candidates(client, game))
 
     assert len(enriched) >= 3, [a["card_id"] for a in enriched]
-    assert len(walks) == 1, f"{len(walks)} walks for {len(enriched)} targeting actions"
+    assert walks == [], f"{len(walks)} api board walks for {len(enriched)} targeting actions"
 
 
 def test_candidate_enumeration_stays_within_its_measured_budget(client, game):
@@ -643,58 +640,22 @@ def test_the_face_is_read_on_a_second_split_card_with_a_different_phrase(client,
 
 
 def test_an_adventure_faces_own_targets_are_named_on_its_own_row(client, game):
-    """CR 715.3b: "While on the stack as an Adventure, the spell has only its
-    alternative characteristics." That is CR 709.3b's sentence about the other
-    layout that names a face, and CR 601.3e is the rule both instance:
-    "these alternative characteristics replace the object's characteristics
-    for this determination".
-
-    This decoration used to answer `understood: false` for an Adventure row
-    and say so in a note, because the engine's own reads were scoped to
-    `Layout.SPLIT` and there was no face-specific profile a candidate list
-    could be trusted against. Engine commit fd28021 keys all three of them on
-    the chosen face instead, so Stomp's "any target" is now both what
-    `Action.target_slots` advertises and what this enumerates - bob, alice and
-    bob's Bears, and never Bonecrusher Giant's own front-face trigger, which
-    targets nothing at all.
-    """
+    """Stomp's row carries Stomp's own "any target" slot - bob, alice and bob's
+    Bears - and never Bonecrusher Giant's front-face text, which targets
+    nothing. The engine reads the named face and names the candidates on the
+    row; a face the printing does not carry never gets a row at all."""
     add_card(client, game, "Mountain", "alice", "battlefield")
     add_card(client, game, "Bonecrusher Giant", "alice", "hand")
     add_card(client, game, "Grizzly Bears", "bob", "battlefield")
     giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
     bears = find(state(client, game)["battlefield"], "Grizzly Bears")
 
-    live = store.get(game)
-    source = affordances.find_source(live, UUID(giant["id"]))
+    (row,) = [
+        action
+        for action in with_candidates(client, game)
+        if action["card_id"] == giant["id"] and action.get("spell_face") == "Stomp"
+    ]
 
-    answer = affordances.target_candidates(live, source, "alice", face="Stomp")
-
-    assert answer["understood"] is True, answer
-    (slot,) = answer["slots"]
-    lines = " ".join(slot["candidates"])
-    assert bears["id"] in lines, slot
-    assert "alice" in lines and "bob" in lines, slot
-
-
-def test_a_face_the_card_does_not_print_says_so_instead_of_naming_the_cards_targets(client, game):
-    """The refusal that survives, and the only one left: a face name that is
-    no face of this printing. The engine's own announcement would refuse it
-    (`Casting.cast_as_split_half` / `cast_as_adventure` both do, in their own
-    words), so handing back the whole card's candidates would be enumerating
-    targets for a cast that cannot happen. `understood: false` plus a note
-    naming the face is what a seat is already told to read as "name targets
-    yourself" (`seatkit.TARGETS_NOTE`).
-    """
-    add_card(client, game, "Mountain", "alice", "battlefield")
-    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
-    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
-    giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
-
-    live = store.get(game)
-    source = affordances.find_source(live, UUID(giant["id"]))
-
-    answer = affordances.target_candidates(live, source, "alice", face="Shock")
-
-    assert answer["understood"] is False, answer
-    assert "Shock" in answer["note"], answer
-    assert "slots" not in answer, answer
+    (slot,) = row["target_slots"]
+    assert bears["id"] in slot["candidates"], slot
+    assert set(slot["player_candidates"]) == {"alice", "bob"}, slot

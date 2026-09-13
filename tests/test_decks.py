@@ -11,6 +11,7 @@ engine's legality check on.
 from __future__ import annotations
 
 from collections import Counter
+from pathlib import Path
 
 import pytest
 from magic_cards_model.machines import Step
@@ -18,6 +19,9 @@ from magic_cards_model.models import Match, Zone
 
 from magic_cards_model_api import serve
 from magic_cards_model_api.decks import load_deck_into_game, parse_decklist
+
+#: The real guide decklists this repo ships under `tests/fixtures/guides/`.
+GUIDE_DECKS_DIR = Path(__file__).parent / "fixtures" / "guides" / "decks"
 
 # Two 12-card lists over the four recorded fixture cards only.
 ALICE = "4 Mountain\n4 Grizzly Bears\n4 Lightning Bolt"
@@ -77,6 +81,62 @@ def test_set_bracket_and_collector_number_stripped() -> None:
     main, side = parse_decklist("4 Lightning Bolt [2X2] 129\n2 Mountain [MH3]")
     assert main == [(4, "Lightning Bolt"), (2, "Mountain")]
     assert side == []
+
+
+def test_blank_line_closes_the_mainboard_b8_05() -> None:
+    """B8-05: dimir-frog's real decklist.txt has no `Sideboard` header at all
+    - a blank line is the only boundary, exactly as mtg-decks' own
+    `scripts/decklist.py` documents ("the mainboard runs until the first
+    blank line or a `Sideboard` header, whichever comes first"). Before this
+    fix, a blank line was just skipped and every line after it kept landing
+    in the mainboard."""
+    main, side = parse_decklist("4 Lightning Bolt\n4 Grizzly Bears\n\n2 Mountain\n1 Forest")
+    assert main == [(4, "Lightning Bolt"), (4, "Grizzly Bears")]
+    assert side == [(2, "Mountain"), (1, "Forest")]
+
+
+def test_further_blank_lines_after_the_boundary_are_just_spacing() -> None:
+    """mtg-decks: "there is no third section" - once the blank line has
+    closed the mainboard, later blank lines are spacing inside the
+    sideboard, not a second boundary."""
+    main, side = parse_decklist("4 Lightning Bolt\n\n2 Mountain\n\n1 Forest")
+    assert main == [(4, "Lightning Bolt")]
+    assert side == [(2, "Mountain"), (1, "Forest")]
+
+
+def test_a_blank_line_before_any_content_is_not_a_boundary() -> None:
+    """Leading blank lines (or ones between comments, before any real entry)
+    do not prematurely close a mainboard that has not started yet."""
+    main, side = parse_decklist("\n\n4 Lightning Bolt\n4 Grizzly Bears")
+    assert main == [(4, "Lightning Bolt"), (4, "Grizzly Bears")]
+    assert side == []
+
+
+def test_explicit_sideboard_header_still_works_after_a_blank_line() -> None:
+    """The blank-line boundary and the explicit `Sideboard` header agree:
+    a file that has both (most of this repo's bundled guide decks do) parses
+    exactly the same as one with only the blank line."""
+    main, side = parse_decklist("4 Lightning Bolt\n\nSideboard\n1 Mountain")
+    assert main == [(4, "Lightning Bolt")]
+    assert side == [(1, "Mountain")]
+
+
+@pytest.mark.parametrize(
+    "slug",
+    ["dimir-frog", "living-end", "affinity", "boros-aggro", "orzhov-martyr", "prison-tron"],
+)
+def test_guide_decklists_match_mtg_decks_own_parser_counts(slug: str) -> None:
+    """Every real decklist this repo ships under `tests/fixtures/guides/`
+    parses to 60 mainboard + 15 sideboard - verified in this session against
+    mtg-decks' own `scripts/decklist.py` (`load_decklist(...).mainboard_count`/
+    `.sideboard_count`), which is the canonical parser these guide decks are
+    written for. `dimir-frog` is the one with no `Sideboard` header at all
+    (B8-05's exact repro, a blank line only); the rest also carry the header,
+    proving the blank-line fix does not disturb the header-only files."""
+    text = (GUIDE_DECKS_DIR / slug / "decklist.txt").read_text()
+    main, side = parse_decklist(text)
+    assert sum(count for count, _ in main) == 60, (slug, main)
+    assert sum(count for count, _ in side) == 15, (slug, side)
 
 
 def test_garbage_line_raises_with_the_line_quoted() -> None:

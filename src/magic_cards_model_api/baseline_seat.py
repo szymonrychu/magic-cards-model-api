@@ -321,7 +321,7 @@ def _plain_cast(action: dict[str, Any]) -> bool:
     engine reads the announced face into `target_slots`, and not before" - is
     what came true. Engine commit fd28021 made the chosen face the
     discriminator on every casting path (CR 601.3e), so
-    `Game._announcement_profile` takes a `spell_face` and both the
+    `Game.announcement_profile` takes a `spell_face` and both the
     `target_slots` shape on a row and the candidates the api folds into it
     (`app._attach_target_candidates`, `affordances._face_profile`) are that
     face's own: the Tear row says "target enchantment" rather than Wear's
