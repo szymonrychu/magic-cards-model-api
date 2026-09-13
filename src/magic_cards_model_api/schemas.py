@@ -12,7 +12,14 @@ from uuid import UUID
 
 from magic_cards_model.models import Action, Card
 from magic_cards_model.models.action import ActionKind
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    WithJsonSchema,
+    model_validator,
+)
 
 
 class RequestModel(BaseModel):
@@ -423,10 +430,17 @@ class ScriptsRegisterIn(RequestModel):
     guides_revision: Stated
     """The guides checkout revision they were read at."""
     scripts: list[dict[str, Any]]
-    inputs: list[dict[str, Any]] = Field(default_factory=list)
+    inputs: Annotated[
+        Any,
+        WithJsonSchema(
+            {"type": "array", "items": {"type": "object", "additionalProperties": True}}
+        ),
+    ] = Field(default_factory=list)
     """The deck's declared inputs, `decks/<slug>/plays/inputs.json`'s
     `inputs` list, judged by `playscripts.inputs` and refused as
-    `malformed-inputs`. Empty when the deck declares none."""
+    `malformed-inputs`. Empty when the deck declares none. Typed `Any` for the
+    same reason as `scripts`: a value that is not a list of objects reaches
+    `records.inputs_errors` and is refused in its words, not pydantic's."""
 
 
 class ScriptsRegisteredResponse(BaseModel):

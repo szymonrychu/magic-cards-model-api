@@ -435,6 +435,36 @@ def test_malformed_declared_inputs_refuse_the_corpus(client: TestClient, game: s
     assert store.scripts(game, alice) is None
 
 
+@pytest.mark.parametrize(
+    ("inputs", "message"),
+    [
+        ({"x": 1}, "inputs must be a list"),
+        ("nope", "inputs must be a list"),
+        (None, "inputs must be a list"),
+        ([1], "inputs[0]: must be an object"),
+    ],
+)
+def test_inputs_of_the_wrong_shape_refuse_as_malformed_inputs(
+    client: TestClient, game: str, inputs: Any, message: str
+) -> None:
+    """B6-01: an `inputs` that is not a list of objects is judged by
+    `playscripts.inputs` like any other malformed declaration, not refused by
+    pydantic's generic `loc: [body, inputs]` 422 before the route sees it."""
+    alice = seat_uid(game, "alice")
+
+    put = client.put(
+        f"/api/games/{game}/seats/{alice}/scripts",
+        params={"uid": alice},
+        json={**corpus(), "inputs": inputs},
+    )
+
+    assert put.status_code == 422, put.text
+    body = put.json()
+    assert body.get("code") == "invalid_scripts", body
+    assert body["errors"] == [{"code": "malformed-inputs", "path": "inputs", "message": message}]
+    assert store.scripts(game, alice) is None
+
+
 # ---------------------------------------------------------------------------
 # the kill switch
 # ---------------------------------------------------------------------------
