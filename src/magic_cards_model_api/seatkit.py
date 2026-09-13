@@ -160,19 +160,7 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-19"
-#: `seatkit-19` is an **additive response** change. Every `actions[]` entry's
-#: `target_slots[]` now carries the engine's own `candidates` (object ids) and
-#: `player_candidates` (usernames) beside `phrase`/`minimum`/`maximum`, on a
-#: cast row and on every activation row - battlefield, loyalty, off-zone and
-#: equip alike - and the `targets` block is written from those same lists
-#: rather than from a second walk of the board, so a candidate listed is one
-#: the announcement accepts. The equip row is now the engine's own (`keyword:
-#: Equip`, no `ability_index`), still served as `kind: equip`, listed once and
-#: priced. A `seatkit-18` process reads every key it knew and ignores the two
-#: new ones, so nothing it sends is refused; the number moves because the
-#: response shape did.
-#:
+PROTOCOL_VERSION = "seatkit-18"
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
 #: legal-action row of kind `equip`, and rows gaining `printed_cost`,
@@ -222,6 +210,17 @@ PROTOCOL_VERSION = "seatkit-19"
 #: marker now sees power, toughness, keywords, controller, player counters
 #: and the stack. An older process passes the new fields through untouched,
 #: so a seat on it simply does not see them.
+#:
+#: Engine M1e (task S1) also rides `seatkit-18`, additive response only.
+#: Every `actions[]` entry's `target_slots[]` carries the engine's own
+#: `candidates` (object ids) and `player_candidates` (usernames) beside
+#: `phrase`/`minimum`/`maximum`, on a cast row and on every activation row -
+#: battlefield, loyalty, off-zone and equip alike - and the `targets` block
+#: is written from those same lists rather than a second walk of the board,
+#: so a candidate listed is one the announcement accepts. The equip row is
+#: the engine's own (`keyword: Equip`, no `ability_index`), still served as
+#: `kind: equip`, listed once and priced. An older process ignores the two
+#: new keys, so nothing it sends is refused.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
