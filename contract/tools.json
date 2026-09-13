@@ -553,6 +553,61 @@
       ]
     },
     {
+      "docstring_first_line": "Equip: attach an Equipment you control to a creature you control,",
+      "name": "equip",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "card_id",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "target",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "mana_sources",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "dry_run",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": false,
+          "has_default": true,
+          "name": "hold_priority",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "CR 116.2h/702.143b: pay {2} and exile a card with foretell from",
       "name": "foretell",
       "parameters": [

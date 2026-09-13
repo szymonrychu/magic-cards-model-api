@@ -1534,6 +1534,64 @@ def build_server(seats: Seats) -> MCPServer:
 
     @server.tool()
     @_guarded(seats)
+    def equip(
+        player_uid: str,
+        card_id: str,
+        target: str,
+        mana_sources: str = "",
+        dry_run: bool = False,
+        hold_priority: bool = False,
+        reasoning: str = "",
+        ctx: Context | None = None,
+    ) -> str | InputRequiredResult:
+        """Equip: attach an Equipment you control to a creature you control,
+        paying its equip cost. CR 702.6a: "Equip [cost]" means "[Cost]: Attach
+        this permanent to target creature you control. Activate only as a
+        sorcery." - your main phase, with the stack empty (CR 307.5).
+
+        `card_id` is the Equipment; `target` is the creature's id. A legal
+        equip is listed in your legal actions as a row of kind `equip`, with
+        its cost and its target candidates. `mana_sources` is comma-separated
+        source ids; leave it empty to offer all your untapped mana sources.
+
+        This is the tool for equip, not `activate`: equip is a keyword ability,
+        so the Equipment's `abilities` list has no index for it.
+
+        The ability uses the stack, so this releases priority and then checks
+        once for your next moment to act, unless `hold_priority` is true - the
+        Equipment attaches when the ability resolves. Never blocks or waits;
+        see `cast`'s docstring for the shape of the answer."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        state = seat.fetch_state()
+        body: dict[str, Any] = {
+            "player": seat.player,
+            "card_id": card_id,
+            "target": target,
+            "dry_run": dry_run,
+        }
+        sources = seat.sources_or_all(mana_sources, state)
+        if sources:
+            body["mana_sources"] = sources
+        if reasoning:
+            body["reasoning"] = reasoning
+        if dry_run:
+            return seat.call("POST", f"/api/games/{seat.game_id()}/actions/equip", body)
+
+        def perform() -> Any:
+            return seat.call_json("POST", f"/api/games/{seat.game_id()}/actions/equip", body)
+
+        return act(
+            seat,
+            perform,
+            hold_priority,
+            reasoning=reasoning,
+            protocol_version=ctx.protocol_version if ctx is not None else None,
+        )
+
+    @server.tool()
+    @_guarded(seats)
     def declare_attackers(
         player_uid: str,
         attackers: str,

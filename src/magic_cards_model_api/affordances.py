@@ -102,7 +102,7 @@ from magic_cards_model.machines.targeting import (
 )
 from magic_cards_model.models import Card, CardState, Game, Player, Zone
 
-from .engine_api import dry_run_copy
+from .engine_api import dry_run_copy, equip_target_requirements
 
 #: Zones whose contents a spell or ability can realistically be asked to
 #: target, and which every seat may see anyway (CR 400.2's public zones, plus
@@ -198,7 +198,9 @@ def ability_hints(
     hints: dict[str, Any] = {
         "cost": cost,
         "needs_x": _needs_x(cost),
-        "is_mana_ability": getattr(ability, "mana", None) is not None,
+        # CR 605.1a: "it's not a loyalty ability" - Ugin's `0: Add {C}{C}{C}`
+        # adds mana and still uses the stack.
+        "is_mana_ability": (getattr(ability, "mana", None) is not None and loyalty is None),
     }
     if loyalty is not None:
         # CR 107.7's `[+N]`/`[0]`/`[-N]`. `amount` is signed, so the sign is
@@ -660,8 +662,21 @@ def target_candidates(
     if not profile.requirements:
         return {"understood": True, "slots": []}
 
-    listed: list[list[str]] = [[] for _ in profile.requirements]
-    counts = [0] * len(profile.requirements)
+    return _candidate_block(game, state, caster, list(profile.requirements), targetables)
+
+
+def _candidate_block(
+    game: Game,
+    state: CardState,
+    caster: str,
+    requirements: list[Any],
+    targetables: list[Any] | None,
+) -> dict[str, Any]:
+    """Per requirement slot, every object `TargetRequirement.rejects` lets
+    `state`'s announcement name - `target_candidates`' answer once its
+    requirements are known."""
+    listed: list[list[str]] = [[] for _ in requirements]
+    counts = [0] * len(requirements)
     for thing in all_targetables(game) if targetables is None else targetables:
         if thing is state and state.zone is not Zone.STACK:
             # Same exclusion `candidates` makes, for the same reason: the
@@ -669,7 +684,7 @@ def target_candidates(
             # not a candidate for its own "target other" clauses.
             continue
         line: str | None = None
-        for index, requirement in enumerate(profile.requirements):
+        for index, requirement in enumerate(requirements):
             if requirement.rejects(thing, caster, game, state.id) is not None:
                 continue
             counts[index] += 1
@@ -691,6 +706,25 @@ def target_candidates(
     if truncated_anywhere:
         block["more_with"] = MORE_CANDIDATES_WITH
     return block
+
+
+def equip_target_candidates(
+    game: Game, equipment: CardState, caster: str, *, targetables: list[Any] | None = None
+) -> dict[str, Any]:
+    """What an Equipment's equip ability may target (CR 702.6a: "target
+    creature you control"), per slot - the requirements the engine's targeting
+    parser reads off the ability `equip_activation` builds, never the
+    Equipment's own printed text, which carries no equip target at all."""
+    from magic_cards_model.machines.keywords import equip_activation
+
+    try:
+        activation = equip_activation(game, equipment, equipment, caster)
+    except ValueError as exc:
+        return {"understood": False, "note": f"{UNREADABLE_TARGETING} ({exc})"}
+    requirements = equip_target_requirements(activation)
+    if not requirements:
+        return {"understood": False, "note": UNREADABLE_TARGETING}
+    return _candidate_block(game, equipment, caster, requirements, targetables)
 
 
 def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[str, Any]]:

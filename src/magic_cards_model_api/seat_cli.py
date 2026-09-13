@@ -342,6 +342,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     priority_flag(cycle)
 
+    equip = sub.add_parser(
+        "equip",
+        help=(
+            "CR 702.6a: attach an Equipment you control to target creature you "
+            "control, paying its equip cost. Only as a sorcery (CR 307.5). It "
+            "uses the stack, so it releases priority unless --hold"
+        ),
+    )
+    equip.add_argument("card_id", help="the Equipment's id")
+    equip.add_argument("--target", required=True, help="the id of the creature to equip")
+    equip.add_argument(
+        "--sources",
+        default="",
+        help="comma-separated mana source ids (default: all your untapped sources)",
+    )
+    equip.add_argument(
+        "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
+    )
+    priority_flag(equip)
+
     land = sub.add_parser("play-land", help="play a land from your hand")
     land.add_argument("card", help="card name or id")
     priority_flag(land)
@@ -885,6 +905,22 @@ def run(argv: list[str] | None = None) -> int:
             body["reasoning"] = args.reasoning
         act(
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
+            dry_run=args.dry_run,
+        )
+    elif args.command == "equip":
+        body = {
+            "player": seat.player,
+            "card_id": args.card_id,
+            "target": args.target,
+            "dry_run": args.dry_run,
+        }
+        sources = sources_or_all(args.sources)
+        if sources:
+            body["mana_sources"] = sources
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
+        act(
+            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/equip", body),
             dry_run=args.dry_run,
         )
     elif args.command == "play-land":

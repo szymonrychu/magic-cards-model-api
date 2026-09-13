@@ -581,7 +581,7 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
 def _player_view(player: Player, counters: dict[str, int] | None = None) -> dict[str, Any]:
     """One seat's own block. `counters`, when given, replaces the committed
     player's own - `state_view` hands in the ones a paused command is
-    standing on (`_counters_at_pause`).
+    standing on (`_paused_overlay`).
 
     No `decklist` or `agent` field any more (2b's T8, map's S6): both used to
     be read here from lobby-owned state (`store.decklists`/
@@ -853,40 +853,79 @@ def unloadable_game_summary(game_id: str, reason: str, *, seat_count: int) -> di
     }
 
 
-#: `_counters_at_pause`'s answers, keyed by what makes one stale: the game, the
+#: `_paused_overlay`'s answers, keyed by what makes one stale: the game, the
 #: standing question's generation (bumped by every new pause), and the
-#: committed counters the replay started from. A poll repeats the key for as
-#: long as one question stands, so the replay runs once per question.
-_PAUSED_COUNTERS: dict[tuple[str, int, str], dict[str, dict[str, int]]] = {}
-_PAUSED_COUNTERS_LIMIT = 64
+#: committed board the replay started from (`_committed_signature`). A poll
+#: repeats the key for as long as one question stands, so the replay runs once
+#: per question.
+_PAUSED_OVERLAYS: dict[tuple[str, int, str], dict[str, Any]] = {}
+_PAUSED_OVERLAYS_LIMIT = 64
 
 
-def _counters_at_pause(game_id: str, game: Game, paused: Any) -> dict[str, dict[str, int]]:
-    """Each player's counters on the board a paused command is standing on,
-    or `{}` when nothing is paused (or the replay no longer pauses).
+def _committed_signature(game: Game) -> str:
+    """What an overlay was read against: board-setup routes mutate the
+    committed game in place, so a stale overlay must not outlive them."""
+    turn = game.turn
+    return repr(
+        (
+            sorted((p.username, sorted(p.counters.root.items())) for p in game.players),
+            sorted(
+                (str(card.id), sorted(card.counters.root.items()))
+                for card in game.shared_zones.get(Zone.BATTLEFIELD, [])
+                if isinstance(card, CardState)
+            ),
+            turn.turn_number if turn is not None else None,
+            turn.step.value if turn is not None else None,
+            turn.active_index if turn is not None else None,
+            game.priority.holder if game.priority is not None else None,
+        )
+    )
 
-    CR 122.1 puts counters "on an object or player", and CR 107.14's energy is
-    one: "To pay {E}, a player removes one energy counter from themselves." A
-    pause is never committed (`commands.board_at_pause`), so without this the
-    view showed the counters from before the command - `{}` while Galvanic
-    Discharge asked how much of the energy it had just given to pay.
+
+def _paused_overlay(game_id: str, game: Game, paused: Any) -> dict[str, Any]:
+    """The turn position, priority holder and counters of the board a paused
+    command is standing on, or `{}` when nothing is paused (or the replay no
+    longer pauses).
+
+    A pause is never committed (`commands.board_at_pause`), so without this a
+    read showed the board from before the command:
+
+    - CR 122.1 puts counters "on an object or player", and CR 107.14's energy is
+      one - `{}` while Galvanic Discharge asked how much of the energy it had
+      just given to pay (battle 2, B2-16).
+    - CR 714.3c adds a Saga's lore counter "as the precombat main phase begins"
+      - two Urza's Sagas read `draw`, lore 1, with the precombat main phase's
+      chapter triggers being ordered, and the priority holder was the seat
+      whose pass began that step (battle 3, B3-08), so a helper posted a pass
+      the engine refused.
     """
     if paused is None:
         return {}
     command, tape, _ = paused
-    committed = repr(sorted((p.username, sorted(p.counters.root.items())) for p in game.players))
-    key = (game_id, store.pause_generation(game_id), committed)
-    cached = _PAUSED_COUNTERS.get(key)
+    key = (game_id, store.pause_generation(game_id), _committed_signature(game))
+    cached = _PAUSED_OVERLAYS.get(key)
     if cached is None:
         board = commands.board_at_pause(game, command, tape)
-        cached = (
-            {player.username: dict(player.counters.root) for player in board.players}
-            if board is not None
-            else {}
-        )
-        if len(_PAUSED_COUNTERS) >= _PAUSED_COUNTERS_LIMIT:
-            _PAUSED_COUNTERS.clear()
-        _PAUSED_COUNTERS[key] = cached
+        cached = {}
+        if board is not None:
+            turn = board.turn
+            cached = {
+                "player_counters": {
+                    player.username: dict(player.counters.root) for player in board.players
+                },
+                "card_counters": {
+                    str(card.id): dict(card.counters.root)
+                    for card in board.shared_zones.get(Zone.BATTLEFIELD, [])
+                    if isinstance(card, CardState)
+                },
+                "turn_number": turn.turn_number if turn is not None else None,
+                "step": turn.step if turn is not None else None,
+                "active_player": turn.players[turn.active_index] if turn is not None else None,
+                "priority_holder": board.priority.holder if board.priority is not None else None,
+            }
+        if len(_PAUSED_OVERLAYS) >= _PAUSED_OVERLAYS_LIMIT:
+            _PAUSED_OVERLAYS.clear()
+        _PAUSED_OVERLAYS[key] = cached
     return cached
 
 
@@ -916,12 +955,14 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # trigger's target question comes after CR 601.2a put the card on the
     # stack and CR 601.2h paid its cost (B2-13, `commands.paused_board`).
     # Nothing is committed by reading it. Resolution and turn-based pauses
-    # keep serving the committed board - `advance`'s own docstring and
-    # `seatkit.pass_until`'s stops read the step `advance` was called from.
+    # keep the committed board's objects, but take the paused board's turn
+    # position, priority holder and counters (`_paused_overlay`, B2-16 and
+    # B3-08): the question stands in the step it was asked in.
     paused = store.paused_command(game_id)
     committed = game
     if paused is not None and paused[0].kind in commands.ANNOUNCING_KINDS:
         game = commands.paused_board(game, *paused) or game
+    overlay = _paused_overlay(game_id, committed, paused) if game is committed else {}
     images = _images_for(game)
 
     def views(cards: list[StackObject]) -> list[dict[str, Any]]:
@@ -929,6 +970,14 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
 
     turn = game.turn
     step = turn.step if turn is not None else Step.UNTAP
+    turn_number = turn.turn_number if turn is not None else None
+    active_player = turn.players[turn.active_index] if turn is not None else None
+    priority_holder = game.priority.holder if game.priority is not None else None
+    if overlay:
+        step = overlay["step"] or step
+        turn_number = overlay["turn_number"]
+        active_player = overlay["active_player"]
+        priority_holder = overlay["priority_holder"]
     # The pending decision a paused command is waiting to resume, if any -
     # read from the repository's own paused-command slot (`commands.py`,
     # `repository.store_paused_command`) rather than a live mailbox: a
@@ -940,10 +989,15 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         if paused is not None
         else None
     )
-    # The player counters that question is asked with (`_counters_at_pause`):
-    # `committed` is the board from before the paused command, which never shows
-    # Galvanic Discharge's three energy while it asks how many to pay.
-    paused_counters = _counters_at_pause(game_id, committed, paused)
+    # The counters that question is asked with (`_paused_overlay`): `committed`
+    # is the board from before the paused command, which never shows Galvanic
+    # Discharge's three energy while it asks how many to pay.
+    paused_counters = overlay.get("player_counters", {})
+    battlefield_views = views(game.shared_zones.get(Zone.BATTLEFIELD, []))
+    for card_view in battlefield_views:
+        card_counters = overlay.get("card_counters", {}).get(card_view["id"])
+        if card_counters is not None:
+            card_view["counters"] = card_counters
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
     # CR 500.1 makes a phase part of a turn, and the engine's two pregame steps
     # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) run before CR 103.8's first
@@ -954,18 +1008,18 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     return {
         "game_id": game_id,
         "pending_decision": pending.to_view() if pending is not None else None,
-        "turn_number": turn.turn_number if turn is not None else None,
+        "turn_number": turn_number,
         "step": step.value,
         "phase": phase.value if phase is not None else None,
         # What CR 103.5/CR 103.6 are waiting for, or `None` once the game has
         # reached its first turn - see `opening.pregame_view`.
         "pregame": pregame_view(game),
-        "active_player": turn.players[turn.active_index] if turn is not None else None,
-        "priority_holder": game.priority.holder if game.priority is not None else None,
+        "active_player": active_player,
+        "priority_holder": priority_holder,
         "players": [
             _player_view(player, paused_counters.get(player.username)) for player in game.players
         ],
-        "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
+        "battlefield": battlefield_views,
         "stack": _stack_view(game, images),
         "exile": exile_views,
         # CR 406.4's marked piles - suspended cards (with their time counters,
