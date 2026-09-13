@@ -248,8 +248,46 @@ function patchPermissions(container, permissions, onClick) {
   );
 }
 
+/** This seat's own `known_cards` entry. `serialize.py`'s `_known_cards_view`
+ * keys it by the player who knows, and the redaction hands each viewer only
+ * its own, so everything known about any player's hidden cards is in here. */
+function knownByYou(state) {
+  const known = state.known_cards && state.known_cards[state.you];
+  return known || { hand: [], library: [], sideboard: [] };
+}
+
+/** The opponent's hand as this seat sees it: every card it knows is there,
+ * face up, then a card back for each card it does not know. A hand holds only
+ * its owner's cards, so the known ones are those `opp` owns. `hand_count` is
+ * how many cards the hand really holds, so a known list longer than that is a
+ * stale or broken view: it is clamped, with a warning, rather than drawing
+ * cards that are not there. */
+function opponentHandItems(state, opp) {
+  let known = (knownByYou(state).hand || []).filter((card) => card.owner === opp.username);
+  if (known.length > opp.hand_count) {
+    console.warn(
+      `known_cards lists ${known.length} cards in ${opp.username}'s hand, which holds ${opp.hand_count}; drawing only ${opp.hand_count}`
+    );
+    known = known.slice(0, opp.hand_count);
+  }
+  const items = known.map((card) => ({ key: card.id, card }));
+  for (let i = known.length; i < opp.hand_count; i++) items.push({ key: `back-${i}`, card: null });
+  return items;
+}
+
+/** The known top card of `username`'s library, as its `known_cards` record
+ * (`{index_from_top, source, card}`), or `null` when the top is unknown. */
+function knownLibraryTop(state, username) {
+  return (
+    (knownByYou(state).library || []).find(
+      (record) => record.index_from_top === 0 && record.card && record.card.owner === username
+    ) || null
+  );
+}
+
 function infoRow(el, app, player) {
   const opts = targetingOpts(app, player.username);
+  const top = knownLibraryTop(app.state, player.username);
   el.classList.toggle("targetable", opts.targetable);
   el.classList.toggle("chosen", opts.chosen);
   el.classList.toggle("dimmed", opts.dimmed);
@@ -265,6 +303,10 @@ function infoRow(el, app, player) {
       `hand ${player.hand_count} / library ${player.library_count} / graveyard ${player.graveyard_count}`
     )
   );
+  if (top) {
+    const title = top.source ? `${top.card.name} (known from ${top.source})` : top.card.name;
+    el.appendChild(h("span", { class: "known-top", title }, `top: ${top.card.name}`));
+  }
   // `manaPoolNodes` already returns its own `span.pool` - wrapping it in a
   // second one nested `.pool` inside `.pool` for no reason.
   el.appendChild(manaPoolNodes(app.symbols, player.mana_pool));
@@ -314,10 +356,14 @@ export function mountBoard(root, store, handlers) {
     infoRow(els.youInfo, app, me);
     patchChildren(
       els.oppHand,
-      Array.from({ length: opp.hand_count }, (_, i) => ({ id: `back-${i}` })),
-      (c) => c.id,
-      () => cardBackNode(),
-      () => {}
+      opponentHandItems(state, opp),
+      (item) => item.key,
+      (item) => (item.card ? cardNode(item.card, "card-sm", {}) : cardBackNode()),
+      (el, item) => {
+        if (!item.card) return;
+        updateCardNode(el, item.card, {});
+        el.classList.add("card--known");
+      }
     );
     // Lands nearest their own controller, everything else in the row further
     // from them - so `#opp-lands` sits directly under the opponent's hand at

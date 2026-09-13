@@ -24,6 +24,20 @@
   --opp: #d4685f;
   --card-radius: 5px;
   --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  /* A hidden card this seat knows (`known_cards`): an opponent's hand card
+     drawn face up, or the known top of a library. Its own hue, so it never
+     reads as a targeting, pinned, or combat outline. */
+  --known: #c79bff;
+  --known-ink: #1a1026;
+}
+
+/* A light colour scheme darkens the known hue so the known outline and chip
+   still stand apart from a normal card against a light page. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --known: #6f35c4;
+    --known-ink: #ffffff;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -349,6 +363,15 @@ h3 { font-size: 14px; }
 .info-row .life { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .info-row .life.low { color: var(--bad); }
 .info-row .counts { color: var(--ink-dim); font-size: 12px; margin-left: auto; }
+/* The known top card of this player's library, beside its library count. */
+.info-row .known-top {
+  font-size: 11px;
+  border: 1px solid var(--known);
+  color: var(--known);
+  border-radius: 999px;
+  padding: 1px 7px;
+  cursor: help;
+}
 .info-row .pool { display: flex; align-items: center; gap: 4px; font-size: 12px; }
 .info-row .pool.empty { color: var(--ink-faint); }
 .info-row .pcounter {
@@ -736,6 +759,27 @@ h3 { font-size: 14px; }
     radial-gradient(circle at 50% 40%, #3a3050 0%, #201a2c 62%, #14101c 100%);
   border: 2px solid #4a3f63;
   flex: 0 0 auto;
+}
+
+/* An opponent's hand card this seat knows, drawn face up among the card
+   backs: a ring and a corner label in the known hue, so it never passes for
+   a card in your own hand or on the battlefield. */
+.card--known {
+  box-shadow: 0 0 0 2px var(--known);
+}
+.card--known::after {
+  content: "known";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--known);
+  color: var(--known-ink);
+  pointer-events: none;
 }
 
 /* Badges. Everything the art itself cannot tell you: what the card *is* now

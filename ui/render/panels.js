@@ -445,8 +445,10 @@ export function openZonesModal(root, app, handlers) {
  * exists nowhere else on the view) - keyed by id, fresh on each hover rather
  * than kept live, so a card that only exists because of a permission still
  * previews correctly. The decision's cards go in first, so a card that is
- * also on the board previews as its board view. */
-function hoverableCards(state) {
+ * also on the board previews as its board view. The opponent's hand cards
+ * this seat knows (`known_cards[you].hand`) are drawn face up on the board,
+ * so they preview like any other visible card. */
+export function hoverableCards(state) {
   const lookup = {};
   const add = (card) => {
     if (card && card.id) lookup[card.id] = card;
@@ -459,6 +461,7 @@ function hoverableCards(state) {
   (state.exile_pile || []).forEach(add);
   (state.command || []).forEach(add);
   ((state.hands && state.hands[state.you]) || []).forEach(add);
+  ((state.known_cards && state.known_cards[state.you] && state.known_cards[state.you].hand) || []).forEach(add);
   Object.values(state.graveyards || {}).forEach((cards) => (cards || []).forEach(add));
   ((state.play_permissions && state.play_permissions[state.you]) || []).forEach((p) => add(p.card));
   return lookup;

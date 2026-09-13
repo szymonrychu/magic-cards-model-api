@@ -2995,3 +2995,4 @@ whoever works on the repo itself.
   when no v2 payload exists. `A.begin` seeds `holdPriority: null`, meaning the
   casting strip's tick follows the standing default until touched. Agent and
   REST defaults (`hold_priority=false`) are deliberately unchanged.
+- 2026-09-13 A2: the board reads the opponent's known hand as `known_cards[you].hand` filtered by `owner`, not `known_cards[opp]` - the view is keyed by the knower and redacted to the viewer's own entry, so `known_cards[opp]` is never present. Known library records now carry `source` (engine `KnownCard.source`, a non-string is coerced to None by `redact_view`) so the top-card chip can name what showed it. The known hue is a `--known` token with a `prefers-color-scheme: light` override.

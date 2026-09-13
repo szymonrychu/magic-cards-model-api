@@ -241,6 +241,7 @@ def test_a_bauble_look_shows_alice_the_card_and_tells_bob_nothing(client, game):
     alice_known = view(client, game, uids["alice"])["known_cards"]["alice"]
     (record,) = alice_known["library"]
     assert record["index_from_top"] == 0
+    assert record["source"] == "Mishra's Bauble"
     assert record["card"]["name"] == "Lightning Bolt"
     assert record["card"]["owner"] == "bob"
     assert record["card"]["id"] == str(card_in(game, "Lightning Bolt", "bob", Zone.LIBRARY).id)
@@ -504,6 +505,8 @@ def test_redact_view_drops_malformed_known_cards_data_fail_closed():
                     {"card": card},
                     {"index_from_top": "0", "card": card},
                     {"index_from_top": 1},
+                    {"index_from_top": 2, "source": ["not", "a", "name"], "card": card},
+                    {"index_from_top": 3, "source": "Mishra's Bauble", "card": card},
                 ],
             },
             "bob": {"hand": [card], "library": [], "sideboard": []},
@@ -513,7 +516,15 @@ def test_redact_view_drops_malformed_known_cards_data_fail_closed():
 
     as_alice = visibility.redact_view(raw, "alice")["known_cards"]
     assert as_alice == {
-        "alice": {"hand": [card], "library": [{"index_from_top": 0, "card": card}], "sideboard": []}
+        "alice": {
+            "hand": [card],
+            "library": [
+                {"index_from_top": 0, "source": None, "card": card},
+                {"index_from_top": 2, "source": None, "card": card},
+                {"index_from_top": 3, "source": "Mishra's Bauble", "card": card},
+            ],
+            "sideboard": [],
+        }
     }
 
     raw_missing = {**raw, "known_cards": {"alice": None, "bob": "garbage"}}

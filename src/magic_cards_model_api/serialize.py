@@ -882,7 +882,13 @@ def _known_cards_view(
             if entry.zone is Zone.LIBRARY:
                 if entry.index_from_top is None:
                     continue
-                block["library"].append({"index_from_top": entry.index_from_top, "card": card_view})
+                block["library"].append(
+                    {
+                        "index_from_top": entry.index_from_top,
+                        "source": entry.source,
+                        "card": card_view,
+                    }
+                )
             else:
                 block[entry.zone.value].append(card_view)
         block["library"].sort(key=lambda record: record["index_from_top"])

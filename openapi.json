@@ -5246,6 +5246,17 @@
           "index_from_top": {
             "title": "Index From Top",
             "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
           }
         },
         "required": [

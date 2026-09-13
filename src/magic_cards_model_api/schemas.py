@@ -1525,6 +1525,8 @@ class KnownLibraryCardView(BaseModel):
     (`serialize._known_cards_view`; CR 701.20d ends it on a reordering)."""
 
     index_from_top: int
+    source: str | None = None
+    """The name of what showed the card (`KnownCard.source`), when recorded."""
     card: CardView
 
 

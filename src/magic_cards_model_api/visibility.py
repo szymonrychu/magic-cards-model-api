@@ -206,7 +206,14 @@ def _redact_known_cards(known: Any, viewer: Viewer) -> dict[str, Any]:
         card = record.get("card")
         if type(index) is not int or not isinstance(card, dict) or not card.get("id"):
             continue
-        library.append({"index_from_top": index, "card": _redact_known_card(card, viewer)})
+        source = record.get("source")
+        library.append(
+            {
+                "index_from_top": index,
+                "source": source if isinstance(source, str) else None,
+                "card": _redact_known_card(card, viewer),
+            }
+        )
     return {viewer: {"hand": cards("hand"), "library": library, "sideboard": cards("sideboard")}}
 
 
