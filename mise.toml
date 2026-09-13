@@ -38,6 +38,9 @@ uv run pytest
 [tasks."tools:export"]
 description = "Write contract/tools.json from mcp.py's @server.tool() registrations (T3): the artifact tests/test_prompt_matches_tools.py checks driver/prompt.py's prose against. Deterministic - run twice, git status stays clean."
 run = "uv run python scripts/export_tools.py"
+[tasks."playscript:export"]
+description = "Write contract/playscript.schema.json from playscripts/schema.py's Play model: the JSON Schema a decks/<slug>/plays/<id>.json script must satisfy, checked by tests/test_playscript_export_drift.py. Deterministic - run twice, git status stays clean."
+run = "uv run python scripts/export_playscript_schema.py"
 [tasks."openapi:dump"]
 description = "Regenerate the committed openapi.json from the live FastAPI app - the fix for a red test_openapi_drift.py"
 run = "uv run python scripts/dump_openapi.py"

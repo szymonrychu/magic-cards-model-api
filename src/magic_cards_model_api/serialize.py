@@ -90,6 +90,19 @@ def _current_characteristics(game: Game, state: CardState) -> tuple[str, int | N
     return type_line, characteristics.power, characteristics.toughness
 
 
+def _current_colors(game: Game, state: CardState) -> list[str]:
+    """This object's colors right now, as color letters - the computed board's
+    on the battlefield (a color-setting effect shows), `CardState.colors`
+    anywhere else, the same split `_current_characteristics` makes. Read from
+    the engine so a play script's `colors_any` never re-derives color from a
+    mana cost."""
+    if state.zone is Zone.BATTLEFIELD:
+        colors = game.characteristics_of(state).colors
+    else:
+        colors = state.colors
+    return [color.value for color in colors]
+
+
 #: name -> image links, remembered across requests. POSITIVE RESULTS ONLY, so
 #: a miss is retried on the next poll: a card can be absent now and present a
 #: moment later, because validating a decklist writes fresh printings into the
@@ -494,6 +507,8 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         "summoning_sick": state.is_summoning_sick(game),
         "power": power,
         "toughness": toughness,
+        "colors": _current_colors(game, state),
+        "mana_value": state.mana_value,
         "keywords": _keywords_of(game, state),
         "targets": _target_names(game, state.targets),
         "target_refs": _target_refs(game, state.targets),
@@ -573,7 +588,7 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
     return views
 
 
-def _player_view(player: Player) -> dict[str, Any]:
+def _player_view(game: Game, player: Player) -> dict[str, Any]:
     """One seat's own block.
 
     No `decklist` or `agent` field any more (2b's T8, map's S6): both used to
@@ -601,6 +616,10 @@ def _player_view(player: Player) -> dict[str, Any]:
         "graveyard_count": len(player.graveyard),
         "sideboard_count": len(player.sideboard),
         "maximum_hand_size": player.maximum_hand_size,
+        # The engine's own land-play count and allowance, so "is a land drop
+        # left" is read, never re-derived (`Game.why_cannot_play_land`).
+        "lands_played": game.lands_played.get(player.username, 0),
+        "land_allowance": game.land_allowance(player.username),
     }
 
 
@@ -987,7 +1006,7 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
         "pregame": pregame_view(game),
         "active_player": turn.players[turn.active_index] if turn is not None else None,
         "priority_holder": game.priority.holder if game.priority is not None else None,
-        "players": [_player_view(player) for player in game.players],
+        "players": [_player_view(game, player) for player in game.players],
         "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "stack": _stack_view(game, images),
         "exile": exile_views,

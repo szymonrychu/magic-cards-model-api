@@ -2558,6 +2558,20 @@
               }
             ]
           },
+          "colors": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colors"
+          },
           "controller": {
             "anyOf": [
               {
@@ -2647,6 +2661,17 @@
               }
             ],
             "title": "Mana Cost"
+          },
+          "mana_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Value"
           },
           "name": {
             "title": "Name",
@@ -3464,6 +3489,20 @@
               }
             ]
           },
+          "colors": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colors"
+          },
           "controller": {
             "anyOf": [
               {
@@ -3560,6 +3599,17 @@
               }
             ],
             "title": "Mana Cost"
+          },
+          "mana_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Value"
           },
           "name": {
             "title": "Name",
@@ -7952,6 +8002,28 @@
             "title": "Hand Count",
             "type": "integer"
           },
+          "land_allowance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Allowance"
+          },
+          "lands_played": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lands Played"
+          },
           "library_count": {
             "title": "Library Count",
             "type": "integer"
@@ -10494,6 +10566,20 @@
               }
             ]
           },
+          "colors": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colors"
+          },
           "controller": {
             "anyOf": [
               {
@@ -10589,6 +10675,17 @@
               }
             ],
             "title": "Mana Cost"
+          },
+          "mana_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Value"
           },
           "name": {
             "title": "Name",

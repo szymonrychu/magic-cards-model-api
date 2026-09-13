@@ -42,6 +42,11 @@ look-then-split (`scry`/`surveil`), `split_destinations` says where each half
 of that answer actually goes, in the asking card's own words. Two short
 strings inside a whole state dump are easy to miss, and these two decide
 which zone the cards end up in - the decision's kind does not.
+
+One command is not a seat action at all: `plays check [--root PATH]
+[--deck SLUG] [--json]` lints a guides checkout's play scripts offline, needs
+no `--uid`, and exits 0 when clean (conflict warnings allowed) or 1 with coded
+errors - the same codes as mtg-decks' `scripts/check_plays.py`.
 """
 
 from __future__ import annotations
@@ -49,8 +54,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
+from .playscripts import lint as playscripts_lint
 from .seatkit import (
     _UUID,
     AUTOPASS_STEPS,
@@ -107,7 +114,11 @@ def split_destinations(state: dict[str, Any] | None) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--uid", required=True, help="your seat uid, given at dispatch")
+    parser.add_argument(
+        "--uid",
+        default=None,
+        help="your seat uid, given at dispatch; required by every command but `plays`",
+    )
     parser.add_argument("--game", default=None, help="game id; default: the live game")
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base url; default {DEFAULT_API}")
     parser.add_argument(
@@ -723,11 +734,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="the report; omit it to read the report from stdin instead",
     )
 
+    plays = sub.add_parser(
+        "plays",
+        help="CLI-only: check a guides checkout's play scripts (no seat, no game, no API)",
+    )
+    plays_sub = plays.add_subparsers(dest="plays_command", required=True)
+    check = plays_sub.add_parser(
+        "check",
+        help=(
+            "lint decks/<slug>/plays/*.json: exit 0 when clean (conflict warnings "
+            "allowed), 1 with coded errors"
+        ),
+    )
+    check.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="guides root holding decks/ and meta/card-data.json (default: .)",
+    )
+    check.add_argument(
+        "--deck",
+        action="append",
+        default=[],
+        metavar="SLUG",
+        help="check only this deck; repeatable (default: every deck)",
+    )
+    check.add_argument("--json", action="store_true", help="print the report as JSON")
+
     return parser
 
 
 def run(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "plays":
+        # Offline by design: a lint over files, so no uid, no API, no seat.
+        return playscripts_lint.run_cli(args.root, args.deck or None, as_json=args.json)
+    if not args.uid:
+        parser.error("the following arguments are required: --uid")
     seats = Seats(args.api, args.game)
     # The same check every MCP tool makes through `_guarded`, which this
     # transport simply did not have: an API speaking a different

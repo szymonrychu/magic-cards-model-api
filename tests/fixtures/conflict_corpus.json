@@ -1,0 +1,2133 @@
+{
+  "schema_version": 1,
+  "description": "Tagged pairs for the play-conflict exclusivity algorithm shared by mtg-decks scripts/check_plays.py and the api's plays check. Each case is two play fragments (when, opposing_archetypes, true, false). An exclusive case lists every dimension that proves it (proven_by, in dimension order); a conflicting case proves none and lists the dimensions the pair overlaps on. The api copies this file byte-identical.",
+  "dimensions": [
+    {
+      "letter": "a",
+      "name": "whose_turn",
+      "rule": "when.whose_turn is mine in one and theirs in the other"
+    },
+    {
+      "letter": "b",
+      "name": "steps",
+      "rule": "when.steps sets do not intersect"
+    },
+    {
+      "letter": "c",
+      "name": "opposing_archetypes",
+      "rule": "neither list holds * and the sets do not intersect"
+    },
+    {
+      "letter": "d",
+      "name": "stack",
+      "rule": "one play's when.stack is empty and the other has a stack_top condition in true"
+    },
+    {
+      "letter": "e",
+      "name": "input",
+      "rule": "an input condition in each play on the same name whose value sets cannot both hold; a false-list condition is negated first"
+    },
+    {
+      "letter": "f",
+      "name": "true_false",
+      "rule": "a normalized condition is in one play's true and the other's false"
+    },
+    {
+      "letter": "g",
+      "name": "numeric_range",
+      "rule": "count, zone_size, life, untapped_mana or int-input conditions on the same key whose ranges cannot overlap; a false-list condition is negated first"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "plan",
+      "type": "enum",
+      "values": [
+        "aggro",
+        "control"
+      ],
+      "description": "The line the agent has committed to this game.",
+      "required": false
+    },
+    {
+      "name": "hold_up_interaction",
+      "type": "bool",
+      "description": "Whether the agent prefers to keep mana open on the opponent's turn.",
+      "required": false
+    },
+    {
+      "name": "opponent_clock",
+      "type": "int",
+      "min": 0,
+      "max": 10,
+      "description": "Turns the agent expects the opponent to need to win.",
+      "required": true
+    }
+  ],
+  "matchup_keys": [
+    "dimir-frog",
+    "living-end"
+  ],
+  "cases": [
+    {
+      "name": "whose-turn-mine-vs-theirs",
+      "verdict": "exclusive",
+      "dimension": "whose_turn",
+      "proven_by": [
+        "whose_turn"
+      ],
+      "note": "mine and theirs never coincide",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "theirs",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "whose-turn-either-vs-mine",
+      "verdict": "conflicting",
+      "dimension": "whose_turn",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "either is never disjoint from anything",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "either",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "steps-disjoint",
+      "verdict": "exclusive",
+      "dimension": "steps",
+      "proven_by": [
+        "steps"
+      ],
+      "note": "no step in common",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "upkeep",
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "end_step",
+            "postcombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "steps-one-shared",
+      "verdict": "conflicting",
+      "dimension": "steps",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "precombat_main is in both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "upkeep",
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "archetypes-disjoint-named",
+      "verdict": "exclusive",
+      "dimension": "opposing_archetypes",
+      "proven_by": [
+        "opposing_archetypes"
+      ],
+      "note": "two named keys that do not intersect",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir-frog"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "living-end"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "archetypes-wildcard-overlaps-a-named-key",
+      "verdict": "conflicting",
+      "dimension": "opposing_archetypes",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "a * play applies against every key",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "living-end"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "archetypes-named-sets-intersect",
+      "verdict": "conflicting",
+      "dimension": "opposing_archetypes",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "living-end is in both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "dimir-frog",
+          "living-end"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "living-end"
+        ],
+        "true": [],
+        "false": []
+      }
+    },
+    {
+      "name": "stack-empty-vs-stack-top-required",
+      "verdict": "exclusive",
+      "dimension": "stack",
+      "proven_by": [
+        "stack"
+      ],
+      "note": "an empty stack has no top object",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "stack-any-vs-stack-top-required",
+      "verdict": "conflicting",
+      "dimension": "stack",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "stack any allows a top object",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "stack-empty-vs-stack-top-in-false",
+      "verdict": "conflicting",
+      "dimension": "stack",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "a stack_top in false does not require a stack object",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "input-enum-eq-vs-eq",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input"
+      ],
+      "note": "two different enum values",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "eq",
+            "value": "aggro"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "eq",
+            "value": "control"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-enum-eq-vs-in-overlapping",
+      "verdict": "conflicting",
+      "dimension": "input",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "input"
+      ],
+      "note": "aggro satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "eq",
+            "value": "aggro"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "in",
+            "value": [
+              "aggro",
+              "control"
+            ]
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-enum-in-vs-not-in",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input"
+      ],
+      "note": "complementary sets",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "in",
+            "value": [
+              "aggro"
+            ]
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "not_in",
+            "value": [
+              "aggro"
+            ]
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-enum-ne-vs-ne",
+      "verdict": "conflicting",
+      "dimension": "input",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "input"
+      ],
+      "note": "* satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "ne",
+            "value": "dimir-frog"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "ne",
+            "value": "living-end"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-built-in-archetype-eq-vs-eq",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input"
+      ],
+      "note": "the built-in enum: * is a value of its own",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "eq",
+            "value": "dimir-frog"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opposing_archetype",
+            "op": "eq",
+            "value": "*"
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-bool-eq-vs-ne",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input"
+      ],
+      "note": "ne true is false for a bool",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "hold_up_interaction",
+            "op": "eq",
+            "value": true
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "hold_up_interaction",
+            "op": "ne",
+            "value": true
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-bool-in-both-values-vs-eq",
+      "verdict": "conflicting",
+      "dimension": "input",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "input"
+      ],
+      "note": "false satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "hold_up_interaction",
+            "op": "in",
+            "value": [
+              true,
+              false
+            ]
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "hold_up_interaction",
+            "op": "eq",
+            "value": false
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-false-list-is-negated",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input",
+        "true_false"
+      ],
+      "note": "a false condition must not hold",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "eq",
+            "value": "aggro"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "eq",
+            "value": "aggro"
+          }
+        ]
+      }
+    },
+    {
+      "name": "input-int-ranges-disjoint",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input",
+        "numeric_range"
+      ],
+      "note": "0..3 and 4..10",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "<=",
+            "value": 3
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": ">",
+            "value": 3
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-int-ranges-touch",
+      "verdict": "conflicting",
+      "dimension": "input",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "input",
+        "numeric_range"
+      ],
+      "note": "3 satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "<=",
+            "value": 3
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": ">=",
+            "value": 3
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-int-in-vs-ne",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input",
+        "numeric_range"
+      ],
+      "note": "the only allowed value is excluded",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "in",
+            "value": [
+              1
+            ]
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "ne",
+            "value": 1
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-int-in-vs-ne-leaves-a-value",
+      "verdict": "conflicting",
+      "dimension": "input",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "input",
+        "numeric_range"
+      ],
+      "note": "2 satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "in",
+            "value": [
+              1,
+              2
+            ]
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "ne",
+            "value": 1
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-int-range-emptied-by-declared-bounds",
+      "verdict": "exclusive",
+      "dimension": "input",
+      "proven_by": [
+        "input",
+        "numeric_range"
+      ],
+      "note": "max 10 leaves only 10, which the other excludes",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": ">=",
+            "value": 10
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "opponent_clock",
+            "op": "not_in",
+            "value": [
+              10
+            ]
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "input-different-names",
+      "verdict": "conflicting",
+      "dimension": "input",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "different inputs never contradict",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "plan",
+            "op": "eq",
+            "value": "aggro"
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "input",
+            "name": "hold_up_interaction",
+            "op": "eq",
+            "value": true
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "true-false-same-condition-after-normalization",
+      "verdict": "exclusive",
+      "dimension": "true_false",
+      "proven_by": [
+        "true_false"
+      ],
+      "note": "selector lists are sets",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Sorcery",
+                "Instant",
+                "Instant"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "true-false-different-controller",
+      "verdict": "conflicting",
+      "dimension": "true_false",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "different conditions",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "stack_top",
+            "controller": "me",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "true-false-same-polarity",
+      "verdict": "conflicting",
+      "dimension": "true_false",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "true_false"
+      ],
+      "note": "the same condition in both true lists",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "any"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "stack_top",
+            "controller": "opponent",
+            "select": {
+              "types_any": [
+                "Instant",
+                "Sorcery"
+              ]
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "true-false-land-drop-value-flipped",
+      "verdict": "exclusive",
+      "dimension": "true_false",
+      "proven_by": [
+        "true_false"
+      ],
+      "note": "value false in true normalizes to value true in false",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "land_drop_available",
+            "value": false
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "land_drop_available",
+            "value": true
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-life-ge-8-vs-le-5",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "8.. and ..5",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": "<=",
+            "n": 5
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-life-ge-8-vs-le-9",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "8 and 9 satisfy both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": "<=",
+            "n": 9
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-life-different-sides",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "different keys never contradict",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "opponent",
+            "op": "<=",
+            "n": 5
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-life-false-list-is-negated",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "false life >= 5 is life < 5",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 5
+          }
+        ]
+      }
+    },
+    {
+      "name": "numeric-zone-size-eq-vs-ne",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "7 and not 7",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "zone_size",
+            "zone": "hand",
+            "side": "me",
+            "op": "==",
+            "n": 7
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "zone_size",
+            "zone": "hand",
+            "side": "me",
+            "op": "!=",
+            "n": 7
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-untapped-mana-lt-vs-ge",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "..1 and 2..",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "untapped_mana",
+            "op": "<",
+            "n": 2
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "untapped_mana",
+            "op": ">=",
+            "n": 2
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-count-same-selector",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "the same normalized selector is the same key",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "battlefield",
+            "side": "me",
+            "op": ">=",
+            "n": 3,
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "battlefield",
+            "side": "me",
+            "op": "<",
+            "n": 3,
+            "select": {
+              "types_all": [
+                "Land",
+                "Land"
+              ]
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-count-different-selectors",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "lands and creatures are different keys",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "battlefield",
+            "side": "me",
+            "op": ">=",
+            "n": 3,
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "battlefield",
+            "side": "me",
+            "op": "<=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Creature"
+              ]
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-mana-floor-at-zero",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "note": "untapped mana is never negative, so <= 0 leaves only 0",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "untapped_mana",
+            "op": "<=",
+            "n": 0
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "untapped_mana",
+            "op": "!=",
+            "n": 0
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "numeric-life-has-no-floor",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "life can be negative, so -1 satisfies both",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": "<=",
+            "n": 0
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "life",
+            "side": "me",
+            "op": "!=",
+            "n": 0
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "identical-normalized-sets",
+      "verdict": "conflicting",
+      "dimension": "identical",
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "true_false",
+        "numeric_range"
+      ],
+      "note": "nothing can separate two identical plays",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "battlefield",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            }
+          },
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": [
+          {
+            "kind": "zone_size",
+            "zone": "library",
+            "side": "me",
+            "op": "<=",
+            "n": 5
+          }
+        ]
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "battlefield",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ]
+            }
+          },
+          {
+            "kind": "life",
+            "side": "me",
+            "op": ">=",
+            "n": 8
+          }
+        ],
+        "false": [
+          {
+            "kind": "zone_size",
+            "zone": "library",
+            "side": "me",
+            "op": "<=",
+            "n": 5
+          }
+        ]
+      }
+    }
+  ]
+}

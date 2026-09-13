@@ -1298,6 +1298,11 @@ class _CardViewFields(BaseModel):
     summoning_sick: bool | None = None
     power: int | None = None
     toughness: int | None = None
+    colors: list[str] | None = None
+    """Color letters as the engine computes them right now
+    (`serialize._current_colors`)."""
+    mana_value: float | None = None
+    """The engine's `CardState.mana_value`."""
     keywords: list[str] | None = None
     targets: list[str] | None = None
     target_refs: list[TargetRefView] | None = None
@@ -1439,6 +1444,11 @@ class PlayerView(BaseModel):
     graveyard_count: int
     sideboard_count: int
     maximum_hand_size: int
+    lands_played: int | None = None
+    """Lands this player has played this turn (`Game.lands_played`). Optional
+    only so a snapshot recorded before the field existed still reads."""
+    land_allowance: int | None = None
+    """How many lands this player may play this turn (`Game.land_allowance`)."""
 
 
 class PlayPermissionView(BaseModel):

@@ -6,6 +6,9 @@
       "abilities": [],
       "art_crop": "/api/card-art?name=Delver%20of%20Secrets%20%2F%2F%20Insectile%20Aberration&size=art_crop",
       "card_name": "Delver of Secrets // Insectile Aberration",
+      "colors": [
+        "U"
+      ],
       "controller": "alice",
       "counters": {},
       "damage": 0,
@@ -14,6 +17,7 @@
       "image": "/api/card-art?name=Delver%20of%20Secrets%20%2F%2F%20Insectile%20Aberration&size=normal",
       "keywords": [],
       "mana_cost": null,
+      "mana_value": 1.0,
       "name": "Delver of Secrets",
       "oracle_text": null,
       "owner": "alice",
@@ -32,6 +36,9 @@
       "abilities": [],
       "art_crop": "/api/card-art?name=Delver%20of%20Secrets%20%2F%2F%20Insectile%20Aberration&size=art_crop",
       "card_name": "Delver of Secrets // Insectile Aberration",
+      "colors": [
+        "U"
+      ],
       "controller": "alice",
       "counters": {},
       "damage": 0,
@@ -40,6 +47,7 @@
       "image": "/api/card-art?name=Delver%20of%20Secrets%20%2F%2F%20Insectile%20Aberration&size=normal",
       "keywords": [],
       "mana_cost": null,
+      "mana_value": 1.0,
       "name": "Delver of Secrets",
       "oracle_text": null,
       "owner": "alice",
@@ -119,6 +127,8 @@
       "counters": {},
       "graveyard_count": 0,
       "hand_count": 0,
+      "land_allowance": 1,
+      "lands_played": 0,
       "library_count": 0,
       "life": 20,
       "mana_pool": {
@@ -135,6 +145,8 @@
       "counters": {},
       "graveyard_count": 0,
       "hand_count": 0,
+      "land_allowance": 1,
+      "lands_played": 0,
       "library_count": 0,
       "life": 20,
       "mana_pool": {

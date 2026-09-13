@@ -724,3 +724,70 @@ def test_the_cli_refuses_a_decline_that_also_names_cards(client, game, monkeypat
     said = capsys.readouterr().out
     assert "--decline names no cards" in said
     assert "CR 701.23b" in said
+
+
+# -- every CLI command fronts an MCP tool, or is CLI-only on purpose -----------
+#
+# The two front ends are one seat, so a command one of them has and the other
+# lacks is a gap until someone decides it is not. That decision is this
+# allowlist: a command in `CLI_ONLY_COMMANDS` is deliberately not an MCP tool,
+# with the reason next to it. Anything else must name the tool it fronts.
+
+#: `seat_cli` command -> the MCP tool (in `contract/tools.json`) it fronts.
+CLI_COMMAND_TOOLS = {
+    "state": "battlefield_state",
+    "wait": "wait_for_priority",
+    "cast": "cast",
+    "suspend": "suspend",
+    "plot": "plot",
+    "foretell": "foretell",
+    "cycle": "cycle",
+    "play-land": "play_land",
+    "activate": "activate",
+    "attackers": "declare_attackers",
+    "blockers": "declare_blockers",
+    "decide": "decide",
+    "pass": "pass",
+    "pass-until": "pass_until",
+    "mulligan": "mulligan",
+    "opening-hand-action": "opening_hand_action",
+    "opening-hand-done": "opening_hand_action",
+    "log": "game_log",
+    "report": "report_problem",
+}
+
+#: Commands that are CLI-only by design, each with why.
+CLI_ONLY_COMMANDS = {
+    "plays": (
+        "`plays check` lints a guides checkout's play scripts offline; it reads "
+        "files on the pod, touches no seat and no game, and a stateless MCP "
+        "server has no guides tree to read (design D8)"
+    ),
+}
+
+
+def test_every_cli_command_fronts_an_mcp_tool_or_is_explicitly_cli_only():
+    sub = next(
+        action for action in seat_cli.build_parser()._actions if getattr(action, "choices", None)
+    )
+    commands = set(sub.choices)
+    assert not set(CLI_COMMAND_TOOLS) & set(CLI_ONLY_COMMANDS)
+    assert commands == set(CLI_COMMAND_TOOLS) | set(CLI_ONLY_COMMANDS), (
+        "a seat_cli command is neither mapped to its MCP tool nor allowlisted as CLI-only: "
+        f"{sorted(commands ^ (set(CLI_COMMAND_TOOLS) | set(CLI_ONLY_COMMANDS)))}"
+    )
+    from scripts.export_tools import OUTPUT as TOOLS
+
+    tools = {tool["name"] for tool in json.loads(TOOLS.read_text())["tools"]}
+    for command, tool in CLI_COMMAND_TOOLS.items():
+        assert tool in tools, f"{command} fronts {tool}, which is not an MCP tool"
+    for command, why in CLI_ONLY_COMMANDS.items():
+        assert why.strip()
+        assert command.replace("-", "_") not in tools
+
+
+def test_plays_is_cli_only_and_has_a_check_subcommand():
+    assert "plays" in CLI_ONLY_COMMANDS
+    plays = subcommand("plays")
+    nested = next(action for action in plays._actions if getattr(action, "choices", None))
+    assert set(nested.choices) == {"check"}

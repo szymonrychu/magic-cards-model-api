@@ -7,6 +7,32 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-13 - play scripts are a closed vocabulary, gated by 17 shared
+  codes.** `playscripts/schema.py` is the pydantic model (7 condition kinds:
+  count, zone_size, life, stack_top, land_drop_available, untapped_mana,
+  input; 4 move kinds; no iteration, attack, block, mulligan, concede or pass
+  field), and `mcp-seat plays check` (`playscripts/lint.py`) mirrors
+  mtg-decks' stdlib `scripts/check_plays.py` rule for rule: malformed-play,
+  unknown-field, id-mismatch, bounds-exceeded, forbidden-kind,
+  hidden-zone-side-any, card-name-in-field, phrase-too-narrow, unknown-next,
+  next-cycle, chain-too-deep, too-many-plays, too-many-active-for-archetype,
+  unknown-archetype-key, unknown-input, invalid-input-value, malformed-inputs,
+  plus the non-blocking play-conflict/next-conflict warnings. An
+  `ability_text_has`/`oracle_has` phrase must match at least 3 distinct cards'
+  oracle text in the guides root's `meta/card-data.json` - the
+  anti-overfitting rule; a card name is never a selector. The conflict
+  algorithm is pinned by `tests/fixtures/conflict_corpus.json`, a
+  byte-identical copy (sha256 pinned) of mtg-decks' fixture. Two readings:
+  `known_cards` is keyed by the player who KNOWS, so "the opponent's known
+  hand" is `known_cards[viewer].hand` filtered to cards the opponent owns (the
+  requirement's `known_cards[opp]` never survives redaction); and the view
+  gained engine-read `colors`/`mana_value` per card and
+  `lands_played`/`land_allowance` per player, so `colors_any`, `mana_value`
+  and `land_drop_available` never re-derive a rule from a mana cost or a
+  guess. Optional pydantic fields are typed without `None` (`tapped: bool =
+  None`) so an explicit `null` is refused like the stdlib gate refuses it; a
+  `mode="before"` wildcard validator is not an option, pydantic forbids it on
+  the `kind` discriminator.
 - **2026-09-13 - the default model for an AI opponent seat and a buddy is
   `opus`.** The owner's call. Spelled as the codebase already spells
   `AgentSettings.model` (`opus`, never a versioned id), and set in the three

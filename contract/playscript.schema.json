@@ -1,0 +1,941 @@
+{
+  "$defs": {
+    "ActivateMove": {
+      "additionalProperties": false,
+      "properties": {
+        "ability_text_has": {
+          "pattern": "\\S",
+          "title": "Ability Text Has",
+          "type": "string"
+        },
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/Answer"
+          },
+          "maxItems": 3,
+          "title": "Answers",
+          "type": "array"
+        },
+        "kind": {
+          "const": "activate",
+          "title": "Kind",
+          "type": "string"
+        },
+        "sacrifice": {
+          "default": null,
+          "enum": [
+            "source",
+            "none"
+          ],
+          "title": "Sacrifice",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ZonedCard"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "ability_text_has"
+      ],
+      "title": "ActivateMove",
+      "type": "object"
+    },
+    "Answer": {
+      "additionalProperties": false,
+      "description": "How to answer one pending decision of kind `decision`.",
+      "properties": {
+        "accept": {
+          "default": null,
+          "title": "Accept",
+          "type": "boolean"
+        },
+        "decision": {
+          "pattern": "\\S",
+          "title": "Decision",
+          "type": "string"
+        },
+        "pick": {
+          "$ref": "#/$defs/Pick",
+          "default": null
+        },
+        "to_bottom": {
+          "$ref": "#/$defs/Selector",
+          "default": null
+        },
+        "to_graveyard": {
+          "$ref": "#/$defs/Selector",
+          "default": null
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "title": "Answer",
+      "type": "object"
+    },
+    "AnswerMove": {
+      "additionalProperties": false,
+      "description": "Answers for a decision already pending.",
+      "properties": {
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/Answer"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Answers",
+          "type": "array"
+        },
+        "kind": {
+          "const": "answer",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "answers"
+      ],
+      "title": "AnswerMove",
+      "type": "object"
+    },
+    "CastMove": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/Answer"
+          },
+          "maxItems": 3,
+          "title": "Answers",
+          "type": "array"
+        },
+        "card": {
+          "$ref": "#/$defs/ZonedCard"
+        },
+        "kind": {
+          "const": "cast",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mana": {
+          "const": "auto",
+          "default": null,
+          "title": "Mana",
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/CastTarget"
+          },
+          "title": "Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "card"
+      ],
+      "title": "CastMove",
+      "type": "object"
+    },
+    "CastTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "select",
+        "side"
+      ],
+      "title": "CastTarget",
+      "type": "object"
+    },
+    "Comparison": {
+      "additionalProperties": false,
+      "description": "`{op, n}` against a number on the card.",
+      "properties": {
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "n"
+      ],
+      "title": "Comparison",
+      "type": "object"
+    },
+    "CountCondition": {
+      "additionalProperties": false,
+      "description": "How many cards matching `select` are in a zone, by side. A hidden zone\n(hand, library, sideboard) must name `me` or `opponent`.",
+      "properties": {
+        "kind": {
+          "const": "count",
+          "title": "Kind",
+          "type": "string"
+        },
+        "known_only": {
+          "default": null,
+          "title": "Known Only",
+          "type": "boolean"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "battlefield",
+            "graveyard",
+            "exile",
+            "hand",
+            "stack",
+            "library",
+            "sideboard"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "zone",
+        "side",
+        "op",
+        "n",
+        "select"
+      ],
+      "title": "CountCondition",
+      "type": "object"
+    },
+    "CounterComparison": {
+      "additionalProperties": false,
+      "description": "`{name, op, n}`: how many counters of one kind (not a card name).",
+      "properties": {
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "name": {
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "op",
+        "n"
+      ],
+      "title": "CounterComparison",
+      "type": "object"
+    },
+    "InputCondition": {
+      "additionalProperties": false,
+      "description": "A fact only the agent knows: a declared input or `opposing_archetype`.",
+      "properties": {
+        "kind": {
+          "const": "input",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "ne",
+            "in",
+            "not_in",
+            "<",
+            "<=",
+            ">",
+            ">="
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "op",
+        "value"
+      ],
+      "title": "InputCondition",
+      "type": "object"
+    },
+    "LandCard": {
+      "additionalProperties": false,
+      "properties": {
+        "select": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "LandCard",
+      "type": "object"
+    },
+    "LandDropCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "land_drop_available",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "LandDropCondition",
+      "type": "object"
+    },
+    "LifeCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "life",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "side",
+        "op",
+        "n"
+      ],
+      "title": "LifeCondition",
+      "type": "object"
+    },
+    "Pick": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "default": null,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "prefer": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "title": "Prefer",
+          "type": "array"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "required": [
+        "select"
+      ],
+      "title": "Pick",
+      "type": "object"
+    },
+    "PlayLandMove": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/Answer"
+          },
+          "maxItems": 3,
+          "title": "Answers",
+          "type": "array"
+        },
+        "card": {
+          "$ref": "#/$defs/LandCard"
+        },
+        "kind": {
+          "const": "play_land",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "card"
+      ],
+      "title": "PlayLandMove",
+      "type": "object"
+    },
+    "Selector": {
+      "additionalProperties": false,
+      "description": "Characteristics of one card, all optional, combined with AND. No field\ntakes a card name: type words come from the type line, text fields are\ntemplate phrases matched case-insensitively.",
+      "properties": {
+        "ability_text_has": {
+          "default": null,
+          "pattern": "\\S",
+          "title": "Ability Text Has",
+          "type": "string"
+        },
+        "colors_any": {
+          "default": null,
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Colors Any",
+          "type": "array"
+        },
+        "counters": {
+          "$ref": "#/$defs/CounterComparison",
+          "default": null
+        },
+        "keywords_any": {
+          "default": null,
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Keywords Any",
+          "type": "array"
+        },
+        "mana_value": {
+          "$ref": "#/$defs/Comparison",
+          "default": null
+        },
+        "oracle_has": {
+          "default": null,
+          "pattern": "\\S",
+          "title": "Oracle Has",
+          "type": "string"
+        },
+        "power": {
+          "$ref": "#/$defs/Comparison",
+          "default": null
+        },
+        "subtypes_any": {
+          "default": null,
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Subtypes Any",
+          "type": "array"
+        },
+        "supertypes_any": {
+          "default": null,
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Supertypes Any",
+          "type": "array"
+        },
+        "tapped": {
+          "default": null,
+          "title": "Tapped",
+          "type": "boolean"
+        },
+        "toughness": {
+          "$ref": "#/$defs/Comparison",
+          "default": null
+        },
+        "types_all": {
+          "default": null,
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Types All",
+          "type": "array"
+        },
+        "types_any": {
+          "default": null,
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Types Any",
+          "type": "array"
+        }
+      },
+      "title": "Selector",
+      "type": "object"
+    },
+    "StackTopCondition": {
+      "additionalProperties": false,
+      "description": "The top object of the stack: whose, and matching `select`.",
+      "properties": {
+        "controller": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Controller",
+          "type": "string"
+        },
+        "kind": {
+          "const": "stack_top",
+          "title": "Kind",
+          "type": "string"
+        },
+        "select": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "required": [
+        "kind",
+        "controller",
+        "select"
+      ],
+      "title": "StackTopCondition",
+      "type": "object"
+    },
+    "UntappedManaCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "untapped_mana",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "n"
+      ],
+      "title": "UntappedManaCondition",
+      "type": "object"
+    },
+    "When": {
+      "additionalProperties": false,
+      "properties": {
+        "stack": {
+          "enum": [
+            "empty",
+            "any"
+          ],
+          "title": "Stack",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "enum": [
+              "upkeep",
+              "draw",
+              "precombat_main",
+              "beginning_of_combat",
+              "combat_damage",
+              "end_of_combat",
+              "postcombat_main",
+              "end_step"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        },
+        "whose_turn": {
+          "enum": [
+            "mine",
+            "theirs",
+            "either"
+          ],
+          "title": "Whose Turn",
+          "type": "string"
+        }
+      },
+      "required": [
+        "whose_turn",
+        "steps",
+        "stack"
+      ],
+      "title": "When",
+      "type": "object"
+    },
+    "ZoneSizeCondition": {
+      "additionalProperties": false,
+      "description": "A zone's public card count, by side.",
+      "properties": {
+        "kind": {
+          "const": "zone_size",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "op": {
+          "enum": [
+            ">=",
+            "<=",
+            "==",
+            "!=",
+            ">",
+            "<"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent",
+            "any"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "hand",
+            "library",
+            "graveyard",
+            "exile",
+            "sideboard"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "zone",
+        "side",
+        "op",
+        "n"
+      ],
+      "title": "ZoneSizeCondition",
+      "type": "object"
+    },
+    "ZonedCard": {
+      "additionalProperties": false,
+      "properties": {
+        "select": {
+          "$ref": "#/$defs/Selector"
+        },
+        "zone": {
+          "enum": [
+            "battlefield",
+            "graveyard",
+            "exile",
+            "hand",
+            "stack",
+            "library",
+            "sideboard"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "select"
+      ],
+      "title": "ZonedCard",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One play script. `name` and `intent` are prose nothing executes;\n`priority` 0 disables it; `true` must all hold and `false` must all not\nhold; `next` names plays of the same deck tried after the moves.",
+  "properties": {
+    "false": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "count": "#/$defs/CountCondition",
+            "input": "#/$defs/InputCondition",
+            "land_drop_available": "#/$defs/LandDropCondition",
+            "life": "#/$defs/LifeCondition",
+            "stack_top": "#/$defs/StackTopCondition",
+            "untapped_mana": "#/$defs/UntappedManaCondition",
+            "zone_size": "#/$defs/ZoneSizeCondition"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/CountCondition"
+          },
+          {
+            "$ref": "#/$defs/ZoneSizeCondition"
+          },
+          {
+            "$ref": "#/$defs/LifeCondition"
+          },
+          {
+            "$ref": "#/$defs/StackTopCondition"
+          },
+          {
+            "$ref": "#/$defs/LandDropCondition"
+          },
+          {
+            "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/InputCondition"
+          }
+        ]
+      },
+      "maxItems": 8,
+      "title": "False",
+      "type": "array"
+    },
+    "id": {
+      "pattern": "\\S",
+      "title": "Id",
+      "type": "string"
+    },
+    "intent": {
+      "default": null,
+      "pattern": "\\S",
+      "title": "Intent",
+      "type": "string"
+    },
+    "moves": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "activate": "#/$defs/ActivateMove",
+            "answer": "#/$defs/AnswerMove",
+            "cast": "#/$defs/CastMove",
+            "play_land": "#/$defs/PlayLandMove"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ActivateMove"
+          },
+          {
+            "$ref": "#/$defs/CastMove"
+          },
+          {
+            "$ref": "#/$defs/PlayLandMove"
+          },
+          {
+            "$ref": "#/$defs/AnswerMove"
+          }
+        ]
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Moves",
+      "type": "array"
+    },
+    "name": {
+      "pattern": "\\S",
+      "title": "Name",
+      "type": "string"
+    },
+    "next": {
+      "items": {
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 3,
+      "title": "Next",
+      "type": "array"
+    },
+    "opposing_archetypes": {
+      "items": {
+        "pattern": "^(\\*|[a-z0-9]+(-[a-z0-9]+)*)$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Opposing Archetypes",
+      "type": "array"
+    },
+    "priority": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Priority",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "true": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "count": "#/$defs/CountCondition",
+            "input": "#/$defs/InputCondition",
+            "land_drop_available": "#/$defs/LandDropCondition",
+            "life": "#/$defs/LifeCondition",
+            "stack_top": "#/$defs/StackTopCondition",
+            "untapped_mana": "#/$defs/UntappedManaCondition",
+            "zone_size": "#/$defs/ZoneSizeCondition"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/CountCondition"
+          },
+          {
+            "$ref": "#/$defs/ZoneSizeCondition"
+          },
+          {
+            "$ref": "#/$defs/LifeCondition"
+          },
+          {
+            "$ref": "#/$defs/StackTopCondition"
+          },
+          {
+            "$ref": "#/$defs/LandDropCondition"
+          },
+          {
+            "$ref": "#/$defs/UntappedManaCondition"
+          },
+          {
+            "$ref": "#/$defs/InputCondition"
+          }
+        ]
+      },
+      "maxItems": 8,
+      "title": "True",
+      "type": "array"
+    },
+    "when": {
+      "$ref": "#/$defs/When"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "priority",
+    "opposing_archetypes",
+    "when",
+    "moves"
+  ],
+  "title": "Play",
+  "type": "object"
+}
