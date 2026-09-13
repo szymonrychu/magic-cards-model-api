@@ -77,8 +77,6 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from magic_cards_model.machines.abilities import keywords_in_lines
-from magic_cards_model.machines.combat import Keyword
 from magic_cards_model.machines.decisions import (
     Answer,
     DecisionPending,
@@ -185,7 +183,7 @@ def _run_resolve_top(game: Game, payload: dict[str, Any]) -> Any:
     same `None` when there was nothing on the stack to resolve."""
     resolving_obj = game.stack[-1] if game.stack else None
     resolving_spell_id = resolving_obj.id if isinstance(resolving_obj, CardState) else None
-    before = _resolution_state(game)
+    before = _resolution_state(game, resolving=resolving_obj)
     result = engine_api.resolve_top(game)
     if result.get("resolved") is None:
         return result
@@ -230,45 +228,20 @@ def _run_concede(game: Game, payload: dict[str, Any]) -> Any:
     return {"winner": game.winner}
 
 
-def _current_power_toughness(game: Game, state: CardState) -> tuple[int | None, int | None]:
-    """This card's power and toughness right now: the computed board
-    (CR 613.5) on the battlefield, so an until-end-of-turn pump or a static
-    anthem is seen, or the printed-plus-counters accessors everywhere else,
-    where there is no computed board to ask ("permanents exist only on the
-    battlefield", CR 403.3). The same split `serialize._current_characteristics`
-    makes for its own display purposes; kept here too since `_card_fingerprint`
-    needs it and `commands.py` cannot import `serialize` (`serialize` already
-    imports `commands`)."""
-    if state.zone is not Zone.BATTLEFIELD:
-        return state.power, state.toughness
-    characteristics = game.characteristics_of(state)
-    return characteristics.power, characteristics.toughness
-
-
-def _current_keywords(game: Game, state: CardState) -> tuple[str, ...]:
-    """This card's keyword abilities right now, continuous effects included
-    (CR 613.5) - the same computation `serialize._keywords_of` makes for
-    display; see `_current_power_toughness`'s docstring for why it is
-    duplicated here rather than imported."""
-    printed = state.keywords
-    if state.zone is not Zone.BATTLEFIELD:
-        return tuple(printed)
-    characteristics = game.characteristics_of(state)
-    vocabulary = [keyword.value for keyword in Keyword] + list(printed)
-    return tuple(sorted(keywords_in_lines(list(characteristics.abilities), vocabulary)))
-
-
 def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
     """One card's own observable state, identity included (CR 400.7) - see
     `_resolution_state`.
 
-    Power, toughness and keywords are computed (`_current_power_toughness`/
-    `_current_keywords`), not read off the printed card: an until-end-of-turn
-    pump (Craterhoof Behemoth's trigger, a prowess trigger, Mutagenic Growth)
-    touches none of the other fields here - no zone move, no tap, no counter,
-    no attachment - so without these two a resolution that only grew every
-    creature on the board read as `changed: false` (battle-7, B7-11)."""
-    power, toughness = _current_power_toughness(game, state)
+    On the battlefield this carries the card's computed characteristics
+    (`Game.characteristics_of`, CR 613.5): power, toughness, abilities,
+    types, colors and controller with every continuous effect applied. An
+    until-end-of-turn pump (Craterhoof Behemoth's trigger, prowess, Mutagenic
+    Growth) touches none of the other fields here - no zone move, no tap, no
+    counter, no attachment - so without them a resolution that only grew
+    every creature read as `changed: false` (battle-7, B7-11). `controller`
+    is read off the card too, so a change of control counts in every zone
+    where an object has a controller."""
+    characteristics = game.characteristics_of(state) if state.zone is Zone.BATTLEFIELD else None
     return (
         str(state.zone_change_stamp),
         state.tapped,
@@ -276,48 +249,51 @@ def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
         state.damage,
         tuple(sorted(state.counters.root.items())),
         state.attachment,
-        power,
-        toughness,
-        _current_keywords(game, state),
+        state.controller,
+        characteristics,
     )
 
 
-def _resolution_state(game: Game) -> dict[str, Any]:
-    """A fingerprint of everything a resolution is meant to change, minus the
-    stack itself - moved here (from `app.py`) with `_run_pass_priority` in
-    T7b, so the fingerprint taken right after `Game.pass_priority` resolves
-    something is taken *inside* the same deterministic replay a pause resumes
-    into, before `settle_priorityless_steps` gets a chance to run and change
-    tracked state (CR 500.5's mana-pool emptying) for a reason that has
-    nothing to do with what actually resolved.
+def _resolution_state(game: Game, *, resolving: object | None = None) -> dict[str, Any]:
+    """A fingerprint of everything a resolution can change that a seat sees -
+    moved here (from `app.py`) with `_run_pass_priority` in T7b, so the
+    fingerprint taken right after `Game.pass_priority` resolves something is
+    taken *inside* the same deterministic replay a pause resumes into, before
+    `settle_priorityless_steps` gets a chance to run and change tracked state
+    (CR 500.5's mana-pool emptying) for a reason that has nothing to do with
+    what actually resolved.
 
-    Resolving always pops the stack, so the stack cannot say whether the
-    resolution *did* anything. Everything else can - board, hands,
-    graveyards, exile, life, and pools - as long as it is compared by each
-    card's own identity and observable state (`_card_fingerprint`), not by
-    zone-and-name alone: a bare list of names cannot tell a card that stayed
-    apart from a card that left and came back to the exact same zone under
-    the exact same name, which is precisely what a blink (Ephemerate) does.
-    Keyed by card id so `_without_own_arrival` can discount one specific
+    Board, hands, graveyards, exile, life, pools, player counters (energy and
+    poison are counters on a player, CR 122.1) and the stack, with each card
+    compared by its own identity and observable state (`_card_fingerprint`),
+    not by zone-and-name alone: a bare list of names cannot tell a card that
+    stayed apart from a card that left and came back to the exact same zone
+    under the exact same name, which is precisely what a blink (Ephemerate)
+    does. Keyed by card id so `_without_own_arrival` can discount one specific
     object rather than guessing which of several same-named cards changed.
 
+    `resolving` is the object about to resolve, taken before the resolve
+    call: resolving always takes it off the stack, so it is left out of the
+    stack here and only *other* stack changes count - a copy put on the stack
+    (CR 707.10), a triggered ability countered (it ceases to exist, CR
+    608.2n).
+
     This is necessary but not sufficient on its own for a *spell*: every
-    spell also leaves the stack somewhere as part of resolving at all
-    (CR 608.2m), and that arrival mutates this fingerprint regardless of
-    whether the spell's own effect ran. `_without_own_arrival` is what
-    discounts that one mandatory move for spells; abilities need no such
-    correction, since CR 608.2n removes a resolved ability from the stack
-    without putting it anywhere (see `machines.triggers.AbilityOnStack`).
+    spell also leaves the stack somewhere as part of resolving at all, and
+    that arrival mutates this fingerprint regardless of whether the spell's
+    own effect ran. `_without_own_arrival` is what discounts that one
+    mandatory move for spells; abilities need no such correction, since CR
+    608.2n removes a resolved ability from the stack without putting it
+    anywhere (see `machines.triggers.AbilityOnStack`).
 
     **What this still cannot see**, honestly: the library, the command zone,
     and the sideboard are not fingerprinted at all (an effect that only
     shuffles the library, or only changes what is in a face-down command-zone
-    card, reads as "nothing changed"); a card's own printed text or
-    characteristics changed by a continuous effect that touches none of the
-    fields above (e.g. a name change with no P/T, tap, or counter change)
-    is invisible; and two effects that exactly cancel out within the same
-    resolution (a counter added then removed by the same spell) leave no
-    trace, the same blind spot a snapshot diff always has.
+    card, reads as "nothing changed"); a characteristic changed off the
+    battlefield, where no computed board exists; and two effects that exactly
+    cancel out within the same resolution (a counter added then removed by
+    the same spell) leave no trace, the same blind spot a snapshot diff
+    always has.
     """
 
     def zone_fingerprint(cards: Any) -> dict[str, tuple[Any, ...]]:
@@ -326,6 +302,10 @@ def _resolution_state(game: Game) -> dict[str, Any]:
     return {
         "life": {player.username: player.life for player in game.players},
         "pools": {player.username: dict(player.mana_pool.floating) for player in game.players},
+        "player_counters": {
+            player.username: tuple(sorted(player.counters.root.items())) for player in game.players
+        },
+        "stack": tuple(str(obj.id) for obj in game.stack if obj is not resolving),
         "battlefield": zone_fingerprint(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "hands": {player.username: zone_fingerprint(player.hand) for player in game.players},
         "graveyards": {
@@ -401,7 +381,7 @@ def _run_pass_priority(game: Game, payload: dict[str, Any]) -> Any:
     resolving_obj = game.stack[-1] if game.stack else None
     resolving = resolving_obj.name if resolving_obj is not None else None
     resolving_spell_id = resolving_obj.id if isinstance(resolving_obj, CardState) else None
-    before = _resolution_state(game)
+    before = _resolution_state(game, resolving=resolving_obj)
     outcome = game.pass_priority(req.player)
     detail: dict[str, Any] = {"outcome": outcome}
     if outcome is PriorityOutcome.RESOLVE_TOP:
