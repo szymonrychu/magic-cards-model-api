@@ -41,30 +41,65 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from itertools import combinations, product
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from magic_cards_model.machines.abilities import CostKind, keyword_abilities
-from magic_cards_model.machines.casting import _BLIGHT_PHRASE
+from magic_cards_model.machines.casting import (
+    _BLIGHT_PHRASE,
+    granted_cast_options,
+    keyword_cast_options,
+    marker_cast_options,
+)
 from magic_cards_model.machines.cost import (
+    ComponentKind,
     TotalCost,
     additional_cost_phrases,
+    apply_modifications,
     mana_candidate_scan,
     plan_mana_payment,
     total_cost_for_phrase,
 )
 from magic_cards_model.machines.decisions import PendingDecision
+from magic_cards_model.machines.keywords import equip_activation, off_zone_abilities
 from magic_cards_model.machines.legal_actions import (
     _cast_action,
     _cost_affordability,
+    _cost_strings,
     legal_actions,
 )
-from magic_cards_model.models import Action, CardState, Color, Game
-from magic_cards_model.models.action import ActionKind, Affordability
-from magic_cards_model.models.mana import ManaCost, ManaSpend
+from magic_cards_model.models import Action, CardState, Color, Game, Zone
+from magic_cards_model.models.action import ActionKind, Affordability, TargetSlot
+from magic_cards_model.models.mana import ManaCost, ManaSpend, ManaSymbol, SymbolKind
 
-from .engine_api import activate_ability, dry_run_copy, effective_production
+from .affordances import activation_profile
+from .engine_api import (
+    activate_ability,
+    dry_run_copy,
+    effective_production,
+    equip_target_requirements,
+    unreadable_mode_notice,
+    unreadable_modes,
+    without_loyalty_mana_advice,
+)
 from .schemas import ActivateRequest
+
+#: The printed cost pieces that never move the card they are on (CR 602.1a):
+#: an ability made only of these has no CR 113.6m zone of its own to read.
+_NO_ZONE_COST_KINDS = frozenset(
+    {CostKind.MANA, CostKind.TAP, CostKind.UNTAP, CostKind.LOYALTY, CostKind.PAY_LIFE}
+)
+
+#: Marker for a component whose own `zone` field names where its card must be.
+_COMPONENT_ZONE = object()
+
+#: The cost components that move a chosen card out of a zone, and that zone:
+#: a discard is always from hand (CR 701.9a), an exile from the component's
+#: own `zone` ("Exile this card from your graveyard").
+_SELF_MOVE_ZONE: dict[ComponentKind, Any] = {
+    ComponentKind.DISCARD: Zone.HAND,
+    ComponentKind.EXILE: _COMPONENT_ZONE,
+}
 
 #: The optional costs a keyword ability carries, each with the rule that
 #: defines it and whether it may be paid more than once. One row per mechanic,
@@ -101,17 +136,119 @@ def legal_action_rows(
     if pending is not None:
         return actions, [action.model_dump(mode="json") for action in actions]
     rows = _Rows(game, player)
-    actions = [rows.with_front_face_cost(action) for action in actions]
+    actions = [
+        rows.with_target_slots(rows.as_loyalty_activation(rows.with_front_face_cost(action)))
+        for action in actions
+        if rows.functions_where_it_is(action)
+    ]
+    charged = [rows.with_charged_cost(action) for action in actions]
+    actions = [action for action, _ in charged]
     views = [action.model_dump(mode="json") for action in actions]
-    for action, view in zip(actions, views, strict=True):
+    for (action, charge), view in zip(charged, views, strict=True):
+        view.update(charge)
         if action.kind is ActionKind.CAST:
             rows.add_optional_costs(action, view)
+            rows.name_unreadable_modes(action, view)
         elif action.kind is ActionKind.ACTIVATE_MANA:
             rows.state_production(action, view)
+    for action, view in rows.equip_rows():
+        actions.append(action)
+        views.append(view)
     for action, view in zip(actions, views, strict=True):
         if action.kind is ActionKind.CAST:
             rows.offer_manual_mana(action, view)
+        if view.get("unaffordable_reason"):
+            view["unaffordable_reason"] = without_loyalty_mana_advice(
+                game, view["unaffordable_reason"]
+            )
     return actions, views
+
+
+#: How far `charge_schedule` walks X looking for the point the charge settles.
+#: A floor is three or so and a reduction a handful of mana, so this is never
+#: reached on a real board; past it the row fails closed.
+_MAX_X_WALK = 64
+
+
+class ChargeSchedule(NamedTuple):
+    """What a cast is charged across every X (`charge_schedule`)."""
+
+    listed: list[ManaCost]
+    """The charge at X = 0, 1, ... up to the first X `cost`/`words` covers."""
+    cost: ManaCost
+    """The charge from there on, X kept - meaningful only if `words` is None."""
+    words: str | None
+    """The charge from there on in words, when no one mana cost says it."""
+
+
+def charge_schedule(
+    printed: ManaCost,
+    increases: list[ManaCost],
+    reductions: list[ManaCost],
+    floor: int | None,
+) -> ChargeSchedule:
+    """`Casting.total_cost`'s mana arithmetic, `apply_modifications(printed.
+    with_x(x), ...)`, laid out over every X.
+
+    CR 107.3a: X is announced before CR 601.2f determines the total cost, so
+    an increase lands on the cost X has already made and a floor or a
+    generic reduction reads it. Past some X the charge settles into adding
+    each X symbol's one generic mana per X: the increases and the coloured
+    part of a reduction do not depend on X, a generic reduction stops
+    growing once the generic mana covers it, and a floor stops applying once
+    the cost reaches it. The first X one step of which grows that way is that
+    point - a step smaller than that means one of the two is still biting.
+    The X below it are `listed`; from it on the charge is one cost with X in
+    it, unless the reduction ate into X's own mana, which no mana cost can
+    say - then `words` says it (`{X}{R} less {1}`).
+
+    A cost with no X settles at X = 0, so `cost` is simply the charge."""
+
+    def charged(x: int) -> ManaCost:
+        return apply_modifications(printed.with_x(x), increases, reductions, floor=floor)
+
+    per_x = printed.x_count
+    for settled in range(_MAX_X_WALK):
+        here, there = charged(settled), charged(settled + 1)
+        if _generic(there) == _generic(here) + per_x and _coloured(there) == _coloured(here):
+            break
+    else:
+        raise ValueError(f"the charge for {printed} does not settle by X={_MAX_X_WALK}")
+    listed = [charged(x) for x in range(settled)]
+    if not per_x:
+        return ChargeSchedule(listed, here, None)
+    xs = tuple(symbol for symbol in printed.symbols if symbol.kind is SymbolKind.VARIABLE)
+    rest = tuple(symbol for symbol in here.symbols if symbol.kind is not SymbolKind.GENERIC)
+    offset = _generic(here) - per_x * settled
+    if offset < 0:
+        return ChargeSchedule(listed, here, f"{ManaCost(symbols=xs + rest)} less {{{-offset}}}")
+    generic = (ManaSymbol(kind=SymbolKind.GENERIC, amount=offset),) if offset else ()
+    return ChargeSchedule(listed, ManaCost(symbols=xs + generic + rest), None)
+
+
+def _generic(cost: ManaCost) -> int:
+    return sum(symbol.amount for symbol in cost.symbols if symbol.kind is SymbolKind.GENERIC)
+
+
+def _coloured(cost: ManaCost) -> list[str]:
+    return sorted(str(symbol) for symbol in cost.symbols if symbol.kind is not SymbolKind.GENERIC)
+
+
+def _cost_text(mana: ManaCost, parts: list[str]) -> tuple[str | None, str | None]:
+    """`legal_actions._cost_strings` for a mana part and the text of the
+    other cost parts - `str(TotalCost)`'s own joining."""
+    free = not mana.converted and not mana.x_count and not parts
+    pieces = ([str(mana)] if mana.converted or mana.x_count else []) + parts
+    return (None if free else ", ".join(pieces) or "{0}"), (str(mana) if mana.symbols else None)
+
+
+def _component_text(action: Action) -> list[str]:
+    """A row's non-mana cost parts, as text: its `cost` with the leading
+    mana part `str(TotalCost)` put there taken off."""
+    cost, mana = action.cost or "", action.mana_cost or ""
+    if mana and ManaCost.parse(mana).converted or "{X}" in mana:
+        cost = cost.removeprefix(mana).removeprefix(", ")
+    return [cost] if cost else []
 
 
 def _symbols(colors: list[Color]) -> str:
@@ -186,6 +323,336 @@ class _Rows:
             # top-level `{X}` check does not look.
             rebuilt = rebuilt.model_copy(update={"x_range": (0, None)})
         return rebuilt
+
+    # -- equip (CR 702.6a) --------------------------------------------------------
+
+    def equip_rows(self) -> list[tuple[Action, dict[str, Any]]]:
+        """One `equip` row per Equipment this seat controls whose equip ability
+        `machines.keywords.equip_activation` allows right now (its `why_not`,
+        CR 602.5, "Activate only as a sorcery" included).
+
+        The engine's enumeration has no row for equip: `Game.
+        activated_abilities` does not list a keyword ability, so Blade of the
+        Bloodchief offered nothing at all. The row is built from the
+        activation itself - its cost, its affordability by the engine's own
+        planner, and the target slot the engine's targeting parser reads off
+        CR 702.6a's "Attach this permanent to target creature you control".
+        `kind` is `equip`, the tail of `POST .../actions/equip`, the way every
+        other row's kind names its route; the engine-side `Action` it is
+        index-aligned with is an `activate` carrying `keyword: Equip`.
+
+        The activation is built with the Equipment standing in as its own
+        target: a target is needed to build one, and nothing read here (cost,
+        timing, the ability's text) depends on which object it is."""
+        found: list[tuple[Action, dict[str, Any]]] = []
+        board: Any = None
+        for permanent in self.game.permanents_controlled_by(self.player):
+            if not any(
+                ability.canonical.lower() == "equip"
+                for ability in keyword_abilities(permanent.card)
+            ):
+                continue
+            try:
+                activation = equip_activation(self.game, permanent, permanent, self.player)
+            except ValueError as error:
+                action = Action(
+                    kind=ActionKind.ACTIVATE,
+                    player=self.player,
+                    rule="CR 702.6a",
+                    card_id=permanent.id,
+                    from_zone=Zone.BATTLEFIELD,
+                    keyword="Equip",
+                    affordable=Affordability.UNKNOWN,
+                    unaffordable_reason=str(error),
+                )
+                found.append((action, {**action.model_dump(mode="json"), "kind": "equip"}))
+                continue
+            if activation.why_not() is not None:
+                continue
+            if board is None:
+                board = self.game.computed_board()
+            affordable, reason, pays_with = _cost_affordability(
+                self.game,
+                self.player,
+                activation.cost,
+                self.scan,
+                spend=ManaSpend.activating(board.of(permanent)),
+            )
+            cost, mana_cost = _cost_strings(activation.cost)
+            action = Action(
+                kind=ActionKind.ACTIVATE,
+                player=self.player,
+                rule=activation.rule,
+                card_id=permanent.id,
+                from_zone=Zone.BATTLEFIELD,
+                keyword=activation.keyword,
+                cost=cost,
+                mana_cost=mana_cost,
+                affordable=affordable,
+                unaffordable_reason=reason,
+                pays_with=pays_with,
+                target_slots=tuple(
+                    TargetSlot(
+                        phrase=requirement.phrase,
+                        minimum=requirement.minimum,
+                        maximum=None if requirement.unbounded else requirement.count,
+                    )
+                    for requirement in equip_target_requirements(activation)
+                ),
+            )
+            found.append((action, {**action.model_dump(mode="json"), "kind": "equip"}))
+        return found
+
+    # -- where an ability functions (CR 113.6, CR 602.2) ------------------------
+
+    def functions_where_it_is(self, action: Action) -> bool:
+        """Whether an activation row's ability functions in the zone its card
+        is in, and belongs to this seat.
+
+        CR 113.6b: "An ability that states which zones it functions in
+        functions only from those zones", and CR 113.6m: "An ability whose
+        cost or effect specifies that it moves the object it's on out of a
+        particular zone functions only in that zone". The zone is the engine's
+        own reading of the ability - `OffZoneAbility.zone` for an off-zone row,
+        and the cost components `Game.activation_cost` builds for a battlefield
+        row, whose self-exile or self-discard names where the card has to be.
+        CR 602.2: "Only an object's controller (or its owner, if it doesn't
+        have a controller) can activate its activated ability" - CR 108.4a's
+        owner for a card in exile, which the engine's enumeration offers to
+        every seat alike."""
+        if action.kind is ActionKind.ACTIVATE_OFF_ZONE:
+            card = self._card(action.card_id)
+            if card is None or action.ability_index is None:
+                return True
+            if card.controller_or_owner not in (None, self.player):
+                return False
+            pool = off_zone_abilities(card.card)
+            if not 0 <= action.ability_index < len(pool):
+                return True
+            return pool[action.ability_index].zone is card.zone
+        if action.kind not in (ActionKind.ACTIVATE, ActionKind.ACTIVATE_MANA):
+            return True
+        permanent = self._card(action.card_id)
+        if permanent is None or action.ability_index is None:
+            return True
+        abilities = list(self.game.activated_abilities(permanent))
+        if not 0 <= action.ability_index < len(abilities):
+            return True
+        ability = abilities[action.ability_index]
+        zone = getattr(ability, "zone", None)
+        if zone is not None and zone is not permanent.zone:
+            return False
+        if all(
+            piece.kind in _NO_ZONE_COST_KINDS for piece in getattr(ability, "costs", None) or []
+        ):
+            return True
+        try:
+            total = self.game.activation_cost(permanent, action.ability_index, self.player)
+        except ValueError:
+            return True
+        for component in total.components:
+            moved_from = _SELF_MOVE_ZONE.get(component.kind)
+            if moved_from is None:
+                continue
+            origin = component.zone if moved_from is _COMPONENT_ZONE else moved_from
+            if origin is not permanent.zone and any(
+                card.id == permanent.id for card in component.cards
+            ):
+                return False
+        return True
+
+    # -- a loyalty ability is never a mana ability (CR 605.1a) --------------------
+
+    def as_loyalty_activation(self, action: Action) -> Action:
+        """CR 605.1a: an activated ability is a mana ability only if "it's not
+        a loyalty ability". The engine's enumeration keys `ACTIVATE_MANA` on
+        the ability adding mana alone, so Ugin, Eye of the Storms' `0: Add
+        {C}{C}{C}` came out a mana row - it uses the stack like any other
+        loyalty ability (CR 606.3)."""
+        if action.kind is not ActionKind.ACTIVATE_MANA or action.ability_index is None:
+            return action
+        permanent = self._card(action.card_id)
+        if permanent is None:
+            return action
+        abilities = list(self.game.activated_abilities(permanent))
+        if not 0 <= action.ability_index < len(abilities):
+            return action
+        if getattr(abilities[action.ability_index], "loyalty", None) is None:
+            return action
+        return action.model_copy(update={"kind": ActionKind.ACTIVATE})
+
+    # -- the cost the cast will charge (CR 601.2f) --------------------------------
+
+    def with_charged_cost(self, action: Action) -> tuple[Action, dict[str, Any]]:
+        """The row rebuilt at the total cost the cast is charged, and what the
+        view gains for it (`printed_cost`, and `x_costs` on an X row) - or
+        the row unchanged and nothing.
+
+        CR 601.2f: "Some effects may increase or reduce the cost to pay". The
+        engine's enumeration prices a cast at its printed (or alternative)
+        mana cost; `Casting.total_cost` charges `apply_modifications(base.
+        with_x(x_value), increases, reductions, floor)` - every board-wide
+        increase, reduction and floor (`Game.static_cost_modifiers_for`) and
+        the spell's own discount (`Game.cost_reduction_for`). These are those
+        same calls, so Malevolent Rumble under Trinisphere reads `{2}{G}`,
+        Emrakul, the Promised End reads what its graveyard makes it, and
+        Solitude's evoke, a cost with no mana in it, is taxed by Sphere of
+        Resistance too. The spell's own discount is asked with no targets
+        announced yet: a discount conditioned on a target (CR 601.2c comes
+        first) is not assumed.
+
+        An X row is priced by `charge_schedule` from the same arithmetic run
+        at each X. A row whose cost strings match none of the card's cast
+        options (`_row_total`) still shows the charged mana, but its other
+        cost parts are only text here, so its payability is not judged."""
+        if action.kind is not ActionKind.CAST:
+            return action, {}
+        card = self._card(action.card_id)
+        if card is None:
+            return action, {}
+        try:
+            increases, reductions, floor = self.game.static_cost_modifiers_for(card, self.player)
+            own = self.game.cost_reduction_for(card, self.player, targets=[])
+        except ValueError:
+            return action, {}
+        if own.symbols:
+            reductions = [*reductions, own]
+        if not increases and not reductions and floor is None:
+            return action, {}
+        printed = ManaCost.parse(action.mana_cost or "")
+        schedule = charge_schedule(printed, increases, reductions, floor)
+        if not schedule.listed and schedule.words is None and str(schedule.cost) == str(printed):
+            return action, {}
+        total = self._row_total(action, card)
+        parts = (
+            [str(component) for component in total.components]
+            if total is not None
+            else _component_text(action)
+        )
+        extra: dict[str, Any] = {"printed_cost": action.cost or "{0}"}
+        if schedule.listed:
+            extra["x_costs"] = [
+                dict(zip(("x", "cost", "mana_cost"), (x, *_cost_text(mana, parts)), strict=True))
+                for x, mana in enumerate(schedule.listed)
+            ]
+        if schedule.words is None:
+            cost, mana_cost = _cost_text(schedule.cost, parts)
+        else:
+            cost, mana_cost = ", ".join([schedule.words, *parts]), None
+        if total is None:
+            return action.model_copy(
+                update={
+                    "cost": cost,
+                    "mana_cost": mana_cost,
+                    "affordable": Affordability.UNKNOWN,
+                    "unaffordable_reason": (
+                        "this row's cost matches none of the card's cast options, so whether "
+                        "the cost the cast is charged (CR 601.2f) can be paid is not judged here"
+                    ),
+                    "pays_with": (),
+                }
+            ), extra
+        least = schedule.listed[0] if schedule.listed else schedule.cost.with_x(0)
+        rebuilt = _cast_action(
+            self.game,
+            self.player,
+            card,
+            rule=action.rule,
+            keyword=action.keyword,
+            alternative_cost=action.alternative_cost,
+            total=TotalCost(mana=least, components=list(total.components)),
+            candidate_scan=self.scan,
+            spell_face=action.spell_face,
+            splice_options=action.splice_options,
+        )
+        update: dict[str, Any] = {
+            "cost": cost,
+            "mana_cost": mana_cost,
+            "x_range": action.x_range,
+        }
+        if action.x_range is not None or schedule.words is not None:
+            update.update(
+                affordable=Affordability.UNKNOWN,
+                unaffordable_reason="X has not been announced yet (CR 107.3a)",
+                pays_with=(),
+            )
+        return rebuilt.model_copy(update=update), extra
+
+    def _row_total(self, action: Action, card: CardState) -> TotalCost | None:
+        """The `TotalCost` a cast row was priced from, found again among the
+        same cast options the enumeration read (`legal_actions._cast_actions`)
+        by the strings it printed - `None` when no option prints the same."""
+        if action.cost == action.mana_cost:
+            return TotalCost.of(ManaCost.parse(action.mana_cost or ""))
+        totals: list[TotalCost | None] = [
+            option.cost for option in keyword_cast_options(card.card) + marker_cast_options(card)
+        ]
+        totals.extend(
+            granted.option.cost
+            for granted in granted_cast_options(self.game, card, self.player, card.zone)
+        )
+        totals.extend(
+            alternative.cost for alternative in self.game.alternative_costs_for(card, self.player)
+        )
+        for total in totals:
+            if total is not None and _cost_strings(total) == (action.cost, action.mana_cost):
+                return total
+        return None
+
+    # -- modes the engine cannot read (CR 700.2a) --------------------------------
+
+    def name_unreadable_modes(self, action: Action, view: dict[str, Any]) -> None:
+        card = self._card(action.card_id)
+        if card is None or not action.modes:
+            return
+        unreadable = unreadable_modes(card)
+        if unreadable:
+            view["unreadable_modes"] = [
+                {
+                    "mode_number": mode.number,
+                    "text": mode.text,
+                    "notice": unreadable_mode_notice(card, mode),
+                }
+                for mode in unreadable
+            ]
+
+    # -- an activation's targets ---------------------------------------------------
+
+    def with_target_slots(self, action: Action) -> Action:
+        """CR 602.2b: an activation announces its targets as a cast does, but
+        the engine's `legal_actions` builds `target_slots` only for a cast row,
+        so every activation row read `[]` - "targets nothing" - for Goblin
+        Bombardment's "Sacrifice a creature: ... any target" (B5-10). Filled
+        here from the same announcement profile the cast row's come from."""
+        if (
+            action.kind not in (ActionKind.ACTIVATE, ActionKind.ACTIVATE_OFF_ZONE)
+            or action.target_slots
+            or action.ability_index is None
+        ):
+            return action
+        card = self._card(action.card_id)
+        if card is None:
+            return action
+        try:
+            profile = activation_profile(
+                self.game,
+                card,
+                action.ability_index,
+                off_zone=action.kind is ActionKind.ACTIVATE_OFF_ZONE,
+            )
+        except (IndexError, ValueError):
+            return action
+        if not profile.understood or not profile.requirements:
+            return action
+        slots = tuple(
+            TargetSlot(
+                phrase=requirement.phrase,
+                minimum=requirement.minimum,
+                maximum=None if requirement.unbounded else requirement.count,
+            )
+            for requirement in profile.requirements
+        )
+        return action.model_copy(update={"target_slots": slots})
 
     # -- optional additional costs ------------------------------------------------
 
@@ -267,8 +734,10 @@ class _Rows:
                     f"{card.name}'s {keyword} cost {printed!r} could not be read"
                 ),
             }
-        if action.x_range is not None or (
-            action.mana_cost is not None and action.cost != action.mana_cost
+        if (
+            action.x_range is not None
+            or (action.mana_cost is not None and action.cost != action.mana_cost)
+            or (action.mana_cost is None and "less {" in (action.cost or ""))
         ):
             return {
                 "affordable": Affordability.UNKNOWN.value,

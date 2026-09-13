@@ -1148,14 +1148,19 @@ def test_choose_a_quality_missing_choice_is_refused_not_defaulted(client, game):
 
 
 # -- choose_a_mode: a modal triggered ability's "choose one -" (CR 603.3c,
-# CR 700.2a) ------------------------------------------------------------
+# CR 700.2b) ------------------------------------------------------------
 
 
-def declare_gargaroth_attacking(client: TestClient, game_id: str, uids: dict[str, str]) -> None:
-    """Elder Gargaroth attacking bob triggers its "attacks or blocks, choose
-    one -" ability. CR 603.3c announces the mode as the ability is put on the
-    stack, so the engine asks `choose_a_mode` then, before anything resolves
-    (`_put_pending_triggers_on_stack`)."""
+def declare_gargaroth_attacking(
+    client: TestClient, game_id: str, uids: dict[str, str]
+) -> dict[str, Any]:
+    """Elder Gargaroth attacking bob triggers its own "attacks or blocks,
+    choose one -" ability. CR 603.3c: "If a triggered ability is modal, its
+    controller announces the mode choice when putting the ability on the
+    stack" (and CR 700.2b says the same), so the `choose_a_mode` question is
+    asked by the attack declaration itself, before the trigger reaches the
+    stack - not later, when something resolves it. Returns the attack
+    response, which carries that pause."""
     gargaroth = add_card(client, game_id, "Elder Gargaroth", "alice", "battlefield")["added"][
         "card_id"
     ]
@@ -1171,7 +1176,21 @@ def declare_gargaroth_attacking(client: TestClient, game_id: str, uids: dict[str
         json={"attackers": [{"card_id": gargaroth, "defender": "bob"}]},
     )
     assert attack.status_code == 200, attack.text
-    assert attack.json()["allowed"] is True, attack.json()
+    body = attack.json()
+    assert body["allowed"] is True, body
+    return body
+
+
+def assert_mode_trigger_waits_on_the_stack(client: TestClient, game_id: str) -> None:
+    """After the mode is answered, the trigger is on the stack (CR 603.3c)
+    and nothing has resolved yet - the chosen mode happens only when it
+    resolves."""
+    board = state(client, game_id)
+    assert board.get("pending_decision") is None
+    assert [(item["kind"], item["name"]) for item in board["stack"]] == [
+        ("ability", "Elder Gargaroth")
+    ], "the mode was chosen as the trigger went on the stack"
+    assert life_of(board, "alice") == 20, "the chosen mode has not resolved yet"
 
 
 def test_choose_a_mode_picks_the_named_mode(client, game):
@@ -1179,13 +1198,18 @@ def test_choose_a_mode_picks_the_named_mode(client, game):
     Beast creature token. / You gain 3 life. / Draw a card." A
     `choose_a_mode` decision's answer is the mode's own printed text, out of
     `pending_decision.options` - this is the other live-hang case the report
-    names, alongside Necrodominance's `pay_life_amount`."""
+    names, alongside Necrodominance's `pay_life_amount`. The question is
+    asked while the trigger is being put on the stack (CR 603.3c), so the
+    attack declaration is the call that pauses on it."""
     uids = seats_for(client, game)
-    declare_gargaroth_attacking(client, game, uids)
+    attack = declare_gargaroth_attacking(client, game, uids)
 
+    assert attack["paused"] is True
+    assert attack["pending_decision"]["kind"] == "choose_a_mode"
     pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
     assert pending["kind"] == "choose_a_mode"
     assert pending["player"] == "alice"
+    assert state(client, game)["stack"] == [], "the trigger is not on the stack before its mode"
     gain_life_mode = next(mode for mode in pending["options"] if "gain 3 life" in mode)
 
     answer = client.post(
@@ -1195,9 +1219,13 @@ def test_choose_a_mode_picks_the_named_mode(client, game):
     )
     assert answer.status_code == 200, answer.text
     assert answer.json()["accepted"] is True
-    assert life_of(state(client, game), "alice") == 20, "the mode is chosen, not yet resolved"
+    assert_mode_trigger_waits_on_the_stack(client, game)
 
-    resolve_top(game)
+    resolved = resolve_top(game)
+    assert resolved.get("paused") is not True, (
+        "the mode was already chosen - resolution asks nothing"
+    )
+    assert resolved["pending_decision"] is None
 
     final = state(client, game)
     assert life_of(final, "alice") == 23, "the chosen mode - gain 3 life - actually happened"
@@ -1209,13 +1237,15 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
     `pending_decision.options` synchronously, in this request, against the
     same `options` `Game.ask` itself checks - never silently substituting
     the first mode, never letting the mismatch surface late on the
-    resolving thread's side (see
+    engine's side (see
     `test_an_engine_refused_answer_is_refused_synchronously_not_recorded_allowed`
-    in `test_decisions.py`). The resolving thread stays parked on the same
-    decision, so an offered mode afterwards still lets it resolve."""
+    in `test_decisions.py`). The paused attack declaration stays parked on
+    the same decision, so an offered mode afterwards still puts the trigger
+    on the stack with that mode, and it resolves as that mode alone."""
     uids = seats_for(client, game)
-    declare_gargaroth_attacking(client, game, uids)
+    attack = declare_gargaroth_attacking(client, game, uids)
 
+    assert attack["paused"] is True
     pending = wait_for_pending(client, game, uids["alice"])["pending_decision"]
     assert set(pending["options"]) == {
         "Create a 3/3 green Beast creature token.",
@@ -1234,6 +1264,7 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
     assert "Deal 3 damage to any target." in body["reason"]
     still_pending = state(client, game, uid=uids["alice"])
     assert still_pending.get("pending_decision") is not None, "a refused answer must not consume it"
+    assert still_pending["stack"] == [], "a refused answer must not put the trigger on the stack"
 
     legal = client.post(
         f"/api/games/{game}/decide",
@@ -1242,6 +1273,8 @@ def test_choose_a_mode_rejects_a_mode_that_was_not_offered(client, game):
     )
     assert legal.status_code == 200, legal.text
     assert legal.json()["accepted"] is True
+    assert_mode_trigger_waits_on_the_stack(client, game)
+
     resolve_top(game)
 
     final = state(client, game)

@@ -197,6 +197,7 @@ DRY_RUN_ROUTES = frozenset(
         "/api/games/{game_id}/actions/cast",
         "/api/games/{game_id}/actions/crew",
         "/api/games/{game_id}/actions/cycle",
+        "/api/games/{game_id}/actions/equip",
         "/api/games/{game_id}/actions/foretell",
         "/api/games/{game_id}/actions/play-land",
         "/api/games/{game_id}/actions/plot",

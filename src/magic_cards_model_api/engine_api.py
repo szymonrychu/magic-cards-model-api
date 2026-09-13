@@ -23,7 +23,7 @@ from magic_cards_model.machines.casting import (
 )
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
 from magic_cards_model.models import CardState, Color, Game, Layout, Zone
-from magic_cards_model.models.card_state import Counter, counter_state_based_actions
+from magic_cards_model.models.card_state import Counter, ExileMarker, counter_state_based_actions
 from pydantic import ValidationError
 
 from .decisions import player_or_card
@@ -33,6 +33,7 @@ from .schemas import (
     CastRequest,
     CrewRequest,
     CycleRequest,
+    EquipRequest,
     ManaSource,
     OptionalCostChoice,
     PlayLandRequest,
@@ -79,6 +80,72 @@ def _engine_message(reason: str | Exception) -> str:
     if isinstance(reason, ValidationError):
         return "; ".join(_without_pydantic_prefix(error["msg"]) for error in reason.errors())
     return str(reason)
+
+
+def is_mana_ability(ability: Any) -> bool:
+    """CR 605.1a: a mana ability "could add mana ... it's not a loyalty
+    ability". The engine's parsed `mana` is set on any ability that adds
+    mana, Ugin, Eye of the Storms' `0: Add {C}{C}{C}` included - which uses
+    the stack like every loyalty ability (CR 606.3)."""
+    return getattr(ability, "mana", None) is not None and getattr(ability, "loyalty", None) is None
+
+
+def without_loyalty_mana_advice(game: Game, text: str | None) -> str | None:
+    """`text` without the engine's "activate it manually to include it" advice
+    about a loyalty ability.
+
+    The engine's payment planner (`machines/cost._withheld_mana_sources`)
+    names every untapped source whose only mana ability costs more than
+    `{T}`, and reads a loyalty ability that adds mana as one - so every
+    refused cast told a seat to activate Ugin's `0` mid-cast. CR 605.1a says
+    it is not a mana ability, and CR 606.3 lets it be activated only with the
+    stack empty, never while a spell is being paid for. The clause is built
+    here from the same fields the engine formats it from, for each loyalty
+    ability on the battlefield, and removed; every other source's advice is
+    left as the engine wrote it."""
+    if not text or "activate it manually" not in text:
+        return text
+    for permanent in list(game.battlefield):
+        try:
+            abilities = game.activated_abilities(permanent)
+        except Exception:  # noqa: BLE001 - a read of refusal prose must not raise
+            continue
+        for ability in abilities:
+            if getattr(ability, "mana", None) is None or getattr(ability, "loyalty", None) is None:
+                continue
+            clause = (
+                f"{permanent.name} was not auto-tapped because its only mana ability costs "
+                f"more than {{T}} ({ability.cost}: {ability.effect}) - activate it manually to "
+                "include it"
+            )
+            for joined in (f"{clause}; ", f"; {clause}", f": {clause}", clause):
+                text = text.replace(joined, "")
+    return text
+
+
+def unreadable_modes(card: CardState) -> list[Any]:
+    """The modes of `card` the engine cannot read into an effect.
+
+    `effects.resolve_modal_spell` runs each chosen mode through
+    `parse_mode_effect` and records a `ModeNotice` for one that reads as
+    nothing, skipping it (CR 700.2a's modes, carried out one by one). The same
+    reading, asked before the cast, is what tells a seat which modes would
+    spend the card for nothing."""
+    from magic_cards_model.machines.effects import parse_mode_effect
+    from magic_cards_model.machines.modes import modal_profile
+
+    profile = modal_profile(card.card)
+    if profile is None or not profile.understood:
+        return []
+    return [mode for mode in profile.modes if parse_mode_effect(mode, 0) is None]
+
+
+def unreadable_mode_notice(card: CardState, mode: Any) -> str:
+    return (
+        f"{card.name}'s mode {mode.number} ({mode.text!r}) cannot be read by this engine: "
+        "chosen, it would resolve doing nothing and leave only a mode notice (CR 700.2a), "
+        "so a cast choosing it is refused"
+    )
 
 
 def _without_pydantic_prefix(message: str) -> str:
@@ -425,8 +492,8 @@ def pay_with(
       have picked;
     - a bare card id, or a `ManaSource` with no colour, names *which* source
       to consider but leaves *what colour it makes* to the engine. This is
-      the common case: `seat_cli`'s default (every untapped source, no
-      colour) and an explicit `--sources <id>` naming a dual both land here,
+      the common case: no source named at all (every untapped permanent the
+      payer controls, below) and an explicit `--sources <id>` naming a dual both land here,
       and both used to crash straight out of `ManaAbility.resolve` the moment
       the named source was a dual, a shockland, or any other choice ability -
       "this ability offers [['W'], ['U']]; pass the colour chosen" - with no
@@ -461,8 +528,26 @@ def pay_with(
             card_id = entry.card_id if isinstance(entry, ManaSource) else entry
             unpinned.append(find_card(game, card_id))
 
+    if not sources and payment.shortfall and payment.payer is not None:
+        # Naming no source leaves the choice to the engine's automatic
+        # payment over every untapped permanent the payer controls - it taps
+        # only what the cost needs (CR 601.2g, CR 118.3c), so a front end has
+        # no reason to offer the lot and a log row no reason to name it
+        # (battle 5, B5-05).
+        unpinned = [
+            card
+            for card in game.battlefield
+            if card.controller == payment.payer and not card.tapped
+        ]
     if unpinned and payment.shortfall:
-        payment.auto_tap(unpinned)
+        try:
+            payment.auto_tap(unpinned)
+        except ValueError:
+            if sources:
+                raise
+            # Unnamed, the automatic payment is only an attempt: when it finds
+            # no plan, the payment's own refusal (`pay`) names the real reason,
+            # such as a CR 106.6 restriction, rather than "no combination".
 
 
 def shortfall_reason(payment: Any) -> str:
@@ -816,6 +901,12 @@ def _announce_modes(req: CastRequest, casting: Casting, mode_costs: _ModeCosts) 
     """
     if req.modes or mode_costs.entwined:
         casting.choose_modes(req.modes or [], x_value=req.x_value, entwined=mode_costs.entwined)
+        chosen = set(casting.chosen_mode_numbers)
+        for mode in unreadable_modes(casting.spell):
+            if mode.number in chosen:
+                # Refused before the cost is paid, so the card stays where it
+                # was: the engine would resolve this mode as a `ModeNotice`.
+                raise ValueError(unreadable_mode_notice(casting.spell, mode))
     elif req.x_value is not None:
         # CR 107.3a's X is announced as part of CR 601.2b, before targets
         # are chosen at CR 601.2c - `Casting.targeting`'s own docstring
@@ -1005,7 +1096,14 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
         return refused(exc)
     game.put_on_stack(state, casting.caster)
     game.retain_priority(casting.caster)
-    return Outcome(True, detail={"spell_id": str(state.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "spell_id": str(state.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 def apply_object_costs(game: Game, spell: CardState, payment: Any, req: CastRequest) -> None:
@@ -1070,6 +1168,132 @@ def crew_vehicle(game: Game, req: CrewRequest) -> Outcome:
 
     on_stack = activation.activate()
     game.retain_priority(req.player)
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
+
+
+# -- what the ledger records about an action ---------------------------------
+
+
+def cast_origin_zone(game: Game, req: CastRequest) -> str:
+    """The zone `req`'s card is cast from on `game` - CR 601.2a moves it "from
+    where it is to the stack" - rather than `CastRequest.from_zone`, which
+    defaults to `hand` and is only read to find a card named without an id
+    (battle 3, B3-15: a card cast from exile under Ragavan's permission was
+    logged `from_zone: hand`)."""
+    try:
+        return locate_castable(game, req).zone.value
+    except (KeyError, ValueError):
+        return req.from_zone
+
+
+#: The exile piles `ExileAnnotation` marks without a turn. Imprint and hideaway
+#: link a card to a permanent (`linked_permanent_id`) and nothing in the engine
+#: reads when they landed, so the engine leaves `turn_exiled` unset for them -
+#: while every other pile carries it (battle 4, B4-09).
+_UNSTAMPED_PILES = frozenset({ExileMarker.IMPRINTED, ExileMarker.HIDEAWAY})
+
+
+def stamp_exile_turns(before: Game, after: Game) -> None:
+    """Give each imprinted or hidden-away card that `after` exiled - and
+    `before` did not hold in exile as that same object (CR 400.7's
+    `zone_change_stamp`) - the turn it was exiled on.
+
+    CR 406.4 keeps face-down exiled cards "in separate piles based on when
+    they were exiled and how they were exiled". A command commits all at once,
+    so the turn it commits on is the turn its exile happened on. Only a pile
+    the engine left unstamped is touched, so an engine that stamps these
+    itself makes this a no-op."""
+    if after.turn is None:
+        return
+    earlier = {
+        card.id: card.zone_change_stamp
+        for card in before.shared_zones.get(Zone.EXILE, [])
+        if isinstance(card, CardState)
+    }
+    for card in after.shared_zones.get(Zone.EXILE, []):
+        if not isinstance(card, CardState):
+            continue
+        annotation = card.exile_annotation
+        if (
+            annotation is None
+            or annotation.turn_exiled is not None
+            or annotation.marker not in _UNSTAMPED_PILES
+            or earlier.get(card.id) == card.zone_change_stamp
+        ):
+            continue
+        card.exile_annotation = annotation.model_copy(
+            update={"turn_exiled": after.turn.turn_number}
+        )
+
+
+# -- equipping (CR 702.6) ---------------------------------------------------
+
+
+def equip_target_requirements(activation: Any) -> list[Any]:
+    """The targeting requirements of an equip activation, read by the engine's
+    own targeting parser off the ability CR 702.6a expands equip into
+    ("Attach this permanent to target creature you control.")."""
+    from magic_cards_model.machines.targeting import profile_for_text
+
+    profile = profile_for_text(activation.ability.effect)
+    return list(profile.requirements) if profile.understood else []
+
+
+def equip_permanent(game: Game, req: EquipRequest) -> Outcome:
+    """CR 702.6a's equip ability, activated: pay its cost and put "attach this
+    permanent to target creature you control" on the stack.
+
+    `machines.keywords.equip_activation` is the engine's object for it - the
+    one its own `tests/scenarios/test_equip.py` builds - and its `why_not` is
+    CR 602.5's refusal, "Activate only as a sorcery" (CR 307.5) included. The
+    target is checked at announcement (CR 602.2b applies CR 601.2c), against
+    the requirements the engine's targeting parser reads off that same
+    ability, before anything is paid; the engine rechecks it on resolution
+    (CR 608.2b)."""
+    from magic_cards_model.machines.keywords import equip_activation
+
+    try:
+        equipment = find_card(game, req.card_id)
+        target = find_card(game, req.target)
+        activation = equip_activation(game, equipment, target, req.player)
+    except (KeyError, ValueError) as exc:
+        return refused(exc)
+
+    refusal = activation.why_not()
+    if refusal is not None:
+        return refused(refusal)
+    for requirement in equip_target_requirements(activation):
+        rejected = requirement.rejects(target, req.player, game, equipment.id)
+        if rejected is not None:
+            return refused(f"{rejected} ({activation.rule})")
+
+    payment = None
+    try:
+        payment = activation.begin_paying()
+        pay_with(payment, list(req.mana_sources or []), game)
+        if req.dry_run:
+            tapped = tapped_view(payment)
+            if payment.unpayable or payment.shortfall:
+                reason = shortfall_reason(payment)
+                payment.rewind()
+                return Outcome(False, reason, {"cost": str(payment.cost), "tapped": tapped})
+            payment.rewind()
+            return Outcome(True, detail={"cost": str(payment.cost), "tapped": tapped})
+        payment.pay()
+    except ValueError as exc:
+        if payment is not None:
+            payment.rewind()
+        return refused(exc)
+
+    on_stack = activation.activate()
+    game.retain_priority(req.player)
     return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
 
 
@@ -1115,7 +1339,11 @@ def _take_marked_exile(game: Game, action: MarkedExile, req: SpecialActionReques
         return refused(exc)
 
     card = action.take()
-    detail: dict[str, Any] = {"card_id": str(card.id), "cost": str(payment.cost)}
+    detail: dict[str, Any] = {
+        "card_id": str(card.id),
+        "cost": str(payment.cost),
+        "tapped": tapped_view(payment),
+    }
     if action.time_counters is not None:
         detail["time_counters"] = action.time_counters
     return Outcome(True, detail=detail)
@@ -1203,7 +1431,14 @@ def cycle_card(game: Game, req: CycleRequest) -> Outcome:
 
     on_stack = activation.activate()
     game.retain_priority(req.player)
-    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 # -- targeting -------------------------------------------------------------
@@ -1349,7 +1584,14 @@ def _activate_off_zone_ability(game: Game, card: CardState, req: ActivateRequest
 
     on_stack = activation.activate()
     game.retain_priority(req.player)
-    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
@@ -1456,8 +1698,18 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
 
     game.retain_priority(req.player)
     if ability_on_stack is None:
-        return Outcome(True, detail={"mana_ability": True, "cost": str(payment.cost)})
-    return Outcome(True, detail={"ability_id": str(ability_on_stack.id), "cost": str(payment.cost)})
+        return Outcome(
+            True,
+            detail={"mana_ability": True, "cost": str(payment.cost)},
+        )
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(ability_on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 # -- attacking -------------------------------------------------------------
@@ -1875,7 +2127,7 @@ def list_abilities(game: Game, state: CardState) -> list[dict[str, Any]]:
             {
                 "index": index,
                 "text": ability.text,
-                "mana": getattr(ability, "mana", None) is not None,
+                "mana": is_mana_ability(ability),
                 **_mana_counts(game, state, ability, index, scanned),
                 # What activating it actually asks the player for: its cost, a
                 # loyalty symbol (CR 606.2), an X to announce, and whether it

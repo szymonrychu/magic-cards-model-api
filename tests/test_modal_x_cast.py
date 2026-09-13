@@ -318,6 +318,7 @@ def test_casting_it_with_two_modes_and_an_x_puts_it_on_the_stack(client, game):
     assert response.status_code == 200, response.text
     body = response.json()
     assert isinstance(body.pop("log_seq"), int)
+    assert sorted(entry["card_id"] for entry in body.pop("tapped")) == sorted(wastes)
     assert body == {
         "allowed": True,
         "reason": None,

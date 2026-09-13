@@ -25,6 +25,7 @@ from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
+from magic_cards_model.models.action import ActionKind
 from starlette.convertors import Convertor, register_url_convertor
 from starlette.responses import Response
 
@@ -79,6 +80,7 @@ from .schemas import (
     DeclarePlanIn,
     DeclarePlanResponse,
     DeleteGameResponse,
+    EquipRequest,
     GameLogResponse,
     GameReviewResponse,
     GameStateView,
@@ -591,6 +593,11 @@ def audit_outcome(
     if dry_run:
         return {**body, "log_seq": None}
     log_keys = {**keys, "notices": notices} if notices else keys
+    if outcome.allowed and "mana_sources" in log_keys and "tapped" in outcome.detail:
+        # The permanents that paid, not the ones the request offered: a
+        # source offered to a cost with no mana in it paid nothing (B5-05).
+        paid = [entry["card_id"] for entry in outcome.detail["tapped"]]
+        log_keys = {**log_keys, "mana_sources": paid}
     seq = audit.record(
         game_id,
         action,
@@ -771,12 +778,14 @@ def _run_command(
         # refusal of something never offered as the seat's own misreading and
         # a refusal of something offered as anything but.
         records.note_offered_action(command.kind, command.payload, legal_before)
+        records.note_action_board(game_id, game)
         result = commands.run_command(game, command)
         seq: int | None = None
         if dry_run:
             pass
         elif result.status is commands.RunStatus.COMPLETED:
             assert result.game is not None
+            engine_api.stamp_exile_turns(game, result.game)
             seq = store.replace(game_id, result.game)
             store.clear_paused_command(game_id)
         else:
@@ -963,9 +972,12 @@ def _resume(
     with store.locked(game_id) as game:
         legal_before = records.legal_actions_before(game, player, pending)
         result = commands.resume_command(game, command, tape, pending, answer)
+        # The answer is taken on the board its question was asked on (B3-11).
+        records.note_action_board(game_id, result.asked_on or game)
         seq: int | None = None
         if result.status is commands.RunStatus.COMPLETED:
             assert result.game is not None
+            engine_api.stamp_exile_turns(game, result.game)
             seq = store.replace(game_id, result.game)
             store.clear_paused_command(game_id)
         else:
@@ -1742,7 +1754,7 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
-    result, _, legal_before, seq = _run_command(game_id, "cast", req)
+    result, committed, legal_before, seq = _run_command(game_id, "cast", req)
     return _respond(
         game_id,
         "cast",
@@ -1750,7 +1762,8 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
         dry_run=req.dry_run,
         player=req.player,
         card=req.card or str(req.card_id),
-        from_zone=req.from_zone,
+        # Where the card was, not the request's `hand` default (B3-15).
+        from_zone=engine_api.cast_origin_zone(committed, req),
         spell_face=req.spell_face,
         targets=req.targets,
         mana_sources=[str(source) for source in req.mana_sources or []],
@@ -2026,6 +2039,13 @@ def _attach_target_candidates(
             continue
         if targetables is None:
             targetables = affordances.all_targetables(game)
+        if view.get("kind") == "equip":
+            # CR 702.6a's "target creature you control", read off the equip
+            # ability itself - the Equipment has no printed ability index.
+            view["targets"] = affordances.equip_target_candidates(
+                game, source, player, targetables=targetables
+            )
+            continue
         view["targets"] = affordances.target_candidates(
             game,
             source,
@@ -2046,6 +2066,7 @@ def _attach_target_candidates(
             # printing does not carry rather than guessing.
             face=action.spell_face,
             targetables=targetables,
+            off_zone=action.kind is ActionKind.ACTIVATE_OFF_ZONE,
         )
 
 
@@ -2273,6 +2294,46 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
         player=req.player,
         card_id=str(req.card_id),
         crewing=[str(card_id) for card_id in req.crewing],
+        reasoning=req.reasoning,
+        legal_actions_before=legal_before,
+        seq_hint=seq,
+    )
+
+
+@app.post(
+    "/api/games/{game_id}/actions/equip",
+    response_model=ActionOutcome,
+    response_model_exclude_unset=True,
+)
+def action_equip(game_id: str, req: EquipRequest) -> dict[str, Any]:
+    """Activate an Equipment's equip ability (CR 702.6a): "[Cost]: Attach this
+    permanent to target creature you control. Activate only as a sorcery."
+
+    Its own endpoint rather than an `activate` against an ability index, the
+    same as crew and cycling: equip is a keyword ability the engine builds
+    (`machines.keywords.equip_activation`), not one of the Equipment's
+    `activated_abilities`, so there is no index to name. The legal-action row
+    for it is `kind: equip`."""
+    records.require_current_board(
+        game_id,
+        "equip",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
+    records.require_reasoning(game_id, req.player, req.reasoning)
+    records.require_plan(game_id, req.player)
+    result, _, legal_before, seq = _run_command(game_id, "equip", req)
+    return _respond(
+        game_id,
+        "equip",
+        result,
+        dry_run=req.dry_run,
+        player=req.player,
+        card_id=str(req.card_id),
+        target=str(req.target),
+        mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
         legal_actions_before=legal_before,
         seq_hint=seq,

@@ -664,7 +664,16 @@
             "title": "Keyword"
           },
           "kind": {
-            "$ref": "#/components/schemas/ActionKind"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionKind"
+              },
+              {
+                "const": "equip",
+                "type": "string"
+              }
+            ],
+            "title": "Kind"
           },
           "land_face": {
             "anyOf": [
@@ -721,6 +730,17 @@
           "player": {
             "title": "Player",
             "type": "string"
+          },
+          "printed_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Cost"
           },
           "printed_produces": {
             "anyOf": [
@@ -807,6 +827,34 @@
               }
             ],
             "title": "Unaffordable Reason"
+          },
+          "unreadable_modes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UnreadableModeView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreadable Modes"
+          },
+          "x_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/XCostView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Costs"
           },
           "x_range": {
             "anyOf": [
@@ -1058,7 +1106,16 @@
             "title": "Keyword"
           },
           "kind": {
-            "$ref": "#/components/schemas/ActionKind"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionKind"
+              },
+              {
+                "const": "equip",
+                "type": "string"
+              }
+            ],
+            "title": "Kind"
           },
           "land_face": {
             "anyOf": [
@@ -1115,6 +1172,17 @@
           "player": {
             "title": "Player",
             "type": "string"
+          },
+          "printed_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Cost"
           },
           "printed_produces": {
             "anyOf": [
@@ -1204,6 +1272,34 @@
               }
             ],
             "title": "Unaffordable Reason"
+          },
+          "unreadable_modes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UnreadableModeView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreadable Modes"
+          },
+          "x_costs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/XCostView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Costs"
           },
           "x_range": {
             "anyOf": [
@@ -5062,6 +5158,82 @@
           "deleted"
         ],
         "title": "EndGameResponse",
+        "type": "object"
+      },
+      "EquipRequest": {
+        "additionalProperties": false,
+        "description": "CR 702.6a: \"Equip [cost]\" means \"[Cost]: Attach this permanent to\ntarget creature you control. Activate only as a sorcery.\"\n\nA keyword ability the engine builds on its own (`machines.keywords.\nequip_activation`) rather than one of the Equipment's\n`activated_abilities`, so there is no ability index to name - the same\nreason crew and cycling have their own request shapes.",
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
+          "mana_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManaSource"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Sources"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "target": {
+            "format": "uuid",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "card_id",
+          "target"
+        ],
+        "title": "EquipRequest",
         "type": "object"
       },
       "ExilePileView": {
@@ -12707,6 +12879,30 @@
         "title": "TargetingProfileView",
         "type": "object"
       },
+      "UnreadableModeView": {
+        "description": "One mode of a modal spell the engine cannot read into an effect -\n`action_rows.legal_action_rows`, from the reading\n`effects.resolve_modal_spell` records a `ModeNotice` for.",
+        "properties": {
+          "mode_number": {
+            "title": "Mode Number",
+            "type": "integer"
+          },
+          "notice": {
+            "title": "Notice",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode_number",
+          "text",
+          "notice"
+        ],
+        "title": "UnreadableModeView",
+        "type": "object"
+      },
       "ValidateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -12760,6 +12956,42 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "XCostView": {
+        "description": "What an X cast row is charged at one X its `cost` does not describe\n(`action_rows._Rows.with_charged_cost`).",
+        "properties": {
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "x": {
+            "title": "X",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x"
+        ],
+        "title": "XCostView",
         "type": "object"
       },
       "Zone": {
@@ -13679,6 +13911,56 @@
           }
         },
         "summary": "Action Declare Blockers"
+      }
+    },
+    "/api/games/{game_id}/actions/equip": {
+      "post": {
+        "description": "Activate an Equipment's equip ability (CR 702.6a): \"[Cost]: Attach this\npermanent to target creature you control. Activate only as a sorcery.\"\n\nIts own endpoint rather than an `activate` against an ability index, the\nsame as crew and cycling: equip is a keyword ability the engine builds\n(`machines.keywords.equip_activation`), not one of the Equipment's\n`activated_abilities`, so there is no index to name. The legal-action row\nfor it is `kind: equip`.",
+        "operationId": "action_equip_api_games__game_id__actions_equip_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EquipRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Equip"
       }
     },
     "/api/games/{game_id}/actions/foretell": {

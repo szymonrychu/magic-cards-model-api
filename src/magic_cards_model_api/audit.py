@@ -249,7 +249,11 @@ def record(
     `audit_outcome` and the `resolve-top`/`advance`/`pass-priority`
     endpoints) against a later read, rather than guessing from a blind retry.
     """
-    from .records import named_a_current_board, offered_action  # lazy, with `store` below
+    from .records import (  # lazy, with `store` below
+        action_board,
+        named_a_current_board,
+        offered_action,
+    )
     from .repository import GameUnloadable  # lazy, with `store` below
     from .serialize import snapshot  # lazy: keep module import light
     from .store import store  # lazy: audit imports nothing of the app at load
@@ -266,12 +270,18 @@ def record(
     except GameUnloadable:
         game = None
     turn = game.turn if game is not None else None
+    turn_number = turn.turn_number if turn is not None else None
     step = turn.step if turn is not None else None
+    # The step the action was taken in, not the one the committed board has
+    # moved on to since (`records.note_action_board`, battle 3 B3-11).
+    noted = action_board(game_id)
+    if noted is not None:
+        turn_number, step = noted
     payload = {
         "ts": datetime.now(UTC).isoformat(),
         "action": action,
         "detail": dict(detail),
-        "turn": turn.turn_number if turn is not None else None,
+        "turn": turn_number,
         "step": step.value if step is not None else None,
         # `.get`, not `[...]`: CR 500.1 makes a phase - and so every step in
         # one - part of *a turn*, and the engine's two pregame steps

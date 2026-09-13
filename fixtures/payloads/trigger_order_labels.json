@@ -192,7 +192,7 @@
   "pregame": null,
   "priority_holder": "alice",
   "stack": [],
-  "step": "untap",
+  "step": "upkeep",
   "turn_number": 1,
   "winner": null,
   "you": "alice"

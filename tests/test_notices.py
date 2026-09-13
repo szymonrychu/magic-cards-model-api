@@ -30,7 +30,7 @@ from magic_cards_model.machines.opening_hand import OpeningHandNotice
 from magic_cards_model.machines.triggers import TargetingNotice, TargetingNoticeKind
 from magic_cards_model.models import Game, Zone
 
-from magic_cards_model_api import commands, visibility
+from magic_cards_model_api import commands, engine_api, visibility
 from magic_cards_model_api.commands import Command, RunStatus, run_command
 from magic_cards_model_api.store import store
 
@@ -65,16 +65,23 @@ def _hand_card(game_obj: Game, name: str, player: str = "alice"):
 # -- a fail-closed clause reaches the seat's own result and the log ---------
 
 
-def test_a_mode_this_wave_cannot_read_reaches_the_seats_own_result_and_the_log(client, game):
+def test_a_mode_this_wave_cannot_read_reaches_the_seats_own_result_and_the_log(
+    client, game, monkeypatch
+):
     """Cryptic Command modes [1, 3] (`test_modal_spells.py`'s own fixture in
     the engine repo): mode 1 ("Counter target spell.") is a shape
     `resolve_modal_spell` reads; mode 3 ("Tap all creatures your opponents
     control.") is not, since it names no target at all, and is recorded as a
     `ModeNotice` (`Game.mode_notices`) instead of silently doing nothing.
 
-    This is the exact shape of defect the task names: Cryptic Command still
-    counters the bolt (mode 1 ran), and nothing about the response says mode
-    3 was skipped unless `notices` says so.
+    Battle 3, B3-05: the cast route now refuses a cast choosing such a mode,
+    with that notice's own words, before anything is paid - so the card is not
+    spent for nothing (`engine_api.unreadable_modes`). That refusal is the
+    first half here. The second half is the resolution the notice pipeline
+    still carries for any spell the cast guard does not stop, driven with the
+    guard switched off: Cryptic Command still counters the bolt (mode 1 ran),
+    and nothing about the response says mode 3 was skipped unless `notices`
+    says so.
     """
     add_card(client, game, "Island", "alice", "battlefield")
     add_card(client, game, "Island", "alice", "battlefield")
@@ -100,6 +107,30 @@ def test_a_mode_this_wave_cannot_read_reaches_the_seats_own_result_and_the_log(c
     assert bolt_body.get("notices", []) == [], "a plain Bolt cast reads its own text cleanly"
     bolt_spell_id = bolt_body["spell_id"]
 
+    live = store.get(game)
+    refused = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Cryptic Command",
+            "modes": [1, 3],
+            "targets": [bolt_spell_id],
+            "mana_sources": [str(i) for i in _ids(live, "Island")],
+        },
+    ).json()
+    assert refused["allowed"] is False, refused
+    assert "mode 3" in refused["reason"] and "CR 700.2a" in refused["reason"], refused
+    live = store.get(game)
+    assert _hand_card(live, "Cryptic Command").zone is Zone.HAND
+    assert not any(
+        state.tapped for state in live.shared_zones[Zone.BATTLEFIELD] if state.name == "Island"
+    ), "nothing was paid for the refused cast"
+    cast_rows = [
+        row for row in client.get(f"/api/games/{game}/log").json()["log"] if row["action"] == "cast"
+    ]
+    assert cast_rows[-1]["detail"]["reason"] == refused["reason"]
+
+    monkeypatch.setattr(engine_api, "unreadable_modes", lambda card: [])
     live = store.get(game)
     cryptic = client.post(
         f"/api/games/{game}/actions/cast",

@@ -25,6 +25,8 @@ def test_cast_allowed_and_resolves(client, game):
     )
     cast_body = cast.json()
     assert isinstance(cast_body.pop("log_seq"), int)  # the audit entry's own idempotency marker
+    # The permanents that paid, which is what the log row records (B5-05).
+    assert cast_body.pop("tapped") == [{"card_id": mountain["id"], "name": "Mountain"}]
     assert cast_body == {
         "allowed": True,
         "reason": None,

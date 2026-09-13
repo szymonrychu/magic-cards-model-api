@@ -39,9 +39,9 @@ arguments.
   again when you need history a `wait` answer cannot give you - not on every
   wake, because nothing before your last look has changed.
 
-Six subcommands take `--dry-run`, which asks "could this be done?" and
-changes nothing: `cast`, `cycle`, `activate` and the three special actions
-`suspend`, `plot` and `foretell`. That is how you check an idea before you
+Seven subcommands take `--dry-run`, which asks "could this be done?" and
+changes nothing: `cast`, `cycle`, `activate`, `equip` and the three special
+actions `suspend`, `plot` and `foretell`. That is how you check an idea before you
 propose it - whether the mana is really there, whether the target is really
 legal - rather than proposing something the engine would refuse. Read the
 answer's `outcome` and, when it refuses, the engine's own words for why: that

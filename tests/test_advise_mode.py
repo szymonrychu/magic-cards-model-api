@@ -516,9 +516,9 @@ def _openapi() -> dict[str, Any]:
     return json.loads((REPO_ROOT / "openapi.json").read_text())
 
 
-def test_the_frozen_action_shapes_are_exactly_twelve_seven_of_which_dry_run() -> None:
-    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 12
-    assert len(seatkit.DRY_RUN_SHAPES) == 7
+def test_the_frozen_action_shapes_are_exactly_thirteen_eight_of_which_dry_run() -> None:
+    assert len(set(seatkit.ACTION_REQUEST_SHAPES.values())) == 13
+    assert len(seatkit.DRY_RUN_SHAPES) == 8
     assert set(seatkit.ACTION_REQUEST_SHAPES.values()) >= seatkit.DRY_RUN_SHAPES
 
 
@@ -1233,7 +1233,7 @@ def mcp_server(game_id: str) -> Any:
     return build_server(seats_for(game_id))
 
 
-def test_the_buddy_gets_the_same_twenty_one_tools(client: TestClient, game: str) -> None:
+def test_the_buddy_gets_the_same_twenty_two_tools(client: TestClient, game: str) -> None:
     """One server, one toolset: there is no advisor-only tool and no tool an
     advisor is denied - `contract/tools.json` is the committed list, and this
     pins that advise mode did not fork it."""
@@ -1244,7 +1244,7 @@ def test_the_buddy_gets_the_same_twenty_one_tools(client: TestClient, game: str)
     }
 
     assert names == committed
-    assert len(names) == 21, "19 plus run_script and list_scripts"
+    assert len(names) == 22, "19 plus run_script, list_scripts and equip"
 
 
 def test_the_cast_tool_proposes_for_an_advisor_and_casts_for_a_seat(

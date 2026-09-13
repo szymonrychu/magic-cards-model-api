@@ -154,6 +154,16 @@ def parse_inputs(values: list[str] | None) -> dict[str, Any] | None:
     return parsed
 
 
+#: `cast`'s and `activate`'s `--sources`. Only the sources named are sent, so a
+#: log row never names a land offered to a cost with no mana in it (B5-05).
+NAMED_SOURCES_HELP = (
+    "comma-separated ids of the mana sources to pay with; only the sources named "
+    "are sent. Omit it (or pass '') to name none: the engine's automatic payment "
+    "then taps only what the cost needs from your untapped permanents, and the log "
+    "names only the permanents that actually paid"
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -239,11 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     cast.add_argument("--target", default="", help="comma-separated card ids or player names")
-    cast.add_argument(
-        "--sources",
-        default="",
-        help="comma-separated mana source ids (default: all your untapped sources)",
-    )
+    cast.add_argument("--sources", default="", help=NAMED_SOURCES_HELP)
     cast.add_argument("--modes", default="", help="comma-separated mode numbers")
     cast.add_argument("--x", type=int, default=None, help="the chosen value of X")
     cast.add_argument(
@@ -394,6 +400,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     priority_flag(cycle)
 
+    equip = sub.add_parser(
+        "equip",
+        help=(
+            "CR 702.6a: attach an Equipment you control to target creature you "
+            "control, paying its equip cost. Only as a sorcery (CR 307.5). It "
+            "uses the stack, so it releases priority unless --hold"
+        ),
+    )
+    equip.add_argument("card_id", help="the Equipment's id")
+    equip.add_argument("--target", required=True, help="the id of the creature to equip")
+    equip.add_argument(
+        "--sources",
+        default="",
+        help="comma-separated mana source ids (default: all your untapped sources)",
+    )
+    equip.add_argument(
+        "--dry-run", action="store_true", help="ask 'could I?' without changing anything"
+    )
+    priority_flag(equip)
+
     land = sub.add_parser("play-land", help="play a land from your hand")
     land.add_argument("card", help="card name or id")
     priority_flag(land)
@@ -424,7 +450,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     activate.add_argument("--target", default="", help="comma-separated ids")
-    activate.add_argument("--sources", default="", help="comma-separated mana source ids")
+    activate.add_argument("--sources", default="", help=NAMED_SOURCES_HELP)
     activate.add_argument(
         "--sacrificing",
         default="",
@@ -1058,7 +1084,7 @@ def run(argv: list[str] | None = None) -> int:
             body["spell_face"] = args.spell_face.strip()
         if args.target:
             body["targets"] = _parse_ids(args.target)
-        sources = sources_or_all(args.sources)
+        sources = _parse_ids(args.sources)
         if sources:
             body["mana_sources"] = sources
         if args.modes:
@@ -1117,6 +1143,22 @@ def run(argv: list[str] | None = None) -> int:
             lambda: seat.call_json("POST", f"/api/games/{gid}/actions/cycle", body),
             dry_run=args.dry_run,
         )
+    elif args.command == "equip":
+        body = {
+            "player": seat.player,
+            "card_id": args.card_id,
+            "target": args.target,
+            "dry_run": args.dry_run,
+        }
+        sources = sources_or_all(args.sources)
+        if sources:
+            body["mana_sources"] = sources
+        if args.reasoning:
+            body["reasoning"] = args.reasoning
+        act(
+            lambda: seat.call_json("POST", f"/api/games/{gid}/actions/equip", body),
+            dry_run=args.dry_run,
+        )
     elif args.command == "play-land":
         body = {"player": seat.player}
         body.update(card_reference(args.card))
@@ -1132,7 +1174,7 @@ def run(argv: list[str] | None = None) -> int:
         }
         if args.target:
             body["targets"] = _parse_ids(args.target)
-        sources = sources_or_all(args.sources)
+        sources = _parse_ids(args.sources)
         if sources:
             body["mana_sources"] = sources
         if args.sacrificing:

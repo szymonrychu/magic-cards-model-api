@@ -299,6 +299,7 @@ OFFERED_KINDS: dict[str, frozenset[str]] = {
     "foretell": frozenset({"foretell"}),
     "pass_priority": frozenset({"pass_priority"}),
     "concede": frozenset({"concede"}),
+    "equip": frozenset({"equip"}),
 }
 
 #: The two kinds that name no object. Everything else is an action taken with
@@ -314,10 +315,44 @@ _OBJECTLESS_KINDS = frozenset({"pass_priority", "concede"})
 #: from matching the plain row it sits beside.
 _EXACT_FIELDS = ("spell_face", "keyword", "alternative_cost")
 
+#: Kinds whose request announces none of `_EXACT_FIELDS`: `EquipRequest` has
+#: no face, keyword or alternative cost to name, while its row carries
+#: `keyword: Equip` - the keyword its own route already is.
+_NO_ANNOUNCEMENT_KINDS = frozenset({"equip"})
+
 #: Fields the request may leave for the server to work out (which zone the
 #: card is in, which of an ability's indices) - compared only when the
 #: request actually names one.
 _GIVEN_FIELDS = ("from_zone", "ability_index")
+
+
+#: The board an action was taken on - `(game_id, turn number, step)` - for the
+#: row this request records (`audit.record`'s `turn`/`step`/`phase`).
+#:
+#: A ContextVar for the reason `_OFFERED` is one. `audit.record` used to read
+#: the store *after* the action had committed, so a pass that ended the
+#: upkeep was labelled `draw`, and an attack declaration whose resume paused
+#: again was labelled with the step before it (battle 3, B3-11). The label is
+#: the step the action was taken in: the committed board a fresh command ran
+#: against, or the paused board the answered question was asked on.
+_ACTION_BOARD: ContextVar[tuple[str, int | None, Step | None] | None] = ContextVar(
+    "action_board", default=None
+)
+
+
+def note_action_board(game_id: str, game: Game) -> None:
+    """Remember `game` as the board this request's action is taken on."""
+    turn = game.turn
+    _ACTION_BOARD.set((game_id, turn.turn_number if turn else None, turn.step if turn else None))
+
+
+def action_board(game_id: str) -> tuple[int | None, Step | None] | None:
+    """`(turn number, step)` of the board `note_action_board` named for this
+    game in this request, or `None` when nothing was noted."""
+    noted = _ACTION_BOARD.get()
+    if noted is None or noted[0] != game_id:
+        return None
+    return noted[1], noted[2]
 
 
 def note_offered_action(kind: str, payload: Any, legal_before: LegalActionsBefore | None) -> None:
@@ -374,7 +409,9 @@ def _was_offered(kind: str, payload: Any, legal_before: LegalActionsBefore | Non
             continue
         if needs_object and str(row.get("card_id") or "") != str(card_id):
             continue
-        if any(_same(row.get(name)) != _same(payload.get(name)) for name in _EXACT_FIELDS):
+        if kind not in _NO_ANNOUNCEMENT_KINDS and any(
+            _same(row.get(name)) != _same(payload.get(name)) for name in _EXACT_FIELDS
+        ):
             continue
         if any(
             payload.get(name) is not None and _same(row.get(name)) != _same(payload.get(name))

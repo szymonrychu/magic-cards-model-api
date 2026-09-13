@@ -245,13 +245,12 @@ def test_the_seat_cli_can_take_an_opening_hand_action(client, monkeypatch, capsy
 # -- shared parsing, shared guard --------------------------------------------
 
 
-def test_an_unparseable_sources_value_still_offers_every_untapped_source(
-    client, game, monkeypatch, capsys
-):
-    """`--sources ","` parses to no ids at all. `mcp.py` read that as "nothing
-    was named, offer everything"; `seat_cli` branched on the raw string
-    instead and offered the engine *no* sources, so the cast was refused for
-    mana the seat plainly had. One rule, one place: `Seat.sources_or_all`."""
+def test_an_unparseable_sources_value_still_pays_for_the_cast(client, game, monkeypatch, capsys):
+    """`--sources ","` parses to no ids at all. `seat_cli` once branched on the
+    raw string and offered the engine *no* sources, so the cast was refused for
+    mana the seat plainly had. It now names none, exactly as the MCP tool does
+    for an empty `mana_sources`, and the engine's automatic payment pays
+    (B5-05, `tests/test_named_mana_sources.py`)."""
     wire(monkeypatch)
     uid = uid_for(game, "alice")
     add_card(client, game, "Mountain", "alice", "battlefield")

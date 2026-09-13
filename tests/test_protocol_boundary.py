@@ -60,32 +60,32 @@ def test_the_version_in_effect_has_a_changelog_entry() -> None:
     )
 
 
-def test_seatkit_18_names_the_known_cards_and_contents_blocks() -> None:
+def test_seatkit_19_names_the_known_cards_and_contents_blocks() -> None:
     """The bump that added `known_cards` to the state view and the
     own-only `library_contents`/`sideboard_contents` behind
     `?include=contents`: its changelog paragraph names all four."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-18"
+    assert protocol.PROTOCOL_VERSION == "seatkit-19"
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-17`", 1)[0]
+    paragraph = changelog.split("`seatkit-18`", 1)[0]
     for term in ("known_cards", "library_contents", "sideboard_contents", "include=contents"):
-        assert term in paragraph, f"the seatkit-18 paragraph does not name {term}"
+        assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
 
 
-def test_seatkit_18_names_the_double_faced_views_and_known_cards_while_paused() -> None:
-    """In the seatkit-18 paragraph: a double-faced card view gained `faces`
+def test_seatkit_19_names_the_double_faced_views_and_known_cards_while_paused() -> None:
+    """In the seatkit-19 paragraph: a double-faced card view gained `faces`
     and a non-null `oracle_text`, and `known_cards` holds what a paused
     command already showed while its choice is pending."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-17`", 1)[0]
+    paragraph = changelog.split("`seatkit-18`", 1)[0]
     for term in ("faces", "oracle_text", "pending"):
-        assert term in paragraph, f"the seatkit-18 paragraph does not name {term}"
+        assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
 
 
 def test_seatkit_17_stays_mains_optional_costs_paragraph() -> None:
     """main shipped seatkit-17 to production for `optional_costs`; the DSL
-    additions are seatkit-18, so a seatkit-17 client gets a PROTOCOL
+    additions are seatkit-19, so a seatkit-17 client gets a PROTOCOL
     MISMATCH, and main's paragraph is still the one under `seatkit-17`."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
@@ -95,16 +95,29 @@ def test_seatkit_17_stays_mains_optional_costs_paragraph() -> None:
         assert term not in seventeen, f"the seatkit-17 paragraph still names {term}"
 
 
-def test_seatkit_18_names_the_script_tools_and_their_exit_block() -> None:
-    """In the seatkit-18 paragraph: `run_script` and `list_scripts` are new
-    tools over the play-script routes, and `script_exit` is the typed block
-    `run_script` answers with."""
-    assert protocol.PROTOCOL_VERSION == "seatkit-18"
+def test_seatkit_18_stays_mains_equip_paragraph() -> None:
+    """main shipped seatkit-18 for `equip` and the re-priced rows while the
+    DSL additions were still on `script-dsl`; those are seatkit-19, so main's
+    paragraph is still the one under `seatkit-18`."""
     source = Path(seatkit.__file__).read_text()
     changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
-    paragraph = changelog.split("`seatkit-17`", 1)[0]
+    eighteen = changelog.split("#: `seatkit-18`", 1)[1].split("#: `seatkit-17`", 1)[0]
+    for term in ("equip", "printed_cost", "x_costs", "unreadable_modes"):
+        assert term in eighteen, f"the seatkit-18 paragraph does not name {term}"
+    for term in ("known_cards", "run_script", "/script-runs"):
+        assert term not in eighteen, f"the seatkit-18 paragraph still names {term}"
+
+
+def test_seatkit_19_names_the_script_tools_and_their_exit_block() -> None:
+    """In the seatkit-19 paragraph: `run_script` and `list_scripts` are new
+    tools over the play-script routes, and `script_exit` is the typed block
+    `run_script` answers with."""
+    assert protocol.PROTOCOL_VERSION == "seatkit-19"
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-18`", 1)[0]
     for term in ("run_script", "list_scripts", "script_exit"):
-        assert term in paragraph, f"the seatkit-18 paragraph does not name {term}"
+        assert term in paragraph, f"the seatkit-19 paragraph does not name {term}"
     assert "No MCP tool calls any of them" not in paragraph, (
         "the play-script routes paragraph still says no tool calls them"
     )
