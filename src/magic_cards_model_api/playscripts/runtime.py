@@ -52,6 +52,7 @@ import json
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
@@ -280,12 +281,17 @@ class _Context:
     deadline: float
     poll_seconds: float
     call_started: float
+    #: The caller going away (an MCP call cancelled by an interrupt): read
+    #: like the time cap, so a run waiting on the board stops at once.
+    should_stop: Callable[[], bool] | None = None
 
     @property
     def me(self) -> str:
         return self.seat.player
 
     def time_up(self) -> bool:
+        if self.should_stop is not None and self.should_stop():
+            return True
         return time.monotonic() >= self.deadline
 
     def elapsed_ms(self) -> int:
@@ -311,6 +317,7 @@ def run_script(
     resume: dict[str, Any] | None = None,
     max_seconds: float = RUN_CAP_SECONDS,
     poll_seconds: float = POLL_SECONDS,
+    should_stop: Callable[[], bool] | None = None,
 ) -> RunResult:
     """Run one registered script (and whatever single `next` play applies
     after it) for `seat`. `inputs` is passed to every condition check in the
@@ -347,6 +354,7 @@ def run_script(
         deadline=now + cap,
         poll_seconds=poll_seconds,
         call_started=now,
+        should_stop=should_stop,
     )
     if resume:
         return _resume(ctx, script_id, resume)
@@ -500,6 +508,7 @@ def _wait(
             reasoning=_suffixed(ctx, run, "wait"),
             max_seconds=max(0.0, ctx.deadline - time.monotonic()),
             include_actions=False,
+            should_stop=ctx.should_stop,
         )
         reached = result.get("state") or ctx.seat.fetch_state()
         if result.get("finished"):

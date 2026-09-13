@@ -49,6 +49,17 @@ NUDGE_AFTER_SECONDS = 420.0
 #: the retire after the marker still fits before the kubelet's SIGTERM.
 HANDOVER_BUDGET_SECONDS = 510.0
 
+#: How long the handover turn's push is retried while the agent answers 409
+#: (its interrupted turn not ended yet) before the handover fails and writes
+#: the marker. The wrapper ends an interrupted turn `INTERRUPT_SETTLE_SECONDS`
+#: (20 s) after the interrupt, so this is several settles, and far inside 540 s.
+HANDOVER_PUSH_BUDGET_SECONDS = 120.0
+
+#: The first wait after a 409, doubled after each further one up to the max.
+#: Live, a flat 50 ms retry sent 5523 pushes in one 510 s budget.
+HANDOVER_BACKOFF_START_SECONDS = 0.5
+HANDOVER_BACKOFF_MAX_SECONDS = 5.0
+
 #: How often the waiting handover looks at its clock.
 POLL_SECONDS = 0.05
 

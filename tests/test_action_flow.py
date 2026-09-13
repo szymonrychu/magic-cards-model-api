@@ -526,9 +526,9 @@ def test_the_mcp_tool_threads_max_seconds_to_block_until_wake(client, game, monk
     seen: list[float] = []
     real = seatkit_module.block_until_wake
 
-    def spy(seat: Any, before: Any = None, max_seconds: float = 0.0) -> Any:
+    def spy(seat: Any, before: Any = None, max_seconds: float = 0.0, **kwargs: Any) -> Any:
         seen.append(max_seconds)
-        return real(seat, before, max_seconds=0.0)  # never actually wait in this test
+        return real(seat, before, max_seconds=0.0, **kwargs)  # never actually wait in this test
 
     monkeypatch.setattr(seatkit_module, "block_until_wake", spy)
     seats, uids = wired_seats(monkeypatch, game)
@@ -547,9 +547,9 @@ def test_seat_cli_wait_threads_max_seconds_to_block_until_wake(client, game, mon
     real = seat_cli.block_until_wake
     seen: list[float] = []
 
-    def spy(seat: Any, before: Any = None, max_seconds: float = 0.0) -> Any:
+    def spy(seat: Any, before: Any = None, max_seconds: float = 0.0, **kwargs: Any) -> Any:
         seen.append(max_seconds)
-        return real(seat, before, max_seconds=0.0)
+        return real(seat, before, max_seconds=0.0, **kwargs)
 
     monkeypatch.setattr(seat_cli, "block_until_wake", spy)
     seats, uids = wired_seats(monkeypatch, game)

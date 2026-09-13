@@ -104,6 +104,7 @@ import argparse
 import functools
 import json
 import sys
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -125,6 +126,24 @@ from .seatkit import (
     parse_optional_costs,
     run_action,
 )
+
+
+def cancel_probe(ctx: Any) -> Callable[[], bool]:
+    """Whether this tool call's request has been cancelled, as a probe a wait
+    loop can read between polls.
+
+    An interrupt in the seat's claude cancels its in-flight MCP call
+    (`notifications/cancelled`), and the SDK sets the request's
+    `cancel_requested` - but a sync tool runs on a worker thread nothing can
+    cancel, so without this a cancelled `wait_for_priority` kept polling for
+    its whole bound. Outside a request there is nothing to cancel."""
+    try:
+        event = ctx.request_context.cancel_requested if ctx is not None else None
+    except Exception:  # noqa: BLE001 - no request in flight, nothing to cancel
+        event = None
+    if event is None:
+        return lambda: False
+    return event.is_set
 
 
 def _guarded(seats: Seats):
@@ -795,6 +814,11 @@ def build_server(seats: Seats) -> MCPServer:
                 separately - it exists for "I have done nothing yet, is it my
                 turn", and for the wait itself when the answer is "not yet".
 
+        **A game that is gone ends the wait at once.** Once the game has been
+                released or deleted, `wake_reason` says so (`the game is gone:
+                ...`): stop calling the game tools for it. A call cancelled
+                while it waits returns at once with `the wait was interrupted`.
+
         **An advisor uid also gets `available_actions` on a real wake** - the
                 same compacted list, target `candidates` and `pays_with`
                 included, that a seat gets on `pass`/`pass_until`. An advisor is
@@ -806,7 +830,9 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        woken = seatkit.block_until_wake(seat, before=None, max_seconds=max_seconds)
+        woken = seatkit.block_until_wake(
+            seat, before=None, max_seconds=max_seconds, should_stop=cancel_probe(ctx)
+        )
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
         if seat.advise and woken["wake_reason"] != seatkit.NOTHING_NEW_YET:
@@ -2252,7 +2278,9 @@ def build_server(seats: Seats) -> MCPServer:
           you (CR 608.2d), which arrives shaped `input_required`; something new
           landed on the stack; it is your own declare-attackers step; you are
           being attacked and it is your declare-blockers step; a pass was
-          refused; the game ended.
+          refused; the game ended; the game is gone (released or deleted -
+          `stopped_because` starts `the game is gone`, and there is nothing
+          left to play in it).
         - `finished: false` - the run got as far as it could (within
           `max_seconds`, if you gave one) and handed the board back, because
           your opponent holds priority or the game is frozen on a question
@@ -2369,6 +2397,7 @@ def build_server(seats: Seats) -> MCPServer:
                 resume=resumed,
                 reasoning=reasoning or None,
                 max_seconds=max_seconds,
+                should_stop=cancel_probe(ctx),
             ),
             ctx.protocol_version if ctx is not None else None,
         )
@@ -2444,6 +2473,7 @@ def build_server(seats: Seats) -> MCPServer:
             wait=wait,
             max_seconds=max_seconds,
             inputs=inputs,
+            should_stop=cancel_probe(ctx),
         )
         if isinstance(answer, str):
             return answer

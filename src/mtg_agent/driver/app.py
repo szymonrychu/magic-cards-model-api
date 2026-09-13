@@ -35,7 +35,10 @@ from magic_cards_model_api.playscripts.report import script_run_table
 from .config import DriverSettings
 from .guides import DeckGuide, GuideLibrary, ScriptsRegistration, parse_decklist
 from .handover import (
+    HANDOVER_BACKOFF_MAX_SECONDS,
+    HANDOVER_BACKOFF_START_SECONDS,
     HANDOVER_BUDGET_SECONDS,
+    HANDOVER_PUSH_BUDGET_SECONDS,
     MARKER_NAME,
     NUDGE_AFTER_SECONDS,
     POLL_SECONDS,
@@ -173,10 +176,13 @@ def build_app(
     *,
     client_factory: Callable[[str], httpx.Client] | None = None,
     clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> FastAPI:
-    """`clock` is the monotonic clock the handover's nudge and budget read."""
+    """`clock` is the monotonic clock the handover's nudge and budget read;
+    `sleep` is how the handover waits between pushes the agent refused."""
     app = FastAPI(title="mtg-agent-driver")
     now = clock or time.monotonic
+    pause = sleep or time.sleep
     marker_path = settings.workspace / MARKER_NAME
     # False for the whole life of a compose-style driver that just sits and
     # takes dispatches; a per-game Job container flips this in `retire` once
@@ -467,19 +473,35 @@ def build_app(
             return False
         return True
 
-    def push_handover(text: str, started: float) -> str | None:
-        """Push the handover turn, or None when the budget ran out first. Only a
-        409 - the interrupted turn still draining - is waited out: an agent that
-        is gone or refuses cannot hand anything over, so that is raised."""
+    def push_handover(assignment: Assignment, text: str, started: float) -> str:
+        """Push the handover turn. Only a 409 - the interrupted turn still
+        draining - is waited out, backing off, for `HANDOVER_PUSH_BUDGET_SECONDS`;
+        past that, and on an agent that is gone or refuses, this raises, and
+        the handover fails with the reason in its marker."""
+        wait = HANDOVER_BACKOFF_START_SECONDS
+        backing_off = False
         while True:
             try:
                 return push_turn(text)
             except AgentUnavailable as exc:
                 if exc.status != 409:
                     raise
-            if now() - started >= HANDOVER_BUDGET_SECONDS:
-                return None
-            time.sleep(POLL_SECONDS)
+            elapsed = now() - started
+            if elapsed >= HANDOVER_PUSH_BUDGET_SECONDS:
+                raise RuntimeError(
+                    f"the agent still answered 409 {elapsed:.0f} s after the handover began: "
+                    "its interrupted turn never ended, so the handover turn was never pushed"
+                )
+            if not backing_off:
+                backing_off = True
+                log.warning(
+                    "handover for game %s: the agent is still busy with the interrupted turn, "
+                    "backing off for up to %.0f s",
+                    assignment.game_id,
+                    HANDOVER_PUSH_BUDGET_SECONDS,
+                )
+            pause(min(wait, HANDOVER_PUSH_BUDGET_SECONDS - elapsed))
+            wait = min(wait * 2, HANDOVER_BACKOFF_MAX_SECONDS)
 
     def await_handover_turn(assignment: Assignment, handover: dict, started: float) -> str:
         """`done` once the turn's `/turn-done` lands, `timeout` at the budget.
@@ -514,18 +536,15 @@ def build_app(
                 interrupted = wrapper_post("/v1/interrupt")
                 with lock:
                     handover["status"]["interrupted"] = interrupted
-            turn_id = push_handover(prepared, started)
-            if turn_id is None:
-                state = "timeout"
-            else:
-                with lock:
-                    handover["turnId"] = turn_id
-                    handover["status"]["turnId"] = turn_id
-                    if turn_id in handover["finished"]:
-                        handover["done"].set()
-                    if current["assignment"] is assignment:
-                        current.update(lastTurnId=turn_id, turnActive=not handover["done"].is_set())
-                state = await_handover_turn(assignment, handover, started)
+            turn_id = push_handover(assignment, prepared, started)
+            with lock:
+                handover["turnId"] = turn_id
+                handover["status"]["turnId"] = turn_id
+                if turn_id in handover["finished"]:
+                    handover["done"].set()
+                if current["assignment"] is assignment:
+                    current.update(lastTurnId=turn_id, turnActive=not handover["done"].is_set())
+            state = await_handover_turn(assignment, handover, started)
         except Exception as exc:  # noqa: BLE001 - every failure still writes the marker
             state, error = "failed", str(exc)
             log.error("handover for game %s failed: %s", assignment.game_id, exc)

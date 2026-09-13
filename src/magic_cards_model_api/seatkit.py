@@ -121,6 +121,7 @@ import json
 import re
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -267,6 +268,17 @@ PROTOCOL_VERSION = "seatkit-19"
 #: accepted its "you may cast it": the hit's face, mode, target, kicker and
 #: mana questions arrive as `pending_decision`s chained off that answer,
 #: with no separate `cast` call and no standing permission left to use.
+#:
+#: Also `seatkit-19`, **two response values added** (ho1): a wait ends at once
+#: on a game that is gone. `wait_for_priority` (and `seat_cli wait`) answers
+#: `wake_reason` `GAME_GONE` ("the game is gone: ...") the first time its game
+#: read answers 404 or 410, and `pass_until` answers `finished: true` with
+#: `stopped_because` `GAME_GONE`; a call its caller cancelled mid-wait answers
+#: `WAIT_INTERRUPTED` ("the wait was interrupted ...") in the same field, and
+#: `pass_until` keeps `finished: false` and its `resume` token there. Both are
+#: new values of existing free-text fields; no key moved. A seatkit-19 process
+#: without them reads a deleted game as "nothing new yet" and waits out its
+#: bound.
 #:
 #: Also `seatkit-19`, **one request narrowed** (bd1): an advisor's rationale is
 #: capped at `ADVICE_REASONING_MAX_CHARS` (240) characters. `AdviceIn.reasoning`
@@ -1310,6 +1322,8 @@ class Seat:
         self._wake_signatures: dict[str, Any] = (
             wake_signatures if wake_signatures is not None else {}
         )
+        #: The HTTP status of the latest `fetch_state`, read by `game_gone`.
+        self.last_state_status: int | None = None
 
     def send_expected_seq_once(self, seq: int | None) -> None:
         """Arm the next mutating call this seat makes to name `seq` as the
@@ -1544,7 +1558,9 @@ class Seat:
         params = {"uid": self.uid}
         if include_contents:
             params["include"] = "contents"
-        state = self.http.get(f"/api/games/{self.game_id()}", params=params).json()
+        response = self.http.get(f"/api/games/{self.game_id()}", params=params)
+        self.last_state_status = response.status_code
+        state = response.json()
         _trim_images(state)
         return state
 
@@ -2067,6 +2083,30 @@ def compute_wake_reason(
 #: than this function holding a request open to notice the change for it.
 NOTHING_NEW_YET = "nothing new yet - call again to check"
 
+#: The wait's answer, and a run's `stopped_because`, once a read of the game
+#: answers 404 or 410: the lobby released it or somebody deleted it
+#: (`lobby.reset_game`), so nothing will ever wake this seat in it again.
+#: Before this, the 404 body read as a board where nothing was new and the
+#: wait polled a deleted game for its whole bound.
+GAME_GONE = (
+    "the game is gone: it was released or deleted, so there is nothing left to wait for "
+    "or to play in it - stop calling the game tools for it"
+)
+
+#: The wait's answer, and a run's `stopped_because`, when its caller stopped
+#: it (`should_stop`: an MCP call cancelled by an interrupt) before it woke.
+WAIT_INTERRUPTED = (
+    "the wait was interrupted before anything new happened - call again if you still need to wait"
+)
+
+#: The statuses a game read answers once the game is gone.
+GAME_GONE_STATUSES = frozenset({404, 410})
+
+
+def game_gone(seat: Any) -> bool:
+    """Whether `seat`'s latest `fetch_state` found its game gone."""
+    return getattr(seat, "last_state_status", None) in GAME_GONE_STATUSES
+
 
 #: Ceiling for `max_seconds` on `block_until_wake`/`pass_until` - the bound
 #: that makes bringing a server-side wait back at all safe. MCP 2026-07-28
@@ -2095,7 +2135,10 @@ _NO_CACHED_WAKE_SIGNATURE = object()
 
 
 def block_until_wake(
-    seat: Seat, before: dict[str, Any] | None, max_seconds: float = 0.0
+    seat: Seat,
+    before: dict[str, Any] | None,
+    max_seconds: float = 0.0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Check this seat's own state, right now - and, if nothing has changed
     yet, keep checking for up to `max_seconds` (capped at `MAX_WAIT_SECONDS`)
@@ -2159,6 +2202,8 @@ def block_until_wake(
     deadline = time.monotonic() + max_seconds
     while True:
         state = seat.fetch_state()
+        if game_gone(seat):
+            return {"state": state, "wake_reason": GAME_GONE, "recent_log": seat.recent_log()}
         reason = compute_wake_reason(state, before, seat.player)
         remaining = deadline - time.monotonic()
         if reason is not None or remaining <= 0:
@@ -2172,6 +2217,12 @@ def block_until_wake(
             return {
                 "state": state,
                 "wake_reason": reason or NOTHING_NEW_YET,
+                "recent_log": seat.recent_log(),
+            }
+        if should_stop is not None and should_stop():
+            return {
+                "state": state,
+                "wake_reason": WAIT_INTERRUPTED,
                 "recent_log": seat.recent_log(),
             }
         time.sleep(min(WAIT_POLL_SECONDS, remaining))
@@ -3148,6 +3199,7 @@ def pass_until(
     reasoning: str | None = None,
     max_seconds: float = 0.0,
     include_actions: bool = True,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
@@ -3207,6 +3259,9 @@ def pass_until(
     }
     result = _pass_until_once(seat, resume=resume, **kwargs)
     while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
+        if should_stop is not None and should_stop():
+            result["stopped_because"] = WAIT_INTERRUPTED
+            break
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         result = _pass_until_once(seat, resume=result.get("resume"), **kwargs)
     result.pop("retryable", None)
@@ -3297,6 +3352,15 @@ def _pass_until_once(
     fresh one per pass.
     """
     before = seat.fetch_state()
+    if game_gone(seat):
+        return {
+            "stopped_because": GAME_GONE,
+            "passes": 0,
+            "finished": True,
+            "until": {"step": until_step, "whose_turn": whose_turn},
+            "state": before,
+            "recent_log": seat.recent_log(),
+        }
     run = resume_autopass(resume, before, until_step, whose_turn)
     passes = 0
 
@@ -3345,6 +3409,8 @@ def _pass_until_once(
 
     while True:
         state = seat.fetch_state()
+        if game_gone(seat):
+            return answer(state, GAME_GONE)
         reason = autopass_stop_reason(
             state,
             run,

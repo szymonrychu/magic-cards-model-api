@@ -68,6 +68,10 @@ class Settings:
     turn_timeout: float = 1800.0
     boot_timeout: float = 60.0
     submit_delay: float = 0.4
+    #: How long an interrupted turn gets to end on its own before the wrapper
+    #: ends it (`Manager.escalate_interrupt`): claude runs no Stop hook for an
+    #: interrupted turn, so without this the turn slot is never freed.
+    interrupt_settle: float = 20.0
     webhook_retries: int = 3
     default_callback_url: str = ""
     shared_secret: str = ""
@@ -109,6 +113,7 @@ class Settings:
             turn_timeout=_float(env, "TURN_TIMEOUT_SECONDS", 1800.0),
             boot_timeout=_float(env, "BOOT_TIMEOUT_SECONDS", 60.0),
             submit_delay=_float(env, "SUBMIT_DELAY_SECONDS", 0.4),
+            interrupt_settle=_float(env, "INTERRUPT_SETTLE_SECONDS", 20.0),
             webhook_retries=_int(env, "WEBHOOK_RETRIES", 3),
             default_callback_url=_str(env, "DEFAULT_CALLBACK_URL", ""),
             shared_secret=_str(env, "WRAPPER_SHARED_SECRET", ""),

@@ -153,6 +153,7 @@ class Manager:
         self._current: str | None = None
         self._current_started = 0.0
         self._timer: threading.Timer | None = None
+        self._interrupt_timer: threading.Timer | None = None
         self._stall_suspected_since: float | None = None
         self._fatal_turn: str | None = None
         self._last_fatal: str = ""
@@ -522,7 +523,12 @@ class Manager:
         """One ESC byte. Pasted text is only consumed at the next tool-call
         boundary; ESC cancels synchronously even inside a running tool call,
         which is the one failure mode worth interrupting. The session, its
-        id, transcript and context all survive."""
+        id, transcript and context all survive.
+
+        claude runs no Stop hook for an interrupted turn, so nothing would
+        ever call `complete` for it: a turn in flight is given
+        `interrupt_settle` seconds to end on its own, then
+        `escalate_interrupt` ends it."""
         with self._lock:
             proc = self._proc
             if proc is None or self._state is State.DEAD:
@@ -534,7 +540,54 @@ class Manager:
             except OSError as exc:
                 raise ProbeUnavailableError(f"interrupt write failed: {exc}") from exc
         log.warning("interrupt written turn_id=%s", turn_id)
+        if turn_id is not None:
+            with self._lock:
+                if self._current == turn_id:
+                    if self._interrupt_timer is not None:
+                        self._interrupt_timer.cancel()
+                    self._interrupt_timer = threading.Timer(
+                        self.settings.interrupt_settle, self.escalate_interrupt, args=(turn_id,)
+                    )
+                    self._interrupt_timer.daemon = True
+                    self._interrupt_timer.start()
         return turn_id
+
+    def escalate_interrupt(self, turn_id: str) -> None:
+        """The interrupted turn has not ended within `interrupt_settle`: write
+        a second ESC and end the turn as failed, so the slot is free for the
+        next `submit` (the handover turn) while the PTY and the conversation
+        stay up. A turn that ended in the meantime is left alone."""
+        with self._lock:
+            if self._current != turn_id:
+                return
+            self._interrupt_timer = None
+            proc = self._proc
+        log.warning(
+            "interrupt escalation turn_id=%s: the turn did not end within %.0fs of the "
+            "interrupt, and claude runs no Stop hook for an interrupted turn; writing a "
+            "second interrupt and ending the turn",
+            turn_id,
+            self.settings.interrupt_settle,
+        )
+        if proc is not None:
+            with self._pty_lock:
+                try:
+                    proc.write(b"\x1b")
+                except OSError as exc:
+                    log.warning("second interrupt write failed: %s", exc)
+        with self._lock:
+            if self._current != turn_id:
+                return
+            self._current = None
+            self._cancel_timer_locked()
+            self._stall_suspected_since = None
+            if self._state is not State.DEAD:
+                self._state = State.READY
+        self._finish_failed(
+            turn_id,
+            f"interrupted: the turn had not ended {self.settings.interrupt_settle:.0f}s "
+            "after the interrupt",
+        )
 
     def _finish_failed(self, turn_id: str, reason: str) -> None:
         # A turn that dies here used to be silent in the container log: the
@@ -556,9 +609,10 @@ class Manager:
             log.error("on_turn_done raised: %s", exc)
 
     def _cancel_timer_locked(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
+        for timer in (self._timer, self._interrupt_timer):
+            if timer is not None:
+                timer.cancel()
+        self._timer = self._interrupt_timer = None
 
     # ---- reporting -------------------------------------------------------
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Callable
 from typing import Any
 
 from ..seatkit import Seat
@@ -128,10 +129,12 @@ def run(
     wait: bool = True,
     max_seconds: float = 0.0,
     inputs: dict[str, Any] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any] | str:
     """`{script_exit, state}` for one run, or the refusal text for arguments
     no run can start from. `max_seconds` left at 0 runs up to
-    `runtime.RUN_CAP_SECONDS`; a positive value caps the call below that."""
+    `runtime.RUN_CAP_SECONDS`; a positive value caps the call below that.
+    `should_stop` ends the run's waiting early, as its time cap does."""
     supplied = merged_inputs(opposing_archetype, inputs)
     if isinstance(supplied, str):
         return supplied
@@ -148,6 +151,7 @@ def run(
         wait=wait,
         resume=token,
         max_seconds=max_seconds if max_seconds > 0 else runtime.RUN_CAP_SECONDS,
+        should_stop=should_stop,
     )
     state = result.state if result.state is not None else seat.fetch_state()
     return {"script_exit": script_exit(result, _registered_moves(seat, corpora)), "state": state}

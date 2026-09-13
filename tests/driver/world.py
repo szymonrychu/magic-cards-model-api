@@ -53,7 +53,7 @@ ARCHETYPE = {
 }
 
 
-def build_world(tmp_path, clock=None) -> SimpleNamespace:
+def build_world(tmp_path, clock=None, sleep=None) -> SimpleNamespace:
     guides = tmp_path / "guides" / "decks" / "dimir-frog"
     guides.mkdir(parents=True)
     (guides / "decklist.txt").write_text(DECKLIST)
@@ -71,6 +71,11 @@ def build_world(tmp_path, clock=None) -> SimpleNamespace:
         "marker_at_delete": None,
         "decklist": DECKLIST,
         "agent": "up",
+        #: With `agent` "busy", `/v1/messages` answers 409 - the wrapper still
+        #: holding a turn - for the first `busy_for` pushes (every push when
+        #: None), then accepts. `conflicts` counts every busy answer.
+        "busy_for": None,
+        "conflicts": 0,
         "game": "up",
         "deleted": 0,
         #: Whether the fake wrapper answers `/v1/session` at all - False
@@ -205,6 +210,10 @@ def build_world(tmp_path, clock=None) -> SimpleNamespace:
 
     @wrapper.post("/v1/messages", status_code=202)
     def post_message(body: dict):
+        if state["agent"] == "busy":
+            state["conflicts"] += 1
+            if state["busy_for"] is None or state["conflicts"] <= state["busy_for"]:
+                raise HTTPException(status_code=409, detail="session busy")
         if state["agent"] == "booting":
             raise HTTPException(status_code=503, detail="session not ready")
         if state["agent"] == "down":
@@ -279,7 +288,9 @@ def build_world(tmp_path, clock=None) -> SimpleNamespace:
         agent_boot_wait=1.0,
         agent_retry_interval=0.01,
     )
-    client = TestClient(build_app(settings, client_factory=client_factory, clock=clock))
+    client = TestClient(
+        build_app(settings, client_factory=client_factory, clock=clock, sleep=sleep)
+    )
     return SimpleNamespace(
         client=client,
         settings=settings,

@@ -9,6 +9,7 @@ real FastAPI apps over ASGI. The clock the handover reads is injected, so the
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 
@@ -276,6 +277,56 @@ def test_an_agent_that_is_gone_fails_the_handover_rather_than_waiting_it_out(wor
     world.state["agent"] = "down"
     world.client.post("/handover", json={})
     assert marker_status(world)["state"] == "failed"
+
+
+class Sleeper:
+    """The handover's sleep: records each wait and moves the clock by it."""
+
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+        self.waits: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        self.clock.now += seconds
+
+
+def test_a_busy_agent_is_backed_off_and_the_marker_fails_well_before_the_prestop(
+    tmp_path, clock, caplog
+):
+    """Live, game 995daaf7: 5523 pushes answered 409 in 510 s, one every
+    ~90 ms, and the marker said only `timeout`."""
+    caplog.set_level(logging.INFO, logger="driver")
+    sleeper = Sleeper(clock)
+    world = build_world(tmp_path, clock=clock, sleep=sleeper)
+    dispatch(world)
+    world.state["agent"] = "busy"
+    world.client.post("/handover", json={})
+    status = marker_status(world)
+    assert status["state"] == "failed"
+    assert "409" in status["error"]
+    assert clock.now <= 180, f"gave up only at {clock.now:.0f} s"
+    assert world.state["conflicts"] <= 40
+    assert sleeper.waits[1] > sleeper.waits[0]
+    assert max(sleeper.waits) <= 5.0
+    busy = [r.getMessage() for r in caplog.records if "backing off" in r.getMessage()]
+    assert len(busy) == 1, busy
+    wait_for(lambda: world.state["deleted"] == 1)
+
+
+def test_a_409_is_retried_with_growing_waits_until_the_agent_accepts(tmp_path, clock):
+    sleeper = Sleeper(clock)
+    world = build_world(tmp_path, clock=clock, sleep=sleeper)
+    dispatch(world)
+    world.state["agent"] = "busy"
+    world.state["busy_for"] = 3
+    world.client.post("/handover", json={})
+    finish(world, handover_turn_id(world))
+    assert marker_status(world)["state"] == "done"
+    assert world.state["conflicts"] == 4
+    assert len(sleeper.waits) == 3
+    assert sleeper.waits == sorted(sleeper.waits)
+    assert sleeper.waits[0] < sleeper.waits[-1]
 
 
 # ---- buddies ------------------------------------------------------------------------
