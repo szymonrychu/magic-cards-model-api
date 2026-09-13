@@ -184,7 +184,17 @@ PROTOCOL_VERSION = "seatkit-17"
 #: library is one call away would get a refusal instead. That is the
 #: stale-process case the PROTOCOL MISMATCH sentence exists to make loud.
 #:
-#: What did NOT change: no existing field moved or lost a value, `hands`
+#: Folded into the same version, not a second bump: a double-faced card view
+#: (CR 712) carries `faces`, each face's name, mana cost, type line and oracle
+#: text, and its `oracle_text` is no longer null but the face that is up - the
+#: front face anywhere but the battlefield or stack (CR 712.8a). And
+#: `known_cards` now holds what a paused command already showed a seat while
+#: that command's choice is still pending (Thoughtseize's revealed hand before
+#: the discard is chosen), not only once it has been answered. A seatkit-16
+#: process reads both as it read the fields before: `faces` is an extra key,
+#: and a known record is the same shape whenever it arrives.
+#:
+#: What did NOT change: no existing field moved, `hands`
 #: still holds only the viewer's own cards, and `libraries`/`sideboards` are
 #: still stripped for every viewer but the admin.
 #:

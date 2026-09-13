@@ -214,6 +214,18 @@ def _input_entry_problem(entry: Any, spec: dict[str, Any]) -> str | None:
     return None
 
 
+def supplied_input_problem(name: str, value: Any, catalog: dict[str, dict[str, Any]]) -> str | None:
+    """Why one input an agent supplies at run time does not fit `catalog`
+    (`input_catalog`), or None: a name the catalog does not hold, or a value
+    that is not one of the enum's values, a boolean, or an integer within
+    min..max - the same judgement `input_value_problem` gives a condition's
+    value."""
+    spec = catalog.get(name)
+    if spec is None:
+        return f"{name!r} is neither declared in {INPUTS_FILE} nor the built-in {BUILTIN_INPUT!r}"
+    return _input_entry_problem(value, spec)
+
+
 def input_value_problem(condition: dict[str, Any], spec: dict[str, Any]) -> str | None:
     """Why an input condition's op or value does not fit its input, or None."""
     op, value, kind = condition["op"], condition["value"], spec["type"]

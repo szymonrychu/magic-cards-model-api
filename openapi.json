@@ -2380,6 +2380,53 @@
         "title": "CardFace",
         "type": "object"
       },
+      "CardFaceView": {
+        "description": "One face of a double-faced card (`serialize._faces_view`), as printed.",
+        "properties": {
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "oracle_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oracle Text"
+          },
+          "type_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type Line"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CardFaceView",
+        "type": "object"
+      },
       "CardLookupResponse": {
         "description": "`GET /api/cards`/`GET /api/cards/{name}` (`scryfall.lookup_card`).",
         "properties": {
@@ -2621,6 +2668,20 @@
           "face_up": {
             "title": "Face Up",
             "type": "boolean"
+          },
+          "faces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CardFaceView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faces"
           },
           "id": {
             "title": "Id",
@@ -3552,6 +3613,20 @@
           "face_up": {
             "title": "Face Up",
             "type": "boolean"
+          },
+          "faces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CardFaceView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faces"
           },
           "id": {
             "anyOf": [
@@ -11001,6 +11076,20 @@
           "face_up": {
             "title": "Face Up",
             "type": "boolean"
+          },
+          "faces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CardFaceView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faces"
           },
           "id": {
             "title": "Id",

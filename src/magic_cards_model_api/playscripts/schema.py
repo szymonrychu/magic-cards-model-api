@@ -2,9 +2,15 @@
 
 `decks/<slug>/plays/<id>.json` is a declarative chain a seat runs through the
 seatkit runner. `Play` is its model: every object forbids unknown keys, every
-union is discriminated on `kind`, every list is bounded, and no field or kind
-can iterate, attack, block, mulligan, concede or pass. The vocabulary is
-closed at seven condition kinds and four move kinds.
+union is discriminated on `kind`, every list is bounded (`maxItems` in the
+exported JSON Schema, an explicit bound on every list field below), and no
+field or kind can iterate, attack, block, mulligan, concede or pass. The
+vocabulary is closed at seven condition kinds and four move kinds; a `cast`
+names its cost from `CAST_COSTS` (the engine's own cast option kinds), and an
+answer names its decision from `DECISION_KINDS` (the api's pending decision
+kinds, less the combat declarations and the mulligan a script never makes).
+`when.steps` names each step once, and `opposing_archetypes` is either `["*"]`
+or named keys, never both.
 
 `play_errors` is the same judgement as coded errors - one `PlaysError` per
 refused shape - using the codes shared verbatim with mtg-decks'
@@ -30,6 +36,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from ..decisions import ANSWERABLE_KINDS
 from ..seatkit import AUTOPASS_STEPS
 
 SCHEMA_VERSION = 1
@@ -40,6 +47,23 @@ MAX_NEXT = 3
 MAX_CONDITIONS = 8
 MAX_STEPS = 4
 MAX_PRIORITY = 100
+#: A selector word list (types, subtypes, supertypes, colors, keywords) is a
+#: set of alternatives drawn from one characteristic. The largest closed
+#: vocabulary any of them draws from is CR 205.2a's fifteen card types; a
+#: longer list is no longer describing a characteristic.
+MAX_SELECTOR_WORDS = 15
+#: One entry per target the cast announces, in order. Bounded like the rest
+#: of a play's fan-out (moves, answers, next): a spell asking for more targets
+#: than this is left to the seat rather than scripted.
+MAX_TARGETS = 6
+#: Ordered tie-breakers after `pick.select`, the same fan-out as `moves`.
+MAX_PREFER = 4
+#: Named archetype keys of one play, or of one `in`/`not_in` input list. The
+#: widest enum a play names from is `opposing_archetype`, `*` plus the matchup
+#: stems of a deck's newest analysis run (19 in the largest run at the time of
+#: writing); a play meant for every matchup says `*`.
+MAX_ARCHETYPES = 32
+MAX_INPUT_VALUES = 32
 
 COMBAT_DECLARATION_STEPS = ("declare_attackers", "declare_blockers")
 #: The steps a script may name: the autopass steps, minus the two combat
@@ -61,6 +85,45 @@ HIDDEN_ZONES = ("hand", "library", "sideboard")
 SIDES = ("me", "opponent", "any")
 OPS = (">=", "<=", "==", "!=", ">", "<")
 INPUT_OPS = ("eq", "ne", "in", "not_in", "<", "<=", ">", ">=")
+#: The cost a `cast` move is announced under. `normal` is the printed mana
+#: cost. The rest are the engine's cast option kinds, as a card view's
+#: `cast_options[].keyword` and `CastRequest.keyword` name them, lowercased:
+#: every keyword `machines/casting.py::_option_from_keyword` turns into a cast
+#: option, the `Adventure` and `Airbend` options `keyword_cast_options` and
+#: `marker_cast_options` hand out, and `printed` - the card's own CR 118.9
+#: alternative cost (`AlternativeCostSource.PRINTED`, a Force of Negation
+#: pitch), which `CastRequest.alternative_cost` announces. `impending`
+#: (CR 702.176a) is named although the engine offers no impending cast yet: a
+#: runner refuses a cost no live cast option offers, the same as any other.
+#: `tests/test_playscript_schema.py` reads the engine's own source, so a cast
+#: option the engine learns fails that test until it is named here.
+CAST_COSTS = (
+    "normal",
+    "adventure",
+    "airbend",
+    "bestow",
+    "dash",
+    "disguise",
+    "escape",
+    "evoke",
+    "flashback",
+    "foretell",
+    "harmonize",
+    "impending",
+    "madness",
+    "mayhem",
+    "megamorph",
+    "morph",
+    "plot",
+    "printed",
+    "warp",
+)
+#: The decision kinds an answer may name: every `DecisionKind` the api can
+#: pend (`decisions.ANSWERABLE_KINDS`), by value.
+DECISION_KINDS = tuple(sorted(kind.value for kind in ANSWERABLE_KINDS))
+#: Pending decision kinds a script never answers: scripts do not attack, block
+#: or mulligan, the same reason the combat declaration steps are forbidden.
+FORBIDDEN_DECISION_KINDS = ("declare_attackers", "declare_blockers", "mulligan")
 
 CODES = (
     "malformed-play",
@@ -80,6 +143,10 @@ CODES = (
     "unknown-input",
     "invalid-input-value",
     "malformed-inputs",
+    "unknown-decision-kind",
+    "unknown-cast-cost",
+    "duplicate-step",
+    "wildcard-with-keys",
 )
 
 
@@ -105,6 +172,9 @@ AtLeastZero = Annotated[int, Field(ge=0)]
 Op = Literal[OPS]
 Side = Literal[SIDES]
 StepName = Literal[STEPS]
+DecisionKind = Literal[DECISION_KINDS]
+CastCost = Literal[CAST_COSTS]
+SelectorWords = Annotated[list[NonBlank], Field(max_length=MAX_SELECTOR_WORDS)]
 
 
 class _Strict(BaseModel):
@@ -133,20 +203,30 @@ class CounterComparison(_Strict):
     n: AtLeastZero
 
 
+SELECTOR_WORD_FIELDS = (
+    "types_all",
+    "types_any",
+    "subtypes_any",
+    "supertypes_any",
+    "colors_any",
+    "keywords_any",
+)
+
+
 class Selector(_Strict):
     """Characteristics of one card, all optional, combined with AND. No field
     takes a card name: type words come from the type line, text fields are
     template phrases matched case-insensitively."""
 
-    types_all: list[NonBlank] = None
-    types_any: list[NonBlank] = None
-    subtypes_any: list[NonBlank] = None
-    supertypes_any: list[NonBlank] = None
-    colors_any: list[NonBlank] = None
+    types_all: SelectorWords = None
+    types_any: SelectorWords = None
+    subtypes_any: SelectorWords = None
+    supertypes_any: SelectorWords = None
+    colors_any: SelectorWords = None
     mana_value: Comparison = None
     power: Comparison = None
     toughness: Comparison = None
-    keywords_any: list[NonBlank] = None
+    keywords_any: SelectorWords = None
     tapped: bool = None
     counters: CounterComparison = None
     ability_text_has: NonBlank = None
@@ -223,6 +303,17 @@ class InputCondition(_Strict):
     op: Literal[INPUT_OPS]
     value: Any
 
+    @field_validator("value")
+    @classmethod
+    def _value_list_is_bounded(cls, value: Any) -> Any:
+        if isinstance(value, list) and len(value) > MAX_INPUT_VALUES:
+            raise PydanticCustomError(
+                "too_many_input_values",
+                "a value list holds at most {max} values, not {count}",
+                {"max": MAX_INPUT_VALUES, "count": len(value)},
+            )
+        return value
+
 
 Condition = Annotated[
     CountCondition
@@ -242,17 +333,29 @@ Condition = Annotated[
 class Pick(_Strict):
     select: Selector
     count: Annotated[int, Field(ge=1)] = None
-    prefer: list[Selector] = None
+    prefer: Annotated[list[Selector], Field(max_length=MAX_PREFER)] = None
 
 
 class Answer(_Strict):
     """How to answer one pending decision of kind `decision`."""
 
-    decision: NonBlank
+    decision: DecisionKind
     pick: Pick = None
     accept: bool = None
     to_graveyard: Selector = None
     to_bottom: Selector = None
+
+    @field_validator("decision")
+    @classmethod
+    def _not_a_combat_declaration_or_mulligan(cls, decision: str) -> str:
+        if decision in FORBIDDEN_DECISION_KINDS:
+            raise PydanticCustomError(
+                "forbidden_decision",
+                "'{decision}' is not answered by a script; "
+                "scripts do not attack, block or mulligan",
+                {"decision": decision},
+            )
+        return decision
 
 
 class ZonedCard(_Strict):
@@ -280,7 +383,8 @@ class ActivateMove(_Strict):
 class CastMove(_Strict):
     kind: Literal["cast"]
     card: ZonedCard
-    targets: list[CastTarget] = Field(default_factory=list)
+    cost: CastCost = None
+    targets: list[CastTarget] = Field(default_factory=list, max_length=MAX_TARGETS)
     mana: Literal["auto"] = None
     answers: list[Answer] = Field(default_factory=list, max_length=MAX_ANSWERS)
 
@@ -312,6 +416,18 @@ class When(_Strict):
     steps: list[StepName] = Field(min_length=1, max_length=MAX_STEPS)
     stack: Literal["empty", "any"]
 
+    @field_validator("steps")
+    @classmethod
+    def _each_step_once(cls, steps: list[str]) -> list[str]:
+        repeated = sorted({step for step in steps if steps.count(step) > 1})
+        if repeated:
+            raise PydanticCustomError(
+                "duplicate_step",
+                "names {steps} more than once",
+                {"steps": ", ".join(repeated)},
+            )
+        return steps
+
 
 class Play(_Strict):
     """One play script. `name` and `intent` are prose nothing executes;
@@ -323,7 +439,7 @@ class Play(_Strict):
     name: NonBlank
     intent: NonBlank = None
     priority: Annotated[int, Field(ge=0, le=MAX_PRIORITY)]
-    opposing_archetypes: list[ArchetypeKey] = Field(min_length=1)
+    opposing_archetypes: list[ArchetypeKey] = Field(min_length=1, max_length=MAX_ARCHETYPES)
     when: When
     true: list[Condition] = Field(default_factory=list, max_length=MAX_CONDITIONS)
     false: list[Condition] = Field(default_factory=list, max_length=MAX_CONDITIONS)
@@ -336,6 +452,17 @@ class Play(_Strict):
         if isinstance(value, bool):
             raise PydanticCustomError("literal_error", "Input should be 1")
         return value
+
+    @field_validator("opposing_archetypes")
+    @classmethod
+    def _wildcard_stands_alone(cls, keys: list[str]) -> list[str]:
+        if WILDCARD in keys and len(keys) > 1:
+            raise PydanticCustomError(
+                "wildcard_with_keys",
+                "'{wildcard}' already means every archetype; name it alone or name keys, not both",
+                {"wildcard": WILDCARD},
+            )
+        return keys
 
 
 def json_schema() -> dict[str, Any]:
@@ -354,8 +481,28 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "answers": TypeAdapter(Answer),
     "next": TypeAdapter(NonBlank),
     "steps": TypeAdapter(StepName),
+    "targets": TypeAdapter(CastTarget),
+    "prefer": TypeAdapter(Selector),
+    "opposing_archetypes": TypeAdapter(ArchetypeKey),
+    **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
 }
-_BOUND_TYPES = ("too_long", "greater_than_equal", "less_than_equal", "greater_than", "less_than")
+_BOUND_TYPES = (
+    "too_long",
+    "too_many_input_values",
+    "greater_than_equal",
+    "less_than_equal",
+    "greater_than",
+    "less_than",
+)
+#: Pydantic's own error type for a model's custom check, by the code it is.
+_CUSTOM_CODES = {
+    "hidden_zone_side_any": "hidden-zone-side-any",
+    "forbidden_decision": "forbidden-kind",
+    "duplicate_step": "duplicate-step",
+    "wildcard_with_keys": "wildcard-with-keys",
+}
+#: A value outside a closed Literal, by the field it is in.
+_LITERAL_CODES = {"decision": "unknown-decision-kind", "cost": "unknown-cast-cost"}
 _MISSING = object()
 
 
@@ -390,8 +537,10 @@ def _code(error: dict[str, Any], loc: tuple[Any, ...]) -> str:
     kind = error["type"]
     if kind == "extra_forbidden":
         return "unknown-field"
-    if kind == "hidden_zone_side_any":
-        return "hidden-zone-side-any"
+    if kind in _CUSTOM_CODES:
+        return _CUSTOM_CODES[kind]
+    if kind == "literal_error" and _last_field(loc) in _LITERAL_CODES:
+        return _LITERAL_CODES[_last_field(loc)]
     if kind in _BOUND_TYPES:
         return "bounds-exceeded"
     if kind == "too_short":
@@ -413,7 +562,7 @@ def _code(error: dict[str, Any], loc: tuple[Any, ...]) -> str:
 def _message(error: dict[str, Any], code: str) -> str:
     if code == "forbidden-kind" and error["type"] == "literal_error":
         return f"{error['input']!r} is a combat declaration step; scripts do not attack or block"
-    if code == "forbidden-kind":
+    if code == "forbidden-kind" and error["type"] == "union_tag_invalid":
         return f"kind {error['input'].get('kind')!r} is not in the closed vocabulary"
     if code == "unknown-field":
         return "is not a field of this schema"

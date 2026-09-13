@@ -41,6 +41,7 @@ HOLDS = {
     "failing_list": None,
     "seen": None,
     "needs_input": None,
+    "invalid_input": None,
 }
 
 
@@ -97,6 +98,7 @@ def test_the_first_failing_true_condition_is_named_with_what_was_seen():
         "failing_list": "true",
         "seen": 5,
         "needs_input": None,
+        "invalid_input": None,
     }
 
 
@@ -108,6 +110,7 @@ def test_a_false_condition_that_holds_stops_the_script():
         "failing_list": "false",
         "seen": 3,
         "needs_input": None,
+        "invalid_input": None,
     }
 
 
@@ -427,6 +430,7 @@ def test_a_missing_optional_input_makes_the_condition_not_hold():
         "failing_list": "true",
         "seen": None,
         "needs_input": None,
+        "invalid_input": None,
     }
     assert not holds(inp("opposing_archetype", "eq", "*"), state_view(), inputs={}, catalog=CATALOG)
     assert only(
@@ -570,3 +574,104 @@ def test_the_live_view_carries_the_engines_colors_and_mana_value(client, game):
     assert evaluate(
         script(true=[count("hand", "me", "==", 1, {"colors_any": ["red"]})]), view, "alice"
     )["applies"]
+
+
+# -- supplied inputs are checked against the catalog (battle 1, D04) ---------------
+
+D04_CATALOG = input_catalog(
+    [
+        {
+            "name": "plan_stance",
+            "type": "enum",
+            "values": ["grind", "race"],
+            "description": "d",
+            "required": False,
+        },
+        {"name": "hold_discard", "type": "bool", "description": "d", "required": False},
+        {
+            "name": "clock",
+            "type": "int",
+            "min": 0,
+            "max": 10,
+            "description": "d",
+            "required": False,
+        },
+    ],
+    ["esper-blink", "dimir-frog"],
+)
+VALID_INPUTS = {"opposing_archetype": "esper-blink", "plan_stance": "grind", "clock": 4}
+
+
+@pytest.mark.parametrize(
+    ("supplied", "name", "value"),
+    [
+        ({"opposing_archetype": "not-a-deck"}, "opposing_archetype", "not-a-deck"),
+        ({"plan_stance": "turtle"}, "plan_stance", "turtle"),
+        ({"hold_discard": "yes"}, "hold_discard", "yes"),
+        ({"clock": 11}, "clock", 11),
+        ({"clock": -1}, "clock", -1),
+        ({"clock": True}, "clock", True),
+        ({"clock": "4"}, "clock", "4"),
+        ({"plan_stanse": "grind"}, "plan_stanse", "grind"),
+    ],
+)
+def test_a_supplied_input_outside_the_catalog_is_reported_not_read_as_not_holding(
+    supplied, name, value
+):
+    holding = inp("opposing_archetype", "ne", "dimir-frog")
+    result = evaluate(
+        script(true=[holding]),
+        state_view(),
+        "alice",
+        inputs={**VALID_INPUTS, **supplied},
+        catalog=D04_CATALOG,
+    )
+    assert result["applies"] is False
+    assert (result["failing_list"], result["failing_index"], result["needs_input"]) == (
+        None,
+        None,
+        None,
+    )
+    invalid = result["invalid_input"]
+    assert (invalid["name"], invalid["value"]) == (name, value)
+    assert isinstance(invalid["reason"], str) and name in invalid["reason"]
+
+
+def test_an_invalid_input_is_reported_even_when_no_condition_reads_it():
+    result = evaluate(
+        script(), state_view(), "alice", inputs={"hold_discard": 1}, catalog=D04_CATALOG
+    )
+    assert result["applies"] is False
+    assert result["invalid_input"]["name"] == "hold_discard"
+
+
+def test_valid_inputs_report_no_invalid_input():
+    result = evaluate(
+        script(true=[inp("plan_stance", "eq", "grind"), inp("clock", "<=", 10)]),
+        state_view(),
+        "alice",
+        inputs={**VALID_INPUTS, "hold_discard": False},
+        catalog=D04_CATALOG,
+    )
+    assert result == HOLDS
+
+
+def test_the_built_in_archetype_is_checked_without_a_declared_catalog():
+    result = evaluate(script(), state_view(), "alice", inputs={"opposing_archetype": "dimir-frog"})
+    assert result["invalid_input"]["name"] == "opposing_archetype"
+    assert evaluate(script(), state_view(), "alice", inputs={"opposing_archetype": "*"}) == HOLDS
+
+
+def test_a_missing_optional_input_still_does_not_hold_and_is_not_invalid():
+    result = evaluate(
+        script(true=[inp("hold_discard", "eq", True)]),
+        state_view(),
+        "alice",
+        inputs={"opposing_archetype": "esper-blink"},
+        catalog=D04_CATALOG,
+    )
+    assert (result["applies"], result["failing_list"], result["invalid_input"]) == (
+        False,
+        "true",
+        None,
+    )

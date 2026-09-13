@@ -191,3 +191,55 @@ def test_matching_does_not_mutate_the_card():
     before = repr(view)
     matches({"types_any": ["Instant"], "colors_any": ["R"], "oracle_has": "damage"}, view)
     assert repr(view) == before
+
+
+# -- double-faced cards: the face a card has in its zone (CR 712.8a, 712.8f) ------
+
+WITCH_FACES = [
+    {
+        "name": "Witch Enchanter",
+        "mana_cost": "{3}{W}",
+        "type_line": "Creature — Human Warlock",
+        "oracle_text": "When this creature enters, destroy target artifact or enchantment.",
+    },
+    {
+        "name": "Witch-Blessed Meadow",
+        "mana_cost": "",
+        "type_line": "Land",
+        "oracle_text": "As this land enters, you may pay 3 life.",
+    },
+]
+
+
+def _dfc(zone: str, name: str, *, type_line: str = "Creature — Human Warlock // Land") -> dict:
+    view = card(name, type_line=type_line, zone=zone, oracle_text=None)
+    view["card_name"] = "Witch Enchanter // Witch-Blessed Meadow"
+    view["faces"] = [dict(face) for face in WITCH_FACES]
+    return view
+
+
+@pytest.mark.parametrize("zone", ["hand", "library", "graveyard", "exile", "sideboard"])
+def test_a_double_faced_card_off_the_battlefield_and_stack_is_only_its_front_face(zone):
+    witch = _dfc(zone, "Witch Enchanter")
+    assert matches({"types_any": ["Creature"]}, witch)
+    assert not matches({"types_any": ["Land"]}, witch)
+    assert matches({"oracle_has": "destroy target artifact"}, witch)
+    assert not matches({"oracle_has": "pay 3 life"}, witch)
+
+
+def test_a_double_faced_spell_on_the_stack_is_the_face_it_was_cast_as():
+    front = _dfc("stack", "Witch Enchanter")
+    back = _dfc("stack", "Witch-Blessed Meadow")
+    assert matches({"types_any": ["Creature"]}, front)
+    assert not matches({"types_any": ["Land"]}, front)
+    assert matches({"types_any": ["Land"]}, back)
+    assert matches({"oracle_has": "pay 3 life"}, back)
+    assert not matches({"oracle_has": "destroy target artifact"}, back)
+
+
+def test_a_double_faced_permanent_reads_its_computed_type_line_and_up_face_text():
+    meadow = _dfc("battlefield", "Witch-Blessed Meadow", type_line="Land")
+    meadow["oracle_text"] = WITCH_FACES[1]["oracle_text"]
+    assert matches({"types_any": ["Land"]}, meadow)
+    assert not matches({"types_any": ["Creature"]}, meadow)
+    assert matches({"oracle_has": "pay 3 life"}, meadow)

@@ -1393,6 +1393,15 @@ class CastOptionView(BaseModel):
     granted_by: str | None = None
 
 
+class CardFaceView(BaseModel):
+    """One face of a double-faced card (`serialize._faces_view`), as printed."""
+
+    name: str
+    mana_cost: str | None = None
+    type_line: str | None = None
+    oracle_text: str | None = None
+
+
 class _CardViewFields(BaseModel):
     """Every field a card view can carry. `CardView` requires the `id`;
     `ContentsCardView` is the same view that never names one."""
@@ -1408,6 +1417,10 @@ class _CardViewFields(BaseModel):
     type_line: str | None = None
     mana_cost: str | None = None
     oracle_text: str | None = None
+    """The printed rules text. For a double-faced card, the face that is up:
+    the front face anywhere but the battlefield or stack (CR 712.8a)."""
+    faces: list[CardFaceView] | None = None
+    """Double-faced cards only (CR 712): every face, front first."""
     counters: dict[str, int] | None = None
     damage: int | None = None
     summoning_sick: bool | None = None

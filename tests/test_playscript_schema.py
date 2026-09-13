@@ -17,8 +17,16 @@ from playscript_testkit import FETCH_SHOCK, FETCH_SURVEIL, play
 from pydantic import ValidationError
 
 from magic_cards_model_api.playscripts.schema import (
+    CAST_COSTS,
     CODES,
     CONDITION_KINDS,
+    DECISION_KINDS,
+    FORBIDDEN_DECISION_KINDS,
+    MAX_ARCHETYPES,
+    MAX_INPUT_VALUES,
+    MAX_PREFER,
+    MAX_SELECTOR_WORDS,
+    MAX_TARGETS,
     MOVE_KINDS,
     STEPS,
     Play,
@@ -79,6 +87,10 @@ def test_the_error_codes_are_the_shared_contract_in_order():
         "unknown-input",
         "invalid-input-value",
         "malformed-inputs",
+        "unknown-decision-kind",
+        "unknown-cast-cost",
+        "duplicate-step",
+        "wildcard-with-keys",
     )
 
 
@@ -380,3 +392,216 @@ def test_the_error_message_says_where():
 def test_a_non_object_play_is_malformed():
     assert codes([FETCH_SHOCK]) == ["malformed-play"]
     assert codes("fetch") == ["malformed-play"]
+
+
+# -- D05: the cost a cast is announced under -------------------------------------
+
+
+def cast_move(**over: Any) -> dict[str, Any]:
+    move: dict[str, Any] = {
+        "kind": "cast",
+        "card": {"zone": "hand", "select": {"types_any": ["Creature"]}},
+    }
+    move.update(over)
+    return move
+
+
+def test_the_cast_cost_vocabulary_names_normal_evoke_warp_and_impending():
+    assert {"normal", "evoke", "warp", "impending"} <= set(CAST_COSTS)
+    assert len(set(CAST_COSTS)) == len(CAST_COSTS)
+
+
+def test_the_cast_costs_are_the_engines_cast_option_kinds():
+    """Every cast option kind a card view's `cast_options` can carry - the
+    keywords `_option_from_keyword`, `keyword_cast_options` and
+    `marker_cast_options` hand out - plus the card's own printed CR 118.9
+    alternative cost (`AlternativeCostSource.PRINTED`), the printed mana cost
+    (`normal`) and impending, which the engine does not offer yet. Read off
+    the engine so a keyword it learns fails this test until the vocabulary
+    names it."""
+    import inspect
+    import re
+
+    from magic_cards_model.machines import casting
+
+    source = inspect.getsource(casting._option_from_keyword)
+    keywords = set(re.findall(r'canonical == "([a-z-]+)"', source))
+    for group in re.findall(r"canonical in \(([^)]*)\)", source):
+        keywords |= set(re.findall(r'"([a-z-]+)"', group))
+    for function in (casting.keyword_cast_options, casting.marker_cast_options):
+        keywords |= {
+            word.lower()
+            for word in re.findall(r'keyword="([A-Za-z-]+)"', inspect.getsource(function))
+        }
+    assert {"evoke", "warp", "adventure", "airbend"} <= keywords
+    keywords.add(casting.AlternativeCostSource.PRINTED.value)
+    assert set(CAST_COSTS) == {"normal", "impending"} | keywords
+
+
+@pytest.mark.parametrize("cost", CAST_COSTS)
+def test_every_cast_cost_validates(cost):
+    doc = play(moves=[cast_move(cost=cost)])
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).moves[0].cost == cost
+
+
+def test_a_cast_may_leave_the_cost_out():
+    doc = play(moves=[cast_move()])
+    assert play_errors(doc) == []
+    assert Play.model_validate(doc).moves[0].cost is None
+
+
+@pytest.mark.parametrize("cost", ["Evoke", "kicker", "overload", "", None, 3, ["evoke"]])
+def test_a_cost_outside_the_vocabulary_is_unknown_cast_cost(cost):
+    doc = play(moves=[cast_move(cost=cost)])
+    assert codes(doc) == ["unknown-cast-cost"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_only_a_cast_takes_a_cost():
+    doc = mutate("moves.0.cost", "evoke")
+    assert codes(doc) == ["unknown-field"]
+
+
+# -- D07: an answer names a decision kind the api can pend -----------------------
+
+
+def test_the_decision_kinds_are_the_apis_pending_decision_kinds():
+    from magic_cards_model_api.decisions import ANSWERABLE_KINDS
+
+    assert set(DECISION_KINDS) == {kind.value for kind in ANSWERABLE_KINDS}
+    assert set(FORBIDDEN_DECISION_KINDS) == {"declare_attackers", "declare_blockers", "mulligan"}
+
+
+@pytest.mark.parametrize("kind", sorted(set(DECISION_KINDS) - set(FORBIDDEN_DECISION_KINDS)))
+def test_every_answerable_decision_kind_validates(kind):
+    assert play_errors(mutate("moves.0.answers.1.decision", kind)) == []
+
+
+@pytest.mark.parametrize("kind", ["choose_cardz", "Choose_Cards", "pay life", "", 7, None])
+def test_a_decision_kind_outside_the_set_is_unknown_decision_kind(kind):
+    doc = mutate("moves.0.answers.0.decision", kind)
+    assert codes(doc) == ["unknown-decision-kind"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_an_answer_move_is_judged_the_same_way():
+    doc = mutate("moves", [{"kind": "answer", "answers": [{"decision": "choose_cardz"}]}])
+    assert codes(doc) == ["unknown-decision-kind"]
+
+
+def test_a_decision_kind_typo_past_a_too_long_answers_list_is_still_judged():
+    answers = [ANSWER] * 3 + [{"decision": "choose_cardz"}]
+    assert codes(mutate("moves.0.answers", answers)) == [
+        "bounds-exceeded",
+        "unknown-decision-kind",
+    ]
+
+
+@pytest.mark.parametrize("kind", ["declare_attackers", "declare_blockers", "mulligan"])
+def test_answering_a_combat_declaration_or_a_mulligan_is_forbidden(kind):
+    assert codes(mutate("moves.0.answers.0.decision", kind)) == ["forbidden-kind"]
+
+
+# -- D08: every list bounded, no duplicate step, no wildcard beside keys ----------
+
+
+def _selector_list(field: str):
+    return lambda n: mutate("true.0.select", {field: ["Land"] * n})
+
+
+BOUNDED_LISTS = [
+    (
+        "cast-targets",
+        lambda n: play(moves=[cast_move(targets=[{"select": {}, "side": "opponent"}] * n)]),
+        MAX_TARGETS,
+    ),
+    ("pick-prefer", lambda n: mutate("moves.0.answers.0.pick.prefer", [{}] * n), MAX_PREFER),
+    (
+        "opposing-archetypes",
+        lambda n: mutate("opposing_archetypes", [f"deck-{index}" for index in range(n)]),
+        MAX_ARCHETYPES,
+    ),
+    (
+        "input-value-list",
+        lambda n: play(
+            true=[{"kind": "input", "name": "plan", "op": "in", "value": ["a"] * n}], false=[]
+        ),
+        MAX_INPUT_VALUES,
+    ),
+    *[
+        (f"selector-{field}", _selector_list(field), MAX_SELECTOR_WORDS)
+        for field in (
+            "types_all",
+            "types_any",
+            "subtypes_any",
+            "supertypes_any",
+            "colors_any",
+            "keywords_any",
+        )
+    ],
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "bound"),
+    [(build, bound) for _, build, bound in BOUNDED_LISTS],
+    ids=[name for name, _, _ in BOUNDED_LISTS],
+)
+def test_a_list_at_its_bound_is_fine_and_one_past_it_is_bounds_exceeded(build, bound):
+    assert play_errors(build(bound)) == []
+    assert codes(build(bound + 1)) == ["bounds-exceeded"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(build(bound + 1))
+
+
+def test_the_battle_report_shapes_are_refused():
+    assert codes(play(moves=[cast_move(targets=[{"select": {}, "side": "opponent"}] * 40)])) == [
+        "bounds-exceeded"
+    ]
+    assert codes(mutate("moves.0.answers.0.pick.prefer", [{}] * 50)) == ["bounds-exceeded"]
+
+
+def _arrays(schema: Any, where: str = "") -> list[tuple[str, dict[str, Any]]]:
+    found = []
+    if isinstance(schema, dict):
+        if schema.get("type") == "array":
+            found.append((where, schema))
+        for key, value in schema.items():
+            found += _arrays(value, f"{where}.{key}")
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            found += _arrays(value, f"{where}[{index}]")
+    return found
+
+
+def test_every_list_in_the_json_schema_has_max_items():
+    arrays = _arrays(Play.model_json_schema())
+    assert arrays
+    unbounded = [where for where, node in arrays if "maxItems" not in node]
+    assert unbounded == []
+
+
+def test_a_repeated_step_is_duplicate_step():
+    doc = mutate("when.steps", ["end_step", "end_step"])
+    assert codes(doc) == ["duplicate-step"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+    assert play_errors(mutate("when.steps", ["upkeep", "end_step"])) == []
+
+
+@pytest.mark.parametrize(
+    "keys", [["*", "esper-blink"], ["esper-blink", "*"], ["*", "*"], ["*", "a", "b"]]
+)
+def test_the_wildcard_beside_any_other_key_is_wildcard_with_keys(keys):
+    doc = mutate("opposing_archetypes", keys)
+    assert codes(doc) == ["wildcard-with-keys"]
+    with pytest.raises(ValidationError):
+        Play.model_validate(doc)
+
+
+def test_the_wildcard_alone_and_named_keys_alone_are_fine():
+    assert play_errors(mutate("opposing_archetypes", ["*"])) == []
+    assert play_errors(mutate("opposing_archetypes", ["esper-blink", "dimir-frog"])) == []

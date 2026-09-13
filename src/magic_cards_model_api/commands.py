@@ -665,6 +665,12 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     diff already covers the whole command, pause included - see
     `resume_command`'s own docstring). See `_new_notices`/`_attach_notices`.
     """
+    return _attempt(game, command, tape)[0]
+
+
+def _attempt(game: Game, command: Command, tape: Sequence[Answer]) -> tuple[RunResult, Game]:
+    """One `run_command` attempt, and the working copy it mutated - which a
+    `PAUSED` result never hands on as `RunResult.game` (see `paused_game`)."""
     handler = COMMAND_HANDLERS.get(command.kind)
     if handler is None:
         raise KeyError(f"no command handler registered for kind={command.kind!r}")
@@ -676,11 +682,34 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     try:
         outcome = handler(working, command.payload)
     except DecisionPending as exc:
-        return RunResult(status=RunStatus.PAUSED, pending=exc.pending, tape=tuple(tape))
+        return RunResult(status=RunStatus.PAUSED, pending=exc.pending, tape=tuple(tape)), working
 
     working.decisions.finish_replay()
     _attach_notices(outcome, _new_notices(working, before_notices))
-    return RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape))
+    return (
+        RunResult(status=RunStatus.COMPLETED, game=working, outcome=outcome, tape=tuple(tape)),
+        working,
+    )
+
+
+def paused_game(game: Game, command: Command, tape: Sequence[Answer]) -> Game | None:
+    """The half-applied game a stored pause stands in, to READ from only, or
+    None when replaying `command` with `tape` from `game` no longer pauses.
+
+    Nothing is ever committed from this - a game mid-resolution is not a legal
+    state (this module's own docstring). It exists for what only that
+    half-applied game holds while a question is pending: what an effect has
+    already shown a player before asking them (CR 701.20a keeps a revealed
+    card revealed "for as long as necessary to complete the parts of the
+    effect that card is relevant to") - Thoughtseize's revealed hand while its
+    choice is open. `serialize._known_cards_view` reads its records against
+    the committed `game`.
+    """
+    try:
+        result, working = _attempt(game, command, tape)
+    except Exception:  # noqa: BLE001 - a replay the engine refuses has no pause to read
+        return None
+    return working if result.status is RunStatus.PAUSED else None
 
 
 def run_command_to_completion(game: Game, command: Command) -> RunResult:

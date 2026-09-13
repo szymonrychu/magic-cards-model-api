@@ -52,7 +52,26 @@
           "type": "boolean"
         },
         "decision": {
-          "pattern": "\\S",
+          "enum": [
+            "choose_a_mode",
+            "choose_a_quality",
+            "choose_cards",
+            "choose_targets",
+            "declare_attackers",
+            "declare_blockers",
+            "may",
+            "mulligan",
+            "opening_hand_action",
+            "order_triggers",
+            "pay_energy",
+            "pay_energy_amount",
+            "pay_life",
+            "pay_life_amount",
+            "pay_mana",
+            "put_on_top_or_bottom",
+            "scry",
+            "surveil"
+          ],
           "title": "Decision",
           "type": "string"
         },
@@ -115,6 +134,32 @@
         "card": {
           "$ref": "#/$defs/ZonedCard"
         },
+        "cost": {
+          "default": null,
+          "enum": [
+            "normal",
+            "adventure",
+            "airbend",
+            "bestow",
+            "dash",
+            "disguise",
+            "escape",
+            "evoke",
+            "flashback",
+            "foretell",
+            "harmonize",
+            "impending",
+            "madness",
+            "mayhem",
+            "megamorph",
+            "morph",
+            "plot",
+            "printed",
+            "warp"
+          ],
+          "title": "Cost",
+          "type": "string"
+        },
         "kind": {
           "const": "cast",
           "title": "Kind",
@@ -130,6 +175,7 @@
           "items": {
             "$ref": "#/$defs/CastTarget"
           },
+          "maxItems": 6,
           "title": "Targets",
           "type": "array"
         }
@@ -428,6 +474,7 @@
           "items": {
             "$ref": "#/$defs/Selector"
           },
+          "maxItems": 4,
           "title": "Prefer",
           "type": "array"
         },
@@ -484,6 +531,7 @@
             "pattern": "\\S",
             "type": "string"
           },
+          "maxItems": 15,
           "title": "Colors Any",
           "type": "array"
         },
@@ -497,6 +545,7 @@
             "pattern": "\\S",
             "type": "string"
           },
+          "maxItems": 15,
           "title": "Keywords Any",
           "type": "array"
         },
@@ -520,6 +569,7 @@
             "pattern": "\\S",
             "type": "string"
           },
+          "maxItems": 15,
           "title": "Subtypes Any",
           "type": "array"
         },
@@ -529,6 +579,7 @@
             "pattern": "\\S",
             "type": "string"
           },
+          "maxItems": 15,
           "title": "Supertypes Any",
           "type": "array"
         },
@@ -547,6 +598,7 @@
             "pattern": "\\S",
             "type": "string"
           },
+          "maxItems": 15,
           "title": "Types All",
           "type": "array"
         },
@@ -556,6 +608,7 @@
             "pattern": "\\S",
             "type": "string"
           },
+          "maxItems": 15,
           "title": "Types Any",
           "type": "array"
         }
@@ -866,6 +919,7 @@
         "pattern": "^(\\*|[a-z0-9]+(-[a-z0-9]+)*)$",
         "type": "string"
       },
+      "maxItems": 32,
       "minItems": 1,
       "title": "Opposing Archetypes",
       "type": "array"

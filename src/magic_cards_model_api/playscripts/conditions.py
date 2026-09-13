@@ -19,6 +19,9 @@ information by construction:
   `untapped_mana` (`seatkit.untapped_mana_sources`) read the public board.
 - `input` reads the caller's `inputs`. A missing required input makes the
   script unevaluable (`needs_input`); a missing optional one does not hold.
+  Every supplied input is first checked against the catalog: a name it does
+  not hold, or a value outside the input's enum, bool or int range, makes the
+  script unevaluable (`invalid_input`) rather than silently not holding.
 
 Side `opponent` is every player but the viewer; `any` is every player. A
 count or size sums over them; `life` holds when any of them satisfies it.
@@ -31,7 +34,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..seatkit import untapped_mana_sources
-from .inputs import input_catalog
+from .inputs import input_catalog, supplied_input_problem
 from .selectors import compare, matches
 
 HIDDEN_CONTENTS = {"library": "library_contents", "sideboard": "sideboard_contents"}
@@ -221,6 +224,24 @@ def _check(
     raise ValueError(f"condition kind {kind!r} is not in the closed vocabulary")
 
 
+def _result(
+    *,
+    polarity: str | None = None,
+    index: int | None = None,
+    seen: Any = None,
+    needs_input: str | None = None,
+    invalid_input: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "applies": polarity is None and invalid_input is None,
+        "failing_index": index,
+        "failing_list": polarity,
+        "seen": seen,
+        "needs_input": needs_input,
+        "invalid_input": invalid_input,
+    }
+
+
 def evaluate(
     script: BaseModel | dict[str, Any],
     view: dict[str, Any],
@@ -234,34 +255,23 @@ def evaluate(
     does. Otherwise `failing_list`/`failing_index` name the first condition
     that stopped it, `true` before `false`, with what it `seen`. `needs_input`
     names a required input `inputs` lacks; `catalog` (`inputs.input_catalog`)
-    says which inputs are required and defaults to the built-in alone.
+    says which inputs exist and which are required, and defaults to the
+    built-in alone. `invalid_input` is `{name, value, reason}` for the first
+    supplied input the catalog does not hold or whose value does not fit it;
+    it is checked before any condition, and nothing is judged past it.
     Raises `ContentsRequired` when a condition needs `include=contents`.
     """
     doc = _as_dict(script)
     supplied = inputs or {}
     known = catalog if catalog is not None else input_catalog([], ())
+    for name, value in supplied.items():
+        reason = supplied_input_problem(name, value, known)
+        if reason is not None:
+            return _result(invalid_input={"name": name, "value": value, "reason": reason})
     for polarity, index, condition in _conditions(doc):
         holds, seen, needs_input = _check(condition, view, viewer, supplied, known)
         if needs_input is not None:
-            return {
-                "applies": False,
-                "failing_index": index,
-                "failing_list": polarity,
-                "seen": None,
-                "needs_input": needs_input,
-            }
+            return _result(polarity=polarity, index=index, needs_input=needs_input)
         if holds is not (polarity == "true"):
-            return {
-                "applies": False,
-                "failing_index": index,
-                "failing_list": polarity,
-                "seen": seen,
-                "needs_input": None,
-            }
-    return {
-        "applies": True,
-        "failing_index": None,
-        "failing_list": None,
-        "seen": None,
-        "needs_input": None,
-    }
+            return _result(polarity=polarity, index=index, seen=seen)
+    return _result()

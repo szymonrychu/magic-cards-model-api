@@ -52,8 +52,14 @@ def cli(*argv: str) -> int:
 
 
 def test_codes_and_warning_codes_are_the_shared_contract():
-    assert CODES[-3:] == ("unknown-input", "invalid-input-value", "malformed-inputs")
-    assert len(CODES) == 17
+    assert CODES[14:17] == ("unknown-input", "invalid-input-value", "malformed-inputs")
+    assert CODES[17:] == (
+        "unknown-decision-kind",
+        "unknown-cast-cost",
+        "duplicate-step",
+        "wildcard-with-keys",
+    )
+    assert len(CODES) == 21
     assert WARNING_CODES == ("play-conflict", "next-conflict")
     assert EXCLUSIVITY_DIMENSIONS == (
         "whose_turn",
@@ -127,7 +133,11 @@ def test_card_name_in_any_machine_read_field(root):
     doc["false"][1]["select"] = {"keywords_any": ["Lightning Bolt"]}
     doc["moves"][0]["answers"][1]["decision"] = "arid mesa"
     put(root, doc)
-    assert error_codes(root) == ["card-name-in-field", "card-name-in-field"]
+    assert error_codes(root) == [
+        "card-name-in-field",
+        "card-name-in-field",
+        "unknown-decision-kind",
+    ]
 
 
 def test_card_names_are_allowed_in_prose(root):
@@ -256,8 +266,10 @@ def test_unknown_archetype_key_reads_the_newest_analysis_run(tmp_path):
     (older / "affinity.json").write_text("{}", encoding="utf-8")
     put(root, play(opposing_archetypes=["affinity"]))
     assert error_codes(root) == ["unknown-archetype-key"]
-    put(root, play(opposing_archetypes=["*", "living-end"]))
+    put(root, play(opposing_archetypes=["living-end"]))
     assert check_report(root)[0] == []
+    put(root, play(opposing_archetypes=["*", "living-end"]))
+    assert error_codes(root) == ["wildcard-with-keys"]
 
 
 # -- inputs.json and input conditions (M1b's three codes) ----------------------

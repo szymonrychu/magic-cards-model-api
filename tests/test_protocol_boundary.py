@@ -70,3 +70,14 @@ def test_seatkit_17_names_the_known_cards_and_contents_blocks() -> None:
     paragraph = changelog.split("`seatkit-16`", 1)[0]
     for term in ("known_cards", "library_contents", "sideboard_contents", "include=contents"):
         assert term in paragraph, f"the seatkit-17 paragraph does not name {term}"
+
+
+def test_seatkit_17_names_the_double_faced_views_and_known_cards_while_paused() -> None:
+    """Folded into seatkit-17 rather than a second bump: a double-faced card
+    view gained `faces` and a non-null `oracle_text`, and `known_cards` holds
+    what a paused command already showed while its choice is pending."""
+    source = Path(seatkit.__file__).read_text()
+    changelog = source.split("PROTOCOL_VERSION = ", 1)[1]
+    paragraph = changelog.split("`seatkit-16`", 1)[0]
+    for term in ("faces", "oracle_text", "pending"):
+        assert term in paragraph, f"the seatkit-17 paragraph does not name {term}"

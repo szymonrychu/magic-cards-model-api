@@ -13,13 +13,27 @@
       "counters": {},
       "damage": 0,
       "face_up": true,
+      "faces": [
+        {
+          "mana_cost": "{U}",
+          "name": "Delver of Secrets",
+          "oracle_text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
+          "type_line": "Creature \u2014 Human Wizard"
+        },
+        {
+          "mana_cost": "",
+          "name": "Insectile Aberration",
+          "oracle_text": "Flying",
+          "type_line": "Creature \u2014 Human Insect"
+        }
+      ],
       "id": "00000000-0000-0000-0000-000000000004",
       "image": "/api/card-art?name=Delver%20of%20Secrets%20%2F%2F%20Insectile%20Aberration&size=normal",
       "keywords": [],
       "mana_cost": null,
       "mana_value": 1.0,
       "name": "Delver of Secrets",
-      "oracle_text": null,
+      "oracle_text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
       "owner": "alice",
       "power": 1,
       "printed_type_line": "Creature \u2014 Human Wizard // Creature \u2014 Human Insect",
@@ -43,13 +57,27 @@
       "counters": {},
       "damage": 0,
       "face_up": true,
+      "faces": [
+        {
+          "mana_cost": "{U}",
+          "name": "Delver of Secrets",
+          "oracle_text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
+          "type_line": "Creature \u2014 Human Wizard"
+        },
+        {
+          "mana_cost": "",
+          "name": "Insectile Aberration",
+          "oracle_text": "Flying",
+          "type_line": "Creature \u2014 Human Insect"
+        }
+      ],
       "id": "00000000-0000-0000-0000-000000000005",
       "image": "/api/card-art?name=Delver%20of%20Secrets%20%2F%2F%20Insectile%20Aberration&size=normal",
       "keywords": [],
       "mana_cost": null,
       "mana_value": 1.0,
       "name": "Delver of Secrets",
-      "oracle_text": null,
+      "oracle_text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
       "owner": "alice",
       "power": 1,
       "printed_type_line": "Creature \u2014 Human Wizard // Creature \u2014 Human Insect",

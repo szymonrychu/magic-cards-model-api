@@ -231,6 +231,117 @@ def test_a_thoughtseize_reveal_lists_the_whole_opponent_hand_for_the_caster(clie
     assert_matches_engine(client, game)
 
 
+# -- (n) a reveal before a pending choice is known while the choice is pending ----
+
+
+def test_a_thoughtseize_reveal_is_known_while_its_discard_choice_is_pending(client, game):
+    """CR 701.20a: a revealed card "remains revealed for as long as necessary
+    to complete the parts of the effect that card is relevant to". Thoughtseize
+    reveals the hand before alice chooses from it, so the hand is known while
+    the choice is pending - not only once it has been answered (battle 1, D13).
+    A paused command keeps no half-applied game, so the view reads the paused
+    attempt's records; they still reach only the seat entitled to them."""
+    add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Thoughtseize", "alice", "hand")
+    for name in ("Lightning Bolt", "Forest", "Mountain"):
+        add_card(client, game, name, "bob", "hand")
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    board = admin_view(client, game)
+    thoughtseize = next(card for card in board["hands"]["alice"] if card["name"] == "Thoughtseize")
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": thoughtseize["id"],
+            "targets": ["bob"],
+            "mana_sources": [battlefield_id(client, game, "Swamp", "alice")],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved.get("paused"), resolved
+    assert resolved["pending_decision"]["kind"] == "choose_cards"
+    uids = seats_for(game)
+    bobs_hand = {card["id"]: card["name"] for card in admin_view(client, game)["hands"]["bob"]}
+
+    as_alice = view(client, game, uids["alice"])
+    assert as_alice["pending_decision"]["kind"] == "choose_cards"
+    known = as_alice["known_cards"]["alice"]
+    assert {card["id"] for card in known["hand"]} == set(bobs_hand)
+    assert names_in_hand(known) == ["Forest", "Lightning Bolt", "Mountain"]
+    assert {card["owner"] for card in known["hand"]} == {"bob"}
+    assert known["library"] == [] and known["sideboard"] == []
+    assert as_alice["hands"]["bob"] == []
+
+    assert view(client, game, uids["bob"])["known_cards"] == {
+        "bob": {"hand": [], "library": [], "sideboard": []}
+    }
+    for nobody in (None, "garbage"):
+        seen = view(client, game, nobody)
+        assert seen["known_cards"] == {}
+        assert not [card_id for card_id in bobs_hand if card_id in str(seen)]
+
+    bolt = next(card_id for card_id, name in bobs_hand.items() if name == "Lightning Bolt")
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "card_ids": [bolt]},
+    )
+    assert answered.status_code == 200, answered.text
+    assert not answered.json().get("paused"), answered.json()
+    after = view(client, game, uids["alice"])["known_cards"]["alice"]
+    assert names_in_hand(after) == ["Forest", "Mountain"]
+    assert_matches_engine(client, game)
+
+
+def test_a_scry_look_is_recorded_as_the_engine_records_it_after_the_put_back(client, game):
+    """The boundary of the paused read: it surfaces only records the paused
+    game already holds. The engine's `Game.scry` records Opt's look (CR 701.22a,
+    a look shown to the scrier alone, CR 701.20e) after the put-back, against
+    the order that put-back makes - so while the scry is pending there is no
+    record to surface, the api invents none (the pending decision's own cards
+    show the scrier the card), and the record is there once answered - with
+    the Bolt sent to the bottom, so Opt's draw does not take it."""
+    add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Opt", "alice", "hand")
+    stage_library(client, game, "alice", ["Lightning Bolt", "Forest"])
+    force_turn_position(game, Step.PRECOMBAT_MAIN, "alice")
+    opt = next(card for card in admin_view(client, game)["hands"]["alice"] if card["name"] == "Opt")
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card_id": opt["id"],
+            "mana_sources": [battlefield_id(client, game, "Island", "alice")],
+        },
+    )
+    assert cast.status_code == 200, cast.text
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved.get("paused"), resolved
+    assert resolved["pending_decision"]["kind"] == "scry"
+    uids = seats_for(game)
+    top = card_in(game, "Lightning Bolt", "alice", Zone.LIBRARY)
+
+    pending_view = view(client, game, uids["alice"])
+    assert pending_view["known_cards"]["alice"]["library"] == []
+    assert str(top.id) in pending_view["pending_decision"]["cards"]
+    assert "Lightning Bolt" not in str(view(client, game, uids["bob"])["known_cards"])
+
+    answered = client.post(
+        f"/api/games/{game}/decide",
+        params={"uid": uids["alice"]},
+        json={"player": "alice", "moved": [str(top.id)]},
+    )
+    assert answered.status_code == 200, answered.text
+    assert not answered.json().get("paused"), answered.json()
+    names = [
+        record["card"]["name"]
+        for record in view(client, game, uids["alice"])["known_cards"]["alice"]["library"]
+    ]
+    assert "Lightning Bolt" in names
+    assert_matches_engine(client, game)
+
+
 # -- (d) looks are one way ------------------------------------------------------
 
 

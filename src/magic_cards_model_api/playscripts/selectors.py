@@ -5,11 +5,16 @@ card name (design D3):
 
 - type words come from `type_line`, split into supertypes, card types and
   subtypes on the dash, every face of a split card included;
+- a double-faced card (a view carrying `faces`) is read as the one face it
+  has in its zone: the front face in every zone but the battlefield and the
+  stack (CR 712.8a), the face it was cast as on the stack (the view's `name`),
+  and on the battlefield the engine's computed `type_line` and up-face
+  `oracle_text` (CR 712.8d-f);
 - `colors_any` and `mana_value` read the engine's own `colors` and
   `mana_value` on the view, so no rule about either is re-derived here;
 - `ability_text_has` reads each `AbilityView.text` (and a stack ability's own
-  `text`), `oracle_has` reads `oracle_text`, both as case-insensitive
-  substrings.
+  `text`), `oracle_has` reads `oracle_text` (a double-faced card's face
+  text, as above), both as case-insensitive substrings.
 
 An empty list constrains nothing. A number the card does not have (a
 non-creature's power, a view with no `mana_value`) never matches.
@@ -80,10 +85,24 @@ def _texts(card: dict[str, Any]) -> list[str]:
     return texts
 
 
+def _face(card: dict[str, Any]) -> dict[str, Any] | None:
+    """The face a double-faced card view has in its zone, or None when the
+    view's own `type_line`/`oracle_text` already are its characteristics (a
+    single-faced card, or a permanent the engine computed)."""
+    faces = [face for face in card.get("faces") or [] if isinstance(face, dict)]
+    if not faces or card.get("zone") == "battlefield":
+        return None
+    if card.get("zone") == "stack":
+        return next((face for face in faces if face.get("name") == card.get("name")), faces[0])
+    return faces[0]
+
+
 def matches(selector: BaseModel | dict[str, Any], card: dict[str, Any]) -> bool:
     """Does `card` have every characteristic `selector` names?"""
     wanted = selector.model_dump(exclude_none=True) if isinstance(selector, BaseModel) else selector
-    supertypes, types, subtypes = parse_type_line(card.get("type_line"))
+    face = _face(card)
+    printed = face if face is not None else card
+    supertypes, types, subtypes = parse_type_line(printed.get("type_line"))
 
     if wanted.get("types_all") and not _folded(wanted["types_all"]) <= types:
         return False
@@ -121,5 +140,5 @@ def matches(selector: BaseModel | dict[str, Any], card: dict[str, Any]) -> bool:
         phrase = wanted["ability_text_has"].casefold()
         if not any(phrase in text.casefold() for text in _texts(card)):
             return False
-    oracle = str(card.get("oracle_text") or "").casefold()
+    oracle = str(printed.get("oracle_text") or "").casefold()
     return "oracle_has" not in wanted or wanted["oracle_has"].casefold() in oracle
