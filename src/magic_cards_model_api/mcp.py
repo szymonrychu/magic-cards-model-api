@@ -1113,11 +1113,10 @@ def build_server(seats: Seats) -> MCPServer:
                 one. Set `hold_priority` to cast again, or to respond to your own
                 spell, without giving up the chance to act again first (CR 117.3c:
                 you already keep priority after casting - this only decides whether
-                the harness auto-passes it for you). Releasing is the default for the
-                same reason it is the human player's default too: their stops panel
-                has a "keep priority after casting" tick, off by default, that is the
-                same override as `hold_priority=true` here - a human and an agent seat
-                stop in the same place from the same setting.
+                the harness auto-passes it for you). Releasing is the default here.
+                The human play UI's stops panel has its own "Keep priority by
+                default" tick, on by default, which is the same override as
+                `hold_priority=true` here.
 
         `reasoning`: why you are casting this, in your own words - required
         for an agent seat (a missing one is refused with a 422 naming the

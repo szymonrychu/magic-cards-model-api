@@ -42,7 +42,7 @@ INDEX_HTML = UI / "index.html"
 #: the board behind it - the greyed-out, dead-button outage this file exists
 #: for. `#log-modal` (the game log, moved out of the control ribbon when the
 #: mtg-buddy advisor panel took that corner) is the newest of them.
-OVERLAYS = ("card-preview", "toast", "popover", "log-modal", "modal")
+OVERLAYS = ("card-preview", "toast", "popover", "decision-window", "log-modal", "modal")
 
 #: Every module that can toggle `.hidden` - the still-classic `app.js` plus
 #: the buildless ES modules under `ui/` and `ui/render/` (`board.js` and

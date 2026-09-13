@@ -2968,3 +2968,30 @@ whoever works on the repo itself.
   tests in one file were enough to double CI's budget.
 - 2026-09-13 A13: the seat Job guides checkout is writable (deploy/guides-clone.sh: partial `--filter=blob:none` fetch of main, local main tracking origin/main), so GUIDES_REF is now main-only and the pinned-ref/sha path is gone - a harness wanting a fixed corpus has no knob until a read-only mode returns. The PAT is a file mount (/var/run/mtg-decks-git/GH_PAT, 0440 via fsGroup) read by a ~/.gitconfig credential helper, never an env var. SCRIPTS_ENABLED is only published/documented here; nothing reads it yet. preStop modules mtg_agent.driver.handover / mtg_agent.wrapper.handover_wait are named in the template but implemented by A14.
 - 2026-09-13 A1 (seatkit-17): `known_cards` is a sibling block of `hands` in `serialize.state_view`, keyed by the player who knows and built live from engine `Game.known_to` (own hand/sideboard dropped, own-library looks kept); `visibility.redact_view` keeps only the viewer's entry and rebuilds it from recognised shapes (fail closed). A player's own library/sideboard are served only as unordered `{card, count}` multisets with no ids or positions (`library_contents`/`sideboard_contents`), only behind `GET /api/games/{id}?include=contents` or a named `battlefield_state` section - never in the default board, an action answer, or a wake, so the answer budgets are untouched. `schemas.CardView` now inherits its fields from `_CardViewFields` so `ContentsCardView` can omit `id` without a type override; pydantic keeps `id` first, so response key order did not move.
+
+- **2026-09-13 - Complex decisions moved into a persistent floating window
+  (`ui/render/decision_window.js`, `#decision-window` built once in
+  `index.html`).** Scry, surveil, look-at-the-top split, every `choose_cards`
+  (whatever zone), `order_triggers`, and the seat's own pregame mulligan are
+  answered there with real cards; small kinds stay in `#prompt-box`, which
+  now only points at the window for the complex ones. `decisions.js`'s
+  `usesDecisionWindow` is the single routing test. It cannot be a panel that
+  `renderPromptBox` rebuilds: the press guard stops deferring after
+  `PRESS_CAP_MS`, so a card mid-drag there is torn down on the next poll. The
+  window keys its content on player/kind/generation/cards, patches in place,
+  and defers every render while a card or the window is being dragged. Card
+  drags are pointer events plus `elementFromPoint` (`.dw-slot.dragging` is
+  `pointer-events: none` so the hit test sees the lane underneath), not HTML5
+  drag-and-drop, which never fires for touch. A trigger-ordering window shows
+  the offered order as a full order, so confirming untouched posts it; the
+  answer is still `answerFor` over that order.
+
+- **2026-09-13 - the play UI keeps priority by default, under `mcm.stops.v2`.**
+  The owner: casting without keeping priority was too easy, and activating
+  must match. `stops.keepPriorityAfterCasting` (default off, v1) became
+  `stops.keepPriorityByDefault` (default on, v2). The key moved because every
+  v1 payload wrote `false` as the old default, not as a choice, so v1's value
+  is ignored rather than migrated; v1's step ticks and stack tick still load
+  when no v2 payload exists. `A.begin` seeds `holdPriority: null`, meaning the
+  casting strip's tick follows the standing default until touched. Agent and
+  REST defaults (`hold_priority=false`) are deliberately unchanged.

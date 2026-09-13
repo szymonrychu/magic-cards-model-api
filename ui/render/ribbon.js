@@ -25,12 +25,15 @@
 // multi-select), `amount` (a number), `targets` (a `choose_targets`
 // decision's own slot, separate from the in-flight action's `action.slots`),
 // `moved`/`order` (a scry/surveil split), `order` alone (CR 603.3b's trigger
-// ordering). The pregame mulligan panel reuses the same draft and handler
-// for its "tick which cards go to the bottom" checkboxes, under the key
-// `bottom` - it is not a `pending_decision` at all (CR 103.5/103.6 run before
-// any decision machinery exists), but the shape of the problem ("remember a
-// set of ids until the player submits") is identical, and inventing a
-// second store field for it would only be able to disagree with this one.
+// ordering).
+//
+// The complex decisions - scry, surveil, every `choose_cards`,
+// `order_triggers`, and this seat's own mulligan - are not answered here at
+// all: `render/decision_window.js` answers them in a floating window with
+// the real cards, and this box only says where the question went (with a
+// button to bring a minimized window back). `decision_window.js`'s
+// `windowSubject` is the one test of which questions those are, so the two
+// surfaces can never both claim one.
 //
 // CR numbers here (verified with `knowledge_search` in the session that
 // wrote this file): 103.5 (mulligans), 103.6 (opening-hand actions), 508.1
@@ -45,6 +48,8 @@ import { withSymbols, restrictedManaRows } from "../symbols.js";
 import { needsExplicitFire, readyToFire, targetSlotIndex } from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
+import { windowSubject } from "./decision_window.js";
+import { viewModel } from "../decisions.js";
 
 // --------------------------------------------------------------- pregame ---
 
@@ -66,88 +71,20 @@ function opponentSeatNote(status) {
   return h("div", { class: "hint" }, `Its agent is ${status.state}.`);
 }
 
-function renderMulliganStep(state, app, handlers) {
+/** The mulligan step while the other seat is still deciding. This seat's own
+ * keep-or-mulligan is `render/decision_window.js`'s, with the hand shown as
+ * cards, and never reaches here (`renderPromptBox` hands it over first). */
+function renderMulliganStep(state, app) {
   const pregame = state.pregame;
   const you = state.you;
   const waiting = pregame.awaiting_mulligan || [];
   const taken = (pregame.mulligans_taken || {})[you] || 0;
   const takingText = taken ? ` You have taken ${taken} mulligan${taken > 1 ? "s" : ""}.` : "";
-  if (!waiting.includes(you)) {
-    const others = waiting.filter((n) => n !== you);
-    const who = others.length ? others.join(", ") : "the other seat";
-    const box = h("div", { class: "pregame-step" }, h("span", {}, `Mulligans (CR 103.5): waiting on ${who}.${takingText}`));
-    const note = opponentSeatNote(app.aiStatus);
-    if (note) box.appendChild(note);
-    return box;
-  }
-  const needed = (pregame.cards_to_bottom || {})[you] || 0;
-  const hand = (state.hands && state.hands[you]) || [];
-  const chosenBottom = app.decisionDraft.bottom || [];
-  const box = h(
-    "div",
-    { class: "pregame-step" },
-    h("span", {}, `Your opening hand (CR 103.5): keep it, or shuffle back for a new seven.${takingText}`)
-  );
-  if (needed) {
-    box.appendChild(
-      h(
-        "div",
-        { class: "pregame-bottom" },
-        h("span", {}, `Keeping costs ${needed} card${needed > 1 ? "s" : ""} on the bottom of your library - tick exactly ${needed}:`),
-        ...hand.map((card) =>
-          h(
-            "label",
-            { class: "option" },
-            h("input", {
-              type: "checkbox",
-              checked: chosenBottom.includes(card.id),
-              onChange: () => {
-                const next = chosenBottom.includes(card.id)
-                  ? chosenBottom.filter((id) => id !== card.id)
-                  : [...chosenBottom, card.id];
-                handlers.onDecisionDraft({ bottom: next });
-              },
-            }),
-            card.name
-          )
-        )
-      )
-    );
-  }
-  const canKeep = chosenBottom.length === needed;
-  box.appendChild(
-    h(
-      "button",
-      {
-        class: "primary",
-        disabled: !canKeep,
-        title: canKeep ? null : `tick exactly ${needed} card(s) first`,
-        onClick: () => {
-          const body = { player: you, take: false };
-          if (chosenBottom.length) body.bottom = chosenBottom;
-          handlers.onDecisionDraft({ bottom: [] });
-          handlers.onPregame("mulligan", body);
-        },
-      },
-      "Keep"
-    )
-  );
-  if (pregame.can_mulligan && pregame.can_mulligan[you]) {
-    box.appendChild(
-      h(
-        "button",
-        {
-          onClick: () => {
-            handlers.onDecisionDraft({ bottom: [] });
-            handlers.onPregame("mulligan", { player: you, take: true });
-          },
-        },
-        "Mulligan"
-      )
-    );
-  } else {
-    box.appendChild(h("span", { class: "hint" }, "no mulligan left - a hand of nothing is the floor (CR 103.5)"));
-  }
+  const others = waiting.filter((n) => n !== you);
+  const who = others.length ? others.join(", ") : "the other seat";
+  const box = h("div", { class: "pregame-step" }, h("span", {}, `Mulligans (CR 103.5): waiting on ${who}.${takingText}`));
+  const note = opponentSeatNote(app.aiStatus);
+  if (note) box.appendChild(note);
   return box;
 }
 
@@ -189,7 +126,7 @@ function renderOpeningHandStep(state, app, handlers) {
 
 function renderPregame(state, app, handlers) {
   return state.pregame.step === "mulligan"
-    ? renderMulliganStep(state, app, handlers)
+    ? renderMulliganStep(state, app)
     : renderOpeningHandStep(state, app, handlers);
 }
 
@@ -301,6 +238,30 @@ function actionTitle(action) {
   return ability ? "Activate" : "Cast";
 }
 
+/** What `#prompt-box` says while the question is up in the decision window:
+ * which question, and a button that brings a minimized window back. */
+function renderWindowPointer(subject, handlers) {
+  let what = "Your opening hand";
+  if (subject.pending && !(subject.mode === "hand" && !subject.pending.source)) {
+    what = viewModel(subject.pending, {}).title;
+  }
+  return h(
+    "div",
+    { class: "decision-pointer" },
+    h("div", { class: "hint" }, `${what}: answer it in the decision window.`),
+    h(
+      "button",
+      {
+        type: "button",
+        onClick: () => {
+          if (handlers.onShowDecisionWindow) handlers.onShowDecisionWindow();
+        },
+      },
+      "Show decision window"
+    )
+  );
+}
+
 function renderPromptBox(el, app, handlers) {
   if (focusedTextInput(el)) return;
   clear(el);
@@ -311,6 +272,11 @@ function renderPromptBox(el, app, handlers) {
     el.appendChild(
       h("div", { class: "prompt-gameover" }, state.winner ? `Game over - ${state.winner} won.` : "Game over - drawn.")
     );
+    return;
+  }
+  const subject = windowSubject(app);
+  if (subject) {
+    el.appendChild(renderWindowPointer(subject, handlers));
     return;
   }
   if (state.pregame) {
@@ -731,7 +697,12 @@ function renderCastingStrip(el, app, handlers) {
       h(
         "label",
         { class: "hint" },
-        h("input", { type: "checkbox", checked: action.holdPriority, onChange: (e) => handlers.onHoldPriority(e.target.checked) }),
+        h("input", {
+          type: "checkbox",
+          // Untouched (`null`), the tick shows the standing default it follows.
+          checked: action.holdPriority ?? app.stops.keepPriorityByDefault !== false,
+          onChange: (e) => handlers.onHoldPriority(e.target.checked),
+        }),
         " keep priority (CR 117.3c)"
       )
     );
@@ -812,19 +783,19 @@ function renderStopsBox(el, app, handlers) {
   );
   // Beside it, not inside either step column, for the same reason: it is not
   // a step, it fires (or rather, doesn't) regardless of which one you are
-  // in. Off by default - casting a spell auto-passes priority to the
-  // opponent unless this is ticked (`priority.js`'s header has the CR 117.3c
-  // reasoning and the MCP/agent side's own `hold_priority` twin).
+  // in. On by default - casting a spell or activating an ability keeps
+  // priority unless this is unticked (`priority.js`'s `DEFAULT_STOPS` comment
+  // has the reasoning). Absent reads as ticked, like the stack tick.
   el.appendChild(
     h(
       "label",
       { class: "stops-anything" },
       h("input", {
         type: "checkbox",
-        checked: app.stops.keepPriorityAfterCasting === true,
-        onChange: () => handlers.onToggleKeepPriorityAfterCasting(),
+        checked: app.stops.keepPriorityByDefault !== false,
+        onChange: () => handlers.onToggleKeepPriorityByDefault(),
       }),
-      " keep priority after casting"
+      " Keep priority by default"
     )
   );
   const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));

@@ -208,3 +208,47 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui(
         # first (this module imports `decisions.ANSWERABLE_KINDS` directly,
         # so the two can never silently disagree about which kinds are
         # server-answerable).
+
+
+#: The kinds answered in `ui/render/decision_window.js`'s floating window
+#: (several cards to see, arrange or pick) - every other `DECISION_KINDS`
+#: entry keeps rendering in `#prompt-box`.
+_WINDOW_KINDS = {"scry", "surveil", "choose_cards", "order_triggers", "mulligan"}
+
+
+def test_every_ui_decision_kind_has_exactly_one_surface() -> None:
+    """Routing is decided by `ui/decisions.js`'s `usesDecisionWindow`, and a
+    kind with a renderer must land on exactly one surface: the decision
+    window for the complex kinds, the prompt box for the rest. The combat
+    declarations are on neither - their dedicated screen owns them."""
+    import shutil
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not on PATH")
+    from ui_node import run_module
+
+    ui_side = _object_literal_keys(UI_DECISIONS_JS, "DECISION_KINDS")
+    assert ui_side is not None
+    routed = run_module(
+        "decisions.js",
+        "Object.fromEntries(ks.map((k) => [k, m.usesDecisionWindow({ kind: k })]))",
+        ks=sorted(ui_side | {kind.value for kind in _UI_HANDLED_ELSEWHERE}),
+    )
+    window = {kind for kind, uses in routed.items() if uses}
+    assert window == _WINDOW_KINDS
+    assert not window & {kind.value for kind in _UI_HANDLED_ELSEWHERE}
+    prompt = ui_side - window
+    assert prompt | window == ui_side
+    assert prompt == {
+        "may",
+        "pay_life",
+        "pay_energy",
+        "pay_mana",
+        "pay_energy_amount",
+        "pay_life_amount",
+        "opening_hand_action",
+        "choose_targets",
+        "choose_a_quality",
+        "choose_a_mode",
+        "put_on_top_or_bottom",
+    }

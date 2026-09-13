@@ -72,62 +72,60 @@ export const VERB_LABELS = {
 // to whatever just landed. Unticking it is the deliberate "I am answering
 // nothing in this stretch".
 //
-// `keepPriorityAfterCasting` sits beside it for the same structural reason
+// `keepPriorityByDefault` sits beside it for the same structural reason
 // (not a step, fires regardless of which one you are in) but is not a
 // `stopReason`/`pass_until` concern at all - `fire()` (`app.js`) reads it
-// directly, once, right after a cast or activation goes on the stack. CR
-// 117.3c already gives you priority back after you cast a spell, activate an
-// ability, or take a special action; the *default* is for the harness to
-// spend that priority for you with one auto-pass, same as `hold_priority`
-// already does on the MCP/agent side (`cast`/`activate` in `mcp.py`, both
-// defaulting `hold_priority=false`) - this tick is this seat's own standing
-// override of that default, in place of re-ticking a per-cast "hold
-// priority" box every single time. Off by default, the opposite polarity
-// from `onStack`: unlike the stack tick (where "off" would silently take
-// away a chance to respond, so absent has to read as on), the auto-pass
-// default here is the EXISTING behaviour - so absent has to read as off, or
-// introducing this tick would silently start holding priority for every
-// player who never touched the setting.
+// right after a cast, activation or crew goes on the stack. CR 117.3c
+// already gives you priority back after you cast a spell or activate an
+// ability; this setting decides whether the harness keeps it for you or
+// spends it with one auto-pass. On by default: the owner found casting a
+// spell without keeping priority far too easy, and the same goes for
+// activating an ability. The casting strip's per-action tick starts from
+// it and overrides it for that one action. Mana abilities and land plays
+// never auto-pass either way.
 export const DEFAULT_STOPS = {
   mine: ["precombat_main", "declare_attackers", "postcombat_main"],
   theirs: ["declare_attackers", "end_step"],
   onStack: true,
-  keepPriorityAfterCasting: false,
+  keepPriorityByDefault: true,
 };
 
-const STOPS_KEY = "mcm.stops.v1";
+// v1 was written while the keep-priority setting defaulted off, so a stored
+// `false` there records the old default rather than a choice. The setting
+// lives under v2; v1 is read only for the step ticks and the stack tick.
+const STOPS_KEY = "mcm.stops.v2";
+const V1_STOPS_KEY = "mcm.stops.v1";
+
+function readStops(storage, key) {
+  const raw = storage.getItem(key);
+  if (!raw) return null;
+  const parsed = JSON.parse(raw);
+  // "[]" and "7" both parse cleanly but are not a {mine, theirs} object -
+  // the wrong shape is exactly as unusable as invalid JSON, so it gets the
+  // same fallback rather than silently becoming empty stops.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return parsed;
+}
 
 export function loadStops(storage) {
   const defaults = {
     mine: [...DEFAULT_STOPS.mine],
     theirs: [...DEFAULT_STOPS.theirs],
     onStack: DEFAULT_STOPS.onStack,
-    keepPriorityAfterCasting: DEFAULT_STOPS.keepPriorityAfterCasting,
+    keepPriorityByDefault: DEFAULT_STOPS.keepPriorityByDefault,
   };
   try {
-    const raw = storage.getItem(STOPS_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    // "[]" and "7" both parse cleanly but are not a {mine, theirs} object -
-    // the wrong shape is exactly as unusable as invalid JSON, so it gets the
-    // same fallback rather than silently becoming empty stops.
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaults;
-    // The storage key is unchanged, so a player's own step ticks survive the
-    // arrival of `onStack` - and a payload written before it existed carries
-    // no `onStack` at all. Absent means ON, which is both the default and the
-    // safe reading: the alternative silently takes the chance to respond away
-    // from everyone who had already ticked a step.
-    //
-    // `keepPriorityAfterCasting` reads the opposite way on purpose: absent
-    // means OFF (`=== true`, not `!== false`), because a payload written
-    // before this tick existed already represents a player used to today's
-    // auto-pass-after-casting behaviour - reading it back as ON would
-    // silently start holding priority nobody asked to hold.
+    const v2 = readStops(storage, STOPS_KEY);
+    const parsed = v2 || readStops(storage, V1_STOPS_KEY);
+    if (!parsed) return defaults;
+    // Both absent-means-ON: a payload written before `onStack` existed must
+    // not silently take the chance to respond away, and one without
+    // `keepPriorityByDefault` must not silently start auto-passing.
     return {
       mine: parsed.mine || [],
       theirs: parsed.theirs || [],
       onStack: parsed.onStack !== false,
-      keepPriorityAfterCasting: parsed.keepPriorityAfterCasting === true,
+      keepPriorityByDefault: v2 ? v2.keepPriorityByDefault !== false : true,
     };
   } catch {
     return defaults;

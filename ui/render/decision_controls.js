@@ -1,15 +1,15 @@
-// The controls a live decision's `viewModel` (`decisions.js`) can ask for,
-// split out of `ribbon.js` once that file passed ~500 lines. One function
-// per `control.type`, plus `renderDecision`, which wraps them with the
-// title, prompt, `remaining` countdown, and submit/secondary buttons.
+// The controls a small decision's `viewModel` (`decisions.js`) can ask for in
+// `#prompt-box`, split out of `ribbon.js` once that file passed ~500 lines.
+// One function per `control.type`, plus `renderDecision`, which wraps them
+// with the title, prompt, `remaining` countdown, and submit/secondary
+// buttons. The complex kinds (`split`, `order` and the multi-select
+// `options` of `choose_cards`) are answered with real cards in
+// `render/decision_window.js` instead, so they have no renderer here.
 //
 // Every control reports the player's choice back through
 // `handlers.onDecisionDraft(patch)`, using the exact draft field name each
 // decision kind's own `viewModel` reads it back from - `choice` (a single
-// pick or free text), `card_ids` (a multi-select), `amount` (a number),
-// `moved`/`order` (a scry/surveil split), `order` alone (CR 603.3b's trigger
-// ordering, verified with `knowledge_search` in the session that wrote this
-// file). Getting a field name wrong here does not fail loudly: it would
+// pick or free text), `card_ids` (a multi-select), `amount` (a number). Getting a field name wrong here does not fail loudly: it would
 // leave `viewModel` reading a key nobody ever writes, so the control would
 // look interactive while quietly doing nothing.
 
@@ -73,81 +73,6 @@ function renderTargetsControl(control, handlers) {
   );
 }
 
-function swapped(list, i, j) {
-  const next = [...list];
-  [next[i], next[j]] = [next[j], next[i]];
-  return next;
-}
-
-function renderSplitControl(control, handlers) {
-  const movedIds = () => control.cards.filter((c) => c.moved).map((c) => c.id);
-  const byId = new Map(control.cards.map((c) => [c.id, c]));
-  const kept = h(
-    "div",
-    { class: "split-col" },
-    h("div", { class: "label" }, control.keptLabel),
-    ...control.order.map((id, i) => {
-      const card = byId.get(id);
-      return h(
-        "div",
-        { class: "split-row" },
-        h("span", {}, card ? card.label : id),
-        h("button", { disabled: i === 0, onClick: () => handlers.onDecisionDraft({ order: swapped(control.order, i, i - 1) }) }, "up"),
-        h(
-          "button",
-          { disabled: i === control.order.length - 1, onClick: () => handlers.onDecisionDraft({ order: swapped(control.order, i, i + 1) }) },
-          "down"
-        ),
-        h("button", { onClick: () => handlers.onDecisionDraft({ moved: [...movedIds(), id] }) }, "Move")
-      );
-    })
-  );
-  const moved = h(
-    "div",
-    { class: "split-col" },
-    h("div", { class: "label" }, control.movedLabel),
-    ...control.cards
-      .filter((c) => c.moved)
-      .map((card) =>
-        h(
-          "div",
-          { class: "split-row" },
-          h("span", {}, card.label),
-          h("button", { onClick: () => handlers.onDecisionDraft({ moved: movedIds().filter((id) => id !== card.id) }) }, "Keep")
-        )
-      )
-  );
-  return h("div", { class: "split-columns" }, kept, moved);
-}
-
-function renderOrderControl(control, handlers) {
-  const current = () =>
-    control.items
-      .filter((i) => i.selected)
-      .sort((a, b) => a.position - b.position)
-      .map((i) => i.id);
-  return h(
-    "div",
-    {},
-    h(
-      "div",
-      { class: "chip-row" },
-      ...control.items.map((item) =>
-        h(
-          "button",
-          {
-            class: `chip ${item.selected ? "on" : ""}`,
-            disabled: item.selected,
-            onClick: () => handlers.onDecisionDraft({ order: [...current(), item.id] }),
-          },
-          item.position >= 0 ? `#${item.position + 1} ${item.label}` : item.label
-        )
-      )
-    ),
-    h("button", { onClick: () => handlers.onDecisionDraft({ order: [] }) }, "Start over")
-  );
-}
-
 function renderTextControl(control, handlers) {
   return h("input", {
     type: "text",
@@ -160,8 +85,6 @@ function renderControl(control, handlers) {
   if (control.type === "options") return renderOptionsControl(control, handlers);
   if (control.type === "number") return renderNumberControl(control, handlers);
   if (control.type === "targets") return renderTargetsControl(control, handlers);
-  if (control.type === "split") return renderSplitControl(control, handlers);
-  if (control.type === "order") return renderOrderControl(control, handlers);
   if (control.type === "text") return renderTextControl(control, handlers);
   return h("div", { class: "error" }, `no ribbon renderer for control type ${control.type}`);
 }

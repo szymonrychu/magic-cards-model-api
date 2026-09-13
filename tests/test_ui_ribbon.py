@@ -11,14 +11,16 @@ Both assert only that mounting does not throw and that the rendered
 `#prompt-box`/`#casting-strip` fakes contain the labels a player would need
 to see.
 
-Two more scenarios exercise an actual handler end to end: the fake DOM's
+One more scenario exercises an actual handler end to end: the fake DOM's
 `addEventListener` records the listener `h()` wires up, and `click(el)`
-(found via `findByText`) invokes it - a `choose_cards` decision's option
-button reports `{card_ids: [...]}` back through `onDecisionDraft`, and a
-scry's split control's "Move" button reports `{moved: [...]}`. Everything
+(found via `findByText`) invokes it - a `choose_a_mode` decision's option
+button reports `{choice: ...}` back through `onDecisionDraft`. The complex
+kinds (scry, surveil, `choose_cards`, `order_triggers`) are answered in
+`render/decision_window.js` now (`tests/test_ui_decision_window.py`); here
+the prompt box only points at it. Everything
 else about a control's own correctness (which draft field each kind reads
 back, `readyToFire`'s exact gating) belongs to `decisions.js`/`actions.js`/
-`targeting.js`'s own direct tests - these two just confirm the wiring
+`targeting.js`'s own direct tests - these just confirm the wiring
 between a rendered button and the handler it is supposed to call is real,
 not merely plausible-looking markup.
 """
@@ -198,7 +200,7 @@ const HANDLERS = {
   onUnfill: NOOP, onSetShare: NOOP, onDone: NOOP, onCast: NOOP, onCancel: NOOP,
   onHoldPriority: NOOP, onDecisionDraft: NOOP, onDecide: NOOP, onVerb: NOOP,
   onStopRun: NOOP, onToggleStop: NOOP, onToggleStackStop: NOOP,
-  onToggleKeepPriorityAfterCasting: NOOP,
+  onToggleKeepPriorityByDefault: NOOP,
   onAttackConfirm: NOOP, onAttackNone: NOOP,
   onBlockConfirm: NOOP, onBlockNone: NOOP, onConcede: NOOP, onPregame: NOOP,
   nameOf: (id) => id,
@@ -627,14 +629,15 @@ def test_alt_cost_pitch_tray_says_so_plainly_when_nothing_is_eligible() -> None:
     assert "nothing eligible" in result.lower()
 
 
-def test_clicking_a_choose_cards_option_reports_card_ids() -> None:
-    calls = run_module(
+def test_a_choose_cards_decision_points_at_the_decision_window() -> None:
+    """Every `choose_cards` is answered with real card images in
+    `render/decision_window.js`'s floating window now; the prompt box only
+    says where the question went, and renders no option chips of its own."""
+    result = run_module(
         "render/ribbon.js",
         FAKE_DOM
         + """
         (() => {
-          const calls = [];
-          const handlers = { ...HANDLERS, onDecisionDraft: (patch) => calls.push(patch) };
           const pending = {
             kind: "choose_cards", player: "alice", source: "Merchant Scroll",
             prompt: "Search your library for an instant card.",
@@ -647,17 +650,26 @@ def test_clicking_a_choose_cards_option_reports_card_ids() -> None:
           };
           const state = baseState({ pending_decision: pending });
           const store = makeStore(baseApp(state));
-          m.mountRibbon(document, store, handlers);
+          m.mountRibbon(document, store, HANDLERS);
           store.set({});
-          click(findByText(document, "button", "Brainstorm"));
-          return calls;
+          const box = document.querySelector("#prompt-box");
+          return {
+            text: box.textContent,
+            chip: Boolean(findByText(box, "button", "Brainstorm")),
+            show: Boolean(findByText(box, "button", "Show decision window")),
+          };
         })()
         """,
     )
-    assert calls == [{"card_ids": ["c1"]}]
+    assert "Merchant Scroll" in result["text"]
+    assert "decision window" in result["text"]
+    assert result["chip"] is False
+    assert result["show"] is True
 
 
-def test_clicking_the_split_controls_move_button_reports_moved() -> None:
+def test_clicking_a_choose_a_mode_option_reports_choice() -> None:
+    """A small decision still renders in the prompt box, and its option
+    buttons still report through `onDecisionDraft`."""
     calls = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -665,6 +677,28 @@ def test_clicking_the_split_controls_move_button_reports_moved() -> None:
         (() => {
           const calls = [];
           const handlers = { ...HANDLERS, onDecisionDraft: (patch) => calls.push(patch) };
+          const pending = {
+            kind: "choose_a_mode", player: "alice", source: "Charm",
+            prompt: "Choose one.", options: ["Counter target spell", "Draw a card"],
+          };
+          const state = baseState({ pending_decision: pending });
+          const store = makeStore(baseApp(state));
+          m.mountRibbon(document, store, handlers);
+          store.set({});
+          click(findByText(document, "button", "Draw a card"));
+          return calls;
+        })()
+        """,
+    )
+    assert calls == [{"choice": "Draw a card"}]
+
+
+def test_a_scry_decision_renders_no_split_rows_in_the_prompt_box() -> None:
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
           const pending = {
             kind: "scry", player: "alice", source: "Scry", prompt: "Scry 2.",
             cards: ["a", "b"],
@@ -675,14 +709,15 @@ def test_clicking_the_split_controls_move_button_reports_moved() -> None:
           };
           const state = baseState({ pending_decision: pending });
           const store = makeStore(baseApp(state));
-          m.mountRibbon(document, store, handlers);
+          m.mountRibbon(document, store, HANDLERS);
           store.set({});
-          click(findByText(document, "button", "Move"));
-          return calls;
+          const box = document.querySelector("#prompt-box");
+          return { text: box.textContent, move: Boolean(findByText(box, "button", "Move")) };
         })()
         """,
     )
-    assert calls == [{"moved": ["a"]}]
+    assert result["move"] is False
+    assert "decision window" in result["text"]
 
 
 # --------------------------------------------------------- conceding safely
@@ -1012,12 +1047,11 @@ def test_the_mine_declare_attackers_tick_carries_no_helper_text() -> None:
     assert "*" not in result, "no asterisk decoration either"
 
 
-def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_up() -> None:
-    """The owner's newest ask: a standing tick beside "anything on the
-    stack" that overrides the new default (casting auto-passes priority),
-    the same shape as the stack tick's own test above - same placement
-    rationale (not a step, fires regardless of which one you are in), same
-    off-by-default-unless-`false`-was-never-written asymmetry check."""
+def test_the_stops_box_offers_keep_priority_by_default_and_wires_it_up() -> None:
+    """The standing tick beside "anything on the stack": casting a spell or
+    activating an ability keeps priority unless it is unticked. Absent from
+    the stops object reads as ticked, the same `!== false` reading as the
+    stack tick."""
     result = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -1028,34 +1062,89 @@ def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_
             const toggled = [];
             m.mountRibbon(document, store, {
               ...HANDLERS,
-              onToggleKeepPriorityAfterCasting: () => toggled.push(1),
+              onToggleKeepPriorityByDefault: () => toggled.push(1),
             });
             store.set({});
             const box = document.querySelector("#stops-box");
-            const tick = findByText(box, "label", "keep priority after casting");
+            const tick = findByText(box, "label", "Keep priority by default");
             const checkbox = tick && tick.children.find((c) => c.tagName === "input");
             if (checkbox && checkbox.listeners && checkbox.listeners.change) {
               checkbox.listeners.change({ target: checkbox });
             }
             return {
               offered: Boolean(tick),
+              text: box.textContent,
               checked: checkbox ? "checked" in checkbox.attrs : null,
               toggles: toggled.length,
             };
           };
           return {
-            off: look({ mine: [], theirs: [], keepPriorityAfterCasting: false }),
-            on: look({ mine: [], theirs: [], keepPriorityAfterCasting: true }),
+            absent: look({ mine: [], theirs: [] }),
+            off: look({ mine: [], theirs: [], keepPriorityByDefault: false }),
+            on: look({ mine: [], theirs: [], keepPriorityByDefault: true }),
           };
         })()
         """,
     )
-    off, on = result["off"], result["on"]
+    absent, off, on = result["absent"], result["off"], result["on"]
     assert off["offered"] is True, "the stops panel never renders the keep-priority tick"
+    assert "after casting" not in off["text"], "the old wording must be gone"
     assert off["checked"] is False
     assert off["toggles"] == 1, "clicking the tick reaches no handler"
     assert on["offered"] is True
     assert on["checked"] is True
+    assert absent["checked"] is True, "a stops object with no setting must read as ticked"
+
+
+def test_the_per_action_tick_starts_from_the_standing_default_and_reports_an_untick() -> None:
+    """The casting strip's own tick for one action. It starts where the
+    standing default is (`holdPriority: null` means "not touched yet"), and
+    unticking it reports `false` for that action alone."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (holdPriority, stops) => {
+            const action = { ...koz_action, holdPriority };
+            const state = baseState({ hands: { alice: [koz] } });
+            const store = makeStore(baseApp(state, { action, stops }));
+            const reported = [];
+            m.mountRibbon(document, store, {
+              ...HANDLERS,
+              onHoldPriority: (hold) => reported.push(hold),
+            });
+            store.set({});
+            const strip = document.querySelector("#casting-strip");
+            const tick = findByText(strip, "label", "keep priority");
+            const checkbox = tick && tick.children.find((c) => c.tagName === "input");
+            const checked = checkbox ? "checked" in checkbox.attrs : null;
+            if (checkbox && checkbox.listeners && checkbox.listeners.change) {
+              checkbox.listeners.change({ target: { checked: false } });
+            }
+            return { offered: Boolean(tick), checked, reported };
+          };
+          return {
+            fresh: look(null, { mine: [], theirs: [] }),
+            freshOff: look(null, { mine: [], theirs: [], keepPriorityByDefault: false }),
+            unticked: look(false, { mine: [], theirs: [], keepPriorityByDefault: true }),
+          };
+        })()
+        """,
+        koz=KOZILEK,
+        koz_action={
+            "kind": "cast", "cardId": KOZILEK["id"], "card": KOZILEK, "abilityIndex": None,
+            "keyword": None, "fromZone": None, "modes": [], "xValue": None, "color": None,
+            "altCost": None, "choosing": [], "convoke": [], "delve": [], "crewing": [],
+            "slots": [], "shares": {}, "pinned": [], "freeTargets": [], "pendingTargets": [],
+            "focusSlot": None, "affordance": KOZ_AFF, "error": None, "done": False,
+        },
+    )
+    assert result["fresh"]["offered"] is True
+    assert result["fresh"]["checked"] is True, "the per-action tick must start ticked"
+    assert result["fresh"]["reported"] == [False]
+    assert result["freshOff"]["checked"] is False
+    assert result["unticked"]["checked"] is False
 
 
 # ------------------------------ CR 106.6 restricted mana, mid-payment --------

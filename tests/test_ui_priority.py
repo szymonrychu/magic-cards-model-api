@@ -29,7 +29,7 @@ def test_default_stops_are_mtgo_like() -> None:
         "mine": ["precombat_main", "declare_attackers", "postcombat_main"],
         "theirs": ["declare_attackers", "end_step"],
         "onStack": True,
-        "keepPriorityAfterCasting": False,
+        "keepPriorityByDefault": True,
     }
 
 
@@ -44,41 +44,91 @@ def test_the_stack_tick_is_a_stop_of_its_own_and_starts_on() -> None:
     assert run_module("priority.js", "m.DEFAULT_STOPS")["onStack"] is True
 
 
-def test_the_keep_priority_after_casting_tick_defaults_off() -> None:
-    """The owner's newest default: casting a spell auto-passes priority to
-    the opponent (CR 117.3c already lets you keep it - this only decides
-    whether the harness gives it up on your behalf). `onStack` off, this tick
-    is the override, and it starts off to match today's auto-pass default -
-    the opposite polarity from `onStack` above, deliberately: nothing here
-    should silently start holding priority for a player who never touched the
-    setting."""
-    assert run_module("priority.js", "m.DEFAULT_STOPS")["keepPriorityAfterCasting"] is False
+def test_keep_priority_by_default_starts_on() -> None:
+    """The owner's words: casting a spell without keeping priority was too
+    easy, and the same must hold for activating an ability. CR 117.3c already
+    hands you priority back after either; the standing setting now keeps it
+    unless you untick it."""
+    assert run_module("priority.js", "m.DEFAULT_STOPS")["keepPriorityByDefault"] is True
 
 
-def test_stops_round_trip_through_storage() -> None:
-    result = run_module(
-        "priority.js",
-        "(() => { const store = new Map(); "
+def _map_storage() -> str:
+    return (
+        "const store = new Map(Object.entries(seed)); "
         "const storage = { getItem: (k) => store.get(k) ?? null, "
         "setItem: (k, v) => store.set(k, v) }; "
-        "m.saveStops(storage, { mine: ['upkeep'], theirs: [], onStack: false, "
-        "keepPriorityAfterCasting: true }); "
-        "return m.loadStops(storage); })()",
     )
-    assert result == {
+
+
+def test_empty_storage_keeps_priority_by_default() -> None:
+    result = run_module(
+        "priority.js",
+        "(() => { " + _map_storage() + "return m.loadStops(storage); })()",
+        seed={},
+    )
+    assert result["keepPriorityByDefault"] is True
+
+
+def test_stops_round_trip_through_storage_under_the_v2_key() -> None:
+    """Standing OFF persists - and it persists under `mcm.stops.v2`, the key
+    that only ever held the new default."""
+    result = run_module(
+        "priority.js",
+        "(() => { " + _map_storage() + "m.saveStops(storage, { mine: ['upkeep'], theirs: [], "
+        "onStack: false, keepPriorityByDefault: false }); "
+        "return { keys: [...store.keys()], loaded: m.loadStops(storage) }; })()",
+        seed={},
+    )
+    assert result["keys"] == ["mcm.stops.v2"]
+    assert result["loaded"] == {
         "mine": ["upkeep"],
         "theirs": [],
         "onStack": False,
-        "keepPriorityAfterCasting": True,
+        "keepPriorityByDefault": False,
     }
 
 
+def test_a_v1_payload_never_carries_the_old_off_default_forward() -> None:
+    """`mcm.stops.v1` was written while the setting defaulted off, so a stored
+    `false` there says nothing about what the player chose - it is ignored,
+    not migrated. The step ticks and the stack tick in it were real choices
+    and still read back."""
+    result = run_module(
+        "priority.js",
+        "(() => { " + _map_storage() + "return m.loadStops(storage); })()",
+        seed={
+            "mcm.stops.v1": (
+                '{"mine": ["upkeep"], "theirs": ["end_step"], "onStack": false, '
+                '"keepPriorityAfterCasting": false, "keepPriorityByDefault": false}'
+            )
+        },
+    )
+    assert result == {
+        "mine": ["upkeep"],
+        "theirs": ["end_step"],
+        "onStack": False,
+        "keepPriorityByDefault": True,
+    }
+
+
+def test_a_v2_payload_wins_over_a_v1_payload() -> None:
+    result = run_module(
+        "priority.js",
+        "(() => { " + _map_storage() + "return m.loadStops(storage); })()",
+        seed={
+            "mcm.stops.v1": '{"mine": ["upkeep"], "theirs": [], "keepPriorityAfterCasting": true}',
+            "mcm.stops.v2": '{"mine": ["draw"], "theirs": [], "keepPriorityByDefault": false}',
+        },
+    )
+    assert result["mine"] == ["draw"]
+    assert result["keepPriorityByDefault"] is False
+
+
 def test_stops_saved_before_the_stack_tick_existed_read_back_with_it_on() -> None:
-    """The storage key is unchanged, so a player's own step ticks survive this
-    redesign - and a payload written before the tick existed carries no
-    `onStack` at all. Absent has to mean on: the safe reading, and the one that
-    matches `DEFAULT_STOPS`. Anything else silently takes the chance to respond
-    away from every player who had already ticked a step."""
+    """A payload written before the tick existed carries no `onStack` at all.
+    Absent has to mean on: the safe reading, and the one that matches
+    `DEFAULT_STOPS`. Anything else silently takes the chance to respond away
+    from every player who had already ticked a step."""
     result = run_module(
         "priority.js",
         "m.loadStops({ getItem: () => raw })",
@@ -88,27 +138,14 @@ def test_stops_saved_before_the_stack_tick_existed_read_back_with_it_on() -> Non
         "mine": ["upkeep"],
         "theirs": ["end_step"],
         "onStack": True,
-        "keepPriorityAfterCasting": False,
+        "keepPriorityByDefault": True,
     }
-
-
-def test_stops_saved_before_the_keep_priority_tick_existed_read_back_with_it_off() -> None:
-    """The opposite polarity from `onStack`'s own backward-compatibility
-    rule, and deliberately so: a payload written before this tick existed
-    already represents a player used to today's auto-pass-after-casting
-    behaviour, so absent has to mean "keep that default" - off - not silently
-    start holding priority for everyone who never touched the setting."""
-    result = run_module(
-        "priority.js",
-        "m.loadStops({ getItem: () => raw })",
-        raw='{"mine": ["upkeep"], "theirs": ["end_step"]}',
-    )
-    assert result["keepPriorityAfterCasting"] is False
 
 
 def test_a_broken_storage_yields_defaults() -> None:
     result = run_module("priority.js", "m.loadStops({ getItem() { throw new Error('nope'); } })")
     assert result == run_module("priority.js", "m.DEFAULT_STOPS")
+    assert result["keepPriorityByDefault"] is True
 
 
 def test_stored_stops_that_parse_to_the_wrong_shape_yield_defaults() -> None:

@@ -166,3 +166,107 @@ def test_a_card_moved_and_kept_again_returns_to_the_order() -> None:
         d={"moved": [], "order": ["a"]},
     )
     assert after_keep == ["a", "b"]
+
+
+# -- the decision window's own draft arithmetic --------------------------------
+
+TRIGGERS = {**MAY, "kind": "order_triggers", "cards": ["t1", "t2", "t3"], "amount": 0}
+
+
+def _choose(zone: str, **over: object) -> dict:
+    return {
+        **MAY,
+        "kind": "choose_cards",
+        "cards": ["c1", "c2"],
+        "card_details": [
+            {"id": "c1", "name": "A", "zone": zone},
+            {"id": "c2", "name": "B", "zone": zone},
+        ],
+        **over,
+    }
+
+
+def test_the_complex_kinds_are_the_ones_answered_in_the_decision_window() -> None:
+    kinds = run_module(
+        "decisions.js",
+        "Object.keys(m.DECISION_KINDS).filter((k) => m.usesDecisionWindow({ kind: k })).sort()",
+    )
+    assert kinds == ["choose_cards", "mulligan", "order_triggers", "scry", "surveil"]
+    assert run_module("decisions.js", "m.usesDecisionWindow(null)") is False
+    assert (
+        run_module("decisions.js", "m.usesDecisionWindow({ kind: 'declare_attackers' })") is False
+    )
+
+
+def test_toggling_a_choice_never_goes_past_the_maximum() -> None:
+    result = run_module(
+        "decisions.js",
+        """[
+          m.toggleChoice([], "a", 2),
+          m.toggleChoice(["a"], "b", 2),
+          m.toggleChoice(["a", "b"], "c", 2),
+          m.toggleChoice(["a", "b"], "a", 2),
+          m.toggleChoice(["a"], "b", 1),
+          m.toggleChoice(["a"], "b", null),
+          m.toggleChoice(["a"], "b", 0),
+        ]""",
+    )
+    assert result == [["a"], ["a", "b"], ["a", "b"], ["b"], ["b"], ["a", "b"], ["a"]]
+
+
+def test_placing_a_card_in_a_split_lane() -> None:
+    result = run_module(
+        "decisions.js",
+        """[
+          m.placeInSplit([], ["a", "b", "c"], "a", "moved", 0),
+          m.placeInSplit(["a"], ["b", "c"], "c", "kept", 0),
+          m.placeInSplit(["a", "b"], ["c"], "a", "moved", 5),
+          m.placeInSplit(["a"], ["b", "c"], "a", "kept", 1),
+        ]""",
+    )
+    assert result == [
+        {"moved": ["a"], "order": ["b", "c"]},
+        {"moved": ["a"], "order": ["c", "b"]},
+        {"moved": ["b", "a"], "order": ["c"]},
+        {"moved": [], "order": ["b", "a", "c"]},
+    ]
+
+
+def test_placing_an_id_in_a_list() -> None:
+    result = run_module(
+        "decisions.js",
+        """[
+          m.placeInList(["a", "b", "c"], "c", 0),
+          m.placeInList(["a", "b", "c"], "a", 2),
+          m.placeInList(["a", "b", "c"], "b", -3),
+        ]""",
+    )
+    assert result == [["c", "a", "b"], ["b", "c", "a"], ["b", "a", "c"]]
+
+
+def test_the_shown_trigger_order_is_the_offered_order_until_one_is_drawn() -> None:
+    result = run_module(
+        "decisions.js",
+        "[m.shownTriggerOrder(p, {}),"
+        " m.shownTriggerOrder(p, { order: ['t3', 't1', 't2'] }),"
+        " m.shownTriggerOrder(p, { order: ['t2'] })]",
+        p=TRIGGERS,
+    )
+    assert result == [["t1", "t2", "t3"], ["t3", "t1", "t2"], ["t1", "t2", "t3"]]
+
+
+def test_choose_cards_names_its_zero_answer_by_where_the_cards_are() -> None:
+    library = run_module(
+        "decisions.js", "m.viewModel(p, {})", p=_choose("library", exact=False, amount=1)
+    )
+    assert library["secondary"] == {"label": "Find nothing", "answer": {"card_ids": []}}
+    field = run_module(
+        "decisions.js", "m.viewModel(p, {})", p=_choose("battlefield", exact=False, amount=1)
+    )
+    assert field["secondary"] == {"label": "Choose none", "answer": {"card_ids": []}}
+    exact_zero = run_module(
+        "decisions.js", "m.viewModel(p, {})", p=_choose("hand", exact=True, amount=0)
+    )
+    assert exact_zero["secondary"] is None
+    assert exact_zero["submit"]["label"] == "Choose none"
+    assert exact_zero["submit"]["answer"] == {"card_ids": []}

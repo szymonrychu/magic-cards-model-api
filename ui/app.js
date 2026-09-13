@@ -31,6 +31,12 @@ import {
   updatePopoverItems,
 } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
+import {
+  mountDecisionWindow,
+  minimizeDecisionWindow,
+  restoreDecisionWindow,
+  decisionWindowIsOpen,
+} from "./render/decision_window.js";
 import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
@@ -711,8 +717,8 @@ async function previewAndMaybeFire() {
 // "up to"/unbounded slot waits for the player's Cast or Done.
 
 // Exported for `tests/test_ui_app.py` only - same reason `store` is (its own
-// comment above): a real, awaited drive of the auto-pass-after-casting
-// default against a stubbed `fetch`, rather than a Python restatement of it.
+// comment above): a real, awaited drive of the keep-priority default against
+// a stubbed `fetch`, rather than a Python restatement of it.
 export async function fire() {
   const app = store.get();
   const action = app.action;
@@ -726,15 +732,12 @@ export async function fire() {
   }
   store.set({ action: null, preview: null });
   const onStack = !(res.mana_ability || action.kind === "special");
-  // CR 117.3c already gives you priority back after casting or activating;
-  // the harness spends it for you with one auto-pass by default (the
-  // MCP/agent side's own `hold_priority` default, `mcp.py`'s module
-  // docstring). `action.holdPriority` is this one cast's own override, reset
-  // every time a new cast begins; `stops.keepPriorityAfterCasting` is the
-  // standing one from the stops panel, checked every time in its place
-  // rather than only at the moment casting began - either is enough to keep
-  // priority.
-  if (onStack && !action.holdPriority && !store.get().stops.keepPriorityAfterCasting) {
+  // CR 117.3c already gives you priority back after casting or activating.
+  // `action.holdPriority` is this one action's tick; untouched (`null`) it
+  // follows the stops panel's standing `keepPriorityByDefault`, read fresh
+  // here and on unless explicitly `false`.
+  const hold = action.holdPriority ?? store.get().stops.keepPriorityByDefault !== false;
+  if (onStack && !hold) {
     await passOnce();
   }
   await refresh();
@@ -1662,8 +1665,15 @@ async function main() {
     onStackObject: (o) => tryTarget(o.id),
     onPermission,
   });
+  // One draft for both decision surfaces: the prompt box's small controls and
+  // the decision window's cards write the same `decisionDraft` keys.
+  const onDecisionDraft = (patch) => {
+    store.set((s) => ({ decisionDraft: { ...s.decisionDraft, ...patch } }));
+    refreshDecisionTargets();
+  };
   mountRibbon(document, store, {
     nameOf,
+    onShowDecisionWindow: () => restoreDecisionWindow(document),
     onToggleMode: (n) => {
       store.set((s) => ({ action: A.toggleMode(s.action, n) }));
       refreshAffordance();
@@ -1710,10 +1720,7 @@ async function main() {
     onCast: () => fire(),
     onCancel: cancel,
     onHoldPriority: (hold) => store.set((s) => ({ action: { ...s.action, holdPriority: hold } })),
-    onDecisionDraft: (patch) => {
-      store.set((s) => ({ decisionDraft: { ...s.decisionDraft, ...patch } }));
-      refreshDecisionTargets();
-    },
+    onDecisionDraft,
     onDecide: decide,
     onVerb: (verb) => {
       store.set({ concedeArmed: false });
@@ -1736,10 +1743,10 @@ async function main() {
         return { stops };
       }),
     // Same shape, beside it: not a step either, and `fire()` reads it fresh
-    // on every cast rather than only at the moment casting began.
-    onToggleKeepPriorityAfterCasting: () =>
+    // on every action rather than only at the moment the action began.
+    onToggleKeepPriorityByDefault: () =>
       store.set((s) => {
-        const stops = { ...s.stops, keepPriorityAfterCasting: !s.stops.keepPriorityAfterCasting };
+        const stops = { ...s.stops, keepPriorityByDefault: s.stops.keepPriorityByDefault === false };
         P.saveStops(localStorage, stops);
         return { stops };
       }),
@@ -1764,6 +1771,14 @@ async function main() {
     onPregame,
     onAdvance: advanceStep,
   });
+  // The complex decisions (scry, surveil, every `choose_cards`,
+  // `order_triggers`, this seat's own mulligan), answered with real cards in
+  // a floating window that posts through the same `decide` and `onPregame`.
+  mountDecisionWindow(document, store, {
+    onDecisionDraft,
+    onDecide: decide,
+    onPregame,
+  });
   mountLog(document, store);
   mountAdvice(document, store, { onApprove: approveAdvice });
   mountTopbar(document, store, {
@@ -1787,6 +1802,12 @@ async function main() {
     // rest of the page's life. It is only ever toggled.
     if (logModalIsOpen(document)) {
       closeLogModal(document);
+      return;
+    }
+    // A pending decision's window minimizes; it is never closed while the
+    // question is still standing.
+    if (decisionWindowIsOpen(document)) {
+      minimizeDecisionWindow(document);
       return;
     }
     cancel();

@@ -242,6 +242,25 @@
   <div id="toast" class="toast" hidden></div>
   <div id="popover" class="popover" hidden></div>
 
+  <!-- The decision window (`ui/render/decision_window.js`): every complex
+       decision - scry, surveil, a look-at-the-top split, every choose-cards,
+       ordering triggers, and your own mulligan - answered with the real
+       cards. Small decisions stay in `#prompt-box`.
+
+       Built once, here, and only ever shown, hidden and patched, for the
+       same reason as `#log-modal` below: `#prompt-box` is rebuilt on every
+       poll, and a card mid-drag cannot live in a panel that is torn down
+       under it. Not a `.modal`: it floats over the board without dimming or
+       blocking it, can be dragged by its title bar, and can be minimized but
+       not closed while its decision is pending. -->
+  <div id="decision-window" class="decision-window" role="dialog" aria-modal="false" aria-labelledby="decision-window-title" hidden>
+    <div id="decision-window-handle" class="dw-titlebar">
+      <h2 id="decision-window-title" class="dw-title">Decision</h2>
+      <button type="button" id="decision-window-minimize" class="dw-minimize" aria-expanded="true" aria-controls="decision-window-body">Minimize</button>
+    </div>
+    <div id="decision-window-body" class="dw-body"></div>
+  </div>
+
   <!-- The game log, which used to be the bottom of `#side-panel` and is now
        one click away behind the topbar's Log button. The advisor panel
        (`#advice-box` above) took that corner, which is what the owner asked

@@ -89,9 +89,12 @@ ticked, because CR 117.4 resolves a spell the moment every player has passed in
 succession, so the pass you have not made yet is the whole of your chance to
 answer it. The step grid starts at your precombat main, your declare attackers,
 your postcombat main, the opponent's declare attackers and the opponent's end
-step, and whatever you check is saved in `localStorage` under `mcm.stops.v1`,
+step, and whatever you check is saved in `localStorage` under `mcm.stops.v2`,
 so it survives a reload - a panel saved before the stack tick existed reads
-back with it on. Untap and cleanup give nobody priority (CR 502.4, CR 514.3)
+back with it on, and step ticks saved under the older `mcm.stops.v1` still
+load. Beside the stack tick, "Keep priority by default" (on unless unticked,
+never carried over from v1) keeps priority after you cast a spell or activate
+a non-mana ability instead of auto-passing it. Untap and cleanup give nobody priority (CR 502.4, CR 514.3)
 and the game crosses them itself (CR 500.3); in the rare state where one is
 still showing, the box offers an Advance button instead of a pass, which is the
 one escape from a step no seat is allowed to move. Conceding (CR 104.3a) is
@@ -99,7 +102,8 @@ offered for as long as the game is live, whoever holds priority, and always
 takes two clicks: the first arms the button, the second sends it, and any
 pass verb disarms it again. Once somebody has won or the game is drawn it
 goes away. The "keep priority" checkbox on
-the casting strip is CR 117.3c's retained priority.
+the casting strip is CR 117.3c's retained priority for that one action: it
+starts from the standing default, and unticking it passes after that action.
 
 **The advisor panel.** The bottom of that column shows the mtg-buddy
 advisor's current suggestion, if it has one: the decision summary, the

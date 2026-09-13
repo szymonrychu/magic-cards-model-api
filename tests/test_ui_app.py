@@ -582,85 +582,43 @@ def test_ticking_run_never_ends_over_a_pass_that_paused_instead_of_completing() 
     assert result["run"]["passes"] == 0, "a pass that never completed must not be recorded as one"
 
 
-# -- fire() / keep priority after casting -------------------------------------
+# -- fire() / keep priority by default ---------------------------------------
 #
-# The owner's newest default: casting a spell auto-passes priority to the
-# opponent unless the stops panel's "keep priority after casting" tick
-# overrides it (`stops.keepPriorityAfterCasting`) - the persistent twin of
-# the per-cast "hold priority" checkbox that already existed (`action.
-# holdPriority`, reset for every new cast). `fire` is exported test-only,
+# The owner's words: casting a spell without keeping priority was too easy,
+# and the same must apply to activating an ability. The stops panel's "Keep
+# priority by default" tick (`stops.keepPriorityByDefault`, on unless
+# unticked) is the standing default; the casting strip's per-action tick
+# (`action.holdPriority`, `null` until touched, meaning "follow the standing
+# default") overrides it for that one action. `fire` is exported test-only,
 # alongside `store`/`tryTarget`/`declareNoAttackers` above, and driven here
 # the same way: a real, awaited call against the same stubbed `fetch`.
 
+PLANESWALKER_CARD = {
+    "id": "c1",
+    "abilities": [{"index": 0, "text": "+1: draw a card", "is_mana_ability": False}],
+}
 
-def test_casting_auto_passes_priority_by_default() -> None:
+
+def _fire_paths(kind: str, keep_by_default: bool | None, hold: bool | None = None) -> list[str]:
+    """POST paths `fire()` sends for one `kind` of action begun the real way
+    (`A.begin`), under a standing default (`None` leaves the key out of
+    `stops` entirely) and an optional per-action tick."""
+    stops = {"mine": [], "theirs": [], "onStack": True}
+    if keep_by_default is not None:
+        stops["keepPriorityByDefault"] = keep_by_default
     result = run_app(
         _fetch_stub_body()
         + """
         (async () => {
           const A = await import(pathToFileURL(actionsPath).href);
+          let action = kind === "activate"
+            ? A.begin("activate", card, { abilityIndex: 0 })
+            : A.begin("cast", card, {});
+          if (hold !== null) action = { ...action, holdPriority: hold };
           m.store.set({
             gameId: "g1", uid: "u1",
             state: { you: "alice", battlefield: [] },
-            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: false },
-            action: A.begin("cast", { id: "c1" }, {}),
-          });
-          await m.fire();
-          return { calls: globalThis.__calls };
-        })()
-        """,
-        actionsPath=str(ACTIONS_JS),
-    )
-    posts = [c for c in result["calls"] if c["method"] == "POST"]
-    paths = [c["path"] for c in posts]
-    assert any("actions/cast" in p for p in paths), paths
-    assert any("actions/pass-priority" in p for p in paths), (
-        "casting must auto-pass priority by default - " + str(paths)
-    )
-
-
-def test_the_keep_priority_after_casting_tick_suppresses_the_auto_pass() -> None:
-    result = run_app(
-        _fetch_stub_body()
-        + """
-        (async () => {
-          const A = await import(pathToFileURL(actionsPath).href);
-          m.store.set({
-            gameId: "g1", uid: "u1",
-            state: { you: "alice", battlefield: [] },
-            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
-            action: A.begin("cast", { id: "c1" }, {}),
-          });
-          await m.fire();
-          return { calls: globalThis.__calls };
-        })()
-        """,
-        actionsPath=str(ACTIONS_JS),
-    )
-    posts = [c for c in result["calls"] if c["method"] == "POST"]
-    paths = [c["path"] for c in posts]
-    assert any("actions/cast" in p for p in paths), paths
-    assert not any("actions/pass-priority" in p for p in paths), (
-        "the tick must suppress the auto-pass - " + str(paths)
-    )
-
-
-def test_the_per_cast_hold_priority_checkbox_still_overrides_the_tick_off() -> None:
-    """The persistent tick sets the default; the existing per-cast checkbox
-    (`action.holdPriority`) is still a live override for one specific cast,
-    exactly as it already was before this tick existed - either one holding
-    is enough to suppress the auto-pass."""
-    result = run_app(
-        _fetch_stub_body()
-        + """
-        (async () => {
-          const A = await import(pathToFileURL(actionsPath).href);
-          let action = A.begin("cast", { id: "c1" }, {});
-          action = { ...action, holdPriority: true };
-          m.store.set({
-            gameId: "g1", uid: "u1",
-            state: { you: "alice", battlefield: [] },
-            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: false },
+            stops,
             action,
           });
           await m.fire();
@@ -668,9 +626,65 @@ def test_the_per_cast_hold_priority_checkbox_still_overrides_the_tick_off() -> N
         })()
         """,
         actionsPath=str(ACTIONS_JS),
+        kind=kind,
+        card=PLANESWALKER_CARD,
+        stops=stops,
+        hold=hold,
     )
-    posts = [c for c in result["calls"] if c["method"] == "POST"]
-    paths = [c["path"] for c in posts]
+    return [c["path"] for c in result["calls"] if c["method"] == "POST"]
+
+
+def test_casting_keeps_priority_by_default() -> None:
+    paths = _fire_paths("cast", True)
+    assert any("actions/cast" in p for p in paths), paths
+    assert not any("actions/pass-priority" in p for p in paths), (
+        "casting must keep priority by default - " + str(paths)
+    )
+
+
+def test_activating_keeps_priority_by_default() -> None:
+    paths = _fire_paths("activate", True)
+    assert any("actions/activate" in p for p in paths), paths
+    assert not any("actions/pass-priority" in p for p in paths), (
+        "activating must keep priority by default - " + str(paths)
+    )
+
+
+def test_a_stops_object_without_the_setting_still_keeps_priority() -> None:
+    paths = _fire_paths("cast", None)
+    assert not any("actions/pass-priority" in p for p in paths), paths
+
+
+def test_unticking_the_per_action_tick_passes_after_that_cast() -> None:
+    paths = _fire_paths("cast", True, hold=False)
+    assert any("actions/cast" in p for p in paths), paths
+    assert any("actions/pass-priority" in p for p in paths), (
+        "an unticked per-action tick must pass after the cast - " + str(paths)
+    )
+
+
+def test_unticking_the_per_action_tick_passes_after_that_activation() -> None:
+    paths = _fire_paths("activate", True, hold=False)
+    assert any("actions/activate" in p for p in paths), paths
+    assert any("actions/pass-priority" in p for p in paths), paths
+
+
+def test_standing_off_passes_after_casting() -> None:
+    paths = _fire_paths("cast", False)
+    assert any("actions/cast" in p for p in paths), paths
+    assert any("actions/pass-priority" in p for p in paths), paths
+
+
+def test_standing_off_passes_after_activating() -> None:
+    paths = _fire_paths("activate", False)
+    assert any("actions/activate" in p for p in paths), paths
+    assert any("actions/pass-priority" in p for p in paths), paths
+
+
+def test_the_per_action_tick_still_holds_with_the_standing_default_off() -> None:
+    """The standing setting sets where the per-action tick starts; ticking it
+    for one action is still a live override when the standing one is off."""
+    paths = _fire_paths("cast", False, hold=True)
     assert not any("actions/pass-priority" in p for p in paths), paths
 
 
@@ -1599,7 +1613,7 @@ def test_eldrazi_temples_second_ability_reaches_the_cast_request() -> None:
           action = A.pinSource(action, temple.id, chosen.color, chosen.abilityIndex);
           m.store.set({
             gameId: "g1", uid: "u1", state,
-            stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
+            stops: { mine: [], theirs: [], onStack: true, keepPriorityByDefault: true },
             action,
           });
           await m.fire();
@@ -2479,7 +2493,7 @@ def _click_setup() -> str:
     return """
       m.store.set({
         gameId: "g1", uid: "u1", state,
-        stops: { mine: [], theirs: [], onStack: true, keepPriorityAfterCasting: true },
+        stops: { mine: [], theirs: [], onStack: true, keepPriorityByDefault: true },
         action: null, combatDraft: {},
       });
       const anchor = new El("div");
