@@ -547,13 +547,13 @@ def _replay_copy(game: Game) -> Game:
     replayed, deterministically, from the same `game_uid` (see this module's
     own docstring on determinism).
 
-    A `Game` is fully serializable, so this is a plain deep copy. It used to
+    `engine_api.copy_game` rebinds every object to the copy (U1). It used to
     null and restore `game.decisions.provider` around the copy, mirroring
     `engine_api.dry_run_copy`, because that field could hold arbitrary caller
     state `copy.deepcopy` could not necessarily copy. T8 deleted the field
     from the engine, so there is nothing left to guard against.
     """
-    return game.model_copy(deep=True)
+    return engine_api.copy_game(game)
 
 
 #: `Game`'s own 18 fail-closed notice lists (`models/game.py:1148-1306`) - one

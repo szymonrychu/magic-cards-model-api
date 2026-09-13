@@ -464,6 +464,8 @@ def test_an_activated_ability_carries_its_slots_and_candidates(client, game):
     targeting = [action for action in activations if action["target_slots"]]
     assert len(targeting) == 1, activations
     plus_one = targeting[0]
+    # The engine fills each slot's own candidates since its #19
+    # (`TargetSlot.candidates`/`player_candidates`).
     assert plus_one["target_slots"] == [
         {
             "phrase": "target noncreature artifact",

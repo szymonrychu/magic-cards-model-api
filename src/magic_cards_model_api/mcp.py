@@ -923,7 +923,8 @@ def build_server(seats: Seats) -> MCPServer:
     ) -> str | InputRequiredResult:
         """Cast a spell. Most casts are from your hand, and need nothing
                 else; `card` is the card's name or id. `targets` is comma-separated
-                card ids or player names. `mana_sources` is comma-separated source
+                card ids, player names, or ids of abilities on the stack.
+                `mana_sources` is comma-separated source
                 ids, and only the sources named are sent; leave it empty to name
                 none, and the engine's automatic payment taps only what the cost
                 needs from your untapped permanents. Set `dry_run` to true to ask

@@ -211,6 +211,15 @@ PROTOCOL_VERSION = "seatkit-18"
 #: and the stack. An older process passes the new fields through untouched,
 #: so a seat on it simply does not see them.
 #:
+#: The battle 7 review rode `seatkit-18` too, with no request or response
+#: shape changed. U1: a card's `controller` in every view is the computed one
+#: after a control change (the api's game copies kept each card bound to a
+#: stale duplicate board), and `declare_attacker`/`declare_blocker` rows now
+#: appear while that declaration question stands. U2: `targets` on `cast` and
+#: `activate` may name an ability on the stack by its stack `id`, the id the
+#: legal-action candidates already listed. An older process sends the same
+#: strings and reads the same fields.
+#:
 #: Battle 8 riveted the last hole in the same `game_over` refusal shape
 #: `seatkit-18` first introduced (B6-06 above): the server's own 409 was
 #: already right, but `run_action`'s refusal branch answered every `allowed:

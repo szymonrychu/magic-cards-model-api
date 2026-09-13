@@ -513,8 +513,15 @@ def slot_candidates(game: Game, slots: Sequence[TargetSlot]) -> dict[str, Any]:
     listed: list[dict[str, Any]] = []
     truncated_anywhere = False
     for index, slot in enumerate(slots):
+        # A candidate id may name an ability on the stack (CR 115.2), which is
+        # not a card: `find_by_id` alone dropped it from the list.
         things: list[Any] = [
-            found for found in (game.find_by_id(card_id) for card_id in slot.candidates) if found
+            found
+            for found in (
+                game.find_by_id(card_id) or game.find_ability_by_id(card_id)
+                for card_id in slot.candidates
+            )
+            if found
         ]
         things.extend(players[name] for name in slot.player_candidates if name in players)
         lines = [candidate_line(thing) for thing in things[:CANDIDATE_SLOT_CAP]]
