@@ -24,7 +24,9 @@ legal state this engine's own invariants describe.
 **`run_command` never mutates the `Game` it is given.** It always works
 against an internal deep copy (`_replay_copy`) and either returns that copy,
 mutated to completion, as `RunResult.game` (the new committed state a caller
-persists next), or discards it entirely on a pause. This is what lets a
+persists next), or, on a pause, hands it back only as `RunResult.board` - a
+view of the board the question was raised over, never committed (see
+`paused_board`). This is what lets a
 caller hold one committed `Game` and make as many independent attempts
 against it as it likes - `resume_command`'s own replay-divergence guard
 below depends on exactly this: the guard attempt and the real attempt must
@@ -465,13 +467,17 @@ class RunResult:
     whatever the engine-driving function itself returned (an
     `engine_api.Outcome`, or a plain `dict` for `resolve_top`).
 
-    `PAUSED`: `game` is `None`. The half-applied working copy this attempt
-    was mutating is thrown away rather than returned - there is no legal
-    half-applied state to keep (see this module's own docstring) - and
-    `pending` is the question a caller stores alongside `(committed game,
-    command, tape)` for the next `resume_command` call. `tape` echoes back
-    exactly the answers this attempt was given, unchanged, so a caller does
-    not have to thread it through separately.
+    `PAUSED`: `game` is `None` - nothing is committed, and a resume replays
+    from the committed game rather than patching this attempt's copy (see
+    this module's own docstring). `board` is that copy as it stood the moment
+    the question was raised, for *viewing only* (`paused_board`): a seat
+    reading state mid-cast must see the card on the stack (CR 601.2a) and
+    the cost paid (CR 601.2h) that the question comes after, not the board
+    before the command began (battle 2, B2-13). `pending` is the question a
+    caller stores alongside `(committed game, command, tape)` for the next
+    `resume_command` call. `tape` echoes back exactly the answers this
+    attempt was given, unchanged, so a caller does not have to thread it
+    through separately.
     """
 
     status: RunStatus
@@ -479,6 +485,7 @@ class RunResult:
     outcome: Any = None
     pending: PendingDecision | None = None
     tape: tuple[Answer, ...] = ()
+    board: Game | None = None
 
 
 def _replay_copy(game: Game) -> Game:
@@ -676,7 +683,9 @@ def run_command(game: Game, command: Command, tape: Sequence[Answer] = ()) -> Ru
     try:
         outcome = handler(working, command.payload)
     except DecisionPending as exc:
-        return RunResult(status=RunStatus.PAUSED, pending=exc.pending, tape=tuple(tape))
+        return RunResult(
+            status=RunStatus.PAUSED, pending=exc.pending, tape=tuple(tape), board=working
+        )
 
     working.decisions.finish_replay()
     _attach_notices(outcome, _new_notices(working, before_notices))
@@ -743,6 +752,47 @@ ANNOUNCING_KINDS = frozenset(
 TURN_BASED_KINDS = frozenset({"advance"})
 
 
+def paused_board(
+    committed_game: Game,
+    command: Command,
+    tape: Sequence[Answer],
+    expected_pending: PendingDecision,
+) -> Game | None:
+    """The board as it stands at a stored pause, or `None` when the pause no
+    longer describes `committed_game`.
+
+    Replays `command` from the committed snapshot with the stored `tape` -
+    the same replay `resume_command`'s divergence guard runs - and returns
+    that replay's working copy when it lands on the identical
+    `PendingDecision` again. Nothing is committed: the copy is what a state
+    read shows while the question stands, and a resume still replays from
+    `committed_game`.
+
+    Why a state read needs it (battle 2, B2-13): the pause is raised part
+    way through the command, after whatever the command already did. A cast
+    trigger's target question (CR 603.3d) and the CR 603.3b order question
+    come only once CR 601.2h has paid the cost and CR 601.2i has made the
+    spell cast, so serving the committed game instead showed the card in
+    hand and the lands untapped under a question that is asked after both.
+
+    A replay that completes, pauses somewhere else, or is refused outright
+    (the engine raising an ordinary `ValueError` because the action is no
+    longer legal) returns `None`: the committed state has moved past the
+    point that ever asked this question.
+    """
+    try:
+        guard = run_command(committed_game, command, tape)
+    except Exception:  # noqa: BLE001 - any engine refusal means "no longer live"
+        # `DecisionPending` is a `BaseException` and is caught by name inside
+        # `run_command`, so it never reaches here; an ordinary `ValueError`
+        # (or a pydantic `ValidationError`, which is one) does, and means the
+        # stored command is not even legal to attempt any more.
+        return None
+    if guard.status is not RunStatus.PAUSED or guard.pending != expected_pending:
+        return None
+    return guard.board
+
+
 def pause_is_live(
     committed_game: Game,
     command: Command,
@@ -751,15 +801,12 @@ def pause_is_live(
 ) -> bool:
     """Whether a stored pause still describes `committed_game`.
 
-    Staleness is **tested, never assumed**: `command` is replayed from the
-    committed snapshot with the stored `tape` - the very same replay
-    `resume_command`'s divergence guard runs - and the pause is live only if
-    that replay lands on the identical `PendingDecision` again. A replay that
-    completes instead, pauses somewhere else, or refuses outright (the
-    engine raising an ordinary `ValueError` because the action is no longer
-    legal at all) means the committed state has moved past the point that
-    ever asked this question, and the slot is holding a question nobody can
-    answer any more.
+    Staleness is **tested, never assumed**: `paused_board` replays `command`
+    from the committed snapshot with the stored `tape`, and the pause is live
+    only if that replay lands on the identical `PendingDecision` again. A
+    replay that completes instead, pauses somewhere else, or refuses outright
+    means the committed state has moved past the point that ever asked this
+    question, and the slot is holding a question nobody can answer any more.
 
     That distinction is the whole reason `app.py` cannot simply adopt "the
     first pause wins": a genuinely stale pause left standing would wedge the
@@ -771,15 +818,7 @@ def pause_is_live(
     stored, and a replay from a committed snapshot mutates nothing (see
     `run_command`).
     """
-    try:
-        guard = run_command(committed_game, command, tape)
-    except Exception:  # noqa: BLE001 - any engine refusal means "no longer live"
-        # `DecisionPending` is a `BaseException` and is caught by name inside
-        # `run_command`, so it never reaches here; an ordinary `ValueError`
-        # (or a pydantic `ValidationError`, which is one) does, and means the
-        # stored command is not even legal to attempt any more.
-        return False
-    return guard.status is RunStatus.PAUSED and guard.pending == expected_pending
+    return paused_board(committed_game, command, tape, expected_pending) is not None
 
 
 class DecisionInProgressError(RuntimeError):
