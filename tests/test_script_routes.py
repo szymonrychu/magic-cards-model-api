@@ -719,11 +719,11 @@ def test_script_runs_is_not_a_mutating_game_action() -> None:
     assert "script-runs" not in seatkit.ACTION_REQUEST_SHAPES
 
 
-def test_the_seatkit_17_paragraph_names_the_script_routes() -> None:
+def test_the_seatkit_18_paragraph_names_the_script_routes() -> None:
     source = Path(seatkit.__file__).read_text()
-    paragraph = source.split("PROTOCOL_VERSION = ", 1)[1].split("`seatkit-16`", 1)[0]
+    paragraph = source.split("PROTOCOL_VERSION = ", 1)[1].split("`seatkit-17`", 1)[0]
     for term in ("/seats/{uid}/scripts", "/script-runs", "already_ran", "scripts_disabled"):
-        assert term in paragraph, f"the seatkit-17 paragraph does not name {term}"
+        assert term in paragraph, f"the seatkit-18 paragraph does not name {term}"
 
 
 # ---------------------------------------------------------------------------

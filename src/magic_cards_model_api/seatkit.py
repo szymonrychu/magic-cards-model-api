@@ -160,10 +160,12 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-17"
-#: `seatkit-17` is a **response** shape change plus one **additive request**
-#: option: the state view carries `known_cards`, and a seat can ask for its
-#: own `library_contents` and `sideboard_contents`.
+PROTOCOL_VERSION = "seatkit-18"
+#: `seatkit-18` is the play-script DSL's version: a **response** shape change
+#: plus **additive requests** and two new tools. The state view carries
+#: `known_cards`, a seat can ask for its own `library_contents` and
+#: `sideboard_contents`, the play-script routes exist, and `run_script` and
+#: `list_scripts` run and judge a seat's registered scripts.
 #:
 #: `known_cards` is a sibling of `hands`, keyed by the player who knows: the
 #: hidden cards the engine's `Game.known_to` says that seat was shown and that
@@ -178,11 +180,17 @@ PROTOCOL_VERSION = "seatkit-17"
 #: `sections="sideboard_contents"` - never in an action answer or a wake.
 #:
 #: Why a bump: `battlefield_state` gained three section names, and a stale
-#: seatkit-16 MCP process refuses `sections="known_cards"` as an unknown
+#: seatkit-17 MCP process refuses `sections="known_cards"` as an unknown
 #: section while this build's prose tells a seat to ask for it. The same
 #: stale process also never sends `include=contents`, so a seat told its own
-#: library is one call away would get a refusal instead. That is the
-#: stale-process case the PROTOCOL MISMATCH sentence exists to make loud.
+#: library is one call away would get a refusal instead, and it has no
+#: `run_script`/`list_scripts` to run the scripts the prose points at. That is
+#: the stale-process case the PROTOCOL MISMATCH sentence exists to make loud.
+#:
+#: Numbered 18, not folded into 17: `main` shipped seatkit-17 to production
+#: for `optional_costs` while these additions were still on `script-dsl`. Two
+#: builds answering one number with different shapes is the silent mismatch
+#: this check exists to prevent.
 #:
 #: Folded into the same version, not a second bump: a double-faced card view
 #: (CR 712) carries `faces`, each face's name, mana cost, type line and oracle
@@ -190,7 +198,7 @@ PROTOCOL_VERSION = "seatkit-17"
 #: front face anywhere but the battlefield or stack (CR 712.8a). And
 #: `known_cards` now holds what a paused command already showed a seat while
 #: that command's choice is still pending (Thoughtseize's revealed hand before
-#: the discard is chosen), not only once it has been answered. A seatkit-16
+#: the discard is chosen), not only once it has been answered. A seatkit-17
 #: process reads both as it read the fields before: `faces` is an extra key,
 #: and a known record is the same shape whenever it arrives.
 #:
@@ -208,7 +216,7 @@ PROTOCOL_VERSION = "seatkit-17"
 #: still holds only the viewer's own cards, and `libraries`/`sideboards` are
 #: still stripped for every viewer but the admin.
 #:
-#: **Extended in place with the play-script routes, deliberately not a bump.**
+#: **The play-script routes.**
 #: `PUT /api/games/{id}/seats/{uid}/scripts` registers the corpus a seat Job
 #: runs under its own uid (`{deck_slug, guides_revision, scripts, inputs}`, every
 #: script judged by `playscripts.schema` and refused as `invalid_scripts`
@@ -228,11 +236,9 @@ PROTOCOL_VERSION = "seatkit-17"
 #: set (`failing_condition`, `stop_reason`, `refusal`, `resume` for a run the
 #: time cap cut off, ...). `list_scripts` judges every registered script
 #: against the board without running it, by priority, with its conflicts.
-#: Still no bump: both are new tools, no existing tool's request or response
-#: moved, and a `seatkit-17` process built before them simply does not
-#: advertise them - a seat calling one gets the client's unknown-tool error,
-#: which is as loud as the PROTOCOL MISMATCH sentence and names the tool -
-#: the same reasoning the `spell_face` widening below gives.
+#: No existing tool's request or response moved; a seatkit-17 process simply
+#: does not advertise either tool, and the PROTOCOL MISMATCH sentence says so
+#: before a seat ever calls one.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
