@@ -284,7 +284,7 @@
   "paused": true,
   "pending_decision": {
     "affirmative_is_legal": true,
-    "amount": 4,
+    "amount": 1,
     "answer_field": "moved",
     "answer_with": "decide(moved=\"<any of pending_decision.cards, comma-separated; these go to top of your library>\", generation=1)",
     "card_details": [
@@ -402,7 +402,7 @@
       "00000000-0000-0000-0000-000000000006"
     ],
     "default_cards": null,
-    "exact": true,
+    "exact": false,
     "generation": 1,
     "kept_label": "exiled",
     "kind": "scry",
