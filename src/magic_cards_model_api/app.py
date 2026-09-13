@@ -2406,6 +2406,29 @@ def _answer_declaration(
     return {"allowed": True, "log_seq": seq}
 
 
+def _dry_run_declaration(
+    game: Game,
+    paused: tuple[commands.Command, tuple[Answer, ...], PendingDecisionEngine],
+    pairs: list[DeclaredPairRequest],
+) -> engine_api.Outcome:
+    """A dry run of the standing declaration, answered the way
+    `_answer_declaration` answers the real one: the same answer validation and
+    the same replay of the paused command with the answer appended, on the
+    board the question was raised on (CR 508.1). `commands.resume_command`
+    works on a copy and nothing is committed or restashed, so the question
+    still stands afterwards and the dry run and the real call agree."""
+    command, tape, pending = paused
+    decision = pending.decision
+    try:
+        value = decisions.declared_pairs_answer(pairs, {p.username for p in game.players})
+        decisions.validate_answer(decision, value)
+        answer = Answer(seq=pending.seq, kind=decision.kind, player=decision.player, pairs=value)
+        commands.resume_command(game, command, tape, pending, answer)
+    except ValueError as exc:
+        return engine_api.refused(exc)
+    return engine_api.Outcome(True, detail={"attackers": len(pairs)})
+
+
 @app.post(
     "/api/games/{game_id}/actions/attack",
     dependencies=REFUSED_AFTER_GAME_OVER,
@@ -2435,13 +2458,17 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     attackers_detail = [
         {"card": str(pair.card_id), "defender": pair.defender} for pair in req.attackers
     ]
-    if req.dry_run:
-        game = game_or_404(game_id)
-        outcome = engine_api.declare_attack(game, req)
-        return audit_outcome(game_id, "attack", outcome, attackers=attackers_detail, dry_run=True)
     pairs = [
         DeclaredPairRequest(creature=pair.card_id, defender=pair.defender) for pair in req.attackers
     ]
+    if req.dry_run:
+        game = game_or_404(game_id)
+        paused = store.paused_command(game_id)
+        if paused is not None and paused[2].decision.kind is DecisionKind.DECLARE_ATTACKERS:
+            outcome = _dry_run_declaration(game, paused, pairs)
+        else:
+            outcome = engine_api.declare_attack(game, req)
+        return audit_outcome(game_id, "attack", outcome, attackers=attackers_detail, dry_run=True)
     return _answer_declaration(
         game_id,
         DecisionKind.DECLARE_ATTACKERS,

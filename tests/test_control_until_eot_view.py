@@ -132,3 +132,39 @@ def test_act_of_treason_moves_the_view_and_the_rows_then_cleanup_reverts_them(cl
     assert _controller_everywhere(client, game, mother) == {"bob"}
     assert _activate_rows_for(_rows(client, game, "bob"), mother)
     assert not _activate_rows_for(_rows(client, game, "alice"), mother)
+
+
+def _attack(client, game, card_ids: list[str], *, dry_run: bool = False) -> dict:
+    return client.post(
+        f"/api/games/{game}/actions/attack",
+        params={"uid": uid_for(game, "alice")},
+        json={
+            "attackers": [{"card_id": card_id, "defender": "bob"} for card_id in card_ids],
+            "dry_run": dry_run,
+            "reasoning": "test",
+        },
+    ).json()
+
+
+def test_a_dry_run_attack_checks_the_board_the_declaration_is_answered_on(client, game):
+    """While CR 508.1a's question stands, the committed board is still in the
+    beginning of combat step. The real declaration is checked on the board the
+    question was raised on (the replayed pause), so a dry run of the same pairs
+    is answered there too: the whole declaration, not each pair alone, and
+    the dry run and the real call agree - here on the same creature named
+    twice (CR 508.1a chooses which creatures attack, each once)."""
+    bears = _steal(client, game, "Threaten", "Grizzly Bears")
+    force_turn_position(game, Step.BEGINNING_OF_COMBAT, "alice")
+    paused = client.post(f"/api/games/{game}/advance", json={"player": "alice"}).json()
+    assert paused["pending_decision"]["kind"] == "declare_attackers", paused
+
+    twice = [bears, bears]
+    dry_twice = _attack(client, game, twice, dry_run=True)
+    real_twice = _attack(client, game, twice)
+    assert real_twice["allowed"] is False, real_twice
+    assert dry_twice == {**dry_twice, "allowed": False, "reason": real_twice["reason"]}, dry_twice
+
+    dry = _attack(client, game, [bears], dry_run=True)
+    assert dry["allowed"] is True, dry
+    real = _attack(client, game, [bears])
+    assert real["allowed"] is True, "the dry run answered nothing: the question still stood"
