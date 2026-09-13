@@ -1,5 +1,6 @@
 // The controls a small decision's `viewModel` (`decisions.js`) can ask for in
-// `#prompt-box`, split out of `ribbon.js` once that file passed ~500 lines.
+// `#prompt-box` and in the card-anchored `#decision-popover`
+// (`render/decision_popover.js`, which renders through `renderDecision` too), split out of `ribbon.js` once that file passed ~500 lines.
 // One function per `control.type`, plus `renderDecision`, which wraps them
 // with the title, prompt, `remaining` countdown, and submit/secondary
 // buttons. The complex kinds (`split`, `order` and the multi-select

@@ -37,6 +37,7 @@ import {
   restoreDecisionWindow,
   decisionWindowIsOpen,
 } from "./render/decision_window.js";
+import { mountDecisionPopover } from "./render/decision_popover.js";
 import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
@@ -1778,6 +1779,15 @@ async function main() {
     onDecisionDraft,
     onDecide: decide,
     onPregame,
+  });
+  // The small decisions whose source card is on screen, answered in a popover
+  // beside that card through the same controls and the same `decide`.
+  // Mounted after the board and the ribbon, so it anchors to the cards this
+  // update has already drawn.
+  mountDecisionPopover(document, store, {
+    nameOf,
+    onDecisionDraft,
+    onDecide: decide,
   });
   mountLog(document, store);
   mountAdvice(document, store, { onApprove: approveAdvice });

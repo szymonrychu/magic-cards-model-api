@@ -49,6 +49,7 @@ import { needsExplicitFire, readyToFire, targetSlotIndex } from "../actions.js";
 import { VERB_LABELS, STEPS, passButtonsFor, advanceOffered } from "../priority.js";
 import { renderDecision } from "./decision_controls.js";
 import { windowSubject } from "./decision_window.js";
+import { popoverSubject } from "./decision_popover.js";
 import { viewModel } from "../decisions.js";
 
 // --------------------------------------------------------------- pregame ---
@@ -262,7 +263,17 @@ function renderWindowPointer(subject, handlers) {
   );
 }
 
-function renderPromptBox(el, app, handlers) {
+/** What `#prompt-box` says while a small decision is up in the popover
+ * beside its card. */
+function renderPopoverPointer(pending) {
+  return h(
+    "div",
+    { class: "decision-pointer" },
+    h("div", { class: "hint" }, `${viewModel(pending, {}).title}: answer it at the card.`)
+  );
+}
+
+function renderPromptBox(el, app, handlers, root) {
   if (focusedTextInput(el)) return;
   clear(el);
   el.hidden = false;
@@ -297,7 +308,9 @@ function renderPromptBox(el, app, handlers) {
   // `renderCombatPrompt` below, not stop here.
   const isCombatDeclaration = pending && (pending.kind === "declare_attackers" || pending.kind === "declare_blockers");
   if (pending && pending.player === state.you && !isCombatDeclaration) {
-    el.appendChild(renderDecision(pending, app, handlers));
+    // Anchored beside its rendered source card (`render/decision_popover.js`);
+    // otherwise it renders here, exactly as it always has.
+    el.appendChild(popoverSubject(root, app) ? renderPopoverPointer(pending) : renderDecision(pending, app, handlers));
     return;
   }
   // An announcement in flight is `#casting-strip`'s, and only its
@@ -835,7 +848,7 @@ export function mountRibbon(root, store, handlers) {
   };
   return store.subscribe((app) => {
     if (!app.state) return;
-    renderPromptBox(els.prompt, app, handlers);
+    renderPromptBox(els.prompt, app, handlers, root);
     renderCastingStrip(els.strip, app, handlers);
     renderPriorityBox(els.priority, app, handlers);
     renderStopsBox(els.stops, app, handlers);
