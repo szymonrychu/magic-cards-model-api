@@ -181,6 +181,43 @@ def test_start_game_refuses_an_illegal_deck_naming_the_problem(client: TestClien
     )
     assert response.status_code == 400
     assert "alice" in response.text
+    # Never silently: no game was booted for the refused request either.
+    assert client.get("/api/lobby/games").json()["games"] == []
+
+
+def test_start_game_boots_a_blank_line_sideboard_b8_05(client: TestClient) -> None:
+    """B8-05, end to end through the real boot route: a decklist that puts
+    its sideboard after a blank line with no `Sideboard` header - dimir-frog's
+    real decklist.txt is exactly this shape - boots with the sideboard read
+    as a sideboard, not merged into a 75-card mainboard.
+
+    Only fixture cards (Mountain is a basic, unlimited under CR 100.2a), so a
+    60-card mainboard plus a 15-card sideboard of the same basic stays legal
+    with no network access."""
+    blank_line_deck = f"{LEGAL_DECK}\n\n15 Mountain"
+    response = client.post(
+        "/api/lobby/games",
+        json={
+            "players": [
+                {"username": "alice", "decklist_text": blank_line_deck, "ai": False},
+                {"username": "bob", "decklist_text": LEGAL_DECK_B, "ai": True},
+            ],
+            "seed": 7,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    try:
+        admin = client.get(
+            f"/api/games/{body['game_id']}", params={"uid": body["admin_key"]}
+        ).json()
+        # The 15-card sideboard sat aside (CR 103.2a) rather than merged into
+        # the mainboard - a legal 60-card mainboard still deals a seven-card
+        # opening hand.
+        assert len(admin["sideboards"]["alice"]) == 15
+        assert len(admin["hands"]["alice"]) == 7
+    finally:
+        client.delete(f"/api/games/{body['game_id']}")
 
 
 # ---------------------------------------------------------------------------
