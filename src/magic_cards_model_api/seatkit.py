@@ -211,6 +211,16 @@ PROTOCOL_VERSION = "seatkit-18"
 #: and the stack. An older process passes the new fields through untouched,
 #: so a seat on it simply does not see them.
 #:
+#: Battle 4 made combat damage assignment a decision (B4-06), also riding
+#: `seatkit-18`: the engine's `ASSIGN_COMBAT_DAMAGE` kind (CR 703.4k, 510.1c,
+#: 702.19b), asked when a blocked attacker has two or more blockers or
+#: trample with power past its blockers' lethal damage. `decide` gained a
+#: `damage` parameter (a JSON list of `{"target": ..., "amount": ...}`),
+#: `seat_cli decide` the matching `--damage` flag, and a `pending_decision`
+#: of this kind carries `lethal_damage` (aligned with `targets`) and
+#: `trample`. An older process has no `damage` parameter to send, so it
+#: cannot answer this kind and reads it as an unrecognised one.
+#:
 #: Engine M1e (task S1) also rides `seatkit-18`, additive response only.
 #: Every `actions[]` entry's `target_slots[]` carries the engine's own
 #: `candidates` (object ids) and `player_candidates` (usernames) beside
@@ -390,7 +400,7 @@ PROTOCOL_VERSION = "seatkit-18"
 #: carries this kind's answer; `answer_with` is the whole call, paste-ready,
 #: already carrying this question's own generation. The mapping they encode
 #: (`decisions.TOOL_FIELD_FOR_KIND`/`TOOL_FOR_KIND`) disagrees with the
-#: engine-facing field name on ten of the eighteen kinds and lived only in
+#: engine-facing field name on ten of the nineteen kinds and lived only in
 #: `decide`'s own ~200-line docstring before this, which is exactly the
 #: "how" thinking a seat had to do before it could answer at all - and where
 #: it guessed wrong, the guess was a real parameter of `decide` accepted by

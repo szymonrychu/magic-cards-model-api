@@ -133,6 +133,7 @@ const MODE_BY_KIND = {
   choose_cards: "choose",
   order_triggers: "order",
   mulligan: "hand",
+  assign_combat_damage: "damage",
 };
 
 /** What the window should be showing for `app`, or `null` when it should be
@@ -511,6 +512,70 @@ function orderMode(ctx) {
   };
 }
 
+/** `assign_combat_damage` (CR 703.4k, 510.1c, 702.19b): one row per
+ * recipient - each blocker, a real card, plus the defending player or
+ * planeswalker once trample lets damage reach past them - each with a
+ * number input for how much of the attacker's power to assign it, and its
+ * own `lethal_damage` printed alongside so a seat can see how much is
+ * "enough" before trampling past it. No drag: this is a set of amounts, not
+ * an arrangement, so it has no `drop` and the window wires none for it. */
+function damageMode(ctx) {
+  const { pending, handlers, store } = ctx;
+  const f = frame(ctx.body, ctx.app.symbols, pending.prompt);
+  const grid = h("div", { class: "dw-grid dw-damage-grid", role: "group", "aria-label": "assign combat damage" });
+  f.content.appendChild(grid);
+  const cards = cardsById(pending);
+  const submit = commandButton("primary");
+  syncChildren(f.actions, [submit]);
+  const rowsOf = (app) => viewModel(pending, app.decisionDraft || {}).controls[0].rows;
+  const writeAmount = (row, amount) => {
+    const now = (store.get().decisionDraft || {}).damage || {};
+    handlers.onDecisionDraft({ damage: { ...now, [row.key]: amount } });
+  };
+
+  const createRow = (row) => {
+    const input = h("input", {
+      type: "number",
+      min: "0",
+      class: "dw-damage-amount",
+      "aria-label": `damage assigned to ${row.name}`,
+      onChange: (e) => writeAmount(row, Number(e.target.value) || 0),
+    });
+    const label =
+      row.kind === "player"
+        ? h("div", { class: "dw-damage-player" }, row.name)
+        : cardNode(cards[row.id], "card-md");
+    const el = h(
+      "div",
+      { class: "dw-damage-row", dataset: { key: row.key } },
+      label,
+      h("div", { class: "dw-damage-lethal" }, `lethal: ${row.lethal}`),
+      input
+    );
+    el.__input = input;
+    el.__card = row.kind === "player" ? null : label;
+    return el;
+  };
+  const updateRow = (el, row) => {
+    if (el.__card) updateCardNode(el.__card, cards[row.id], {});
+    if (Number(el.__input.value) !== row.amount) el.__input.value = String(row.amount);
+  };
+
+  return {
+    update(app) {
+      const rows = rowsOf(app);
+      patchChildren(grid, rows, (row) => row.key, createRow, updateRow);
+      const vm = viewModel(pending, app.decisionDraft || {});
+      const control = vm.controls[0];
+      setText(f.status, `${control.total} of ${control.power} damage assigned.`);
+      aim(submit, vm.submit.label, vm.submit.enabled, () => {
+        const fresh = viewModel(pending, store.get().decisionDraft || {});
+        if (fresh.submit.enabled) handlers.onDecide(fresh.submit.answer);
+      });
+    },
+  };
+}
+
 /** A paused `mulligan` decision: the hand it is about, and the view model's
  * own Mulligan / Keep. */
 function handMode(ctx) {
@@ -636,7 +701,14 @@ function pregameMode(ctx) {
   };
 }
 
-const MODES = { split: splitMode, choose: chooseMode, order: orderMode, hand: handMode, pregame: pregameMode };
+const MODES = {
+  split: splitMode,
+  choose: chooseMode,
+  order: orderMode,
+  hand: handMode,
+  pregame: pregameMode,
+  damage: damageMode,
+};
 
 // ---------------------------------------------------------------- mount ---
 

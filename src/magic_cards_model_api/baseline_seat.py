@@ -641,6 +641,7 @@ _DEFAULTED_KINDS = frozenset(
         "choose_a_mode",
         "scry",
         "surveil",
+        "assign_combat_damage",
     }
 )
 
@@ -715,9 +716,51 @@ def decide_body(pending: dict[str, Any], player: str) -> dict[str, Any]:
         body["targets"] = [str(ref.get("id")) for ref in targets[:minimum]]
     elif kind == "choose_a_quality" or kind == "choose_a_mode":
         body["choice"] = options[0] if options else str(pending.get("source") or "baseline")
+    elif kind == "assign_combat_damage":
+        body["damage"] = _combat_damage_answer(pending)
     else:  # pragma: no cover - `test_every_answerable_decision_kind_has_a_default_body`
         raise ValueError(f"the baseline has no default answer for a {kind!r} decision")
     return body
+
+
+def _combat_damage_answer(pending: dict[str, Any]) -> list[dict[str, Any]]:
+    """CR 510.1c's division with nobody choosing: lethal damage to each
+    blocker in declaration order, then whatever is left through to the
+    defending player or planeswalker if trample lets it (CR 702.19b), or onto
+    the last blocker otherwise - the same split `machines/combat.py`'s
+    `_attacker_assignment` computes as its own default (`Decision
+    .default_damage`), recomputed here from the public `pending_decision`
+    fields (`cards`, `targets`, `lethal_damage`, `amount`) rather than read
+    off an engine-internal one the wire never carries.
+
+    `pending.cards` is `(attacker, *blockers)` and `pending.targets`/
+    `.lethal_damage` are the blockers (in that same order) followed by one
+    more entry for the attacked player/planeswalker only when trample makes
+    that a legal recipient at all - `combat.py`'s own construction - so the
+    blocker count off `cards` is what tells the two apart here.
+    """
+    blocker_count = max(len(pending.get("cards") or ()) - 1, 0)
+    targets = list(pending.get("targets") or ())
+    lethal = [int(x) for x in (pending.get("lethal_damage") or ())]
+    blocker_targets = targets[:blocker_count]
+    blocker_lethal = lethal[:blocker_count]
+    defender_target = targets[blocker_count] if len(targets) > blocker_count else None
+
+    remaining = int(pending.get("amount") or 0)
+    assigned: list[dict[str, Any]] = []
+    for target, needed in zip(blocker_targets, blocker_lethal, strict=True):
+        share = min(remaining, needed)
+        if share > 0:
+            assigned.append({"target": target.get("id"), "amount": share})
+            remaining -= share
+    if remaining > 0:
+        if defender_target is not None:
+            assigned.append({"target": defender_target.get("id"), "amount": remaining})
+        elif assigned:
+            assigned[-1]["amount"] += remaining
+        elif blocker_targets:
+            assigned.append({"target": blocker_targets[-1].get("id"), "amount": remaining})
+    return assigned
 
 
 def _choose_cards_answer(pending: dict[str, Any], cards: list[str]) -> list[str]:

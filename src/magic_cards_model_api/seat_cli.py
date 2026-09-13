@@ -609,6 +609,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     decide.add_argument(
+        "--damage",
+        default="",
+        help=(
+            'JSON list of {"target": ..., "amount": ...}, for an '
+            "assign_combat_damage decision (CR 510.1c, CR 702.19b) - how a "
+            "blocked attacker's combat damage divides among its blockers and, "
+            "with trample, past them to the player or planeswalker attacked. "
+            "`target` is a card id from pending_decision.cards[1:] (the "
+            "blockers) or, with trample, a player/planeswalker id from "
+            "pending_decision.targets. The amounts must sum to exactly "
+            "pending_decision.amount (the attacker's power), and damage may "
+            "reach the attacked player or planeswalker only once every "
+            "blocker has been assigned at least its own entry of "
+            "pending_decision.lethal_damage (CR 702.19b)"
+        ),
+    )
+    decide.add_argument(
         "--generation",
         type=int,
         default=None,
@@ -1078,6 +1095,11 @@ def run(argv: list[str] | None = None) -> int:
                 body["top"] = args.top == "top"
             if args.order:
                 body["order"] = _parse_ids(args.order)
+            if args.damage:
+                body["damage"] = [
+                    {"target": entry["target"], "amount": entry["amount"]}
+                    for entry in _parse_pairs(args.damage)
+                ]
             if args.generation is not None:
                 body["generation"] = args.generation
             if args.reasoning:
