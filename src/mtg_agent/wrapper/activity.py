@@ -295,6 +295,8 @@ _MTG_STATES = {
     "mulligan": DECIDING,
     "opening_hand_action": DECIDING,
     "declare_plan": DECIDING,
+    "list_scripts": READING_BOARD,
+    "run_script": ACTING,
 }
 
 

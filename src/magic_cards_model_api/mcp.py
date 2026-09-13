@@ -112,6 +112,7 @@ from mcp_types import InputRequiredResult
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from . import seatkit
+from .playscripts import script_tools
 from .seatkit import (
     DEFAULT_API,
     NO_SUCH_SEAT,
@@ -638,8 +639,14 @@ def _action_answer(payload: dict[str, Any]) -> dict[str, Any]:
     carried = ("outcome", "wake_reason", "state", "available_actions", "recent_log")
     answer.update({key: value for key, value in payload.items() if key not in carried})
     answer["board"] = board
-    answer["available_actions"] = _compact_actions(payload.get("available_actions"))
-    answer["recent_log"] = payload.get("recent_log")
+    # Written when the payload carries them - every action and `pass_until`
+    # does - and left out when it does not: a script run's answer is its
+    # `script_exit` and the board, and a null list would read as "nothing is
+    # legal" rather than "this answer does not say".
+    if "available_actions" in payload:
+        answer["available_actions"] = _compact_actions(payload.get("available_actions"))
+    if "recent_log" in payload:
+        answer["recent_log"] = payload.get("recent_log")
     return answer
 
 
@@ -2233,6 +2240,109 @@ def build_server(seats: Seats) -> MCPServer:
             ),
             ctx.protocol_version if ctx is not None else None,
         )
+
+    @server.tool()
+    @_guarded(seats)
+    def run_script(
+        player_uid: str,
+        script: str,
+        opposing_archetype: str = "*",
+        *,
+        reasoning: str,
+        resume: str = "",
+        wait: bool = True,
+        max_seconds: float = 0.0,
+        inputs: dict[str, Any] | None = None,
+        ctx: Context | None = None,
+    ) -> str | InputRequiredResult:
+        """Run one of your registered play scripts: its moves, in order, and
+        the one `next` script that applies after them.
+
+        `script` is the script's `id`. The runner waits for the script's
+        `when` (passing priority with every stop on, the way `pass_until`
+        does), checks `opposing_archetypes` and its `true`/`false`
+        conditions against the board, makes each move through the same
+        routes a hand-played move uses - so every refusal is the engine's own
+        - answers each decision a move raises from the move's `answers`, and
+        passes priority only over its own objects until they resolve. It
+        never passes beyond the resolution of its last move.
+
+        `reasoning`: why you are running this script now, in your own words.
+        Every move it makes is sent with it; without it the run is refused.
+
+        `opposing_archetype`: the opponent's archetype as you read it, `*`
+        (the default) when you do not know. A script listing only other
+        archetypes does not apply. `inputs`: the facts your deck's scripts
+        read that the board cannot show, by name - `{"prefer_tempo": true}`.
+        `opposing_archetype` is one of them and may be given here instead;
+        naming two different archetypes is refused.
+
+        `wait=false` does not wait for the script's `when`: a script off its
+        step is simply not applicable. `max_seconds` caps this call
+        (at most `seatkit.MAX_WAIT_SECONDS`, which a 0.0 leaves it at).
+
+        The answer is `script_exit` beside the narrowed `board`:
+        `script_exit.exit` is one of `chain_complete` (the moves are done,
+        and no next script applies), `not_applicable` (with
+        `failing_condition`: the `list` and `index` that stopped it and what
+        it `seen`), `needs_input` (a required input is missing, named in
+        `needs_input`), `unforeseen` (with `stop_reason`), `interrupted`
+        (someone else acted), `ambiguous` (two cards or two next scripts
+        tie), `refused` (with `refusal`, the server's or the runner's words),
+        `stale`, `unknown_outcome`, `needs_plan` (call `declare_plan`
+        first), `already_ran` (this script already ran this turn and step)
+        or `advised` (an advisor's run: move 1 is proposed as advice and the
+        rest are named in `unvalidated`). `moves_done`/`moves_total` count
+        its moves. `exit` is null when the time cap came first: pass
+        `script_exit.resume` back, verbatim, as `resume` to carry on with the
+        same run. A decision left pending for you arrives shaped
+        `input_required`, like every action tool's."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        answer = script_tools.run(
+            seat,
+            seats.script_corpora,
+            script=script,
+            reasoning=reasoning,
+            opposing_archetype=opposing_archetype,
+            resume=resume,
+            wait=wait,
+            max_seconds=max_seconds,
+            inputs=inputs,
+        )
+        if isinstance(answer, str):
+            return answer
+        return _tool_result(seat, answer, ctx.protocol_version if ctx is not None else None)
+
+    @server.tool()
+    @_guarded(seats)
+    def list_scripts(
+        player_uid: str, opposing_archetype: str = "*", inputs: dict[str, Any] | None = None
+    ) -> str:
+        """Your registered play scripts, highest priority first, each judged
+        against the board right now - nothing is run and nothing recorded.
+
+        Each script says whether it `applies`, and when it does not, its
+        `failing_condition`: the `list` that stopped it (`priority` for a
+        disabled script, `opposing_archetypes`, `when`, `true` or `false`),
+        the `index` within it, and what it `seen`. `needs_input` names a
+        required input you did not supply. `conflicts` are the
+        `play-conflict`/`next-conflict` warnings `plays check` raises that
+        involve it - scripts that could both apply at one decision point.
+        `runtime_conflict` is true when more than one listed script applies
+        right now; `applicable` names them.
+
+        `opposing_archetype` and `inputs` mean what they mean for
+        `run_script`, so a listing shows what a run with the same ones would
+        find."""
+        seat = resolve(player_uid)
+        if seat is None:
+            return NO_SUCH_SEAT
+        answer = script_tools.listing(
+            seat, seats.script_corpora, opposing_archetype=opposing_archetype, inputs=inputs
+        )
+        return answer if isinstance(answer, str) else json.dumps(answer, indent=1)
 
     @server.tool()
     @_guarded(seats)

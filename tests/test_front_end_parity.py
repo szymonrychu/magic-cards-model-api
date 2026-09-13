@@ -756,6 +756,13 @@ CLI_COMMAND_TOOLS = {
     "report": "report_problem",
 }
 
+#: `seat_cli` commands whose subcommands each front one MCP tool: `script run`
+#: is `run_script` and `script list` is `list_scripts`, with the same argument
+#: names (`test_script_subcommands_take_their_tools_parameters_by_name`).
+CLI_SUBCOMMAND_TOOLS = {
+    "script": {"run": "run_script", "list": "list_scripts"},
+}
+
 #: Commands that are CLI-only by design, each with why.
 CLI_ONLY_COMMANDS = {
     "plays": (
@@ -791,16 +798,25 @@ def test_every_cli_command_fronts_an_mcp_tool_or_is_explicitly_cli_only():
         action for action in seat_cli.build_parser()._actions if getattr(action, "choices", None)
     )
     commands = set(sub.choices)
+    mapped = set(CLI_COMMAND_TOOLS) | set(CLI_SUBCOMMAND_TOOLS)
     assert not set(CLI_COMMAND_TOOLS) & set(CLI_ONLY_COMMANDS)
-    assert commands == set(CLI_COMMAND_TOOLS) | set(CLI_ONLY_COMMANDS), (
+    assert not set(CLI_SUBCOMMAND_TOOLS) & (set(CLI_COMMAND_TOOLS) | set(CLI_ONLY_COMMANDS))
+    assert commands == mapped | set(CLI_ONLY_COMMANDS), (
         "a seat_cli command is neither mapped to its MCP tool nor allowlisted as CLI-only: "
-        f"{sorted(commands ^ (set(CLI_COMMAND_TOOLS) | set(CLI_ONLY_COMMANDS)))}"
+        f"{sorted(commands ^ (mapped | set(CLI_ONLY_COMMANDS)))}"
     )
     from scripts.export_tools import OUTPUT as TOOLS
 
     tools = {tool["name"] for tool in json.loads(TOOLS.read_text())["tools"]}
     for command, tool in CLI_COMMAND_TOOLS.items():
         assert tool in tools, f"{command} fronts {tool}, which is not an MCP tool"
+    for command, nested in CLI_SUBCOMMAND_TOOLS.items():
+        nested_parser = next(
+            action for action in subcommand(command)._actions if getattr(action, "choices", None)
+        )
+        assert set(nested_parser.choices) == set(nested), command
+        for name, tool in nested.items():
+            assert tool in tools, f"{command} {name} fronts {tool}, which is not an MCP tool"
     for command, why in CLI_ONLY_COMMANDS.items():
         assert why.strip()
         assert command.replace("-", "_") not in tools
@@ -814,3 +830,145 @@ def test_cli_only_commands_have_exactly_their_allowlisted_subcommands():
         )
         assert set(nested.choices) == set(allowed), command
         assert all(why.strip() for why in allowed.values())
+
+
+# -- the play-script tools: one argument surface, one answer --------------------
+#
+# `script run`/`script list` and `run_script`/`list_scripts` both call
+# `playscripts.script_tools`, so the answer cannot drift; what can drift is the
+# argument surface around it. The CLI's `dest`s are the tools' parameter names
+# (with `--reasoning` the CLI's global flag, as for every other command), their
+# defaults are the tools' defaults, and `--input NAME=VALUE` is `inputs`.
+
+
+def _tool_parameters(tool: str) -> dict[str, dict[str, Any]]:
+    from scripts.export_tools import OUTPUT as TOOLS
+
+    [entry] = [t for t in json.loads(TOOLS.read_text())["tools"] if t["name"] == tool]
+    return {param["name"]: param for param in entry["parameters"]}
+
+
+def _script_subcommand(name: str) -> Any:
+    nested = next(
+        action for action in subcommand("script")._actions if getattr(action, "choices", None)
+    )
+    return nested.choices[name]
+
+
+def test_script_subcommands_take_their_tools_parameters_by_name():
+    top_level = {action.dest for action in seat_cli.build_parser()._actions}
+    assert "reasoning" in top_level, "--reasoning is the CLI's global flag"
+    for name, tool in CLI_SUBCOMMAND_TOOLS["script"].items():
+        parameters = _tool_parameters(tool)
+        actions = {
+            action.dest: action
+            for action in _script_subcommand(name)._actions
+            if action.dest != "help"
+        }
+        expected = set(parameters) - {"player_uid", "reasoning"}
+        assert set(actions) == expected, (name, sorted(set(actions) ^ expected))
+        for dest, action in actions.items():
+            parameter = parameters[dest]
+            if parameter["has_default"]:
+                assert action.default == parameter["default"], (name, dest, action.default)
+            else:
+                assert not action.option_strings, (name, dest, "a required parameter is positional")
+    assert "reasoning" in _tool_parameters("run_script")
+    assert "reasoning" not in _tool_parameters("list_scripts")
+
+
+def test_the_input_flag_is_repeatable_and_names_inputs():
+    for name in CLI_SUBCOMMAND_TOOLS["script"]:
+        [flag] = [
+            action
+            for action in _script_subcommand(name)._actions
+            if "--input" in getattr(action, "option_strings", ())
+        ]
+        assert flag.dest == "inputs"
+        assert type(flag).__name__ == "_AppendAction", "--input is repeatable"
+        assert flag.default is None and flag.metavar == "NAME=VALUE"
+        said = " ".join((flag.help or "").split())
+        assert "repeat" in said and "JSON" in said
+
+
+def _two_scripts_on_one_board(client: TestClient, game_id: str) -> str:
+    from conftest import force_turn_position
+    from magic_cards_model.machines import Step
+    from test_playscript_runtime import land_script, register
+
+    force_turn_position(game_id, Step.PRECOMBAT_MAIN, "alice")
+    uid = uid_for(game_id, "alice")
+    frog = land_script("frog-only", opposing_archetypes=["dimir-frog"])
+    register(client, game_id, uid, frog, land_script("drop", priority=40))
+    add_card(client, game_id, "Island", "alice", "hand")
+    return uid
+
+
+def test_both_front_ends_list_the_same_scripts_for_the_same_inputs(
+    client, game, monkeypatch, capsys
+):
+    wire(monkeypatch)
+    uid = _two_scripts_on_one_board(client, game)
+    server = build_server(Seats(api="http://testserver", game_id=game))
+
+    for flags, arguments in (
+        ([], {}),
+        (["--opposing-archetype", "dimir-frog"], {"opposing_archetype": "dimir-frog"}),
+        (
+            ["--input", "opposing_archetype=dimir-frog"],
+            {"inputs": {"opposing_archetype": "dimir-frog"}},
+        ),
+    ):
+        assert seat_cli.run(["--uid", uid, "--game", game, "script", "list", *flags]) == 0
+        from_cli = json.loads(capsys.readouterr().out)
+        from_mcp = json.loads(
+            asyncio.run(server.call_tool("list_scripts", {"player_uid": uid, **arguments}))
+            .content[0]
+            .text
+        )
+        assert from_cli == from_mcp, flags
+    assert from_cli["runtime_conflict"] is True
+
+
+def test_both_front_ends_run_a_script_to_the_same_exit(client, game, monkeypatch, capsys):
+    wire(monkeypatch)
+    uid = _two_scripts_on_one_board(client, game)
+    second = client.post(
+        "/api/games", json={"players": [{"username": "alice"}, {"username": "bob"}]}
+    ).json()["game_id"]
+    try:
+        uid2 = _two_scripts_on_one_board(client, second)
+        rc = seat_cli.run(
+            [
+                "--uid",
+                uid,
+                "--game",
+                game,
+                "--reasoning",
+                "the frog plan",
+                "script",
+                "run",
+                "frog-only",
+                "--input",
+                "opposing_archetype=dimir-frog",
+            ]
+        )
+        assert rc == 0
+        from_cli = json.loads(capsys.readouterr().out)["script_exit"]
+        server = build_server(Seats(api="http://testserver", game_id=second))
+        raw = asyncio.run(
+            server.call_tool(
+                "run_script",
+                {
+                    "player_uid": uid2,
+                    "script": "frog-only",
+                    "reasoning": "the frog plan",
+                    "inputs": {"opposing_archetype": "dimir-frog"},
+                },
+            )
+        )
+        from_mcp = json.loads(raw.content[0].text)["script_exit"]
+        assert from_cli == from_mcp
+        assert from_cli["exit"] == "chain_complete"
+    finally:
+        client.delete(f"/api/games/{second}")

@@ -105,6 +105,58 @@ NON_TOOL_VOCABULARY = {
     "source_name",
     # the MCP 2026-07-28 result-shape name, not a tool or a parameter
     "input_required",
+    # `run_script`'s typed answer block and every exit it can name - the
+    # closed `playscripts.runtime.Exit` vocabulary plus `invalid_input` - and
+    # the block's own fields. All answer shape; `script` and `resume` are
+    # also parameters, which a mention here never hides from the call checks.
+    "script_exit",
+    "exit",
+    "chain_complete",
+    "not_applicable",
+    "unforeseen",
+    "interrupted",
+    "ambiguous",
+    "refused",
+    "stale",
+    "unknown_outcome",
+    "needs_plan",
+    "already_ran",
+    "advised",
+    "needs_input",
+    "invalid_input",
+    "script",
+    "moves_done",
+    "moves_total",
+    "failing_condition",
+    "stop_reason",
+    "refusal",
+    "refusal_source",
+    "ambiguous_names",
+    "applicable_next",
+    "prior_run_id",
+    "proposal",
+    "unvalidated",
+    "scripts_run",
+    "record_refusal",
+    "resume",
+    # `list_scripts`'s listing and its conflict entries - answer shape too
+    # (`opposing_archetype` is also a parameter, echoed back as asserted)
+    "opposing_archetype",
+    "deck_slug",
+    "guides_revision",
+    "scripts",
+    "applicable",
+    "runtime_conflict",
+    "id",
+    "name",
+    "priority",
+    "applies",
+    "conflicts",
+    "code",
+    "path",
+    "plays",
+    "dimensions",
+    "message",
     # local Python names in this module, no MCP meaning
     "briefing",
     "current_game_path",
@@ -219,6 +271,26 @@ def _verbs(text: str) -> set[str]:
     return {
         token for span in _BACKTICK_SPAN_RE.findall(text) for token in _VERB_TOKEN_RE.findall(span)
     }
+
+
+def test_the_script_answer_vocabulary_is_never_checked_as_tool_surface():
+    """`run_script` answers with a typed `script_exit` and `list_scripts` with
+    a listing, and prose teaching either names their exits and fields in
+    backticks. None of those words is a tool or a parameter, so all of them
+    are on `NON_TOOL_VOCABULARY` - every `runtime.Exit` value (plus
+    `invalid_input`, the typed exit the runner gains for an input that does
+    not fit its catalog), every `script_exit` field and every listing field
+    the tools emit."""
+    from magic_cards_model_api.playscripts import runtime, script_tools
+
+    words = (
+        {exit.value for exit in runtime.Exit}
+        | {"invalid_input"}
+        | set(script_tools.SCRIPT_EXIT_FIELDS)
+        | set(script_tools.LISTING_FIELDS)
+    )
+    missing = sorted(words - NON_TOOL_VOCABULARY)
+    assert not missing, f"NON_TOOL_VOCABULARY is missing script answer words: {missing}"
 
 
 def test_prompt_source_is_readable():

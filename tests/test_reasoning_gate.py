@@ -136,6 +136,10 @@ EXEMPT_TOOLS: dict[str, str] = {
     "wait_for_priority": "one poll for whether it is this seat's moment; reads only.",
     "battlefield_state": "the board as this seat may see it; reads only.",
     "game_log": "this game's log, seat-filtered; reads only.",
+    "list_scripts": (
+        "this seat's registered play scripts judged against the board; runs and records "
+        "nothing, reads only."
+    ),
     "report_problem": ("`text` is the reasoning - see the matching note on `POST .../report`."),
     "declare_plan": (
         "the declaration IS the reasoning, and mutates no `Game` at all - see the "

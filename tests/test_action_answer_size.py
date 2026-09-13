@@ -519,3 +519,152 @@ def test_known_cards_and_contents_never_ride_an_action_answer_or_a_wake(client, 
     store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
     wake = json.loads(advisor_wake(advisor_server(client, game, monkeypatch)))
     assert "library_contents" not in wake and "sideboard_contents" not in wake
+
+
+# -- run_script: the runner's answer, at its largest ------------------------
+#
+# `run_script` answers through the same `_action_answer`, so its board is the
+# narrowed board above and carries neither an action list nor a log tail. What
+# it adds is `script_exit`, and the largest one a run can produce is an
+# advisor's: a proposal for move 1 and every other move handed back
+# unvalidated. A script's own selectors are the unbounded part of it - the
+# schema bounds every list (`MAX_MOVES`, `MAX_TARGETS`, `MAX_ANSWERS`,
+# `MAX_PREFER`, `MAX_SELECTOR_WORDS`) but no string - so the exit must never
+# echo a move back: `unvalidated` names each move by its index and kind, and
+# the agent reads the move in its own script. The script below fills every
+# bound there is, with a 90-character template phrase in every text field.
+
+WORST_PHRASE = (
+    "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle"
+)
+WORDS = [
+    "Artifact",
+    "Battle",
+    "Creature",
+    "Enchantment",
+    "Instant",
+    "Kindred",
+    "Land",
+    "Planeswalker",
+    "Sorcery",
+    "Conspiracy",
+    "Dungeon",
+    "Phenomenon",
+    "Plane",
+    "Scheme",
+    "Vanguard",
+]
+
+
+def worst_selector() -> dict[str, Any]:
+    from magic_cards_model_api.playscripts import schema
+
+    words = WORDS[: schema.MAX_SELECTOR_WORDS]
+    return {
+        "types_all": words,
+        "types_any": words,
+        "subtypes_any": words,
+        "supertypes_any": words,
+        "colors_any": words,
+        "keywords_any": words,
+        "mana_value": {"op": "<=", "n": 16},
+        "power": {"op": ">=", "n": 0},
+        "toughness": {"op": ">=", "n": 0},
+        "tapped": False,
+        "counters": {"name": "+1/+1", "op": ">=", "n": 0},
+        "ability_text_has": WORST_PHRASE,
+        "oracle_has": WORST_PHRASE,
+    }
+
+
+def worst_answers() -> list[dict[str, Any]]:
+    from magic_cards_model_api.playscripts import schema
+
+    pick = {
+        "select": worst_selector(),
+        "count": 1,
+        "prefer": [worst_selector() for _ in range(schema.MAX_PREFER)],
+    }
+    return [{"decision": "choose_cards", "pick": pick} for _ in range(schema.MAX_ANSWERS)]
+
+
+def worst_case_script(script_id: str) -> dict[str, Any]:
+    from magic_cards_model_api.playscripts import schema
+
+    cast = {
+        "kind": "cast",
+        "card": {"zone": "hand", "select": worst_selector()},
+        "cost": "flashback",
+        "targets": [
+            {"side": "opponent", "select": worst_selector()} for _ in range(schema.MAX_TARGETS)
+        ],
+        "mana": "auto",
+        "answers": worst_answers(),
+    }
+    return {
+        "schema_version": 1,
+        "id": script_id,
+        "name": WORST_PHRASE,
+        "intent": WORST_PHRASE,
+        "priority": schema.MAX_PRIORITY,
+        "opposing_archetypes": ["*"],
+        "when": {"whose_turn": "mine", "steps": ["precombat_main"], "stack": "empty"},
+        "true": [],
+        "false": [],
+        "moves": [
+            {
+                "kind": "play_land",
+                "card": {"select": {"types_all": ["Land"]}},
+                "answers": worst_answers(),
+            },
+            *[cast] * (schema.MAX_MOVES - 1),
+        ],
+        "next": [],
+    }
+
+
+def advisor_runs_the_worst_case_script(
+    client: TestClient, game: str, monkeypatch, script_id: str
+) -> str:
+    from test_playscript_runtime import register
+
+    seats, _ = wired(client, monkeypatch, game)
+    register(client, game, "buddy-uid", worst_case_script(script_id))
+    server = build_server(seats)
+    return text_of(
+        call_tool(
+            server,
+            "run_script",
+            {"player_uid": "buddy-uid", "script": script_id, "reasoning": "the land drop first"},
+        )
+    )
+
+
+def test_the_worst_case_run_script_answer_still_fits(client, game, monkeypatch):
+    """The real answer on the busy board, and the arithmetic beside it: the
+    same run with the digest emptied, plus the digest's cap at full value."""
+    from magic_cards_model_api.playscripts import schema
+    from magic_cards_model_api.repository import Advisor
+
+    busy_board(client, game)
+    stage_card(game, "Plains", "alice", "hand")
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+
+    text = advisor_runs_the_worst_case_script(client, game, monkeypatch, "worst-case")
+    payload = json.loads(text)
+
+    out = payload["script_exit"]
+    assert out["exit"] == "advised", out
+    assert out["moves_total"] == schema.MAX_MOVES
+    assert out["unvalidated"] == [
+        {"index": index, "kind": "cast"} for index in range(2, schema.MAX_MOVES + 1)
+    ]
+    assert WORST_PHRASE not in json.dumps(out), "script_exit echoed a move back"
+    assert set(payload) == {"script_exit", "board"}, list(payload)
+    assert payload["board"]["battlefield_digest"]
+    assert len(text) < MAX_ANSWER_BYTES, f"{len(text)} bytes"
+
+    cap = mcp_module.MAX_DIGEST_BYTES
+    monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 0)
+    base = len(advisor_runs_the_worst_case_script(client, game, monkeypatch, "worst-case-2"))
+    assert base + cap < MAX_ANSWER_BYTES, f"base {base} + digest cap {cap}"

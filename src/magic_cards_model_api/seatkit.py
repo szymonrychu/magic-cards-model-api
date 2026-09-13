@@ -218,9 +218,21 @@ PROTOCOL_VERSION = "seatkit-17"
 #: turn and step with exit `already_ran`, and `phase: finish` writes one
 #: `script_run` ledger row that no other seat's log read ever returns. With
 #: `SCRIPTS_ENABLED` off, registering and starting refuse with code
-#: `scripts_disabled`. No MCP tool calls any of them and no existing request
-#: or response moved, so a `seatkit-17` process meets nothing it cannot
-#: express - the same reasoning the `spell_face` widening below gives.
+#: `scripts_disabled`.
+#:
+#: Two MCP tools call them, `run_script` and `list_scripts` (and the CLI's
+#: `script run`/`script list`), both through `playscripts.script_tools`.
+#: `run_script` runs one registered script with `playscripts.runtime` and
+#: answers like an action: the narrowed board plus `script_exit` - `exit`,
+#: `script`, `moves_done`, `moves_total`, and only the typed fields the exit
+#: set (`failing_condition`, `stop_reason`, `refusal`, `resume` for a run the
+#: time cap cut off, ...). `list_scripts` judges every registered script
+#: against the board without running it, by priority, with its conflicts.
+#: Still no bump: both are new tools, no existing tool's request or response
+#: moved, and a `seatkit-17` process built before them simply does not
+#: advertise them - a seat calling one gets the client's unknown-tool error,
+#: which is as loud as the PROTOCOL MISMATCH sentence and names the tool -
+#: the same reasoning the `spell_face` widening below gives.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row

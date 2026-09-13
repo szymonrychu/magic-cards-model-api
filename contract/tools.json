@@ -628,6 +628,33 @@
       ]
     },
     {
+      "docstring_first_line": "Your registered play scripts, highest priority first, each judged",
+      "name": "list_scripts",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "*",
+          "has_default": true,
+          "name": "opposing_archetype",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "inputs",
+          "type": "dict[str, Any] | None",
+          "type_error": null
+        }
+      ]
+    },
+    {
       "docstring_first_line": "Declare whether you take a mulligan (CR 103.5), before the game starts.",
       "name": "mulligan",
       "parameters": [
@@ -875,6 +902,68 @@
           "has_default": false,
           "name": "text",
           "type": "str",
+          "type_error": null
+        }
+      ]
+    },
+    {
+      "docstring_first_line": "Run one of your registered play scripts: its moves, in order, and",
+      "name": "run_script",
+      "parameters": [
+        {
+          "default": null,
+          "has_default": false,
+          "name": "player_uid",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "script",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "*",
+          "has_default": true,
+          "name": "opposing_archetype",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": false,
+          "name": "reasoning",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
+          "name": "resume",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": true,
+          "has_default": true,
+          "name": "wait",
+          "type": "bool",
+          "type_error": null
+        },
+        {
+          "default": 0.0,
+          "has_default": true,
+          "name": "max_seconds",
+          "type": "float",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "inputs",
+          "type": "dict[str, Any] | None",
           "type_error": null
         }
       ]
