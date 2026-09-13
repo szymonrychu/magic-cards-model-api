@@ -973,6 +973,48 @@ class DecisionInProgressError(RuntimeError):
         )
 
 
+class GameOverError(RuntimeError):
+    """An action was attempted in a game that has already ended.
+
+    CR 104.1: "A game ends immediately when a player wins, when the game is a
+    draw, or when the game is restarted." Nothing resolves after that, no
+    decision is raised or answered, and no player has an action to take -
+    battle 6 (B6-06) logged `game_over` and then a pass that resolved the
+    spell still on the stack and two answered decisions, because nothing on
+    the api's side asked `Game.is_over` before running a command.
+
+    `status_code = 409`, like `DecisionInProgressError`: the request is well
+    formed and the game is not in a state that accepts it. `allowed: False`
+    and `reason` in the body are what `seatkit._refused` reads; `type:
+    game_over` is what tells a client this refusal apart from every other
+    409 without parsing the sentence, and `winner`/`drawn` say how it ended.
+
+    A `RuntimeError` and not a `ValueError` for the reason
+    `DecisionInProgressError` gives: `pass-priority`'s and `advance`'s own
+    `except ValueError` blocks would swallow it into a 200 refusal.
+    """
+
+    status_code = 409
+
+    def __init__(self, game: Game, attempted: str) -> None:
+        self.winner = game.winner
+        self.drawn = bool(game.drawn)
+        ending = f"{self.winner} won" if self.winner else "it is a draw"
+        message = (
+            f"{attempted} cannot be taken: the game is over ({ending}). CR 104.1: a "
+            "game ends immediately when a player wins or when the game is a draw, "
+            "so nothing more can be done in it - read the final state and stop."
+        )
+        super().__init__(message)
+        logger.info(message)
+
+
+def refuse_if_over(game: Game, attempted: str) -> None:
+    """Raise `GameOverError` when `game` has ended (`Game.is_over`)."""
+    if game.is_over:
+        raise GameOverError(game, attempted)
+
+
 class CommandDivergenceError(RuntimeError):
     """The replay-divergence guard tripped: re-running `command` from the
     committed snapshot with the tape as it stood *before* a new answer was

@@ -630,6 +630,20 @@
               }
             ]
           },
+          "improvise": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvise"
+          },
           "keyword": {
             "anyOf": [
               {
@@ -1071,6 +1085,20 @@
                 "type": "null"
               }
             ]
+          },
+          "improvise": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvise"
           },
           "keyword": {
             "anyOf": [
@@ -3488,6 +3516,21 @@
             "title": "From Zone",
             "type": "string"
           },
+          "improvise": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvise"
+          },
           "keyword": {
             "anyOf": [
               {
@@ -5309,6 +5352,27 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "ImproviseCostView": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectCostCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "candidates"
+        ],
+        "title": "ImproviseCostView",
+        "type": "object"
+      },
       "Layout": {
         "description": "How the card is arranged. Changes how it is cast and how it behaves in play.",
         "enum": [
@@ -6855,6 +6919,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DelveCostView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "improvise": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImproviseCostView"
               },
               {
                 "type": "null"
