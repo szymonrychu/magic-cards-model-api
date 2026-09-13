@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -455,6 +455,31 @@ def _decision_in_progress(_: Request, exc: commands.DecisionInProgressError) -> 
     )
 
 
+@app.exception_handler(commands.GameOverError)
+def _game_over(_: Request, exc: commands.GameOverError) -> JSONResponse:
+    """409: the game has ended (CR 104.1), so no action, decision or dry run
+    is taken in it - see `commands.GameOverError`.
+
+    Registered above the `ValueError` handler with the other 409s. `type:
+    game_over` names the refusal for a client that switches on it;
+    `allowed: False`/`reason` are what `seatkit._refused` reads for an
+    action, and `accepted: False` is `decide`'s own refusal key. `winner`
+    and `drawn` are the ending, so a seat need not read the board to stop.
+    """
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": str(exc),
+            "type": "game_over",
+            "allowed": False,
+            "accepted": False,
+            "reason": str(exc),
+            "winner": exc.winner,
+            "drawn": exc.drawn,
+        },
+    )
+
+
 @app.exception_handler(ValueError)
 def _value_error(_: Request, exc: ValueError) -> JSONResponse:
     """Setup requests that name an unknown zone, counter, color, or card."""
@@ -611,8 +636,34 @@ def audit_outcome(
     return {**body, "log_seq": seq}
 
 
+def _refuse_after_game_over(request: Request, game_id: str) -> None:
+    """Every action route's first gate: a finished game (CR 104.1) is refused
+    with `commands.GameOverError` before anything else is asked of the
+    request - its body, its `expected_seq`, its reasoning.
+
+    First, because every other gate is wrong about a finished game. A seat
+    that decided before the ending names a ledger position the `game_over`
+    row has since moved past, and `records.BoardMoved` would send it to
+    re-read and try again; `decide` would answer "no pending decision for
+    you". Declared as a route dependency, so FastAPI runs it before the body
+    is validated. `_run_command` and `_resume` ask again under the game's
+    lock, which is what refuses a command racing the one that ended it.
+    """
+    try:
+        game = game_or_404(game_id)
+    except KeyError:
+        return  # the route's own lookup answers the 404
+    template = getattr(request.scope.get("route"), "path", "") or ""
+    commands.refuse_if_over(game, template.rsplit("{game_id}/", 1)[-1] or "this action")
+
+
+#: Declared on every route that takes an action in a game - see
+#: `_refuse_after_game_over`.
+REFUSED_AFTER_GAME_OVER = [Depends(_refuse_after_game_over)]
+
+
 def _pause_slot_guard(
-    game_id: str, game: Game, command: commands.Command
+    game_id: str, game: Game, command: commands.Command, *, clear_stale: bool = True
 ) -> tuple[commands.Command, tuple[Answer, ...], PendingDecisionEngine] | None:
     """Settle what a stored pause means for `command`, before `command` runs.
 
@@ -645,7 +696,8 @@ def _pause_slot_guard(
         return None
     stored_command, stored_tape, stored_pending = paused
     if not commands.pause_is_live(game, stored_command, stored_tape, stored_pending):
-        store.clear_paused_command(game_id)
+        if clear_stale:
+            store.clear_paused_command(game_id)
         return None
     if stored_command != command:
         raise commands.DecisionInProgressError(stored_command, stored_pending, command)
@@ -694,17 +746,24 @@ def _run_command(
     was deleted by the opponent's ordinary autopass 227 ms later, and the
     fetch resolved as a decline (`tests/test_pause_slot_clobber.py`).
 
-    Two commands are exempt. A `dry_run` commits nothing and never touches
-    the slot in either direction (`seatkit.available_actions` probes every
-    card in hand and every ability on the battlefield this way on every
-    wake, and none of those probes is an action anyone took), and `concede`
-    is legal "at any time" - CR 104.3a - which includes part-way through
-    somebody else's command.
+    `concede` is exempt: it is legal "at any time" - CR 104.3a - which
+    includes part-way through somebody else's command. A `dry_run` is not:
+    it is asked the same question and given the same verdict - refused with
+    the same `DecisionInProgressError`, or handed the standing pause when it
+    names the paused command itself - because a probe that answers "yes" to
+    a move the real call refuses is a wrong answer (battle 6, B6-09: a mana
+    ability dry run allowed while a `pay_mana` decision stood). It still
+    never writes the slot in either direction: a stale pause it finds is left
+    for the next real command to clear.
+
+    **A finished game refuses everything, `concede` and dry runs included**
+    (`commands.GameOverError`, CR 104.1) - asked here under the lock as well
+    as up front by `_refuse_after_game_over`.
 
     `store.clear_paused_command` still runs on every `COMPLETED` result, and
     the guard above is what makes that safe: the only slot it can now find
-    is one this same call already proved stale, or one a `concede`/`dry_run`
-    exemption deliberately walked past. The argument it used to rest on -
+    is one this same call already proved stale, or one a `concede`
+    deliberately walked past. The argument it used to rest on -
     that a paused command was never applied to the committed game, so
     nothing is thrown away but a *question* - holds only while the tape is
     empty. The moment the pause carries answers, clearing the slot deletes
@@ -732,8 +791,16 @@ def _run_command(
     player = getattr(request, "player", None)
     dry_run = getattr(request, "dry_run", False)
     with store.locked(game_id) as game:
-        if not dry_run and kind != "concede":
-            standing = _pause_slot_guard(game_id, game, command)
+        commands.refuse_if_over(game, kind)
+        if kind != "concede":
+            # A dry run is compared as the real command it asks about, and
+            # never clears a stale slot - see this function's docstring.
+            asked = (
+                commands.Command(kind=kind, payload={**command.payload, "dry_run": False})
+                if dry_run
+                else command
+            )
+            standing = _pause_slot_guard(game_id, game, asked, clear_stale=not dry_run)
             if standing is not None:
                 _, standing_tape, standing_pending = standing
                 return (
@@ -743,7 +810,9 @@ def _run_command(
                         tape=standing_tape,
                     ),
                     game,
-                    records.legal_actions_before(game, player, standing_pending),
+                    None
+                    if dry_run
+                    else records.legal_actions_before(game, player, standing_pending),
                     None,
                 )
         # Read *after* the guard: a stale slot it just cleared must not be
@@ -970,6 +1039,7 @@ def _resume(
     this api's registered 409 handler unchanged.
     """
     with store.locked(game_id) as game:
+        commands.refuse_if_over(game, "decide")
         legal_before = records.legal_actions_before(game, player, pending)
         result = commands.resume_command(game, command, tape, pending, answer)
         # The answer is taken on the board its question was asked on (B3-11).
@@ -1735,6 +1805,7 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
 
 @app.post(
     "/api/games/{game_id}/actions/cast",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -1775,6 +1846,7 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/suspend",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -1809,6 +1881,7 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/plot",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -1842,6 +1915,7 @@ def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/foretell",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -1876,6 +1950,7 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/cycle",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -1911,6 +1986,7 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/target",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -2180,6 +2256,7 @@ def get_legal_actions(
 
 @app.post(
     "/api/games/{game_id}/actions/concede",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ConcedeResponse,
     response_model_exclude_unset=True,
 )
@@ -2235,6 +2312,7 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/activate",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -2268,6 +2346,7 @@ def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/crew",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -2475,6 +2554,7 @@ def _answer_declaration(
 
 @app.post(
     "/api/games/{game_id}/actions/attack",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -2522,6 +2602,7 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
 
 @app.post(
     "/api/games/{game_id}/actions/play-land",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -2552,6 +2633,7 @@ def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/actions/pass-priority",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=PassPriorityResponse,
     response_model_exclude_unset=True,
 )
@@ -2666,6 +2748,7 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
 
 @app.post(
     "/api/games/{game_id}/actions/declare-blockers",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome,
     response_model_exclude_unset=True,
 )
@@ -2695,6 +2778,7 @@ def action_declare_blockers(
 
 @app.post(
     "/api/games/{game_id}/state-based-actions",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=StateBasedActionsResponse,
     response_model_exclude_unset=True,
 )
@@ -2762,6 +2846,7 @@ def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[s
 
 @app.post(
     "/api/games/{game_id}/resolve-top",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ResolveTopResponse,
     response_model_exclude_unset=True,
 )
@@ -2833,6 +2918,7 @@ def resolve_top(
 
 @app.post(
     "/api/games/{game_id}/advance",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=ActionOutcome | AdvanceResponse,
     response_model_exclude_unset=True,
 )
@@ -3399,7 +3485,10 @@ def record_script_run(game_id: str, req: ScriptRunIn, request: Request) -> dict[
 
 
 @app.post(
-    "/api/games/{game_id}/decide", response_model=DecideResponse, response_model_exclude_unset=True
+    "/api/games/{game_id}/decide",
+    dependencies=REFUSED_AFTER_GAME_OVER,
+    response_model=DecideResponse,
+    response_model_exclude_unset=True,
 )
 def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str, Any]:
     """Answer this game's pending decision - most kinds CR 608.2d,
@@ -3678,6 +3767,7 @@ def _settled(game: Game, result: dict[str, Any]) -> dict[str, Any]:
 
 @app.post(
     "/api/games/{game_id}/pregame/mulligan",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=MulliganResponse,
     response_model_exclude_unset=True,
 )
@@ -3720,6 +3810,7 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
 
 @app.post(
     "/api/games/{game_id}/pregame/opening-hand/action",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=OpeningHandActionResponse,
     response_model_exclude_unset=True,
 )
@@ -3749,6 +3840,7 @@ def pregame_opening_hand_action(
 
 @app.post(
     "/api/games/{game_id}/pregame/opening-hand/finish",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=OpeningHandFinishResponse,
     response_model_exclude_unset=True,
 )
@@ -3798,6 +3890,7 @@ def pregame_opening_hand_finish(
 
 @app.post(
     "/api/games/{game_id}/pregame/settle",
+    dependencies=REFUSED_AFTER_GAME_OVER,
     response_model=PregameSettleResponse,
     response_model_exclude_unset=True,
 )

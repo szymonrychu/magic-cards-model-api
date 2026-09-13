@@ -652,6 +652,20 @@
               }
             ]
           },
+          "improvise": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvise"
+          },
           "keyword": {
             "anyOf": [
               {
@@ -1093,6 +1107,20 @@
                 "type": "null"
               }
             ]
+          },
+          "improvise": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvise"
           },
           "keyword": {
             "anyOf": [
@@ -3644,6 +3672,21 @@
             "title": "From Zone",
             "type": "string"
           },
+          "improvise": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvise"
+          },
           "keyword": {
             "anyOf": [
               {
@@ -5920,6 +5963,27 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "ImproviseCostView": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectCostCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "candidates"
+        ],
+        "title": "ImproviseCostView",
+        "type": "object"
+      },
       "KnownCardsView": {
         "description": "What one player knows about hidden cards (`Game.known_to`): cards in\nanother player's hand, library cards with their live position, and\nsideboard cards. The player's own hand and sideboard are never listed.",
         "properties": {
@@ -7624,6 +7688,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DelveCostView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "improvise": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImproviseCostView"
               },
               {
                 "type": "null"

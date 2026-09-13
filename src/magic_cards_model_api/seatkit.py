@@ -246,7 +246,10 @@ PROTOCOL_VERSION = "seatkit-19"
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
 #: legal-action row of kind `equip`, and rows gaining `printed_cost`,
-#: `x_costs` and `unreadable_modes`.
+#: `x_costs` and `unreadable_modes`; `cast` gained `improvise` (the CLI
+#: `--improvise`), a legal-action cast row gained `improvise`, and every
+#: action route, `decide` and every dry run now answer a finished game with
+#: a `409 {"type": "game_over", ...}`.
 #:
 #: Battle 3 found equip unreachable (B3-01): CR 702.6a's ability is a keyword
 #: the engine builds (`equip_activation`), not one of the Equipment's
@@ -268,6 +271,17 @@ PROTOCOL_VERSION = "seatkit-19"
 #: A bump, the same reasoning as `seatkit-17`: an MCP process built before it
 #: has no `equip` tool, so a seat told to equip has no way to. An older build
 #: meeting a row of kind `equip` passes it through untouched.
+#:
+#: Battle 6 found improvise unreachable (B6-05): the engine has paid CR
+#: 702.126a's artifact taps all along (`Game.cast(..., improvise=...)`), but
+#: `CastRequest` refused the field, so Kappa Cannoneer and Metallic Rebuke
+#: could only be cast off lands. A seatkit-17 MCP process has no parameter to
+#: send and keeps reading a castable row's `improvise` as unknown noise. The
+#: same battle drove a game past its `game_over` row (B6-06); a seatkit-17
+#: process reads the new 409 as an ordinary refusal through `allowed: False`,
+#: which is safe, but only this build's prose says what it means. These rode
+#: the same `seatkit-18` rather than a bump, so an MCP process built on the
+#: first `seatkit-18` (equip only) misses `improvise` the same way.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row

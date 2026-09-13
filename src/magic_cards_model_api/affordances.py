@@ -891,14 +891,14 @@ def _cards_in_reach(game: Game, component: Any, caster: str) -> list[CardState]:
 def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
     """Which objects could be spent on this card's cost, and for what.
 
-    Convoke (CR 702.51a), delve (CR 702.66a) and crew (CR 702.122a) all pay
-    part of a cost by spending objects rather than mana, and the engine
-    shares one `ObjectOffer` across all three. The candidate list is that
+    Convoke (CR 702.51a), delve (CR 702.66a), improvise (CR 702.126a) and
+    crew (CR 702.122a) all pay part of a cost by spending objects rather than
+    mana, and the engine shares one `ObjectOffer` across all four. The candidate list is that
     offer's own eligibility answer, so a UI cannot disagree with the payment
     that follows it.
 
     Only the keys that apply are present: a card with none of the three gets
-    an empty dict, so the UI renders no row at all rather than three empty
+    an empty dict, so the UI renders no row at all rather than four empty
     ones.
     """
     from magic_cards_model.machines.objects_as_costs import (
@@ -908,6 +908,8 @@ def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
         delve_offer,
         has_convoke,
         has_delve,
+        has_improvise,
+        improvise_offer,
         is_vehicle,
         power_of,
     )
@@ -938,6 +940,11 @@ def object_costs(game: Game, state: CardState, player: str) -> dict[str, Any]:
         out["delve"] = {
             "rule": "CR 702.66a",
             "candidates": eligible(delve_offer(), list(game.player(player).graveyard)),
+        }
+    if has_improvise(state.card):
+        out["improvise"] = {
+            "rule": "CR 702.126a",
+            "candidates": eligible(improvise_offer(), battlefield),
         }
     if is_vehicle(state.card):
         number = crew_number(state.card)

@@ -341,6 +341,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     cast.add_argument(
+        "--improvise",
+        default="",
+        help=(
+            "comma-separated ids of your untapped artifacts, tapped to pay one "
+            "generic mana each (CR 702.126a). A cast row that is payable this way "
+            "names the ids in its own 'improvise'"
+        ),
+    )
+    cast.add_argument(
         "--optional-costs",
         default="",
         help=(
@@ -1106,6 +1115,7 @@ def run(argv: list[str] | None = None) -> int:
             ("exiling", args.exiling),
             ("tapping", args.tapping),
             ("delve", args.delve),
+            ("improvise", args.improvise),
         ):
             if value:
                 body[field] = _parse_ids(value)

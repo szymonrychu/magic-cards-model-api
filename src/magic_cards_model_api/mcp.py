@@ -974,6 +974,7 @@ def build_server(seats: Seats) -> MCPServer:
         tapping: str = "",
         delve: str = "",
         convoke: str = "",
+        improvise: str = "",
         optional_costs: str = "",
         dry_run: bool = False,
         hold_priority: bool = False,
@@ -1112,6 +1113,9 @@ def build_server(seats: Seats) -> MCPServer:
                   generic symbol) or `<id>:W` to cover a coloured one. Four white
                   creatures offered against `{3}{W}` are three bare ids and one
                   `<id>:W`.
+                - `improvise` - your untapped artifacts tapped to pay one generic
+                  mana each (CR 702.126a), comma-separated ids. A cast row that is
+                  payable this way names them in its own `improvise`.
 
                 `GET .../affordances/{card_id}` is the one place that answers all of
                 these for a specific card, and a hand card's own `cast_options` in
@@ -1183,6 +1187,7 @@ def build_server(seats: Seats) -> MCPServer:
             ("exiling", exiling),
             ("tapping", tapping),
             ("delve", delve),
+            ("improvise", improvise),
         ):
             if value:
                 body[field] = _parse_ids(value)
