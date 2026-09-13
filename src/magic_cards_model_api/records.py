@@ -746,7 +746,8 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
     matching `finish` yet (still in flight, or a crash) still blocks: this
     check cannot tell whether it moved anything. The release covers that run's
     own start row too (newest first, so its finish is always read before it),
-    and never an `unknown_outcome` finish, whose move may have landed uncounted."""
+    and never an `unknown_outcome` finish, whose move may have landed uncounted,
+    nor an advise finish, which always reports zero moves by design."""
     from .store import store
 
     key = tuple(detail.get(name) for name in _SCRIPT_RUN_KEY)
@@ -766,6 +767,7 @@ def _prior_script_run(game_id: str, detail: dict[str, Any]) -> str | None:
             action == SCRIPT_RUN_ACTION
             and prior.get("moves_done") == 0
             and prior.get("exit") != "unknown_outcome"
+            and prior.get("advise") is not True
         ):
             released.add(run_id)
             continue
