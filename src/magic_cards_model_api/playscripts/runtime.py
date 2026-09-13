@@ -520,6 +520,20 @@ def _wait_for_own_priority(
     polls exactly like `_settle`'s own idle wait rather than reaching for
     `pass_until`, which would treat this occurrence as already behind it."""
     while True:
+        if state.get("winner") or state.get("drawn"):
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason="the game ended while waiting for this seat's own priority",
+            )
+        pending = state.get("pending_decision")
+        if isinstance(pending, dict) and pending.get("player") == ctx.me:
+            return ScriptExit(
+                Exit.UNFORESEEN,
+                stop_reason=(
+                    f"a {pending.get('kind')} decision was asked of this seat while waiting "
+                    "for its own priority"
+                ),
+            )
         if state.get("priority_holder") == ctx.me:
             return state
         if not _in_when(state, when, ctx.me):

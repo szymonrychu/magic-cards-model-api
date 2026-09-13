@@ -1291,6 +1291,78 @@ def test_a_theirs_script_without_wait_is_not_applicable_while_the_other_seat_hol
     assert hook.posts("/actions/activate") == []
 
 
+def test_a_game_that_ends_while_waiting_for_own_priority_ends_the_run(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finished game never hands this seat priority again, so the wait
+    ends the run rather than polling to the time cap and handing back a
+    resume token that would only poll again."""
+    force_turn_position(game, Step.END_STEP, "alice")
+    bob = seat_uid(game, "bob")
+    script = theirs_float_script("float-theirs")
+    register(client, game, bob, script)
+    add_card(client, game, "Island", "bob", "battlefield")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, bob)
+    fetch = seat.fetch_state
+    calls = {"n": 0}
+
+    def ends_after_first_read(**kwargs: Any) -> dict[str, Any]:
+        calls["n"] += 1
+        read = fetch(**kwargs)
+        return read if calls["n"] == 1 else {**read, "winner": "alice"}
+
+    monkeypatch.setattr(seat, "fetch_state", ends_after_first_read)
+
+    result = run_script(
+        seat,
+        script_id="float-theirs",
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        max_seconds=1.0,
+    )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/activate") == []
+
+
+def test_a_decision_for_this_seat_while_waiting_for_own_priority_ends_the_run(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A question put to this seat is only ever answered by this seat, so
+    waiting for priority behind it could never end before the time cap."""
+    force_turn_position(game, Step.END_STEP, "alice")
+    bob = seat_uid(game, "bob")
+    script = theirs_float_script("float-theirs")
+    register(client, game, bob, script)
+    add_card(client, game, "Island", "bob", "battlefield")
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, bob)
+    fetch = seat.fetch_state
+    calls = {"n": 0}
+    asked = {"player": "bob", "kind": "surveil", "prompt": "Surveil 1"}
+
+    def asks_after_first_read(**kwargs: Any) -> dict[str, Any]:
+        calls["n"] += 1
+        read = fetch(**kwargs)
+        return read if calls["n"] == 1 else {**read, "pending_decision": asked}
+
+    monkeypatch.setattr(seat, "fetch_state", asks_after_first_read)
+
+    result = run_script(
+        seat,
+        script_id="float-theirs",
+        reasoning=REASONING,
+        corpora=seats.script_corpora,
+        max_seconds=1.0,
+    )
+
+    assert result.finished is True, result.to_dict()
+    assert result.script_exit.exit is Exit.UNFORESEEN, result.to_dict()
+    assert hook.posts("/actions/activate") == []
+
+
 # -- resume -----------------------------------------------------------------------
 
 
