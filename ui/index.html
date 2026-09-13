@@ -140,10 +140,11 @@
   <!-- Concede, Report and Lobby, pinned to the top-right corner of the
        viewport at every width (`style.css`'s `.game-toolbar`: `position:
        fixed`, so it holds that corner whether `#game` is the three-column
-       desktop grid or the narrow-width single-column stack) rather than
-       living inside `#topbar`'s own in-flow column. `#game`'s own top
-       padding reserves the strip this sits in, so nothing in the grid ever
-       renders underneath it.
+       desktop grid, the two-column landscape one or the single-column
+       portrait stack) rather than living inside `#topbar`'s own in-flow
+       column. `#game`'s own top padding - or, on a landscape window below
+       1100px, the control column's first grid row - reserves the strip this
+       sits in, so nothing in the grid ever renders underneath it.
 
        Concede used to be the last button `ui/render/ribbon.js`'s
        `renderPriorityBox` appended to `#priority-box`; it is still rendered

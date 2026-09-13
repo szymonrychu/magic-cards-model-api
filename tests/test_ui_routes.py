@@ -270,7 +270,12 @@ def test_a_crowded_board_row_scrolls_instead_of_painting_over_its_neighbour(
     board = css.split("#mtg-board {", 1)[1].split("}", 1)[0]
     assert "display: flex;" in board and "flex-direction: column;" in board, board
     rows = css.split("#mtg-board > .fit-row {", 1)[1].split("}", 1)[0]
-    assert "min-height: calc(44px * 88 / 63" in rows, "a row never collapses under one card"
+    # One floor card: 44px wide unless `render/board.js`'s `fitBoardFloor`
+    # lowers `--card-floor` on a board too short for seven of them.
+    assert "--card-floor: 44px;" in board, board
+    assert "min-height: calc(var(--card-floor) * 88 / 63" in rows, (
+        "a row never collapses under one card"
+    )
     assert "overflow-x: auto" in rows, "a row whose cards hit the floor scrolls itself"
     assert "overflow-y: hidden" in rows, "and never paints over the row beneath"
     for row in ("opp-hand", "opp-lands", "opp-battlefield", "my-battlefield", "my-lands"):

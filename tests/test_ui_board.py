@@ -739,3 +739,43 @@ def test_the_board_css_sizes_cards_from_card_w_and_reserves_tapped_boxes() -> No
         assert "var(--card-w" not in rule(fixed)
     board = rule("#mtg-board")
     assert "overflow-x: hidden;" in board
+
+
+def test_a_short_board_lowers_the_shared_card_floor_so_every_row_fits() -> None:
+    """On a landscape phone the board is too short for seven 44px-wide cards
+    stacked, so the fit pass derives one floor for every row from the height
+    the board has left after its info rows, gaps and the stack caption, writes
+    it as `#mtg-board`'s `--card-floor` (the rows' `min-height` in
+    `style.css`), and fits every row against it rather than the fixed 44px."""
+    result = run_module(
+        "render/board.js",
+        FAKE_DOM
+        + FIT_MOUNT
+        + """
+        (() => {
+          const board = document.querySelector("#mtg-board");
+          const ids = ["#opp-info", "#opp-hand", "#opp-lands", "#opp-battlefield", "#stack-row",
+            "#my-battlefield", "#my-lands", "#my-hand", "#you-info"];
+          board.children = ids.map((id) => document.querySelector(id));
+          board.clientHeight = 7 * 42 + 16;
+          for (const id of ids.slice(1, 8)) sized(id, 1000, 42);
+          sized("#stack-row", 1000, 58);
+          const state = baseState({
+            hands: { alice: [{ id: "h1", name: "A", zone: "hand", abilities: [] }] },
+          });
+          const store = makeStore(baseApp(state));
+          m.mountBoard(document, store, {
+            onHandCard: NOOP, onPlayer: NOOP, onStackObject: NOOP, onPermission: NOOP,
+            onPermanent: NOOP,
+          });
+          store.set({});
+          const floor = () => board.style.getPropertyValue("--card-floor");
+          const short = { floor: floor(), hand: cardW("#my-hand") };
+          board.clientHeight = 2000;
+          for (const o of observers) o.fn([]);
+          return { short, tall: floor() };
+        })()
+        """,
+    )
+    assert result["short"] == {"floor": "30px", "hand": "30px"}
+    assert result["tall"] == "44px"

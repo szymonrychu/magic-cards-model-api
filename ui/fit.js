@@ -42,6 +42,22 @@ export function fitCardWidth({ width, height, count, tapped = 0, depths = [], ga
   return { cardWidth: Math.max(floor, whole(Math.min(byWidth, byHeight))), scroll };
 }
 
+/** The smallest a shared floor may get on a very short window - below this
+ * the board scrolls inside itself rather than drawing unreadable slivers. */
+export const MIN_FLOOR_WIDTH = 20;
+
+/**
+ * The floor width every one of a board's `rows` card rows shares, given the
+ * `height` the board has left for cards once its info rows, gaps, row padding
+ * and captions are taken off: `floor` on any window with room for one card
+ * that wide per row, and on a short one (a phone in landscape) the widest
+ * card for which one per row still fits `height` - never below `minimum`.
+ */
+export function fitFloor({ height, rows, floor = MIN_CARD_WIDTH, minimum = MIN_FLOOR_WIDTH }) {
+  if (!(rows > 0)) return floor;
+  return Math.min(floor, Math.max(minimum, whole(height / rows / CARD_ASPECT)));
+}
+
 // Floored to a whole pixel, so rounding can never push the last card over the
 // edge - with a hair of tolerance, so an exact fit is not lost to float error.
 function whole(value) {

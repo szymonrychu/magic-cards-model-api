@@ -243,14 +243,19 @@ h3 { font-size: 14px; }
   grid-template-columns: minmax(0, 1fr) 192px 340px;
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas: "board zones top" "board zones banner" "board zones side";
+  /* `dvh` where the browser has it: a phone's `100vh` is the height with its
+     address bar hidden, which is taller than the window it actually shows. */
   height: 100vh;
+  height: 100dvh;
   gap: 8px;
   padding: 8px;
   /* A reserved strip along the very top of the viewport, exclusively for
      `.game-toolbar` below - nothing in the grid (the board, the zone ribbon,
      `#topbar`'s own turn/phase/AI content) is ever laid out under it, at any
      width, so the fixed toolbar can never cover something a player is trying
-     to read or click. */
+     to read or click. On a landscape window below 1100px the strip is the
+     control column's first grid row instead (the media blocks at the end of
+     this file), so the board there keeps the full height. */
   padding-top: 52px;
 }
 
@@ -258,9 +263,8 @@ h3 { font-size: 14px; }
    at every width - `position: fixed` is what makes "every width" true for
    free: it is placed against the viewport, not against `#game`'s own grid,
    so it holds the same corner whether that grid is the three-column desktop
-   layout or the narrow-width single-column stack, and it survives the page
-   scrolling in the latter. `#game`'s own `padding-top` above reserves the
-   strip this sits in.
+   layout, the two-column landscape one or the single-column portrait stack.
+   `#game`'s own `padding-top` above reserves the strip this sits in.
 
    `flex-wrap: wrap` with `justify-content: flex-end` rather than a fixed
    `nowrap` row: an armed Concede's "click again to confirm" label is the one
@@ -276,7 +280,10 @@ h3 { font-size: 14px; }
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  max-width: calc(100vw - 16px);
+  /* `--toolbar-max` is set by the layouts that reserve the strip above the
+     control column only (a phone in landscape, below) - there the toolbar
+     wraps inside that column rather than reaching over the board. */
+  max-width: var(--toolbar-max, calc(100vw - 16px));
 }
 
 /* The ribbon's top block. A column rather than a bar now that it is 340px
@@ -357,8 +364,11 @@ h3 { font-size: 14px; }
    inside itself, because a row that collapsed once painted over the row
    beneath and swallowed its clicks. In the browser pass that put a Forest on
    top of the casting strip's mode chips and a real click landed on the
-   Forest, so Kozilek's Command could not be cast at all. Only on a window too
-   short for seven floor-height rows does the board scroll, inside itself. */
+   Forest, so Kozilek's Command could not be cast at all. The floor itself drops
+   on a window too short for seven 44px-wide cards (`render/board.js`'s
+   `fitBoardFloor` writes `--card-floor` below), so a phone in landscape still
+   fits all seven rows; only past `ui/fit.js`'s smallest floor does the board
+   scroll, inside itself. */
 #mtg-board {
   grid-area: board;
   display: flex;
@@ -371,6 +381,11 @@ h3 { font-size: 14px; }
   padding: 8px;
   overflow-x: hidden;
   overflow-y: auto;
+  /* The card floor every row shares and the rows' own padding. The floor is
+     44px here and is lowered by `render/board.js`'s `fitBoardFloor` (inline,
+     on this element) when the board is too short for seven such cards. */
+  --card-floor: 44px;
+  --row-pad: 4px;
 }
 
 .info-row {
@@ -472,7 +487,8 @@ h3 { font-size: 14px; }
    `render/board.js` sets from `ui/fit.js` after every render and on every
    resize - the largest width at which every card, tapped ones standing in a
    landscape box and piles with their tuck offsets, fits the row's width and
-   height. Below the 44px floor the cards stop shrinking and the row scrolls
+   height. Below the floor (44px, or the lower
+   `--card-floor` of a short board - see `#mtg-board`) the cards stop shrinking and the row scrolls
    sideways (`overflow-x: auto`).
 
    The one-card floor (`min-height`) stays: a row that collapsed once painted
@@ -489,8 +505,8 @@ h3 { font-size: 14px; }
   align-items: flex-start;
   align-content: flex-start;
   min-width: 0;
-  min-height: calc(44px * 88 / 63 + 8px);
-  padding: 4px;
+  min-height: calc(var(--card-floor) * 88 / 63 + 2 * var(--row-pad));
+  padding: var(--row-pad);
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -506,7 +522,7 @@ h3 { font-size: 14px; }
    stands sideways in the left padding rather than taking a card's room. */
 #mtg-board > #stack-row {
   position: relative;
-  min-height: calc(44px * 88 / 63 + 8px + 16px);
+  min-height: calc(var(--card-floor) * 88 / 63 + 2 * var(--row-pad) + 16px + 2px);
   padding-left: 20px;
 }
 #stack-row::before {
@@ -1261,7 +1277,7 @@ h3 { font-size: 14px; }
   position: fixed;
   z-index: 50;
   min-width: 168px;
-  /* Narrow windows (the 1100px breakpoint stacks the grid) must not get a
+  /* Narrow windows (a phone, upright or on its side) must not get a
      menu wider than the window; `anchoredPosition` clamps `left` against the
      measured width, and this is what keeps that width sane in the first
      place. An ability's full oracle text wraps rather than widening it. */
@@ -1843,26 +1859,75 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
   #game { grid-template-columns: minmax(0, 1fr) 112px 340px; }
 }
 
+/* Below 1100px there is no room for three columns, and the page still never
+   scrolls: every layout here is exactly one viewport tall, and whatever does
+   not fit scrolls inside its own region.
+
+   Landscape (a phone on its side, a small tablet): two columns. The board
+   keeps the whole left side, full height, and everything else stacks in the
+   control column on the right - the turn block, the banners, the zones lying
+   down as a horizontal strip, then the side panel taking the rest. The strip
+   the fixed toolbar sits in is reserved in that column only (its first grid
+   row), and `--toolbar-max` wraps the toolbar inside the column, so on a
+   390px-tall phone the board does not give up 52px to three buttons. */
 @media (max-width: 1100px) {
-  /* Too narrow for a ribbon beside the board, so it goes back to a stack -
-     and the turn block goes back to being a bar, since it now has the whole
-     width again. The zones lie down into a horizontal strip and stay directly
-     under the board, still opponent-first: each zone scrolls inside itself,
-     so the page never grows sideways. */
   #game {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto auto;
-    grid-template-areas: "top" "banner" "board" "zones" "side";
-    height: auto;
+    --side-w: clamp(240px, 32vw, 320px);
+    --toolbar-max: var(--side-w);
+    --strip: 76px;
+    --zones-cap: 30%;
+    grid-template-columns: minmax(0, 1fr) var(--side-w);
+    /* `fit-content()`, not `auto`: the turn block and the zones take what
+       they need up to a cap and scroll inside themselves past it, so the
+       side panel - the pass and priority controls - always keeps the rest. */
+    grid-template-rows: var(--strip) fit-content(35%) auto fit-content(var(--zones-cap)) minmax(0, 1fr);
+    grid-template-areas: "board ." "board top" "board banner" "board zones" "board side";
+    padding-top: 8px;
   }
-  /* The grid no longer gives the board a height of its own, and its rows are
-     fixed shares of one - so it takes a viewport's worth itself. */
-  #mtg-board { height: calc(100vh - 60px); }
   #zone-ribbon { flex-direction: row; overflow-x: auto; }
-  .zone-pile { flex: 1 1 0; min-width: 96px; max-height: 168px; }
+  .zone-pile { flex: 1 1 0; min-width: 96px; }
   .zone-pile.empty { flex: 0 1 auto; }
-  #topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 14px; }
+  #topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-height: 0; overflow-y: auto; }
   .topbar-right { margin-left: auto; }
   .card-preview { right: 14px; }
   .deck-pickers { grid-template-columns: 1fr; }
+}
+
+/* Portrait (a phone upright): one column - the toolbar strip across the top
+   as on a desktop, the turn block, the board taking what is left, then the
+   zones and the side panel side by side in a bounded bottom band that scrolls
+   inside itself. */
+@media (max-width: 1100px) and (max-aspect-ratio: 1/1) {
+  #game {
+    --toolbar-max: calc(100vw - 16px);
+    grid-template-columns: minmax(0, 112px) minmax(0, 1fr);
+    grid-template-rows: fit-content(25%) auto minmax(0, 1fr) minmax(0, 26%);
+    grid-template-areas: "top top" "banner banner" "board board" "zones side";
+    padding-top: 52px;
+  }
+  #zone-ribbon { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+  .zone-pile { flex: 1 1 auto; min-width: 0; }
+  /* One line each, scrolling sideways: at phone width a wrapped phase track
+     and a wrapped info row cost the board two card rows' worth of height. */
+  #phase-track { flex-wrap: nowrap; overflow-x: auto; }
+  #mtg-board > .info-row { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+}
+
+/* Phone-sized buttons in the fixed toolbar, so an armed Concede's longer
+   label still leaves the three on one line at phone width (and two inside
+   the landscape control column) rather than growing down over the grid. */
+@media (max-height: 560px), (max-width: 600px) {
+  .game-toolbar button { padding: 2px 8px; font-size: 12px; }
+}
+
+/* A short window - every phone in landscape - tightens the board's own
+   spacing, so the seven rows keep as much of the height as there is. */
+@media (max-height: 560px) {
+  #game { gap: 4px; padding-inline: 4px; padding-bottom: 4px; --strip: 56px; --zones-cap: 20%; }
+  #phase-track { flex-wrap: nowrap; overflow-x: auto; }
+  #mtg-board { gap: 2px; padding: 3px; --row-pad: 2px; }
+  #mtg-board > .info-row { padding: 1px 8px; gap: 8px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; font-size: 12px; }
+  .info-row .life { font-size: 14px; }
+  #topbar { padding: 4px 8px; }
+  #side-panel > div { padding: 6px 8px; }
 }

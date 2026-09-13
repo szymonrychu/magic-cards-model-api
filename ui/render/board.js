@@ -32,7 +32,7 @@ import { activeSlotIndex, candidateIds } from "../targeting.js";
 import { targetSlotIndex } from "../actions.js";
 import { manaPoolNodes } from "../symbols.js";
 import { opponentOf } from "../combat.js";
-import { fitCardWidth } from "../fit.js";
+import { fitCardWidth, fitFloor } from "../fit.js";
 
 /** The size class of every card on the seven board rows - sized from the
  * row's `--card-w` in `style.css`, not a fixed pixel width. */
@@ -192,9 +192,10 @@ function footprint(el) {
 
 /** Measure one board row and set its `--card-w` from `ui/fit.js`, toggling
  * `.fit-scroll` when even the floor width does not fit. `reserveY` is height
- * inside the row that is not card (a stack card's caption). A row with no
- * layout box yet (hidden, or not in a rendering document) is left alone. */
-export function fitBoardRow(row, reserveY) {
+ * inside the row that is not card (a stack card's caption), and `floor` the
+ * board's shared floor from `fitBoardFloor` (44px when omitted). A row with
+ * no layout box yet (hidden, or not in a rendering document) is left alone. */
+export function fitBoardRow(row, reserveY, floor) {
   if (!row || !row.clientWidth || !row.clientHeight) return null;
   const style = typeof getComputedStyle === "function" ? getComputedStyle(row) : null;
   const prints = [...row.children].map(footprint);
@@ -205,12 +206,52 @@ export function fitBoardRow(row, reserveY) {
     tapped: prints.filter((p) => p.tapped).length,
     depths: prints.map((p) => p.depth),
     gap: pixels(style, "columnGap"),
+    floor,
   });
   if (row.style && typeof row.style.setProperty === "function") {
     row.style.setProperty("--card-w", `${fit.cardWidth}px`);
   }
   row.classList.toggle("fit-scroll", fit.scroll);
   return fit;
+}
+
+/** The card floor every row of `board` shares, written as the board's
+ * `--card-floor` (the rows' `min-height` in `style.css`). It is the height the
+ * board has left once its other children, the gaps between them, and each
+ * card row's padding, borders and reserved caption (`fitted`, row to
+ * `reserveY`) are taken off, split across the card rows - so on a window too
+ * short for seven 44px-wide cards (a phone in landscape) the floor drops and
+ * every row still fits rather than the board scrolling. A board with no
+ * layout box yet is left alone and the rows keep the 44px default. */
+export function fitBoardFloor(board, fitted) {
+  if (!board || !board.clientHeight) return undefined;
+  const reserves = new Map(fitted);
+  const style = typeof getComputedStyle === "function" ? getComputedStyle(board) : null;
+  const kids = [...(board.children || [])].filter((kid) => !kid.hidden);
+  let height =
+    board.clientHeight -
+    pixels(style, "paddingTop") -
+    pixels(style, "paddingBottom") -
+    pixels(style, "rowGap") * Math.max(0, kids.length - 1);
+  let rows = 0;
+  for (const kid of kids) {
+    if (!reserves.has(kid)) {
+      height -= kid.offsetHeight || 0;
+      continue;
+    }
+    const own = typeof getComputedStyle === "function" ? getComputedStyle(kid) : null;
+    rows += 1;
+    height -=
+      Math.max(0, (kid.offsetHeight || 0) - (kid.clientHeight || 0)) +
+      pixels(own, "paddingTop") +
+      pixels(own, "paddingBottom") +
+      reserves.get(kid);
+  }
+  const floor = fitFloor({ height, rows });
+  if (board.style && typeof board.style.setProperty === "function") {
+    board.style.setProperty("--card-floor", `${floor}px`);
+  }
+  return floor;
 }
 
 /** One object on the stack, drawn as the card it is (a spell's printing, an
@@ -441,8 +482,10 @@ export function mountBoard(root, store, handlers) {
     [els.myLands, 0],
     [els.myHand, 0],
   ];
+  const board = $("#mtg-board");
   const fitAll = () => {
-    for (const [row, reserveY] of fitted) fitBoardRow(row, reserveY);
+    const floor = fitBoardFloor(board, fitted);
+    for (const [row, reserveY] of fitted) fitBoardRow(row, reserveY, floor);
   };
   // A window resize, the side panel growing, `#permitted-row` appearing: any
   // of them changes a row's box without a render, so the rows are refitted
@@ -450,7 +493,6 @@ export function mountBoard(root, store, handlers) {
   let observer = null;
   if (typeof ResizeObserver === "function") {
     observer = new ResizeObserver(fitAll);
-    const board = $("#mtg-board");
     if (board) observer.observe(board);
     for (const [row] of fitted) observer.observe(row);
   }

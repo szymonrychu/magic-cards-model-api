@@ -115,6 +115,32 @@ def test_a_row_too_short_for_the_floor_still_gets_the_floor() -> None:
     assert result == {"cardWidth": 44, "scroll": False}
 
 
+def floor(**kwargs: object) -> int:
+    return run_module("fit.js", "m.fitFloor(args)", args=kwargs)
+
+
+def test_a_board_tall_enough_for_seven_floor_cards_keeps_the_readable_floor() -> None:
+    assert floor(height=1000, rows=7) == 44
+
+
+def test_a_short_board_lowers_the_floor_so_all_seven_rows_fit_its_height() -> None:
+    """A landscape phone has about 250px for seven rows: seven 44px-wide cards
+    are 430px tall, so the shared floor drops until one card per row fits."""
+    got = floor(height=294, rows=7)
+    assert got == 30
+    assert 7 * got * ASPECT <= 294
+    assert 7 * (got + 1) * ASPECT > 294
+
+
+def test_the_floor_never_drops_below_the_smallest_card() -> None:
+    assert floor(height=50, rows=7) == run_module("fit.js", "m.MIN_FLOOR_WIDTH")
+    assert run_module("fit.js", "m.MIN_FLOOR_WIDTH") == 20
+
+
+def test_a_board_with_no_rows_keeps_the_readable_floor() -> None:
+    assert floor(height=0, rows=0) == 44
+
+
 def test_the_css_tuck_offsets_scale_with_the_same_ratios_fit_js_uses() -> None:
     """`fit.js` sizes a pile with `TUCK_X`/`TUCK_Y`, and `style.css` draws the
     pile - the two have to be the same numbers or a fitted pile overhangs."""
