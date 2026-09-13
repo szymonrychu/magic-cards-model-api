@@ -13,6 +13,7 @@ from mtg_agent.wrapper.session import (
     State,
     new_turn_id,
 )
+from mtg_agent.wrapper.transcript import turn_marker
 from mtg_agent.wrapper.turns import Store, TurnState
 
 
@@ -171,7 +172,8 @@ def test_submit_is_a_bracketed_paste_then_a_separate_carriage_return(monkeypatch
     manager = ready_manager(monkeypatch, proc)
     try:
         turn_id = manager.submit("play a land")
-        assert proc.writes == [b"\x1b[200~play a land\x1b[201~", b"\r"]
+        marker = turn_marker(turn_id)
+        assert proc.writes == [f"\x1b[200~play a land\n\n{marker}\x1b[201~".encode(), b"\r"]
         gap = proc.write_times[1] - proc.write_times[0]
         assert gap >= 0.05, "one write does not submit; the pause is required"
         assert manager.state is State.BUSY

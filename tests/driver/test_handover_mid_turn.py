@@ -80,11 +80,23 @@ def test_a_release_mid_turn_delivers_the_handover_turn_and_writes_a_done_marker(
         assert handover_turn != turn_zero
         assert manager.store.get(turn_zero).state is TurnState.FAILED
 
-        # claude finishes the handover turn, and its Stop hook reports it.
-        internal.post(
-            "/internal/turn-complete", json={"finalText": "handed over", "stopReason": "end_turn"}
-        )
+        # A Stop hook for the interrupted turn 0 lands late, after the
+        # escalation: it must not end the handover turn or write the marker.
         marker = world.settings.workspace / handover.MARKER_NAME
+        internal.post(
+            "/internal/turn-complete",
+            json={"turnId": turn_zero, "finalText": "late", "stopReason": "end_turn"},
+        )
+        time.sleep(0.3)
+        assert manager.current_turn_id == handover_turn
+        assert manager.store.get(handover_turn).state is TurnState.RUNNING
+        assert not marker.exists()
+
+        # claude finishes the handover turn, and its own Stop hook reports it.
+        internal.post(
+            "/internal/turn-complete",
+            json={"turnId": handover_turn, "finalText": "handed over", "stopReason": "end_turn"},
+        )
         wait_for(marker.exists)
         status = json.loads(marker.read_text())
         assert status["state"] == "done"

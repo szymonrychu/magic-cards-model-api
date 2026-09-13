@@ -133,3 +133,21 @@ def test_main_exits_zero_even_when_everything_fails(tmp_path):
         timeout=60,
     )
     assert proc.returncode == 0
+
+
+def test_the_result_names_the_turn_the_transcript_says_stopped(tmp_path):
+    from mtg_agent.wrapper.transcript import turn_marker
+
+    path = tmp_path / "t.jsonl"
+    lines = [
+        {"type": "user", "message": {"content": f"go\n\n{turn_marker('turn-abc')}"}},
+        {"type": "assistant", "message": {"content": [], "usage": {}, "stop_reason": "end_turn"}},
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    result = stop_hook.build_result(payload(transcript_path=str(path)), tmp_path / "absent.json")
+    assert result["turnId"] == "turn-abc"
+
+
+def test_the_result_names_no_turn_without_a_transcript(tmp_path):
+    result = stop_hook.build_result(payload(), tmp_path / "absent.json")
+    assert result["turnId"] == ""

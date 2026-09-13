@@ -15,8 +15,19 @@ not reset the accumulator.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+#: The line `Manager.submit` appends to every turn's prompt, naming the turn.
+#: The Stop hook payload carries no turn id at all, so this is how the hook
+#: says which turn stopped: the last marker in a prompt claude took in.
+TURN_MARKER = "<!-- wrapper turn: {turn_id} -->"
+TURN_MARKER_RE = re.compile(r"<!-- wrapper turn: (turn-[0-9a-z]+) -->")
+
+
+def turn_marker(turn_id: str) -> str:
+    return TURN_MARKER.format(turn_id=turn_id)
 
 
 @dataclass
@@ -68,6 +79,41 @@ def last_assistant(path: Path) -> tuple[str, dict | None, str]:
         if joined:
             text = joined
     return text, usage, stop
+
+
+def _prompt_texts(line: dict) -> list[str]:
+    """The prompt text a line gave claude: a typed or pasted `user` prompt
+    (string content, or its text blocks - never a tool result), or a prompt
+    queued mid-turn and taken in (`attachment` of type `queued_command`). An
+    `enqueue` `queue-operation` is not one: the turn running then never saw it."""
+    if line.get("type") == "user":
+        content = (line.get("message") or {}).get("content")
+    elif line.get("type") == "attachment":
+        attachment = line.get("attachment") or {}
+        if attachment.get("type") != "queued_command":
+            return []
+        content = attachment.get("prompt")
+    else:
+        return []
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, list):
+        return [
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+    return []
+
+
+def last_turn_marker(path: Path) -> str:
+    """The turn id of the last `TURN_MARKER` in a prompt claude took in, or ""."""
+    found = ""
+    for line in _lines(path):
+        for text in _prompt_texts(line):
+            for match in TURN_MARKER_RE.finditer(text):
+                found = match.group(1)
+    return found
 
 
 def sum_turn_tokens(path: Path) -> list[TurnTokens]:

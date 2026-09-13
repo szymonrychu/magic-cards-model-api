@@ -22,6 +22,7 @@ from .metrics import Metrics
 from .probe import DEFAULT_PROBE_TEXT, ProbeTracker, ProbeUnavailableError
 from .pty_proc import ClaudeProcess, spawn_claude
 from .ring import Ring
+from .transcript import turn_marker
 from .turns import Record, Store
 
 log = logging.getLogger("wrapper.session")
@@ -154,6 +155,10 @@ class Manager:
         self._current_started = 0.0
         self._timer: threading.Timer | None = None
         self._interrupt_timer: threading.Timer | None = None
+        #: True from an interrupt escalation until a completion is accepted:
+        #: while it holds, a completion naming no turn may be the escalated
+        #: turn's late Stop hook, so it is not trusted (`complete`).
+        self._escalated = False
         self._stall_suspected_since: float | None = None
         self._fatal_turn: str | None = None
         self._last_fatal: str = ""
@@ -411,11 +416,14 @@ class Manager:
         self.metrics.turn_in_flight.set(1)
 
         seq = self.submit_seq
+        # The turn's marker rides on its prompt so the Stop hook can say which
+        # turn stopped (`transcript.last_turn_marker`, checked in `complete`).
+        stamped = f"{text}\n\n{turn_marker(turn_id)}"
         # Serialise against any other PTY writer (probe, interrupt) so nothing
         # lands inside the paste block or the delay window.
         with self._pty_lock:
             try:
-                proc.write((seq.paste_start + text + seq.paste_end).encode())
+                proc.write((seq.paste_start + stamped + seq.paste_end).encode())
                 time.sleep(self.settings.submit_delay)
                 proc.write(seq.submit.encode())
             except OSError as exc:
@@ -452,11 +460,29 @@ class Manager:
         log.warning("turn stall suspected turn_id=%s", turn_id)
 
     def complete(self, result: dict[str, Any]) -> None:
+        """Complete the turn in flight - only if this is its Stop hook.
+
+        `turnId` is the turn the hook read off the transcript. A different
+        turn's id is a stale completion (an escalated or failed turn's Stop
+        hook landing late) and is ignored. No id at all is trusted, as it
+        always was, except after an escalation: then it may be the escalated
+        turn's own late hook, and ending the next turn on it (the handover
+        turn) would report a handover that never ran."""
+        claimed = str(result.get("turnId") or "")
         with self._lock:
             turn_id = self._current
             if turn_id is None:
                 log.warning("turn-complete with no turn in flight, ignoring")
                 return
+            stale = (claimed and claimed != turn_id) or (not claimed and self._escalated)
+            if stale:
+                log.warning(
+                    "stale turn-complete ignored: it is for turn %s, and turn_id=%s is in flight",
+                    claimed or "(unnamed, after an interrupt escalation)",
+                    turn_id,
+                )
+                return
+            self._escalated = False
             started = self._current_started
             self._cancel_timer_locked()
             self._current = None
@@ -563,7 +589,7 @@ class Manager:
             self._interrupt_timer = None
             proc = self._proc
         log.warning(
-            "interrupt escalation turn_id=%s: the turn did not end within %.0fs of the "
+            "interrupt escalation turn_id=%s: the turn did not end within %gs of the "
             "interrupt, and claude runs no Stop hook for an interrupted turn; writing a "
             "second interrupt and ending the turn",
             turn_id,
@@ -579,13 +605,14 @@ class Manager:
             if self._current != turn_id:
                 return
             self._current = None
+            self._escalated = True
             self._cancel_timer_locked()
             self._stall_suspected_since = None
             if self._state is not State.DEAD:
                 self._state = State.READY
         self._finish_failed(
             turn_id,
-            f"interrupted: the turn had not ended {self.settings.interrupt_settle:.0f}s "
+            f"interrupted: the turn had not ended {self.settings.interrupt_settle:g}s "
             "after the interrupt",
         )
 

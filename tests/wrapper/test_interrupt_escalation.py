@@ -118,3 +118,78 @@ def test_an_interrupt_with_no_turn_in_flight_escalates_nothing(monkeypatch):
 
 def test_the_settle_time_defaults_to_twenty_seconds():
     assert fast_settings().interrupt_settle == 20.0
+
+
+# ---- a late Stop hook for the escalated turn -------------------------------------
+
+
+def escalated_then_next_turn(monkeypatch, caplog=None):
+    """Turn A interrupted and escalated, then turn B submitted."""
+    proc = FakeProc(b"ready")
+    delivered: list = []
+    manager = ready_manager(monkeypatch, proc, settled())
+    manager.on_turn_done = delivered.append
+    first = manager.submit("play the game")
+    manager.interrupt()
+    wait_for(lambda: delivered)
+    second = manager.submit("hand over now")
+    return manager, proc, delivered, first, second
+
+
+def test_every_submitted_turn_carries_its_own_marker(monkeypatch):
+    from mtg_agent.wrapper.transcript import turn_marker
+
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc, settled())
+    try:
+        turn_id = manager.submit("play a land")
+        pasted = proc.writes[0].decode()
+        assert "play a land" in pasted
+        assert turn_marker(turn_id) in pasted
+        assert manager.store.get(turn_id).text == "play a land"
+    finally:
+        manager.shutdown()
+
+
+def test_a_late_stop_hook_for_the_escalated_turn_never_ends_the_next_one(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger="wrapper.session")
+    manager, _, delivered, first, second = escalated_then_next_turn(monkeypatch)
+    try:
+        manager.complete({"turnId": first, "finalText": "late", "stopReason": "end_turn"})
+        assert manager.current_turn_id == second
+        assert manager.state is State.BUSY
+        assert manager.store.get(second).state is TurnState.RUNNING
+        assert manager.store.get(first).state is TurnState.FAILED
+        assert [r.id for r in delivered] == [first]
+        stale = [r.getMessage() for r in caplog.records if "stale" in r.getMessage()]
+        assert len(stale) == 1
+        assert first in stale[0]
+
+        manager.complete({"turnId": second, "finalText": "handed over"})
+        assert manager.store.get(second).state is TurnState.COMPLETE
+        assert [r.id for r in delivered] == [first, second]
+    finally:
+        manager.shutdown()
+
+
+def test_an_unclaimed_completion_after_an_escalation_is_not_trusted(monkeypatch):
+    manager, _, delivered, first, second = escalated_then_next_turn(monkeypatch)
+    try:
+        manager.complete({"finalText": "who knows"})
+        assert manager.current_turn_id == second
+        assert manager.store.get(second).state is TurnState.RUNNING
+        manager.complete({"turnId": second, "finalText": "handed over"})
+        assert manager.store.get(second).state is TurnState.COMPLETE
+    finally:
+        manager.shutdown()
+
+
+def test_an_unclaimed_completion_is_trusted_when_nothing_was_escalated(monkeypatch):
+    proc = FakeProc(b"ready")
+    manager = ready_manager(monkeypatch, proc, settled())
+    try:
+        turn_id = manager.submit("go")
+        manager.complete({"finalText": "done"})
+        assert manager.store.get(turn_id).state is TurnState.COMPLETE
+    finally:
+        manager.shutdown()

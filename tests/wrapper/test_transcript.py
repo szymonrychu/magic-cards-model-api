@@ -117,3 +117,57 @@ def test_sum_turn_tokens_groups_by_model(tmp_path):
 
 def test_sum_turn_tokens_on_missing_file_is_empty(tmp_path):
     assert sum_turn_tokens(tmp_path / "nope.jsonl") == []
+
+
+# ---- which turn stopped ---------------------------------------------------------
+
+
+def test_the_turn_marker_names_the_turn_and_is_found_again():
+    from mtg_agent.wrapper.transcript import TURN_MARKER_RE, turn_marker
+
+    marker = turn_marker("turn-dlef7p7my5b1")
+    assert "turn-dlef7p7my5b1" in marker
+    assert TURN_MARKER_RE.search(f"hand over now\n\n{marker}").group(1) == "turn-dlef7p7my5b1"
+
+
+def test_last_turn_marker_reads_the_last_prompt_claude_took_in(tmp_path):
+    from mtg_agent.wrapper.transcript import last_turn_marker, turn_marker
+
+    path = write_jsonl(
+        tmp_path / "t.jsonl",
+        [
+            {"type": "user", "message": {"content": f"play\n\n{turn_marker('turn-a')}"}},
+            assistant(f"quoting {turn_marker('turn-echo')}"),
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "content": f"cat: {turn_marker('turn-tool')}"}
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {"content": [{"type": "text", "text": turn_marker("turn-b")}]},
+            },
+            {
+                "type": "attachment",
+                "attachment": {
+                    "type": "queued_command",
+                    "prompt": f"hand over\n\n{turn_marker('turn-c')}",
+                },
+            },
+            # Enqueued but not yet taken in: the turn that stopped never saw it.
+            {"type": "queue-operation", "operation": "enqueue", "content": turn_marker("turn-d")},
+            assistant("done"),
+        ],
+    )
+    assert last_turn_marker(path) == "turn-c"
+
+
+def test_last_turn_marker_is_empty_without_one(tmp_path):
+    from mtg_agent.wrapper.transcript import last_turn_marker
+
+    path = write_jsonl(tmp_path / "t.jsonl", [{"type": "user", "message": {"content": "go"}}])
+    assert last_turn_marker(path) == ""
+    assert last_turn_marker(tmp_path / "absent.jsonl") == ""

@@ -6,7 +6,10 @@ It reproduces only the three behaviours the wrapper actually depends on:
    refuses to accept input until it has seen Down then Enter;
 2. it accepts a bracketed-paste block followed by a separate CR;
 3. at end of "turn" it runs the Stop hook, feeding it a payload on stdin the
-   same shape the real binary uses.
+   same shape the real binary uses;
+4. it records each prompt in its transcript as a `user` line, as the real
+   binary does, so the hook can read which turn stopped from the wrapper's
+   turn marker - which, like the real model, it does not repeat in its reply.
 
 It is a test double for a subprocess, not for the rules engine: it never
 touches a game.
@@ -16,16 +19,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
 PASTE_START = "\x1b[200~"
 PASTE_END = "\x1b[201~"
+TURN_MARKER = re.compile(r"\s*<!-- wrapper turn: turn-[0-9a-z]+ -->")
 
 
 def main() -> None:
     hook = os.environ["STUB_HOOK_COMMAND"]
     transcript = os.environ.get("STUB_TRANSCRIPT", "")
+    base = open(transcript, encoding="utf-8").read() if transcript else ""  # noqa: SIM115
     print("Bypass Permissions mode", flush=True)
     print("  Yes, I accept / No, exit", flush=True)
 
@@ -49,12 +55,16 @@ def main() -> None:
             text = buffer[start : buffer.find(PASTE_END)]
             buffer = ""
             print(f"working on: {text}", flush=True)
+            if transcript:
+                prompt = json.dumps({"type": "user", "message": {"content": text}})
+                with open(transcript, "w", encoding="utf-8") as handle:
+                    handle.write(prompt + "\n" + base)
             payload = {
                 "session_id": "stub-session",
                 "transcript_path": transcript,
                 "cwd": os.getcwd(),
                 "hook_event_name": "Stop",
-                "last_assistant_message": f"ACK:{text}",
+                "last_assistant_message": f"ACK:{TURN_MARKER.sub('', text)}",
             }
             subprocess.run(hook, shell=True, input=json.dumps(payload).encode(), check=False)
             print("turn done", flush=True)
