@@ -417,6 +417,11 @@ SCRY = {
     "source": "Preordain",
     "prompt": "Scry 3.",
     "amount": 3,
+    # A real scry is CR 107.1c's "any number of them" (`exact=False`), never
+    # `BASE`'s default `True` - L1a's split-count check would otherwise read
+    # this fixture as a mandatory "exactly 3" and refuse the one- and
+    # two-card answers the drag tests below post.
+    "exact": False,
     "cards": ["a", "b", "c"],
     "card_labels": ["Opt", "Ponder", "Island"],
     "card_details": [_card("a", "Opt"), _card("b", "Ponder"), _card("c", "Island")],
@@ -670,6 +675,40 @@ def test_a_look_at_the_top_split_uses_the_payloads_own_lane_labels() -> None:
     assert result["labels"] == {"kept": "EXILED", "moved": "TOP OF YOUR LIBRARY"}
     assert result["posted"] == [{"moved": ["b"], "top_order": ["a", "c"]}]
     assert result["posted"][0] == _answer(SPLIT, result["draft"])
+
+
+# -- L1a: the window's own status line must state the count the engine
+# enforces (`pending.amount`/`.exact`), never leave a seat to guess it -----
+
+SPLIT_EXACT_ONE = {**SCRY, "cards": ["a", "b"], "amount": 1, "exact": True}
+SPLIT_UP_TO_ONE = {**SCRY, "amount": 1, "exact": False}
+
+
+def _status_text(pending: dict) -> str:
+    result = _run(
+        """
+        (() => {
+          const store = makeStore(baseApp(baseState({ pending_decision: P })));
+          mount(store, []);
+          store.set({});
+          return walkAll(WIN, hasClass("dw-status"))[0].textContent;
+        })()
+        """,
+        P=pending,
+    )
+    return str(result)
+
+
+def test_the_split_window_states_any_number_for_a_plain_scry() -> None:
+    assert "any number, including none" in _status_text(SCRY)
+
+
+def test_the_split_window_states_exactly_one_for_an_exact_split() -> None:
+    assert "exactly 1" in _status_text(SPLIT_EXACT_ONE)
+
+
+def test_the_split_window_states_up_to_one_for_a_ceiling_of_one() -> None:
+    assert "up to 1" in _status_text(SPLIT_UP_TO_ONE)
 
 
 def test_a_click_without_movement_is_not_a_drag() -> None:

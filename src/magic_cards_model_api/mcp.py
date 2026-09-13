@@ -1830,6 +1830,20 @@ def build_server(seats: Seats) -> MCPServer:
           ordered on top, or unchanged otherwise. Leaving `moved` empty is a
           real answer: it opts into nothing and is the decline.
 
+          **How many you must name is `pending_decision.exact`, the same
+          check a `choose_cards` answer is held to (CR 608.2d).** `True`
+          means exactly `pending_decision.amount` ids - Codecracker Hound's
+          "look at the top two cards of your library. Put one into your
+          hand and the other into your graveyard" offers no third option,
+          so `moved` must name exactly one. `False` means any number from
+          zero up to `pending_decision.amount` (CR 107.1c): a plain scry or
+          surveil's `amount` equals every card in `pending_decision.cards`
+          ("any number of them"), while Devourer of Destiny's "you may put
+          one of those cards back on top of your library" is `exact=False`
+          with `amount=1` - a real ceiling of one, never "any". `moved`'s
+          own `answer_with` template already states the count this
+          question enforces; `validate_answer` refuses `moved` outside it.
+
           **Where the two halves go is read off
           `pending_decision.moved_label` and `pending_decision.kept_label`,
           never off the kind.** They are short phrases in the asking card's
