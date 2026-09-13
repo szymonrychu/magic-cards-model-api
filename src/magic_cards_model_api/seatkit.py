@@ -160,25 +160,7 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-19"
-#: `seatkit-19` is an **additive request** change and an **additive
-#: response** one: the engine's new `ASSIGN_COMBAT_DAMAGE` decision kind (CR
-#: 703.4k, 510.1c, 702.19b - how a blocked attacker with two or more blockers,
-#: or trample with power beyond their lethal damage, divides its combat
-#: damage) is now answerable at all. `decide` gained a `damage` parameter
-#: (a JSON list of `{"target": ..., "amount": ...}` pairs), `seat_cli decide`
-#: gained the matching `--damage` flag, and a `pending_decision` of this kind
-#: now carries `lethal_damage` (aligned with `targets`) and `trample`
-#: alongside the fields every other kind already had.
-#:
-#: A bump, the same reasoning as `seatkit-17`/`seatkit-18`: an MCP process
-#: built before it has no `damage` parameter to send, so a seat asked to
-#: divide combat damage between two blockers - or to trample past them - has
-#: no way to answer at all and the game sits paused on the question until it
-#: times out. An older build meeting a `pending_decision` of this new kind
-#: reads it as an unrecognised kind, which is safe (it simply cannot answer
-#: it), but only this build's prose says what `lethal_damage`/`trample` mean.
-#:
+PROTOCOL_VERSION = "seatkit-18"
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
 #: legal-action row of kind `equip`, and rows gaining `printed_cost`,
@@ -228,6 +210,16 @@ PROTOCOL_VERSION = "seatkit-19"
 #: marker now sees power, toughness, keywords, controller, player counters
 #: and the stack. An older process passes the new fields through untouched,
 #: so a seat on it simply does not see them.
+#:
+#: Battle 4 made combat damage assignment a decision (B4-06), also riding
+#: `seatkit-18`: the engine's `ASSIGN_COMBAT_DAMAGE` kind (CR 703.4k, 510.1c,
+#: 702.19b), asked when a blocked attacker has two or more blockers or
+#: trample with power past its blockers' lethal damage. `decide` gained a
+#: `damage` parameter (a JSON list of `{"target": ..., "amount": ...}`),
+#: `seat_cli decide` the matching `--damage` flag, and a `pending_decision`
+#: of this kind carries `lethal_damage` (aligned with `targets`) and
+#: `trample`. An older process has no `damage` parameter to send, so it
+#: cannot answer this kind and reads it as an unrecognised one.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
