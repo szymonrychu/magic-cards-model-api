@@ -204,7 +204,232 @@ def test_a_keyword_that_is_no_optional_additional_cost_is_refused(client, game):
     )
     assert body["allowed"] is False
     assert "Flashback" in body["reason"]
-    assert "Kicker" in body["reason"]
+    for keyword in ("Kicker", "Entwine", "Escalate", "Harmonize"):
+        assert keyword in body["reason"]
+
+
+# -- entwine, escalate and harmonize --------------------------------------------
+
+
+def lands(client, game: str, name: str, count: int) -> list[str]:
+    for _ in range(count):
+        add_card(client, game, name, "alice", "battlefield")
+    return [card["id"] for card in state(client, game)["battlefield"] if card["name"] == name]
+
+
+def offer(row: dict, keyword: str) -> dict:
+    (found,) = [entry for entry in row.get("optional_costs") or [] if entry["keyword"] == keyword]
+    return found
+
+
+def test_tooth_and_nail_row_offers_entwine(client, game):
+    lands(client, game, "Forest", 9)
+    add_card(client, game, "Tooth and Nail", "alice", "hand")
+
+    entwine = offer(cast_row(client, game, "Tooth and Nail"), "Entwine")
+    assert (entwine["rule"], entwine["cost"], entwine["repeatable"]) == ("CR 702.42a", "{2}", False)
+    assert entwine["affordable"] == "yes", entwine
+
+
+def test_entwined_tooth_and_nail_pays_the_entwine_cost_on_top(client, game):
+    """CR 702.42a: "You may choose all modes of this spell instead of just the
+    number specified. If you do, you pay an additional [cost].\""""
+    sources = lands(client, game, "Forest", 9)
+    add_card(client, game, "Tooth and Nail", "alice", "hand")
+    card = find(state(client, game)["hands"]["alice"], "Tooth and Nail")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        modes=[1, 2],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Entwine"}],
+        dry_run=True,
+    )
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{7}{G}{G}"
+
+
+def test_both_tooth_and_nail_modes_without_entwine_are_refused(client, game):
+    sources = lands(client, game, "Forest", 9)
+    add_card(client, game, "Tooth and Nail", "alice", "hand")
+    card = find(state(client, game)["hands"]["alice"], "Tooth and Nail")["id"]
+
+    body = cast(client, game, card, modes=[1, 2], mana_sources=sources, dry_run=True)
+    assert body["allowed"] is False
+    assert "too many modes" in body["reason"]
+
+
+def test_an_unaffordable_entwine_is_refused(client, game):
+    sources = lands(client, game, "Forest", 8)
+    add_card(client, game, "Tooth and Nail", "alice", "hand")
+    card = find(state(client, game)["hands"]["alice"], "Tooth and Nail")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        modes=[1, 2],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Entwine"}],
+    )
+    assert body["allowed"] is False
+    assert body["reason"] == "no combination of the available mana sources can pay {7}{G}{G}"
+
+
+def test_entwining_a_card_without_entwine_is_refused(client, game):
+    sources = lands(client, game, "Plains", 5)
+    add_card(client, game, "Blessed Alliance", "alice", "hand")
+    card = find(state(client, game)["hands"]["alice"], "Blessed Alliance")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        modes=[1, 2, 3],
+        targets=["alice"],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Entwine"}],
+        dry_run=True,
+    )
+    assert body["allowed"] is False
+    assert "no entwine cost" in body["reason"]
+
+
+def test_blessed_alliance_row_offers_escalate(client, game):
+    lands(client, game, "Plains", 4)
+    add_card(client, game, "Blessed Alliance", "alice", "hand")
+
+    escalate = offer(cast_row(client, game, "Blessed Alliance"), "Escalate")
+    assert (escalate["rule"], escalate["cost"]) == ("CR 702.120a", "{2}")
+    assert escalate["affordable"] == "yes", escalate
+
+
+def test_a_second_blessed_alliance_mode_pays_escalate(client, game):
+    """CR 702.120a: "For each mode you choose beyond the first as you cast this
+    spell, you pay an additional [cost]." Owed by choosing the mode, so it is
+    charged whether or not the request names it."""
+    sources = lands(client, game, "Plains", 4)
+    add_card(client, game, "Blessed Alliance", "alice", "hand")
+    card = find(state(client, game)["hands"]["alice"], "Blessed Alliance")["id"]
+
+    body = cast(client, game, card, modes=[1, 2], targets=["alice"], mana_sources=sources)
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{3}{W}"
+    client.post(f"/api/games/{game}/resolve-top")
+    assert life_of(state(client, game), "alice") == 24
+
+
+def test_an_unaffordable_escalate_is_refused(client, game):
+    sources = lands(client, game, "Plains", 3)
+    add_card(client, game, "Blessed Alliance", "alice", "hand")
+    card = find(state(client, game)["hands"]["alice"], "Blessed Alliance")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        modes=[1, 2],
+        targets=["alice"],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Escalate"}],
+    )
+    assert body["allowed"] is False
+    assert body["reason"] == "no combination of the available mana sources can pay {3}{W}"
+
+
+def test_collective_brutality_escalates_by_discarding_the_named_card(client, game):
+    sources = lands(client, game, "Swamp", 2)
+    add_card(client, game, "Collective Brutality", "alice", "hand")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    hand = state(client, game)["hands"]["alice"]
+    card = find(hand, "Collective Brutality")["id"]
+    bolt = find(hand, "Lightning Bolt")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        modes=[1, 3],
+        targets=["bob", "bob"],
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Escalate", "choosing": [bolt]}],
+    )
+    assert body["allowed"] is True, body
+    board = state(client, game)
+    assert find(board["graveyards"]["alice"], "Lightning Bolt")["id"] == bolt
+    client.post(f"/api/games/{game}/resolve-top")
+    assert life_of(state(client, game), "bob") == 18
+
+
+def test_roamers_routine_harmonize_row_offers_the_creature_tap(client, game):
+    lands(client, game, "Forest", 5)
+    add_card(client, game, "Roamer's Routine", "alice", "graveyard")
+    card = find(state(client, game)["graveyards"]["alice"], "Roamer's Routine")["id"]
+
+    (row,) = [
+        row
+        for row in legal_actions(client, game)
+        if row["kind"] == "cast" and row["card_id"] == card and row["keyword"] == "Harmonize"
+    ]
+    harmonize = offer(row, "Harmonize")
+    assert harmonize["rule"] == "CR 702.180b"
+    assert harmonize["repeatable"] is False
+
+
+def test_harmonize_taps_the_named_creature_to_reduce_the_cost(client, game):
+    """CR 702.180a: "its total cost is reduced by an amount of generic mana
+    equal to the tapped creature's power"; CR 702.180b: "You choose which
+    creature to tap as you choose to pay a spell's harmonize cost"."""
+    sources = lands(client, game, "Forest", 3)
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Roamer's Routine", "alice", "graveyard")
+    board = state(client, game)
+    bears = find(board["battlefield"], "Grizzly Bears")["id"]
+    card = find(board["graveyards"]["alice"], "Roamer's Routine")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        keyword="Harmonize",
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Harmonize", "choosing": [bears]}],
+    )
+    assert body["allowed"] is True, body
+    assert body["cost"] == "{2}{G}"
+    assert find(state(client, game)["battlefield"], "Grizzly Bears")["tapped"] is True
+
+
+def test_harmonize_without_a_creature_pays_the_whole_cost(client, game):
+    sources = lands(client, game, "Forest", 3)
+    add_card(client, game, "Roamer's Routine", "alice", "graveyard")
+    card = find(state(client, game)["graveyards"]["alice"], "Roamer's Routine")["id"]
+
+    body = cast(client, game, card, keyword="Harmonize", mana_sources=sources)
+    assert body["allowed"] is False
+    assert body["reason"] == "no combination of the available mana sources can pay {4}{G}"
+
+
+def test_harmonize_named_on_a_plain_cast_is_refused(client, game):
+    sources = lands(client, game, "Forest", 3)
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Roamer's Routine", "alice", "hand")
+    board = state(client, game)
+    bears = find(board["battlefield"], "Grizzly Bears")["id"]
+    card = find(board["hands"]["alice"], "Roamer's Routine")["id"]
+
+    body = cast(
+        client,
+        game,
+        card,
+        mana_sources=sources,
+        optional_costs=[{"keyword": "Harmonize", "choosing": [bears]}],
+        dry_run=True,
+    )
+    assert body["allowed"] is False
+    assert "not being cast using harmonize" in body["reason"]
 
 
 # -- both front ends ------------------------------------------------------------

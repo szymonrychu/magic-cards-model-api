@@ -290,7 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
             "the keyword from the cast row's own optional_costs: 'Kicker' kicks "
             "(CR 702.33a). A repeatable one takes a count ('Multikicker:2', "
             "'Replicate:3'), a gift names the opponent ('Gift:bob'), and a cost "
-            "naming objects takes their ids ('Blight:<creature id>')"
+            "naming objects takes their ids ('Blight:<creature id>'). 'Entwine' "
+            "chooses every mode (list them in --modes too, CR 702.42a); escalate "
+            "is charged per mode beyond the first (CR 702.120a) and "
+            "'Escalate:<card id>' names what it discards; a --keyword Harmonize "
+            "cast taps 'Harmonize:<creature id>' to cut its cost (CR 702.180a)"
         ),
     )
     priority_flag(cast)

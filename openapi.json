@@ -6850,7 +6850,7 @@
       },
       "OptionalCostChoice": {
         "additionalProperties": false,
-        "description": "One optional additional cost a cast pays (`CastRequest.optional_costs`).\n\n`keyword` is the cost's own keyword, case-insensitively: `Kicker` and\n`Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`\n(CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,\n`Casting.pay_offspring`), `Blight` (CR 701.68a's \"you may blight N\",\n`Casting.pay_blight`) and `Gift` (CR 702.174a, `Casting.pay_gift`) - every\noptional additional cost the engine charges.",
+        "description": "One optional cost a cast pays (`CastRequest.optional_costs`).\n\n`keyword` is the cost's own keyword, case-insensitively: `Kicker` and\n`Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`\n(CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,\n`Casting.pay_offspring`), `Blight` (CR 701.68a's \"you may blight N\",\n`Casting.pay_blight`), `Gift` (CR 702.174a, `Casting.pay_gift`),\n`Entwine` (CR 702.42a, `Casting.choose_modes(entwined=True)` - name every\nmode in `modes` too), `Escalate` (CR 702.120a, `Casting.pay_escalate` -\ncharged for every mode beyond the first whether or not it is named; name\nit to hand over the objects a non-mana escalate cost takes) and\n`Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a\n`keyword: Harmonize` cast taps to reduce its cost) - every optional cost\nchoice the engine charges.",
         "properties": {
           "choosing": {
             "anyOf": [

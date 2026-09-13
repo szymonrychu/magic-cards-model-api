@@ -633,14 +633,20 @@ class CastRequest(BoardRead):
 
 
 class OptionalCostChoice(RequestModel):
-    """One optional additional cost a cast pays (`CastRequest.optional_costs`).
+    """One optional cost a cast pays (`CastRequest.optional_costs`).
 
     `keyword` is the cost's own keyword, case-insensitively: `Kicker` and
     `Multikicker` (CR 702.33a/c, `Casting.pay_kicker`), `Replicate`
     (CR 702.56a, `Casting.pay_replicate`), `Offspring` (CR 702.175a,
     `Casting.pay_offspring`), `Blight` (CR 701.68a's "you may blight N",
-    `Casting.pay_blight`) and `Gift` (CR 702.174a, `Casting.pay_gift`) - every
-    optional additional cost the engine charges."""
+    `Casting.pay_blight`), `Gift` (CR 702.174a, `Casting.pay_gift`),
+    `Entwine` (CR 702.42a, `Casting.choose_modes(entwined=True)` - name every
+    mode in `modes` too), `Escalate` (CR 702.120a, `Casting.pay_escalate` -
+    charged for every mode beyond the first whether or not it is named; name
+    it to hand over the objects a non-mana escalate cost takes) and
+    `Harmonize` (CR 702.180a/b, `Casting.pay_harmonize` - the creature a
+    `keyword: Harmonize` cast taps to reduce its cost) - every optional cost
+    choice the engine charges."""
 
     keyword: str
     times: int = 1
@@ -649,7 +655,9 @@ class OptionalCostChoice(RequestModel):
     other."""
     choosing: list[UUID] | None = None
     """The objects the cost names: a kicker or replicate cost that is not only
-    mana, and the one creature a blight cost puts its -1/-1 counters on."""
+    mana, the one creature a blight cost puts its -1/-1 counters on, the cards
+    a non-mana escalate cost takes (one set per mode beyond the first), and the
+    at most one creature harmonize taps."""
     opponent: str | None = None
     """The opponent a gift is promised to (CR 702.174a)."""
 
@@ -2172,7 +2180,7 @@ class OptionalCostView(BaseModel):
     cost: str | None = None
     """The cost as printed after the keyword (`{4}` for Burst Lightning's
     kicker), or `blight N`; `None` for gift, whose cost is choosing an
-    opponent."""
+    opponent, and for harmonize, whose choice is the creature tapped."""
     repeatable: bool
     """Whether it may be paid more than once (multikicker, replicate) -
     `OptionalCostChoice.times`."""
@@ -2202,7 +2210,8 @@ class ActionRow(Action):
     here is left off a row it does not apply to."""
 
     optional_costs: list[OptionalCostView] | None = None
-    """A cast row's optional additional costs - kicker and its siblings."""
+    """A cast row's optional costs - kicker and its siblings, entwine and
+    escalate on a modal row, harmonize's creature tap on a harmonize row."""
     printed_produces: str | None = None
     """A mana row whose `produces` was resolved on this board (Urza's Tower
     making `{C}{C}{C}` beside Mine and Power-Plant) keeps the printed phrase

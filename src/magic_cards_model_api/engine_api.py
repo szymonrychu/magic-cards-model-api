@@ -34,6 +34,7 @@ from .schemas import (
     CrewRequest,
     CycleRequest,
     ManaSource,
+    OptionalCostChoice,
     PlayLandRequest,
     SpecialActionRequest,
     TargetRequest,
@@ -710,19 +711,26 @@ def _announce_printed_additional_costs(game: Game, req: CastRequest, casting: Ca
             setattr(casting, name, [find_card(game, card_id) for card_id in ids])
 
 
-def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> None:
-    """CR 601.2b's announcement of the optional additional costs this cast
-    pays - "If the spell has alternative or additional costs that will be paid
-    as it's being cast such as buyback or kicker costs ..., the player
-    announces their intentions to pay any or all of those costs" - onto the
-    `Casting`, before anything determines the total cost (CR 601.2f).
+def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> _ModeCosts:
+    """CR 601.2b's announcement of the optional costs this cast pays - "If the
+    spell has alternative or additional costs that will be paid as it's being
+    cast such as buyback or kicker costs ..., the player announces their
+    intentions to pay any or all of those costs" - onto the `Casting`, before
+    anything determines the total cost (CR 601.2f).
 
     One engine door per mechanic, each refusing in its own words: kicker and
     multikicker (CR 702.33a/c) through `pay_kicker`, replicate (CR 702.56a),
-    offspring (CR 702.175a), blight (CR 701.68a) and gift (CR 702.174a).
-    `times` is passed to the two that take a count and repeats the call for
-    the rest, whose own second-payment refusal then speaks.
+    offspring (CR 702.175a), blight (CR 701.68a), gift (CR 702.174a) and
+    harmonize's "tapping up to one untapped creature you control"
+    (CR 702.180a/b, `pay_harmonize`, which refuses unless the cast was
+    announced with `keyword: Harmonize`). `times` is passed to the two that
+    take a count and repeats the call for the rest, whose own second-payment
+    refusal then speaks.
+
+    Entwine (CR 702.42a) and escalate (CR 702.120a) are costs of the mode
+    choice, so they are only read here and paid by `_announce_modes`.
     """
+    mode_costs = _ModeCosts()
     for choice in req.optional_costs or []:
         keyword = choice.keyword.strip().lower()
         chosen = [find_card(game, card_id) for card_id in choice.choosing or []]
@@ -748,12 +756,91 @@ def _announce_optional_costs(game: Game, req: CastRequest, casting: Casting) -> 
                 )
             for _ in range(choice.times):
                 casting.pay_gift(choice.opponent)
+        elif keyword == "harmonize":
+            _paid_once(choice, "harmonize taps up to one creature (CR 702.180a)")
+            if len(chosen) > 1:
+                raise ValueError(
+                    "harmonize taps up to one untapped creature you control (CR 702.180a) - "
+                    "name at most one id in choosing"
+                )
+            casting.pay_harmonize(chosen[0] if chosen else None)
+        elif keyword == "entwine":
+            _paid_once(choice, "entwine is paid once, for all the modes (CR 702.42a)")
+            mode_costs.entwined = True
+        elif keyword == "escalate":
+            _paid_once(
+                choice,
+                "escalate is paid once for each mode chosen beyond the first "
+                "(CR 702.120a) - choose the modes, not a count",
+            )
+            mode_costs.escalate = chosen
         else:
             raise ValueError(
-                f"{choice.keyword} is not an optional additional cost this engine pays "
-                "(CR 118.8): name one of Kicker, Multikicker, Replicate, Offspring, Blight "
-                "or Gift"
+                f"{choice.keyword} is not an optional cost this engine pays (CR 601.2b): "
+                "name one of Kicker, Multikicker, Replicate, Offspring, Blight, Gift, "
+                "Entwine, Escalate or Harmonize"
             )
+    return mode_costs
+
+
+@dataclass
+class _ModeCosts:
+    """The optional costs a cast announces that are paid on its mode choice."""
+
+    entwined: bool = False
+    escalate: list[CardState] | None = None
+    """The objects an escalate cost names, when the request named escalate."""
+
+
+def _paid_once(choice: OptionalCostChoice, why: str) -> None:
+    if choice.times != 1:
+        raise ValueError(f"{choice.keyword} cannot be paid {choice.times} times: {why}")
+
+
+def _announce_modes(req: CastRequest, casting: Casting, mode_costs: _ModeCosts) -> None:
+    """CR 601.2b's mode choice, with the two optional costs that ride on it.
+
+    Entwine is `choose_modes(..., entwined=True)`: CR 702.42a "You may choose
+    all modes of this spell instead of just the number specified. If you do,
+    you pay an additional [cost]" - the engine opens every mode and charges
+    the cost in the one call, so an entwined request with no modes named is
+    still announced and refused with the engine's own mode count.
+
+    Escalate is `pay_escalate`, once the modes are known: CR 702.120a "For
+    each mode you choose beyond the first as you cast this spell, you pay an
+    additional [cost]." That cost is owed by choosing the modes, not by
+    naming the keyword, so it is charged whenever an escalate spell is
+    announced with more than one mode; naming `Escalate` is how the objects a
+    non-mana escalate cost takes (Collective Brutality's discarded card) are
+    handed over.
+    """
+    if req.modes or mode_costs.entwined:
+        casting.choose_modes(req.modes or [], x_value=req.x_value, entwined=mode_costs.entwined)
+    elif req.x_value is not None:
+        # CR 107.3a's X is announced as part of CR 601.2b, before targets
+        # are chosen at CR 601.2c - `Casting.targeting`'s own docstring
+        # says so outright: "X is announced before targets, so it is
+        # always known here." `choose_modes` is the one call that sets
+        # `Casting.x_value`, and a non-modal spell has no modes of its
+        # own to give it, so it still has to be called, with an empty
+        # list, purely to announce X this early. Skipping it whenever
+        # `req.modes` was empty (as it always is for a non-modal spell)
+        # left `x_value` at its unset default for every `choose_targets`
+        # below - Postmortem Lunge's own "target creature card with mana
+        # value X" read X as 0 no matter what the caller actually
+        # announced, and refused every legal target above mana value 0.
+        # `determine_cost` still receives the same `x_value` afterwards;
+        # this only moves the *announcement* earlier, exactly where CR
+        # 601.2b already puts it.
+        casting.choose_modes([], x_value=req.x_value)
+    modal = casting.modal
+    owed = (
+        modal is not None
+        and modal.escalate_cost is not None
+        and len(casting.chosen_mode_numbers) > 1
+    )
+    if owed or mode_costs.escalate is not None:
+        casting.pay_escalate(choosing=mode_costs.escalate)
 
 
 def _announce_the_face(req: CastRequest, casting: Casting) -> None:
@@ -855,30 +942,12 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
         return refused(exc)
 
     try:
-        _announce_optional_costs(game, req, casting)
+        mode_costs = _announce_optional_costs(game, req, casting)
     except (KeyError, ValueError) as exc:
         return refused(exc)
 
     try:
-        if req.modes:
-            casting.choose_modes(req.modes, x_value=req.x_value)
-        elif req.x_value is not None:
-            # CR 107.3a's X is announced as part of CR 601.2b, before targets
-            # are chosen at CR 601.2c - `Casting.targeting`'s own docstring
-            # says so outright: "X is announced before targets, so it is
-            # always known here." `choose_modes` is the one call that sets
-            # `Casting.x_value`, and a non-modal spell has no modes of its
-            # own to give it, so it still has to be called, with an empty
-            # list, purely to announce X this early. Skipping it whenever
-            # `req.modes` was empty (as it always is for a non-modal spell)
-            # left `x_value` at its unset default for every `choose_targets`
-            # below - Postmortem Lunge's own "target creature card with mana
-            # value X" read X as 0 no matter what the caller actually
-            # announced, and refused every legal target above mana value 0.
-            # `determine_cost` still receives the same `x_value` afterwards;
-            # this only moves the *announcement* earlier, exactly where CR
-            # 601.2b already puts it.
-            casting.choose_modes([], x_value=req.x_value)
+        _announce_modes(req, casting, mode_costs)
         if req.targets:
             casting.choose_targets([target_thing(game, token) for token in req.targets])
     except ValueError as exc:

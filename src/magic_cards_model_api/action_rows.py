@@ -13,8 +13,9 @@ each read off the engine rather than guessed:
   CR 118.6's unpayable cost - Ajani, Nacatl Pariah offered as uncastable and
   cast for `{1}{W}` all the same. The row is rebuilt by the engine's own
   `_cast_action` from the cost the cast actually charges.
-- **`optional_costs`** on a cast row: kicker and every other optional
-  additional cost the engine charges (CR 118.8, announced at CR 601.2b), with
+- **`optional_costs`** on a cast row: kicker and every other optional cost
+  the engine charges (announced at CR 601.2b) - entwine and escalate on a
+  modal row, harmonize's creature tap on a harmonize row - with
   whether the row's cost plus that one is payable - `CastRequest.
   optional_costs` takes the keyword back.
 - **`produces`** on a mana row, resolved on this board. The engine's field is
@@ -65,17 +66,23 @@ from magic_cards_model.models.mana import ManaCost, ManaSpend
 from .engine_api import activate_ability, dry_run_copy, effective_production
 from .schemas import ActivateRequest
 
-#: The optional additional costs a keyword ability carries, each with the rule
-#: that defines it and whether it may be paid more than once. One row per
-#: mechanic, keyed by the keyword every card carrying it prints - the same
-#: spellings `Casting.pay_kicker`/`pay_replicate`/`pay_offspring`/`pay_gift`
-#: read. Blight is printed as a sentence, not a keyword, and is read below.
+#: The optional costs a keyword ability carries, each with the rule that
+#: defines it and whether it may be paid more than once. One row per mechanic,
+#: keyed by the keyword every card carrying it prints - the same spellings
+#: `engine_api._announce_optional_costs` hands to `Casting.pay_kicker`/
+#: `pay_replicate`/`pay_offspring`/`pay_gift`/`pay_harmonize`, to
+#: `choose_modes(entwined=True)` and to `pay_escalate`. Blight is printed as a
+#: sentence, not a keyword, and is read below. Escalate is not repeatable by
+#: count: it is paid once per mode chosen beyond the first (CR 702.120a).
 _OPTIONAL_COST_KEYWORDS: dict[str, tuple[str, bool]] = {
     "kicker": ("CR 702.33a", False),
     "multikicker": ("CR 702.33c", True),
     "replicate": ("CR 702.56a", True),
     "offspring": ("CR 702.175a", False),
     "gift": ("CR 702.174a", False),
+    "entwine": ("CR 702.42a", False),
+    "escalate": ("CR 702.120a", False),
+    "harmonize": ("CR 702.180b", False),
 }
 
 #: How many sources with a costlier mana ability, and how many activation
@@ -205,6 +212,10 @@ class _Rows:
                 # CR 702.174a: the cost is choosing an opponent - nothing to pay.
                 offer["affordable"] = view["affordable"]
                 offer["unaffordable_reason"] = view.get("unaffordable_reason")
+            elif ability.canonical.lower() == "harmonize":
+                if (action.keyword or "").lower() != "harmonize":
+                    continue
+                offer.update(self._harmonize_tap(view))
             else:
                 offer.update(self._affordable_with(action, card, ability.keyword, ability.cost))
             offers.append(offer)
@@ -227,6 +238,23 @@ class _Rows:
             )
         if offers:
             view["optional_costs"] = offers
+
+    @staticmethod
+    def _harmonize_tap(view: dict[str, Any]) -> dict[str, Any]:
+        """CR 702.180a's "tapping up to one untapped creature you control",
+        chosen as the harmonize cost is (CR 702.180b). The harmonize cost
+        itself is this row's `cost`; the tap only reduces it, by the tapped
+        creature's power, so it is priced by which creature is named."""
+        if view["affordable"] == Affordability.YES.value:
+            return {"cost": None, "affordable": Affordability.YES.value}
+        return {
+            "cost": None,
+            "affordable": Affordability.UNKNOWN.value,
+            "unaffordable_reason": (
+                "tapping an untapped creature you control reduces this cost by its power "
+                "(CR 702.180a) - pass its id in the optional cost's choosing"
+            ),
+        }
 
     def _affordable_with(
         self, action: Action, card: CardState, keyword: str, printed: str | None

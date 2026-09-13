@@ -1036,7 +1036,13 @@ def build_server(seats: Seats) -> MCPServer:
                   (CR 702.33a); a repeatable cost takes a count
                   (`"Multikicker:2"`), a gift names the opponent (`"Gift:bob"`),
                   and a cost naming objects takes their ids
-                  (`"Blight:<creature id>"`). Leave it empty to pay none.
+                  (`"Blight:<creature id>"`). `"Entwine"` chooses every mode
+                  (list them in `modes` too, CR 702.42a); escalate is charged
+                  for each mode beyond the first (CR 702.120a), and
+                  `"Escalate:<card id>"` names what a non-mana escalate cost
+                  discards; a `keyword="Harmonize"` cast taps the creature
+                  named by `"Harmonize:<creature id>"` to cut its cost by that
+                  creature's power (CR 702.180a). Leave it empty to pay none.
                 - `delve` - graveyard cards exiled to pay generic mana
                   (CR 702.66a), one per generic symbol.
                 - `convoke` - your untapped creatures tapped to pay (CR 702.51a).

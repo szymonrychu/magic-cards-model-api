@@ -170,8 +170,9 @@ PROTOCOL_VERSION = "seatkit-17"
 #: exile-a-land half, and every kicker card in the pool, could never be chosen
 #: by a seat - while the engine has charged kicker all along
 #: (`Casting.pay_kicker`, CR 702.33a). `optional_costs` is the CR 601.2b
-#: announcement of any optional additional cost the engine charges - kicker,
-#: multikicker, replicate, offspring, blight, gift - named by the keyword the
+#: announcement of any optional cost the engine charges - kicker,
+#: multikicker, replicate, offspring, blight, gift, entwine, escalate and
+#: harmonize's creature tap - named by the keyword the
 #: row's own `optional_costs` entry carries (`parse_optional_costs` is the one
 #: parser both front ends use: `Kicker`, `Multikicker:2`, `Gift:bob`).
 #:
