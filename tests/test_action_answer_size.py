@@ -668,3 +668,16 @@ def test_the_worst_case_run_script_answer_still_fits(client, game, monkeypatch):
     monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 0)
     base = len(advisor_runs_the_worst_case_script(client, game, monkeypatch, "worst-case-2"))
     assert base + cap < MAX_ANSWER_BYTES, f"base {base} + digest cap {cap}"
+
+
+def test_an_action_answer_keeps_its_list_and_log_keys_when_the_payload_lacks_them():
+    """An action run with `include_actions` off hands `_action_answer` no
+    `available_actions`; the answer still says so with a null rather than
+    dropping the key, so every action tool keeps one shape. Only a script
+    run's answer (`script_exit` beside the board) leaves both out."""
+    answer = mcp_module._action_answer({"outcome": {"allowed": True}, "state": {}})
+    assert "available_actions" in answer and answer["available_actions"] is None, answer
+    assert "recent_log" in answer and answer["recent_log"] is None, answer
+
+    script = mcp_module._action_answer({"script_exit": {"exit": "chain_complete"}, "state": {}})
+    assert "available_actions" not in script and "recent_log" not in script, script

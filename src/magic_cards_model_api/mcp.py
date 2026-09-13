@@ -639,13 +639,12 @@ def _action_answer(payload: dict[str, Any]) -> dict[str, Any]:
     carried = ("outcome", "wake_reason", "state", "available_actions", "recent_log")
     answer.update({key: value for key, value in payload.items() if key not in carried})
     answer["board"] = board
-    # Written when the payload carries them - every action and `pass_until`
-    # does - and left out when it does not: a script run's answer is its
-    # `script_exit` and the board, and a null list would read as "nothing is
-    # legal" rather than "this answer does not say".
-    if "available_actions" in payload:
+    # Every action tool's answer always carries both keys, null when the
+    # payload had none. A script run's answer alone leaves them out: it is its
+    # `script_exit` and the board, and a null list there would read as
+    # "nothing is legal" rather than "this answer does not say".
+    if "script_exit" not in payload:
         answer["available_actions"] = _compact_actions(payload.get("available_actions"))
-    if "recent_log" in payload:
         answer["recent_log"] = payload.get("recent_log")
     return answer
 
