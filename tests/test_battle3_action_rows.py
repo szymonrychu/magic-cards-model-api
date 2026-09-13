@@ -36,7 +36,7 @@ session that wrote this file. Every card is a real Scryfall printing.
 from __future__ import annotations
 
 from conftest import add_card, find, state
-from test_legal_actions_endpoint import legal_actions, seat_uid
+from test_legal_actions_endpoint import legal_actions
 
 from magic_cards_model_api.seatkit import untapped_mana_sources
 
@@ -236,6 +236,234 @@ def test_an_unmodified_row_carries_no_printed_cost(client, game):
     (row,) = rows_for(legal_actions(client, game, "alice"), bears)
     assert row["cost"] == "{1}{G}"
     assert "printed_cost" not in row
+    assert "x_costs" not in row
+
+
+def dry_cast_cost(client, game, card: str, **extra) -> str:
+    """What `Casting.total_cost` charges, read through the cast route's dry
+    run - the engine's own answer the row has to agree with."""
+    answer = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={"player": "alice", "card_id": card, "dry_run": True, **extra},
+    ).json()
+    assert "cost" in answer, answer
+    return answer["cost"]
+
+
+def test_an_x_spell_under_a_flat_increase_carries_the_increase_for_every_x(client, game):
+    """CR 601.2f on an X spell: X is announced first (CR 107.3a), then Sphere
+    of Resistance's {1} is added - Meltdown is {X}{1}{R} whatever X is."""
+    for _ in range(4):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Meltdown", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    meltdown = find(state(client, game)["hands"]["alice"], "Meltdown")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), meltdown)
+    assert row["cost"] == "{X}{1}{R}", row
+    assert row["mana_cost"] == "{X}{1}{R}", row
+    assert row["printed_cost"] == "{X}{R}", row
+    assert row["x_range"] == [0, None], row
+    assert "x_costs" not in row, row
+    for x_value, charged in ((0, "{1}{R}"), (2, "{3}{R}")):
+        assert dry_cast_cost(client, game, meltdown, x_value=x_value) == charged
+
+
+def test_an_x_spell_under_a_floor_lists_each_x_the_floor_raises(client, game):
+    """Trinisphere reads the cost X has already left (CR 601.2f): Walking
+    Ballista is {3} at X=0 and X=1, and {X}{X} from X=2 on."""
+    for _ in range(4):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Walking Ballista", "alice", "hand")
+    add_card(client, game, "Trinisphere", "bob", "battlefield")
+    ballista = find(state(client, game)["hands"]["alice"], "Walking Ballista")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), ballista)
+    assert row["cost"] == "{X}{X}", row
+    assert row["printed_cost"] == "{X}{X}", row
+    assert row["x_costs"] == [
+        {"x": 0, "cost": "{3}", "mana_cost": "{3}"},
+        {"x": 1, "cost": "{3}", "mana_cost": "{3}"},
+    ], row
+    for entry in row["x_costs"]:
+        assert dry_cast_cost(client, game, ballista, x_value=entry["x"]) == entry["cost"]
+    assert dry_cast_cost(client, game, ballista, x_value=2) == "{4}"
+
+
+def test_an_x_spell_whose_reduction_eats_into_x_says_so(client, game):
+    """Ruby Medallion's {1} off Meltdown comes out of the generic mana X adds
+    (CR 118.7a): {R} at X=0 and X=1, {1}{R} at X=2. No single mana cost with
+    an X in it says that, so the row states the reduction in words and
+    lists the X the words do not cover."""
+    for _ in range(3):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Meltdown", "alice", "hand")
+    add_card(client, game, "Ruby Medallion", "alice", "battlefield")
+    meltdown = find(state(client, game)["hands"]["alice"], "Meltdown")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), meltdown)
+    assert row["cost"] == "{X}{R} less {1}", row
+    assert row["mana_cost"] is None, row
+    assert row["printed_cost"] == "{X}{R}", row
+    assert row["x_costs"] == [{"x": 0, "cost": "{R}", "mana_cost": "{R}"}], row
+    assert row["affordable"] == "unknown", row
+    for x_value, charged in ((0, "{R}"), (1, "{R}"), (2, "{1}{R}"), (3, "{2}{R}")):
+        assert dry_cast_cost(client, game, meltdown, x_value=x_value) == charged
+
+
+def test_a_modal_x_spell_is_repriced_too(client, game):
+    """Kozilek's Command has an X and modes, so the engine's row carries no
+    `x_range` - its X is still in the cost Sphere of Resistance taxes."""
+    add_card(client, game, "Wastes", "alice", "battlefield")
+    add_card(client, game, "Kozilek's Command", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    command = find(state(client, game)["hands"]["alice"], "Kozilek's Command")["id"]
+
+    (row,) = rows_for(legal_actions(client, game, "alice"), command)
+    assert row["cost"] == "{X}{1}{C}{C}", row
+    assert row["printed_cost"] == "{X}{C}{C}", row
+
+
+def test_an_alternative_cost_with_no_mana_is_taxed(client, game):
+    """Solitude's evoke cost is a card, not mana (CR 118.9), and Sphere of
+    Resistance adds {1} to it all the same (CR 118.9d, CR 601.2f)."""
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Solitude", "alice", "hand")
+    add_card(client, game, "Savannah Lions", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    hand = state(client, game)["hands"]["alice"]
+    solitude = find(hand, "Solitude")["id"]
+    lions = find(hand, "Savannah Lions")["id"]
+
+    (evoke,) = [
+        row
+        for row in rows_for(legal_actions(client, game, "alice"), solitude)
+        if row["keyword"] == "Evoke"
+    ]
+    assert evoke["mana_cost"] == "{1}", evoke
+    assert evoke["cost"].startswith("{1}, "), evoke
+    assert evoke["printed_cost"] == evoke["cost"].removeprefix("{1}, "), evoke
+    # The dry run's payment names the mana it opened; the pitched card is
+    # paid beside it, and the row's `cost` carries both.
+    charged = dry_cast_cost(client, game, solitude, keyword="Evoke", choosing=[lions])
+    assert charged == evoke["mana_cost"], (charged, evoke)
+
+
+def test_a_row_no_cast_option_prints_is_repriced_and_not_judged(client, game):
+    """The fallback: a cast row whose cost strings match none of the card's
+    cast options still shows the charged mana, and says its payability was
+    not judged rather than quoting the printed cost."""
+    from magic_cards_model.models import Action
+    from magic_cards_model.models.action import ActionKind, Affordability
+    from magic_cards_model.models.zone import Zone
+
+    from magic_cards_model_api.action_rows import _Rows
+    from magic_cards_model_api.store import store
+
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    engine_game = store.get(game)
+    (bears,) = engine_game.player("alice").hand
+    row = Action(
+        kind=ActionKind.CAST,
+        player="alice",
+        rule="CR 601.2",
+        card_id=bears.id,
+        from_zone=Zone.HAND,
+        cost="{1}{G}, sacrifice a creature",
+        mana_cost="{1}{G}",
+        affordable=Affordability.YES,
+    )
+
+    repriced, extra = _Rows(engine_game, "alice").with_charged_cost(row)
+    assert repriced.mana_cost == "{2}{G}", repriced
+    assert repriced.cost == "{2}{G}, sacrifice a creature", repriced
+    assert repriced.affordable is Affordability.UNKNOWN, repriced
+    assert "601.2f" in (repriced.unaffordable_reason or ""), repriced
+    assert extra == {"printed_cost": "{1}{G}, sacrifice a creature"}, extra
+
+
+# -- B4-02 on activations: the engine charges these rows' own cost ------------
+
+
+def test_an_off_zone_row_shows_its_own_reduction(client, game):
+    """Takenuma's Channel "costs {1} less to activate for each legendary
+    creature you control" (CR 601.2f via CR 602.2b): {2}{B} with Emrakul out,
+    and Sphere of Resistance, which taxes spells only, adds nothing."""
+    for _ in range(3):
+        add_card(client, game, "Swamp", "alice", "battlefield")
+    add_card(client, game, "Emrakul, the Promised End", "alice", "battlefield")
+    add_card(client, game, "Takenuma, Abandoned Mire", "alice", "hand")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    takenuma = find(state(client, game)["hands"]["alice"], "Takenuma, Abandoned Mire")["id"]
+
+    (row,) = [
+        row
+        for row in rows_for(legal_actions(client, game, "alice"), takenuma)
+        if row["kind"] == "activate_off_zone"
+    ]
+    assert row["mana_cost"] == "{2}{B}", row
+    dry = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": takenuma,
+            "ability_index": row["ability_index"],
+            "dry_run": True,
+        },
+    ).json()
+    # The dry run's payment names the mana it opened; the discard is paid
+    # beside it, and the row's `cost` carries both.
+    assert dry["cost"] == row["mana_cost"], (dry, row)
+    assert row["cost"] == "{2}{B}, Discard this card", row
+
+
+def test_a_battlefield_activation_row_is_what_the_activation_charges(client, game):
+    for _ in range(4):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Walking Ballista", "alice", "battlefield")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    ballista = find(state(client, game)["battlefield"], "Walking Ballista")["id"]
+
+    (row,) = [
+        row
+        for row in rows_for(legal_actions(client, game, "alice"), ballista)
+        if row["cost"] and row["mana_cost"]
+    ]
+    assert row["mana_cost"] == "{4}", row
+    dry = client.post(
+        f"/api/games/{game}/actions/activate",
+        json={
+            "player": "alice",
+            "card_id": ballista,
+            "ability_index": row["ability_index"],
+            "dry_run": True,
+        },
+    ).json()
+    assert dry["cost"] == row["cost"], (dry, row)
+
+
+def test_an_equip_row_is_what_the_equip_charges(client, game):
+    add_card(client, game, "Blade of the Bloodchief", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Sphere of Resistance", "bob", "battlefield")
+    board = state(client, game)
+    blade = find(board["battlefield"], "Blade of the Bloodchief")["id"]
+    bears = find(board["battlefield"], "Grizzly Bears")["id"]
+
+    (row,) = [
+        row
+        for row in rows_for(legal_actions(client, game, "alice"), blade)
+        if row["kind"] == "equip"
+    ]
+    assert row["cost"] == "{1}", row
+    dry = client.post(
+        f"/api/games/{game}/actions/equip",
+        json={"player": "alice", "card_id": blade, "target": bears, "dry_run": True},
+    ).json()
+    assert dry["cost"] == row["cost"], (dry, row)
 
 
 # -- B3-05: a mode the engine cannot read --------------------------------------
@@ -304,15 +532,14 @@ def test_a_readable_mode_still_casts(client, game):
 
 
 def test_a_modal_row_with_every_mode_readable_carries_no_warning(client, game):
+    """Kozilek's Command reads all four of its modes, so its cast row lists
+    them and warns about none - the warning is the unreadable mode's, never
+    every modal row's."""
     add_card(client, game, "Island", "alice", "battlefield")
     add_card(client, game, "Kozilek's Command", "alice", "hand")
     command = find(state(client, game)["hands"]["alice"], "Kozilek's Command")["id"]
 
-    rows = rows_for(legal_actions(client, game, "alice"), command)
-    assert rows
-    for row in rows:
-        assert all(
-            entry["mode_number"] in {mode for mode in range(1, 5)}
-            for entry in row.get("unreadable_modes") or []
-        )
-    seat_uid(game, "alice")
+    (row,) = rows_for(legal_actions(client, game, "alice"), command)
+    assert row["kind"] == "cast", row
+    assert len(row["modes"]) == 4, row
+    assert not row.get("unreadable_modes"), row

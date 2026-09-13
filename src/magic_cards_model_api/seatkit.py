@@ -163,8 +163,8 @@ DEFAULT_API = "http://127.0.0.1:8000"
 PROTOCOL_VERSION = "seatkit-18"
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
-#: legal-action row of kind `equip`, and rows gaining `printed_cost` and
-#: `unreadable_modes`.
+#: legal-action row of kind `equip`, and rows gaining `printed_cost`,
+#: `x_costs` and `unreadable_modes`.
 #:
 #: Battle 3 found equip unreachable (B3-01): CR 702.6a's ability is a keyword
 #: the engine builds (`equip_activation`), not one of the Equipment's
@@ -174,7 +174,8 @@ PROTOCOL_VERSION = "seatkit-18"
 #: same `card_id`/`--target`/`--sources` the tool does. Battles 3 and 4 also
 #: found rows that contradicted the engine: a cast row now prices the total
 #: cost the cast is charged (CR 601.2f) and keeps the old one as
-#: `printed_cost`; a modal row names each mode the engine cannot read as
+#: `printed_cost` - an X row keeps its X and lists, as `x_costs`, each X a
+#: floor or reduction charges differently; a modal row names each mode the engine cannot read as
 #: `unreadable_modes`, and a cast choosing one is refused rather than spending
 #: the card for nothing; a loyalty ability that adds mana is an `activate` row,
 #: never `activate_mana` (CR 605.1a); and an ability is offered only from the

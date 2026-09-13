@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from itertools import combinations, product
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from magic_cards_model.machines.abilities import CostKind, keyword_abilities
@@ -70,7 +70,7 @@ from magic_cards_model.machines.legal_actions import (
 )
 from magic_cards_model.models import Action, CardState, Color, Game, Zone
 from magic_cards_model.models.action import ActionKind, Affordability, TargetSlot
-from magic_cards_model.models.mana import ManaCost, ManaSpend
+from magic_cards_model.models.mana import ManaCost, ManaSpend, ManaSymbol, SymbolKind
 
 from .engine_api import (
     activate_ability,
@@ -143,9 +143,8 @@ def legal_action_rows(
     charged = [rows.with_charged_cost(action) for action in actions]
     actions = [action for action, _ in charged]
     views = [action.model_dump(mode="json") for action in actions]
-    for (action, printed_cost), view in zip(charged, views, strict=True):
-        if printed_cost is not None:
-            view["printed_cost"] = printed_cost
+    for (action, charge), view in zip(charged, views, strict=True):
+        view.update(charge)
         if action.kind is ActionKind.CAST:
             rows.add_optional_costs(action, view)
             rows.name_unreadable_modes(action, view)
@@ -162,6 +161,93 @@ def legal_action_rows(
                 game, view["unaffordable_reason"]
             )
     return actions, views
+
+
+#: How far `charge_schedule` walks X looking for the point the charge settles.
+#: A floor is three or so and a reduction a handful of mana, so this is never
+#: reached on a real board; past it the row fails closed.
+_MAX_X_WALK = 64
+
+
+class ChargeSchedule(NamedTuple):
+    """What a cast is charged across every X (`charge_schedule`)."""
+
+    listed: list[ManaCost]
+    """The charge at X = 0, 1, ... up to the first X `cost`/`words` covers."""
+    cost: ManaCost
+    """The charge from there on, X kept - meaningful only if `words` is None."""
+    words: str | None
+    """The charge from there on in words, when no one mana cost says it."""
+
+
+def charge_schedule(
+    printed: ManaCost,
+    increases: list[ManaCost],
+    reductions: list[ManaCost],
+    floor: int | None,
+) -> ChargeSchedule:
+    """`Casting.total_cost`'s mana arithmetic, `apply_modifications(printed.
+    with_x(x), ...)`, laid out over every X.
+
+    CR 107.3a: X is announced before CR 601.2f determines the total cost, so
+    an increase lands on the cost X has already made and a floor or a
+    generic reduction reads it. Past some X the charge settles into adding
+    each X symbol's one generic mana per X: the increases and the coloured
+    part of a reduction do not depend on X, a generic reduction stops
+    growing once the generic mana covers it, and a floor stops applying once
+    the cost reaches it. The first X one step of which grows that way is that
+    point - a step smaller than that means one of the two is still biting.
+    The X below it are `listed`; from it on the charge is one cost with X in
+    it, unless the reduction ate into X's own mana, which no mana cost can
+    say - then `words` says it (`{X}{R} less {1}`).
+
+    A cost with no X settles at X = 0, so `cost` is simply the charge."""
+
+    def charged(x: int) -> ManaCost:
+        return apply_modifications(printed.with_x(x), increases, reductions, floor=floor)
+
+    per_x = printed.x_count
+    for settled in range(_MAX_X_WALK):
+        here, there = charged(settled), charged(settled + 1)
+        if _generic(there) == _generic(here) + per_x and _coloured(there) == _coloured(here):
+            break
+    else:
+        raise ValueError(f"the charge for {printed} does not settle by X={_MAX_X_WALK}")
+    listed = [charged(x) for x in range(settled)]
+    if not per_x:
+        return ChargeSchedule(listed, here, None)
+    xs = tuple(symbol for symbol in printed.symbols if symbol.kind is SymbolKind.VARIABLE)
+    rest = tuple(symbol for symbol in here.symbols if symbol.kind is not SymbolKind.GENERIC)
+    offset = _generic(here) - per_x * settled
+    if offset < 0:
+        return ChargeSchedule(listed, here, f"{ManaCost(symbols=xs + rest)} less {{{-offset}}}")
+    generic = (ManaSymbol(kind=SymbolKind.GENERIC, amount=offset),) if offset else ()
+    return ChargeSchedule(listed, ManaCost(symbols=xs + generic + rest), None)
+
+
+def _generic(cost: ManaCost) -> int:
+    return sum(symbol.amount for symbol in cost.symbols if symbol.kind is SymbolKind.GENERIC)
+
+
+def _coloured(cost: ManaCost) -> list[str]:
+    return sorted(str(symbol) for symbol in cost.symbols if symbol.kind is not SymbolKind.GENERIC)
+
+
+def _cost_text(mana: ManaCost, parts: list[str]) -> tuple[str | None, str | None]:
+    """`legal_actions._cost_strings` for a mana part and the text of the
+    other cost parts - `str(TotalCost)`'s own joining."""
+    free = not mana.converted and not mana.x_count and not parts
+    pieces = ([str(mana)] if mana.converted or mana.x_count else []) + parts
+    return (None if free else ", ".join(pieces) or "{0}"), (str(mana) if mana.symbols else None)
+
+
+def _component_text(action: Action) -> list[str]:
+    """A row's non-mana cost parts, as text: its `cost` with the leading
+    mana part `str(TotalCost)` put there taken off."""
+    cost, mana = action.cost or "", action.mana_cost or ""
+    if mana and ManaCost.parse(mana).converted or "{X}" in mana:
+        cost = cost.removeprefix(mana).removeprefix(", ")
+    return [cost] if cost else []
 
 
 def _symbols(colors: list[Color]) -> str:
@@ -396,43 +482,76 @@ class _Rows:
 
     # -- the cost the cast will charge (CR 601.2f) --------------------------------
 
-    def with_charged_cost(self, action: Action) -> tuple[Action, str | None]:
-        """The row rebuilt at the total cost the cast is charged, and the
-        printed cost it replaced - or the row unchanged and `None`.
+    def with_charged_cost(self, action: Action) -> tuple[Action, dict[str, Any]]:
+        """The row rebuilt at the total cost the cast is charged, and what the
+        view gains for it (`printed_cost`, and `x_costs` on an X row) - or
+        the row unchanged and nothing.
 
         CR 601.2f: "Some effects may increase or reduce the cost to pay". The
         engine's enumeration prices a cast at its printed (or alternative)
-        mana cost; `Casting.total_cost` charges it with every board-wide
+        mana cost; `Casting.total_cost` charges `apply_modifications(base.
+        with_x(x_value), increases, reductions, floor)` - every board-wide
         increase, reduction and floor (`Game.static_cost_modifiers_for`) and
-        the spell's own discount (`Game.cost_reduction_for`) folded in by
-        `apply_modifications`. These are those same calls, so Malevolent
-        Rumble under Trinisphere reads `{2}{G}` and Emrakul, the Promised End
-        reads what its graveyard makes it. The spell's own discount is asked
-        with no targets announced yet: a discount conditioned on a target
-        (CR 601.2c comes first) is not assumed."""
-        if action.kind is not ActionKind.CAST or action.mana_cost is None:
-            return action, None
-        if action.x_range is not None:
-            return action, None
+        the spell's own discount (`Game.cost_reduction_for`). These are those
+        same calls, so Malevolent Rumble under Trinisphere reads `{2}{G}`,
+        Emrakul, the Promised End reads what its graveyard makes it, and
+        Solitude's evoke, a cost with no mana in it, is taxed by Sphere of
+        Resistance too. The spell's own discount is asked with no targets
+        announced yet: a discount conditioned on a target (CR 601.2c comes
+        first) is not assumed.
+
+        An X row is priced by `charge_schedule` from the same arithmetic run
+        at each X. A row whose cost strings match none of the card's cast
+        options (`_row_total`) still shows the charged mana, but its other
+        cost parts are only text here, so its payability is not judged."""
+        if action.kind is not ActionKind.CAST:
+            return action, {}
         card = self._card(action.card_id)
         if card is None:
-            return action, None
+            return action, {}
         try:
             increases, reductions, floor = self.game.static_cost_modifiers_for(card, self.player)
             own = self.game.cost_reduction_for(card, self.player, targets=[])
         except ValueError:
-            return action, None
+            return action, {}
         if own.symbols:
             reductions = [*reductions, own]
         if not increases and not reductions and floor is None:
-            return action, None
-        printed = ManaCost.parse(action.mana_cost)
-        charged = apply_modifications(printed, increases, reductions, floor=floor)
-        if str(charged) == str(printed):
-            return action, None
+            return action, {}
+        printed = ManaCost.parse(action.mana_cost or "")
+        schedule = charge_schedule(printed, increases, reductions, floor)
+        if not schedule.listed and schedule.words is None and str(schedule.cost) == str(printed):
+            return action, {}
         total = self._row_total(action, card)
+        parts = (
+            [str(component) for component in total.components]
+            if total is not None
+            else _component_text(action)
+        )
+        extra: dict[str, Any] = {"printed_cost": action.cost or "{0}"}
+        if schedule.listed:
+            extra["x_costs"] = [
+                dict(zip(("x", "cost", "mana_cost"), (x, *_cost_text(mana, parts)), strict=True))
+                for x, mana in enumerate(schedule.listed)
+            ]
+        if schedule.words is None:
+            cost, mana_cost = _cost_text(schedule.cost, parts)
+        else:
+            cost, mana_cost = ", ".join([schedule.words, *parts]), None
         if total is None:
-            return action, None
+            return action.model_copy(
+                update={
+                    "cost": cost,
+                    "mana_cost": mana_cost,
+                    "affordable": Affordability.UNKNOWN,
+                    "unaffordable_reason": (
+                        "this row's cost matches none of the card's cast options, so whether "
+                        "the cost the cast is charged (CR 601.2f) can be paid is not judged here"
+                    ),
+                    "pays_with": (),
+                }
+            ), extra
+        least = schedule.listed[0] if schedule.listed else schedule.cost.with_x(0)
         rebuilt = _cast_action(
             self.game,
             self.player,
@@ -440,20 +559,30 @@ class _Rows:
             rule=action.rule,
             keyword=action.keyword,
             alternative_cost=action.alternative_cost,
-            total=TotalCost(mana=charged, components=list(total.components)),
+            total=TotalCost(mana=least, components=list(total.components)),
             candidate_scan=self.scan,
             spell_face=action.spell_face,
             splice_options=action.splice_options,
         )
-        return rebuilt, action.cost
+        update: dict[str, Any] = {
+            "cost": cost,
+            "mana_cost": mana_cost,
+            "x_range": action.x_range,
+        }
+        if action.x_range is not None or schedule.words is not None:
+            update.update(
+                affordable=Affordability.UNKNOWN,
+                unaffordable_reason="X has not been announced yet (CR 107.3a)",
+                pays_with=(),
+            )
+        return rebuilt.model_copy(update=update), extra
 
     def _row_total(self, action: Action, card: CardState) -> TotalCost | None:
         """The `TotalCost` a cast row was priced from, found again among the
         same cast options the enumeration read (`legal_actions._cast_actions`)
         by the strings it printed - `None` when no option prints the same."""
-        assert action.mana_cost is not None
         if action.cost == action.mana_cost:
-            return TotalCost.of(ManaCost.parse(action.mana_cost))
+            return TotalCost.of(ManaCost.parse(action.mana_cost or ""))
         totals: list[TotalCost | None] = [
             option.cost for option in keyword_cast_options(card.card) + marker_cast_options(card)
         ]
@@ -566,8 +695,10 @@ class _Rows:
                     f"{card.name}'s {keyword} cost {printed!r} could not be read"
                 ),
             }
-        if action.x_range is not None or (
-            action.mana_cost is not None and action.cost != action.mana_cost
+        if (
+            action.x_range is not None
+            or (action.mana_cost is not None and action.cost != action.mana_cost)
+            or (action.mana_cost is None and "less {" in (action.cost or ""))
         ):
             return {
                 "affordable": Affordability.UNKNOWN.value,

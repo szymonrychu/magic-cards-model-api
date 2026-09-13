@@ -2238,6 +2238,15 @@ class UnreadableModeView(BaseModel):
     notice: str
 
 
+class XCostView(BaseModel):
+    """What an X cast row is charged at one X its `cost` does not describe
+    (`action_rows._Rows.with_charged_cost`)."""
+
+    x: int
+    cost: str | None = None
+    mana_cost: str | None = None
+
+
 class ActionRow(Action):
     """The engine's own `Action` as `GET .../legal-actions` serves it, plus
     what the api adds to a row (`action_rows.legal_action_rows`). Every field
@@ -2262,7 +2271,15 @@ class ActionRow(Action):
     printed_cost: str | None = None
     """A cast row whose `cost` was changed by a cost increase, reduction or
     floor (CR 601.2f, 118.7) keeps the cost it would otherwise print here;
-    `cost` is what the cast is charged."""
+    `cost` is what the cast is charged. On an X row `cost` keeps the X - for
+    every X not listed in `x_costs` - and when a reduction eats into the mana
+    X adds, no one mana cost says that: `cost` then states the reduction in
+    words (`{X}{R} less {1}`) and `mana_cost` is left off."""
+    x_costs: list[XCostView] | None = None
+    """An X cast row's charge at each X its `cost` does not describe, lowest
+    first - a floor or a reduction reads the cost X has already left
+    (CR 601.2f), so Walking Ballista under Trinisphere is `{3}` at X=0 and
+    X=1 and `{X}{X}` from there on."""
     unreadable_modes: list[UnreadableModeView] | None = None
     """A modal cast row's modes the engine cannot read (CR 700.2a): chosen,
     each would resolve doing nothing, so a cast naming one is refused with
