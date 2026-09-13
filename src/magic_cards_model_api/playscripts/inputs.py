@@ -160,17 +160,24 @@ def load_inputs(deck: Path, root: Path) -> tuple[list[dict[str, Any]] | None, li
     ], []
 
 
-def newest_matchup_keys(deck: Path) -> set[str]:
-    """Matchup stems of the deck's newest analysis run, by the run's date suffix."""
+def newest_run(deck: Path) -> Path | None:
+    """The deck's newest analysis run directory, by the run's date suffix."""
     runs = [p for p in (deck / "analysis").glob("*/") if p.is_dir()]
     if not runs:
-        return set()
+        return None
 
     def order(run: Path) -> tuple[str, str]:
         match = re.search(r"(\d{4}-\d{2}-\d{2})$", run.name)
         return (match.group(1) if match else "", run.name)
 
-    newest = max(runs, key=order)
+    return max(runs, key=order)
+
+
+def newest_matchup_keys(deck: Path) -> set[str]:
+    """Matchup stems of the deck's newest analysis run, by the run's date suffix."""
+    newest = newest_run(deck)
+    if newest is None:
+        return set()
     return {p.stem for p in (newest / "domain3-matchup-threat" / "matchups").glob("*.json")}
 
 

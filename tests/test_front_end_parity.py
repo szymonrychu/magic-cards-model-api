@@ -759,10 +759,30 @@ CLI_COMMAND_TOOLS = {
 #: Commands that are CLI-only by design, each with why.
 CLI_ONLY_COMMANDS = {
     "plays": (
-        "`plays check` lints a guides checkout's play scripts offline; it reads "
-        "files on the pod, touches no seat and no game, and a stateless MCP "
-        "server has no guides tree to read (design D8)"
+        "`plays` works a guides checkout's play scripts on the pod: `check` lints "
+        "them offline, `priority` edits one play's priority, `admit` commits and "
+        "pushes them to mtg-decks main. It touches no seat and no game, and a "
+        "stateless MCP server has no guides tree to read or push (design D8)"
     ),
+    "guides": (
+        "`guides propose` commits a matchup play_plan / notes edit with the "
+        "regenerated guides and opens a pull request from the pod's guides "
+        "checkout; no seat, no game, and nothing an MCP server holds"
+    ),
+}
+
+#: Every subcommand of a CLI-only command, each allowlisted with why. A new
+#: nested command is a decision too, not something that rides in under its
+#: parent's entry.
+CLI_ONLY_SUBCOMMANDS = {
+    "plays": {
+        "check": "lints decks/<slug>/plays/*.json offline",
+        "priority": "changes one play's priority in the pod's guides clone",
+        "admit": "commits, gates and pushes play-script changes to mtg-decks main",
+    },
+    "guides": {
+        "propose": "opens a guides pull request from the pod's guides clone",
+    },
 }
 
 
@@ -786,8 +806,11 @@ def test_every_cli_command_fronts_an_mcp_tool_or_is_explicitly_cli_only():
         assert command.replace("-", "_") not in tools
 
 
-def test_plays_is_cli_only_and_has_a_check_subcommand():
-    assert "plays" in CLI_ONLY_COMMANDS
-    plays = subcommand("plays")
-    nested = next(action for action in plays._actions if getattr(action, "choices", None))
-    assert set(nested.choices) == {"check"}
+def test_cli_only_commands_have_exactly_their_allowlisted_subcommands():
+    assert set(CLI_ONLY_SUBCOMMANDS) == set(CLI_ONLY_COMMANDS)
+    for command, allowed in CLI_ONLY_SUBCOMMANDS.items():
+        nested = next(
+            action for action in subcommand(command)._actions if getattr(action, "choices", None)
+        )
+        assert set(nested.choices) == set(allowed), command
+        assert all(why.strip() for why in allowed.values())

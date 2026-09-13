@@ -43,10 +43,18 @@ of that answer actually goes, in the asking card's own words. Two short
 strings inside a whole state dump are easy to miss, and these two decide
 which zone the cards end up in - the decision's kind does not.
 
-One command is not a seat action at all: `plays check [--root PATH]
-[--deck SLUG] [--json]` lints a guides checkout's play scripts offline, needs
-no `--uid`, and exits 0 when clean (conflict warnings allowed) or 1 with coded
-errors - the same codes as mtg-decks' `scripts/check_plays.py`.
+Two commands are not seat actions at all, and need no `--uid`:
+
+- `plays check [--root PATH] [--deck SLUG] [--json]` lints a guides
+  checkout's play scripts offline, and exits 0 when clean (conflict warnings
+  allowed) or 1 with coded errors - the same codes as mtg-decks'
+  `scripts/check_plays.py`.
+- `plays priority`, `plays admit` and `guides propose` work the pod's guides
+  clone (default `/guides`): edit a play's priority, take play-script changes
+  to mtg-decks main, and propose a matchup-plan edit as a pull request. Each
+  prints one JSON result and exits 0 on admitted / pr_opened /
+  nothing_to_admit (or a priority set), 1 otherwise; see
+  `playscripts.admit` and `playscripts.guides_propose`.
 """
 
 from __future__ import annotations
@@ -57,7 +65,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .playscripts import admit as playscripts_admit
+from .playscripts import guides_propose as playscripts_guides
 from .playscripts import lint as playscripts_lint
+from .playscripts.gitwork import GUIDES_ROOT, SUCCESS
 from .seatkit import (
     _UUID,
     AUTOPASS_STEPS,
@@ -117,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--uid",
         default=None,
-        help="your seat uid, given at dispatch; required by every command but `plays`",
+        help="your seat uid, given at dispatch; required by every command but `plays` and `guides`",
     )
     parser.add_argument("--game", default=None, help="game id; default: the live game")
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base url; default {DEFAULT_API}")
@@ -736,7 +747,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     plays = sub.add_parser(
         "plays",
-        help="CLI-only: check a guides checkout's play scripts (no seat, no game, no API)",
+        help=(
+            "CLI-only: check, reprioritise and admit a guides checkout's play scripts "
+            "(no seat, no game, no API)"
+        ),
     )
     plays_sub = plays.add_subparsers(dest="plays_command", required=True)
     check = plays_sub.add_parser(
@@ -761,15 +775,82 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check.add_argument("--json", action="store_true", help="print the report as JSON")
 
+    reprioritise = plays_sub.add_parser(
+        "priority",
+        help=(
+            "change one play's priority, clamped to 0..100, touching nothing else in the "
+            "file; the delta is recorded in .git/mtg-plays-deltas.json for admit"
+        ),
+    )
+    reprioritise.add_argument("play_id", help="the play's id, its file stem")
+    amount = reprioritise.add_mutually_exclusive_group(required=True)
+    amount.add_argument("--delta", type=int, help="add this (negative lowers it)")
+    amount.add_argument("--set", dest="set_to", type=int, help="set it to this")
+    _guides_target(reprioritise, game=False)
+
+    admit = plays_sub.add_parser(
+        "admit",
+        help=(
+            "commit, rebase, gate and push decks/*/plays/** changes to mtg-decks main "
+            "(a pull request after 3 non-fast-forward pushes); prints admitted | pr_opened | "
+            "refused | conflict | gate_failed | conflict_regression | nothing_to_admit"
+        ),
+    )
+    _guides_target(admit, game=True)
+
+    guides = sub.add_parser(
+        "guides",
+        help="CLI-only: propose a deck-guide edit as a pull request (no seat, no game, no API)",
+    )
+    guides_sub = guides.add_subparsers(dest="guides_command", required=True)
+    propose = guides_sub.add_parser(
+        "propose",
+        help=(
+            "render and commit a matchups[].play_plan / notes edit of the newest boarding plan "
+            "and NOTES.md, push seat/<game-id>-guides and open a pull request"
+        ),
+    )
+    _guides_target(propose, game=True)
+
     return parser
+
+
+def _guides_target(parser: argparse.ArgumentParser, *, game: bool) -> None:
+    parser.add_argument("--deck", required=True, metavar="SLUG", help="the deck's slug")
+    if game:
+        parser.add_argument(
+            "--game-id", required=True, help="the game this change came out of (Game-Id trailer)"
+        )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=GUIDES_ROOT,
+        help=f"the guides git checkout (default: {GUIDES_ROOT})",
+    )
+
+
+def _emit(result: dict[str, Any], success: frozenset[str] = SUCCESS) -> int:
+    print(json.dumps(result, indent=2))
+    return 0 if result.get("result") in success else 1
 
 
 def run(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "plays":
+    if args.command == "plays" and args.plays_command == "check":
         # Offline by design: a lint over files, so no uid, no API, no seat.
         return playscripts_lint.run_cli(args.root, args.deck or None, as_json=args.json)
+    if args.command == "plays" and args.plays_command == "priority":
+        return _emit(
+            playscripts_admit.set_priority(
+                args.root, args.deck, args.play_id, delta=args.delta, value=args.set_to
+            ),
+            frozenset({"priority_set"}),
+        )
+    if args.command == "plays":
+        return _emit(playscripts_admit.admit(args.root, args.deck, args.game_id))
+    if args.command == "guides":
+        return _emit(playscripts_guides.propose(args.root, args.deck, args.game_id))
     if not args.uid:
         parser.error("the following arguments are required: --uid")
     seats = Seats(args.api, args.game)

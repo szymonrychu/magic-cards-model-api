@@ -628,3 +628,36 @@ what happened and why you believe it is wrong. This is not a rules judge
 call for you to guess at - only report something you can actually point to
 in the state or the log as wrong. Filing a report ends your game session,
 which is a legitimate stop.
+
+## Play scripts and guides, for handover
+
+These commands take no `--uid` and touch no game. They work the deck-guides
+checkout at `/guides`, and they are how what you learned this game reaches
+the next one. Run them once the game is over, or when you are told to hand
+over. Each prints one JSON object, and its `result` says what happened:
+
+- `mcp-seat plays priority <play-id> --delta N --deck SLUG` (or `--set N`)
+  changes that one play's `priority`, clamped to 0..100. Nothing else in the
+  file changes. Use it instead of hand-editing a priority, because the change
+  is recorded so that `admit` can replay it if someone else moved the same
+  priority first.
+- `mcp-seat plays admit --deck SLUG --game-id GAME` takes your changes under
+  `decks/*/plays/` to mtg-decks main. It commits them, rebases onto origin,
+  runs the plays gate, and pushes without forcing. After three races it opens
+  a pull request instead. Results:
+  - `admitted` (with `sha`) or `pr_opened` (with `pr_url`): done.
+  - `nothing_to_admit`: there was nothing to take.
+  - `refused`: you changed something outside the plays directories. Revert
+    those `files`.
+  - `conflict`: someone else changed the same lines. The listed `files` need
+    your change rebuilt on origin/main.
+  - `gate_failed`: read `output`, fix the plays, and admit again.
+  - `conflict_regression`: your change makes two plays able to apply at the
+    same moment. Extend their conditions so that at most one applies.
+    Reordering priority never resolves a conflict.
+- `mcp-seat guides propose --deck SLUG --game-id GAME` covers the matchup
+  advice. Edit only `matchups[].play_plan` and `matchups[].notes` in the
+  deck's newest `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command
+  regenerates the guides, pushes a `seat/GAME-guides` branch and returns the
+  pull request's `pr_url`. The pull request is merged on CI, not by you. Any
+  other change is `refused`.

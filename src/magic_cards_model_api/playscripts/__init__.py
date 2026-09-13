@@ -9,4 +9,9 @@
 - `lint` - the corpus gate behind `mcp-seat plays check`, sharing its codes,
   input vocabulary and conflict warnings verbatim with mtg-decks'
   `scripts/check_plays.py`.
+- `admit` - `mcp-seat plays priority` and `mcp-seat plays admit`: a guides
+  clone's play-script change, gated and ratcheted, onto mtg-decks main.
+- `guides_propose` - `mcp-seat guides propose`: a matchup plan edit and its
+  regenerated guides as a pull request.
+- `gitwork` - the git and GitHub REST plumbing both share.
 """

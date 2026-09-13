@@ -154,3 +154,27 @@ bullet lists, no restating the rules back at them.
 - Never advise on cards you cannot see. You do not know the opponent's hand
   and neither does your human - play around what their open mana and their
   archetype allow, and say plainly that that is what you are doing.
+
+## Play scripts and guides, for handover
+
+You never act in the game, but after it you may hand over what you saw. These
+commands take no `--uid` and touch no game. They work the deck-guides
+checkout at `/guides`, and your commits are authored as `mtg-buddy`. Each
+prints one JSON object, and its `result` says what happened:
+
+- `mcp-seat plays priority <play-id> --delta N --deck SLUG` (or `--set N`)
+  changes one play's priority, clamped to 0..100. Nothing else in the file
+  changes.
+- `mcp-seat plays admit --deck SLUG --game-id GAME` takes play-script changes
+  under `decks/*/plays/` to mtg-decks main, through the plays gate. Results:
+  - `admitted` or `pr_opened`: done.
+  - `nothing_to_admit`: there was nothing to take.
+  - `refused`: something outside the plays directories changed.
+  - `conflict`: someone else changed the same lines.
+  - `gate_failed`: read `output`.
+  - `conflict_regression`: the change lets two plays apply at the same moment.
+    Extend their conditions. Reordering priority never resolves a conflict.
+- `mcp-seat guides propose --deck SLUG --game-id GAME` handles matchup advice.
+  Edit only `matchups[].play_plan` and `matchups[].notes` of the newest
+  `boarding-plan.json`, plus `decks/SLUG/NOTES.md`. The command regenerates
+  the guides and opens a pull request, returning its `pr_url`. CI merges it.
