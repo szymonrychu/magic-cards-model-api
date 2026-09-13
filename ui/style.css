@@ -959,8 +959,8 @@ h3 { font-size: 14px; }
 
    `.advice-stale` wraps all three once the board has moved: dimmed, because
    the reasoning is still worth reading while deciding whether it still
-   applies, but no longer something to act on. The two notices that must NOT
-   dim with it - "the board moved" and "unchecked" - sit outside that
+   applies, but no longer something to act on. The status line
+   (`.advice-status`, "Buddy is thinking" and friends) sits outside that
    wrapper, at full contrast, and so does Approve. */
 .advice-head {
   font-size: 11px;
@@ -973,10 +973,11 @@ h3 { font-size: 14px; }
 .advice-why { margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
 .advice-where { margin-top: 6px; color: var(--ink-faint); font-size: 11px; }
 .advice-stale { opacity: 0.55; }
-/* The two notices, in the same warning colour and deliberately outside
-   `.advice-stale`: both are the reason not to trust what is above them, so
-   neither may be dimmed by it. */
-.advice-moved, .advice-unchecked { margin-top: 8px; color: var(--warn); }
+/* One short, friendly status per panel state (`advice_model.js`'s
+   `adviceStatus`), deliberately outside `.advice-stale` so it is never
+   dimmed. Only the states that say "not yet" take the warning colour. */
+.advice-status { margin-top: 8px; color: var(--ink-dim); font-size: 12px; }
+.advice-status-stale, .advice-status-unverified { color: var(--warn); }
 #advice-box button { margin-top: 10px; }
 
 /* The game log's own overlay. `.modal` already centres its child and dims

@@ -38,6 +38,7 @@
 // rather than a friendlier one invented locally.
 
 import { api } from "../api.js";
+import { clipRationale } from "../advice_model.js";
 import { apiBase } from "../config.js";
 import { h, clear } from "../dom.js";
 import { cardNode, updateCardNode } from "../cards.js";
@@ -468,8 +469,11 @@ function adviceNode(advice, you, catalogue) {
     )
   );
   el.appendChild(h("div", { class: "advice-summary" }, text(advice.summary)));
-  if (advice.reasoning) {
-    el.appendChild(h("blockquote", { class: "advice-reasoning" }, text(advice.reasoning)));
+  // Clipped to the same cap `POST .../advice` enforces: a row recorded
+  // before the cap existed must not render as an unbounded blob.
+  const why = clipRationale(advice.reasoning);
+  if (why) {
+    el.appendChild(h("blockquote", { class: "advice-reasoning" }, why));
   }
   el.appendChild(
     h(

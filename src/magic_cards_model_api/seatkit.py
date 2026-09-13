@@ -161,6 +161,18 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #:
 #: Bump this alongside any change to a tool's request/response shape.
 PROTOCOL_VERSION = "seatkit-19"
+#: `seatkit-19` **narrows one request**: an advisor's rationale is capped at
+#: `ADVICE_REASONING_MAX_CHARS` (240) characters (bd1). `AdviceIn.reasoning`
+#: gained `maxLength: 240` and the route refuses a longer one with a 422 of
+#: type `reasoning_too_long`; an advise `Seat` refuses it first, client-side,
+#: before any `dry_run` probe or `/advice` POST goes out, answering `allowed:
+#: false`, `type: reasoning_too_long`, `max_chars` and a `reason` that says to
+#: shorten it and propose again. A seat's own per-action `reasoning` is not
+#: capped. A bump because the prose this build serves promises the cap and
+#: the typed refusal: a seatkit-18 process would still send the long
+#: rationale, probe the engine for it, and read the server's 422 back only as
+#: an untyped refusal.
+#:
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
 #: legal-action row of kind `equip`, and rows gaining `printed_cost`,
@@ -987,6 +999,33 @@ ADVISE_WAKE_REASON = (
     "move, and you still hold no priority of your own"
 )
 
+#: The most characters an advisor's `reasoning` may run to - the rationale a
+#: human reads in the buddy panel. Kept equal by hand to the api's
+#: `schemas.ADVICE_REASONING_MAX_CHARS` (this module cannot import the api's
+#: package once the repos split); `tests/test_advise_mode.py` pins the two.
+ADVICE_REASONING_MAX_CHARS = 240
+#: The `type` of the refusal an overlong rationale gets, on both sides.
+REASONING_TOO_LONG = "reasoning_too_long"
+
+
+def _overlong_rationale(reasoning: Any) -> dict[str, Any] | None:
+    """The typed refusal for an advisor rationale over
+    `ADVICE_REASONING_MAX_CHARS`, or `None` when it fits."""
+    said = str(reasoning or "").strip()
+    if len(said) <= ADVICE_REASONING_MAX_CHARS:
+        return None
+    return {
+        "allowed": False,
+        "type": REASONING_TOO_LONG,
+        "max_chars": ADVICE_REASONING_MAX_CHARS,
+        "reason": (
+            f"{REASONING_TOO_LONG}: reasoning is {len(said)} characters and an advice "
+            f"rationale is capped at {ADVICE_REASONING_MAX_CHARS}: shorten it to one or "
+            "two plain sentences and propose again. Nothing was proposed."
+        ),
+    }
+
+
 #: The reason carried by a proposal nobody validated - the 5 shapes with no
 #: `dry_run` to ask with. Said out loud in the answer *and* recorded in the
 #: ledger row (`validated: false`), because "the engine agreed this is legal"
@@ -1350,6 +1389,9 @@ class Seat:
            `DRY_RUN_SHAPES` for why leaning on the gate's own `dry_run`
            carve-out here would be a way to commit a real action by accident.
 
+        Before guard 4, a `reasoning` over `ADVICE_REASONING_MAX_CHARS` is
+        refused outright (`type: reasoning_too_long`) and nothing is sent.
+
         The `/advice` POST itself can be refused (a blank `reasoning`, most
         likely - the route requires the advisor's own words), and that
         refusal is returned rather than swallowed: a proposal nobody recorded
@@ -1362,6 +1404,12 @@ class Seat:
         sending = dict(body or {})
         if sending.get("dry_run") is True:
             return None
+        # A rationale the route would refuse is refused here, before the
+        # probe: a proposal that cannot be recorded is not worth asking the
+        # engine about, and the buddy gets a typed answer it can retry on.
+        overlong = _overlong_rationale(sending.get("reasoning"))
+        if overlong is not None:
+            return 422, overlong
         shape = ACTION_REQUEST_SHAPES.get(_action_key(path) or "")
         validated = shape in DRY_RUN_SHAPES
         outcome: Any

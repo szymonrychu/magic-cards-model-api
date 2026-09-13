@@ -13,9 +13,12 @@
 //
 // The two ledger rows this module knows about, and their `detail` shapes:
 //
-// - `advice`: `{player, method, path, body, summary, reasoning,
-//   based_on_seq, validated}`. `player` is the HUMAN the advice is for, not
-//   the advisor. `summary` is server-derived; `reasoning` is the agent's own
+// - `advice`: `detail` is `{player, method, path, body, summary,
+//   based_on_seq, validated}`, and the agent's rationale is the ROW's own
+//   top-level `reasoning` - `audit.record` takes `reasoning` as a keyword
+//   argument and writes it beside `detail`, never inside it, exactly as for
+//   every action route. `player` is the HUMAN the advice is for, not the
+//   advisor. `summary` is server-derived; `reasoning` is the agent's own
 //   words and is the rationale the human actually reads. `{method, path,
 //   body}` is the request the human is being offered, verbatim - nothing
 //   here or downstream assembles a request of its own. `based_on_seq` is the
@@ -30,6 +33,21 @@
 
 export const ADVICE_ACTION = "advice";
 export const ADVICE_APPROVED_ACTION = "advice_approved";
+
+// The most of a rationale any panel renders - the same number
+// `schemas.ADVICE_REASONING_MAX_CHARS` makes `POST .../advice` enforce
+// (`tests/test_ui_advice.py` pins the two together). The route refuses a
+// longer one outright; this clip is for rows recorded before the cap existed,
+// so the panel never renders an unbounded blob.
+export const RATIONALE_MAX_CHARS = 240;
+
+/** `text` trimmed, and clipped to `RATIONALE_MAX_CHARS` with a trailing
+ * "..." when it is longer. `""` for nothing at all. */
+export function clipRationale(text) {
+  const said = typeof text === "string" ? text.trim() : "";
+  if (said.length <= RATIONALE_MAX_CHARS) return said;
+  return `${said.slice(0, RATIONALE_MAX_CHARS - 3).trimEnd()}...`;
+}
 
 // The rows that do NOT stale a proposal. The advice row itself always lands
 // after the board the agent read (it is recorded once the agent has spoken),
@@ -62,7 +80,9 @@ function viewOf(entry) {
     path: detail.path,
     body: detail.body,
     summary: detail.summary,
-    reasoning: detail.reasoning,
+    // Top-level first, where `audit.record` writes it; `detail.reasoning` is
+    // the same fallback `review.py` and `review_model.js` already read.
+    reasoning: entry.reasoning || detail.reasoning || null,
     based_on_seq: detail.based_on_seq,
     validated: detail.validated,
   };
@@ -131,6 +151,33 @@ export function isFresh(advice, log) {
   const base = advice.based_on_seq;
   if (base === null || base === undefined) return false;
   return stalingSeq(advice, log) === null;
+}
+
+// The human-facing status line per panel state. Friendly and short on
+// purpose: the internal wording ("unchecked - the server could not dry-run
+// this shape", "the board moved - see entry #N") is for agents and logs,
+// and `validated`/`based_on_seq` stay on the row for them.
+export const ADVICE_STATUS = {
+  stale: "Buddy is thinking",
+  busy: "Buddy is waiting for your play to finish",
+  unverified: "Buddy is unsure about this play",
+  ready: "Buddy is waiting for your call",
+};
+
+/** `{state, text}` for the proposal on screen, or `null` with none.
+ *
+ * In precedence order: `stale` (the ledger moved past the board it read, or
+ * it has no baseline - its advice is out of date and a fresh one is what
+ * comes next), `busy` (one of this seat's own submissions is still
+ * outstanding), `unverified` (`validated: false` - the engine was never
+ * asked), `ready`. */
+export function adviceStatus(advice, log, busy) {
+  if (!advice) return null;
+  let state = "ready";
+  if (!isFresh(advice, log)) state = "stale";
+  else if (busy) state = "busy";
+  else if (advice.validated === false) state = "unverified";
+  return { state, text: ADVICE_STATUS[state] };
 }
 
 /** `path` with any `uid` query parameter removed.

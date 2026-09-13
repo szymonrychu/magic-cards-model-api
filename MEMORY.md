@@ -7,6 +7,36 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-13 - bd1: the buddy panel always said "(no rationale was
+  recorded)" because `ui/advice_model.js`'s `viewOf` read `detail.reasoning`,
+  while `audit.record` writes `reasoning` as the row's own TOP-LEVEL key
+  (a keyword argument, like every action route).** The UI test fixture put
+  `reasoning` inside `detail`, so the suite pinned the wrong shape and stayed
+  green; `review.py` and `review_model.js` already read top-level first,
+  which is why the retrospective was fine. The fixture now mirrors
+  `audit.record`, and `test_the_rationale_sent_through_the_real_route_is_
+  what_the_panel_shows` drives `POST .../advice` -> `GET .../log` -> the
+  panel. Lesson: a UI fixture for a ledger row is built from a real route
+  read at least once, never hand-shaped from a comment.
+- **2026-09-13 - bd1: the rationale was long because the prose asked for it
+  ("three to five sentences, every time", production rows ~1,000 chars), and
+  nothing bounded it.** Now one or two plain sentences, at most 240
+  characters, in `prompt.advisor_turn_zero` and `docs/ai_buddy_brief.md`.
+  Enforced three ways: `schemas.AdviceIn.reasoning` (`Rationale`: typed 422
+  `reasoning_too_long` whose msg says shorten it, plus `maxLength: 240` in
+  the contract), `seatkit._advise_answer` refuses first client-side before
+  any `dry_run` probe (so MCP and the seat CLI share it), and the panel and
+  retrospective clip to `RATIONALE_MAX_CHARS` for rows older than the cap.
+  A seat's own per-action `reasoning` is not capped. Narrowing a request is
+  a bump: `seatkit-19`.
+- **2026-09-13 - bd1: the panel showed internal wording ("unchecked - the
+  server could not dry-run...", "The board moved after this was proposed -
+  see entry #N") because `render/advice.js` rendered agent/log-facing state
+  verbatim to the human.** Replaced by one `.advice-status` line from
+  `advice_model.adviceStatus`: stale "Buddy is thinking", busy "Buddy is
+  waiting for your play to finish", unverified "Buddy is unsure about this
+  play", ready "Buddy is waiting for your call". `validated`, `based_on_seq`
+  and `ADVISE_UNVALIDATED_REASON` stay in the payload and agent answers.
 - **2026-09-13 - the default model for an AI opponent seat and a buddy is
   `opus`.** The owner's call. Spelled as the codebase already spells
   `AgentSettings.model` (`opus`, never a versioned id), and set in the three

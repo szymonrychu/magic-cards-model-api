@@ -11,10 +11,12 @@
 // `#log-modal` behind the topbar's Log button.
 //
 // What is on screen, in reading order: the decision summary, the agent's own
-// reasoning, where in the game it was proposed (`#seq`, turn, step) so the
-// human can place it against the log, an "unchecked" marker when the server
-// could not dry-run the proposed request shape, the "the board moved" line
-// when it has, and Approve.
+// reasoning (clipped to `RATIONALE_MAX_CHARS`), where in the game it was
+// proposed (`#seq`, turn, step) so the human can place it against the log,
+// one short status line (`advice_model.js`'s `adviceStatus`: "Buddy is
+// thinking", "Buddy is waiting for your call", ...), and Approve. The
+// internal verification and staleness sentences are not shown to the human;
+// `validated` and `based_on_seq` stay on the row for agents and logs.
 //
 // Approve is enabled only when the proposal is FRESH (`advice_model.js`'s
 // deliberately over-conservative `isFresh`) and this seat has nothing else
@@ -30,7 +32,7 @@
 // as for a manual click. There is deliberately no second mechanism for it.
 
 import { h, clear } from "../dom.js";
-import { currentAdvice, isFresh, stalingSeq } from "../advice_model.js";
+import { adviceStatus, clipRationale, currentAdvice, isFresh } from "../advice_model.js";
 
 // The "nothing has been rendered yet" marker for the guard below - a unique
 // value rather than a string, since every string this guard builds is a
@@ -58,12 +60,6 @@ function whereLine(advice) {
   return `proposed at #${advice.seq}, turn ${turn} / ${step}`;
 }
 
-function staleLine(seq) {
-  return seq === null || seq === undefined
-    ? "The board moved after this was proposed (an entry with no recorded baseline)."
-    : `The board moved after this was proposed - see entry #${seq}.`;
-}
-
 function renderAdvice(el, app, handlers) {
   clear(el);
   const advice = currentAdvice(app.log, (app.state || {}).you);
@@ -81,7 +77,7 @@ function renderAdvice(el, app, handlers) {
   el.hidden = false;
 
   const fresh = isFresh(advice, app.log);
-  const staled = fresh ? null : stalingSeq(advice, app.log);
+  const status = adviceStatus(advice, app.log, app.busy);
   // Fresh AND idle. `busy` is `send()`'s live counter of this seat's own
   // outstanding submissions, so approving while it is non-zero would put two
   // of the human's own actions against one board.
@@ -93,25 +89,13 @@ function renderAdvice(el, app, handlers) {
       "div",
       { class: `advice-body${fresh ? "" : " advice-stale"}` },
       h("div", { class: "advice-summary" }, advice.summary || "(no summary was recorded)"),
-      h("div", { class: "advice-why" }, advice.reasoning || "(no rationale was recorded)"),
+      h("div", { class: "advice-why" }, clipRationale(advice.reasoning) || "(no rationale was recorded)"),
       h("div", { class: "advice-where" }, whereLine(advice))
     )
   );
-  // `validated: false` means the server could not probe this request shape
-  // before recording it, so nobody has checked the engine would accept it.
-  // Said out loud rather than smoothed over: the human may still approve it
-  // (the engine's refusal is the backstop), but a panel that looks equally
-  // confident about a play it has no evidence for is lying by omission.
-  if (advice.validated === false) {
-    el.appendChild(
-      h(
-        "div",
-        { class: "advice-unchecked" },
-        "unchecked - the server could not dry-run this shape, so nothing has confirmed the engine accepts it"
-      )
-    );
-  }
-  if (!fresh) el.appendChild(h("div", { class: "advice-moved" }, staleLine(staled)));
+  el.appendChild(
+    h("div", { class: `advice-status advice-status-${status.state}` }, status.text)
+  );
   el.appendChild(
     h(
       "button",
