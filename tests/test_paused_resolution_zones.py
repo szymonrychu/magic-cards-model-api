@@ -133,9 +133,9 @@ def test_the_resolving_trigger_stays_on_the_stack_at_the_pause(client, game) -> 
 
 
 def test_the_pause_does_not_move_the_turn_or_priority(client, game) -> None:
-    """Only the zones come from the replay: the step and the priority holder a
-    resolution pause reports stay the ones the committed game is in, which is
-    what `advance` and `seatkit.pass_until` read (`serialize.state_view`)."""
+    """The zones come from the replay, and the step and turn come from the
+    paused board (`serialize._paused_overlay`): a trigger resolving in the step
+    it was put on the stack in leaves both where the committed game has them."""
     before = state(client, game)
     pause_on_the_overlord(client, game)
     during = state(client, game)
