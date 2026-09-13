@@ -602,6 +602,29 @@ PROTOCOL_VERSION = "seatkit-16"
 
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
+
+#: Hex digits and dashes, at least six, with a digit or a dash among them - a
+#: card id someone shortened or cut off. No printed card name has that shape
+#: (one that did would need no letters past `f` and no spaces).
+_ID_FRAGMENT = re.compile(r"^(?=.*[0-9-])[0-9a-f-]{6,}$", re.IGNORECASE)
+
+
+def card_reference(value: str) -> dict[str, str]:
+    """The request field a seat's `card` argument belongs in: `card_id` for
+    an id, `card` for a name.
+
+    An id fragment (`5609c7e2`) goes out as `card_id` too, not as a name: the
+    API then refuses it as a malformed card id naming the full form
+    (`app._validation_error`), where looking it up as a name could only say
+    "no card named 5609c7e2" - true, and no help to a seat that meant an id.
+    Shared by `seat_cli.py` and `mcp.py` so the two front ends split the same
+    way."""
+    stripped = value.strip()
+    if _UUID.match(stripped) or _ID_FRAGMENT.match(stripped):
+        return {"card_id": stripped}
+    return {"card": value}
+
+
 NO_SUCH_SEAT = (
     "that uid is no seat in this game. You cannot act, and you may see nothing - "
     "a seat uid is given to you when you are dispatched."
@@ -2267,7 +2290,13 @@ def run_action(
         )
 
     pass_outcome = None
-    if release:
+    # D16: release only priority this seat actually holds. A decision is
+    # asked of whoever the resolving object names (bob paying life for his
+    # own shockland in alice's turn), not of the priority holder, so after
+    # `decide` the seat may hold nothing to release - and a pass posted anyway
+    # is refused and recorded as this seat's refusal, inflating the audit
+    # tallies (`eval_report`'s `rules_error_rate`) with a move nobody chose.
+    if release and seat.fetch_state().get("priority_holder") == seat.player:
 
         def perform_pass() -> Any:
             body: dict[str, Any] = {"player": seat.player}

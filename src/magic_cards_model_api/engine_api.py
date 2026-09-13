@@ -26,6 +26,7 @@ from magic_cards_model.models import CardState, Color, Game, Layout, Zone
 from magic_cards_model.models.card_state import Counter, counter_state_based_actions
 from pydantic import ValidationError
 
+from .decisions import player_or_card
 from .schemas import (
     ActivateRequest,
     AttackRequest,
@@ -344,13 +345,10 @@ def mana_colors(
 
 def target_thing(game: Game, token: str) -> Any:
     """A target named as a card id or a player name."""
-    if token in {player.username for player in game.players}:
-        return token  # the engine accepts a username string anywhere a player goes
-    try:
-        card_id = UUID(token)
-    except ValueError as exc:
-        raise ValueError(f"target {token!r} is neither a player name nor a card id") from exc
-    state = game.find_by_id(card_id)
+    thing = player_or_card(token, {player.username for player in game.players})
+    if not isinstance(thing, UUID):
+        return thing  # the engine accepts a username string anywhere a player goes
+    state = game.find_by_id(thing)
     if state is None:
         raise ValueError(f"target {token!r} is neither a player name nor a card id")
     return state
@@ -1308,9 +1306,24 @@ def locate_land(game: Game, req: PlayLandRequest) -> CardState:
     if not req.card:
         raise ValueError("give either card_id or card (a name)")
     for state in game.player(req.player).hand:
-        if state.card.name == req.card and state.card.is_land:
+        if _answers_to_land_name(state, req.card):
             return state
     raise ValueError(f"{req.player} has no land named {req.card} in hand")
+
+
+def _answers_to_land_name(state: CardState, name: str) -> bool:
+    """Whether a hand card is a land `name` can mean.
+
+    A card with a land face (CR 712.12 - `Card.land_face`, which reads every
+    face, where `is_land` reads only the front one, CR 712.8a) answers to its
+    full name and to each of its faces' names: a modal double-faced card is
+    played by its front face's name ("Witch Enchanter"), its land face's name
+    ("Witch-Blessed Meadow") or both joined. A single-faced land has no faces
+    and answers to its one name."""
+    card = state.card
+    if not card.is_land and card.land_face is None:
+        return False
+    return name in {card.name, *(face.name for face in card.card_faces or [])}
 
 
 def _not_a_land_refusal(land: CardState) -> str | None:
