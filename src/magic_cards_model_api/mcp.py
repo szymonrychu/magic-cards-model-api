@@ -923,8 +923,9 @@ def build_server(seats: Seats) -> MCPServer:
         """Cast a spell. Most casts are from your hand, and need nothing
                 else; `card` is the card's name or id. `targets` is comma-separated
                 card ids or player names. `mana_sources` is comma-separated source
-                ids; leave it empty to offer all your untapped mana sources (the
-                engine taps only what the cost needs). Set `dry_run` to true to ask
+                ids, and only the sources named are sent; leave it empty to name
+                none, and the engine's automatic payment taps only what the cost
+                needs from your untapped permanents. Set `dry_run` to true to ask
                 "could I cast this?" without changing anything (a dry run never
                 blocks).
 
@@ -1086,7 +1087,6 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        state = seat.fetch_state()
         body: dict[str, Any] = {"player": seat.player, "dry_run": dry_run}
         body.update(card_reference(card))
         if spell_face.strip():
@@ -1097,7 +1097,7 @@ def build_server(seats: Seats) -> MCPServer:
             body["spell_face"] = spell_face.strip()
         if targets:
             body["targets"] = _parse_ids(targets)
-        sources = seat.sources_or_all(mana_sources, state)
+        sources = _parse_ids(mana_sources)
         if sources:
             body["mana_sources"] = sources
         if modes:
@@ -1494,7 +1494,6 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
-        state = seat.fetch_state()
         body: dict[str, Any] = {
             "player": seat.player,
             "card_id": card_id,
@@ -1503,7 +1502,7 @@ def build_server(seats: Seats) -> MCPServer:
         }
         if targets:
             body["targets"] = _parse_ids(targets)
-        sources = seat.sources_or_all(mana_sources, state)
+        sources = _parse_ids(mana_sources)
         if sources:
             body["mana_sources"] = sources
         if sacrificing:
