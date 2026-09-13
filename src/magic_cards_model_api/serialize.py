@@ -465,6 +465,30 @@ def _play_permissions_view(
     return by_player
 
 
+def _mana_value(game: Game, state: CardState) -> float:
+    """This object's mana value (CR 202.3), the way `state.mana_value` itself
+    never can: CR 202.3e makes an `{X}` in the cost read as the chosen number
+    while the object is on the stack, not CR 107.3g's off-stack `X = 0` -
+    which is all `CardState.mana_value` computes, since a `CardState` has
+    nowhere of its own to keep the announced X once casting is over (see
+    `magic_cards_model.models.game.CastRecord.x_value`'s own docstring).
+
+    `state.mana_value` already does everything else right (meld's combined
+    value, a land-face MDFC's 0, a face-down object's 0), so this only adds
+    CR 202.3e's stack-only delta on top of it, the same arithmetic
+    `Game.put_on_stack` already runs for its own `CAST_SPELL` event (see the
+    CR 107.3i comment there: every `{X}` in the cost is worth the chosen X,
+    not one shared between them - Walking Ballista's `{X}{X}` at X=3 is 6,
+    not 3)."""
+    base = state.mana_value
+    if state.zone is not Zone.STACK:
+        return base
+    x_count = (state.mana_cost or "").count("{X}")
+    if not x_count:
+        return base
+    return base + x_count * game.cast_record(state).x_value
+
+
 def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) -> dict[str, Any]:
     image = images.get(state.card.name, {})
     proxied = assets.proxy_image_links(state.card.name, image) if image else {}
@@ -536,6 +560,16 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
             # `_special_actions` already gets for free by only existing on a
             # hidden hand - see `visibility._redact_cast_options`.
             view["cast_options"] = cast_options
+    if state.zone is Zone.STACK:
+        # CR 202.3e: only on the stack does an `{X}` in the cost mean
+        # anything other than 0 (CR 107.3g) - see `_mana_value`'s own
+        # docstring. `x_value` itself is added only when the cost actually
+        # has an `{X}` to announce, so a spell with none carries no stray
+        # `x_value: 0` a client could mistake for an announced X (battle-7,
+        # B7-13).
+        view["mana_value"] = _mana_value(game, state)
+        if "{X}" in (state.mana_cost or ""):
+            view["x_value"] = game.cast_record(state).x_value
     if state.zone is Zone.BATTLEFIELD:
         # What this Equipment or Aura is attached to (`CardState.attachment`),
         # in the same `{kind, id, name}` shape every other reference on this

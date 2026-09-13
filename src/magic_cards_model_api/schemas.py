@@ -1382,6 +1382,17 @@ class CardView(BaseModel):
     face_up: bool
     type_line: str | None = None
     mana_cost: str | None = None
+    mana_value: float | None = None
+    """This object's mana value (CR 202.3) - set only on the stack, where
+    CR 202.3e makes it depend on the chosen X (`x_value` below), which is why
+    it is not simply carried for every zone: off the stack, `mana_cost` plus
+    a client's own symbol counting already gets CR 107.3g's "X is 0" answer
+    for free. See `serialize._mana_value`."""
+    x_value: int | None = None
+    """The X a spell with `{X}` in its mana cost was cast for (CR 107.3a),
+    set only while it sits on the stack. Absent for a spell with no `{X}`,
+    not only a zero one - `mana_cost` already says whether one was ever
+    announced."""
     oracle_text: str | None = None
     counters: dict[str, int] | None = None
     damage: int | None = None
@@ -2073,6 +2084,11 @@ class ResolveTopResponse(GameStateView):
     resolved: str | None = None
     zone: str | None = None
     reason: str | None = None
+    changed: bool | None = None
+    """Whether resolving actually changed anything observable - `None` only
+    when nothing was there to resolve (`resolved` is also `None` then). See
+    `commands._resolution_state`; the same marker `pass_priority`'s own
+    `resolve_top` outcome carries."""
     allowed: bool | None = None
     paused: bool = False
     notices: list[dict[str, Any]] = Field(default_factory=list)
