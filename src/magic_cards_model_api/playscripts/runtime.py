@@ -74,7 +74,7 @@ from ..seatkit import (
 from . import conditions
 from .inputs import BUILTIN_INPUT, input_catalog
 from .schema import AMOUNT_DECISION_KINDS, WILDCARD, Play
-from .selectors import matches
+from .selectors import Present, matches
 
 #: The tool parameter each decision kind is answered on, by kind value - the
 #: fallback for a pending decision that does not name its `answer_field`.
@@ -574,7 +574,7 @@ def _send_move(ctx: _Context, run: _Run, play: dict[str, Any]) -> ScriptExit | N
     index = run.move_index
     move = play["moves"][index]
     seat.recent_log()
-    state = seat.fetch_state()
+    state = seat.fetch_state(include_contents=conditions.needs_contents(move))
     reasoning = _suffixed(ctx, run, f"move {index + 1}/{len(play['moves'])} ({move['kind']})")
     if move["kind"] == "answer":
         pending = state.get("pending_decision")
@@ -675,7 +675,9 @@ def _answer(
             ),
         )
     view = state
-    if any(card.get("type_line") is None for card in _decision_cards(pending, state, ctx.me)):
+    if conditions.needs_contents(answers[found]) or any(
+        card.get("type_line") is None for card in _decision_cards(pending, state, ctx.me)
+    ):
         view = seat.fetch_state(include_contents=True)
     body = decide_body(answers[found], pending, view, ctx.me, reasoning)
     if isinstance(body, ScriptExit):
@@ -792,7 +794,12 @@ def _move_request(
     if kind == "cast":
         body = cast_body(move, state, me, reasoning)
         return body if isinstance(body, ScriptExit) else ("actions/cast", body)
-    chosen = _pick(_zone_cards(state, "hand", me), move["card"]["select"], "the land to play")
+    chosen = _pick(
+        _zone_cards(state, "hand", me),
+        move["card"]["select"],
+        "the land to play",
+        present=conditions.presence(state, me),
+    )
     if isinstance(chosen, ScriptExit):
         return chosen
     return "actions/play-land", {"player": me, "card_id": chosen[0]["id"], "reasoning": reasoning}
@@ -807,7 +814,8 @@ def _activate_request(
         for card in _zone_cards(state, move["source"]["zone"], me)
         if _ability(card, phrase) is not None
     ]
-    chosen = _pick(candidates, move["source"]["select"], "the source to activate")
+    present = conditions.presence(state, me)
+    chosen = _pick(candidates, move["source"]["select"], "the source to activate", present=present)
     if isinstance(chosen, ScriptExit):
         return chosen
     source = chosen[0]
@@ -833,6 +841,7 @@ def _activate_request(
             "the permanent to sacrifice",
             sacrifice.get("prefer"),
             sacrifice.get("count") or sacrifice_count(ability),
+            present=present,
         )
         if isinstance(sacrificed, ScriptExit):
             return sacrificed
@@ -872,7 +881,7 @@ def _targets(move: dict[str, Any], state: dict[str, Any], me: str) -> list[str] 
                 if _on_side(card.get("controller"), target["side"], me)
             ]
             select = target["select"]
-        picked = _pick(pool, select, f"target {index + 1}")
+        picked = _pick(pool, select, f"target {index + 1}", present=conditions.presence(state, me))
         if isinstance(picked, ScriptExit):
             return picked
         chosen.append(picked[0]["id"])
@@ -887,7 +896,12 @@ def cast_body(
     under: the keyword, or for `printed` the card's name, which is how the
     engine names a card's own CR 118.9 cost."""
     zone = move["card"]["zone"]
-    chosen = _pick(_zone_cards(state, zone, me), move["card"]["select"], "the card to cast")
+    chosen = _pick(
+        _zone_cards(state, zone, me),
+        move["card"]["select"],
+        "the card to cast",
+        present=conditions.presence(state, me),
+    )
     if isinstance(chosen, ScriptExit):
         return chosen
     targets = _targets(move, state, me)
@@ -928,6 +942,7 @@ def decide_body(
         body[answer_field] = pending.get("amount") if item["amount"] == "max" else item["amount"]
         return body
     cards = _decision_cards(pending, state, me)
+    present = conditions.presence(state, me)
     pick = item.get("pick")
     if pick is not None:
         if kind == "choose_targets":
@@ -944,7 +959,12 @@ def decide_body(
         else:
             pool, field_name = cards, "card_ids"
         chosen = _pick(
-            pool, pick["select"], f"the {kind} answer", pick.get("prefer"), pick.get("count", 1)
+            pool,
+            pick["select"],
+            f"the {kind} answer",
+            pick.get("prefer"),
+            pick.get("count", 1),
+            present=present,
         )
         if isinstance(chosen, ScriptExit):
             return chosen
@@ -956,11 +976,13 @@ def decide_body(
     if kind in ("surveil", "scry"):
         # Naming no split moves nothing: every card looked at stays on top.
         moving = item.get("to_graveyard") if kind == "surveil" else item.get("to_bottom")
-        body["moved"] = [] if moving is None else [c["id"] for c in cards if matches(moving, c)]
+        body["moved"] = (
+            [] if moving is None else [c["id"] for c in cards if matches(moving, c, present)]
+        )
         body["top_order"] = None
         return body
     if kind == "put_on_top_or_bottom" and item.get("to_bottom") is not None and cards:
-        body["top"] = not matches(item["to_bottom"], cards[0])
+        body["top"] = not matches(item["to_bottom"], cards[0], present)
         return body
     return ScriptExit(
         Exit.UNFORESEEN,
@@ -1016,15 +1038,17 @@ def _pick(
     what: str,
     prefer: list[dict[str, Any]] | None = None,
     count: int = 1,
+    present: Present | None = None,
 ) -> list[dict[str, Any]] | ScriptExit:
     """`count` cards matching `select`, narrowed by each `prefer` that still
     leaves some. Same-named candidates are interchangeable; different names
-    left tied are `ambiguous`, and nothing matching is `unforeseen`."""
-    found = [card for card in cards if matches(select, card)]
+    left tied are `ambiguous`, and nothing matching is `unforeseen`. `present`
+    is the board a `missing_from` compares against."""
+    found = [card for card in cards if matches(select, card, present)]
     if not found:
         return ScriptExit(Exit.UNFORESEEN, stop_reason=f"nothing matched {what}")
     for preference in prefer or []:
-        narrowed = [card for card in found if matches(preference, card)]
+        narrowed = [card for card in found if matches(preference, card, present)]
         if narrowed:
             found = narrowed
     names = sorted({str(card.get("name") or card.get("card_name")) for card in found})
@@ -1170,11 +1194,15 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
             return ScriptExit(
                 Exit.UNFORESEEN, stop_reason="no decision this move answers is pending"
             )
+        if conditions.needs_contents(item):
+            state = seat.fetch_state(include_contents=True)
         body = decide_body(item, pending, state, ctx.me, reasoning)
         built: tuple[str, dict[str, Any]] | ScriptExit = (
             body if isinstance(body, ScriptExit) else ("decide", body)
         )
     else:
+        if conditions.needs_contents(first):
+            state = seat.fetch_state(include_contents=True)
         built = _move_request(first, state, ctx.me, reasoning)
     if isinstance(built, ScriptExit):
         return built

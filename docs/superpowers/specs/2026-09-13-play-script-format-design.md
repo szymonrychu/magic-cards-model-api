@@ -24,7 +24,8 @@ the exported `contract/playscript.schema.json` (`mise run playscript:export`).
   card has in its current zone: `types_all`, `types_any`, `subtypes_any`,
   `supertypes_any`, `colors_any`, `keywords_any` (each 0-15 words);
   `mana_value {op, n}`; `power {op, n}`; `toughness {op, n}`; `tapped`;
-  `counters {name, op, n}`; `ability_text_has`; `oracle_has`.
+  `counters {name, op, n}`; `ability_text_has`; `oracle_has`;
+  `missing_from {zones: [1-7 zone], side: me|opponent, by: subtype|name}`.
 - `colors_any` reads the card's `colors` by name or letter, any case, from a
   closed vocabulary: the five colors and `colorless`. `colorless` (or `C`)
   matches a card whose color set is empty (CR 105.2c, "A colorless object has
@@ -69,6 +70,47 @@ make right now from untapped sources, not the number of sources:
   source. Tron assembled is 7; with Eldrazi Temple 8; Eldrazi Temple and an
   Island are 2; an Island and Mystic Gate
   are 2; Captivating Cave and an Island are 2.
+
+### `missing_from`
+
+A selector field for the "fetch a piece you are missing" shape. A candidate
+matches only when no card on `side` in `zones` shares the compared
+characteristic with it:
+
+- `by: subtype` compares the candidate's subtypes that the selector's own
+  `subtypes_any` also lists, or all its subtypes when `subtypes_any` is left
+  out. No card in the zones may have any of them. `{subtypes_any: [Tower,
+  Mine, Power-Plant], missing_from: {zones: [battlefield, hand], side: me, by:
+  subtype}}` over a library with all three, beside a battlefield Tower and a
+  Mine in hand, matches only the Power-Plant; without `subtypes_any` it
+  matches nothing, because every Tron land also has the subtype `Urza's`.
+- `by: name` compares the card views' `name`s. It is a comparison between
+  objects: the script names no card, so the card-name rule holds.
+- A candidate with nothing to compare (no listed subtype, no name) never
+  matches. The candidate itself counts when it sits in one of the zones, so
+  name the zones it is not chosen from.
+- Zones are read exactly as a `count` reads them: battlefield and stack by
+  controller, graveyard and exile by owner. Hidden zones are read from
+  known information only. The opponent's hand, library and sideboard are only the
+  cards the viewer knows (`known_cards`); a card the viewer does not know
+  about is treated as absent, so over the opponent's hidden zones "missing"
+  means "not known to be there". The viewer's own library or sideboard is its
+  contents multiset, fetched with `include=contents`, which the runner asks
+  for whenever a condition or move reads it.
+- It works wherever a selector does: a `count` or `stack_top` condition, a
+  move's card, source, target or sacrifice choice, and an answer's `pick` and
+  its `prefer`. `zone_size` takes no selector.
+- A zone outside the set, a side other than `me`/`opponent`, or a `by` outside
+  the set is `malformed-play`; no zones is `bounds-exceeded`.
+- The play-conflict check reads `missing_from` as part of the condition it is
+  in, never as a dimension: two counts over one identical selector (zones
+  compared as a set) can be exclusive by range (`>= 1` against `== 0`), but
+  selectors that differ only in `missing_from` are different keys and prove
+  nothing.
+
+- Missing-from zones: `battlefield`, `graveyard`, `exile`, `hand`, `stack`, `library`, `sideboard`
+- Missing-from sides: `me`, `opponent`
+- Missing-from by: `subtype`, `name`
 
 ## Moves
 

@@ -505,6 +505,53 @@
       "title": "LifeCondition",
       "type": "object"
     },
+    "MissingFrom": {
+      "additionalProperties": false,
+      "description": "`{zones, side, by}`: the candidate matches only when no card on `side`\nin `zones` shares what `by` compares with it - its subtypes (those the\nselector's own `subtypes_any` lists, when it lists any) or its name. A\ncomparison between objects, never a name written in the script.",
+      "properties": {
+        "by": {
+          "enum": [
+            "subtype",
+            "name"
+          ],
+          "title": "By",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "me",
+            "opponent"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "zones": {
+          "items": {
+            "enum": [
+              "battlefield",
+              "graveyard",
+              "exile",
+              "hand",
+              "stack",
+              "library",
+              "sideboard"
+            ],
+            "type": "string"
+          },
+          "maxItems": 7,
+          "minItems": 1,
+          "title": "Zones",
+          "type": "array"
+        }
+      },
+      "required": [
+        "zones",
+        "side",
+        "by"
+      ],
+      "title": "MissingFrom",
+      "type": "object"
+    },
     "Pick": {
       "additionalProperties": false,
       "properties": {
@@ -610,7 +657,7 @@
     },
     "Selector": {
       "additionalProperties": false,
-      "description": "Characteristics of one card, all optional, combined with AND. No field\ntakes a card name: type words come from the type line, text fields are\ntemplate phrases matched case-insensitively.",
+      "description": "Characteristics of one card, all optional, combined with AND. No field\ntakes a card name: type words come from the type line, text fields are\ntemplate phrases matched case-insensitively, and `missing_from` compares\nthe candidate with the cards already in some zones.",
       "properties": {
         "ability_text_has": {
           "default": null,
@@ -644,6 +691,10 @@
         },
         "mana_value": {
           "$ref": "#/$defs/Comparison",
+          "default": null
+        },
+        "missing_from": {
+          "$ref": "#/$defs/MissingFrom",
           "default": null
         },
         "oracle_has": {

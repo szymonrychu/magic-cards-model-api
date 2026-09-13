@@ -20,6 +20,9 @@ from magic_cards_model_api.playscripts.schema import (
     MAX_ANSWERS,
     MAX_PREFER,
     MAX_TARGETS,
+    MISSING_FROM_BY,
+    MISSING_FROM_SIDES,
+    MISSING_FROM_ZONES,
 )
 from magic_cards_model_api.playscripts.selectors import COLOR_LETTERS
 
@@ -95,3 +98,16 @@ def test_doc_defines_the_untapped_mana_counting_rule() -> None:
     ):
         assert phrase in text
     assert "Restricted mana counts" not in text
+
+
+def test_doc_names_the_missing_from_selector_and_its_closed_vocabularies():
+    text = DOC.read_text()
+    assert (
+        f"`missing_from {{zones: [1-{len(MISSING_FROM_ZONES)} zone], side: me|opponent, "
+        "by: subtype|name}`"
+    ) in text
+    assert _listed("- Missing-from zones:") == list(MISSING_FROM_ZONES)
+    assert _listed("- Missing-from sides:") == list(MISSING_FROM_SIDES)
+    assert _listed("- Missing-from by:") == list(MISSING_FROM_BY)
+    for phrase in ("`subtypes_any`", "known information", "`include=contents`"):
+        assert phrase in text.split("### `missing_from`", 1)[1].split("\n## ", 1)[0]

@@ -2542,6 +2542,475 @@
           }
         ]
       }
+    },
+    {
+      "name": "missing-from-count-at-least-one-vs-none-same-selector",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "one selector with missing_from is one key: at least one missing piece and none cannot both hold",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": "==",
+            "n": 0,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "missing-from-count-at-least-one-vs-below-one-zones-reordered",
+      "verdict": "exclusive",
+      "dimension": "numeric_range",
+      "proven_by": [
+        "numeric_range"
+      ],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "missing_from zones are a set, so reordered zones are the same key",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": "<",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "hand",
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "missing-from-same-condition-true-and-false",
+      "verdict": "exclusive",
+      "dimension": "true_false",
+      "proven_by": [
+        "true_false",
+        "numeric_range"
+      ],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack",
+        "numeric_range"
+      ],
+      "note": "the same missing_from count in one play's true and the other's false",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [],
+        "false": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing-from-selectors-differ-only-in-missing-from",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "a library Tower beside a battlefield Tower: no piece is missing, yet the library holds one, so both apply; selectors differing only in missing_from are different keys",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": "==",
+            "n": 0,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ]
+            }
+          }
+        ],
+        "false": []
+      }
+    },
+    {
+      "name": "missing-from-different-zones",
+      "verdict": "conflicting",
+      "dimension": "numeric_range",
+      "proven_by": [],
+      "dimensions": [
+        "whose_turn",
+        "steps",
+        "opposing_archetypes",
+        "stack"
+      ],
+      "note": "missing from the battlefield and hand, and yet present in the graveyard: different zones are different keys",
+      "a": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": ">=",
+            "n": 1,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      },
+      "b": {
+        "when": {
+          "whose_turn": "mine",
+          "steps": [
+            "precombat_main"
+          ],
+          "stack": "empty"
+        },
+        "opposing_archetypes": [
+          "*"
+        ],
+        "true": [
+          {
+            "kind": "count",
+            "zone": "library",
+            "side": "me",
+            "op": "==",
+            "n": 0,
+            "select": {
+              "types_all": [
+                "Land"
+              ],
+              "subtypes_any": [
+                "Tower",
+                "Mine",
+                "Power-Plant"
+              ],
+              "missing_from": {
+                "zones": [
+                  "battlefield",
+                  "hand",
+                  "graveyard"
+                ],
+                "side": "me",
+                "by": "subtype"
+              }
+            }
+          }
+        ],
+        "false": []
+      }
     }
   ]
 }

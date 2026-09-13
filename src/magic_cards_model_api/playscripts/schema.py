@@ -14,7 +14,10 @@ or named keys, never both. An answer's fields fit its decision kind: a
 pay-amount decision (`AMOUNT_DECISION_KINDS`) is answered with `amount` alone,
 and no other kind takes one (`answer-shape-mismatch`). A `cast` or `activate`
 target is a card by selector and side, or a player; an `activate` sacrifices
-its source, nothing, or permanents chosen by selector.
+its source, nothing, or permanents chosen by selector. A selector's optional
+`missing_from` names zones (`MISSING_FROM_ZONES`, at least one), a side
+(`MISSING_FROM_SIDES`) and what it compares (`MISSING_FROM_BY`); a word outside
+those is `malformed-play` and no zones `bounds-exceeded`, so it adds no code.
 
 `play_errors` is the same judgement as coded errors - one `PlaysError` per
 refused shape - using the codes shared verbatim with mtg-decks'
@@ -89,6 +92,11 @@ COUNT_ZONES = ("battlefield", "graveyard", "exile", "hand", "stack", "library", 
 SIZE_ZONES = ("hand", "library", "graveyard", "exile", "sideboard")
 HIDDEN_ZONES = ("hand", "library", "sideboard")
 SIDES = ("me", "opponent", "any")
+#: `Selector.missing_from`: the zones it reads are a count's own, on one named
+#: side (never `any`), and it compares either subtypes or card names.
+MISSING_FROM_ZONES = COUNT_ZONES
+MISSING_FROM_SIDES = ("me", "opponent")
+MISSING_FROM_BY = ("subtype", "name")
 OPS = (">=", "<=", "==", "!=", ">", "<")
 INPUT_OPS = ("eq", "ne", "in", "not_in", "<", "<=", ">", ">=")
 #: The cost a `cast` move is announced under. `normal` is the printed mana
@@ -228,6 +236,19 @@ class CounterComparison(_Strict):
     n: AtLeastZero
 
 
+class MissingFrom(_Strict):
+    """`{zones, side, by}`: the candidate matches only when no card on `side`
+    in `zones` shares what `by` compares with it - its subtypes (those the
+    selector's own `subtypes_any` lists, when it lists any) or its name. A
+    comparison between objects, never a name written in the script."""
+
+    zones: list[Literal[MISSING_FROM_ZONES]] = Field(
+        min_length=1, max_length=len(MISSING_FROM_ZONES)
+    )
+    side: Literal[MISSING_FROM_SIDES]
+    by: Literal[MISSING_FROM_BY]
+
+
 SELECTOR_WORD_FIELDS = (
     "types_all",
     "types_any",
@@ -241,7 +262,8 @@ SELECTOR_WORD_FIELDS = (
 class Selector(_Strict):
     """Characteristics of one card, all optional, combined with AND. No field
     takes a card name: type words come from the type line, text fields are
-    template phrases matched case-insensitively."""
+    template phrases matched case-insensitively, and `missing_from` compares
+    the candidate with the cards already in some zones."""
 
     types_all: SelectorWords = None
     types_any: SelectorWords = None
@@ -256,6 +278,7 @@ class Selector(_Strict):
     counters: CounterComparison = None
     ability_text_has: NonBlank = None
     oracle_has: NonBlank = None
+    missing_from: MissingFrom = None
 
 
 # -- conditions --------------------------------------------------------------
@@ -597,6 +620,7 @@ _ITEM_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "targets": TypeAdapter(Target),
     "prefer": TypeAdapter(Selector),
     "opposing_archetypes": TypeAdapter(ArchetypeKey),
+    "zones": TypeAdapter(Literal[MISSING_FROM_ZONES]),
     **{field: TypeAdapter(NonBlank) for field in SELECTOR_WORD_FIELDS},
 }
 _BOUND_TYPES = (
