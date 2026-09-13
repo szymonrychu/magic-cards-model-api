@@ -107,7 +107,8 @@ body.busy { cursor: progress; }
    business being greyed out by it. The topbar's Zones/Report/Lobby buttons
    are left alone for the same reason they always were - a page that traps
    the player in it while a request is out is worse than a slow one. */
-body.busy #side-panel button {
+body.busy #side-panel button,
+body.busy #decision-window button {
   opacity: 0.55;
 }
 
@@ -1216,23 +1217,89 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .decision h3 { color: var(--warn); }
 .decision .remaining { font-variant-numeric: tabular-nums; }
 
-.split-columns { display: flex; gap: 14px; }
-.split-col { flex: 1; min-width: 0; }
-.split-col > .label {
+/* ------------------------------------------- decision window (decision_window.js) */
+
+/* Floats over the board and never dims or blocks it: no scrim, no `inset`,
+   just the box. Below the hover preview (40) and the card menus (50), so
+   both still paint over it; the body of the page stays clickable around it.
+   `left`/`top` are set by the script (dragged, clamped, remembered). */
+.decision-window {
+  position: fixed;
+  left: 24px;
+  top: 72px;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  background: var(--bg-raised);
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.decision-window.moving { opacity: 0.92; }
+.dw-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line);
+  border-radius: 10px 10px 0 0;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+.decision-window.minimized .dw-titlebar { border-bottom: none; border-radius: 10px; }
+.dw-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-minimize { font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.dw-body { padding: 10px 12px 12px; overflow-y: auto; overscroll-behavior: contain; }
+.dw-prompt { font-size: 13px; margin-bottom: 6px; }
+.dw-status { font-size: 12px; color: var(--ink-dim); margin-bottom: 8px; }
+.dw-lanes { display: flex; flex-direction: column; gap: 10px; }
+.dw-lane {
+  border: 1px dashed var(--line-bright);
+  border-radius: 8px;
+  padding: 6px;
+}
+.dw-lane.drop-target { border-color: var(--accent); background: rgba(107, 164, 255, 0.08); }
+.dw-lane-label {
   font-size: 11px;
-  text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--ink-dim);
   margin-bottom: 4px;
 }
-/* The card's name comes first and keeps a real width. `flex: 1` gave it a
-   0% basis, so in the side panel's narrow column the three buttons ("up",
-   "down", "Move") took every pixel and the name rendered 0px wide: the
-   browser pass answered a scry without ever being shown which card it was
-   ordering. A 6em basis plus `flex-wrap` puts the buttons on their own line
-   rather than squeezing the name back out. */
-.split-row { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 12px; margin: 3px 0; }
-.split-row span { flex: 1 1 6em; min-width: 6em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dw-lane-cards, .dw-grid { display: flex; flex-wrap: wrap; gap: 8px; min-height: 120px; }
+.dw-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+/* See-through to `elementFromPoint`, so the drop lands on what is under the
+   card rather than on the card itself. */
+.dw-slot.dragging { position: relative; z-index: 1; pointer-events: none; opacity: 0.85; cursor: grabbing; }
+.dw-slot-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; max-width: 120px; }
+.dw-slot-controls button { font-size: 11px; padding: 1px 6px; }
+.dw-pick { padding: 3px; background: transparent; border: 2px solid transparent; border-radius: 8px; }
+.dw-pick[aria-pressed="true"] { border-color: var(--accent); background: rgba(107, 164, 255, 0.15); }
+.dw-pick.at-cap { opacity: 0.55; }
+.decision-window .card img { -webkit-user-drag: none; user-select: none; }
+.decision-window .card:hover { transform: none; }
+.dw-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.decision-pointer { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 
 .combat-prompt .combat-list { margin: 4px 0; padding-left: 18px; font-size: 12px; }
 .prompt-gameover { font-weight: 600; color: var(--warn); }

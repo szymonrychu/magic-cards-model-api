@@ -359,16 +359,6 @@ def test_an_empty_zone_gives_its_room_to_the_zones_that_have_cards(
     assert ".zone-pile.empty .zone-pile-cards { display: none; }" in css
 
 
-def test_the_scry_split_row_keeps_room_for_the_card_name(client: TestClient) -> None:
-    """From the browser pass. `.split-row span` was `flex: 1` - a 0% basis -
-    so in the side panel's narrow column the row's three buttons took every
-    pixel and the card name rendered 0px wide. The scry was answerable, but
-    without ever showing which card was being ordered."""
-    css = client.get("/style.css").text
-    row = css.split(".split-row span {", 1)[1].split("}", 1)[0]
-    assert "min-width: 6em" in row, "the card's name needs a floor, not a 0% basis"
-
-
 def test_the_armed_concede_button_actually_looks_armed(client: TestClient) -> None:
     """`ribbon.js` puts an `armed` class on the concede button once the first
     click has armed it. A class with no rule behind it is a change nobody

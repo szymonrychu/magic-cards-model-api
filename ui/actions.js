@@ -75,7 +75,9 @@ export function begin(kind, card, extra) {
     focusSlot: null,
     affordance: null,
     error: null,
-    holdPriority: false,
+    // The casting strip's per-action keep-priority tick. `null` until the
+    // player touches it, meaning "follow `stops.keepPriorityByDefault`".
+    holdPriority: null,
     done: false,
   };
 }
