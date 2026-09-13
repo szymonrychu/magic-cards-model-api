@@ -581,7 +581,9 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         if state.attachment is not None:
             view["attached_to"] = _target_refs(game, [state.attachment])[0]
         printed_type_line = state.card.type_line
-        printed_power, printed_toughness = state.power, state.toughness
+        # The printing plus counters, never the layer engine: a bound card's
+        # `power`/`toughness` already answer with the computed board (CR 613.5).
+        printed_power, printed_toughness = state._printed_power, state._printed_toughness
         if printed_type_line != type_line:
             view["printed_type_line"] = printed_type_line
         if printed_power != power or printed_toughness != toughness:
