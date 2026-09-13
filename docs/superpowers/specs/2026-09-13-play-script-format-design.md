@@ -126,11 +126,12 @@ An answer's fields must fit its decision kind, or it is
 `decision` is a closed set equal to the api's pending decision kinds: the
 values of `decisions.ANSWERABLE_KINDS`, which are the engine `DecisionKind`s
 the api can pend. A value outside it (a typo such as `choose_cardz`) is
-`unknown-decision-kind`. Three of them are in the set but refused with
-`forbidden-kind`, because scripts never attack, block or mulligan.
+`unknown-decision-kind`. Four of them are in the set but refused with
+`forbidden-kind`, because scripts never attack, block, assign combat damage or
+mulligan.
 
-- Decision kinds: `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
-- Never answered: `declare_attackers`, `declare_blockers`, `mulligan`
+- Decision kinds: `assign_combat_damage`, `choose_a_mode`, `choose_a_quality`, `choose_cards`, `choose_targets`, `declare_attackers`, `declare_blockers`, `may`, `mulligan`, `opening_hand_action`, `order_triggers`, `pay_energy`, `pay_energy_amount`, `pay_life`, `pay_life_amount`, `pay_mana`, `put_on_top_or_bottom`, `scry`, `surveil`
+- Never answered: `assign_combat_damage`, `declare_attackers`, `declare_blockers`, `mulligan`
 
 ## How the runner builds a move
 

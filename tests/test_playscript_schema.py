@@ -473,7 +473,12 @@ def test_the_decision_kinds_are_the_apis_pending_decision_kinds():
     from magic_cards_model_api.decisions import ANSWERABLE_KINDS
 
     assert set(DECISION_KINDS) == {kind.value for kind in ANSWERABLE_KINDS}
-    assert set(FORBIDDEN_DECISION_KINDS) == {"declare_attackers", "declare_blockers", "mulligan"}
+    assert set(FORBIDDEN_DECISION_KINDS) == {
+        "assign_combat_damage",
+        "declare_attackers",
+        "declare_blockers",
+        "mulligan",
+    }
 
 
 @pytest.mark.parametrize(
@@ -504,7 +509,9 @@ def test_a_decision_kind_typo_past_a_too_long_answers_list_is_still_judged():
     ]
 
 
-@pytest.mark.parametrize("kind", ["declare_attackers", "declare_blockers", "mulligan"])
+@pytest.mark.parametrize(
+    "kind", ["assign_combat_damage", "declare_attackers", "declare_blockers", "mulligan"]
+)
 def test_answering_a_combat_declaration_or_a_mulligan_is_forbidden(kind):
     assert codes(mutate("moves.0.answers.0.decision", kind)) == ["forbidden-kind"]
 

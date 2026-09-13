@@ -127,9 +127,15 @@ CAST_COSTS = (
 #: The decision kinds an answer may name: every `DecisionKind` the api can
 #: pend (`decisions.ANSWERABLE_KINDS`), by value.
 DECISION_KINDS = tuple(sorted(kind.value for kind in ANSWERABLE_KINDS))
-#: Pending decision kinds a script never answers: scripts do not attack, block
-#: or mulligan, the same reason the combat declaration steps are forbidden.
-FORBIDDEN_DECISION_KINDS = ("declare_attackers", "declare_blockers", "mulligan")
+#: Pending decision kinds a script never answers: scripts do not attack, block,
+#: assign combat damage or mulligan, the same reason the combat declaration
+#: steps are forbidden.
+FORBIDDEN_DECISION_KINDS = (
+    "assign_combat_damage",
+    "declare_attackers",
+    "declare_blockers",
+    "mulligan",
+)
 #: The decision kinds answered with a number rather than yes/no or cards: the
 #: kinds `decisions.ANSWER_FIELD_FOR_KIND` answers on the engine's `amount`
 #: field (`pay_energy_amount`, `pay_life_amount` - an integer from 0 up to the
@@ -420,7 +426,7 @@ class Answer(_Strict):
             raise PydanticCustomError(
                 "forbidden_decision",
                 "'{decision}' is not answered by a script; "
-                "scripts do not attack, block or mulligan",
+                "scripts do not attack, block, assign combat damage or mulligan",
                 {"decision": decision},
             )
         return decision
