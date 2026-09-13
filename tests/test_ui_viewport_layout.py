@@ -11,8 +11,9 @@ CSS layout cannot be checked from a regex, so this serves `ui/` over HTTP,
 mounts the real `render/board.js` on the real `#game` markup and `style.css`
 with a crowded board, and loads that page into iframes of exact sizes inside
 one headless Chrome (an iframe's viewport is exactly its box, which a
-headless window's is not). The harness page measures every frame and writes
-the numbers into the DOM, which `--dump-dom` hands back.
+headless window's is not). The harness page measures every frame and POSTs
+the numbers back to the test server; the test waits on that report against a
+real-time deadline, so a busy machine only makes it slower, never wrong.
 
 Skipped when no Chrome/Chromium is installed.
 """
@@ -20,14 +21,12 @@ Skipped when no Chrome/Chromium is installed.
 from __future__ import annotations
 
 import functools
-import html
 import json
 import os
 import re
 import shutil
 import subprocess
 import threading
-import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -196,7 +195,9 @@ const SIZES = {json.dumps(VIEWPORTS)};
 const ROWS = {json.dumps(SEVEN_ROWS)};
 const REGIONS = ["#topbar", "#banners", "#zone-ribbon", "#side-panel", "#mtg-board"];
 const report = (value) => {{
-  document.getElementById("result").textContent = JSON.stringify(value);
+  const body = JSON.stringify(value);
+  document.getElementById("result").textContent = body;
+  fetch("/__result", {{ method: "POST", body }});
 }};
 const box = (el) => {{
   if (!el) return null;
@@ -258,6 +259,8 @@ Promise.all(frames).then((loaded) => {{
 
 class _Handler(SimpleHTTPRequestHandler):
     pages: dict[str, str] = {}
+    reported: threading.Event
+    result: bytes = b""
 
     def do_GET(self) -> None:  # noqa: N802 - the http.server hook name
         page = self.pages.get(self.path)
@@ -271,65 +274,88 @@ class _Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self) -> None:  # noqa: N802 - the http.server hook name
+        if self.path != "/__result":
+            self.send_error(404)
+            return
+        type(self).result = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.send_response(204)
+        self.end_headers()
+        self.reported.set()
+
     def log_message(self, *args: object) -> None:
         pass
 
 
-def _dump_dom(command: list[str], within: float = 120.0) -> str:
-    """Chrome's stdout once `--dump-dom` has written the page. Headless Chrome
-    prints the DOM when the virtual time budget runs out but does not always
-    exit afterwards, so the output is read as it arrives and Chrome is killed
-    once the whole document is in."""
-    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    chunks: list[str] = []
-    pump = threading.Thread(
-        target=lambda: chunks.extend(iter(proc.stdout.readline, "")), daemon=True
+def _collect(pages: dict[str, str], entry: str, profile: Path, within: float = 120.0) -> object:
+    """Serve `pages` (and `ui/`), open `entry` in headless Chrome and return the
+    JSON the page POSTs to `/__result`. Waits for that report in real time -
+    no virtual time budget, which runs out before the page has reported when
+    the machine is busy - and fails with a clear message if it never comes."""
+    handler = type("_CollectHandler", (_Handler,), {"pages": pages, "reported": threading.Event()})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(handler, directory=str(UI)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}{entry}"
+    chrome = subprocess.Popen(
+        [
+            str(CHROME),
+            "--headless=new",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            f"--user-data-dir={profile}",
+            "--window-size=2000,1200",
+            url,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    pump.start()
-    deadline = time.monotonic() + within
     try:
-        while time.monotonic() < deadline and proc.poll() is None:
-            if "</html>" in "".join(chunks):
-                break
-            time.sleep(0.1)
+        reported = handler.reported.wait(within)
     finally:
-        proc.kill()
-        proc.wait()
-        pump.join(timeout=5)
-    return "".join(chunks)
+        chrome.kill()
+        chrome.wait()
+        server.shutdown()
+        server.server_close()
+    if not reported:
+        pytest.fail(f"{url} did not report a result within {within:g}s", pytrace=False)
+    try:
+        return json.loads(handler.result)
+    except json.JSONDecodeError as err:
+        pytest.fail(f"{url} reported something that is not JSON ({err}): {handler.result[:2000]!r}")
 
 
 @pytest.fixture(scope="module")
 def measurements(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
-    _Handler.pages = {
-        "/__viewport_game.html": _game_page(),
-        "/__viewport_harness.html": _harness_page(),
-    }
-    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(_Handler, directory=str(UI)))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        output = _dump_dom(
-            [
-                str(CHROME),
-                "--headless=new",
-                "--disable-gpu",
-                "--no-first-run",
-                "--no-default-browser-check",
-                f"--user-data-dir={tmp_path_factory.mktemp('chrome-profile')}",
-                "--window-size=2000,1200",
-                "--virtual-time-budget=5000",
-                "--dump-dom",
-                f"http://127.0.0.1:{server.server_address[1]}/__viewport_harness.html",
-            ]
-        )
-    finally:
-        server.shutdown()
-    found = re.search(r'<pre id="result">(.*?)</pre>', output, re.S)
-    assert found, f"no result from Chrome: {output[-2000:]}"
-    data = json.loads(html.unescape(found.group(1)))
+    data = _collect(
+        {"/__viewport_game.html": _game_page(), "/__viewport_harness.html": _harness_page()},
+        "/__viewport_harness.html",
+        tmp_path_factory.mktemp("chrome-profile"),
+    )
     assert not isinstance(data, dict), data
     return data
+
+
+def test_a_result_reported_after_the_page_settles_is_still_collected(tmp_path: Path) -> None:
+    """The harness reports only after every iframe has loaded and rendered. On
+    a busy machine that can come later than any fixed time budget, and the
+    fixture must still wait for the report rather than read a page that says
+    "pending"."""
+    late = """<!doctype html><html><body><pre id="result">pending</pre><script>
+setTimeout(() => {
+  const value = JSON.stringify({ late: true });
+  document.getElementById("result").textContent = value;
+  fetch("/__result", { method: "POST", body: value });
+}, 6000);
+</script></body></html>"""
+    assert _collect({"/__late.html": late}, "/__late.html", tmp_path / "profile") == {"late": True}
+
+
+def test_a_page_that_never_reports_fails_with_a_clear_message(tmp_path: Path) -> None:
+    silent = '<!doctype html><html><body><pre id="result">pending</pre></body></html>'
+    with pytest.raises(pytest.fail.Exception, match="did not report a result"):
+        _collect({"/__silent.html": silent}, "/__silent.html", tmp_path / "profile", within=3)
 
 
 EACH = pytest.mark.parametrize(
