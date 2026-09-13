@@ -342,3 +342,17 @@ def test_readme_documents_handover_timing() -> None:
     text = (ROOT / "README.md").read_text()
     assert "handover" in text.lower()
     assert "docker compose stop" in text
+
+
+def test_the_agent_image_owns_guides_so_guides_init_can_clone_into_the_named_volume():
+    """`guides-init` runs as the image's non-root `agent` user and `git init`s
+    into `/guides`. A new named volume takes its ownership from the image's
+    directory at the mount path; with no `/guides` in the image it is created
+    root-owned 0755 and the clone fails with permission denied (kubernetes
+    gets away without this through the seat Job's `fsGroup`)."""
+    dockerfile = (ROOT / "Dockerfile.agent").read_text()
+    before_user = dockerfile.split("\nUSER agent", 1)[0]
+    run_steps = re.findall(r"^RUN (?:.*\\\n)*.*$", before_user, flags=re.MULTILINE)
+    creates = [step for step in run_steps if re.search(r"mkdir -p[^&]*\s/guides\b", step)]
+    assert creates, "Dockerfile.agent never creates /guides before USER agent"
+    assert re.search(r"chown -R agent:agent[^&]*\s/guides\b", creates[0])
