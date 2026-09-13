@@ -47,7 +47,11 @@ def seats_for(game_id: str) -> dict[str, str]:
 
 def crack_the_strand(client: TestClient, game_id: str) -> dict[str, Any]:
     """Flooded Strand activated, both seats passed, the ability resolving and
-    paused on its search - `pass-priority`'s own paused response.
+    paused on its search - `pass-priority`'s own paused response, with its
+    `pending_decision` read from alice's own seat. Bob's pass is what paused,
+    but the search is alice's: bob's copy of it is `{player, kind, prompt}`
+    and nothing that names her library (`app._paused_pending_view`), so the
+    candidates come from the one seat entitled to them.
 
     The library holds exactly the two cards the fetch's "Island or Plains
     card" clause can find a legal answer among: Steam Vents ("Land - Mountain
@@ -75,7 +79,9 @@ def crack_the_strand(client: TestClient, game_id: str) -> dict[str, Any]:
     body = second.json()
     assert body.get("paused") is True, body
     assert body["pending_decision"]["kind"] == "choose_cards", body
-    return body
+    assert "cards" not in body["pending_decision"], "bob is shown none of alice's search"
+    alice = next(uid for uid, name in store.seat_uids(game_id).items() if name == "alice")
+    return {**body, "pending_decision": state(client, game_id, uid=alice)["pending_decision"]}
 
 
 def steam_vents_in(pending: dict[str, Any]) -> str:

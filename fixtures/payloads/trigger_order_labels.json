@@ -98,6 +98,7 @@
     "player": "alice",
     "prompt": "order your triggered abilities on the stack, bottom of the stack first: 1. Delver of Secrets, 2. Delver of Secrets",
     "source": null,
+    "source_card_id": null,
     "target_maximum": null,
     "target_minimum": 0,
     "targets": []

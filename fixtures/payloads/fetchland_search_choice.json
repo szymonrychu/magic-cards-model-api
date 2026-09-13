@@ -21,7 +21,7 @@
         "counters": {},
         "damage": 0,
         "face_up": true,
-        "id": "00000000-0000-0000-0000-000000000005",
+        "id": "00000000-0000-0000-0000-000000000002",
         "image": "/api/card-art?name=Wooded%20Foothills&size=normal",
         "keywords": [],
         "mana_cost": "",
@@ -62,7 +62,7 @@
         "counters": {},
         "damage": 0,
         "face_up": true,
-        "id": "00000000-0000-0000-0000-000000000002",
+        "id": "00000000-0000-0000-0000-000000000003",
         "image": "/api/card-art?name=Breeding%20Pool&size=normal",
         "keywords": [],
         "mana_cost": "",
@@ -87,7 +87,7 @@
         "counters": {},
         "damage": 0,
         "face_up": true,
-        "id": "00000000-0000-0000-0000-000000000003",
+        "id": "00000000-0000-0000-0000-000000000004",
         "image": "/api/card-art?name=Forest&size=normal",
         "keywords": [],
         "mana_cost": "",
@@ -110,11 +110,11 @@
       "Forest"
     ],
     "cards": [
-      "00000000-0000-0000-0000-000000000002",
-      "00000000-0000-0000-0000-000000000003"
+      "00000000-0000-0000-0000-000000000003",
+      "00000000-0000-0000-0000-000000000004"
     ],
     "default_cards": [
-      "00000000-0000-0000-0000-000000000002"
+      "00000000-0000-0000-0000-000000000003"
     ],
     "exact": false,
     "generation": 1,
@@ -125,6 +125,7 @@
     "player": "alice",
     "prompt": "choose up to 1 card(s) to find while searching your library",
     "source": "Wooded Foothills",
+    "source_card_id": "00000000-0000-0000-0000-000000000002",
     "target_maximum": null,
     "target_minimum": 0,
     "targets": []
@@ -174,7 +175,7 @@
   "stack": [
     {
       "controller": "alice",
-      "id": "00000000-0000-0000-0000-000000000004",
+      "id": "00000000-0000-0000-0000-000000000005",
       "kind": "ability",
       "name": "Wooded Foothills",
       "target_refs": [],

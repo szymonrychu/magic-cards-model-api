@@ -228,7 +228,9 @@ def test_declining_the_split_exiles_all_four_and_the_seat_can_see_them(
         reach_the_devourer_upkeep(client, info)
         # The browser's own route: both seats pass priority in CR 103.7's
         # first upkeep, and the trigger's resolution pauses on the question.
-        pending = None
+        # Bob's pass is the one that pauses, but the question is alice's, so
+        # alice's browser reads it off her own board.
+        paused = False
         for player in ("alice", "bob"):
             passed = client.post(
                 f"/api/games/{game_id}/actions/pass-priority",
@@ -236,10 +238,13 @@ def test_declining_the_split_exiles_all_four_and_the_seat_can_see_them(
                 json={"player": player},
             )
             assert passed.status_code == 200, passed.text
-            if passed.json().get("pending_decision") is not None:
-                pending = passed.json()["pending_decision"]
+            if passed.json().get("paused"):
+                paused = True
                 break
-        assert pending is not None, "the delayed trigger never asked its question"
+        assert paused, "the delayed trigger never asked its question"
+        pending = client.get(f"/api/games/{game_id}", params={"uid": uids["alice"]}).json()[
+            "pending_decision"
+        ]
         assert pending["source"] == "Devourer of Destiny"
 
         answered = client.post(

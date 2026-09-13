@@ -1472,6 +1472,12 @@ class PendingDecisionView(BaseModel):
     prompt: str
     generation: int | None = None
     source: str | None = None
+    source_card_id: str | None = None
+    """The id of the object asking (`decisions.PendingDecision
+    .source_card_id`): the card or token, or the card behind an ability on
+    the stack. `None` for a question no object asks, and for a viewer who
+    cannot see the zone that object is in (`visibility
+    .redact_pending_decision`)."""
     amount: int | None = None
     cards: list[str] | None = None
     targets: list[TargetRef] | None = None

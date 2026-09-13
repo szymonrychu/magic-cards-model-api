@@ -7065,6 +7065,17 @@
             ],
             "title": "Source"
           },
+          "source_card_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Card Id"
+          },
           "target_maximum": {
             "anyOf": [
               {
