@@ -31,6 +31,8 @@ from test_playscript_runtime import (
 
 from magic_cards_model_api import seatkit
 from magic_cards_model_api.playscripts.runtime import Exit, run_script
+from magic_cards_model_api.repository import Advisor
+from magic_cards_model_api.store import store
 
 TRON = ["Tower", "Mine", "Power-Plant"]
 MAP_SEARCH = "Search your library for"
@@ -251,3 +253,33 @@ def test_nothing_missing_is_not_applicable(
     assert out["exit"] == "not_applicable", out
     assert out["failing_condition"] == {"list": "true", "index": 0, "seen": 0}
     assert cards_named(state(client, board)["battlefield"], "Expedition Map"), "never activated"
+
+
+# -- advise mode ----------------------------------------------------------------
+
+
+def test_advise_mode_builds_move_one_from_my_library_contents_when_it_reads_them(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Advise mode builds move 1 itself, so a move whose source selector
+    reads my own library through `missing_from` needs `include=contents`."""
+    advisor = "advisor-uid"
+    store.register_advisors(board, {advisor: Advisor(player="alice")})
+    script = fetch_missing_piece()
+    script["moves"][0]["source"]["select"]["missing_from"] = {
+        "zones": ["library"],
+        "side": "me",
+        "by": "name",
+    }
+    register(client, board, advisor, script)
+    set_up(client, board, battlefield=("Tower",), library=("Mine",))
+    seats = wired(monkeypatch, board)
+    seat, _ = hooked_seat(seats, advisor)
+
+    result = run_script(
+        seat, script_id=script["id"], reasoning=REASONING, corpora=seats.script_corpora
+    )
+
+    out = result.script_exit
+    assert out.exit is Exit.ADVISED, result.to_dict()
+    assert out.proposal is not None and out.proposal.get("proposed") is True

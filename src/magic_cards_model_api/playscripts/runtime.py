@@ -1185,11 +1185,15 @@ def _advise(ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any
             return ScriptExit(
                 Exit.UNFORESEEN, stop_reason="no decision this move answers is pending"
             )
+        if conditions.needs_contents(item):
+            state = seat.fetch_state(include_contents=True)
         body = decide_body(item, pending, state, ctx.me, reasoning)
         built: tuple[str, dict[str, Any]] | ScriptExit = (
             body if isinstance(body, ScriptExit) else ("decide", body)
         )
     else:
+        if conditions.needs_contents(first):
+            state = seat.fetch_state(include_contents=True)
         built = _move_request(first, state, ctx.me, reasoning)
     if isinstance(built, ScriptExit):
         return built
