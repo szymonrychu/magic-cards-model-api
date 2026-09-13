@@ -2992,3 +2992,5 @@ whoever works on the repo itself.
   when no v2 payload exists. `A.begin` seeds `holdPriority: null`, meaning the
   casting strip's tick follows the standing default until touched. Agent and
   REST defaults (`hold_priority=false`) are deliberately unchanged.
+
+- **2026-09-13 - `pending_decision.source_card_id`** carries the engine's `Decision.source_id`; `visibility.redact_pending_decision` nulls it when the source is in a zone the viewer cannot see (libraries, sideboards, other hands), and `repository_postgres` round-trips `source_id` too. Additive response field an older MCP build passes through untouched, so no `PROTOCOL_VERSION` bump.

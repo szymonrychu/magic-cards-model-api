@@ -470,6 +470,14 @@ class PendingDecision:
     #: seat - or an autopilot answering on one's behalf - can see what
     #: *silence* would cost before it decides to stay silent.
     default_cards: tuple[str, ...] | None = None
+    #: The id of the object asking - the card or token, or the card behind an
+    #: ability on the stack - from the engine's `Decision.source_id`. `None`
+    #: for a question no object asks (a turn-based action such as the cleanup
+    #: discard, a pregame choice). `source` names the card; this says which
+    #: copy of it, so a client can anchor the question to the card on the
+    #: board. `visibility.redact_pending_decision` withholds it where the
+    #: object sits in a zone the viewer cannot see.
+    source_card_id: str | None = None
 
     #: Which standing question this is, from `repository.GameRepository
     #: .pause_generation` - monotonic per game, bumped only when the pause
@@ -492,6 +500,7 @@ class PendingDecision:
             kind=decision.kind.value,
             prompt=decision.prompt,
             source=decision.source,
+            source_card_id=None if decision.source_id is None else str(decision.source_id),
             amount=decision.amount,
             cards=tuple(str(card_id) for card_id in decision.cards),
             targets=tuple(_target_view(ref) for ref in decision.targets),
@@ -643,6 +652,7 @@ class PendingDecision:
             "kind": self.kind,
             "prompt": self.prompt,
             "source": self.source,
+            "source_card_id": self.source_card_id,
             "amount": self.amount,
             "cards": list(self.cards),
             "targets": [dict(ref) for ref in self.targets],

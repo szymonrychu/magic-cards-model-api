@@ -105,7 +105,9 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     # name cards from the deciding player's own zone, so looking up an
     # opponent's card here is never reachable, but building the map without
     # first guessing whose cards matter is simpler than trying to scope it.
-    card_lookup = _card_lookup(view) if view.get("pending_decision") is not None else None
+    has_pending = view.get("pending_decision") is not None
+    card_lookup = _card_lookup(view) if has_pending else None
+    hidden_ids = _hidden_card_ids(view, viewer) if has_pending else None
     view = dict(view)
     view["hands"] = {
         name: (cards if name == viewer else []) for name, cards in view.get("hands", {}).items()
@@ -137,7 +139,7 @@ def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     view.pop("sideboards", None)
     if view.get("pending_decision") is not None:
         view["pending_decision"] = redact_pending_decision(
-            view["pending_decision"], viewer, card_lookup
+            view["pending_decision"], viewer, card_lookup, hidden_ids
         )
     if viewer is not None:
         view["you"] = viewer
@@ -314,10 +316,26 @@ def _card_lookup(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return lookup
 
 
+def _hidden_card_ids(view: dict[str, Any], viewer: Viewer) -> set[str]:
+    """The ids of every card in a zone `viewer` cannot see, from the
+    *unredacted* view: every library and sideboard, and every hand but the
+    viewer's own (CR 400.2 makes the library and the hand hidden zones; CR
+    402.3: "a player can't look at the cards in another player's hand")."""
+    hidden: set[str] = set()
+    for zone_key in ("libraries", "sideboards"):
+        for cards in view.get(zone_key, {}).values():
+            hidden.update(card["id"] for card in cards)
+    for name, cards in view.get("hands", {}).items():
+        if name != viewer:
+            hidden.update(card["id"] for card in cards)
+    return hidden
+
+
 def redact_pending_decision(
     pending: dict[str, Any],
     viewer: Viewer,
     card_lookup: dict[str, dict[str, Any]] | None = None,
+    hidden_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """A pending decision, as `viewer` may see it.
 
@@ -352,8 +370,15 @@ def redact_pending_decision(
     them. Clients fall back to the prompt's own numbering, which
     `machines/decisions.ask_trigger_order` writes positionally against
     `cards`.
+
+    `source_card_id` goes only where the rest of the block goes, and even
+    the deciding player gets `None` in its place when the asking object is
+    in one of `hidden_ids` - a zone that viewer cannot see - so the id never
+    points at a hidden card.
     """
     if viewer == pending.get("player"):
+        if hidden_ids and pending.get("source_card_id") in hidden_ids:
+            pending = {**pending, "source_card_id": None}
         cards = pending.get("cards") or ()
         if cards and card_lookup is not None:
             details = [card_lookup[card_id] for card_id in cards if card_id in card_lookup]
