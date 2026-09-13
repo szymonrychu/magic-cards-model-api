@@ -21,7 +21,7 @@ import json
 import re
 import threading
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -591,6 +591,18 @@ class Board:
         return {"life": self.life, **{z: [v["name"] for v in self.zone(z)] for z in ZONES}}
 
 
+def board_present(board: Board) -> Callable[[Sequence[str], str], list[dict[str, Any]]]:
+    """`matches`'s `present`, read off the board being staged: the opponent's
+    side is always staged empty (see `holds`), so only mine has any cards."""
+
+    def present(zones: Sequence[str], side: str) -> list[dict[str, Any]]:
+        if side not in ("me", "any"):
+            return []
+        return [view for zone in zones for view in board.zone(zone)]
+
+    return present
+
+
 def card_types(view: dict[str, Any]) -> set[str]:
     return parse_type_line(view["type_line"])[1]
 
@@ -616,7 +628,7 @@ def holds(board: Board, condition: dict[str, Any]) -> bool:
     mine = condition.get("side", "me") in ("me", "any")
     if kind == "count":
         cards = board.zone(condition["zone"]) if mine else []
-        found = sum(matches(condition["select"], view) for view in cards)
+        found = sum(matches(condition["select"], view, board_present(board)) for view in cards)
         return compare(found, condition["op"], condition["n"])
     if kind == "zone_size":
         size = len(board.zone(condition["zone"])) if mine else 0
@@ -705,26 +717,27 @@ def add_chosen(
         fits,
         key=lambda item: (
             rank(item[1]) if rank else 0,
-            sum(matches(selector, item[1]) for selector in selectors),
+            sum(matches(selector, item[1], board_present(board)) for selector in selectors),
             item[0],
         ),
     )
     board.cards.append((zone, view))
 
 
-def move_card(move: dict[str, Any]) -> tuple[str, Callable[[dict[str, Any]], bool]]:
+def move_card(move: dict[str, Any], board: Board) -> tuple[str, Callable[[dict[str, Any]], bool]]:
     """The zone a move's card comes from, and what that card must be."""
+    present = board_present(board)
     if move["kind"] == "activate":
         spec, phrase = move["source"], move["ability_text_has"].casefold()
 
         def wanted(view: dict[str, Any]) -> bool:
-            return matches(spec["select"], view) and any(
+            return matches(spec["select"], view, present) and any(
                 phrase in a["text"].casefold() for a in view["abilities"]
             )
 
         return spec["zone"], wanted
     spec = move["card"]
-    return spec.get("zone", "hand"), lambda view: matches(spec["select"], view)
+    return spec.get("zone", "hand"), lambda view: matches(spec["select"], view, present)
 
 
 def move_cost(move: dict[str, Any], board: Board) -> list[str]:
@@ -732,7 +745,7 @@ def move_cost(move: dict[str, Any], board: Board) -> list[str]:
     or the cost half of the activated ability's own line."""
     if move["kind"] not in ("cast", "activate"):
         return []
-    zone, wanted = move_card(move)
+    zone, wanted = move_card(move, board)
     card = next(view for view in board.zone(zone) if wanted(view))
     if move["kind"] == "cast":
         text = card["mana_cost"]
@@ -768,6 +781,7 @@ def stage(play: dict[str, Any], pool: list[dict[str, Any]]) -> Board:
     card, a card each search can find, mana for its cost, and a library past
     every size guard."""
     board = Board()
+    present = board_present(board)
     picks = [
         item["pick"]
         for move in play["moves"]
@@ -779,12 +793,14 @@ def stage(play: dict[str, Any], pool: list[dict[str, Any]]) -> Board:
         found = []
         for move in play["moves"]:
             if move["kind"] in ("cast", "activate", "play_land"):
-                zone, wanted = move_card(move)
+                zone, wanted = move_card(move, board)
                 found += [view for view in board.zone(zone) if wanted(view)]
         return found
 
     def finds_every_pick(view: dict[str, Any]) -> int:
-        targets = [v for v in board.zone("library") if any(matches(p["select"], v) for p in picks)]
+        targets = [
+            v for v in board.zone("library") if any(matches(p["select"], v, present) for p in picks)
+        ]
         return 0 if all(finds(view, target) for target in targets) else 1
 
     counts = [c for c in play["true"] if c["kind"] == "count"]
@@ -797,27 +813,31 @@ def stage(play: dict[str, Any], pool: list[dict[str, Any]]) -> Board:
                 play,
                 pool,
                 condition["zone"],
-                lambda view, c=condition: matches(c["select"], view),
+                lambda view, c=condition: matches(c["select"], view, present),
                 f"counted by {condition}",
                 finds_every_pick,
             )
 
     for move in play["moves"]:
         if move["kind"] in ("cast", "activate", "play_land"):
-            zone, wanted = move_card(move)
+            zone, wanted = move_card(move, board)
             if not any(wanted(view) for view in board.zone(zone)):
                 add_chosen(board, play, pool, zone, wanted, f"the {move['kind']} move's card")
 
     for pick in picks:
 
         def findable(view: dict[str, Any], pick: dict[str, Any] = pick) -> bool:
-            return matches(pick["select"], view) and all(finds(s, view) for s in searchers())
+            return matches(pick["select"], view, present) and all(
+                finds(s, view) for s in searchers()
+            )
 
         if not any(findable(view) for view in board.zone("library")):
             prefer = list(pick.get("prefer") or [])
 
             def preferred(view: dict[str, Any], prefer: list[Any] = prefer) -> int:
-                return next((i for i, p in enumerate(prefer) if matches(p, view)), len(prefer))
+                return next(
+                    (i for i, p in enumerate(prefer) if matches(p, view, present)), len(prefer)
+                )
 
             add_chosen(board, play, pool, "library", findable, "a card the search finds", preferred)
 
@@ -854,7 +874,9 @@ def stage(play: dict[str, Any], pool: list[dict[str, Any]]) -> Board:
     for zone, floor in zone_floors(play).items():
         while len(board.zone(zone)) < floor:
             inert = [
-                view for view in pool if not any(matches(selector, view) for selector in selectors)
+                view
+                for view in pool
+                if not any(matches(selector, view, present) for selector in selectors)
             ]
             spells = [view for view in inert if "land" not in card_types(view)]
             chosen = (spells or inert or [None])[0]
