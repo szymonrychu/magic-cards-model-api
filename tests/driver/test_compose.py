@@ -14,11 +14,23 @@ def compose() -> dict:
     return yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 
 
-def test_five_services(compose):
+def test_six_services(compose):
     """`postgres`/`migrate` (T9) joined the original three - see docker-
     compose.yml's own module comment for why they are not yet wired into
-    `game`."""
-    assert set(compose["services"]) == {"game", "agent", "driver", "postgres", "migrate"}
+    `game`. `guides-init` (A15) is the sixth: a one-shot clone of the
+    deck-guides corpus into the named `agent-guides` volume, the same script
+    and image the k8s `guides` initContainer uses (deploy/seat-job.yaml,
+    deploy/guides-clone.sh) - so compose stops bind-mounting the owner's own
+    checkout into agent/driver and instead populates `/guides` the same way
+    kubernetes does."""
+    assert set(compose["services"]) == {
+        "game",
+        "agent",
+        "driver",
+        "postgres",
+        "migrate",
+        "guides-init",
+    }
 
 
 def test_every_built_services_context_is_the_parent_so_the_engine_is_in_scope(compose):
@@ -38,12 +50,80 @@ def test_the_game_serves_8000_and_can_read_the_guides(compose):
     assert any("/guides" in str(v) for v in game["volumes"])
 
 
-def test_the_agent_mounts_guides_read_only_and_memory_read_write(compose):
+def test_the_agent_guides_volume_is_writable_and_is_not_a_bind_of_mtg_decks(compose):
+    """A15: the agent commits guide changes (`~/.gitconfig`'s credential
+    helper, `bootstrap.write_gitconfig`), so its `/guides` must be writable -
+    and it must be the named `agent-guides` volume `guides-init` populates
+    from GitHub, never a bind mount of the owner's own `$MTG_DECKS` checkout."""
+    volumes = [str(v) for v in compose["services"]["agent"]["volumes"]]
+    guides = [
+        v
+        for v in volumes
+        if v.rstrip(":ro").endswith("/guides") or ":/guides:" in v or v.endswith(":/guides")
+    ]
+    assert guides, "agent has no /guides mount"
+    assert not any(v.endswith(":ro") for v in guides), "agent's /guides must be writable"
+    assert not any("MTG_DECKS" in v for v in guides), (
+        "the owner's $MTG_DECKS checkout must never be mounted into agent"
+    )
+    assert any(v.startswith("agent-guides:") for v in guides)
+
+
+def test_the_agent_memory_volume_is_still_read_write(compose):
     volumes = compose["services"]["agent"]["volumes"]
-    guides = [v for v in volumes if "/guides" in str(v)]
     memory = [v for v in volumes if "/workspace/memory" in str(v)]
-    assert guides and str(guides[0]).endswith(":ro")
     assert memory and not str(memory[0]).endswith(":ro")
+
+
+def test_the_driver_guides_volume_is_read_only(compose):
+    """The driver never commits, so it keeps the read-only mount - but of the
+    same `agent-guides` volume guides-init populates, not `$MTG_DECKS`."""
+    volumes = [str(v) for v in compose["services"]["driver"]["volumes"]]
+    guides = [v for v in volumes if "/guides" in v]
+    assert guides and guides[0].endswith(":ro")
+    assert guides[0].startswith("agent-guides:")
+
+
+def test_the_secret_appears_only_in_guides_init_and_agent(compose):
+    """MTG_DECKS_GH_PAT (compose secret `mtg_decks_gh_pat`, sourced from the
+    env var of the same name) is mounted only where a git push credential is
+    needed: `guides-init` (the clone) and `agent` (the wrapper's credential
+    helper reads the same file, `bootstrap.write_gitconfig`'s
+    `GH_TOKEN_FILE`). `driver` and `game` never see it."""
+    for name, service in compose["services"].items():
+        secret_names = {
+            (entry if isinstance(entry, str) else entry.get("source"))
+            for entry in service.get("secrets", [])
+        }
+        if name in {"guides-init", "agent"}:
+            assert "mtg_decks_gh_pat" in secret_names, name
+        else:
+            assert "mtg_decks_gh_pat" not in secret_names, name
+    assert compose["secrets"]["mtg_decks_gh_pat"]["environment"] == "MTG_DECKS_GH_PAT"
+
+
+def test_the_agent_and_driver_have_a_ten_minute_stop_grace_period(compose):
+    """Mirrors k8s `terminationGracePeriodSeconds: 600` (deploy/seat-job.yaml)
+    - room for the driver's and the agent's handover waits at game end or
+    `/release` before compose sends SIGKILL. A plain `docker compose stop`
+    runs no handover of its own; this only bounds how long compose waits
+    before killing whatever handover the process itself starts."""
+    assert compose["services"]["agent"]["stop_grace_period"] == "10m"
+    assert compose["services"]["driver"]["stop_grace_period"] == "10m"
+
+
+def test_the_agent_gets_mtg_role_and_mtg_game_id_env(compose):
+    """Consistent with the k8s seat Job (`__MTG_ROLE__`/`__MTG_GAME_ID__`,
+    deploy/seat-job.yaml): the agent's own role and game, read by
+    `playscripts/gitwork.py:identity` for the git author of a guide commit."""
+    env = " ".join(str(e) for e in compose["services"]["agent"]["environment"])
+    assert "MTG_ROLE" in env
+    assert "MTG_GAME_ID" in env
+
+
+def test_the_agent_depends_on_guides_init_completing_successfully(compose):
+    depends = compose["services"]["agent"]["depends_on"]
+    assert depends["guides-init"]["condition"] == "service_completed_successfully"
 
 
 def test_the_agent_needs_an_api_key_from_the_environment(compose):
@@ -97,8 +177,27 @@ def test_the_agent_carries_the_effort_setting(compose):
 
 def test_env_example_lists_every_variable_compose_requires(compose):
     example = (ROOT / ".env.example").read_text()
-    for key in ("ANTHROPIC_API_KEY", "MTG_DECKS", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "MTG_DECKS",
+        "CLAUDE_MODEL",
+        "CLAUDE_EFFORT",
+        "MTG_DECKS_GH_PAT",
+    ):
         assert key in example
+
+
+def test_env_example_documents_the_pat_scope() -> None:
+    """O1's fine-grained token instructions, so the owner action in the plan
+    can be followed straight from this file: repo szymonrychu/mtg-decks only,
+    Contents and Pull requests read and write, Workflows left at no access."""
+    example = (ROOT / ".env.example").read_text()
+    assert "MTG_DECKS_GH_PAT=" in example
+    assert "szymonrychu/mtg-decks" in example
+    assert "Contents" in example
+    assert "Pull requests" in example
+    assert "Workflows" in example
+    assert "read and write" in example.lower()
 
 
 def test_the_real_env_file_is_gitignored():
@@ -225,11 +324,35 @@ def test_no_committed_file_carries_a_credentialed_uri() -> None:
 
 
 def test_the_driver_reads_the_guides_revision_from_the_checkout_it_mounts(compose):
-    """Compose has no `.guides-revision` stamp - the kubernetes initContainer
-    writes that one - so the driver derives the revision from the bind-
-    mounted checkout's own `.git`. That only works while the path it reads
-    (`GUIDES_ROOT`) is the path the checkout is mounted at."""
+    """A15: `guides-init` stamps `.guides-revision` into `agent-guides` itself
+    (the same as `deploy/guides-clone.sh` does for the k8s emptyDir), so the
+    driver derives the revision from that checkout's own `.git` - which only
+    works while the path it reads (`GUIDES_ROOT`) is the path the volume is
+    mounted at."""
     driver = compose["services"]["driver"]
     env = {e.split("=", 1)[0]: e.split("=", 1)[1] for e in driver["environment"]}
     guides = [str(v) for v in driver["volumes"] if "/guides" in str(v)]
-    assert guides == [f"${{MTG_DECKS:?set MTG_DECKS in .env}}:{env['GUIDES_ROOT']}:ro"]
+    assert guides == [f"agent-guides:{env['GUIDES_ROOT']}:ro"]
+
+
+def test_readme_documents_handover_timing() -> None:
+    """A15's binding doc requirement: the handover runs on game end and on
+    `/release`, and a plain `docker compose stop` runs no handover of its
+    own."""
+    text = (ROOT / "README.md").read_text()
+    assert "handover" in text.lower()
+    assert "docker compose stop" in text
+
+
+def test_the_agent_image_owns_guides_so_guides_init_can_clone_into_the_named_volume():
+    """`guides-init` runs as the image's non-root `agent` user and `git init`s
+    into `/guides`. A new named volume takes its ownership from the image's
+    directory at the mount path; with no `/guides` in the image it is created
+    root-owned 0755 and the clone fails with permission denied (kubernetes
+    gets away without this through the seat Job's `fsGroup`)."""
+    dockerfile = (ROOT / "Dockerfile.agent").read_text()
+    before_user = dockerfile.split("\nUSER agent", 1)[0]
+    run_steps = re.findall(r"^RUN (?:.*\\\n)*.*$", before_user, flags=re.MULTILINE)
+    creates = [step for step in run_steps if re.search(r"mkdir -p[^&]*\s/guides\b", step)]
+    assert creates, "Dockerfile.agent never creates /guides before USER agent"
+    assert re.search(r"chown -R agent:agent[^&]*\s/guides\b", creates[0])
