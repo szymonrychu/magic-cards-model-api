@@ -370,8 +370,25 @@ def test_resolving_a_conflict_by_extending_a_condition_is_admitted(capsys, tmp_p
     bare = seed_guides(tmp_path, (play(id="a"), play(id="b"), FETCH_SURVEIL))
     root = clone(bare, tmp_path / "guides")
     b = play(id="b")
-    b["false"] = [*b["false"], {"kind": "life", "side": "me", "op": ">=", "n": 8}]
+    # a's "true" list still requires life >= 8 (unchanged). Narrowing b's own
+    # life condition to <= 5 makes the pair's life ranges disjoint - the
+    # numeric_range dimension proves them exclusive - without b contradicting
+    # its own list the way an added, opposite life >= 8 condition would.
+    b["true"] = [b["true"][0], {"kind": "life", "side": "me", "op": "<=", "n": 5}]
     (root / f"decks/{SLUG}/plays/b.json").write_text(dump(b), "utf-8")
     rc, result, _, _ = admit(capsys, root)
     assert (rc, result["result"]) == (0, "admitted"), result
     assert conflicts_on_main(bare, tmp_path, "after") == []
+
+
+def test_a_clone_without_card_data_fails_closed(capsys, tmp_path, github):
+    bare = seed_guides(tmp_path, card_data=False)
+    root = clone(bare, tmp_path / "guides")
+    before = main_sha(bare)
+    priority(capsys, root, "fetch-untapped-shock", "--delta", "5")
+    rc, result, _, _ = admit(capsys, root)
+    assert (rc, result["result"]) == (1, "gate_failed"), result
+    assert "card-data.json" in (result["message"] + result.get("output", "")), result
+    assert main_sha(bare) == before
+    assert branches(bare) == {"main"}
+    assert github.pulls() == []

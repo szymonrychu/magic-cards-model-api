@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import shutil
 import subprocess
 import threading
 from collections.abc import Callable
@@ -126,11 +127,16 @@ def seed_guides(
     *,
     check_plays: bool = True,
     render_guides: bool = True,
+    card_data: bool = True,
 ) -> Path:
     """A bare repo whose main is a small mtg-decks: plays, a newest and an
     older analysis run with a boarding plan each, the deck's authored files,
-    the gate and the renderer. Returns the bare repo path."""
+    the gate and the renderer. Returns the bare repo path. `card_data=False`
+    seeds a clone that never had `meta/card-data.json`, for the fail-closed
+    gate test."""
     work = make_root(tmp_path / "seed")
+    if not card_data:
+        shutil.rmtree(work / "meta")
     deck = work / "decks" / SLUG
     for doc in plays:
         (deck / "plays" / f"{doc['id']}.json").write_text(dump(doc), encoding="utf-8")

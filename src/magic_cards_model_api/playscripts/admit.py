@@ -381,6 +381,17 @@ def _conflicts(git: Git, rev: str, decks: list[str]) -> dict[tuple[Any, ...], Pl
     found: dict[tuple[Any, ...], PlaysWarning] = {}
     with tempfile.TemporaryDirectory() as tmp:
         corpus = Path(tmp)
+        card_data = git.show(f"{rev}:meta/card-data.json")
+        if card_data is None:
+            raise Outcome(
+                "gate_failed",
+                f"meta/card-data.json is missing from {rev}; the conflict ratchet fails closed "
+                "rather than lint plays against an empty card index",
+            )
+        cards_path = corpus / "meta" / "card-data.json"
+        cards_path.parent.mkdir(parents=True, exist_ok=True)
+        cards_path.write_text(card_data, encoding="utf-8")
+        cards = CardIndex.load(cards_path)
         for deck in decks:
             listed = git.out(
                 "ls-tree",
@@ -403,9 +414,7 @@ def _conflicts(git: Git, rev: str, decks: list[str]) -> dict[tuple[Any, ...], Pl
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text("{}", encoding="utf-8")
             deck_dir = corpus / "decks" / deck
-            _, warnings, _ = check_deck(
-                deck_dir, corpus, corpus / "meta" / "card-data.json", CardIndex({})
-            )
+            _, warnings, _ = check_deck(deck_dir, corpus, cards_path, cards)
             for warning in warnings:
                 head, rest = warning.plays[:1], warning.plays[1:]
                 if warning.code == "play-conflict":
