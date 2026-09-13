@@ -283,6 +283,26 @@ PROTOCOL_VERSION = "seatkit-19"
 #: the same `seatkit-18` rather than a bump, so an MCP process built on the
 #: first `seatkit-18` (equip only) misses `improvise` the same way.
 #:
+#: Battle 7 added two more response fields, also riding `seatkit-18`. B7-13:
+#: a spell cast for X (Nature's Rhythm harmonized for X=8) showed `mana_value
+#: 2.0` and no X anywhere on the stack; a stack `CardView` now carries
+#: `mana_value` with the chosen X counted (CR 202.3e) and, when its cost has
+#: an `{X}`, `x_value`. B7-11: `resolve-top`'s own response gained `changed`,
+#: the marker `pass_priority`'s resolve outcome already carried, and that
+#: marker now sees power, toughness, keywords, controller, player counters
+#: and the stack. An older process passes the new fields through untouched,
+#: so a seat on it simply does not see them.
+#:
+#: Battle 4 made combat damage assignment a decision (B4-06), also riding
+#: `seatkit-18`: the engine's `ASSIGN_COMBAT_DAMAGE` kind (CR 703.4k, 510.1c,
+#: 702.19b), asked when a blocked attacker has two or more blockers or
+#: trample with power past its blockers' lethal damage. `decide` gained a
+#: `damage` parameter (a JSON list of `{"target": ..., "amount": ...}`),
+#: `seat_cli decide` the matching `--damage` flag, and a `pending_decision`
+#: of this kind carries `lethal_damage` (aligned with `targets`) and
+#: `trample`. An older process has no `damage` parameter to send, so it
+#: cannot answer this kind and reads it as an unrecognised one.
+#:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row
 #: gained `optional_costs`, `printed_produces` and `activate_first`.
@@ -451,7 +471,7 @@ PROTOCOL_VERSION = "seatkit-19"
 #: carries this kind's answer; `answer_with` is the whole call, paste-ready,
 #: already carrying this question's own generation. The mapping they encode
 #: (`decisions.TOOL_FIELD_FOR_KIND`/`TOOL_FOR_KIND`) disagrees with the
-#: engine-facing field name on ten of the eighteen kinds and lived only in
+#: engine-facing field name on ten of the nineteen kinds and lived only in
 #: `decide`'s own ~200-line docstring before this, which is exactly the
 #: "how" thinking a seat had to do before it could answer at all - and where
 #: it guessed wrong, the guess was a real parameter of `decide` accepted by

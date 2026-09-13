@@ -1088,6 +1088,23 @@ class DeclaredPairRequest(RequestModel):
     defender: str
 
 
+class DamageAssignmentRequest(RequestModel):
+    """One `(target, amount)` entry for the `assign_combat_damage` kind's
+    `decide` answer (CR 510.1c, CR 702.19b) - the request-side twin of the
+    engine's `machines.decisions.DamageAssignment`.
+
+    `target` is a card id (a blocker, from `pending_decision.cards[1:]`) or a
+    player's username (the defending player or planeswalker, offered only
+    once every blocker has been assigned its own `pending_decision
+    .lethal_damage` and only when `pending_decision.trample` is true) - the
+    same "card id or player name" token shape `DeclaredPairRequest.defender`
+    already uses, told apart the same way (`decisions.damage_answer`).
+    """
+
+    target: str
+    amount: int
+
+
 class DecideRequest(BoardRead):
     player: str
     """Must be the pending decision's own player; anyone else is rejected."""
@@ -1136,7 +1153,14 @@ class DecideRequest(BoardRead):
     """For the `scry` and `surveil` kinds: which of `pending_decision.cards`
     move off the top - to the bottom of the library for a scry (CR 701.22a),
     to the graveyard for a surveil (CR 701.25a). Every card not named here
-    goes back on top. Empty is a real answer: "keep everything on top"."""
+    goes back on top. Empty is a real answer: "keep everything on top".
+    How many may be named is `pending_decision.exact`/`.amount`, the same
+    count `choose_cards` is held to: `exact=True` means exactly `amount`
+    (Codecracker Hound's "put one into your hand and the other into your
+    graveyard"), `exact=False` means zero up to `amount` (CR 107.1c) - a
+    plain scry/surveil's `amount` is every card looked at, while Devourer of
+    Destiny's "may put one of those cards back" is `amount=1`, a real
+    ceiling rather than "any"."""
     top_order: list[str] | None = None
     """For `scry`/`surveil`: the order the cards that stay on top go back,
     topmost first. `None` (the default) keeps them in the order they were
@@ -1165,6 +1189,15 @@ class DecideRequest(BoardRead):
     ("if any"). The one field both declaration kinds share, the same way
     `choice` serves both `choose_a_quality` and `choose_a_mode` - see
     `DeclaredPairRequest`."""
+    damage: list[DamageAssignmentRequest] = Field(default_factory=list)
+    """The `assign_combat_damage` kind's answer (CR 510.1c, CR 702.19b) - how
+    one attacking creature's combat damage divides among its blockers and,
+    with trample, the player or planeswalker it attacks. Every entry's
+    `amount` must sum to exactly `pending_decision.amount` (the attacker's
+    power), and damage may reach the attacked player or planeswalker only
+    once every blocker named in `pending_decision.cards[1:]` has been
+    assigned at least its own `pending_decision.lethal_damage` (CR 702.19b) -
+    see `DamageAssignmentRequest`."""
     generation: int | None = None
     """Which standing question this answer is for -
     `pending_decision.generation`, echoed back.
@@ -1527,6 +1560,17 @@ class _CardViewFields(BaseModel):
     face_up: bool
     type_line: str | None = None
     mana_cost: str | None = None
+    mana_value: float | None = None
+    """This object's mana value (CR 202.3) - set only on the stack, where
+    CR 202.3e makes it depend on the chosen X (`x_value` below), which is why
+    it is not simply carried for every zone: off the stack, `mana_cost` plus
+    a client's own symbol counting already gets CR 107.3g's "X is 0" answer
+    for free. See `serialize._mana_value`."""
+    x_value: int | None = None
+    """The X a spell with `{X}` in its mana cost was cast for (CR 107.3a),
+    set only while it sits on the stack. Absent for a spell with no `{X}`,
+    not only a zero one - `mana_cost` already says whether one was ever
+    announced."""
     oracle_text: str | None = None
     """The printed rules text. For a double-faced card, the face that is up:
     the front face anywhere but the battlefield or stack (CR 712.8a)."""
@@ -1746,6 +1790,15 @@ class PendingDecisionView(BaseModel):
     card_labels: list[str] | None = None
     exact: bool | None = None
     default_cards: list[str] | None = None
+    lethal_damage: list[int] | None = None
+    """`assign_combat_damage` only (CR 702.19b): the damage each of `targets`
+    still needs before it counts as assigned lethal damage, aligned with it
+    positionally - 0 for the defending player or planeswalker itself. `None`
+    for every other kind (`decisions.PendingDecision.lethal_damage`)."""
+    trample: bool | None = None
+    """`assign_combat_damage` only: whether the attacker has trample (CR
+    702.19b), so damage may reach the defending player or planeswalker once
+    every blocker has its own `lethal_damage`. `None` for every other kind."""
     card_details: list[CardView] | None = None
     """Only for the deciding player - the full view of exactly the ids
     `cards` names, resolved from zones `redact_view` otherwise strips
@@ -1759,7 +1812,7 @@ class PendingDecisionView(BaseModel):
     decision's own `generation` (`decisions.PendingDecision.answer_with`).
 
     Emitted rather than derived because the mapping from `kind` to parameter
-    disagrees with the engine-facing field name on ten of the eighteen
+    disagrees with the engine-facing field name on ten of the nineteen
     kinds, and lived only in the MCP `decide` tool's own docstring before
     this - see `decisions.TOOL_FIELD_FOR_KIND`'s note for the table of
     divergences and the refusal it was costing."""
@@ -2291,6 +2344,11 @@ class ResolveTopResponse(GameStateView):
     resolved: str | None = None
     zone: str | None = None
     reason: str | None = None
+    changed: bool | None = None
+    """Whether resolving actually changed anything observable - `None` only
+    when nothing was there to resolve (`resolved` is also `None` then). See
+    `commands._resolution_state`; the same marker `pass_priority`'s own
+    `resolve_top` outcome carries."""
     allowed: bool | None = None
     paused: bool = False
     notices: list[dict[str, Any]] = Field(default_factory=list)

@@ -1751,6 +1751,7 @@ def build_server(seats: Seats) -> MCPServer:
         choice: str = "",
         top: bool | None = None,
         order: str = "",
+        damage: str = "",
         generation: int | None = None,
         hold_priority: bool = False,
         reasoning: str = "",
@@ -1890,6 +1891,20 @@ def build_server(seats: Seats) -> MCPServer:
           ordered on top, or unchanged otherwise. Leaving `moved` empty is a
           real answer: it opts into nothing and is the decline.
 
+          **How many you must name is `pending_decision.exact`, the same
+          check a `choose_cards` answer is held to (CR 608.2d).** `True`
+          means exactly `pending_decision.amount` ids - Codecracker Hound's
+          "look at the top two cards of your library. Put one into your
+          hand and the other into your graveyard" offers no third option,
+          so `moved` must name exactly one. `False` means any number from
+          zero up to `pending_decision.amount` (CR 107.1c): a plain scry or
+          surveil's `amount` equals every card in `pending_decision.cards`
+          ("any number of them"), while Devourer of Destiny's "you may put
+          one of those cards back on top of your library" is `exact=False`
+          with `amount=1` - a real ceiling of one, never "any". `moved`'s
+          own `answer_with` template already states the count this
+          question enforces; `validate_answer` refuses `moved` outside it.
+
           **Where the two halves go is read off
           `pending_decision.moved_label` and `pending_decision.kept_label`,
           never off the kind.** They are short phrases in the asking card's
@@ -1959,6 +1974,35 @@ def build_server(seats: Seats) -> MCPServer:
           so a batch of triggers can be in no zone yet - fall back to
           `pending_decision.prompt`, which numbers each source positionally
           against `cards`: entry N of the prompt is entry N of `cards`.
+        - `assign_combat_damage` (CR 703.4k, 510.1c, 702.19b: how a blocked
+          attacker's combat damage divides among its blockers, and, with
+          trample, past them to the player or planeswalker it is attacking) -
+          only asked when there is a real choice: two or more blockers, or
+          trample with power beyond what is needed to kill them all. `damage`
+          is a JSON list of `{"target": ..., "amount": ...}` objects, one per
+          recipient: `target` is a card id from `pending_decision.cards[1:]`
+          (the blockers, in declaration order - `pending_decision.cards[0]`
+          is the attacker itself) or, with trample, the defending player or
+          planeswalker named in `pending_decision.targets`. Every amount must
+          be a non-negative integer, and the amounts must sum to *exactly*
+          `pending_decision.amount` (the attacker's power, CR 510.1a) -
+          neither more nor less.
+
+          `pending_decision.lethal_damage` is aligned with
+          `pending_decision.targets`: it is how much damage each recipient
+          still needs before it counts as having lethal damage marked
+          (already counting damage marked earlier, deathtouch making 1
+          always lethal, and damage other attackers assign this same step) -
+          0 for the player or planeswalker entry. Damage may reach the player
+          or planeswalker (`pending_decision.trample` true) only once *every*
+          blocker has been assigned at least its own `lethal_damage` (CR
+          702.19b) - trampling past a blocker that is short is refused.
+
+          An unblocked attacker, or one blocked by exactly one creature with
+          no trample excess, never raises this decision at all: CR 510.1c
+          leaves nothing to divide there, so the combat damage step runs
+          straight through without a pause.
+        - `mulligan`, `declare_attackers` and `declare_blockers`: see below.
 
         `generation` is `pending_decision.generation`, echoed back to say
         WHICH question this answer is for - `answer_with` already carries it,
@@ -2027,6 +2071,11 @@ def build_server(seats: Seats) -> MCPServer:
             body["top"] = top
         if order:
             body["order"] = _parse_ids(order)
+        if damage:
+            body["damage"] = [
+                {"target": entry["target"], "amount": entry["amount"]}
+                for entry in _parse_pairs(damage)
+            ]
         if generation is not None:
             body["generation"] = generation
         if reasoning:

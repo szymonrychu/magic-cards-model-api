@@ -432,7 +432,7 @@
     "affirmative_is_legal": true,
     "amount": 1,
     "answer_field": "moved",
-    "answer_with": "decide(moved=\"<any of pending_decision.cards, comma-separated; these go to top of your library>\", generation=1)",
+    "answer_with": "decide(moved=\"<up to 1 of pending_decision.cards, comma-separated; these go to top of your library>\", generation=1)",
     "card_details": [
       {
         "abilities": [],
@@ -560,6 +560,7 @@
     "generation": 1,
     "kept_label": "exiled",
     "kind": "scry",
+    "lethal_damage": [],
     "moved_label": "top of your library",
     "options": [],
     "player": "alice",
@@ -568,7 +569,8 @@
     "source_card_id": "00000000-0000-0000-0000-000000000002",
     "target_maximum": null,
     "target_minimum": 0,
-    "targets": []
+    "targets": [],
+    "trample": false
   },
   "phase": "beginning",
   "play_permissions": {

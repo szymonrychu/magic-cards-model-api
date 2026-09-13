@@ -3419,6 +3419,17 @@
             ],
             "title": "Type Line"
           },
+          "x_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Value"
+          },
           "zone": {
             "title": "Zone",
             "type": "string"
@@ -4680,6 +4691,26 @@
         "title": "CyclingEntry",
         "type": "object"
       },
+      "DamageAssignmentRequest": {
+        "additionalProperties": false,
+        "description": "One `(target, amount)` entry for the `assign_combat_damage` kind's\n`decide` answer (CR 510.1c, CR 702.19b) - the request-side twin of the\nengine's `machines.decisions.DamageAssignment`.\n\n`target` is a card id (a blocker, from `pending_decision.cards[1:]`) or a\nplayer's username (the defending player or planeswalker, offered only\nonce every blocker has been assigned its own `pending_decision\n.lethal_damage` and only when `pending_decision.trample` is true) - the\nsame \"card id or player name\" token shape `DeclaredPairRequest.defender`\nalready uses, told apart the same way (`decisions.damage_answer`).",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "amount"
+        ],
+        "title": "DamageAssignmentRequest",
+        "type": "object"
+      },
       "DecideRequest": {
         "additionalProperties": false,
         "properties": {
@@ -4711,6 +4742,13 @@
               }
             ],
             "title": "Choice"
+          },
+          "damage": {
+            "items": {
+              "$ref": "#/components/schemas/DamageAssignmentRequest"
+            },
+            "title": "Damage",
+            "type": "array"
           },
           "energy_amount": {
             "anyOf": [
@@ -8632,6 +8670,20 @@
             "title": "Kind",
             "type": "string"
           },
+          "lethal_damage": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lethal Damage"
+          },
           "moved_label": {
             "anyOf": [
               {
@@ -8722,6 +8774,17 @@
               }
             ],
             "title": "Targets"
+          },
+          "trample": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trample"
           }
         },
         "required": [
@@ -9918,6 +9981,17 @@
             },
             "title": "Battlefield",
             "type": "array"
+          },
+          "changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed"
           },
           "combat": {
             "$ref": "#/components/schemas/CombatView"
@@ -12147,6 +12221,17 @@
               }
             ],
             "title": "Type Line"
+          },
+          "x_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Value"
           },
           "zone": {
             "title": "Zone",

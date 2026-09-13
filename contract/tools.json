@@ -414,6 +414,13 @@
           "type_error": null
         },
         {
+          "default": "",
+          "has_default": true,
+          "name": "damage",
+          "type": "str",
+          "type_error": null
+        },
+        {
           "default": null,
           "has_default": true,
           "name": "generation",

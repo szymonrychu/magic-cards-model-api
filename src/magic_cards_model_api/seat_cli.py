@@ -598,7 +598,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Destiny's keeps the named card on TOP and exiles the rest. Only "
             "when both labels are absent may you assume the keyword's own pair: "
             "scry bottoms the named cards (CR 701.22a), surveil puts them in "
-            "the graveyard (CR 701.25a), each leaving the rest on top"
+            "the graveyard (CR 701.25a), each leaving the rest on top. "
+            "How many you must name is pending_decision.exact, exactly like a "
+            "choose_cards answer: true means exactly pending_decision.amount "
+            "ids (Codecracker Hound's 'put one into your hand and the other "
+            "into your graveyard' - CR 608.2d's only legal split), false means "
+            "any number from zero up to pending_decision.amount (CR 107.1c) - "
+            "a plain scry/surveil's amount equals every card looked at ('any "
+            "number of them'), while Devourer of Destiny's 'may put one of "
+            "those cards back' is exact=false with amount=1, a real ceiling of "
+            "one, not 'any'. validate_answer refuses a count outside it either way"
         ),
     )
     decide.add_argument(
@@ -649,6 +658,23 @@ def build_parser() -> argparse.ArgumentParser:
             "(CR 113.1c). An id missing from card_details is one CR 603.3b is "
             "asking about before CR 603.3 has put it on the stack - "
             "pending_decision.prompt numbers those positionally against cards"
+        ),
+    )
+    decide.add_argument(
+        "--damage",
+        default="",
+        help=(
+            'JSON list of {"target": ..., "amount": ...}, for an '
+            "assign_combat_damage decision (CR 510.1c, CR 702.19b) - how a "
+            "blocked attacker's combat damage divides among its blockers and, "
+            "with trample, past them to the player or planeswalker attacked. "
+            "`target` is a card id from pending_decision.cards[1:] (the "
+            "blockers) or, with trample, a player/planeswalker id from "
+            "pending_decision.targets. The amounts must sum to exactly "
+            "pending_decision.amount (the attacker's power), and damage may "
+            "reach the attacked player or planeswalker only once every "
+            "blocker has been assigned at least its own entry of "
+            "pending_decision.lethal_damage (CR 702.19b)"
         ),
     )
     decide.add_argument(
@@ -1299,6 +1325,11 @@ def run(argv: list[str] | None = None) -> int:
                 body["top"] = args.top == "top"
             if args.order:
                 body["order"] = _parse_ids(args.order)
+            if args.damage:
+                body["damage"] = [
+                    {"target": entry["target"], "amount": entry["amount"]}
+                    for entry in _parse_pairs(args.damage)
+                ]
             if args.generation is not None:
                 body["generation"] = args.generation
             if args.reasoning:

@@ -3669,6 +3669,15 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         except ValueError as exc:
             return refuse(f"bad pair: {exc}", **detail)
         detail["pairs"] = [{"creature": str(p.creature), "defender": p.defender} for p in req.pairs]
+    elif kind is DecisionKind.ASSIGN_COMBAT_DAMAGE:
+        # CR 510.1c/702.19b: how the attacking creature's controller divides
+        # its combat damage among its blockers and, with trample, the
+        # defending player or planeswalker past them.
+        try:
+            answer_value = decisions.damage_answer(req.damage, {p.username for p in game.players})
+        except ValueError as exc:
+            return refuse(f"bad damage assignment: {exc}", **detail)
+        detail["damage"] = [{"target": d.target, "amount": d.amount} for d in req.damage]
     else:  # pragma: no cover - unreachable: ANSWERABLE_KINDS == every DecisionKind
         return refuse(
             f"this endpoint does not know how to answer a {kind.value!r} decision", **detail

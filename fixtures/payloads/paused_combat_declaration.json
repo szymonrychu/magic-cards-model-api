@@ -167,6 +167,7 @@
     "generation": 1,
     "kept_label": "",
     "kind": "declare_attackers",
+    "lethal_damage": [],
     "moved_label": "",
     "options": [],
     "player": "alice",
@@ -175,7 +176,8 @@
     "source_card_id": null,
     "target_maximum": null,
     "target_minimum": 0,
-    "targets": []
+    "targets": [],
+    "trample": false
   },
   "phase": "combat",
   "play_permissions": {
