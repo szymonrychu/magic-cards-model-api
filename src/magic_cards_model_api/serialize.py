@@ -955,18 +955,29 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # trigger's target question comes after CR 601.2a put the card on the
     # stack and CR 601.2h paid its cost (B2-13, `commands.paused_board`).
     # Nothing is committed by reading it. Resolution and turn-based pauses
-    # keep the committed board's objects, but take the paused board's turn
-    # position, priority holder and counters (`_paused_overlay`, B2-16 and
-    # B3-08): the question stands in the step it was asked in.
+    # keep the committed board's turn position from `game`, but take the paused
+    # board's step, turn, priority holder and counters (`_paused_overlay`, B2-16
+    # and B3-08): the question stands in the step it was asked in.
+    #
+    # They also show their objects where they stand at the question: CR 608.2c
+    # follows a resolution's instructions in order, so Overlord of the
+    # Balemurk's "mill four cards, then you may return ..." asks with the four
+    # already in the graveyard (battle 5, B5-03). `board` supplies the zones and
+    # the players; `game` the combat and the stack - CR 608.2n removes a
+    # resolving ability from the stack only as the final part of its
+    # resolution, and the replay has already popped it.
     paused = store.paused_command(game_id)
     committed = game
+    board = game
     if paused is not None and paused[0].kind in commands.ANNOUNCING_KINDS:
-        game = commands.paused_board(game, *paused) or game
+        game = board = commands.paused_board(game, *paused) or game
+    elif paused is not None:
+        board = commands.board_at_pause(game, paused[0], paused[1]) or game
     overlay = _paused_overlay(game_id, committed, paused) if game is committed else {}
-    images = _images_for(game)
+    images = _images_for(board) if board is game else {**_images_for(game), **_images_for(board)}
 
     def views(cards: list[StackObject]) -> list[dict[str, Any]]:
-        return [_card_view(game, state, images) for state in cards if isinstance(state, CardState)]
+        return [_card_view(board, state, images) for state in cards if isinstance(state, CardState)]
 
     turn = game.turn
     step = turn.step if turn is not None else Step.UNTAP
@@ -993,12 +1004,12 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
     # is the board from before the paused command, which never shows Galvanic
     # Discharge's three energy while it asks how many to pay.
     paused_counters = overlay.get("player_counters", {})
-    battlefield_views = views(game.shared_zones.get(Zone.BATTLEFIELD, []))
+    battlefield_views = views(board.shared_zones.get(Zone.BATTLEFIELD, []))
     for card_view in battlefield_views:
         card_counters = overlay.get("card_counters", {}).get(card_view["id"])
         if card_counters is not None:
             card_view["counters"] = card_counters
-    exile_views = views(game.shared_zones.get(Zone.EXILE, []))
+    exile_views = views(board.shared_zones.get(Zone.EXILE, []))
     # CR 500.1 makes a phase part of a turn, and the engine's two pregame steps
     # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) run before CR 103.8's first
     # turn - so they are in no phase and are deliberately absent from
@@ -1017,7 +1028,7 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         "active_player": active_player,
         "priority_holder": priority_holder,
         "players": [
-            _player_view(player, paused_counters.get(player.username)) for player in game.players
+            _player_view(player, paused_counters.get(player.username)) for player in board.players
         ],
         "battlefield": battlefield_views,
         "stack": _stack_view(game, images),
@@ -1034,12 +1045,12 @@ def state_view(game: Game, game_id: str) -> dict[str, Any]:
         # needed) and `POST .../actions/play-land` already drive
         # `Casting.use_permission()` for a card sitting in the permission's
         # own zone, so this is purely the discoverability half of the gap.
-        "play_permissions": _play_permissions_view(game, images),
-        "command": views(game.shared_zones.get(Zone.COMMAND, [])),
-        "hands": {player.username: views(player.hand) for player in game.players},
-        "graveyards": {player.username: views(player.graveyard) for player in game.players},
-        "libraries": {player.username: views(player.library) for player in game.players},
-        "sideboards": {player.username: views(player.sideboard) for player in game.players},
+        "play_permissions": _play_permissions_view(board, images),
+        "command": views(board.shared_zones.get(Zone.COMMAND, [])),
+        "hands": {player.username: views(player.hand) for player in board.players},
+        "graveyards": {player.username: views(player.graveyard) for player in board.players},
+        "libraries": {player.username: views(player.library) for player in board.players},
+        "sideboards": {player.username: views(player.sideboard) for player in board.players},
         "winner": game.winner,
         "drawn": game.drawn,
         "losers": list(game.losers),

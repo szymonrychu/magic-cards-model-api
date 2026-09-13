@@ -24,6 +24,7 @@ from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
+from magic_cards_model.models.action import ActionKind
 from starlette.convertors import Convertor, register_url_convertor
 from starlette.responses import Response
 
@@ -523,6 +524,11 @@ def audit_outcome(
     if dry_run:
         return {**body, "log_seq": None}
     log_keys = {**keys, "notices": notices} if notices else keys
+    if outcome.allowed and "mana_sources" in log_keys and "tapped" in outcome.detail:
+        # The permanents that paid, not the ones the request offered: a
+        # source offered to a cost with no mana in it paid nothing (B5-05).
+        paid = [entry["card_id"] for entry in outcome.detail["tapped"]]
+        log_keys = {**log_keys, "mana_sources": paid}
     seq = audit.record(
         game_id,
         action,
@@ -1955,6 +1961,7 @@ def _attach_target_candidates(
             # printing does not carry rather than guessing.
             face=action.spell_face,
             targetables=targetables,
+            off_zone=action.kind is ActionKind.ACTIVATE_OFF_ZONE,
         )
 
 

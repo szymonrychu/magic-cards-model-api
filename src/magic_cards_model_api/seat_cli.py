@@ -106,6 +106,16 @@ def split_destinations(state: dict[str, Any] | None) -> str:
     )
 
 
+#: `cast`'s and `activate`'s `--sources`. Only the sources named are sent, so a
+#: log row never names a land offered to a cost with no mana in it (B5-05).
+NAMED_SOURCES_HELP = (
+    "comma-separated ids of the mana sources to pay with; only the sources named "
+    "are sent. Omit it (or pass '') to name none: the engine's automatic payment "
+    "then taps only what the cost needs from your untapped permanents, and the log "
+    "names only the permanents that actually paid"
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uid", required=True, help="your seat uid, given at dispatch")
@@ -187,11 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     cast.add_argument("--target", default="", help="comma-separated card ids or player names")
-    cast.add_argument(
-        "--sources",
-        default="",
-        help="comma-separated mana source ids (default: all your untapped sources)",
-    )
+    cast.add_argument("--sources", default="", help=NAMED_SOURCES_HELP)
     cast.add_argument("--modes", default="", help="comma-separated mode numbers")
     cast.add_argument("--x", type=int, default=None, help="the chosen value of X")
     cast.add_argument(
@@ -392,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     activate.add_argument("--target", default="", help="comma-separated ids")
-    activate.add_argument("--sources", default="", help="comma-separated mana source ids")
+    activate.add_argument("--sources", default="", help=NAMED_SOURCES_HELP)
     activate.add_argument(
         "--sacrificing",
         default="",
@@ -848,7 +854,7 @@ def run(argv: list[str] | None = None) -> int:
             body["spell_face"] = args.spell_face.strip()
         if args.target:
             body["targets"] = _parse_ids(args.target)
-        sources = sources_or_all(args.sources)
+        sources = _parse_ids(args.sources)
         if sources:
             body["mana_sources"] = sources
         if args.modes:
@@ -938,7 +944,7 @@ def run(argv: list[str] | None = None) -> int:
         }
         if args.target:
             body["targets"] = _parse_ids(args.target)
-        sources = sources_or_all(args.sources)
+        sources = _parse_ids(args.sources)
         if sources:
             body["mana_sources"] = sources
         if args.sacrificing:

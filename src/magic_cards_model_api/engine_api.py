@@ -492,8 +492,8 @@ def pay_with(
       have picked;
     - a bare card id, or a `ManaSource` with no colour, names *which* source
       to consider but leaves *what colour it makes* to the engine. This is
-      the common case: `seat_cli`'s default (every untapped source, no
-      colour) and an explicit `--sources <id>` naming a dual both land here,
+      the common case: no source named at all (every untapped permanent the
+      payer controls, below) and an explicit `--sources <id>` naming a dual both land here,
       and both used to crash straight out of `ManaAbility.resolve` the moment
       the named source was a dual, a shockland, or any other choice ability -
       "this ability offers [['W'], ['U']]; pass the colour chosen" - with no
@@ -528,8 +528,26 @@ def pay_with(
             card_id = entry.card_id if isinstance(entry, ManaSource) else entry
             unpinned.append(find_card(game, card_id))
 
+    if not sources and payment.shortfall and payment.payer is not None:
+        # Naming no source leaves the choice to the engine's automatic
+        # payment over every untapped permanent the payer controls - it taps
+        # only what the cost needs (CR 601.2g, CR 118.3c), so a front end has
+        # no reason to offer the lot and a log row no reason to name it
+        # (battle 5, B5-05).
+        unpinned = [
+            card
+            for card in game.battlefield
+            if card.controller == payment.payer and not card.tapped
+        ]
     if unpinned and payment.shortfall:
-        payment.auto_tap(unpinned)
+        try:
+            payment.auto_tap(unpinned)
+        except ValueError:
+            if sources:
+                raise
+            # Unnamed, the automatic payment is only an attempt: when it finds
+            # no plan, the payment's own refusal (`pay`) names the real reason,
+            # such as a CR 106.6 restriction, rather than "no combination".
 
 
 def shortfall_reason(payment: Any) -> str:
@@ -1078,7 +1096,14 @@ def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bo
         return refused(exc)
     game.put_on_stack(state, casting.caster)
     game.retain_priority(casting.caster)
-    return Outcome(True, detail={"spell_id": str(state.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "spell_id": str(state.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 def apply_object_costs(game: Game, spell: CardState, payment: Any, req: CastRequest) -> None:
@@ -1143,7 +1168,14 @@ def crew_vehicle(game: Game, req: CrewRequest) -> Outcome:
 
     on_stack = activation.activate()
     game.retain_priority(req.player)
-    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 # -- what the ledger records about an action ---------------------------------
@@ -1307,7 +1339,11 @@ def _take_marked_exile(game: Game, action: MarkedExile, req: SpecialActionReques
         return refused(exc)
 
     card = action.take()
-    detail: dict[str, Any] = {"card_id": str(card.id), "cost": str(payment.cost)}
+    detail: dict[str, Any] = {
+        "card_id": str(card.id),
+        "cost": str(payment.cost),
+        "tapped": tapped_view(payment),
+    }
     if action.time_counters is not None:
         detail["time_counters"] = action.time_counters
     return Outcome(True, detail=detail)
@@ -1395,7 +1431,14 @@ def cycle_card(game: Game, req: CycleRequest) -> Outcome:
 
     on_stack = activation.activate()
     game.retain_priority(req.player)
-    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 # -- targeting -------------------------------------------------------------
@@ -1541,7 +1584,14 @@ def _activate_off_zone_ability(game: Game, card: CardState, req: ActivateRequest
 
     on_stack = activation.activate()
     game.retain_priority(req.player)
-    return Outcome(True, detail={"ability_id": str(on_stack.id), "cost": str(payment.cost)})
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
@@ -1648,8 +1698,18 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
 
     game.retain_priority(req.player)
     if ability_on_stack is None:
-        return Outcome(True, detail={"mana_ability": True, "cost": str(payment.cost)})
-    return Outcome(True, detail={"ability_id": str(ability_on_stack.id), "cost": str(payment.cost)})
+        return Outcome(
+            True,
+            detail={"mana_ability": True, "cost": str(payment.cost)},
+        )
+    return Outcome(
+        True,
+        detail={
+            "ability_id": str(ability_on_stack.id),
+            "cost": str(payment.cost),
+            "tapped": tapped_view(payment),
+        },
+    )
 
 
 # -- attacking -------------------------------------------------------------

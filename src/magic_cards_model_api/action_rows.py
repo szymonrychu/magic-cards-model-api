@@ -72,6 +72,7 @@ from magic_cards_model.models import Action, CardState, Color, Game, Zone
 from magic_cards_model.models.action import ActionKind, Affordability, TargetSlot
 from magic_cards_model.models.mana import ManaCost, ManaSpend, ManaSymbol, SymbolKind
 
+from .affordances import activation_profile
 from .engine_api import (
     activate_ability,
     dry_run_copy,
@@ -136,7 +137,7 @@ def legal_action_rows(
         return actions, [action.model_dump(mode="json") for action in actions]
     rows = _Rows(game, player)
     actions = [
-        rows.as_loyalty_activation(rows.with_front_face_cost(action))
+        rows.with_target_slots(rows.as_loyalty_activation(rows.with_front_face_cost(action)))
         for action in actions
         if rows.functions_where_it_is(action)
     ]
@@ -614,6 +615,44 @@ class _Rows:
                 }
                 for mode in unreadable
             ]
+
+    # -- an activation's targets ---------------------------------------------------
+
+    def with_target_slots(self, action: Action) -> Action:
+        """CR 602.2b: an activation announces its targets as a cast does, but
+        the engine's `legal_actions` builds `target_slots` only for a cast row,
+        so every activation row read `[]` - "targets nothing" - for Goblin
+        Bombardment's "Sacrifice a creature: ... any target" (B5-10). Filled
+        here from the same announcement profile the cast row's come from."""
+        if (
+            action.kind not in (ActionKind.ACTIVATE, ActionKind.ACTIVATE_OFF_ZONE)
+            or action.target_slots
+            or action.ability_index is None
+        ):
+            return action
+        card = self._card(action.card_id)
+        if card is None:
+            return action
+        try:
+            profile = activation_profile(
+                self.game,
+                card,
+                action.ability_index,
+                off_zone=action.kind is ActionKind.ACTIVATE_OFF_ZONE,
+            )
+        except (IndexError, ValueError):
+            return action
+        if not profile.understood or not profile.requirements:
+            return action
+        slots = tuple(
+            TargetSlot(
+                phrase=requirement.phrase,
+                minimum=requirement.minimum,
+                maximum=None if requirement.unbounded else requirement.count,
+            )
+            for requirement in profile.requirements
+        )
+        return action.model_copy(update={"target_slots": slots})
 
     # -- optional additional costs ------------------------------------------------
 

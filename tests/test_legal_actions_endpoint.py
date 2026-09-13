@@ -445,28 +445,33 @@ def test_an_unaffordable_action_is_still_listed_but_carries_no_candidates(client
     assert "targets" not in cast
 
 
-def test_an_activated_ability_carries_no_candidates_because_the_engine_names_no_slots(client, game):
-    """The boundary of this, stated rather than discovered later. The engine's
-    enumeration fills `target_slots` for a *cast* only
-    (`legal_actions._cast_action`); a battlefield activation carries none,
-    whatever the ability itself targets - Karn, the Great Creator's `+1`
-    ("up to one target noncreature artifact") is listed with `target_slots:
-    []` exactly like his `-2`, which targets nothing at all.
-
-    So an `activate` row gets no candidates here, because there is no slot to
-    hang them on and this repo will not re-derive from printed text what the
-    engine declined to state. `/api/games/{id}/affordances/{card_id}` answers
-    that question per ability (with `ability_index`), and the fix that would
-    make it unnecessary belongs in the engine's `Action`, not here."""
+def test_an_activated_ability_carries_its_slots_and_candidates(client, game):
+    """The engine's enumeration fills `target_slots` for a *cast* only
+    (`legal_actions._cast_action`), so this used to be stated as a boundary:
+    Karn, the Great Creator's `+1` ("up to one target noncreature artifact")
+    was listed with `target_slots: []` exactly like his `-2`, which targets
+    nothing at all. Battle 5's B5-10 (Goblin Bombardment) showed what that
+    costs a seat, and CR 602.2b applies CR 601.2c's target announcement to an
+    activation, so `action_rows` fills the slots from the engine's own
+    `Game._announcement_profile` and the candidates follow. The `-2` still
+    carries none."""
     add_card(client, game, "Karn, the Great Creator", "alice", "battlefield")
     add_card(client, game, "Sol Ring", "bob", "battlefield")
+    ring = find(state(client, game)["battlefield"], "Sol Ring")["id"]
 
     activations = by_kind(with_candidates(client, game), "activate")
 
     assert len(activations) == 2, "Karn's +1 and -2 are both legal here"
-    for action in activations:
-        assert action["target_slots"] == [], action
-        assert "targets" not in action, action
+    targeting = [action for action in activations if action["target_slots"]]
+    assert len(targeting) == 1, activations
+    plus_one = targeting[0]
+    assert plus_one["target_slots"] == [
+        {"phrase": "target noncreature artifact", "minimum": 0, "maximum": 1}
+    ], plus_one
+    candidates = plus_one["targets"]["slots"][0]["candidates"]
+    assert any(line.startswith(ring) for line in candidates), candidates
+    minus_two = next(action for action in activations if not action["target_slots"])
+    assert "targets" not in minus_two, minus_two
 
 
 def test_the_board_is_walked_once_per_request_not_once_per_action(client, game, monkeypatch):

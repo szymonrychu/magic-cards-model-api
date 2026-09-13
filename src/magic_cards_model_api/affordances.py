@@ -93,6 +93,7 @@ from uuid import UUID
 from magic_cards_model.machines import AbilityOnStack
 from magic_cards_model.machines.casting import Casting, face_being_cast
 from magic_cards_model.machines.cost import spend_restriction
+from magic_cards_model.machines.keywords import off_zone_abilities
 from magic_cards_model.machines.modes import modal_profile, substitute_x
 from magic_cards_model.machines.targeting import (
     TargetingProfile,
@@ -100,6 +101,7 @@ from magic_cards_model.machines.targeting import (
     profile_for_text,
     targeting_profile,
 )
+from magic_cards_model.machines.triggers import activated_abilities_of
 from magic_cards_model.models import Card, CardState, Game, Player, Zone
 
 from .engine_api import dry_run_copy, equip_target_requirements
@@ -485,6 +487,29 @@ def _profile_for(
     return targeting_profile(state.card), None
 
 
+def activation_profile(
+    game: Game, state: CardState, ability_index: int, *, off_zone: bool = False
+) -> TargetingProfile:
+    """What activating `state`'s ability `ability_index` targets (CR 602.2b
+    applies CR 601.2c's target announcement to an activation).
+
+    `off_zone` names the index space: `off_zone_abilities(card)`, the one an
+    `ACTIVATE_OFF_ZONE` row carries (CR 113.6j, CR 113.6m), rather than
+    `Game.activated_abilities`. A printed off-zone line is read the way the
+    engine's `off_battlefield_activation` reads it, whole; cycling, unearth and
+    transmute spell their effect out with no target, so they target nothing.
+    """
+    if not off_zone:
+        return game._announcement_profile(
+            state, ability_index=ability_index, modes=None, x_value=None
+        )
+    entry = off_zone_abilities(state.card)[ability_index]
+    if entry.family != "printed":
+        return profile_for_text("")
+    printed = [ability for ability in activated_abilities_of(state.card) if ability.zone]
+    return profile_for_text(printed[entry.index].text)
+
+
 def candidates(
     game: Game,
     state: CardState,
@@ -619,6 +644,7 @@ def target_candidates(
     ability_index: int | None = None,
     face: str | None = None,
     targetables: list[Any] | None = None,
+    off_zone: bool = False,
 ) -> dict[str, Any]:
     """Every object this announcement could legally name, per requirement
     slot, as strings - `candidates` narrowed to what a *seat* needs and
@@ -652,7 +678,11 @@ def target_candidates(
       candidate straight back, so a wrong list costs it the action.
     """
     try:
-        profile, _ = _profile_for(game, state, caster, ability_index, None, None, face=face)
+        if off_zone:
+            assert ability_index is not None
+            profile = activation_profile(game, state, ability_index, off_zone=True)
+        else:
+            profile, _ = _profile_for(game, state, caster, ability_index, None, None, face=face)
     except FaceNotRead as exc:
         return {"understood": False, "note": f"{UNREADABLE_FACE_TARGETING} ({exc})"}
     except (IndexError, ValueError) as exc:
