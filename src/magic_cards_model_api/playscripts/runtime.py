@@ -1211,7 +1211,7 @@ class _Unregistered(Exception):
 
 
 def _start(
-    ctx: _Context, run: _Run, play: dict[str, Any], state: dict[str, Any]
+    ctx: _Context, run: _Run, play: dict[str, Any] | None, state: dict[str, Any]
 ) -> ScriptExit | None:
     run.turn, run.step = state.get("turn_number"), state.get("step")
     answer = _post_run(ctx, {**_run_fields(ctx, run, play), "phase": "start"})
@@ -1243,24 +1243,23 @@ def _end(
     record: bool = True,
 ) -> RunResult:
     """Fill the run's fields into `out`, post the run's finish (and its start,
-    if it never got one) unless `record` is off, and hand the result back."""
+    if it never got one) unless `record` is off, and hand the result back. A
+    start refused `unknown_script` turns off `record`: the ledger began no run,
+    so no finish is posted and the server's refusal is the exit."""
     seat = ctx.seat
     state = seat.fetch_state()
     if record and not run.started:
-        run.turn, run.step = state.get("turn_number"), state.get("step")
-        started = _post_run(ctx, {**_run_fields(ctx, run, play), "phase": "start"})
-        run.started = True
-        if (
-            isinstance(started, dict)
-            and started.get("exit") == Exit.ALREADY_RAN.value
-            and out.exit is not Exit.REFUSED
-        ):
-            out = ScriptExit(
-                Exit.ALREADY_RAN,
-                prior_run_id=started.get("prior_run_id"),
-                refusal=started.get("reason"),
-                refusal_source="server",
-            )
+        try:
+            refused = _start(ctx, run, play, state)
+        except _Unregistered as unregistered:
+            out, record = unregistered.out, False
+        else:
+            if (
+                refused is not None
+                and refused.exit is Exit.ALREADY_RAN
+                and out.exit is not Exit.REFUSED
+            ):
+                out = refused
     total = len(play["moves"]) if play else 0
     done = run.moves_done
     out.script_id, out.run_id = run.script_id, run.run_id

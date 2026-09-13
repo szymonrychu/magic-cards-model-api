@@ -911,6 +911,69 @@ def test_a_script_dropped_from_the_corpus_after_the_read_is_refused_at_its_start
     assert started(board) == [] and finished(board) == []
 
 
+def assert_refused_unregistered(result: Any, hook: Hooked, game_id: str, script_id: str) -> None:
+    out = result.script_exit
+    assert out.exit is Exit.REFUSED, result.to_dict()
+    assert out.refusal_source == "server"
+    assert f"'{script_id}'" in (out.refusal or "")
+    assert out.script_id == script_id
+    assert [body["phase"] for body in hook.posts("/script-runs")] == ["start"]
+    assert started(game_id) == [] and finished(game_id) == []
+
+
+@pytest.mark.parametrize(
+    "stale",
+    [{"priority": 0}, {"opposing_archetypes": ["dimir-frog"]}],
+    ids=["priority-0", "archetype-not-listed"],
+)
+def test_an_exit_before_the_start_from_a_stale_corpus_records_no_finish(
+    client: TestClient, board: str, monkeypatch: pytest.MonkeyPatch, stale: dict[str, Any]
+) -> None:
+    """A run that exits before its start (priority 0, an unlisted archetype)
+    posts its start on the way out. From a stale corpus that start is refused
+    `unknown_script` too, and the run reports that refusal with no finish."""
+    alice = seat_uid(board, "alice")
+    register(client, board, alice, land_script("drop", **stale))
+    seats = wired(monkeypatch, board)
+    seat, hook = hooked_seat(seats, alice)
+    seats.script_corpora[(board, alice)] = client.get(
+        f"/api/games/{board}/seats/{alice}/scripts", params={"uid": alice}
+    ).json()
+    register(client, board, alice, land_script("other"))
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert_refused_unregistered(result, hook, board, "drop")
+
+
+def test_a_wait_exit_from_a_stale_corpus_records_no_finish(
+    client: TestClient, game: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    force_turn_position(game, Step.UPKEEP, "alice")
+    alice = seat_uid(game, "alice")
+    register(client, game, alice, land_script("drop"))
+
+    def stops_short(seat: Any, **_: Any) -> dict[str, Any]:
+        return {
+            "finished": True,
+            "stopped_because": "something new went on the stack: Lightning Bolt",
+            "passes": 0,
+            "state": seat.fetch_state(),
+        }
+
+    monkeypatch.setattr(runtime, "pass_until", stops_short)
+    seats = wired(monkeypatch, game)
+    seat, hook = hooked_seat(seats, alice)
+    seats.script_corpora[(game, alice)] = client.get(
+        f"/api/games/{game}/seats/{alice}/scripts", params={"uid": alice}
+    ).json()
+    register(client, game, alice, land_script("other"))
+
+    result = run_script(seat, script_id="drop", reasoning=REASONING, corpora=seats.script_corpora)
+
+    assert_refused_unregistered(result, hook, game, "drop")
+
+
 # -- waiting --------------------------------------------------------------------
 
 
