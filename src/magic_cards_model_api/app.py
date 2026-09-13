@@ -2041,6 +2041,10 @@ def _attach_target_candidates(
         )
 
 
+#: The pauses whose rows are enumerated on the paused board (`get_legal_actions`).
+_DECLARATION_KINDS = frozenset({DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS})
+
+
 @app.get(
     "/api/games/{game_id}/legal-actions",
     response_model=LegalActionsResponse,
@@ -2138,9 +2142,17 @@ def get_legal_actions(
         )
     paused = store.paused_command(game_id)
     pending = paused[2] if paused is not None else None
-    actions, views = legal_action_rows(game, player, pending)
+    board = game
+    if pending is not None and pending.decision.kind in _DECLARATION_KINDS:
+        # CR 508.1/509.1's question is raised in the declare step, but a pause
+        # is never committed, so `game` is still in the step before it and the
+        # engine enumerates no `declare_attacker`/`declare_blocker` pair for a
+        # board outside that step. The board the question was raised on is
+        # what the rows describe (U1: a stolen, hasty creature's attack row).
+        board = commands.board_at_pause(game, paused[0], paused[1]) or game
+    actions, views = legal_action_rows(board, player, pending)
     if candidates:
-        _attach_target_candidates(game, player, actions, views)
+        _attach_target_candidates(board, player, actions, views)
     # The ledger position this enumeration describes, handed back with it
     # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
     # whatever it decides to do, and that is what makes its refusals

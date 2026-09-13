@@ -441,14 +441,19 @@ def mana_colors(
 
 
 def target_thing(game: Game, token: str) -> Any:
-    """A target named as a card id or a player name."""
+    """A target named as a player name, a card id, or the id of an ability on
+    the stack (`Game.find_ability_by_id`): Consign to Memory's "target
+    triggered ability" names the `AbilityOnStack` itself, and whether it may
+    is the engine's CR 601.2c check, not this lookup's."""
     thing = player_or_card(token, {player.username for player in game.players})
     if not isinstance(thing, UUID):
         return thing  # the engine accepts a username string anywhere a player goes
-    state = game.find_by_id(thing)
-    if state is None:
-        raise ValueError(f"target {token!r} is neither a player name nor a card id")
-    return state
+    found = game.find_by_id(thing) or game.find_ability_by_id(thing)
+    if found is None:
+        raise ValueError(
+            f"target {token!r} is neither a player name, a card id, nor an ability on the stack"
+        )
+    return found
 
 
 def pay_with(
@@ -714,10 +719,26 @@ def dry_run_copy(game: Game) -> Game:
     dry run at all - so nothing minted on a probe copy has anywhere to
     escape to even before that field exists.
     """
-    probe = game.model_copy(deep=True)
+    probe = copy_game(game)
     if hasattr(probe, "game_uid"):
         probe.game_uid = uuid4()
     return probe
+
+
+def copy_game(game: Game) -> Game:
+    """A deep copy of `game` whose objects point at the copy, not at `game`.
+
+    `model_copy(deep=True)` copies each `CardState`'s private `_board_source`
+    as a detached duplicate of the original game rather than as the copy, and
+    it does not run `Game.model_post_init`, the engine's own relink walk. A card bound that way
+    answers `controller`/`power`/`toughness` off a board where nothing done on
+    the copy ever happens: Threaten resolved on a command's working copy and
+    the committed game went on reporting the old controller (CR 613.1b's
+    layer 2). Re-running the relink walk rebinds every object to the copy.
+    """
+    copied = game.model_copy(deep=True)
+    copied.model_post_init(None)
+    return copied
 
 
 def cast_card(game: Game, req: CastRequest) -> Outcome:
@@ -1655,6 +1676,14 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
 
     payment = None
     try:
+        # CR 602.2b runs CR 601.2c before CR 601.2h: the named targets (a card,
+        # a player, or an ability on the stack) are announced and checked by
+        # `begin_activating` before anything is paid.
+        targets = (
+            [target_thing(game, token) for token in req.targets]
+            if req.targets is not None
+            else None
+        )
         payment = game.begin_activating(
             permanent,
             req.ability_index,
@@ -1663,6 +1692,7 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
             discarding=resolve_states(req.discarding),
             exiling=resolve_states(req.exiling),
             x_value=req.x_value or 0,
+            targets=targets,
         )
         pay_with(payment, list(req.mana_sources or []), game)
         if req.dry_run:
@@ -1682,11 +1712,6 @@ def activate_ability(game: Game, req: ActivateRequest) -> Outcome:
         return refused(exc)
 
     try:
-        targets = (
-            [target_thing(game, token) for token in req.targets]
-            if req.targets is not None
-            else None
-        )
         ability_on_stack = game.activate_ability(
             permanent,
             req.ability_index,
@@ -2160,6 +2185,7 @@ def put_card_in_zone(
     position: str | None,
 ) -> None:
     """Set a card into a zone, the way the harness stages a scenario."""
+    card.bind_to_game(game)  # what `Game.put_onto_battlefield` does (CR 613.5)
     if zone in SHARED_ZONES:
         game.shared_zones[zone].append(card)
         return

@@ -211,6 +211,15 @@ PROTOCOL_VERSION = "seatkit-18"
 #: and the stack. An older process passes the new fields through untouched,
 #: so a seat on it simply does not see them.
 #:
+#: The battle 7 review rode `seatkit-18` too, with no request or response
+#: shape changed. U1: a card's `controller` in every view is the computed one
+#: after a control change (the api's game copies kept each card bound to a
+#: stale duplicate board), and `declare_attacker`/`declare_blocker` rows now
+#: appear while that declaration question stands. U2: `targets` on `cast` and
+#: `activate` may name an ability on the stack by its stack `id`, the id the
+#: legal-action candidates already listed. An older process sends the same
+#: strings and reads the same fields.
+#:
 #: Battle 4 made combat damage assignment a decision (B4-06), also riding
 #: `seatkit-18`: the engine's `ASSIGN_COMBAT_DAMAGE` kind (CR 703.4k, 510.1c,
 #: 702.19b), asked when a blocked attacker has two or more blockers or

@@ -196,7 +196,11 @@ def build_parser() -> argparse.ArgumentParser:
             "card's own creature half"
         ),
     )
-    cast.add_argument("--target", default="", help="comma-separated card ids or player names")
+    cast.add_argument(
+        "--target",
+        default="",
+        help="comma-separated card ids, player names, or ids of abilities on the stack",
+    )
     cast.add_argument("--sources", default="", help=NAMED_SOURCES_HELP)
     cast.add_argument("--modes", default="", help="comma-separated mode numbers")
     cast.add_argument("--x", type=int, default=None, help="the chosen value of X")
