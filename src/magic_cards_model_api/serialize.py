@@ -583,7 +583,7 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         printed_type_line = state.card.type_line
         # The printing plus counters, never the layer engine: a bound card's
         # `power`/`toughness` already answer with the computed board (CR 613.5).
-        printed_power, printed_toughness = state._printed_power, state._printed_toughness
+        printed_power, printed_toughness = state.printed_power, state.printed_toughness
         if printed_type_line != type_line:
             view["printed_type_line"] = printed_type_line
         if printed_power != power or printed_toughness != toughness:
