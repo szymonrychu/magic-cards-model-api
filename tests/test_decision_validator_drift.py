@@ -236,6 +236,34 @@ def _cases(board: dict[str, Any]) -> dict[DecisionKind, tuple[Decision, list[obj
         )
         cases[kind] = (legal, [True, False, "yes", 1])
 
+    # `PAY_MANA` overrides the generic bool-kind case above with one that also
+    # offers mana sources (engine PR #17, B6-08, CR 608.2g/CR 605.3a) - a
+    # tuple of ids is a second legal answer shape this kind alone has, so its
+    # candidates cover a legal tuple (a subset, and the full offer, and the
+    # empty tuple - "pay from the floating pool alone"), an illegal one (a
+    # stray id never offered), and the plain-bool candidates every other
+    # `bool_kinds` member already exercises.
+    mana_source_ids = tuple(library_ids)
+    cases[DecisionKind.PAY_MANA] = (
+        Decision(
+            kind=DecisionKind.PAY_MANA,
+            player="alice",
+            prompt="pay_mana test",
+            affirmative_is_legal=True,
+            mana_sources=mana_source_ids,
+        ),
+        [
+            True,
+            False,
+            "yes",
+            1,
+            mana_source_ids,
+            (mana_source_ids[0],),
+            (),
+            (mana_source_ids[0], stray_id),
+        ],
+    )
+
     cases[DecisionKind.PAY_ENERGY_AMOUNT] = (
         Decision(
             kind=DecisionKind.PAY_ENERGY_AMOUNT,
@@ -543,16 +571,24 @@ def test_pay_mana_the_sources_cannot_pay_is_illegal_on_both_sides(
     """The mana variant of the floor above: an "unless ... pays" payment the
     floating pool and the untapped mana sources cannot cover (CR 608.2g,
     CR 118.3). Its refusal carries a clause the other pay kinds do not, so it
-    is pinned separately."""
+    is pinned separately.
+
+    The third value below is a tuple - naming sources to activate - asked of
+    a decision `affirmative_is_legal=False` already ruled out: even a tuple
+    that would otherwise be a legal shape (every id offered) cannot make an
+    illegal "yes" legal, so both sides refuse it with the identical CR 118.3
+    clause a bare `True` gets (engine PR #17, B6-08)."""
     engine_game = _game(game)
+    mana_source_ids = tuple(board["library_ids"])
     decision = Decision(
         kind=DecisionKind.PAY_MANA,
         player="alice",
         prompt="pay {3} or the spell is countered",
         amount=3,
         affirmative_is_legal=False,
+        mana_sources=mana_source_ids,
     )
-    for value in (True, False):
+    for value in (True, False, mana_source_ids):
         _check_parity(engine_game, decision, value)
 
 
