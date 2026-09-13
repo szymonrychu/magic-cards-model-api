@@ -40,6 +40,7 @@ import asyncio
 import json
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -992,7 +993,12 @@ def test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait(monkeypa
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.01)
 
     started = time.monotonic()
-    result = pass_until(object(), until_step="postcombat_main", max_seconds=2.0)
+    # `_pass_until_once` is faked out, so the only thing `pass_until` itself
+    # reads off the seat is `advise` - the one guard that runs before the
+    # retry loop (an advise seat is refused a run outright).
+    result = pass_until(
+        SimpleNamespace(advise=False), until_step="postcombat_main", max_seconds=2.0
+    )
     elapsed = time.monotonic() - started
 
     assert result["finished"] is False

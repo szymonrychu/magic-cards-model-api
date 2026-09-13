@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "archetype": "dimir frog",
+  "signature": [
+    {
+      "cards": [
+        "Psychic Frog",
+        "Quantum Riddler"
+      ],
+      "min": 6,
+      "why": "The two cheap blue-black threats every one of the ten current field lists runs, at 4.0 and 3.7 copies. Frog is the deck: a one-mana body that converts every dead card into a card and a counter, and Riddler is what the deck does with the cards it drew. A build that plays neither is a dimir control deck, which the field files separately."
+    },
+    {
+      "cards": [
+        "Fatal Push",
+        "Thoughtseize",
+        "Sheoldred's Edict",
+        "Drown in the Loch",
+        "Cling to Dust"
+      ],
+      "min": 6,
+      "why": "Cheap black answers. 10/10 field lists run Fatal Push at 4 and Thoughtseize at 3.9; a build cannot be this archetype and answer a resolved threat with nothing, and the split between these five is a metagame call rather than an identity."
+    },
+    {
+      "cards": [
+        "Counterspell",
+        "Force of Negation",
+        "Spell Snare",
+        "Subtlety",
+        "Consign to Memory",
+        "Mystical Dispute",
+        "Logic Knot"
+      ],
+      "min": 6,
+      "why": "The blue half of the same claim. Subtlety and Force of Negation are 10/10 at 3.0 each because a tempo deck holding a 1/3 has to be able to answer a spell on the turn it taps out; which six of these seven a list runs moves with the room."
+    },
+    {
+      "cards": [
+        "Watery Grave",
+        "Polluted Delta",
+        "Undercity Sewers",
+        "Darkslick Shores",
+        "Gloomlake Verge",
+        "Marsh Flats",
+        "Flooded Strand"
+      ],
+      "min": 8,
+      "why": "A dimir manabase. Named rather than counted by colour because the offline cache carries one front-face type line per card, so a colour census is not available here; these seven are the untapped-or-fetch blue-black lands the field's ten lists actually play."
+    }
+  ],
+  "exclude": [
+    {
+      "cards": [
+        "Goryo's Vengeance",
+        "Atraxa, Grand Unifier"
+      ],
+      "min": 4,
+      "why": "instant reanimator runs the same 4 Psychic Frog, Thoughtseize and fetch manabase and is a different deck with a different guide: it wins by putting Atraxa onto the battlefield on turn two rather than by attacking with a 1/3. Four copies across the pair is the reanimation package, not a splash."
+    }
+  ]
+}

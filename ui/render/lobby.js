@@ -44,7 +44,8 @@
 
 import { api } from "../api.js";
 import {
-  agentFrom,
+  seatEntry,
+  buddyControlState,
   thinkingTokensAreValid,
   lobbyViewModel,
   loadSavedGames,
@@ -155,7 +156,9 @@ async function startGame(root, handlers) {
     if (err) err.textContent = "the two players need different names";
     return;
   }
-  if (!checkThinkingField(root)) {
+  const buddy = seatWantsBuddy(root, "you");
+  const thinkingOk = [checkThinkingField(root, "#ai-thinking"), !buddy || checkThinkingField(root, "#you-buddy-thinking")];
+  if (thinkingOk.includes(false)) {
     if (err) err.textContent = "fix the thinking budget field above before starting";
     return;
   }
@@ -171,15 +174,22 @@ async function startGame(root, handlers) {
   }
   const seedEl = $(root, "#seed");
   const seedRaw = seedEl ? seedEl.value : "";
-  const agent = agentFrom({
-    model: fieldValue(root, "#ai-model"),
-    effort: fieldValue(root, "#ai-effort"),
-    thinking: fieldValue(root, "#ai-thinking"),
-  });
   const body = {
     players: [
-      { username: youName, decklist_text: youText, ai: false },
-      { username: aiName, decklist_text: aiText, ai: true, agent },
+      seatEntry({
+        username: youName,
+        decklistText: youText,
+        ai: SEAT_IS_AI.you,
+        buddy,
+        buddyAgent: agentFieldsOf(root, "#you-buddy"),
+      }),
+      seatEntry({
+        username: aiName,
+        decklistText: aiText,
+        ai: SEAT_IS_AI.ai,
+        buddy: seatWantsBuddy(root, "ai"),
+        agent: agentFieldsOf(root, "#ai"),
+      }),
     ],
   };
   if (seedRaw) body.seed = parseInt(seedRaw, 10);
@@ -213,6 +223,43 @@ function fieldValue(root, sel) {
   return el ? el.value : "";
 }
 
+/** Whether each picker's seat is an AI seat. The one place that fact lives
+ * on this page: `startGame` sends it as each entry's `ai`, and both the
+ * buddy controls (`syncBuddyControls`) and the buddy fields of the request
+ * (`seatEntry`) are decided from it - so a buddy can never be offered on, or
+ * sent for, the seat the server would refuse one on. */
+const SEAT_IS_AI = { you: false, ai: true };
+
+/** The raw model/effort/thinking fields under `prefix` (`#ai`, or
+ * `#you-buddy`), in the shape `agentFrom` reads. */
+function agentFieldsOf(root, prefix) {
+  return {
+    model: fieldValue(root, `${prefix}-model`),
+    effort: fieldValue(root, `${prefix}-effort`),
+    thinking: fieldValue(root, `${prefix}-thinking`),
+  };
+}
+
+/** Whether `seat`'s picker has its buddy toggle checked. Only a request -
+ * `seatEntry` still drops it on an AI seat. */
+function seatWantsBuddy(root, seat) {
+  const toggle = $(root, `#${seat}-buddy`);
+  return Boolean(toggle && toggle.checked);
+}
+
+/** Enables `#<seat>-buddy` and `#<seat>-buddy-settings` from
+ * `buddyControlState`: the toggle never on an AI seat, the settings only
+ * while the toggle is on. */
+function syncBuddyControls(root, seat) {
+  const toggle = $(root, `#${seat}-buddy`);
+  if (!toggle) return;
+  const state = buddyControlState({ ai: SEAT_IS_AI[seat], buddy: toggle.checked });
+  toggle.disabled = state.toggleDisabled;
+  if (state.toggleDisabled) toggle.checked = false;
+  const settings = $(root, `#${seat}-buddy-settings`);
+  if (settings) settings.disabled = state.settingsDisabled;
+}
+
 /** `#ai-thinking` accepts an empty value ("let the agent decide") or a
  * whole, non-negative number - `agentFrom` already turns anything else into
  * `null` rather than sending a fraction or a negative number the API's
@@ -224,9 +271,11 @@ function fieldValue(root, sel) {
  * refuses to start rather than send `null` in place of a typo. Guarded on
  * `setCustomValidity` existing, since the fake DOM `tests/test_ui_lobby.py`
  * runs `startGame` against has no such method (and no test here needs it to
- * - only a real `<input>` gets checked this way). */
-function checkThinkingField(root) {
-  const el = $(root, "#ai-thinking");
+ * - only a real `<input>` gets checked this way). `sel` is `#ai-thinking`,
+ * or `#you-buddy-thinking` while the buddy is opted in - an unused buddy
+ * field never blocks a game. */
+function checkThinkingField(root, sel) {
+  const el = $(root, sel);
   if (!el || typeof el.setCustomValidity !== "function") return true;
   const valid = thinkingTokensAreValid(el.value);
   el.setCustomValidity(valid ? "" : "enter a whole number of tokens, 0 or more, or leave this blank");
@@ -496,6 +545,12 @@ export function mountLobby(root, store, handlers) {
   loadBundledDecks(root).catch((e) => console.error(e));
   wireDeckPicker(root, "you");
   wireDeckPicker(root, "ai");
+  for (const seat of Object.keys(SEAT_IS_AI)) {
+    const toggle = $(root, `#${seat}-buddy`);
+    if (!toggle) continue;
+    toggle.addEventListener("change", () => syncBuddyControls(root, seat));
+    syncBuddyControls(root, seat);
+  }
   const startBtn = $(root, "#start-game");
   if (startBtn) {
     startBtn.addEventListener("click", () => {

@@ -161,14 +161,26 @@ def test_the_agents_memory_survives_end_game(world) -> None:
     """The regression that would quietly ruin the continuous agent: ending
     the seat must end the session, not the notes."""
     game_client, _, _, memory = world
+
+    def snapshot() -> dict[str, str]:
+        # Recursive, because the memory root is a tree, not a flat list: the
+        # driver seeds `<deck>/games/<game>.md` at dispatch (the plan file,
+        # whose header names the guides revision this game was played
+        # against) alongside whatever notes the agent has written.
+        return {
+            str(path.relative_to(memory)): path.read_text()
+            for path in sorted(memory.rglob("*"))
+            if path.is_file()
+        }
+
     first = boot(game_client, seed=1)
     start_ai_seat(game_client, first)
-    before = {path.name: path.read_text() for path in memory.iterdir()}
+    before = snapshot()
+    assert before, "nothing in memory to lose - the test would pass vacuously"
 
     end(game_client, first)
 
-    after = {path.name: path.read_text() for path in memory.iterdir()}
-    assert after == before
+    assert snapshot() == before
     assert memory.is_dir()
 
 

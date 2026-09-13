@@ -139,6 +139,8 @@
   "pending_decision": {
     "affirmative_is_legal": true,
     "amount": 0,
+    "answer_field": "attackers",
+    "answer_with": "declare_attackers(attackers='[{\"card\": \"<your creature id>\", \"defender\": \"<a defending player or planeswalker id>\"}]')",
     "card_labels": [],
     "cards": [],
     "default_cards": null,

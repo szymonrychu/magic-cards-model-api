@@ -17,14 +17,32 @@ shape, built on top of it.
 
 from __future__ import annotations
 
+import time
+from uuid import UUID
+
 import httpx
 from conftest import _ADMIN_KEYS, add_card, find, state
 from fastapi.testclient import TestClient
+from test_action_answer_size import BOARD as BUSY_BOARD
+from test_action_answer_size import GRAVE as BUSY_GRAVE
 from test_decisions import advance_into_cleanup, stuff_hand
 
+from magic_cards_model_api import affordances
 from magic_cards_model_api.main import app
 from magic_cards_model_api.seatkit import Seat, Seats, available_actions
 from magic_cards_model_api.store import store
+
+#: What `candidates=true` may add to a `legal-actions` answer on a
+#: 28-permanent board with three targeted spells in hand. Measured at ~106 ms,
+#: which is what put the candidates behind an opt-in parameter in the first
+#: place: the ~50 ms this had to stay under to ride along on every call was
+#: never reachable, because `TargetRequirement.rejects` reaches
+#: `Game.characteristics_of` and `Game.computed_board` is uncached in the
+#: engine on purpose (CR 613.5 - continuous effects are applied "continually",
+#: so a cached board would be a board that lies). Held here at 3x the
+#: measurement, loose enough for a busy CI box and tight enough that an order
+#: of magnitude cannot creep in unnoticed.
+CANDIDATES_TIME_BUDGET = 0.35
 
 
 def seat_uid(game_id: str, player: str) -> str:
@@ -32,17 +50,23 @@ def seat_uid(game_id: str, player: str) -> str:
     return {name: uid for uid, name in store.seat_uids(game_id).items()}[player]
 
 
-def legal_actions(client, game_id: str, player: str = "alice") -> list[dict]:
+def legal_actions(client, game_id: str, player: str = "alice", **params) -> list[dict]:
     """The endpoint as that player's own seat sees it - the only caller it
     answers. Every test here presents a real uid, because the endpoint's whole
     answer is that seat's hidden information: what is in its hand, what each
     card costs, and whether it can pay."""
     response = client.get(
         f"/api/games/{game_id}/legal-actions",
-        params={"player": player, "uid": seat_uid(game_id, player)},
+        params={"player": player, "uid": seat_uid(game_id, player), **params},
     )
     assert response.status_code == 200, response.text
     return response.json()["actions"]
+
+
+def with_candidates(client, game_id: str, player: str = "alice") -> list[dict]:
+    """The same answer a seat gets - `candidates=true`, which is what
+    `seatkit.available_actions` sets and the browser deliberately does not."""
+    return legal_actions(client, game_id, player, candidates="true")
 
 
 def by_kind(actions: list[dict], kind: str) -> list[dict]:
@@ -327,3 +351,337 @@ def test_a_working_call_carries_no_actions_error_at_all(client, game, monkeypatc
 
     assert "actions_error" not in result
     assert by_kind(result["actions"], "pass_priority")
+
+
+# -- the legal targets, computed with the enumeration -----------------------
+#
+# `Action.target_slots` is the *shape* of a targeting requirement and never
+# its candidates - the engine's own `TargetSlot` docstring says as much, and
+# points at `Game.legal_targets` for the objects. That left a seat holding a
+# legal, affordable, targeting action and no idea what it could name, one
+# round trip short of acting. The candidates are computed here instead, in
+# the same request that enumerated the actions, off one walk of the board.
+#
+# Opt-in (`candidates=true`), and measured rather than assumed: the walk costs
+# ~106 ms on a 28-permanent board, which a seat gladly pays once per action to
+# save a whole inference cycle and the browser must not pay on a 1.2s poll it
+# does not need the answer for. `seatkit.available_actions` sets it;
+# `ui/app.js` does not.
+
+
+def targets_of(actions: list[dict], kind: str = "cast") -> list[dict]:
+    return [a for a in by_kind(actions, kind) if "targets" in a]
+
+
+def burn_in_hand(client, game_id: str) -> dict:
+    """A mountain, something to point at, and a Bolt to point with."""
+    add_card(client, game_id, "Mountain", "alice", "battlefield")
+    add_card(client, game_id, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, game_id, "Lightning Bolt", "alice", "hand")
+    return find(state(client, game_id)["hands"]["alice"], "Lightning Bolt")
+
+
+def test_candidates_are_off_unless_the_caller_asks_for_them(client, game):
+    """The browser's own call, unchanged: it asks this endpoint every 1.2s,
+    already has the whole board on screen to pick targets from, and must not
+    pay ~106 ms of candidate enumeration for an answer it does not read."""
+    bolt = burn_in_hand(client, game)
+
+    (cast,) = [
+        a for a in by_kind(legal_actions(client, game), "cast") if a["card_id"] == bolt["id"]
+    ]
+    assert cast["target_slots"], "it targets either way - that half is free"
+    assert "targets" not in cast
+
+
+def test_a_targeting_action_carries_its_legal_candidates_as_plain_strings(client, game):
+    """Strings, not objects: fourteen candidates measured 972 bytes this way
+    against 2,384 as dicts, because `json.dumps(indent=1)` gives every dict
+    key a line. The id is the whole uuid, since that is what `targets` takes
+    back."""
+    bolt = burn_in_hand(client, game)
+    bears = find(state(client, game)["battlefield"], "Grizzly Bears")
+
+    (cast,) = [a for a in targets_of(with_candidates(client, game)) if a["card_id"] == bolt["id"]]
+
+    assert cast["targets"]["understood"] is True
+    (slot,) = cast["targets"]["slots"]
+    assert slot["slot"] == 0
+    assert slot["count"] == len(slot["candidates"])
+    assert all(isinstance(one, str) for one in slot["candidates"])
+    assert f"{bears['id']} Grizzly Bears (battlefield, bob)" in slot["candidates"]
+    assert "alice (player)" in slot["candidates"]
+    assert "bob (player)" in slot["candidates"]
+    assert "truncated" not in slot, "nothing was cut, so nothing says it was"
+    assert "more_with" not in cast["targets"], cast["targets"]
+
+
+def test_an_action_that_targets_nothing_carries_no_targets_block_at_all(client, game):
+    """`target_slots` empty means "this does not target" - there is nothing to
+    enumerate and no key to spend bytes on."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "hand")
+    bears = find(state(client, game)["hands"]["alice"], "Grizzly Bears")
+
+    (cast,) = [
+        a for a in by_kind(with_candidates(client, game), "cast") if a["card_id"] == bears["id"]
+    ]
+    assert cast["target_slots"] == []
+    assert "targets" not in cast
+
+
+def test_an_unaffordable_action_is_still_listed_but_carries_no_candidates(client, game):
+    """CR 118.6 keeps the row; nothing keeps the list. A candidate list for a
+    spell that cannot be cast is bytes a seat can do nothing with."""
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    bolt = find(state(client, game)["hands"]["alice"], "Lightning Bolt")
+
+    (cast,) = [
+        a for a in by_kind(with_candidates(client, game), "cast") if a["card_id"] == bolt["id"]
+    ]
+    assert cast["affordable"] == "no"
+    assert cast["target_slots"], "it still targets - it just cannot be paid for"
+    assert "targets" not in cast
+
+
+def test_an_activated_ability_carries_no_candidates_because_the_engine_names_no_slots(client, game):
+    """The boundary of this, stated rather than discovered later. The engine's
+    enumeration fills `target_slots` for a *cast* only
+    (`legal_actions._cast_action`); a battlefield activation carries none,
+    whatever the ability itself targets - Karn, the Great Creator's `+1`
+    ("up to one target noncreature artifact") is listed with `target_slots:
+    []` exactly like his `-2`, which targets nothing at all.
+
+    So an `activate` row gets no candidates here, because there is no slot to
+    hang them on and this repo will not re-derive from printed text what the
+    engine declined to state. `/api/games/{id}/affordances/{card_id}` answers
+    that question per ability (with `ability_index`), and the fix that would
+    make it unnecessary belongs in the engine's `Action`, not here."""
+    add_card(client, game, "Karn, the Great Creator", "alice", "battlefield")
+    add_card(client, game, "Sol Ring", "bob", "battlefield")
+
+    activations = by_kind(with_candidates(client, game), "activate")
+
+    assert len(activations) == 2, "Karn's +1 and -2 are both legal here"
+    for action in activations:
+        assert action["target_slots"] == [], action
+        assert "targets" not in action, action
+
+
+def test_the_board_is_walked_once_per_request_not_once_per_action(client, game, monkeypatch):
+    """The design's own tripwire. Candidate enumeration is the expensive half
+    of `affordances.py` by that module's own admission, and it is only
+    affordable at all because the board is walked once for the whole request
+    and reused across every action - never once per action, which is the
+    N-round-trip shape T11 removed at the HTTP layer creeping back in one
+    layer down."""
+    for _ in range(3):
+        add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    for name in ("Lightning Bolt", "Shock", "Shock"):
+        add_card(client, game, name, "alice", "hand")
+
+    walks = []
+    real = affordances.all_targetables
+    monkeypatch.setattr(
+        affordances,
+        "all_targetables",
+        lambda game: (walks.append(game), real(game))[1],
+    )
+
+    enriched = targets_of(with_candidates(client, game))
+
+    assert len(enriched) >= 3, [a["card_id"] for a in enriched]
+    assert len(walks) == 1, f"{len(walks)} walks for {len(enriched)} targeting actions"
+
+
+def test_candidate_enumeration_stays_within_its_measured_budget(client, game):
+    """The number that decided the opt-in. Twenty-eight permanents, eight
+    cards in each graveyard and three targeted spells in hand: the candidates
+    add ~106 ms to an answer the enumeration alone already spends ~350 ms on,
+    because `TargetRequirement.rejects` reaches `Game.characteristics_of` and
+    `Game.computed_board` is deliberately uncached in the engine (CR 613.5).
+    Past ~50 ms is what put candidates behind `candidates=true` rather than
+    on every caller; this holds the cost to the ballpark that decision was
+    made in, so a future regression is a decision to re-make rather than a
+    slow endpoint nobody noticed."""
+    for name in BUSY_BOARD:
+        add_card(client, game, name, "alice", "battlefield")
+        add_card(client, game, name, "bob", "battlefield")
+    for name in BUSY_GRAVE:
+        add_card(client, game, name, "alice", "graveyard")
+        add_card(client, game, name, "bob", "graveyard")
+    for name in ("Lightning Bolt", "Shock", "Shock"):
+        add_card(client, game, name, "alice", "hand")
+
+    def best(fetch) -> float:
+        runs = []
+        for _ in range(3):
+            started = time.perf_counter()
+            actions = fetch(client, game)
+            runs.append(time.perf_counter() - started)
+        return min(runs), actions
+
+    without, _ = best(legal_actions)
+    with_, enriched = best(with_candidates)
+
+    assert targets_of(enriched), "the board must actually have produced candidates"
+    added = with_ - without
+    assert added < CANDIDATES_TIME_BUDGET, (
+        f"candidates added {added * 1000:.1f} ms "
+        f"({without * 1000:.1f} -> {with_ * 1000:.1f}), budget {CANDIDATES_TIME_BUDGET}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# the announced face, not the whole printing
+# ---------------------------------------------------------------------------
+#
+# CR 709.3b: "while it's on the stack, a split card has only the
+# characteristics of the half being cast". The engine enumerates one `cast`
+# row per half (`legal_actions._base_cost_options`), each carrying its own
+# `spell_face` - so the candidates hung on the Tear row have to be Tear's
+# own, never Wear's. `seatkit.TARGETS_NOTE` tells a seat to "hand one
+# straight back as `targets`", which makes a wrong list worse than no list:
+# the seat follows the instruction it was given and loses its action to an
+# announcement refusal it had no way to see coming.
+
+
+def split_halves(client, game_id: str) -> tuple[dict, dict]:
+    """The two `cast` rows Wear // Tear offers, `(wear, tear)`.
+
+    Wear destroys target artifact for `{1}{R}`, Tear destroys target
+    enchantment for `{W}` - two halves whose legal targets share no object at
+    all, which is what makes a swapped candidate list visible rather than
+    merely suspicious.
+    """
+    casts = [
+        action
+        for action in with_candidates(client, game_id)
+        if action["kind"] == "cast" and action.get("spell_face") in ("Wear", "Tear")
+    ]
+    by_face = {action["spell_face"]: action for action in casts}
+    assert set(by_face) == {"Wear", "Tear"}, casts
+    return by_face["Wear"], by_face["Tear"]
+
+
+def split_board(client, game_id: str) -> dict[str, str]:
+    """Wear // Tear in hand and payable either way, with one artifact and one
+    enchantment on the board to point either half at."""
+    for _ in range(2):
+        add_card(client, game_id, "Mountain", "alice", "battlefield")
+    add_card(client, game_id, "Plains", "alice", "battlefield")
+    add_card(client, game_id, "Wear // Tear", "alice", "hand")
+    add_card(client, game_id, "Sol Ring", "bob", "battlefield")
+    add_card(client, game_id, "Pacifism", "bob", "battlefield")
+    board = state(client, game_id)["battlefield"]
+    return {name: find(board, name)["id"] for name in ("Sol Ring", "Pacifism")}
+
+
+def test_a_split_card_half_gets_its_own_faces_candidates(client, game):
+    """Wear's row names the artifact; Tear's row names the enchantment.
+
+    Before this, both rows were derived from `targeting_profile(card)`, which
+    reads `Card.front_oracle_text` - Wear's text alone - so the Tear row came
+    back offering Sol Ring, and a seat that handed it straight back as
+    `seatkit.TARGETS_NOTE` tells it to lost the action."""
+    ids = split_board(client, game)
+    wear, tear = split_halves(client, game)
+
+    assert wear["targets"]["understood"] is True, wear["targets"]
+    (wear_slot,) = wear["targets"]["slots"]
+    assert [line.split()[0] for line in wear_slot["candidates"]] == [ids["Sol Ring"]], wear_slot
+
+    assert tear["targets"]["understood"] is True, tear["targets"]
+    (tear_slot,) = tear["targets"]["slots"]
+    assert [line.split()[0] for line in tear_slot["candidates"]] == [ids["Pacifism"]], tear_slot
+
+
+def test_the_face_is_read_on_a_second_split_card_with_a_different_phrase(client, game):
+    """Generality, proved on a card that is not the one above and whose two
+    halves ask for entirely different kinds of object: Repudiate counters
+    "target activated or triggered ability" (nothing on this board) and
+    Replicate copies "target creature you control" (alice's own Bears, and
+    never bob's Lions). Both rows reported Repudiate's phrase and Repudiate's
+    empty list before this - the whole printing's front half, twice."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    for _ in range(2):
+        add_card(client, game, "Island", "alice", "battlefield")
+    add_card(client, game, "Repudiate // Replicate", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Savannah Lions", "bob", "battlefield")
+    bears = find(state(client, game)["battlefield"], "Grizzly Bears")
+
+    casts = {
+        action["spell_face"]: action
+        for action in with_candidates(client, game)
+        if action["kind"] == "cast" and action.get("spell_face")
+    }
+    assert set(casts) == {"Repudiate", "Replicate"}, casts
+
+    (repudiate_slot,) = casts["Repudiate"]["targets"]["slots"]
+    assert repudiate_slot["candidates"] == [], "no ability is on the stack to counter"
+
+    (replicate_slot,) = casts["Replicate"]["targets"]["slots"]
+    assert [line.split()[0] for line in replicate_slot["candidates"]] == [bears["id"]], (
+        replicate_slot
+    )
+
+
+def test_an_adventure_faces_own_targets_are_named_on_its_own_row(client, game):
+    """CR 715.3b: "While on the stack as an Adventure, the spell has only its
+    alternative characteristics." That is CR 709.3b's sentence about the other
+    layout that names a face, and CR 601.3e is the rule both instance:
+    "these alternative characteristics replace the object's characteristics
+    for this determination".
+
+    This decoration used to answer `understood: false` for an Adventure row
+    and say so in a note, because the engine's own reads were scoped to
+    `Layout.SPLIT` and there was no face-specific profile a candidate list
+    could be trusted against. Engine commit fd28021 keys all three of them on
+    the chosen face instead, so Stomp's "any target" is now both what
+    `Action.target_slots` advertises and what this enumerates - bob, alice and
+    bob's Bears, and never Bonecrusher Giant's own front-face trigger, which
+    targets nothing at all.
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
+    bears = find(state(client, game)["battlefield"], "Grizzly Bears")
+
+    live = store.get(game)
+    source = affordances.find_source(live, UUID(giant["id"]))
+
+    answer = affordances.target_candidates(live, source, "alice", face="Stomp")
+
+    assert answer["understood"] is True, answer
+    (slot,) = answer["slots"]
+    lines = " ".join(slot["candidates"])
+    assert bears["id"] in lines, slot
+    assert "alice" in lines and "bob" in lines, slot
+
+
+def test_a_face_the_card_does_not_print_says_so_instead_of_naming_the_cards_targets(client, game):
+    """The refusal that survives, and the only one left: a face name that is
+    no face of this printing. The engine's own announcement would refuse it
+    (`Casting.cast_as_split_half` / `cast_as_adventure` both do, in their own
+    words), so handing back the whole card's candidates would be enumerating
+    targets for a cast that cannot happen. `understood: false` plus a note
+    naming the face is what a seat is already told to read as "name targets
+    yourself" (`seatkit.TARGETS_NOTE`).
+    """
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Bonecrusher Giant", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "battlefield")
+    giant = find(state(client, game)["hands"]["alice"], "Bonecrusher Giant")
+
+    live = store.get(game)
+    source = affordances.find_source(live, UUID(giant["id"]))
+
+    answer = affordances.target_candidates(live, source, "alice", face="Shock")
+
+    assert answer["understood"] is False, answer
+    assert "Shock" in answer["note"], answer
+    assert "slots" not in answer, answer

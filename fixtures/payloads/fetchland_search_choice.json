@@ -51,6 +51,8 @@
   "pending_decision": {
     "affirmative_is_legal": true,
     "amount": 1,
+    "answer_field": "card_ids",
+    "answer_with": "decide(card_ids=\"<one of pending_decision.cards>\", generation=1)",
     "card_details": [
       {
         "abilities": [],

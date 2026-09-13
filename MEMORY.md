@@ -7,6 +7,650 @@ seat's own runtime learning (mounted at `/workspace/memory` in the agent
 container) - a different thing from this file, which is project memory for
 whoever works on the repo itself.
 
+- **2026-09-13 - the default model for an AI opponent seat and a buddy is
+  `opus`.** The owner's call. Spelled as the codebase already spells
+  `AgentSettings.model` (`opus`, never a versioned id), and set in the three
+  places a default is decided: `AgentSettings.default` (the server, when a
+  create request names no `agent`/`buddy_agent`), `lobby_model.js`'s
+  `DEFAULT_MODEL` (a blank lobby model field), and compose's `CLAUDE_MODEL`
+  fallback. `contract/agent-settings.schema.json` is unchanged on purpose: it
+  has no default - `model` is required on the wire - so the default only ever
+  travels as a value; `test_the_wire_shape_of_the_server_default_validates`
+  pins that. `AGENT_DEFAULT_MODEL` still overrides it per deployment.
+- **2026-09-12 - a 5xx is not a refusal, and the baseline must never
+  remember one as if it were.** `api_client.act` mapped every status >= 400
+  to `{"allowed": False}`, and the anti-stall memory then fingerprinted it:
+  a keyless move (`pass_priority`, `advance`, `decide`, a declaration) has no
+  next row for `_pick` to step to, so one 503 silenced the seat for the rest
+  of the game and `play_out` conceded - a fabricated baseline loss, in the
+  parallel gauntlet mode that produces the 503. A 5xx now carries
+  `unknown_outcome: True` (the shape `seatkit._normalise_non_2xx` already
+  used) and is retried, not remembered; a 4xx is still fingerprinted, because
+  that memory is the fix for the unbounded repost loop. A stall caused by an
+  unreachable server ends `ended_by: "transport"` with no concession.
+  `_refusal` also keeps the body's own keys now - the 409 board-moved answer's
+  `stale`/`last_seq` never reached this seam's only caller. `baseline_seat`
+  is the only consumer of `api_client.act`; nothing depended on the
+  conflation.
+
+- **2026-09-12 - the control arm could not measure its own refusal split.**
+  The `stale: False` stamp needs the request to name a current
+  `expected_seq`. `seatkit.run_action` arms one; `baseline_seat` never did, so
+  a baseline-only ledger read `stale_split: unknown` - the same structurally
+  empty bucket recorded below, one level down, for exactly the arm every agent
+  number is compared against. `LegalActionsResponse.last_seq` now carries the
+  position with the enumeration (read *before* the board, so it can never be
+  newer than what the seat saw), `SeatApiClient.board_seq` holds it, and
+  `BaselineSeat` folds it in at the seam - never into `Move.body`, whose
+  fingerprint is the anti-stall memory. `MulliganRequest` became `BoardRead`
+  as the one route the policy posts that could not name a board.
+
+- **2026-09-12 - `stale: False` is not a rules error on its own.** A refusal
+  on a current board was scored as the agent misreading the rules even when
+  the api had itself offered the action (the Adventure face, since fixed in
+  the engine, was the measured case). `app._run_command` holds the request and
+  `legal_actions_before` for the same board, so it sets
+  `records.offered_action` (a ContextVar, the `stale` flag's own pattern) and
+  `audit.record` stamps `offered` on refusal rows. `eval_report` now splits
+  refusals five ways - `rules` (never offered: the only agent fault),
+  `offered`, `stale`, `unknown`, `unchecked` - with an `offer_split` beside
+  `stale_split`. Decision, and its cost: a seat that mis-announces an offered
+  action (a bad target, X, mode) lands in `offered`, not `rules`, because the
+  ledger cannot tell that from the api contradicting itself and
+  `rules_error_rate` must only count what is certainly the seat's fault - read
+  it as a floor. `crew`, `cycle`, the declarations and `decide` make no claim
+  (no `ability_index`, or not a single enumerated row).
+- **2026-09-12 - degradation must never make a match EASIER.** The
+  non-obvious half of hardening the deck-guide readers, and the one that must
+  not be reintroduced. `guides._clauses` dropped an unusable clause from an
+  `archetype.json` and left the rest of the file standing, which looks like
+  the forgiving thing to do and is not: `Candidate.clauses` counts the
+  survivors, so a signature with one clause broken is a SHORTER signature,
+  and a shorter signature is a cheaper one to satisfy in full. Measured on
+  one list against one two-clause archetype - intact it answered 1 of 2 and
+  got `low`; with the second clause malformed it answered 1 of 1 and got
+  `confident`. The `exclude` side is worse: an `exclude` clause is the file
+  saying "a list holding these is playing the other deck, not me", so
+  dropping the unusable row deletes the disavowal and a correctly disowned
+  list is handed that wrong guide confidently. Both are a confidently wrong
+  answer, which is strictly worse for the agent than no answer at all,
+  because it plays someone else's gameplan instead of its own list. So a
+  malformed file costs the deck its WHOLE signature and the other twelve
+  guides answer as before. Keeping an unusable row as an unsatisfiable clause
+  was considered and rejected: safe for `signature`, useless for `exclude`
+  (an exclude nobody can satisfy is an exclude that is not there), so it
+  needs opposite treatments for the two halves of one file - and asymmetry
+  between two readers of this corpus is exactly what let `signature_index`
+  and `load_signature` drift apart in the first place.
+
+- **2026-09-12 - the card's byte budget is per card, and it is never
+  divided.** `render_current_game` used to hand each branch of a family
+  `CARD_TARGET_BYTES // len(offered)` with a shared cap, on the theory that a
+  briefing's cost is the sum of the cards in it. It bought those bytes out of
+  the one thing the brief requires on every one of fifteen to nineteen rows:
+  at a 5120 byte target and an 8192 byte cap there is no rung of the trim
+  ladder left that keeps the tells table's `watch for` column, so the tron
+  case - the case `_family` exists for, and a routine one when pilots bring
+  their own lists - rendered `prison-tron` at 6923 bytes and `eldrazi-tron`
+  at 7879 with the column deleted off all 34 rows between them, while each of
+  those two plans renders whole at 11-12 KB under its own cap. Both halves of
+  the trade were the wrong half: 14802 bytes of card, over the 12288 per-card
+  cap the brief does set, and still missing the field. Rendered at its own
+  budget each branch comes out whole - 11659 and 10026 bytes, 34 rows, no
+  empty cell, neither truncated - for 21685 bytes of card in a 25 KB
+  briefing, against the 58540 + 58973 bytes of gameplan guide it replaces. Two things
+  to keep:
+
+  (1) **A briefing-wide budget is not a budget the brief set.** The only
+  numbers written down are per card (10 KB target, 12 KB hard cap), and the
+  card's own trim ladder is the only authorised way to spend less. Inventing
+  an outer budget hands the ladder a floor it cannot meet honestly and the
+  cost comes out of whichever field the last rung happens to delete.
+
+  (2) **A test at a squeezed budget is not a test of the default path.**
+  Every family test asserted the renderer behaved honestly under the divided
+  budget - and two of them asserted the loss as expected behaviour ("it
+  dropped section 3 and said otherwise") - so a green suite hid a briefing
+  with zero `| watch for |` in it. What was missing was an assertion about
+  the briefing the driver actually produces:
+  `test_a_family_briefing_keeps_the_watch_for_on_every_row_of_every_branch`
+  is that, and the squeezed-budget tests are now named for what they are.
+
+- **2026-09-12 - a cast can name its half, and the value is the engine's
+  own string.** `CastRequest.spell_face` takes exactly what
+  `Action.spell_face` said on the row being taken - post `GET
+  .../legal-actions`'s `"Tear"` straight back - and `engine_api._drive_cast`
+  hands it to `Casting.cast_as_split_half` first, ahead of every step that
+  reads it (`base_cost`, `targeting`, `determine_cost`). That round trip is
+  the non-obvious part and it is deliberate: the field is named after the
+  engine's own field rather than given a parallel api vocabulary, because a
+  seat that has to convert what it read before it can send it is a seat that
+  will convert it wrong, and there is no second place to look the spelling up.
+  Absent still means the front half - every caller written before this sends
+  nothing.
+
+  Before this the api was advertising an action it could not perform: the
+  engine enumerated Wear // Tear as two `cast` rows and the api cast Wear for
+  both of them. `baseline_seat._plain_cast`'s skip of `spell_face` rows was
+  the workaround, and it stayed on for one more change as a stated policy
+  choice, because `Action.target_slots` was still face-blind engine-side and
+  the Adventure half was refused. **Superseded by the entry below.**
+
+  CR 715.3's Adventure was **refused**, not announced, and the refusal was
+  right when it was written: `Casting.cast_as_adventure` charged the right
+  cost and stamped `face_played`, but `Casting.targeting` read the whole
+  printing for every layout except a split card, so Stomp was announced with
+  no target requirement at all - measured, a target came back "too many
+  targets: 1 chosen where the spell takes at most 0" and a targetless Stomp
+  resolved dealing no damage. **Superseded by the entry below.**
+
+- **2026-09-12 - the Adventure refusal is gone, and it was a measured
+  refusal rather than a missing feature.** `engine_api.adventure_face_refusal`
+  existed because an Adventure announced against the whole printing's profile
+  had zero target requirements: measured both ways, a targeted Stomp was
+  refused "too many targets: 1 chosen where the spell takes at most 0" and a
+  targetless one resolved dealing no damage, so a refusal a seat could read
+  beat a spell that cost {1}{R} and did nothing. **Engine commit `fd28021`
+  "Evaluate the chosen face, not the front one, on every casting path (CR
+  601.3e)" closed it**: CR 715.3a/715.3b turned out to be CR 709.3a/709.3b
+  word for word, CR 601.3e is the general rule both instance ("these
+  alternative characteristics replace the object's characteristics for this
+  determination"), and `Casting.targeting`, `Game._announcement_profile` and
+  `Game._resolution_profile` all key on the chosen face now rather than on
+  `Layout.SPLIT`.
+
+  What that changed here, all in one branch: `_announce_the_face` routes the
+  inset face to `Casting.cast_as_adventure` (the engine's own door, and the
+  stamp CR 715.3d's exile-on-resolution reads); `affordances._face_profile`
+  stops being split-only and reads any face the printing carries through
+  `machines.casting.face_being_cast`, so an Adventure row's candidates are
+  the Adventure's; and `baseline_seat._plain_cast` stops skipping face rows,
+  which is what the old docstring said to do once the engine read the
+  announced face into `target_slots`. Face rows are their own pool in
+  `choose_move`, tried after permanents and faceless spells - the state view
+  carries one `type_line` per printing, so `_is_permanent` cannot classify a
+  named half and must not try. `PROTOCOL_VERSION` stays `seatkit-15`: no
+  request or response shape moved, only the value space a parameter that
+  version already added will accept (argued in full in `seatkit.py`'s own
+  changelog entry).
+
+- **2026-09-12 - two audit gaps: a public component vanished from
+  `openapi.json`, and the baseline paid a round trip this branch existed to
+  remove.**
+
+  (1) **A subclass replaces a component's name, it does not extend it.**
+  Retyping `LegalActionsResponse.actions` to `list[ActionWithTargets]` was
+  meant to add candidates and did - but FastAPI names a component only where a
+  route references one, and with the subclass as the only reference the
+  engine's own `Action` stopped being emitted into `#/components/schemas`
+  altogether. `tests/test_openapi_drift.py` passed straight through it,
+  because its `REQUEST_MODEL_COMPONENTS`/`RESPONSE_MODEL_COMPONENTS`
+  allowlists are hand-written and nobody had listed `Action`. Both halves are
+  fixed: `actions: list[ActionWithTargets | Action]` names both (and is the
+  truth about the answer - `candidates=false` rows are plain engine `Action`s,
+  `candidates=true` adds a *required* `targets` block, which is what keeps the
+  two branches distinguishable), and the drift guard now derives its baseline
+  from `git show origin/main:openapi.json` instead of from a list, so any
+  component that leaves the contract is red with its own name in the message.
+  Hand-listing what must not break cannot cover what nobody thought to list;
+  deriving it from the artifact can. CI's checkout needed `fetch-depth: 0`
+  for that baseline ref to exist at all.
+
+  (2) **The candidate list was never only on `/affordances`.** The baseline's
+  per-cast second call is gone: `step` asks `legal-actions` with
+  `candidates=True` and `_fill_targets` reads the `targets` block off the very
+  row it is about to act on, so a targeted cast costs three calls (state,
+  enumeration, act) rather than four - and a `_pick` loop that declines
+  several casts in a row now costs zero extra calls rather than one apiece.
+  `SeatApiClient` lost its `affordances` method entirely, so the shortcut
+  cannot come back by accident, and
+  `test_a_cast_names_its_targets_out_of_the_enumeration_it_already_read` pins
+  the call list. Reading the candidates means parsing
+  `affordances.candidate_line`'s string form (`baseline_seat.candidate_of`),
+  split from the RIGHT: a card name can carry brackets of its own ("Erase (Not
+  the Urza's Legacy One)"), while the appended `(<zone>, <controller>)` is
+  always last.
+
+- **2026-09-12 - the advisor panel took the bottom-right corner, and the log
+  moved into an overlay of its own rather than into `#modal`.** Three things
+  this cost, worth not rediscovering.
+
+  (1) **`#log-modal` is a sibling of `#modal`, never a dialog inside it.**
+  `panels.js`'s `closeModal` empties `#modal`'s content on every close, and
+  `render/log.js`'s `mountLog` subscribes once at boot and keyed-patches one
+  `#log-box` for the life of the page. Nested, the log's element would be
+  destroyed the first time any other dialog closed and that subscription
+  would patch a detached node for the rest of the game - a log that silently
+  stops growing. So the overlay is built once in `index.html` and only
+  toggled (`toggleLogModal`/`closeLogModal`/`logModalIsOpen`), and `mountLog`
+  itself is untouched.
+
+  (2) **A hidden box has no scroll geometry, so opening the log needed its
+  own scroll pin.** `mountLog`'s auto-scroll reads `scrollHeight`, which is 0
+  while the overlay is `hidden`, so every poll tick pinned `scrollTop` to 0
+  and the log opened on entry #1 of 500. `toggleLogModal` reads
+  `scrollHeight` immediately after clearing `hidden` - which is what forces
+  the browser's synchronous reflow - and pins the bottom there, because that
+  is the only place where the laid-out height exists.
+
+  (3) **Advice freshness is judged over-conservatively on purpose.**
+  `advice_model.js`'s `isFresh` stales a proposal on ANY ledger row after the
+  board the agent read, including rows that move nothing (`plan_declared`,
+  `report_problem`). Deciding whether the board "really" changed means
+  re-implementing the engine in the browser; a false "stale" costs one
+  re-think, a false "fresh" means approving a play against a board that has
+  moved. A proposal with no `based_on_seq` is never fresh. Approve also
+  records `/advice/{seq}/approve` BEFORE performing the play, and performs
+  nothing if that record fails: an unrecorded approval is, in the ledger the
+  retrospective reads, indistinguishable from a play the human thought of
+  themselves.
+- **2026-09-12 - an advice `summary`'s cost comes from the action the engine
+  enumerated, never from the card's printing - and only a cast may fall back
+  to the printing at all.** The cost half of `records.advice_summary`.
+
+  A proposal's body is machine-shaped, so the line a human approves has to
+  spell out the price. Reading `card.card.mana_cost` off the named card is the
+  obvious way and the wrong one: Mind Stone prints `{2}` and its second
+  ability costs `{1}, {T}, Sacrifice this artifact`, Lupine Harbingers is
+  simultaneously a `{3}{G}` cast and a `{2}` foretell (CR 702.143a), and
+  CR 601.2f's increases and reductions never reach a printing at all. So
+  `_proposed_action` matches the body against the `legal_actions_before` row
+  the route has already computed for the same ledger entry - free, and it is
+  the engine's own determined total - keyed on the path's own
+  `models.action.ActionKind` plus `ability_index`/`keyword`/`from_zone`/
+  `alternative_cost` agreement.
+
+  Two things that surprised: `legal_actions` does **not** enumerate crew at
+  all (CR 702.122a's ability has no `{T}` of its own), and cycling comes back
+  as `activate_off_zone` with `keyword: "Cycling"` even though the api gives
+  it an `actions/cycle` route - hence `records._PATH_KINDS`. Crew therefore
+  gets no cost clause rather than a mapping that matches nothing, because the
+  printed-cost fallback would then have quoted the Vehicle's `{2}` for an
+  ability that never pays it. That fallback is restricted to `actions/cast`
+  (`_PRINTED_COST_PATHS`) for exactly that reason - CR 601.2f, "usually this
+  is just the mana cost", is true of a cast and of nothing else - and says
+  `(printed)` out loud when it fires, because a proposal may legitimately name
+  a play that is not legal yet.
+
+- **2026-09-12 - advise mode: the dangerous half is the 5 request shapes with
+  no `dry_run`, not the 7 with one.** B2's whole hazard, written down because
+  it is not visible from either side on its own.
+
+  `game_access._advisor_may` (wave 1) authorises an advisor's POST when the
+  *raw body* says `dry_run: true`. That reads as a general "an advisor may ask
+  questions" rule, and it is not: it is exactly as wide as the request shapes
+  that actually have the field. Seven of the twelve action shapes do
+  (`Activate`/`Attack`/`Cast`/`Crew`/`Cycle`/`PlayLand`/`SpecialAction`); the
+  other five (`Decide`/`DeclareBlockers`/`PassPriority`/`Concede`/`Advance`)
+  do not, so a body claiming `dry_run: true` on one of them passes the gate
+  and then reaches a route that commits for real. An advise `Seat` therefore
+  sends **no mutating request at all** for those five and builds the proposal
+  locally, marked `validated: false` - never "send it with `dry_run` and hope".
+  The split is a frozen constant (`seatkit.DRY_RUN_SHAPES`) pinned against
+  `openapi.json` by `tests/test_advise_mode.py`, because a shape quietly
+  gaining or losing the field silently changes which calls get *sent*.
+
+  Two smaller decisions from the same task. The `advice` row's `summary` is
+  derived server-side (`records.advice_summary`) rather than taken from the
+  agent: an agent-written summary is a second description of the same action
+  that nothing keeps honest, and a human who approves after reading only the
+  summary would approve something else. And `Seats.seat_for` now resolves
+  *every* uid through `GET /api/seats/{uid}`, the pinned `--game` branch
+  included, because that endpoint is the only place a uid's `role` is
+  answered - the pinned branch's old `GET /api/games/{id}/seat` 404s an
+  advisor uid outright, so a buddy pinned to its game was simply nobody. It
+  keeps its isolation by checking the game the lookup reports against the pin
+  rather than by asking a narrower question.
+- **2026-09-12 - a decklist is identified by its archetype signature, never
+  by resemblance to a sample 75.** `GuideLibrary.identify` reads each guide's
+  `decks/<slug>/archetype.json` from the mtg-decks corpus and asks every
+  archetype the same question about the same MAINBOARD: does this list hold
+  `min` copies across the cards this clause names. `_similarity` and
+  `MATCH_THRESHOLD` are gone and must not come back as a fallback - two code
+  paths identifying the same 60 cards differently, depending on whether the
+  list was bundled or pasted, was the bug. Three things worth knowing before
+  touching it:
+
+  (1) **`archetype` in those files is not the directory slug.** `prison-tron`
+  calls itself "urzatron", `orzhov-martyr` calls itself "orzhov blink",
+  `affinity` calls itself "pinnacle affinity". The slug names the guide
+  directory, the `archetype` field names the deck; conflating them reports
+  the wrong deck to the agent.
+
+  (2) **The tron family needed a rule the outcome table did not spell out.**
+  `prison-tron` and `eldrazi-tron` share two clauses verbatim and declare
+  `parent: tron`. A list with nine Tron lands and Temple/Labyrinth mana
+  answers both shared clauses and neither branch's own, so both sit at 2/3 -
+  and the specificity tie-breaks (clause count, then exclude count) DO
+  separate them, because prison-tron carries one exclude clause and
+  eldrazi-tron none. Letting that tie-break decide hands the pilot the wrong
+  branch's gameplan, which `eldrazi-tron/archetype.json` explicitly argues
+  against. So the family check runs BEFORE the tie-breaks: leaders by
+  strength alone that share a parent and satisfied the same clauses as each
+  other resolve to the parent, `low`, with no single guide and both branches'
+  guides offered.
+
+  (3) **The corpus's own answer on two lists that look like misses.** The
+  bundled `jeskai_aggro` and `dimir_control` classify confidently as
+  boros-aggro and dimir-frog: they run the whole boros one-drop suite and 4
+  Psychic Frog + 3 Quantum Riddler respectively, and those signatures' own
+  `why` text says that is what the archetype IS. `boros_energy` matches the
+  single commissioned boros guide on all three clauses. These are the corpus
+  being consistent, not drift - `tests/driver/test_guides.py`'s table records
+  each with its reasoning, pinned to mtg-decks sha
+  `936b324bedcad1c4de6e328c0f32c33a03bfa703`.
+
+- **2026-09-12 - the agent's deck brief is rendered into turn 0, not read
+  from a 58 KB guide.** `GAMEPLAN_GUIDE.md` is 42-73 KB of markdown across the
+  corpus (72.8 KB for orzhov-martyr) and it is *generated*: the structured
+  source is `analysis/<run>/domain3-matchup-threat/boarding-plan.json`, which
+  was sitting unread beside the file the seat was told to open.
+  `driver/matchup_card.py` renders that plan into ~10 KB of turn-0 context
+  instead.
+
+  Three things this cost time to get right:
+
+  (1) **An archetype's signature cards are keyed on the name the archetype
+  file calls itself, not on its directory.** `decks/affinity/archetype.json`
+  says `"archetype": "pinnacle affinity"`, and `pinnacle affinity` is what
+  every boarding plan in the corpus writes; keying the lookup on the directory
+  slug alone found 6 of 19 rows instead of 9. `signature_index` keys on both.
+
+  (2) **A boarding plan has no deck-wide keep rule.** Every `keep` in it is
+  written for a named matchup, so the card presents the *modal* keep across
+  the plan's own matchups, says how many matchups back it, and does not pass
+  one matchup's keep off as universal.
+
+  (3) **The specified trim order - `watch_for` first, top-three detail second
+  - has no power on some plans.** dimir-frog's longest `watch_for` is 123
+  characters, so squeezing the table's cap to 85 saves less than the
+  truncation notice costs, and the detail levels do all the work there. The
+  ladder still tries the table first (that is the order the requirement asks
+  for); the test asserts both branches rather than pretending the first lever
+  always bites. The corpus renders 10.0-11.5 KB at full fidelity, so 11 of 13
+  guides trim by a rung or two against the 10 KB target and every one of them
+  lands under the 12 KB hard cap.
+
+  Also: the seat's own `vs-<archetype>.md` standing notes are now inlined into
+  the briefing (4 KB budget, alphabetical, the deduced matchup's note first
+  when a caller knows it); a past game's write-up stays a path, because there
+  can be dozens. Every note key is the tells table's canonical slug or
+  `unknown`, and `reflection_turn` says so - a note filed under an invented
+  name is one the next briefing never looks up.
+
+- **2026-09-12 - a byte cap is not a trim lever, and the card's notice is
+  derived from the rung rather than written next to it.** Halving the hard
+  cap for a family briefing (entry above, (3)) handed every real corpus plan
+  a budget no honest rendering can meet: the trim ladder bottomed out around
+  9.3 KB, the 6 KB cap took the rest with a blunt byte cut at the end of the
+  text, and each card came out missing two to six tells rows, the brew case,
+  the one-small-read pointer and the whole of section 3 - while its own
+  notice went on saying "Nothing was dropped - every archetype still has a
+  row". Three things came out of fixing it:
+
+  (1) **The ladder got the two levers it was missing**, both announced: the
+  tells table's `watch for` COLUMN goes after its prose has given all it is
+  going to (the prose rungs are nearly free on this corpus - most `watch_for`
+  values are already under 85 characters), and section 3 then keeps its
+  heading and the three names while its detail goes to the matchup files.
+  That reaches ~6.2-6.9 KB with every row, every section and every pointer
+  intact - which is as far down as the ladder goes honestly, and the reason
+  no caller is allowed to ask it for less than a whole card.
+
+  (2) **Rows are the last thing to give, and they are named where they
+  were.** Below every lever the renderer drops tells rows from the bottom of
+  the field up and lists the archetypes that lost one, so their
+  `vs-<name>.md` keys and matchup files stay reachable. Only a budget that
+  cannot hold even an empty table gets the byte cut, and the notice then says
+  the card was cut and what follows the marker is missing.
+
+  (3) **`_notice` is computed from the `_Trim` rung that rendered the card**,
+  not written alongside the loop that picked it, and it separates SHORTENED
+  from DROPPED. A notice written by hand is a second source of truth about
+  what the card did to itself, and it was wrong at every rung below the two
+  it knew about.
+
+  (`CARD_FLOOR_BYTES`, the floor a shared cap did not go below, is gone with
+  the sharing itself - see the 2026-09-12 entry at the top of this file.)
+
+- **2026-09-12 - the matchup card reads the 75, the classifier reads the 60,
+  and both halves of that are in one briefing.** The card and the classifier
+  were built on separate branches and integrating them turned up one real
+  bug and two near-misses worth recording:
+
+  (1) **The swap intersection must be asked of the WHOLE 75, not of the
+  mainboard.** `parse_decklist` returns a split `Decklist` because a
+  signature clause may only be answered from the maindeck - nobody has cast
+  a sideboard card. A boarding swap is the opposite question: every card a
+  plan boards IN comes out of the sideboard by definition, so intersecting
+  on `.mainboard` stamps `(NOT IN YOUR LIST)` on every single board-in.
+  dimir-frog is the case verbatim - `esper blink` is its biggest matchup and
+  boards three Mystical Dispute, which its list ships in the sideboard
+  behind a bare blank line. `guides.held_faces` takes the union of both
+  boards and is the only place that decision lives.
+
+  (2) **The boarding plan and the matchup files are read off the SAME
+  analysis run, selected by the run's date suffix.** A separate
+  `sorted(glob("analysis/*/.../boarding-plan.json"))` sorts by deck name and
+  picks the newest run only by accident - two runs with different name
+  prefixes is all it takes for 2025's plan to beat 2026's. `_analysis_key`
+  picks the run; `matchups_dir` and `boarding_plan` both come off it.
+
+  (3) **A family match hands over two guides, so it renders two cards.**
+  `Identification.guides` returns both leading branches when the list
+  resolved to a parent. Dividing one card's budget between them looked like
+  the thrifty answer and was not - superseded, see the 2026-09-12 entry at
+  the top of this file.
+
+- **2026-09-10 - an action answer now carries its own legal targets, and the
+  candidates are opt-in because the engine will not cache the board.** M1's
+  three findings, in the order they cost time.
+
+  (1) **Candidate enumeration is ~106 ms on a 28-permanent board**, on top of
+  the ~350 ms `machines.legal_actions` already spends there. The cause is not
+  this repo's: `TargetRequirement.rejects` reaches `Game.characteristics_of`,
+  which calls `Game.computed_board`, which is deliberately uncached in the
+  engine - CR 613.5 says continuous effects are applied "continually", so a
+  cached board would be a board that lies, and its docstring says as much. So
+  `GET .../legal-actions` grew `candidates=true` rather than folding them into
+  every answer: `seatkit.available_actions` sets it and pays once per action
+  to save a whole round trip, and `ui/app.js`, which polls the same endpoint
+  every 1.2s with the board already on screen, does not set it and pays
+  nothing. `tests/test_legal_actions_endpoint.py` pins both the added cost and
+  the single board walk per request.
+
+  (2) **`Action.target_slots` is a cast-only field.**
+  `legal_actions._cast_action` fills it; `_battlefield_ability_actions` does
+  not, so Karn, the Great Creator's `+1` ("up to one target noncreature
+  artifact") is enumerated with `target_slots: []`, exactly like his `-2`,
+  which targets nothing. Candidates therefore ride on casts only. This repo
+  deliberately does NOT re-derive an ability's targeting from printed text to
+  fill the gap - `/api/games/{id}/affordances/{card_id}` already answers that
+  per `ability_index`, and the real fix belongs in the engine's own `Action`.
+
+  (3) **Strings, not objects, and the reason is `json.dumps(indent=1)`**,
+  which puts every key of every dict on a line of its own. The same fourteen
+  candidates measured 2,384 bytes as `{id, kind, name, zone, controller}`
+  dicts and 982 as `"<uuid> <name> (<zone>, <controller>)"` strings, carrying
+  the identical five facts. The same reasoning shapes `board
+  .battlefield_digest`: ~62 bytes a permanent against the ~1,300 of a card
+  view. Both caps fail loud rather than short - a truncated slot keeps its
+  true `count`, and a digest that will not fit is replaced whole by a pointer
+  at `battlefield_state`, never emitted partially, because a seat that misses
+  a blocker because the digest ran out of room is the failure this exists to
+  avoid.
+
+- **2026-09-10 - the guides corpus revision is stamped into every game, and
+  `GUIDES_REF` is a knob, not a pin.** The deck guides live in a third repo
+  (`github.com/szymonrychu/mtg-decks`) and used to reach a seat Job through a
+  bare `git clone --depth 1` of `main` with no record of what it got, so two
+  seats scheduled minutes apart could read different guides and no artifact
+  said so. The `guides` initContainer now fetches `GUIDES_REF` (default
+  `main`) and writes `git rev-parse HEAD` to `/guides/.guides-revision`; the
+  driver reads that back and puts the revision in the agent's briefing and in
+  the header of the per-game plan file.
+
+  Three things worth remembering. (1) The default stays `main` on purpose -
+  play wants current guides; only an evaluation harness pins a ref. (2)
+  Compose has no stamp file (the guides are a bind mount, not a clone), so
+  `mtg_agent/driver/revision.py` falls back to reading the checkout's own
+  `.git` - by hand, not by shelling out, because the driver image has no git
+  binary and the bind-mounted checkout belongs to another uid, where `git
+  rev-parse` refuses on `safe.directory` before printing anything. (3) The
+  driver seeds the plan file with its header rather than asking the agent to
+  write the revision, because a fact the agent is merely told to copy is one
+  it can get wrong - and a game that ends before the agent writes a plan still
+  leaves an artifact naming the corpus. `tests/driver/test_guides_revision.py`,
+  `tests/driver/test_revision_stamping.py`.
+
+- **2026-09-10 - a stale action and a rules refusal are two different
+  things, and only a boolean can tell them apart.** A seat that read the
+  board, thought, and then acted on a board the opponent had already moved
+  got back `claude does not have priority, you does` or `no pending decision
+  for you` - the symptom of a lost race, phrased as if the seat had misread
+  the rules. The ledger could not separate the two, so "how much of an
+  agent's refusal rate is play quality and how much is latency" was
+  unanswerable. Every mutating route now takes an optional `expected_seq`
+  (`schemas.BoardRead`) naming the ledger position the seat decided against;
+  `records.require_current_board` compares it to `audit.last_seq` and
+  refuses with `records.BoardMoved` **before the engine runs**, writing one
+  row with `stale: true`, `moved_from` and `moved_to`. Four decisions worth
+  keeping:
+
+  (1) **Optional, and it stays optional.** `None` is "I name no board" and
+  is exactly the behaviour every existing caller - the browser above all -
+  already had. The regression guard is a test of its own, not a comment.
+
+  (2) **The boolean is the discriminator, never the message.** The refusal
+  text is for a person; nothing machine-readable keys on it. Same house rule
+  as the browser fix of 2026-09-08 ("a refused pass is two different
+  things"): ask the board, never pattern-match refusal text.
+
+  (3) **The handler re-uses `game_log` rather than reading the ledger a
+  second way.** The rows attached to the refusal as `since` are `GET
+  .../log?since=` for the same `uid` this request already carried on its
+  query string - so the redaction argument is that route's argument,
+  unchanged, and a caller can never be handed more on a refusal than it
+  could have fetched itself. Bounded at `moved_to`, which drops the
+  refusal's own row: the caller is holding that already.
+
+  (4) **The seat remembers its own watermark; no tool signature grew.**
+  `seatkit.Seat.last_seq` is set by every `recent_log` (the moment a seat is
+  *handed* a position), and `run_action` arms it for exactly one mutating
+  call (`send_expected_seq_once`). One-shot on purpose: the action itself
+  moves the ledger, so `run_action`'s auto-pass would be stale by
+  construction if the arming were sticky. On a stale refusal the seat
+  re-reads and re-sends **once** - never a loop, because a seat that loses
+  the race twice has a genuinely out-of-date decision and hiding that from
+  the corpus defeats the point. An MCP parameter for this was considered and
+  rejected: an agent reasoning about a sequence number spends a decision on
+  bookkeeping and gets it wrong. `tests/test_expected_seq.py`.
+
+  (5) **`expected_seq` never reaches `Command.payload`.** It says which
+  board the caller decided against and has done its whole job before the
+  engine is asked anything, so `commands.Command.build` drops it. Leaving it
+  in made it part of `Command`'s identity, and `app._pause_slot_guard` uses
+  exactly that equality to tell a retry of the standing pause from a
+  competitor: the armed call that stored the pause and the unarmed re-post
+  that retries it (seatkit's autopass re-posts on every `paused: true` it
+  reads) disagreed about the ledger position, so the retry came back a 409
+  the caller could do nothing with. The admin-only `POST .../pregame/settle`
+  is on the guard too, after its admin gate rather than before it: it is a
+  command like any other, its `use_defaults=True` branch settles a whole
+  pregame without going through `_run_command`, and the refusal writes a
+  ledger row a caller without the key has no business writing.
+
+- **2026-09-10 - an advisor credential is its own map, not a flag on
+  `seat_uids`.** The advisor uid (a credential that reads one human seat's game
+  and may not act on it) lives in a new `games.advisors` JSONB column, uid ->
+  `{"player": str, "agent": <AgentSettings wire dict or null>}`
+  (`repository.Advisor`, revision `b8d24f6c1a07`), and resolves through
+  `store.player_for_advisor_uid` - never through `store.player_for_uid`.
+
+  Reusing `seat_uids` is the obvious-looking move and it is wrong twice over.
+  `player_for_uid` is read by every existing caller as "this uid may act as
+  that player" (`declare_plan`, `whose_seat`, `game_access`'s own seat branch),
+  so an advisor uid in that map is a credential that acts, silently, everywhere
+  - the exact thing the whole feature exists to prevent. And the entry needs a
+  second field (which agent runs behind it), which a `uid -> username` map has
+  nowhere to put.
+
+  The trap that forced the shape of the entry itself: the settings could NOT go
+  in `agent_settings`, which is keyed by **username**. An advisor watching a
+  seat that is already an AI seat collides with that seat's own row, and two
+  advisors on one seat collide with each other - a JSONB object has one value
+  per key and no ordering to disambiguate them, so the collision is silent and
+  last-write-wins. Keying by uid and nesting `agent` inside the entry is what
+  keeps "which settings belong to which credential" answerable at all.
+
+  The read-only-ness is enforced in exactly one place, `game_access.
+  can_access_game`, and **before** the ownership question rather than after it:
+  an ownerless game (which is every game today) returns `True` from that check
+  immediately, so an advisor asked about one would be waved through before its
+  own rule was consulted. Its verdict is the only one in that module that
+  depends on what the request is doing - any GET, a POST to `/advice` or
+  `/report`, or a POST carrying `dry_run: true`; everything else is the same
+  404 every other denial gives. `visibility.resolve_viewer` resolves the uid to
+  the *human's username*, so `redact_view`/`redact_log_entry`/
+  `redact_pending_decision` needed no change at all and the advisor's view is
+  byte-identical to its human's by construction. `tests/
+  test_game_access_advisor.py`.
+
+- **2026-09-10 - the measuring stick: a greedy baseline seat and a
+  records-derived scorecard.** Three findings worth keeping, all of them found
+  by running the thing rather than by reading it.
+
+  (1) **`legal_actions` cannot offer the combat pairs at the moment the api
+  accepts them.** `machines.legal_actions._attacker_actions`/`_blocker_actions`
+  both gate on `game.turn.step is Step.DECLARE_ATTACKERS`/`DECLARE_BLOCKERS`,
+  but while the corresponding decision *stands* the committed board is still a
+  step behind (the `advance` that asked the question paused before committing),
+  so the enumeration is nothing but `answer_decision: declare_nobody`. The
+  baseline therefore reads its own candidate pairs off the board - exactly what
+  `ui/combat.js` already does, with its own "nothing here enforces a rule"
+  note - and narrows a refused declaration one pair at a time until the engine
+  accepts, bottoming out at the always-legal empty answer. Still true at engine
+  `4ad120c`, re-measured 2026-09-12 - and what would close it is now written
+  down in `baseline_seat.py`'s own module docstring rather than left as "out
+  of scope": `decision_answers` already routes both kinds to
+  `_attacker_actions`/`_blocker_actions`, so the only thing in the way is
+  those two functions' `game.turn.step` predicate. Either it learns to accept
+  the pending decision's own kind as an alternative to the committed step, or
+  `Game.advance` commits the step before it pauses to ask. Both are engine
+  changes; neither is expressible from this repo.
+
+  (2) **A legal cast is not a targetable one, and the difference cost 547 rows
+  in one game.** `legal_actions` lists a cast whether or not the board offers a
+  legal target - CR 118.6 is about cost, and nothing there consults the board
+  for CR 601.2c - so Galvanic Discharge against an empty board is *legal*,
+  refused at announcement, and offered again on the next priority. The refused
+  set did not save it: the opponent's own move changes the board every round,
+  which correctly clears the memory of the refusal. The seat now names its
+  targets *before* acting, and declines in-process when it cannot fill every
+  requirement. Refusal rate fell from 87% to 0 on the same matchup.
+
+  This entry used to call `GET .../affordances/{card_id}` "the only place the
+  candidate list lives", and that was never true: the first commit of this
+  same branch put the list on `GET .../legal-actions?candidates=true`
+  (`app._attach_target_candidates`), which is where the seat reads it from as
+  of 2026-09-12 - see that day's entry. The affordances endpoint is the
+  *browser's* door onto the same enumeration, and the one that can re-ask a
+  half-announced spell with the modes and the X the player has picked; it is
+  not the only place the list lives, and a seat using it was paying a round
+  trip for an answer it already held.
+
+  (3) **`GET /api/games` is not "the games I booted".** With `DATABASE_URL`
+  set it lists every live game in the database, including ones an earlier
+  gauntlet left behind - so a run that trusted it adopted two strangers, drove
+  them with its own baselines, and printed a four-game scorecard for a two-game
+  run. `scripts/eval_gauntlet.py` reads `serve`'s own printed summary instead,
+  which names exactly what that process created.
+
+  Also: `PATCH /api/games/{id}/cards/{card_id}` accepts a `tapped` field and
+  silently ignores it (`patch_card` applies `face_up`/`damage`/
+  `summoning_sick`/`counters` and never `tapped`); `POST .../cards/{id}/tap` is
+  the route that works. Noted, not fixed here.
+
 - **2026-09-10 - the log route reads what it returns, and a dry run
   enumerates nothing.** Two server-side costs that both grew with the length of
   a game.
@@ -1852,3 +2496,473 @@ whoever works on the repo itself.
   carries an issue ordinal so the older of two concurrent reads cannot land
   on the newer - `mutations` can only order reads against this seat's own
   requests, never two reads against each other.**
+
+- **2026-09-10 - a pending decision now says how to answer itself
+  (`answer_field`, `answer_with`), and the answer has to be emitted as data
+  rather than derived from `ANSWER_FIELD_FOR_KIND`: that table names the
+  engine `Answer` field and the new `TOOL_FIELD_FOR_KIND` names the MCP tool
+  parameter, and they disagree on ten of the eighteen kinds (`split` vs
+  `moved`, `text` vs `choice`, `amount` vs `energy_amount`/`life_amount`,
+  `accept` vs `top`, `card_ids` vs `order`, and `pairs` vs
+  `attackers`/`blocks` on a different tool entirely, since `decide` has no
+  `pairs` parameter). Both tables carry the same `set(...) == set(DecisionKind)`
+  guard. The MCP `decide` tool also gained `generation` - the enforcement and
+  its refusal text had existed at `app.py`'s `decide` since the field was
+  added, and `seat_cli --generation` with it, so the only thing missing was a
+  tool parameter to reach it: a stale read was earning the flat "no pending
+  decision for you" (11 measured) instead of the diagnostic naming both
+  generations. `seatkit-14` covers both halves - additive on the request,
+  additive on the response.**
+
+- **2026-09-12 - the matchup card's rendered size is not a function of its
+  plan's size, and the fixture slice is not the card's worst case.** Measured
+  over all thirteen guides in `mtg-decks` at `01fae6c`, corpus root
+  `~/Documents/mtg-decks`, with the ladder that gives full fidelity the whole
+  cap: the three largest `boarding-plan.json` (orzhov-martyr 141730,
+  dimir-frog 110697, prison-tron 109669) render the 7th, 8th and 3rd largest
+  cards (10982, 10864, 11357), while the largest cards come from mid-sized
+  plans - living-end 11566 from a 107974 byte plan, affinity 11490 from
+  97592 - because the trim ladder bounds the output and what is left is set
+  by matchup COUNT and how many of those archetypes have an `archetype.json`
+  to quote. Maximum in the corpus is 11566 against the 12288 cap, no guide
+  truncated; the smallest rung renders at most 6923 (prison-tron). The full
+  table is in `tests/fixtures/guides/README.md`, pinned by
+  `test_the_readme_quotes_the_size_the_card_actually_renders_to` so it cannot
+  drift again. Two consequences: the card's byte figure is path-dependent -
+  the card prints the plan's absolute path twice (the header, and the
+  one-read line), so a figure moves by exactly TWICE the root's length: 58
+  bytes larger under `.claude/worktrees/<name>/...` than under `code/`, 56
+  smaller under the `/guides` a seat Job clones to. Never quote a raw figure
+  without its root, and pin only `byte_size - 2 * len(str(plan_path))` in a
+  test. And the cap holds regardless of what the fixture pins, because
+  `_capped` enforces `hard_cap_bytes` by cutting bytes in code. Also
+  re-measured the `matchups/*.json` figure the briefing quotes: 211 files,
+  min 3376, median 6202, p90 8194, max 28492, so the prose says 3-9 KB (28 KB
+  at the largest), not the 5-20 KB it used to claim.
+
+- **2026-09-12 - a measurement written into docs in the same commit that
+  changes the code being measured is stale on arrival.** `27291a8` reordered
+  the trim ladder AND wrote byte figures measured before the reorder into
+  `tests/fixtures/guides/README.md` and this file; every figure was 1.3-1.9
+  KB low with the ranking wrong, and the same commit's own test docstring
+  contradicted them. Worse, the program that made its suite green existed
+  only as uncommitted working-tree edits - `HEAD` failed 9 tests of
+  `tests/driver/test_matchup_card.py`. Two habits out of it: re-measure
+  AFTER the last code change and never reuse a number from earlier in the
+  session, and make any figure a doc quotes a thing a test reads out of the
+  doc, so "the docs went stale" becomes a red suite rather than a review
+  finding.
+- **2026-09-12 - never infer intent from the raw request body. The advisor
+  gate permitted a POST carrying `dry_run: true`, read straight off the JSON,
+  and only nine routes declare that field: on every other shape pydantic
+  DISCARDS an unexpected key without a word, so the gate said "probe" and the
+  route committed for real. Twenty mutating routes were reachable this way,
+  and `POST .../seats` was not a stray mutation but privilege escalation -
+  `mint_seat` takes no uid, checks nothing beyond the gate, and hands back a
+  fresh unrestricted seat credential, so one extra key let a read-only
+  credential upgrade itself out of its own restriction. The gate reads the
+  matched route's own declared shape now (`game_access.DRY_RUN_ROUTES`,
+  asserted against `openapi.json` so it cannot drift) and every request body
+  inherits `schemas.RequestModel`'s `extra="forbid"`, so an undeclared field
+  is a 422 instead of a discarded key. `POST .../cards/{card_id}/tap` takes a
+  raw `dict[str, bool]` that no `model_config` can protect - the gate is its
+  only guard. Route matching is on `request.scope["route"].path`, the
+  template, never on `request.url.path`'s tail, which a caller can spell.**
+
+- **2026-09-12 - visibility is not authorization, and `visibility.
+  resolve_viewer` answers only the first. It resolves an advisor uid to the
+  human seat it watches, which is exactly right for the read filter and
+  exactly wrong as "does this uid open the seat this request names" - four
+  routes asked it that (`decide`, `_answer_declaration` behind
+  attack/declare-blockers, `_pregame_seat` behind mulligan and opening-hand),
+  so with the gate stood down in a test an advisor declared alice's attackers
+  and got `{"allowed": true}`. Acting-seat checks call
+  `game_access.seat_for_uid`, which never resolves an advisor; redaction and
+  GET-visibility questions (`advance`, `get_legal_actions`) keep
+  `resolve_viewer`. The two have deliberately different names because the two
+  questions were being asked with one function.**
+
+- **2026-09-12 - a deny-list keyed on a credential cannot restrict a caller
+  who omits the credential. The advisor restriction only ran `if uid and
+  ...`; with no uid the code fell through to "this game has no owner, so
+  yes", and no bearer token has ever reached this deployment, so that is
+  every game. Dropping one query parameter passed a real priority and minted
+  a real seat. `game_access.can_access_game` now carries a POSITIVE rule -
+  POST/PUT/PATCH/DELETE on a `{game_id}` route requires a seat uid of that
+  game, its admin key (accepted in EITHER slot, since `resolve_viewer` and
+  `pregame/settle` have always taken it in `uid=`), or an owner bearer token.
+  Reads are untouched; an ownerless game stays world-readable, which is the
+  migration story. `seat_for_uid` consults `store.archived` when the live
+  lookup misses, because a lobby-ended game is soft-deleted while its seat
+  uid is still that seat's credential and `POST .../reflection` is written
+  exactly then. 469 uncredentialled call sites in the suite are covered by
+  `conftest._harness_credential` (the admin key of a game the harness itself
+  created, patched onto `TestClient.request`, skipping DELETE, opt-out via
+  `@pytest.mark.no_harness_credential`) - which is also the one hazard here:
+  a new security test that forgets the marker passes for the wrong reason.**
+
+- **2026-09-12 - two acceptance-run anomalies, both diagnosed and fixed.**
+  (1) A 10-seed run's `GET /api/games` showed 34 live games, not 10: postgres
+  outlives the process that boots into it, and nothing ever archived a
+  gauntlet's games, so every past run's games (four of them, from earlier
+  dev/test runs: 2+2+10+10) stayed live forever, indistinguishable from the
+  current run's own 10. Fixed by soft-deleting every game a run booted, via
+  the existing `DELETE /api/games/{id}`, in `eval_gauntlet.run`'s own
+  `finally` - regression test boots a real subprocess against postgres and
+  asserts the live-game count is unchanged after the run.
+  (2) Baseline-vs-baseline mirrors were NOT stalling and NOT a policy defect
+  (attacks/blocks were being declared correctly, 0 refusals in 3197 ruled-on
+  attempts) - the acceptance run's 10 concurrent games shared one server
+  process (one CPU's worth of GIL, one postgres pool), and `legal-actions`
+  costs real time (measured mean 61ms/p90 154ms/max 226ms once a board had a
+  dozen-odd permanents, `Game.computed_board` recomputing rather than
+  caching, by design, out of scope to change). Confirmed by timing: the same
+  seed's game reached its own real `game_over` in ~131s run alone
+  (`--serial`) vs ~264s sharing the process with one other game - roughly
+  2x slower at just 2-way concurrency. Fix was `--serial` (play games one at
+  a time) plus making `eval_report`'s output honest about a cut-off game:
+  `unfinished_detail` carries `watch_game`'s own edge (`timeout`/`stalled`/
+  `report`) per game, and the rendered report states outright that
+  "unfinished" is never scored as a loss for either seat. The acceptance
+  condition is now stated explicitly in `eval_gauntlet`'s own docstring: a
+  bounded game reaching a real terminal state within its own bounds, not
+  "ten concurrent games finish in a given wall-clock time" - the latter is
+  a throughput property of this machine, tunable, and unproven at n=10.
+
+- **2026-09-12 - the retrospective half of mtg-buddy, against a write side
+  (B2) that had not landed yet.** `audit.ADVICE_ACTION`/`ADVICE_APPROVED_
+  ACTION` did not exist, so both constants are defined here to the contract
+  given (`"advice"`/`"advice_approved"`), for B2 to meet rather than
+  reinvent. One deliberate deviation from that contract's literal wording:
+  `reasoning` is read off the entry's own top-level field first (falling
+  back to `detail["reasoning"]`), not out of `detail`, because every action
+  route in this codebase already passes `reasoning` as `audit.record`'s own
+  keyword argument, which lands top-level - the contract's `detail: {...,
+  reasoning, ...}` reads as the logical field set, not literally which key
+  it lives under.
+  `_advice`'s `did` is deliberately never a row the engine refused
+  (`detail.allowed is False`) - a refusal is a failed attempt, not "what
+  happened". This makes "approved but refused" and "never approved, did
+  nothing" collapse to the same `did: None`, distinguished only by the
+  `approved` flag - intentional, not an oversight: the alternative (showing
+  the refusal as `did`) would make `followed` ambiguous (does "followed"
+  mean "attempted the same thing" or "successfully did the same thing"?).
+  Verified `_declarations` is unaffected: its marks are `PLAN_ACTION`-only,
+  `_advice`'s are `ADVICE_ACTION`-only, and an advice row still shows up
+  inside a declaration's own `did`/`opponent_did` list like any other row by
+  that seat (test: `test_advice_rows_do_not_disturb_the_declaration_
+  windows`).
+
+  **Follow-up the same day**: `did` excluding a refused row was right, but
+  the refusal itself must not be thrown away - this engine's whole reason
+  for existing is saying out loud *why* a refused action is illegal, and
+  that reason is the single most instructive line a retrospective can show.
+  Added `refused` alongside `did` (never touching `did`'s own meaning): every
+  row by the advised seat in the same window that the engine refused,
+  reason verbatim, never assumed to be at most one (a seat can retry). Now a
+  fourth, visibly distinct outcome: approved, attempted, and refused with the
+  engine's own words - rendered in `ui/render/review.js` in place of the
+  ambiguous empty-outcome line, which now renders only when `refused` is
+  also empty. Mirrored line-for-line in `ui/review_model.js`'s `deriveAdvice`
+  fallback (`refusedInWindow`) and in `reshapeServerAdvice`.
+
+  **Visibility, confirmed rather than assumed**: `GET .../review` has no
+  per-seat redaction of any kind - the whole `build_review` result, `advice`
+  included, goes to whichever seat uid or the admin key asks, once the game
+  is over. An advice row's `summary`/`reasoning`/`body` can name cards that
+  were in the human seat's own hand at the time, and the opponent reads them
+  post-game exactly as the advised seat does - the same rule `declarations`
+  already lived under. Stated explicitly in `app.game_review`'s own
+  docstring and proven by `test_the_opponent_reads_the_same_advice_the_
+  human_seat_does`, rather than left as an unstated consequence of reusing
+  the same route.
+
+- **2026-09-12 - "no permanent name leaks once the digest is withheld" is
+  not the same claim as "the digest is never half-emitted", and conflating
+  them nearly broke a legitimate feature.** Wiring the engine's
+  `Action.pays_with` (mana tap plan, `magic-cards-model` at `4ad120c`)
+  through to an MCP answer made a pre-existing test
+  (`test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_
+  emitted`) fail: a `pays_with` entry legitimately names the permanent it
+  would tap, and that name showed up in the answer even when
+  `MAX_DIGEST_BYTES` forced the battlefield digest itself to be withheld.
+  The instinct was to scrub the name everywhere the digest is absent: wrong,
+  because the test's actual hazard is a seat forming a false belief that it
+  has seen the *whole* board - which only the digest (a claimed survey of
+  every permanent) can cause. `pays_with`, `unaffordable_reason` (engine
+  refusal prose) and a targeting action's own candidate lines all name a
+  card in service of one scoped fact about one action and never claim
+  completeness, so narrowing the test's assertion to `board` itself (with
+  the reasoning written into its docstring) was the correct fix, not a
+  weakened test - scrubbing them would have gutted the very target-candidate
+  enrichment that channel exists for. `pays_with` still got its own real
+  byte budget (`mcp.MAX_PAYS_WITH_BYTES`, independent of `MAX_DIGEST_BYTES`)
+  since it had never had one at all.
+- **2026-09-12 - the two-tool loop's prohibitions are safe everywhere except
+  one answer: `wait` (`seatkit.block_until_wake`) is the ONE answer carrying
+  neither `available_actions` nor `recent_log`, so the loop's wait is
+  `pass-until <step> --max-seconds 20` and a bare `wait` is reserved for the
+  single case where `pass` is refused for want of priority.** Narrowing the
+  agent prose to "a wait, then exactly one committing call, nothing in
+  between" means forbidding `state`/`battlefield_state` and `log`/`game_log`
+  outright, and that is only honest where the wait's own answer really does
+  replace them. `block_until_wake` returns `recent_log` as a *sibling* of
+  `state` (its docstring says why it can never be a key inside it) and never
+  computes `available_actions` at all, and `seat_cli`'s `wait` branch prints
+  `woken["state"]` alone - so the brief's older advice ("run `wait
+  --max-seconds 20`" whenever an action woke with "nothing new yet") plus the
+  new prohibitions left a seat holding an answer with no action list, no log
+  tail, and no sanctioned way to get either. `pass-until` goes through
+  `seatkit.pass_until` and carries all three, which is why it, not `wait`, is
+  the loop's wait; what a bare `wait` *is* good for is that `pending_decision`
+  is part of the state itself, so the paste-ready `answer_with` rides it. The
+  MCP transport differs and the prose had to differ with it:
+  `wait_for_priority` merges `recent_log` into its state view (so "`recent_log`
+  rides every answer" is true there) but still carries no `available_actions`,
+  which is now said out loud where the tool is introduced. The brief's `wait`
+  bullet and `tests/test_prompt_matches_tools.py` keep the three facts and
+  the prose in step - the tests read the shape off the running CLI and MCP
+  server first, then pin the sentences against it, so a future change to
+  either answer fails on the behaviour rather than on the prose.
+- **2026-09-12 - the buddy reuses the whole seat lifecycle, and the two
+  places it could not are both about the uid being a credential.** An advisor
+  gets `role` threaded through `AiSeatRegistry.start` into all three
+  mechanisms - the brief (`docs/ai_buddy_brief.md`), `DispatchIn.role`
+  (picking `prompt.advisor_turn_zero`), and `k8s_seats.build_job` (the
+  `mtg-buddy-*` name plus `mtg/role=advisor`, with `app.kubernetes.io/name`
+  left at `mtg-agent` so `45-networkpolicy.yaml` still selects the pod).
+  `reconcile` needed nothing: it lists by that same app label and deletes by
+  `mtg/game-id`, which is right for a buddy too. No new Job template and no
+  new `SEAT_JOB_PLACEHOLDERS` entry - `role` rides in
+  `__ASSIGNMENT_JSON__`'s payload, written only when it is not `seat` so a
+  seat's body stays byte-identical. **The two exceptions.** (1)
+  `ai-seat/start|stop` take the buddy's uid in a new `advisor_uid` field, not
+  in `uid`: `game_access._credentials` reads a body's own `uid` as the
+  CALLER's credential, and an advisor credential is refused every POST - so
+  the human asking for their own buddy back with `{"uid": <advisor>}` got a
+  404 from the gate before the route ever ran. (2) `game_seats` takes the
+  advisor uid out of an advisor's `ai_seat` status (`_advisor_row_status`):
+  every registry status dict names its own uid, so listing the advisor's
+  liveness on that broadly-readable route leaked the credential through the
+  status even though the row itself carried no `uid` field. Dropping the
+  `uid` key was not enough, and review caught it: a `mechanism: "fallback"`
+  start also hands back `prompt` and `command`, which are the brief and the
+  argv with the uid substituted INTO them, and that is the shape the api
+  container actually produces (no `claude` on PATH). So the helper drops
+  every uid-bearing key AND scrubs the uid as a substring from whatever is
+  left - a kubernetes `reason` quotes the `mtg/seat-uid=<uid>` selector its
+  API error was raised against, and a subprocess `stdout_tail` is the
+  agent's own output. Removing it by value, not only by name, is what covers
+  the key nobody enumerated. Three tests, one per status shape (running,
+  never started, tried and failed), because the running one alone missed the
+  fallback. `AiSeatRegistry.status` also answers a remembered
+  `fallback` now instead of `None` (`_fallbacks`), because a buddy is started
+  once at creation and a `None` there rendered as a bare "not started" with
+  no reason for a runner that had genuinely tried and failed.**
+
+- **2026-09-12 - `Action.pays_with` names a land, and the digest test had to
+  learn the difference.** The engine's tap plan carries the permanent's name
+  as well as its id, on purpose. That made
+  `test_a_digest_that_will_not_fit_is_replaced_whole_and_never_half_emitted`
+  red: it asserted no battlefield name appeared anywhere in an action answer,
+  as a proxy for the digest never being trimmed. The plan is a complete list
+  and the name on it is deliberate, so the check was re-aimed instead of
+  weakened. Two branches wrote that fix independently and M4's is the one
+  that landed (`cd38b85`): the scan is scoped to `board`, the digest's own
+  home, and looks for the digest line's own `<id> <name>` prefix. B5's
+  version (lift `pays_with` out, keep scanning the whole answer) was dropped
+  in the merge because the whole-answer scan is wrong in principle as well as
+  for `pays_with` - a targeting action's candidate lines name cards too, and
+  legitimately. Any engine pointer move that touches an `Action` field needs
+  `mise run openapi:dump` re-run as well; the dump is only as current as the
+  pointer it was taken against.**
+- **2026-09-12: an engine pointer advance reddens this repo's committed
+  artifacts, and `mise run test` is where it shows up - not just `test:pg`.**
+  `magic-cards-model` landing `Action.pays_with` made `openapi.json` stale
+  (`ActionWithTargets` subclasses the engine's `Action` on purpose, so an
+  engine field arrives with no code change here) and broke
+  `test_answer_enrichment.py`'s digest-cap test, which had been scanning the
+  whole answer for `"<name>` - a pattern that never matched a digest line
+  (`"<id> <name> ..."`) and only ever passed because nothing else in the
+  answer named a card as a bare string value. Two lessons: after
+  `git submodule update --remote` on the engine, run `mise run openapi:dump`
+  before believing a red suite belongs to the branch in hand; and a leak
+  assertion must match the shape of the thing it is guarding, or it is
+  asserting nothing until an unrelated field makes it fire.
+
+- **2026-09-12 - a metric that is structurally always zero while every rate
+  around it reads healthy.** `scripts/eval_report.py` has counted refusals
+  into three buckets since P4 - `stale` (a race), `rules` (a genuine
+  illegal action), `unknown` (cannot tell) - and `rules` was always 0.
+  Nothing was wrong with the report: `elif stale is False: tally.rules += 1`
+  is correct. The *write* side never produced a `False`. `detail["stale"]`
+  was set in exactly one place, `records.require_current_board`, and only
+  ever to `True`; no route stamped it on an ordinary refusal. So every rules
+  refusal fell into `unknown`, `rules_error_rate` read `0/N` forever, and
+  `stale_split` could never be better than `"partial"` - the ceiling was
+  structural, not data-dependent. Only synthetic rows in
+  `tests/test_eval_report.py` ever exercised the branch, which is precisely
+  why nothing went red: the read side was tested against a ledger shape the
+  write side could not produce. **The whole capability the field exists to
+  deliver - "of 32 refusals in 556 agent attempts, how many were
+  latency" - was missing for months, from a report that looked complete.**
+  Two lessons kept: (1) a three-state field needs all three states written
+  by production code and asserted end to end, never per-state unit rows;
+  (2) the fix belongs at ONE write site, not threaded as a parameter through
+  every refusal-recording call - this api records refusals in eleven places
+  (`app.audit_outcome`, `decide`/`declare_blockers`'s local `refuse()`,
+  `pass_priority`/`advance`'s `except` arms, `opening.py`, ...) and asking
+  each to pass a flag is how it came to be passed by none. It is now one
+  `ContextVar` set by the guard (`records.named_a_current_board`) and one
+  read in `audit.record`, so a route written tomorrow is stamped by
+  construction. The `unknown` bucket stays honest: absent still means the
+  caller named no board position, and collapsing it into `False` would make
+  `stale_split` report `"measured"` over data that measured nothing.
+
+- **2026-09-12 - "Why it cannot stall" was false, and the module said it in
+  prose. Never restate that claim without a test that would see it break.**
+  `baseline_seat.play_out` set `acted = True` whenever `seat.step(state)`
+  returned a `Move`, and `step` returns the move whether the api ACCEPTED or
+  REFUSED it. So `idle_rounds` reset every round for as long as any seat kept
+  attempting anything, the `idle_rounds >= stall_rounds` concession backstop
+  could never fire, and a game spun until `max_steps` (100,000 in the
+  gauntlet) and was reported as a `timeout` - the unfinished game the
+  scorecard exists to count. Two tests passed straight through it:
+  `test_two_baselines_play_a_bounded_game_to_an_end_state` (a healthy game
+  never refuses anything) and
+  `test_the_stall_guard_ends_a_game_the_policy_cannot_finish` (which forces
+  `choose_move` to `None`, so the seat attempts nothing at all). The path
+  that shipped broken is the third one - a seat that keeps ATTEMPTING and has
+  every attempt refused - and it now has its own test with a seam that
+  refuses every action. A round is idle when no seat *advanced*
+  (`BaselineSeat.advanced`: an accepted move, or a refusal that was new
+  against this board), the guard checks that its own concession was accepted
+  (`stall_guard_refused`), and the module's prose now names the one case the
+  guarantee does not cover - a board that keeps changing without the game
+  getting anywhere - instead of listing five defences of which two did not
+  hold. A move with no enumerated row behind it (`Move.key == ""`: a pass, a
+  decision, a pregame or combat declaration) could not be remembered by
+  `action_key`, and what it did instead - dropping `self.signature` - made
+  the loop worse, because the re-derive threw away this board's refusal
+  memory and produced the identical move. Those are remembered by
+  `answer_fingerprint` (path plus body, minus the seat's own `reasoning`
+  prose) and `_pick` never posts an answer this board has already refused.
+
+- **2026-09-12 - a narrowing sequence is only a termination argument if you
+  check the arithmetic and the fixed point.** `attack_declaration`/
+  `block_declaration` narrowed a refused declaration with `chosen[:
+  len(chosen) - drop]`, whose docstring claimed "at `drop >= len(pairs)` this
+  is the empty declaration ... so the narrowing always terminates". Both
+  halves were wrong. A negative slice re-GROWS the list: with two pairs,
+  `drop == 3` is `chosen[:-1]`, so the sequence went 2, 1, 0, 1, 0 and
+  oscillated instead of bottoming out (`max(len(chosen) - drop, 0)` now). And
+  the empty declaration is a FIXED POINT, so if the engine refuses it - a
+  CR 508.1d attacking or CR 509.1a blocking requirement does, and narrowing
+  moves away from a requirement rather than towards it - `step` incremented
+  `narrowing` forever and re-posted a byte-identical body. Narrowing to empty
+  is now the end of what the policy has to say, not a guarantee of
+  acceptance; the stall guard is what ends such a game, and both docstrings
+  say so.
+- **2026-09-12: two parallel tasks, each correct alone, wrong together -
+  `advisor_turn_zero` kept telling the buddy to read a 58 KB gameplan guide
+  after a sibling task had already replaced that instruction with an inlined
+  matchup card for the seat.** One task narrowed `turn_zero`'s doctrine to
+  the inlined card (`render_current_game` via `matchup_card.py`); the other
+  added `advisor_turn_zero` in the same file, against a base that predated
+  the first. Neither diff conflicted, so nothing forced a look at the other's
+  prose, and the buddy - the most inference-hungry seat, thinking at every
+  decision point its human holds - kept the one instruction that costs a
+  whole turn of output for a `Read`. Fixed by pointing `advisor_turn_zero` at
+  the same `briefing` the driver already built with `render_current_game`
+  (it was already threaded through as a parameter, just not trusted) instead
+  of telling it to go read the guide itself. Lesson: two prose-editing tasks
+  in the same file that both touch "what turn 0 tells the agent to read"
+  need to diff against each other explicitly, not just against their own
+  base, or a base-truth instruction can survive in one branch after the
+  other branch made it wrong.
+- **2026-09-12: `DELETE /api/games/{id}` recorded the deletion and released
+  nothing, and in `wrapper` mode that leak is PERMANENT, not merely untidy.**
+  The route did `audit.record` + `store.delete`, never `lobby.reset_game`, so
+  the pregame watcher kept polling, the seat's process stayed alive, and the
+  registry kept answering `status()` for uids of a game that no longer
+  existed. The non-obvious consequence is the wrapper mechanism: the driver
+  holds one assignment per container and 409s a second dispatch ("it plays
+  one match per container and is free again once that game ends"), and the
+  only thing that ever tells it a game ended is the release this route
+  skipped - so one delete wedged that container for its whole life. Subprocess
+  mode leaked a live `claude`; kubernetes mode leaked the Job until reconcile
+  noticed, up to 60s. Fixed by delegating to `lobby.reset_game`, which also
+  closed the pre-existing seat half. `reset_game` gained an `action` argument
+  rather than the route losing its own audit name: the payload is identical
+  either way, but the ended game's transcript still says which of the two
+  routes ended it, and `scripts/eval_report.py` already knew both names.
+- **2026-09-12: `review.py` computed `followed`, `review_model.js` mirrored
+  it, and NO renderer read it - so "approved and followed" and "approved, then
+  did something else" rendered byte-identically.** Server-side field, mirrored
+  twice through the view model, and dead at the last hop. The second state is
+  the one a trainer reads the retrospective for, and "four distinct outcomes,
+  each rendered distinctly" was an explicit acceptance condition of that work.
+  It survived a green suite because the test named
+  `test_advice_approved_and_followed_...` set `followed=True` in its fixture
+  and all five of its assertions passed identically with `False` - a fixture
+  field asserted by nothing reads as coverage. Fixed with an
+  `advice-followthrough` line above the `did` frame, independent of
+  `approved` (a human can do exactly what was proposed without approving it),
+  and the test now asserts the line and fails when the flag is flipped.
+  Lesson: a computed field is not delivered until something reads it, and the
+  cheap check is to flip the fixture value and see whether any assertion
+  moves.
+- **2026-09-13 - an MCP advisor's wake carries `available_actions`, gated on
+  advise AND a real wake, and that was a bump to `seatkit-16`.** The buddy is
+  refused `pass_until`, so `wait_for_priority` is the answer that wakes it, and
+  it carried the board and no list while an opponent seat got the list on every
+  `pass`/`pass_until`. `mcp.wait_for_priority` now adds it through the action
+  answers' own `_compact_actions` only when `seat.advise` and the wake reason is
+  not `NOTHING_NEW_YET` - an idle poll never pays the ~106 ms read, and a seat
+  uid's wait is unchanged (its list already rides its actions, so adding it
+  there is pure redundant cost). Measured on `test_action_answer_size.py`'s busy
+  board: roughly +8 KB on a wake answer that was ALREADY about 51 KB
+  before (the exact split was not re-measured), over `MAX_ANSWER_BYTES` (45,000), which bounds action answers
+  only; the whole state view is what that tool is for and an advisor test pins
+  it whole, so the list is bounded by the existing candidate and `pays_with`
+  caps (proved by starving both) rather than by narrowing the board. Bumped
+  rather than folded because the MCP server is its own once-spawned process and
+  this build's advisor prose promises the list: a stale `seatkit-15` process
+  would silently answer without it, which is the case PROTOCOL MISMATCH exists
+  for. The fetch is one GET on a path that was already a GET; no POST path was
+  added and `pass_until` stays refused.
+- **2026-09-13 - the MCP wait path busy-spun because `Seats.seat_for` mints a
+  brand new `Seat` on every single tool call, so a naive "remember it on the
+  `Seat` instance" fix would have been a no-op.** `block_until_wake(seat,
+  before=None, ...)` - what `mcp.wait_for_priority` and `seat_cli wait` both
+  call, since neither performed the action a real `before` would come from -
+  fed `compute_wake_reason` a permanent `None`, whose priority branch treats
+  `before is None` as "always different": a seat holding priority woke on
+  *every* call, board unchanged or not. An advisor sitting on its human's
+  decision spun forever. The fix caches `board_signature` per uid in
+  `Seats._wake_signatures` (shared by reference into every `Seat` it mints,
+  parallel to `_by_uid`) rather than as a plain `Seat` attribute, precisely
+  because `Seat` itself does not survive between tool calls - only `Seats`
+  does. `block_until_wake` reads that cache only when `before is None` (so
+  `run_action`'s own real `before` is never second-guessed) and writes it back
+  on every genuine wake, whoever's `before` produced it. Confirmed a naive
+  per-`Seat` cache would have masked nothing: `test_advise_mode.py`'s
+  `test_an_advisor_woken_with_the_legal_actions_still_cannot_move_the_game`
+  had been looping `wait_for_priority` 3 times on an unchanged board asserting
+  a real wake every time - it was pinning the bug as a feature - and needed
+  updating alongside the fix.
+- **2026-09-13 - `test_action_answer_size.py` cost 6 CI minutes twice
+  (`test`/`test:pg`) because every one of its eleven tests rebuilt an
+  identical 44-card board through `add_card`, and each call recomputes the
+  whole board's `characteristics_of` from scratch (no memoisation of parsed
+  oracle text anywhere in the engine) as the board grows - not the actions
+  under test, which were cheap by comparison. Fixed at the test layer, not
+  the engine: `stage_card`/`_stage_busy_board` place cards straight through
+  `engine_api.put_card_in_zone` (skipping the `state_view` every caller here
+  threw away unread), and the resulting `Game` is cached once per session
+  and deep-copied onto each test's own game rather than restaged. 136s -> 27.8s
+  for the file, 712s -> 211s for the whole suite. The underlying
+  `characteristics_of` cost is a real production hot path with no caching -
+  left alone here since nothing in this file's own scope called for an
+  engine change, but any future work touching that path should know eleven
+  tests in one file were enough to double CI's budget.

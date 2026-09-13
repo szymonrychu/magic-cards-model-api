@@ -1,0 +1,142 @@
+"""Where the advisor panel lives, and where the game log went.
+
+The owner asked for the advisor to "reuse bottom-right corner, where game log
+lives right now". `ui/style.css`'s `#game` grid puts `#side-panel` in the
+right-hand column's bottom row, so its children ARE that corner - and reuse
+means the log MOVES rather than dies: it goes into `#log-modal`, a persistent
+overlay behind a new topbar button, keeping `render/log.js` and its own tests
+untouched.
+
+These read `ui/index.html` and `ui/style.css` directly rather than through
+Node, because the grid placement, the modal's parentage and the specificity
+trap below are decided in those two files and nowhere else - and because a
+layout guarantee should not be skipped on a machine with no node.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+UI = Path(__file__).resolve().parents[1] / "ui"
+
+# --------------------------------------------------------- the structure ---
+#
+# The panel takes over the bottom-right corner, which is where the game log
+# lived (the owner: "For this reuse bottom-right corner, where game log lives
+# right now"). Reuse, not replace: the log MOVES, into a persistent modal
+# behind the topbar's Log button. These read `ui/index.html` and
+# `ui/style.css` directly, because the grid placement and the specificity
+# trap below are decided there and nowhere else.
+
+SIDE_PANEL = re.compile(r'<aside id="side-panel">(.*?)</aside>', re.S)
+
+
+def _index() -> str:
+    return (UI / "index.html").read_text()
+
+
+def _css() -> str:
+    return (UI / "style.css").read_text()
+
+
+def test_the_advisor_panel_takes_the_bottom_of_the_control_ribbon() -> None:
+    """`#side-panel` is the right-hand column's bottom row (`style.css`'s
+    grid areas), so its last child IS the bottom-right corner. The advisor
+    panel is that child now; the log is not in this column at all any
+    more."""
+    side = SIDE_PANEL.search(_index())
+    assert side, "could not find #side-panel in ui/index.html"
+    assert 'id="advice-box"' in side.group(1)
+    assert 'id="log-box"' not in side.group(1), (
+        "the log is still in the control ribbon - the advisor panel was supposed to take its place"
+    )
+
+
+def test_the_log_moved_into_a_persistent_modal_of_its_own_never_into_the_shared_one() -> None:
+    """`#log-modal` is a SIBLING of `#modal`, and this matters more than it
+    looks: `panels.js`'s `closeModal` empties `#modal`'s content, so a
+    `#log-box` living inside it would have its DOM destroyed the first time
+    any other dialog closed - and `mountLog`'s subscription, which patches
+    that element for the life of the page, would be left patching a detached
+    node. This modal is built once in the HTML and only ever toggled."""
+    html = _index()
+    log_modal = re.search(r'<div id="log-modal"([^>]*)>(.*?)\n  </div>', html, re.S)
+    assert log_modal, "could not find #log-modal in ui/index.html"
+    attrs, inner = log_modal.group(1), log_modal.group(2)
+    assert "modal" in attrs, "#log-modal is not a .modal overlay"
+    assert "hidden" in attrs, "#log-modal starts visible, covering the board"
+    assert 'id="log-box"' in inner, "#log-modal does not contain the log"
+    shared = re.search(r'<div id="modal"[^>]*>(.*?)</div>', html, re.S)
+    assert shared, "could not find #modal in ui/index.html"
+    assert "log-modal" not in shared.group(1), (
+        "#log-modal is nested inside #modal, whose content closeModal empties - "
+        "that would destroy mountLog's element out from under its subscription"
+    )
+
+
+def test_the_topbar_offers_the_log_next_to_the_zones() -> None:
+    """The log did not become unreachable, it became a click away - and the
+    click sits beside Zones, the other reference-shaped thing this UI keeps
+    behind an overlay rather than in the ribbon."""
+    html = _index()
+    topbar = re.search(r'<header id="topbar">(.*?)</header>', html, re.S)
+    assert topbar, "could not find #topbar in ui/index.html"
+    assert 'id="open-log"' in topbar.group(1)
+    assert re.search(r'id="open-zones".*id="open-log"', topbar.group(1), re.S), (
+        "the Log button is not next to Zones"
+    )
+
+
+def test_the_advisor_panel_inherits_the_height_the_log_used_to_absorb() -> None:
+    """`#log-box` was the one child of that column with `flex: 1 1 auto` - it
+    absorbed whatever height the other panels left, which is what kept the
+    column exactly one viewport tall. Whatever sits in that slot has to carry
+    the same rule, or the ribbon grows past the window."""
+    block = re.search(r"\n#advice-box \{(.*?)\}", _css(), re.S)
+    assert block, "could not find the #advice-box rule in ui/style.css"
+    body = block.group(1)
+    for declaration in ("flex: 1 1 auto", "min-height: 0", "overflow-y: auto"):
+        assert declaration in body, f"#advice-box is missing `{declaration}`"
+
+
+def test_no_advisor_rule_walks_into_the_documented_specificity_trap() -> None:
+    """`#side-panel > div` is an id AND a type selector, so it outranks a
+    bare `#advice-box` - the trap `style.css` already documents above
+    `#prompt-box`/`#priority-box`, both of which silently lost their
+    `border-color` to it. Any advisor declaration that collides with that
+    rule has to be written at matching specificity
+    (`#side-panel > #advice-box`, the shape `#casting-strip` already uses)."""
+    css = _css()
+    outranking = re.search(r"\n#side-panel > div \{(.*?)\}", css, re.S)
+    assert outranking, "could not find the #side-panel > div rule in ui/style.css"
+    taken = {line.split(":")[0].strip() for line in outranking.group(1).split(";") if ":" in line}
+    bare = re.search(r"\n#advice-box \{(.*?)\}", css, re.S)
+    assert bare
+    mine = {line.split(":")[0].strip() for line in bare.group(1).split(";") if ":" in line}
+    assert not (taken & mine), (
+        f"a bare #advice-box rule sets {sorted(taken & mine)}, which "
+        "`#side-panel > div` outranks - "
+        "write those at `#side-panel > #advice-box` instead"
+    )
+
+
+def test_a_stale_proposal_is_actually_dimmed_rather_than_merely_classed() -> None:
+    """The renderer puts `.advice-stale` on the summary and rationale; the
+    reduced opacity the acceptance asks for has to exist in the stylesheet
+    for that class to mean anything."""
+    block = re.search(r"\n\.advice-stale \{(.*?)\}", _css(), re.S)
+    assert block, "could not find the .advice-stale rule in ui/style.css"
+    opacity = re.search(r"opacity:\s*([0-9.]+)", block.group(1))
+    assert opacity, ".advice-stale sets no opacity"
+    assert 0 < float(opacity.group(1)) < 1, "a stale proposal is either invisible or not dimmed"
+
+
+def test_the_app_mounts_the_advisor_panel_and_still_mounts_the_log() -> None:
+    """Moving the log must not have dropped it: both renderers are mounted,
+    and `mountLog` itself is untouched (its own five tests in
+    `tests/test_ui_log.py` build their own `#log-box` root and pass
+    unchanged)."""
+    app = (UI / "app.js").read_text()
+    assert "mountAdvice(document, store" in app
+    assert "mountLog(document, store)" in app

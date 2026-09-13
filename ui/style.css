@@ -911,10 +911,14 @@ h3 { font-size: 14px; }
 }
 /* The side panel's four stacked sections: what is being asked
    (`#prompt-box`), the priority controls (`#priority-box`), the stop
-   conditions autopilot will halt for (`#stops-box`), and the game log
-   (`#log-box`) - which alone takes whatever height the other three leave, so
-   a long log scrolls in place instead of pushing the panel taller than the
-   viewport. */
+   conditions autopilot will halt for (`#stops-box`), and the mtg-buddy
+   advisor's current proposal (`#advice-box`) - which alone takes whatever
+   height the other three leave, so the panel is exactly one viewport tall
+   whatever is in it.
+
+   `#log-box` used to be that last section. It now lives in `#log-modal`
+   instead (`index.html` has the reasoning), because this corner is the one
+   the owner asked to reuse for the advisor. */
 /* Careful with the next two rules: `#side-panel > div` above is an id *and*
    a type selector, so it outranks a bare `#prompt-box`/`#priority-box`, and
    it does - measured with `getComputedStyle` in a real browser, both of them
@@ -927,9 +931,63 @@ h3 { font-size: 14px; }
 #prompt-box { border-color: var(--warn); }
 #priority-box { border-color: var(--accent); }
 #side-panel > #casting-strip { border-color: var(--accent); }
-#log-box {
+/* The advisor's panel, in the slot `#log-box` used to hold - so it carries
+   the same `flex: 1 1 auto; min-height: 0; overflow-y: auto`: it absorbs the
+   height the other three panels leave, and a long rationale scrolls inside
+   itself rather than pushing the ribbon past the window. It is still a
+   static panel, never a list - `render/advice.js` shows exactly one
+   proposal. */
+#advice-box {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+  font-size: 12px;
+}
+/* At `#side-panel > div`'s specificity, not below it - the trap documented
+   just above. A bare `#advice-box { border-color }` would lose, exactly as
+   `#prompt-box`'s and `#priority-box`'s did. */
+#side-panel > #advice-box { border-color: var(--accent); }
+
+/* One advisor proposal (`render/advice.js`). The summary is the play, the
+   `.advice-why` block is the agent's own words, and `.advice-where` says
+   which ledger entry and which step it was proposed at so it can be placed
+   against the log.
+
+   `.advice-stale` wraps all three once the board has moved: dimmed, because
+   the reasoning is still worth reading while deciding whether it still
+   applies, but no longer something to act on. The two notices that must NOT
+   dim with it - "the board moved" and "unchecked" - sit outside that
+   wrapper, at full contrast, and so does Approve. */
+.advice-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+.advice-summary { font-size: 13px; font-weight: 700; }
+.advice-why { margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+.advice-where { margin-top: 6px; color: var(--ink-faint); font-size: 11px; }
+.advice-stale { opacity: 0.55; }
+/* The two notices, in the same warning colour and deliberately outside
+   `.advice-stale`: both are the reason not to trust what is above them, so
+   neither may be dimmed by it. */
+.advice-moved, .advice-unchecked { margin-top: 8px; color: var(--warn); }
+#advice-box button { margin-top: 10px; }
+
+/* The game log's own overlay. `.modal` already centres its child and dims
+   the page behind it; the log just needs a readable box to sit in, which is
+   what `.modal-inner` does for every other dialog - `#log-box` is that box
+   itself here, since it is the whole content. */
+#log-modal > #log-box {
+  background: var(--bg-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 11px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+  width: 860px;
+  max-width: 100%;
+  max-height: 86vh;
   overflow-y: auto;
   font-size: 12px;
 }
@@ -1332,6 +1390,71 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 }
 .no-declaration { color: var(--ink-faint); font-size: 12px; font-style: italic; margin: 8px 0 12px; }
 
+/* mtg-buddy's advice: what was proposed, whether the human took it, and
+   what happened - reported, never scored (see review.py and review_model.js
+   for why). Deliberately a lighter, narrower box than `.pairing` - this is
+   one proposal and one outcome, not a two-column argument. */
+.advice {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  background: var(--bg-raised);
+}
+.advice-label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 6px;
+}
+.advice-label .tag {
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.8px;
+}
+.advice-summary { font-size: 14px; color: var(--ink); margin-bottom: 4px; }
+.advice-reasoning {
+  margin: 4px 0 8px;
+  padding-left: 12px;
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+  color: var(--ink-dim);
+  line-height: 1.4;
+}
+.advice-tag {
+  display: inline-block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-bottom: 6px;
+}
+.advice-tag.approved { color: var(--good); border: 1px solid var(--good); }
+.advice-tag.ignored { color: var(--ink-faint); border: 1px solid var(--line); }
+.advice-outcome-empty { color: var(--ink-dim); font-size: 13px; font-style: italic; }
+/* Whether the move below this line is the move that was proposed. Both
+   outcomes carry the same `approved` tag over the same kind of frame, so this
+   line is the only thing separating "they did exactly that" from "they
+   approved it and then did something else" - and the second is the one a
+   trainer is reading the page for, so it is coloured as the divergence it is
+   rather than left as quiet prose. */
+.advice-followthrough { font-size: 12px; font-style: italic; padding: 2px 0; }
+.advice-followthrough.followed { color: var(--good); }
+.advice-followthrough.diverged { color: var(--warn); font-style: normal; }
+/* The engine's own words for an approved-but-refused proposal - the single
+   most instructive line the review can show, so it is never a quiet blank. */
+.advice-refusal { font-size: 12px; color: var(--ink-dim); padding: 4px 0; }
+.advice-refusal .seq { margin-right: 6px; font-size: 11px; }
+
 .frames { display: flex; flex-direction: column; gap: 2px; }
 /* A folded run of turn-marker rows: one quiet line that opens into them. */
 .frame-run { padding: 2px 0 2px 10px; border-left: 2px dotted var(--line); }
@@ -1346,6 +1469,11 @@ label.option { display: flex; gap: 6px; align-items: flex-start; cursor: pointer
 .frame-run-body { padding-left: 10px; }
 .frame { border-left: 2px solid transparent; padding: 3px 0 3px 10px; }
 .frame.routine { opacity: 0.55; }
+/* The human's one-click approval marker - never mutates the game, so it is
+   drawn as quietly as a routine row, just labelled by the advice it approves
+   rather than folded into a run of turn-marker rows (it is never routine,
+   precisely so `collapseRoutine` leaves it alone). */
+.frame.approval { opacity: 0.55; font-style: italic; }
 .frame.refused { border-left-color: var(--bad); }
 .frame:not(.routine) { border-left-color: var(--line-bright); }
 .frame-head {

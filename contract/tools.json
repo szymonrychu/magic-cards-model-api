@@ -145,6 +145,13 @@
         {
           "default": "",
           "has_default": true,
+          "name": "spell_face",
+          "type": "str",
+          "type_error": null
+        },
+        {
+          "default": "",
+          "has_default": true,
           "name": "targets",
           "type": "str",
           "type_error": null
@@ -390,6 +397,13 @@
           "has_default": true,
           "name": "order",
           "type": "str",
+          "type_error": null
+        },
+        {
+          "default": null,
+          "has_default": true,
+          "name": "generation",
+          "type": "int | None",
           "type_error": null
         },
         {

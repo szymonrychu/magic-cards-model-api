@@ -1,0 +1,2276 @@
+{
+ "field": {
+  "cutoff_share": 2.002730996813837,
+  "count": 19
+ },
+ "sideboard_access": {
+  "kind": "boarded"
+ },
+ "matchups": [
+  {
+   "name": "instant reanimator",
+   "meta_share": 4.415111515703232,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Sanctifier en-Vec and Thraben Charm both attack the graveyard the whole deck is built on, and Orim's Chant buys the exact turn Martyr of Sands needs; none of the three costs our own plan anything.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "counters a triggered ability for one mana, against a deck that is almost nothing else: Solitude, Flickerwisp, Starfield Shepherd, Overlord of the Balemurk and the Abiding Grace end-step return are all triggers, and all five stay in on this row. Three or four copies in ten of ten recorded boards, and it was missing from this row entirely.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Teferi, Time Raveler",
+     "count": 1,
+     "why": "each opponent can cast spells only when they could cast a sorcery, which turns off Thraben Charm on their combo turn, Orim's Chant on their upkeep and Ephemerate in response to removal. Nine of ten recorded boards.",
+     "source_tournament_id": "8ab91b51-0256-4570-87dd-497bcf782ae5"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "X sweeper: at X=1 it takes eight of our post-board cards - four Serra Ascendant and four Martyr of Sands, because Kami of False Hope and Thraben Inspector are both on this row's out list - against a Nihil Spellbomb of their own if one is on the battlefield, and nothing else of theirs.",
+     "source_tournament_id": "8ab91b51-0256-4570-87dd-497bcf782ae5"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 1,
+     "why": "one mana, no colour requirement, exiles our graveyard at instant speed: Abiding Grace and Emeria, the Sky Ruin then have nothing to return. Six of ten boards.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "March of Otherworldly Light",
+     "count": 2,
+     "why": "instant-speed X exile that answers a resolved Sanctifier en-Vec through its protection - it is white, so protection from black and red does not see it. One or two copies maindeck in seven of ten lists as well as boarded in five of ten, so it is a game-one answer too.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Goryo's Vengeance returns Atraxa on turn two or three, and a 7/7 flier kills through 30 life faster than Martyr of Sands can rebuild it.",
+    "key_cards": [
+     {
+      "card": "Goryo's Vengeance",
+      "why": "instant-speed two-mana reanimation, which is what makes the kill turn two or three rather than turn seven."
+     },
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "the payoff body: its enters trigger refuels them on the same turn the clock starts, so racing it is not an option."
+     },
+     {
+      "card": "Solitude",
+      "why": "three or four copies maindeck in ten of ten recorded lists, not the sideboard one-of the row used to name: it answers a resolved Sanctifier en-Vec in game one and costs them no mana to do it."
+     },
+     {
+      "card": "Ephemerate",
+      "why": "rebuys the Atraxa trigger and dodges our Solitude, so one answer does not stop the fast draw."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "an instant that exiles their graveyard in response to Goryo's Vengeance targeting; it is never a permanent, so March of Otherworldly Light cannot answer it."
+    },
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "its replacement effect exiles Atraxa instead of letting it reach the graveyard, so Goryo's Vengeance has no target; the protection from black is not what does that, since Goryo's targets their own graveyard. It is not close to a lock, though, because their answers are white and maindeck: one or two Prismatic Ending in ten of ten lists exile it at two colours for mana value 2, three or four Solitude in ten of ten exile it for free on the turn it lands, and one or two March of Otherworldly Light sit in seven of ten maindecks and five of ten boards. Three or four Thoughtseize in ten of ten take it from hand before any of that. Deploy it into their tapped-out turn and expect to need the second copy."
+    },
+    {
+     "card": "Orim's Chant",
+     "verdict": "SURVIVES",
+     "why": "one mana at instant speed on their combo turn, and it is not uncontested: Force of Negation is a maindeck two-to-three-of in ten of ten recorded lists. Cast on their turn, which is where the Goryo's Vengeance is, the Force costs them {1}{U}{U} rather than a blue card - so the Chant is a tax they have to pay mana for, not a free answer they always have. Teferi, Time Raveler is the worse card here: exactly one copy each time - maindeck in three of the ten lists and one more in each of nine boards - and under it we cannot cast the Chant on their turn at all."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands plus Thraben Charm or Orim's Chant; a hand of only lifegain loses on turn three.",
+    "goldfish_for": "Sanctifier en-Vec on two, then Martyr of Sands with four white cards in hand.",
+    "watch_for": "Two open black mana with a full graveyard is the Goryo's turn - hold the Charm.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot race a turn-three Atraxa."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Sanctifier en-Vec",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "2 Skyclave Apparition",
+     "2 Enduring Innocence",
+     "1 Ephemerate"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Sanctifier en-Vec",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "2 Skyclave Apparition",
+     "2 Enduring Innocence",
+     "1 Ephemerate"
+    ]
+   }
+  },
+  {
+   "name": "broodscale bloodchief",
+   "meta_share": 4.961310878470642,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "High Noon and Orim's Chant attack the turn the combo happens rather than the pieces, which is what a post-board 60 whose only answer to a resolved Equipment is two Skyclave Apparition has against a two-card loop. The 75 also holds three Wrath of the Skies, which destroys Blade of the Bloodchief at mana value 1, but this row does not board them - they take our ten mana-value-1 creatures with it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Soulless Jailer",
+     "count": 1,
+     "why": "permanent cards in graveyards cannot enter the battlefield, so Abiding Grace and Emeria, the Sky Ruin both stop returning anything, on a 0/4 body that also blocks the combat version of the kill. Nine of ten recorded boards, and it was named nowhere in this row.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "the same answer for one mana on the half that matters here - creature cards in graveyards cannot enter, so the Kami of False Hope loop stops. Eight of ten boards.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Warping Wail",
+     "count": 2,
+     "why": "eight of ten recorded boards, and the mode that matters is the first: exile target creature with power OR toughness 1 or less takes Martyr of Sands, a Serra Ascendant short of 30, Kami of False Hope, Thraben Inspector and Flickerwisp at instant speed for two mana - both Enduring Innocence are on this row's out list, so they are not part of it. The second mode counters a sorcery, which is Wrath of the Skies rather than High Noon, an enchantment, and Wrath is not boarded here.",
+     "source_tournament_id": "927b169c-862b-4f83-83c7-d7a66b76116b"
+    },
+    {
+     "card": "Thief of Existence",
+     "count": 2,
+     "why": "the cast trigger exiles a noncreature nonland permanent of mana value 4 or less, which is High Noon or an Abiding Grace, and it resolves whether or not the 3/4 body does. Nine of ten boards.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Nature's Claim",
+     "count": 2,
+     "why": "one mana at instant speed on High Noon or Abiding Grace; the four life it gives us is a cost they are happy to pay against a deck that gains nine a Martyr. Ten of ten boards.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Firespout",
+     "count": 1,
+     "why": "three damage to each creature with and without flying when both {R} and {G} are spent, which kills every creature in our mainboard except Overlord of the Balemurk and a Serra Ascendant past 30 life. Three of ten boards. It is symmetric here, which is why they hold it: Basking Broodscale and Glaring Fleshraker are 2/2 and die to it as well. Whipflare, at one copy in one of ten, is a different and worse card against us - two damage, and only to nonartifact creatures.",
+     "source_tournament_id": "8ab91b51-0256-4570-87dd-497bcf782ae5"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Two cards make an arbitrarily large attacker and a third turns it into direct damage, so the game is decided by whether they assemble before we can tax the turn.",
+    "key_cards": [
+     {
+      "card": "Basking Broodscale",
+      "why": "the half of the loop that is also a fine fair creature, so they never have to hold it back."
+     },
+     {
+      "card": "Blade of the Bloodchief",
+      "why": "a one-mana Equipment that puts a +1/+1 counter on the Broodscale whenever a creature dies, and the Spawn that counter makes is the creature that dies - infinite mana and an unbounded body."
+     },
+     {
+      "card": "Glaring Fleshraker",
+      "why": "one damage to each opponent whenever ANOTHER colorless creature THEY control enters - our creatures never trigger it - which turns the loop from a combat kill into a drain no life total outruns."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "High Noon",
+     "verdict": "SURVIVES",
+     "why": "two Nature's Claim in ten of ten boards, a maindeck Haywire Mite in ten of ten, one or two maindeck Boseiju, Who Endures in ten of ten and two Thief of Existence in nine of ten all answer a resolved High Noon, so what it buys is the turn and the card they spend on it rather than a lock. Orim's Chant is the second copy of the same tax, and the tax is the half of the plan that holds whether the kill is combat or a Glaring Fleshraker drain."
+    },
+    {
+     "card": "Orim's Chant",
+     "verdict": "SURVIVES",
+     "why": "an instant that resolves before their first spell; nothing in their board answers a spell on the stack."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and one of High Noon or Orim's Chant; a pure lifegain hand does not interact.",
+    "goldfish_for": "High Noon on turn two, then a clock while they can only cast one spell a turn.",
+    "watch_for": "Blade of the Bloodchief down with one green open is the Nature's Claim turn - lead with the second tax.",
+    "posture": "lock",
+    "posture_why": "once Glaring Fleshraker is down the kill needs no attack step, so we tax the turn."
+   },
+   "play": {
+    "in": [
+     "2 High Noon",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Enduring Innocence"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 High Noon",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Enduring Innocence"
+    ]
+   }
+  },
+  {
+   "name": "eldrazi ramp",
+   "meta_share": 5.052344105598544,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "White Orchid Phantom destroys the Eldrazi Temple or Ugin's Labyrinth the whole curve is built on, and it does it on a 2/2 flier with first strike that Phelia and Ephemerate can rebuy.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 2,
+     "why": "every spell costs at least three, which taxes seventeen of our mainboard cards and all three alternative costs the deck is built on: Solitude's evoke, Overlord of the Balemurk's impending and Starfield Shepherd's warp. Eight of ten recorded boards, and the hardest single card in the field against this 75.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Chalice of the Void",
+     "count": 3,
+     "why": "on one it counters Serra Ascendant, Martyr of Sands, Thraben Inspector and Ephemerate - twelve cards post-board, thirteen in game one, since this row boards the Kami of False Hope out. On two it counters four Phelia and the three White Orchid Phantom this row brings in, which is the setting that actually beats the plan.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 3,
+     "why": "free for one green card exiled on our turn, and it destroys two enchantments at instant speed with their mana committed elsewhere. Not Abiding Grace, which this row boards out: post-board the targets are four Overlord of the Balemurk and two Enduring Innocence, both Enchantment Creatures on the type line whether or not the Overlord is impending, plus a Thraben Inspector Clue. Six of ten recorded boards carry it, at two, two, three, three, three and three copies, so four of ten cannot punish an enchantment at all - whether the second one is held back is a read on which of the ten is across the table rather than the default line.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Endurance",
+     "count": 2,
+     "why": "its enters trigger puts our graveyard on the bottom of the library, and the evoke cost is a green card rather than mana, so it costs nothing on the turn it matters. This row boards Abiding Grace out, so what it takes is Emeria, the Sky Ruin's returns and Overlord of the Balemurk's - and it leaves a 3/4 reach blocker in front of the Phantom. Six of ten boards.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Elder Gargaroth",
+     "count": 1,
+     "why": "a 6/6 vigilance reach trample blocker whose attack-or-block trigger is modal - a 3/3 Beast, three life, or a card - so it is three life only on the turns they choose it, and the 3/3 mode is the one that outgrows a stalled board.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Their threats are individually larger than ours and replace themselves, so they win a long game unless the mana that casts them early is attacked.",
+    "key_cards": [
+     {
+      "card": "Sowing Mycospawn",
+      "why": "a 3/3 that searches out a land on cast and, kicked for {1}{C}, exiles one of ours - four copies in ten of ten lists, so the mana attack runs in both directions."
+     },
+     {
+      "card": "Ugin, Eye of the Storms",
+      "why": "exiles one coloured permanent on cast and one more per colorless spell afterwards, so a wide board is answered one card a turn rather than swept - which is why we flood against it rather than holding back."
+     },
+     {
+      "card": "Emrakul, the Promised End",
+      "why": "what Fight Rigging is digging for - Green Sun's Zenith cannot find it, since the Zenith fetches a green creature and Emrakul is colorless. Fight Rigging casts it rather than putting it onto the battlefield, so the cast trigger takes our next turn, and protection from instants means only a creature answers the 13/13 afterwards: an evoked Solitude, which hands them thirteen life."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "White Orchid Phantom",
+     "verdict": "SURVIVES",
+     "why": "the land destruction is an enters trigger, so it is paid the moment the Phantom resolves and Chalice of the Void on two is the only card that stops it - and a Chalice on two also stops four Phelia, which is the rest of the blink half, so it is not a cheap setting for them either. The body is a different question: four maindeck Kozilek's Command in ten of ten recorded lists exile a creature of mana value X or less at instant speed, and Dismember, Unholy Heat and Blasphemous Act follow it out of the board. Cast it for the land, never for the clock."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and White Orchid Phantom, or a hand that curves out under a Chalice on one.",
+    "goldfish_for": "Phantom on their Eldrazi Temple, then blink it with Phelia for the second land.",
+    "watch_for": "A first-turn Chalice on one means the nine mana-value-1 creatures left post-board are dead cards.",
+    "posture": "disrupt_first",
+    "posture_why": "their curve only works off the two accelerating lands."
+   },
+   "play": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "2 Abiding Grace"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "2 Abiding Grace"
+    ]
+   }
+  },
+  {
+   "name": "dimir control",
+   "meta_share": 2.5034137460172965,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "White Orchid Phantom attacks a manabase that is almost entirely nonbasic, on a body that blinks - a line the maindeck does not have against a deck that answers threats one at a time.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Engineered Explosives",
+     "count": 2,
+     "why": "Sunburst, so one colour of mana spent means one charge counter and it destroys each nonland permanent of mana value exactly 1 - eight of our post-board cards on this row, since Kami of False Hope and Thraben Inspector are both on the out list, including a Serra Ascendant that has already crossed 30 life. Three mana in total. Ten of ten boards.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana to counter a triggered ability, which is the Abiding Grace end-step return, Emeria and every enters trigger in the deck. Nine of ten boards.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Toxic Deluge",
+     "count": 1,
+     "why": "-X/-X to all creatures for X life, which is the sweeper Engineered Explosives cannot be: the Explosives destroys one mana-value band at a time, and Solitude, Skyclave Apparition, Starfield Shepherd and Overlord of the Balemurk are all above the one it is set to. Six life against a deck that gains nine a Martyr is a price they pay. Nine of ten boards.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 2,
+     "why": "one mana, exiles our graveyard at instant speed, and Abiding Grace and Emeria then have nothing to return. Eight of ten boards.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "count": 2,
+     "why": "nonbasic lands are Islands, so eight of our thirteen nonbasics stop producing {W} - three Shadowy Backstreet, two Godless Shrine, Mistveil Plains and two Emeria - and the other five, the fetchlands, lose their fetch ability and become Islands that tap for {U}. Eight of ten boards, and Skyclave Apparition at mana value 3 is the answer.",
+     "source_tournament_id": "8ab91b51-0256-4570-87dd-497bcf782ae5"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Every card they play trades one-for-one, so the game is decided by which side still has a card advantage engine on turn eight.",
+    "key_cards": [
+     {
+      "card": "Orcish Bowmasters",
+      "why": "flash, and the ping kills Martyr of Sands, Kami of False Hope and a Serra Ascendant that has not crossed 30 life; then they amass Orcs 1."
+     },
+     {
+      "card": "Psychic Frog",
+      "why": "a two-mana threat that draws cards and grows, so they never run out first."
+     },
+     {
+      "card": "Thoughtseize",
+      "why": "takes the engine card out of the opening hand, which is why redundancy beats quality here."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "White Orchid Phantom",
+     "verdict": "SURVIVES",
+     "why": "first strike beats Orcish Bowmasters and the body is above the one damage their pings deal. Fatal Push maindeck and Toxic Deluge at X=2 both answer it, and either one is a card not spent on Serra Ascendant."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a threat and a second threat; a hand with one card that matters loses to Thoughtseize.",
+    "goldfish_for": "Resolve two threats a turn until one sticks, then Martyr of Sands out of removal range.",
+    "watch_for": "Nihil Spellbomb held up means Abiding Grace and Emeria are about to be blanked.",
+    "posture": "grind",
+    "posture_why": "they answer threats one at a time and we have more of them."
+   },
+   "play": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "1 Ephemerate"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "1 Ephemerate"
+    ]
+   }
+  },
+  {
+   "name": "ur cutter prowess",
+   "meta_share": 2.6854802002730995,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Cori-Steel Cutter makes a token every turn, so removal one at a time loses; the sweeper is the only card that resets a board they rebuild for free.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Unholy Heat",
+     "count": 3,
+     "why": "ten of ten boards - three copies in five of them - but only three of the ten play it maindeck, so it is a post-board card rather than a game-one one. One mana for six damage with delirium, and the only card in their 75 that kills a 6/6 Serra Ascendant - Lightning Bolt is three damage and Lava Dart is one. It is not rare in the wider field, where Solitude and Path to Exile exile her outright and Kozilek's Command does it at X=1, that last one because she is mana value 1 however large she has grown.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Spell Snare",
+     "count": 3,
+     "why": "no maindeck copies anywhere and nine of ten boards, three copies in five of them. Counters mana value 2 exactly: the four Phelia maindeck, and Sanctifier en-Vec after boarding, which is the card this matchup's plan rests on and the only way their deck beats a resolved one. Skyclave Apparition and Abiding Grace are 3, and a warped Starfield Shepherd is still 5 - warp is an alternative cost, not a mana value.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "ten of ten boards, four copies in five of them and three in the other five. One mana with replicate, countering a triggered ability - which is most of what this deck does: Phelia, Flickerwisp, Solitude, Skyclave Apparition, Starfield Shepherd, Overlord of the Balemurk and the Abiding Grace end step are all triggers. It does not touch Martyr of Sands, whose ability is activated rather than triggered and is not a spell.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Spell Pierce",
+     "count": 1,
+     "why": "one or two copies in nine of ten boards, one in five of them. It cannot touch Sanctifier en-Vec, which is a creature spell - but Wrath of the Skies is not, and this row rests on Wrath of the Skies. One blue mana taxes it by {2}, so the X=1 sweeper costs five mana out of a 22-land deck or it does not resolve.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Tormod's Crypt",
+     "count": 1,
+     "why": "one or two copies in six of ten boards, and five of ten add one or two Surgical Extraction on top. Free to cast, then tap and sacrifice to exile our graveyard, which is the fuel for Abiding Grace and Emeria, the Sky Ruin.",
+     "source_tournament_id": "5b36515c-820b-459f-9685-e4f902682f88"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Cori-Steel Cutter turns their second spell each turn into a body, so their damage per turn grows while their card count does not fall.",
+    "key_cards": [
+     {
+      "card": "Cori-Steel Cutter",
+      "why": "a Monk on their second spell each turn, at most one a turn, which is why one removal spell a turn never catches up."
+     },
+     {
+      "card": "Dragon's Rage Channeler",
+      "why": "surveil on every noncreature spell, and with delirium online a 3/3 flier that has to attack - the card that makes their one-drops a clock rather than a chump blocker."
+     },
+     {
+      "card": "Slickshot Show-Off",
+      "why": "four copies in nine of the ten maindecks. {1}{R} for a 1/2 with flying and haste that gets +2/+0 on every noncreature spell, so it is lethal out of nowhere, and at mana value 2 it lives through our own Wrath of the Skies at X=1 - and it is not the only card that does, because Cori-Steel Cutter is {1}{R} and an artifact, and Wrath destroys artifacts as well as creatures."
+     },
+     {
+      "card": "Mutagenic Growth",
+      "why": "three or four maindeck in all ten lists and free - {G/P} is 2 life, not mana. +2/+2 wins the combat our 2/2s and 3/2s are supposed to win, and it is a noncreature spell, so it triggers prowess and Dragon's Rage Channeler surveil while it does."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Wrath of the Skies",
+     "verdict": "SURVIVES",
+     "why": "Spell Snare counters mana value 2 and Wrath of the Skies is {X}{W}{W}, so at any X above zero it is out of range of the Snare. Spell Pierce is the one that reaches it - one or two copies in nine of ten recorded boards, countering a noncreature spell unless we pay {2} - so the sweeper wants two more lands than the X, not none. Nothing in their board counters it outright."
+    },
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "protection from red blanks Unholy Heat, Lightning Bolt and every Monk token's damage, so once it resolves their whole damage suite is dead against it. The game is decided on the stack instead: one to three Spell Snare in nine of ten recorded boards counter it exactly, at mana value 2, and Into the Flood Maw in two of ten bounces a resolved one. Deploy it when they are tapped out or after a Phelia has drawn the Snare."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a way to interact; a hand of only one-drops loses to the first sweeper or Cutter.",
+    "goldfish_for": "Sanctifier en-Vec on turn two, then Wrath of the Skies at X=1 once they commit.",
+    "watch_for": "After boarding, one open red with delirium online is Unholy Heat - six damage kills anything, including a 6/6.",
+    "posture": "disrupt_first",
+    "posture_why": "Cori-Steel Cutter outgrows any board we build."
+   },
+   "play": {
+    "in": [
+     "3 Wrath of the Skies",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Abiding Grace",
+     "1 Kami of False Hope"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Wrath of the Skies",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Abiding Grace",
+     "1 Kami of False Hope"
+    ]
+   },
+   "self_cost": "Wrath of the Skies at X=1 answers their Dragon's Rage Channeler, Monastery Swiftspear and every Monk token, and takes our own mana-value-1 half with them: nine copies in this matchup rather than ten, because Kami of False Hope is one of the cards boarded out. What X=1 does not answer is either card at mana value 2: Slickshot Show-Off, and Cori-Steel Cutter, four copies in ten of ten maindecks and an Artifact - Equipment that the sweeper would destroy at X=2, so the Monks start again on their next two-spell turn. Going to X=2 is not free, because our own four Phelia at {1}{W} and both Sanctifier en-Vec at {W}{W} are mana value 2, and the Sanctifier is the card this whole row rests on - so X=1 is the setting, and the Cutter is answered by the blocker they cannot burn rather than by the sweeper. Nothing rebuilds afterwards, and that is a decision rather than an oversight - both Abiding Grace come out here too, so the sweeper has to pay for itself on the turn it resolves. It does, because everything at mana value 2 or more lives through our own X=1 - twenty-three copies post-board: four Phelia and two Sanctifier en-Vec at two; two Skyclave Apparition, three Flickerwisp and two Enduring Innocence at three; and four Solitude, four Starfield Shepherd and the two Overlord of the Balemurk that stay in, at five. Of that list the two Sanctifier en-Vec are what the plan rests on, because their whole damage suite is red and cannot touch it - the exceptions this row already records are blue bounce, which moves it rather than answering it. The other twenty-one copies are what stops them rebuilding into an empty board. Against three Unholy Heat and three or four Consign to Memory the one-for-one game is already lost; the sweeper is how a Sanctifier they cannot burn ends up the last permanent standing."
+  },
+  {
+   "name": "boros aggro",
+   "meta_share": 3.0040964952207556,
+   "winrate": null,
+   "stance": "strengthen",
+   "stance_rationale": "The maindeck already wins this: Martyr of Sands gains more per activation than their whole curve deals per turn, so the board adds a body their removal cannot touch rather than another answer.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "at X=1 it sweeps ten of our mainboard cards and their own Ocelot Pride, Guide of Souls and Ragavan too - three four-ofs, which is why they board it rather than lead on it. Their X is a floor rather than a cap: energy is banked, and four Guide of Souls collect {E} on every creature that enters while four Galvanic Discharge hand them three at a time, so they may pay more than the X they announced. Ours is a hard cap - nothing in the 75 makes energy.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Rest in Peace",
+     "count": 1,
+     "why": "exiles our graveyard and keeps it empty, which blanks Abiding Grace and Emeria, the Sky Ruin permanently. Six of ten boards, at one, one, one, one, two and three copies.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Obsidian Charmaw",
+     "count": 3,
+     "why": "eight of ten boards at two to four copies, three the most common and only one list on four. A 4/4 flier that destroys one of our thirteen nonbasics on arrival; it costs {1} less for each land we control that could produce {C}, and none of ours can, so it always costs the full {3}{R}{R}.",
+     "source_tournament_id": "0f9a2b49-95b9-409d-bfe7-d330656b12d2"
+    },
+    {
+     "card": "Wear / Tear",
+     "count": 2,
+     "why": "ten of ten boards, two copies in eight of them. The Tear half is one mana at instant speed for Abiding Grace, Enduring Innocence or an Overlord of the Balemurk - all three are enchantments.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Blood Moon",
+     "count": 2,
+     "why": "nine of ten boards at one to three copies, and four of ten lists play one maindeck as well, so four of ten can show it in game one. Thirteen of our twenty-two lands become Mountains with no rules text, so Marsh Flats and Flooded Strand stop fetching and Emeria stops being an engine; nine basic Plains is why this is a tempo hit rather than a lock.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "ten of ten boards, two copies in five of them and one in the other five. Whenever a player casts a spell, if no mana was spent to cast it, counter that spell - which is our evoked Solitude. It is symmetric and not quite free for them: one of the ten lists plays a single maindeck Solitude of its own, and that list boards two Vexing Bauble.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "six of ten boards, two copies in each. One spell a turn is a real cost to a deck that wants Martyr of Sands and Abiding Grace in the same turn; High Noon is {1}{W} and mana value 2, so Skyclave Apparition exiles it and is our only maindeck answer.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Guide of Souls gains them life too and Goblin Bombardment turns the board into reach, so they can race a lifegain deck rather than only attack into it.",
+    "key_cards": [
+     {
+      "card": "Ragavan, Nimble Pilferer",
+      "why": "a turn-one clock that also steals the card that would have answered it."
+     },
+     {
+      "card": "Guide of Souls",
+      "why": "gains them a life whenever another creature enters, so Ocelot Pride's Cats and Ajani's token pay too, which is what makes the lifegain race close rather than free."
+     },
+     {
+      "card": "Goblin Bombardment",
+      "why": "a free sacrifice outlet that turns a board of one-drops into direct damage, so blocking and Kami of False Hope both stop mattering."
+     },
+     {
+      "card": "Thraben Charm",
+      "why": "two maindeck copies in ten of ten lists, and two of its three modes are pointed at us: destroy target enchantment, which is Abiding Grace, and exile any number of target players' graveyards, which is the recursion. Instant speed, game one, every list."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "protection from red means Galvanic Discharge, Lightning Bolt and Goblin Bombardment cannot damage it and no red creature blocks it profitably. Two maindeck Thraben Charm in ten of ten lists are the game-one answer - the damage mode is white, so protection does not see it, and twice their creature count clears two easily - and their boarded Wrath of the Skies at X=2 is the post-board one, which costs them their own board."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Martyr of Sands, or two lands and Serra Ascendant with a white card behind it.",
+    "goldfish_for": "Turn-one Serra Ascendant, turn-two Martyr of Sands revealing four white cards for twelve, then attack for six.",
+    "watch_for": "Ranger-Captain of Eos, maindeck in all ten lists: sacrificing it is free and stops us casting noncreature spells that turn, which blanks a held Ephemerate.",
+    "posture": "race",
+    "posture_why": "a resolved Martyr of Sands puts us out of burn range in one activation."
+   },
+   "play": {
+    "in": [
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk"
+    ]
+   }
+  },
+  {
+   "name": "esper blink",
+   "meta_share": 5.2344105598543464,
+   "winrate": null,
+   "stance": "strengthen",
+   "stance_rationale": "This is the shell we adopted with a better removal suite, and the half that is ours to win is the Martyr of Sands loop their one-for-one removal cannot answer; the board adds a mana attack rather than a second engine.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "two to four copies in ten of ten recorded boards, countering a triggered ability for one mana: the Abiding Grace end-step return, Emeria, and every enters trigger in the deck. It was missing from this row while a one-of in three of ten was named.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "two or three copies in nine of ten boards; one spell a turn is a tax on the deck that rebuilds a board, not on the deck that holds one flier and a removal spell.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "at X=1 it sweeps the nine mana-value-1 creatures left after this row cuts the Kami of False Hope, and leaves their two- and three-drops. Ten in game one - and one of the ten recorded lists maindecks a single copy, so it is not strictly a post-board card; the other nine hold two to four in the board only.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Clarion Conqueror",
+     "count": 1,
+     "why": "activated abilities of artifacts, creatures and planeswalkers cannot be activated, so Martyr of Sands, Kami of False Hope and the Thraben Inspector Clue all stop; Mistveil Plains and the fetchlands are lands and keep working, and Abiding Grace and Emeria are triggered abilities it does not touch. Six of ten boards.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Ashiok, Dream Render",
+     "count": 1,
+     "why": "exiles our graveyard every turn, which is a permanent answer to Abiding Grace and Emeria, the Sky Ruin. Three of ten boards, so it is the one to expect least.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Both decks rebuy enters triggers, so the game goes long and is decided by which engine survives a sweeper rather than by the board on turn four.",
+    "key_cards": [
+     {
+      "card": "Witch Enchanter",
+      "why": "two to four copies in nine of ten recorded lists, and its enters trigger destroys an artifact or enchantment: Abiding Grace and Enduring Innocence are answered in game one, and Phelia or Ephemerate does it again."
+     },
+     {
+      "card": "Quantum Riddler",
+      "why": "a 4/6 flier for {3}{U}{U} or warped in for {1}{U}, drawing two a turn once they are low on cards - the card-advantage engine that beats us in a long game."
+     },
+     {
+      "card": "Solitude",
+      "why": "free removal for our Serra Ascendant, four copies in ten of ten lists, and Ephemerate rebuys it."
+     },
+     {
+      "card": "Teferi, Time Raveler",
+      "why": "holds us to sorcery speed, which costs us Ephemerate as a protection spell and Solitude as an ambush."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "White Orchid Phantom",
+     "verdict": "SURVIVES",
+     "why": "their manabase is fetches and duals behind two basic Plains and a Swamp in nine of ten lists, one Plains in the tenth, and an Island in four - so the search clause usually replaces the land and what the Phantom really costs them is the turn. Fatal Push answers the body, and that is a removal spell not spent on Serra Ascendant."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Martyr of Sands, or two lands and a threat that survives Fatal Push.",
+    "goldfish_for": "Martyr of Sands into Abiding Grace, gaining nine a turn while they answer one threat.",
+    "watch_for": "Clarion Conqueror turns off Martyr of Sands, Kami of False Hope and the Clue - not the lands, not the recursion triggers. Solitude and Skyclave Apparition both exile it.",
+    "posture": "grind",
+    "posture_why": "their removal is one-for-one and our engine recurs."
+   },
+   "play": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "2 Overlord of the Balemurk"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "2 Overlord of the Balemurk"
+    ]
+   }
+  },
+  {
+   "name": "living end",
+   "meta_share": 2.913063268092854,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Thraben Charm exiles their graveyard at instant speed with the cascade trigger on the stack, and Orim's Chant stops the cascade spell being cast at all; neither costs our own plan anything.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Clarion Conqueror",
+     "count": 3,
+     "why": "two or three copies in five of ten recorded boards, and it turns off Martyr of Sands and Kami of False Hope - the fog loop this row calls its backup plan - while costing their own hasteless board nothing.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Brotherhood's End",
+     "count": 2,
+     "why": "three damage to each creature: everything in our mainboard except Overlord of the Balemurk and a Serra Ascendant past 30 life. Six of ten boards.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "free for one green card exiled, but only on our turn - the alternative cost reads 'if it's not your turn' - and it destroys two Abiding Grace at once at instant speed. Eight of ten boards, which is more than the Leyline.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Foundation Breaker",
+     "count": 3,
+     "why": "evoked for {1}{G}, and its destroy is an enters trigger rather than a held effect, so it answers a resolved Abiding Grace rather than a window.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Leyline of the Void",
+     "count": 4,
+     "why": "a replacement effect that exiles our cards instead of letting them reach the graveyard, one-sidedly, so Abiding Grace and Emeria stop having targets - it does not touch what is already there, so only an opening-hand copy is a blowout. Four copies, and in two of ten boards it is the least likely of these five.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "One resolved Living End makes a whole board and sweeps ours at the same time, so the game ends on their cascade turn rather than on a damage race.",
+    "key_cards": [
+     {
+      "card": "Living End",
+      "why": "one card turns their cycled graveyard into a lethal board. It exiles graveyards BEFORE it sacrifices boards, so the creatures it sacrifices do not come back - what returns is what was already in the graveyard, ours included."
+     },
+     {
+      "card": "Violent Outburst",
+      "why": "cascades into the payoff at instant speed for three mana, on their turn or at the end of ours."
+     },
+     {
+      "card": "Shardless Agent",
+      "why": "the second cascade shell, so the payoff is effectively a six-of and one answer does not stop it."
+     },
+     {
+      "card": "Force of Negation",
+      "why": "four maindeck in ten of ten lists. Free by exiling a blue card when it is not their turn, which is exactly the window our Thraben Charm wants at our end step; {1}{U}{U} when they cascade on their own turn."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "Force of Vigor and Foundation Breaker cannot answer an instant that is never on the battlefield, but two maindeck four-ofs can. Endurance is four copies in ten of ten lists with flash and an evoke cost of one green card, and its enters trigger puts their own graveyard on the bottom of their library in response to the Charm. Force of Negation is four copies in ten of ten: free when they cascade at our end step, because then it is not their turn, and {1}{U}{U} when they cascade on their own. And a Living End that resolves into an exiled graveyard is not nothing - it exiles graveyards before it sacrifices boards, so our board is still sacrificed and only what was already in our graveyard comes back."
+    },
+    {
+     "card": "Orim's Chant",
+     "verdict": "SURVIVES",
+     "why": "one mana on their upkeep, but not uninteracted-with: Force of Negation is a maindeck four-of in ten of ten recorded lists. Cast on their upkeep it is their turn, so the Force costs them {1}{U}{U} instead of a blue card - which is the reason to Chant on the upkeep rather than hold it for a cascade at our end step, where the same card is free. Mystical Dispute is the second answer and it is not colour-locked: it is {2}{U} for 'counter target spell unless its controller pays {3}', and only the {2} discount is conditional on targeting a blue spell, so against a white Chant it is a full-price counter rather than a blank. Two to four copies in ten of ten boards. One maindeck Flare of Denial in two of the ten counters any spell as well, at {1}{U}{U} or free by sacrificing a nontoken blue creature."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Thraben Charm, or Kami of False Hope with a way to return it.",
+    "goldfish_for": "Hold Thraben Charm for the cascade trigger, then win with Serra Ascendant on an empty board.",
+    "watch_for": "Three mana open on our end step is Violent Outburst - the Charm is cast then, not later.",
+    "posture": "disrupt_first",
+    "posture_why": "one resolved Living End ends the game."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Enduring Innocence",
+     "1 Thraben Inspector"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Enduring Innocence",
+     "1 Thraben Inspector"
+    ]
+   }
+  },
+  {
+   "name": "reanimator",
+   "meta_share": 2.1847974510696404,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Sanctifier en-Vec's replacement effect exiles their black cards instead of letting them reach the graveyard, which is a hard lock on the reanimation half rather than an answer to one copy of it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "ten of ten boards and the most played card in their board - four copies in six of them, two or three in the other four. One blue mana with replicate, countering a triggered ability: post-board Phelia, Flickerwisp, Solitude, Starfield Shepherd and Overlord of the Balemurk are all triggers, as is Sanctifier en-Vec's enters trigger - though not its static replacement effect. Both Skyclave Apparition and both Abiding Grace are on this row's out list, so neither is a target it has here. Martyr of Sands is the exception: an activated ability, not a trigger and not a spell.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "nine of ten boards, one to three copies. Its {2} discount only applies to a blue spell, so against our white 75 it is a full {2}{U} - and it still counters Sanctifier en-Vec, Thraben Charm or a hard-cast Solitude unless we pay {3}, on the turn we can least afford to.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "seven of ten boards, one or two copies. 'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' - that is the evoked Solitude and, because this row keeps all three Ephemerate in the 60, the rebound copy too, which is cast from exile without paying its mana cost. Warp and impending both spend mana and are untouched. It is not our only instant-speed answer to a resolved Archon either: three Thraben Charm come in on this row and the damage mode deals twice the number of creatures we control to one creature, which is six with three on the battlefield and kills a 6/6.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Pyroclasm",
+     "count": 2,
+     "why": "seven of ten boards, two copies in six of them. Two damage to each creature kills everything we play except Overlord of the Balemurk and a Serra Ascendant past 30 life - toughness, not mana value - and leaves their Archon. Sanctifier en-Vec is the other exception and it is boarded in here: Pyroclasm is red and cannot damage it at all.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 2,
+     "why": "five of ten boards, two copies in four of them. Instant-speed graveyard exile that also blanks our Abiding Grace and Emeria, the Sky Ruin.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two Archon of Cruelty eats a creature, strips a card and drains three, then does all of it again on every attack, so the game is over before Martyr of Sands has revealed enough white cards.",
+    "key_cards": [
+     {
+      "card": "Archon of Cruelty",
+      "why": "the trigger reads 'whenever this creature enters or attacks', and it takes a creature or planeswalker of our choice, a card from our hand and 3 life while they draw and gain 3 - a two-for-one on arrival and again on every attack, on a 6/6 flier."
+     },
+     {
+      "card": "Persist",
+      "why": "{1}{B} at sorcery speed returns a nonlegendary creature card from their graveyard with a -1/-1 counter, which is why a mana-value-8 Archon can arrive on turn two."
+     },
+     {
+      "card": "Psychic Frog",
+      "why": "four copies in all ten maindecks, the only enabler the whole field shares. Discarding a card to grow it makes the outlet and the clock the same card, and it does not care which three lists cut Faithless Looting."
+     },
+     {
+      "card": "Thoughtseize",
+      "why": "three or four in every one of the ten maindecks, and the card that beats our stated plan: one black mana takes Sanctifier en-Vec out of our hand before it can ever be cast."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "protection from black blanks their Fatal Push, four copies maindeck in nine of ten lists, and the replacement effect exiles Archon of Cruelty on the way to the graveyard so there is nothing for Persist to return. Pyroclasm is red, so protection prevents the damage rather than the 2/2 surviving it. What answers it is discard and one outlier: three or four Thoughtseize in ten of ten maindecks take it from hand before it is cast, and one Esper list in ten plays four Solitude and four Prismatic Ending, which are white and see straight through the protection."
+    },
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "an instant, never a permanent, so their graveyard hate and their removal are both blank against it, and it exiles the target in response to Persist. One or two Spell Pierce sit in eight of ten maindecks, which counters it unless we pay {2}, so hold the extra land rather than casting it on exactly two."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Sanctifier en-Vec or Thraben Charm; a hand of lifegain loses to a turn-two Archon.",
+    "goldfish_for": "Sanctifier en-Vec on turn two and never let a black card reach a graveyard.",
+    "watch_for": "An early discard outlet - Faithless Looting in seven of ten lists, Psychic Frog in all ten - means the target is already down; hold the Charm for the Persist.",
+    "posture": "disrupt_first",
+    "posture_why": "one resolved Archon of Cruelty is the game."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Skyclave Apparition",
+     "2 Abiding Grace",
+     "1 Kami of False Hope"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Skyclave Apparition",
+     "2 Abiding Grace",
+     "1 Kami of False Hope"
+    ]
+   }
+  },
+  {
+   "name": "allosaurus combo",
+   "meta_share": 2.2303140646335917,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Orim's Chant and High Noon both attack the turn the combo happens, which is the only interaction available to a deck with no counterspells against a kill that happens on turn two.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Elesh Norn, Grand Cenobite",
+     "count": 1,
+     "why": "one copy in every board - the fair plan: -2/-2 to our creatures leaves Overlord of the Balemurk at 3/3 and a 30-life Serra Ascendant at 4/4, and kills everything else.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 4,
+     "why": "ten of ten boards, four copies in nine of them. Its {2} discount only applies to a blue spell, so against our white 75 it is a full {2}{U} - and it counters Orim's Chant or High Noon unless we pay {3}, which on the turn we are taxing them we cannot.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Thundertrap Trainer",
+     "count": 2,
+     "why": "two or three copies in seven of ten boards. {1}{U} for a 1/2 that looks four cards deep for a noncreature card, which is how the fair plan finds a Mystical Dispute or the fourth Pact of Negation.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Into the Flood Maw",
+     "count": 1,
+     "why": "one copy in every board. One blue mana returns a creature to hand; bouncing a resolved High Noon needs the gift promised, and even then it returns the enchantment to our hand rather than destroying it, so the taxing effect has to be the second one for this to matter.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Rider plus converter is two spells and two lands on turn two, and neither of our answers taxes cost: Orim's Chant stops them casting at all, High Noon stops the second spell. Nothing on our board is relevant.",
+    "key_cards": [
+     {
+      "card": "Allosaurus Rider",
+      "why": "two green cards exiled from hand instead of its {5}{G}{G} mana cost, so the body costs no mana at all; only the converter behind it needs lands."
+     },
+     {
+      "card": "Neoform",
+      "why": "{G}{U}, sacrifice the mana-value-7 Rider, put a mana-value-8 creature onto the battlefield with a +1/+1 counter. We hold no counterspell, so the turn has to be stopped before it starts rather than answered once it has."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "four maindeck copies in all ten lists, so this is game-one interaction aimed straight at us. One blue mana with replicate counters a triggered ability, and Phelia, Flickerwisp, Solitude, Skyclave Apparition, Starfield Shepherd and Overlord of the Balemurk are all triggers - most of the post-board 60. The Abiding Grace end step is not among them, because this row boards both copies out, and it was never what the Consign was pointed at. Neither tax is either: Orim's Chant and High Noon are white spells, not triggered abilities and not colourless."
+     },
+     {
+      "card": "Griselbrand",
+      "why": "one of the three mana-value-8 creatures Neoform can fetch off the Rider: a 7/7 flying lifelink whose 'Pay 7 life: Draw seven cards' refills the hand on the turn it lands."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Orim's Chant",
+     "verdict": "SURVIVES",
+     "why": "one mana on their upkeep, and it is answered for free in every recorded list: three maindeck Pact of Negation in ten of ten, plus a fourth from the board in six of ten. So cast it expecting the Pact rather than expecting a lock - the point of the second taxing effect is that they cannot hold two, and a Pact spent on the Chant is {3}{U}{U} they have to find on the next upkeep or lose. Four maindeck Consign to Memory in ten of ten do not touch it: the Chant is a white spell and not a triggered ability."
+    },
+    {
+     "card": "High Noon",
+     "verdict": "SURVIVES",
+     "why": "two Nature's Claim in eight of ten recorded boards, two Natural State in the other two, and a maindeck Boseiju, Who Endures channel in nine of ten destroy a resolved High Noon; an Into the Flood Maw in ten of ten bounces it, but only with the gift promised, and a bounced Noon is recastable. A Spell Snare in one board of ten answers it on the stack rather than after. Every one of them is a card and a turn not spent comboing, and Orim's Chant is the second tax behind it; treat the Noon as a turn bought rather than a lock."
+    }
+   ],
+   "play_plan": {
+    "keep": "Any hand with Orim's Chant and a white source; nothing else interacts with a turn-two kill.",
+    "goldfish_for": "Chant on their upkeep, High Noon on two, then any clock at all.",
+    "watch_for": "Two lands and a green pitch card is the combo turn - the Chant goes on their upkeep, not later.",
+    "posture": "lock",
+    "posture_why": "neither of our two taxes cost - the Chant stops them casting at all, High Noon caps the turn at one spell."
+   },
+   "play": {
+    "in": [
+     "2 Orim's Chant",
+     "2 High Noon"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Abiding Grace"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Orim's Chant",
+     "2 High Noon"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "2 Abiding Grace"
+    ]
+   }
+  },
+  {
+   "name": "devoted combo",
+   "meta_share": 4.8247610377787895,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Wrath of the Skies at two energy destroys each artifact, creature and enchantment with mana value 2 or less, which here is Devoted Druid, Badgermole Cub, Delighted Halfling, Birds of Paradise, Vizier of Remedies, Fiend Artisan, Duskwatch Recruiter, Walking Ballista and Dryad Arbor at mana value 0, Agatha's Soul Cauldron, and any Crystal Barricade, Collector Ouphe, Keen-Eyed Curator or Vexing Bauble they boarded - and our Serra Ascendant, Martyr of Sands, Kami of False Hope, Thraben Inspector, its Clue and all four Phelia with them. That is the answer to the question this row exists to ask: a board of mana dorks IS a Wrath target at the X it wants, and neither doubler that matters is. Leyline of Abundance is mana value 4 and survives until six mana, and Tyvar, Jubilant Brawler is a planeswalker, which the card does not name at any X. So the sweeper resets the board without answering the engine, and Skyclave Apparition and Thraben Charm's enchantment mode are what answer the engine. Thraben Charm and Orim's Chant cost us nothing, so the whole symmetry is the sweeper's. Two recorded differences separate this row from the `creatures toolbox` row of the same deck and both point the same way: Suncleanser, whose second mode takes the energy this card is our only source of, is in ONE of ten pulled boards under the live label against five of ten under the retired one, and Crystal Barricade is in ten of ten against four of ten. The sweeper is therefore both safer than that row says and more necessary, because the Barricade is what blanks the cheaper Thraben Charm damage mode.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Crystal Barricade",
+     "count": 2,
+     "why": "ten of ten pulled boards at one or two copies, and the single card in their 75 that most changes this plan. 'You have hexproof' takes them off the table as a legal target for Orim's Chant, and 'Prevent all noncombat damage that would be dealt to other creatures you control' blanks Thraben Charm's damage mode on everything except the Barricade itself. It is a mana-value-2 artifact creature, so Wrath of the Skies at two energy destroys it.",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    },
+    {
+     "card": "Collector Ouphe",
+     "count": 1,
+     "why": "nine of ten pulled boards, absent only from deck 881870. 'Activated abilities of artifacts can't be activated' reaches exactly one object in our 75, the Thraben Inspector Clue token: Martyr of Sands and Kami of False Hope are creatures, Emeria, the Sky Ruin is a land and Abiding Grace is a triggered ability. It is the card we should most expect to face and the one that does least, and it turns off their own Walking Ballista counter-adding ability while it is out.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Abrupt Decay",
+     "count": 3,
+     "why": "eight of ten pulled boards, three copies in five of them. 'This spell can't be countered. Destroy target nonland permanent with mana value 3 or less' answers Skyclave Apparition, Abiding Grace, Enduring Innocence, Flickerwisp and Phelia - and killing the Apparition does NOT return the exiled card, only an X/X Illusion token. It cannot touch Wrath of the Skies, Thraben Charm or Orim's Chant, which are the three cards this row brings in.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Endurance",
+     "count": 2,
+     "why": "eight of ten pulled boards plus a maindeck copy in decks 882360 and 881864. Flash, and the enters trigger puts our whole graveyard on the bottom of our library in random order, which is what Abiding Grace and Emeria, the Sky Ruin return creatures from. It is also a 3/4 reach blocker against the Serra Ascendant clock.",
+     "source_tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+    },
+    {
+     "card": "Keen-Eyed Curator",
+     "count": 1,
+     "why": "eight of ten pulled boards at one copy. '{1}: Exile target card from a graveyard' is repeatable rather than one-shot, so it beats Abiding Grace and Emeria, the Sky Ruin at instant speed for one mana a turn and there is no window to play around it the way there is with Endurance.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Kraul Harpooner",
+     "count": 1,
+     "why": "nine of ten pulled boards at one copy. The undergrowth trigger fights a creature we control WITH FLYING, which is Starfield Shepherd, Flickerwisp, a boarded White Orchid Phantom and a Serra Ascendant at thirty or more life - the last of which is our whole clock, and the Harpooner gets +X/+0 for their graveyard creature count.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 3,
+     "why": "seven of ten pulled boards. Free on our turn for a green card, and it destroys up to TWO of Abiding Grace, Enduring Innocence, Overlord of the Balemurk and the Clue in one card. It cannot answer Wrath of the Skies, a sorcery, which is part of why the sweeper is the right centrepiece here.",
+     "source_tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "five of ten pulled boards, always exactly two copies. 'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' counters our evoked Solitude and the rebound cast of Ephemerate. Every card this row boards in is paid for with mana, so it taxes the maindeck only.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Guerrilla Gorilla",
+     "count": 2,
+     "why": "six of ten pulled boards. 'Sacrifice this creature: Destroy target noncreature artifact or noncreature enchantment. Activate only as a sorcery' answers Abiding Grace, and it is one reason High Noon stays in the box. Enduring Innocence and Overlord of the Balemurk are enchantment CREATURES, so it cannot take either while it is on the battlefield as one.",
+     "source_tournament_id": "ff73d68a-de63-4c97-8ef8-283f647257cd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Doubled dork mana kills on turn three or four off one tutor and a pile of activated abilities, and nothing in their deck interacts with ours, so they are outrunning our clock rather than fighting over it.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "the engine half: a 0/2 that taps for green and untaps itself for a -1/-1 counter, free once Vizier of Remedies is down."
+     },
+     {
+      "card": "Leyline of Abundance",
+      "why": "the doubler that can be on the battlefield before our first land, and the only mana-value-4 permanent in their deck."
+     },
+     {
+      "card": "Craterhoof Behemoth",
+      "why": "the combat finisher in seven of ten lists: +X/+X and trample for X equal to their creature count, which a big life total can actually survive."
+     },
+     {
+      "card": "Walking Ballista",
+      "why": "the finisher in six of ten lists that our life total does not answer at all, because unbounded mana becomes unbounded damage with no attack step."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "nothing in their 75 counters a spell we paid mana for, so Vexing Bauble does not reach it, and the enchantment mode on Leyline of Abundance is live whatever their board looks like - it is the cheapest answer in the deck to the one permanent that can be on the battlefield before our first land. Crystal Barricade, in ten of ten pulled boards, is the real interference and only against one mode: it prevents all noncombat damage to their OTHER creatures, so the damage mode still kills the Barricade itself but nothing behind it. The third mode is not a dead draw either, because Nature's Rhythm harmonizes from their graveyard in ten of ten lists and Dewdrop Cure rebuys two mana-value-2 creatures from it in four of ten boards. The damage mode's binding constraint is ours: damage equals twice the creatures we control, so it kills a 0/2 Devoted Druid or a 2/1 Vizier of Remedies off one body and nothing off an empty board."
+    },
+    {
+     "card": "Wrath of the Skies",
+     "verdict": "SURVIVES",
+     "why": "not on the grounds that nothing answers a sorcery, but on the recorded numbers. Suncleanser is the one card that blanks it - its second mode takes our counters and this card is our only energy source - and under the live `devoted combo` label it is in ONE of ten pulled boards, deck 881885, against five of ten under the retired `creatures toolbox` label the sibling row was written from. Force of Vigor and Abrupt Decay, their two best answers to our permanents, cannot touch a sorcery at all. What does survive it is the half of their engine the X does not reach: Leyline of Abundance at mana value 4 and Tyvar, Jubilant Brawler, whose '-2: Mill three cards, then you may return a creature card with mana value 2 or less from your graveyard to the battlefield' rebuilds a Devoted Druid out of the yard the sweeper just filled, as does Dewdrop Cure in four of ten boards. Those are reasons to cast it on the turn the board is worth four mana rather than the first turn it is castable, not reasons it is blanked."
+    },
+    {
+     "card": "Orim's Chant",
+     "verdict": "SURVIVES",
+     "why": "degraded by one card and by exactly one of its two halves. Crystal Barricade is in ten of ten pulled boards and gives its controller hexproof, so in every post-board game where it is on the battlefield 'Target player can't cast spells this turn' cannot name them and the Time Walk on their tutor turn is off. The kicked clause is not targeted: name OURSELVES, pay the second {W}, and 'creatures can't attack this turn' still fogs a Craterhoof Behemoth swing at the cost of our own spells for that turn - which is why it is a fog and not an answer to the Walking Ballista lists. Delighted Halfling's uncounterable clause is irrelevant here in a way it is not for a blue deck: the Chant is a prohibition on casting, not a counter, and this 75 holds no counterspells for the Halfling to beat."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands with Thraben Charm or Skyclave Apparition; a Martyr-and-lands hand gains life at a deck that does not care.",
+    "goldfish_for": "Thraben Charm's enchantment mode on Leyline of Abundance before their third land.",
+    "watch_for": "On the play their Gemstone Caverns is live; hold the evoked Solitude for the tutor turn, not a turn-one Halfling.",
+    "posture": "disrupt_first",
+    "posture_why": "Walking Ballista in six of ten lists kills through any life total, so lifegain cannot be the plan."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Wrath of the Skies",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "4 Overlord of the Balemurk",
+     "3 Ephemerate"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm",
+     "3 Wrath of the Skies",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "4 Overlord of the Balemurk",
+     "3 Ephemerate",
+     "1 Thraben Inspector"
+    ]
+   },
+   "self_cost": "Wrath of the Skies destroys each artifact, creature and enchantment at or under the energy paid, not creatures only, and at two energy our half is thirteen permanents: four Serra Ascendant, four Martyr of Sands, one Kami of False Hope, one Thraben Inspector and any Clue it made, and all four Phelia, Exuberant Shepherd, which are {1}{W}. Kami of False Hope is the loss that decides how the exchange reads, because it is the fog on a Craterhoof Behemoth swing and this row boards all three Ephemerate out - so the only ways to see another are Starfield Shepherd, whose enters trigger searches a basic Plains or a creature card with mana value 1 or less, and Abiding Grace, which returns one mana-value-1 creature per end step and is what makes the two-energy exchange recoverable rather than terminal. Do not cast the sweeper before Abiding Grace has resolved. Four energy is the setting that would take Leyline of Abundance at mana value 4, and it is never right here: it costs {4}{W}{W}, and it also destroys Skyclave Apparition, Flickerwisp, Enduring Innocence and the Abiding Grace that was the rebuild, which is trading the recovery for the one permanent Thraben Charm and Skyclave Apparition already answer for two and three mana. Our only energy source is the Wrath itself, so nothing tops X up between copies; unspent energy does bank, which is the only way a second cast ever pays more than the X it announced."
+  },
+  {
+   "name": "creatures toolbox",
+   "meta_share": 2.3213472917614935,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Wrath of the Skies at two energy destroys every artifact, creature and enchantment at mana value 2 or less, which is Devoted Druid, Vizier of Remedies, Badgermole Cub, Delighted Halfling, Birds of Paradise, Fiend Artisan, Duskwatch Recruiter, Quirion Ranger, Agatha's Soul Cauldron and a boarded Vexing Bauble - essentially their whole deck - and our Martyr of Sands, Serra Ascendant, Kami of False Hope, Thraben Inspector and all four Phelia with them. Thraben Charm and Orim's Chant cost us nothing; the sweeper does, and it is the only card that answers a board they have already assembled.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Fatal Push",
+     "count": 2,
+     "why": "ten of ten boards at two or three copies. Mana value 2 or less kills Martyr of Sands, Serra Ascendant, Kami of False Hope, Thraben Inspector and Phelia; revolt lifts it to mana value 4, and with ten fetchlands, two Dryad Arbor and a Boseiju, Who Endures channel in every list revolt is on whenever they want it, which adds Skyclave Apparition, Flickerwisp and Enduring Innocence.",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "eight of ten boards, two copies in every one of the eight. Whenever a player casts a spell, if no mana was spent to cast it, counter that spell - which is our evoked Solitude and the rebound half of Ephemerate. It costs them almost nothing: their own free spell is Force of Vigor, in three of ten boards.",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Drannith Magistrate",
+     "count": 1,
+     "why": "nine of ten boards at one copy. It is not the blank it looks like against a deck that casts from hand: Ephemerate's rebound and Starfield Shepherd's warp are both casts from exile, so a resolved Magistrate turns three Ephemerate into one-shot blinks and four Starfield Shepherd into five-drops.",
+     "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+    },
+    {
+     "card": "Crystal Barricade",
+     "count": 1,
+     "why": "four of ten boards at one copy, and the single card in their 75 that most damages this plan. 'You have hexproof' means Orim's Chant cannot target them at all, and 'prevent all noncombat damage that would be dealt to other creatures you control' turns off Thraben Charm's damage mode on everything except the Barricade itself.",
+     "source_tournament_id": "6b10d3ce-9c8c-4504-b1e1-15765b162d75"
+    },
+    {
+     "card": "Kraul Harpooner",
+     "count": 1,
+     "why": "six of ten boards at one copy. Reach plus an undergrowth fight aimed specifically at a creature with flying, which is Starfield Shepherd, Flickerwisp, White Orchid Phantom and a Serra Ascendant at thirty or more life.",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Suncleanser",
+     "count": 1,
+     "why": "five of ten boards at one copy. Its second mode - target opponent loses all counters and cannot get counters while it remains - takes our energy, and Wrath of the Skies is the only energy in the 75, so a resolved Suncleanser makes the boarded sweeper cast for X and destroy nothing.",
+     "source_tournament_id": "293d8ec3-926d-42e3-a266-b0e62703f826"
+    },
+    {
+     "card": "Dewdrop Cure",
+     "count": 2,
+     "why": "three of ten boards at two copies. Returns up to two creature cards of mana value 2 or less from their graveyard, three if the gift is promised - Devoted Druid and Vizier of Remedies are both mana value 2, so it rebuilds the whole combo out of the graveyard our Wrath of the Skies just filled.",
+     "source_tournament_id": "2b02ea0e-ca61-45cc-bd70-51bcfbb23e73"
+    },
+    {
+     "card": "Guerrilla Gorilla",
+     "count": 1,
+     "why": "five of ten boards at one copy, and Outland Liberator is another five - both sacrifice for an artifact or enchantment. Abiding Grace, Enduring Innocence, Overlord of the Balemurk and a boarded High Noon are all enchantments, which is part of why High Noon stays in the box here.",
+     "source_tournament_id": "037d505d-0c61-4dcc-9a1c-252e69e4c0b7"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Devoted Druid plus Vizier of Remedies is unbounded mana the turn it assembles, and Craterhoof Behemoth turns it into lethal the same turn, so they are outrunning our clock rather than grinding.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "combo half one: taps for {G} and untaps itself for a -1/-1 counter, four copies in ten of ten lists."
+     },
+     {
+      "card": "Vizier of Remedies",
+      "why": "combo half two: the -1/-1 counter is reduced to none, so the untap is free and the mana is unbounded."
+     },
+     {
+      "card": "Craterhoof Behemoth",
+      "why": "the mana sink that ends it on the spot - haste, and every creature they control gets +X/+X and trample."
+     },
+     {
+      "card": "Vexing Bauble",
+      "why": "counters any spell cast for no mana, which is every evoked Solitude and every rebounded Ephemerate we have.",
+      "source_tournament_id": "5cd98d5f-db4f-402a-8d34-b151be5ca436"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "nothing in their 75 counters a spell we paid mana for, and the enchantment mode on Leyline of Abundance is live whatever their board looks like. Crystal Barricade is the one real interference - it prevents all noncombat damage to their OTHER creatures - and the Charm answers it directly, because the Barricade is not one of the creatures its own text protects. The damage mode's real constraint is ours, not theirs: damage equals twice the creatures we control, so it kills a 0/2 Devoted Druid or a 2/1 Vizier of Remedies off one body and nothing off an empty board, which is why it is cast before the sweeper rather than after it."
+    },
+    {
+     "card": "Wrath of the Skies",
+     "verdict": "SURVIVES",
+     "why": "not on the grounds that nothing answers a sorcery. Suncleanser, in five of ten boards at one copy, stops us getting counters and our only energy source is this card, so a resolved Suncleanser makes it destroy nothing - Solitude and Skyclave Apparition both answer it at mana value 2 and both are maindeck. Dewdrop Cure is the other half of the problem and does not stop the sweeper resolving: three of ten boards, two copies, returning two Devoted Druid or Vizier of Remedies out of the graveyard the sweeper just filled. Neither is a blank; both are reasons to hold the Wrath for the turn the board is worth the four mana rather than the first turn it is castable."
+    },
+    {
+     "card": "Orim's Chant",
+     "verdict": "SURVIVES",
+     "why": "Crystal Barricade gives its controller hexproof, so in the four of ten lists boarding it there is a configuration where they are not a legal target. The card still works: 'target player' can be US, and the kicked clause 'creatures can't attack this turn' is not targeted, so the Craterhoof Behemoth fog is intact at the cost of our own spells for the turn. Against the other six lists both halves are live, and neither Vexing Bauble nor Drannith Magistrate touches it - it costs {W}, so mana is spent, and it is cast from hand."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a one- or two-mana answer; a hand whose cheapest interaction is a five-drop is a mulligan.",
+    "goldfish_for": "Thraben Charm on a resolved Vizier of Remedies before their fourth land.",
+    "watch_for": "A tapped-out turn into Green Sun's Zenith or Nature's Rhythm - the combo is one turn away, and Orim's Chant is now worth more than a removal spell.",
+    "posture": "disrupt_first",
+    "posture_why": "Their kill needs two specific two-drops, not a critical mass, so answering one half beats gaining life."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm",
+     "3 Wrath of the Skies",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "4 Overlord of the Balemurk",
+     "3 Ephemerate",
+     "1 Thraben Inspector"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm",
+     "3 Wrath of the Skies",
+     "2 Orim's Chant"
+    ],
+    "out": [
+     "4 Overlord of the Balemurk",
+     "3 Ephemerate",
+     "1 Thraben Inspector"
+    ]
+   },
+   "self_cost": "Wrath of the Skies destroys each artifact, creature and enchantment at or under the energy paid, not creatures only, and our half of that exchange is large. At two energy their side loses Devoted Druid, Vizier of Remedies, Badgermole Cub, Delighted Halfling, Birds of Paradise, Fiend Artisan, Duskwatch Recruiter, Quirion Ranger, Agatha's Soul Cauldron and any Vexing Bauble they boarded; ours loses Martyr of Sands, Serra Ascendant, Kami of False Hope, Thraben Inspector and all four Phelia, which are {1}{W}. Kami of False Hope is the loss that matters - it is the fog on a Craterhoof Behemoth swing, and Starfield Shepherd is the only way to get another. Three energy adds nothing of theirs that two did not already take except Tyvar, Jubilant Brawler and Shang-Chi, Master of Kung Fu, and costs us Skyclave Apparition, Flickerwisp, Enduring Innocence and Abiding Grace - and Abiding Grace's end-step return of a mana-value-1 creature is what makes the two-energy exchange recoverable at all, which is why it stays in the deck here and the sweeper is never cast at three. Our only energy source is the Wrath itself, so nothing tops X up between copies; unspent energy does bank."
+  },
+  {
+   "name": "amulet titan",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "White Orchid Phantom destroys the bounce land or Boseiju the whole engine runs through, and High Noon caps a deck whose turns are four and five spells long; neither is a card the maindeck holds.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 3,
+     "why": "ten of ten boards, three copies in five of them, and the hardest card in the field for this 75: as long as it is untapped, each spell that would cost less than three mana costs three. That is sixteen mainboard cards once this row cuts the Thraben Inspector - four Phelia, four Serra Ascendant, four Martyr of Sands, three Ephemerate and the Kami of False Hope - plus the five cards this row boards in, three White Orchid Phantom at {W}{W} and two High Noon at {1}{W}, which between them are the whole disruption plan this matchup rests on. Orim's Chant, Sanctifier en-Vec and Thraben Charm are never in this 60 and are not part of the count. Worse still, all three alternative costs the deck is built on: Starfield Shepherd's warp {1}{W}, Overlord of the Balemurk's impending {1}{B} and - the largest of them - Solitude's evoke, which is free on four copies and becomes {3}.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Dismember",
+     "count": 2,
+     "why": "two copies in every one of the ten boards. One mana plus four life kills White Orchid Phantom or a Serra Ascendant that has not crossed 30 yet.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "ten of ten boards, two copies in six of them. Free for one green card exiled on our turn, and it destroys both Abiding Grace at once.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Keen-Eyed Curator",
+     "count": 1,
+     "why": "nine of ten boards - one copy in five of them, two in the other four. A {G}{G} Green Sun's Zenith target whose '{1}: Exile target card from a graveyard' is aimed at the Abiding Grace loop.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Six",
+     "count": 1,
+     "why": "one copy in nine of ten boards. A 2/4 reach body walls the small half of the flying clock - Flickerwisp at 3/1 and Starfield Shepherd at 3/2 both die to it, and White Orchid Phantom at 2/2 with first strike is a stand-off rather than a trade - but not Serra Ascendant, which is a 6/6 flier once we are at 30 or more life, and this 75 is built to get there, so it kills the Six and lives. The half that matters more is 'during your turn, nonland permanent cards in your graveyard have retrace', which lets a milled or destroyed Amulet of Vigor or Spelunking be recast for a discarded land, and their own Malevolent Rumble, Aftermath Analyst and the Six's own attack trigger keep stocking it.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A hasty Primeval Titan is six trample on the turn it lands and fetches two more lands as it attacks, so the board runs away from a single Martyr activation within a turn.",
+    "key_cards": [
+     {
+      "card": "Primeval Titan",
+      "why": "six trample damage on the turn it lands if they have assembled haste - a fetched Hanweir Battlements untapped by Amulet of Vigor, plus {R} from a Gruul Turf - and the attack trigger fetches two more lands before we untap."
+     },
+     {
+      "card": "Amulet of Vigor",
+      "why": "the card that turns a bounce land into acceleration rather than a tempo loss, and one of the two reasons a Titan-fetched land is usable on the turn it arrives - Primeval Titan puts them onto the battlefield tapped. Four Spelunking are the other, and they need no untap step at all."
+     },
+     {
+      "card": "Boseiju, Who Endures",
+      "why": "channelled from hand for {1}{G} it destroys our Abiding Grace, our High Noon or a nonbasic; three maindeck copies in every one of the ten lists, and six of ten boards add a fourth, so post-board it is four in a majority. The copy Primeval Titan puts onto the battlefield cannot do any of that - channel is a discard from hand - and it is a Legendary Land with no basic land type that taps for {G}, not a Forest."
+     },
+     {
+      "card": "Urza's Saga",
+      "why": "four maindeck copies in all ten lists. Chapter III tutors Amulet of Vigor at mana cost {1} straight onto the battlefield, and it is a nonbasic land, so it is a fourth thing White Orchid Phantom is happy to destroy. Chapter II is the smaller half in this matchup: the token is a 0/0 that gets +1/+1 for each artifact they control and it counts itself, and Amulet of Vigor is the only nonland artifact in any of the ten maindecks, so it is a 1/1 alone and a 2/2 beside an Amulet. Each one costs {2} and taps the Saga, so it is one a turn, and White Orchid Phantom is a 2/2 with first strike."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "White Orchid Phantom",
+     "verdict": "SURVIVES",
+     "why": "Dismember answers it, but the land is already destroyed when it enters; two Dismember against three Phantom plus Phelia and Ephemerate rebuying them is not enough."
+    },
+    {
+     "card": "High Noon",
+     "verdict": "SURVIVES",
+     "why": "one to three Force of Vigor in ten of ten recorded boards and three maindeck Boseiju, Who Endures in ten of ten - a fourth from the board in six of ten - both answer it. The Force costs a green card from a hand they need for the combo turn and is only free off-turn; the Boseiju channel is {1}{G} from hand at any time and destroys an enchantment, so it is the answer that is always live. Their Trinisphere also taxes the Noon itself to three. Assume it buys one turn, not the game."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and White Orchid Phantom, or two lands and Kami of False Hope.",
+    "goldfish_for": "Phantom on their bounce land turn two, High Noon turn three, then a Serra clock.",
+    "watch_for": "Amulet of Vigor with two untapped means the Titan is coming a turn earlier than it looks.",
+    "posture": "disrupt_first",
+    "posture_why": "a hasty Primeval Titan is six trample and two more lands before we untap, so the second attack is the lethal one and there is only one turn to answer it."
+   },
+   "play": {
+    "in": [
+     "3 White Orchid Phantom",
+     "2 High Noon"
+    ],
+    "out": [
+     "2 Enduring Innocence",
+     "2 Overlord of the Balemurk",
+     "1 Thraben Inspector"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 White Orchid Phantom",
+     "2 High Noon"
+    ],
+    "out": [
+     "2 Enduring Innocence",
+     "2 Overlord of the Balemurk",
+     "1 Thraben Inspector"
+    ]
+   }
+  },
+  {
+   "name": "hollow one",
+   "meta_share": 2.321347291761493,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Thraben Charm exiles the graveyard their whole engine returns from, at instant speed and for two mana: one card against however many Vengevine and Detective's Phoenix are in the yard when it resolves - Vengevine is maindeck in eight of ten lists, the Phoenix in ten of ten. It is one shot per copy and their eight discard outlets refill the yard afterwards, so it is a timing card and not a lock. The maindeck does answer a returned Vengevine - four Solitude exile it at instant speed for no mana, and two Skyclave Apparition exile it at mana value 4 - and exile is permanent, because the recursion trigger returns it from the graveyard. Those answer one permanent each and the Apparition hands its owner a 4/4 Illusion when it leaves. Sanctifier en-Vec is the 75's other graveyard answer and the better one on paper - the replacement effect exiles every black or red card before it reaches a yard at all, which is most of their engine - but it is declined here, because the two cards this row loses to are the two it does not touch: Hollow One is colorless in ten of ten lists and Vengevine is green in eight of ten.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Surgical Extraction",
+     "count": 3,
+     "why": "eight of ten recorded boards, castable for two life with no black source, and it takes all four copies of whatever it names - Martyr of Sands or Serra Ascendant - out of the library and hand, not just the graveyard.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Wear / Tear",
+     "count": 2,
+     "why": "the Tear half answers Abiding Grace, Enduring Innocence's enchantment half or an impending Overlord of the Balemurk for one mana at instant speed. All three are live on this row - two of the four Overlords stay in - and it is in six of ten boards.",
+     "source_tournament_id": "53907faa-fb26-4be5-aa36-6aa17db3a33a"
+    },
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "it never gets its discount - the reduction counts lands that could produce {C} and none of our twenty-two can - but at the full {3}{R}{R} it still destroys one of our thirteen nonbasics on arrival. Six of ten boards.",
+     "source_tournament_id": "53907faa-fb26-4be5-aa36-6aa17db3a33a"
+    },
+    {
+     "card": "Lightning Bolt",
+     "count": 1,
+     "why": "seven of ten boards bring more of it: three damage kills Martyr of Sands, a Serra Ascendant short of 30, Phelia, Flickerwisp and Solitude.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Leyline of the Void",
+     "count": 4,
+     "why": "a replacement effect that exiles our cards on the way to the graveyard rather than emptying one, so from an opening hand it blanks Abiding Grace and Emeria before the Charm is ever relevant. Three of ten boards.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two board of two Hollow One and a Vengevine is twelve power, which kills through Martyr of Sands before the Abiding Grace loop is online.",
+    "key_cards": [
+     {
+      "card": "Vengevine",
+      "why": "returns from the graveyard for free whenever they cast two creatures, so removal does not reduce their board."
+     },
+     {
+      "card": "Hollow One",
+      "why": "costs {2} less for each card cycled or discarded this turn, so it is free on the third one, not the second - one Burning Inquiry does it alone and one Faithless Looting does not. That is how the turn-two board happens at all."
+     },
+     {
+      "card": "Detective's Phoenix",
+      "why": "bestowed out of the graveyard for {R} plus six mana value of exiled cards, so the graveyard is a resource they refill rather than spend."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "an instant that is never a permanent, so nothing they bring in answers it. What beats it is a Leyline of the Void or a Surgical Extraction resolving first: the Charm is one shot per copy and their graveyard refills every turn off eight discard outlets."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Thraben Charm, or Kami of False Hope with a mana-value-1 recursion engine.",
+    "goldfish_for": "Charm their graveyard after the first Vengevine returns, then fog and stabilise.",
+    "watch_for": "Burning Inquiry on turn one means the turn-two board is coming - do not spend the Charm early.",
+    "posture": "disrupt_first",
+    "posture_why": "their board comes back for free from the graveyard."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "1 Thraben Inspector"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk",
+     "1 Thraben Inspector"
+    ]
+   }
+  },
+  {
+   "name": "boros energy",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Wrath of the Skies is the only card in the 75 that answers a board of one-drops that has already gone wide, and it answers ours at the same setting.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "at X=1 it takes our ten mana-value-1 creatures and their own Ocelot Pride, Guide of Souls and Ragavan with them, so it is the card they cast from behind rather than from ahead. Their X is a floor rather than a cap: energy is banked, and four Guide of Souls collect {E} on every creature that enters while four Galvanic Discharge hand them three at a time, so they may pay more than the X they announced. Ours is a hard cap - nothing in the 75 makes energy.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Clarion Conqueror",
+     "count": 1,
+     "why": "activated abilities of artifacts, creatures and planeswalkers cannot be activated: Martyr of Sands, Kami of False Hope and the Thraben Inspector Clue. The single most damaging card they can draw, though only three of ten boards carry it and each at one copy - Solitude and Skyclave Apparition both answer it.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Obsidian Charmaw",
+     "count": 3,
+     "why": "nine of ten boards at two to four copies, more total copies than any other card in their board, though Wear / Tear and Wrath of the Skies are each in all ten. It destroys a nonbasic on arrival and we have thirteen; it costs {1} less for each land we control that could produce {C}, and none of ours can, so it always costs the full {3}{R}{R}, which is the only thing keeping it honest.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Wear / Tear",
+     "count": 2,
+     "why": "ten of ten boards at one or two copies, and it reaches two card types, artifact and enchantment. One mana at instant speed on the Tear half destroys Abiding Grace, Enduring Innocence or an Overlord of the Balemurk - all three are enchantments, so one type between them.",
+     "source_tournament_id": "a334e910-26e0-49e0-a66f-a4160475f360"
+    },
+    {
+     "card": "Rest in Peace",
+     "count": 2,
+     "why": "exiles our graveyard and keeps it empty, which blanks Abiding Grace and Emeria, the Sky Ruin permanently. Three of ten boards carry it, at one, two and two copies.",
+     "source_tournament_id": "a334e910-26e0-49e0-a66f-a4160475f360"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "eight of ten boards, two copies in seven of them. One spell a turn hurts the deck deploying two one-drops a turn more than the deck casting one three-drop. It is not unanswerable: High Noon is {1}{W} and mana value 2, so the two maindeck Skyclave Apparition exile it and the boarded Wrath of the Skies destroys it at X of 2 or more.",
+     "source_tournament_id": "a334e910-26e0-49e0-a66f-a4160475f360"
+    },
+    {
+     "card": "Surgical Extraction",
+     "count": 2,
+     "why": "nine of ten boards at one or two copies. It costs {B/P}, payable with two life, so a deck with no black mana casts it freely. It names a card in a graveyard and exiles every other copy from that player's graveyard, hand and library - the first Martyr of Sands or Serra Ascendant that reaches the graveyard can cost us the other three.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "eight of ten boards at one to three copies. Whenever a player casts a spell, if no mana was spent to cast it, counter that spell - which is our evoked Solitude. It is not free for them: two of the ten lists play a single maindeck Solitude of their own, and both of those lists are among the eight that board two Vexing Bauble.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Guide of Souls gains them a life on every creature that enters, tokens included, so the lifegain race we normally win is the one they are also playing.",
+    "key_cards": [
+     {
+      "card": "Guide of Souls",
+      "why": "gains them a life whenever another creature enters, tokens included, which is the card that makes Martyr of Sands a draw rather than a win."
+     },
+     {
+      "card": "Goblin Bombardment",
+      "why": "a free sacrifice outlet that turns every Ocelot Pride token into direct damage, so blocking and lifelink both stop mattering."
+     },
+     {
+      "card": "Ocelot Pride",
+      "why": "goes wide on tokens, which is why a single sweeper matters more than a single removal spell."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Wrath of the Skies",
+     "verdict": "SURVIVES",
+     "why": "not on the grounds that nothing interacts with a sorcery. One to three maindeck Ranger-Captain of Eos in nine of ten lists sacrifice for free at instant speed and stop us casting a noncreature spell for the turn, which is exactly this card, and one to two High Noon in eight of ten boards hold us to one spell on the turn we want the sweeper plus a follow-up. They are not free of counterspells either: Mana Tithe is maindeck in four of the ten lists, one copy in two of them and two in the other two, and 'counter target spell unless its controller pays {1}' is a real tax on a four-mana sorcery cast off a 22-land deck. Cast it with a second white source up so a sacrificed Ranger-Captain costs a turn rather than the game."
+    },
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "protection from red means Galvanic Discharge and Goblin Bombardment cannot damage it and no red creature blocks it profitably. Their answers are white and maindeck: a Static Prison in ten of ten lists exiles it for one mana, and two or three Thraben Charm in ten of ten deal twice their creature count, which on their board is more than two. Their boarded Wrath of the Skies takes it at X of two or more. It is a blocker they have to spend a real card on, not one they cannot answer."
+    }
+   ],
+   "play_plan": {
+    "keep": "Any two lands with Martyr of Sands, or two lands with Sanctifier en-Vec after boarding.",
+    "goldfish_for": "Martyr of Sands on turn two revealing three white cards, then Abiding Grace on it.",
+    "watch_for": "Clarion Conqueror turns Martyr of Sands off entirely, and Kami of False Hope and the Clue with it - Solitude exiles it and Skyclave Apparition exiles it at mana value 3.",
+    "posture": "grind",
+    "posture_why": "Guide of Souls means we cannot simply out-gain them."
+   },
+   "play": {
+    "in": [
+     "3 Wrath of the Skies",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "3 Ephemerate",
+     "2 Overlord of the Balemurk"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Wrath of the Skies",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "3 Ephemerate",
+     "2 Overlord of the Balemurk"
+    ]
+   },
+   "self_cost": "Wrath of the Skies destroys each artifact, creature and enchantment with mana value at or under the energy paid, not creatures only. At X=1 it takes their Ocelot Pride and Guide of Souls and the one maindeck Static Prison every list runs, and our own Serra Ascendant, Martyr of Sands, Kami of False Hope and Thraben Inspector with them - ten of our cards for four or five of theirs. X=2 adds their Goblin Bombardment at {1}{R} and any High Noon they have boarded - and, on our side, all four Phelia and both Sanctifier en-Vec, which are {W}{W} and so mana value 2. That is six of our own permanents for two of theirs, and one of the six is the Sanctifier this row boards in and gives a SURVIVES verdict to. X=3 is worse still: Abiding Grace and Enduring Innocence are both mana value 3, and the Abiding Grace end-step return is what makes the exchange survivable rather than fatal. So X=1 is the setting to want here, X=2 only with no Sanctifier on the battlefield to lose, and X=3 never. Our only energy source is the Wrath itself, so nothing tops the X up between sweepers - though unspent {E} from the first one does bank for the second, which is the only way our X ever exceeds what we paid. Theirs is topped up every turn by four Guide of Souls and four Galvanic Discharge."
+  },
+  {
+   "name": "pinnacle affinity",
+   "meta_share": 2.6399635867091487,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Their board goes both wide and tall on turn three, so an X sweeper is the only card that answers it. White Orchid Phantom is not there to stop the Saga rebuilding after the sweeper - the sweeper destroys the Saga too - it is there because Wrath is a four-mana sorcery and the Saga has tutored and sacrificed itself by turn three, which is one turn earlier than we can sweep.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "three or four copies in eight of ten recorded boards: one mana counters the White Orchid Phantom land destruction and the Skyclave Apparition exile, both of which are enters triggers. Wrath of the Skies is a white spell, so the Consign does not stop the sweeper - Metallic Rebuke taxes it by {3} instead, and it is in all ten lists, so the sweeper resolves on the turn we can pay seven mana or on the turn they cannot hold the improvise mana up.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Galvanic Blast",
+     "count": 3,
+     "why": "four damage with metalcraft, which is always on here: it kills every creature in our mainboard except Overlord of the Balemurk and a Serra Ascendant past 30 life, both 5/5 or larger. Sanctifier en-Vec's protection from red would blank it, and it is not boarded in this matchup. Ten of ten boards.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Whipflare",
+     "count": 2,
+     "why": "two damage to each nonartifact creature is one-sided in a matchup where their board is artifacts and ours is not. Seven of ten boards.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Blood Moon",
+     "count": 1,
+     "why": "thirteen of our twenty-two lands become Mountains, which is every white source but the nine Plains and stops the fetchlands fetching. Six of ten boards.",
+     "source_tournament_id": "0f9a2b49-95b9-409d-bfe7-d330656b12d2"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 1,
+     "why": "counters a spell cast for no mana. Post-board that is the evoked Solitude and nothing else - this row boards all three Ephemerate out, so the rebound copy is not exposed here. It is symmetric and it is not free for them: four Mox Opal and four Mishra's Bauble in ten of ten maindecks and one to four Welding Jar in ten of ten all cost {0}, as does the Memnite in the one list that plays it, so their own Bauble counters every one of them. That is a reason to let it resolve rather than a reason to fear it. Nine of ten boards, one copy each, and it replaces itself.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Kappa Cannoneer is unblockable on any turn an artifact enters and Weapons Manufacturing converts the rest of the board into direct damage, so neither blocking nor a sweeper buys the turns we need.",
+    "key_cards": [
+     {
+      "card": "Urza's Saga",
+      "why": "a land that makes a scaling Construct on chapter II and tutors an artifact of mana cost {0} or {1} on chapter III, then sacrifices itself. It is an Enchantment Land with no mana cost, so it is mana value 0 and our own Wrath of the Skies destroys it at any X - what it has already tutored is what survives the sweeper, not the Saga."
+     },
+     {
+      "card": "Metallic Rebuke",
+      "why": "{2}{U} with improvise, so on a board of four Mox Opal and four Mishra's Bauble it is close to free. It is a tax and not a hard counter - 'counter target spell unless its controller pays {3}' - so what it changes is the turn we sweep rather than whether we can: X=2 is four mana and paying through the Rebuke is seven. It is in all ten recorded lists, maindeck in seven of them."
+     },
+     {
+      "card": "Kappa Cannoneer",
+      "why": "mana value 6 with ward {4}, and it grows and becomes unblockable on every artifact that enters - out of Skyclave Apparition's range and out of Wrath of the Skies at any X worth paying."
+     },
+     {
+      "card": "Weapons Manufacturing",
+      "why": "every nontoken artifact makes a Munitions token that deals 2 when it leaves, and three Claws of Gix sacrifice them at will, so their reach does not need an attack step."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Wrath of the Skies",
+     "verdict": "SURVIVES",
+     "why": "conditional on the counterspell, not on the targets. At X=2 it takes every Construct, Drone and Munitions token, Mox Opal, Mishra's Bauble, Welding Jar, Claws of Gix, Tormod's Crypt, Weapons Manufacturing and Urza's Saga, which is an Enchantment Land with no mana cost and so mana value 0; Kappa Cannoneer at mana value 6 and Pinnacle Emissary at 3 need a bigger X than we can pay. The Munitions tokens are the part that bites back: three or four Weapons Manufacturing in nine of the ten maindecks make one per nontoken artifact that enters, each reads 'when this token leaves the battlefield, it deals 2 damage to any target', and mana value 0 means every X destroys all of them, so resetting a normal turn-three board hands them six to eight damage. What taxes it is Metallic Rebuke - two or three copies maindeck in seven of ten lists, one to three boarded in five, so it is in all ten - which is 'counter target spell unless its controller pays {3}' rather than a hard counter, and improvise on four Mox Opal and four Mishra's Bauble makes it close to free for them. Paying through it is seven mana for X=2 instead of four, so what it changes is the turn we sweep rather than whether we can. Two Swan Song, two Force of Negation and one Flusterstorm follow it out of the board. Sweep into an untapped blue source only when the alternative is losing to the attack."
+    },
+    {
+     "card": "White Orchid Phantom",
+     "verdict": "SURVIVES",
+     "why": "Galvanic Blast in ten of ten boards answers the body, and destroying an Urza's Saga before its third chapter is worth the removal spell - the sweeper answers a Saga too, at mana value 0, but not until turn four. Two counterspells sit in front of it: Consign to Memory in eight of ten boards counters the land-destruction trigger for one mana and leaves us a 2/2, and Metallic Rebuke taxes the Phantom by {3} rather than countering it outright, which off two open mana is the same thing. Cast it into their tapped-out turn, not on curve."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and Wrath of the Skies, or two lands and White Orchid Phantom.",
+    "goldfish_for": "Phantom on Urza's Saga turn two, Wrath of the Skies at X=2 on turn four; {2}{W}{W} is four mana.",
+    "watch_for": "Whipflare is one-sided against us - do not hold a fifth creature back for value.",
+    "posture": "disrupt_first",
+    "posture_why": "their turn-three board is lethal and rebuilds itself."
+   },
+   "play": {
+    "in": [
+     "3 Wrath of the Skies",
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "3 Ephemerate",
+     "2 Overlord of the Balemurk",
+     "1 Kami of False Hope"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Wrath of the Skies",
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "3 Ephemerate",
+     "2 Overlord of the Balemurk",
+     "1 Kami of False Hope"
+    ]
+   },
+   "self_cost": "Wrath of the Skies at X=2 takes every Construct, Drone and Munitions token, Mox Opal, Mishra's Bauble, Welding Jar, Claws of Gix, Pithing Needle, Tormod's Crypt, Weapons Manufacturing - and Urza's Saga, which is an Enchantment Land with no mana cost and so mana value 0. The Munitions tokens are the half of this exchange that bites back. Weapons Manufacturing is three or four copies in nine of the ten maindecks and makes one token per nontoken artifact that enters, and each token reads 'when this token leaves the battlefield, it deals 2 damage to any target'. They are mana value 0, so our own sweeper destroys all of them at any X and every one of them then points 2 at us: three or four tokens on a normal turn-three board is six to eight damage handed over on the turn we reset, which in a race is the whole question. The sweeper is the answer to the Saga; the Phantom is only the earlier one. One Welding Jar sacrificed in response regenerates a single artifact through it, and cannot save the Saga, which is a land and not an artifact. It takes sixteen of our own permanents with them: four Serra Ascendant, four Martyr of Sands, four Phelia, the Thraben Inspector and - the trap in this row - all three White Orchid Phantom, which are {W}{W} and therefore mana value 2. A Thraben Inspector Clue is a mana-value-0 artifact and dies too. Not Kami of False Hope, which this row boards out. Losing the Phantoms is acceptable only because their work is already done when they enter: the land is destroyed on the enters trigger and the 2/2 body is collateral, so cast the Phantom first and sweep afterwards, never the other way round. It leaves Kappa Cannoneer at mana value 6 and Pinnacle Emissary at 3, and Skyclave Apparition at mana value 3 survives on our side. The recursion does not pay for this exchange and must not be counted on to: three or four maindeck Tormod's Crypt in ten of ten lists turn Abiding Grace and Emeria off in game one, so what we are actually trading is a board that does not come back for one they rebuild out of hand off four Mox Opal and whatever the Saga has already tutored."
+  },
+  {
+   "name": "esper control",
+   "meta_share": 2.3668639053254434,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "White Orchid Phantom attacks a three-colour manabase that runs only three basics, on a body Phelia and Ephemerate rebuy for a second and third land - the one angle a removal-heavy control deck answering one threat a turn cannot grind back.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "three in the board, and it sweeps our go-wide one-drop board for two energy: Serra Ascendant, Martyr of Sands, Kami of False Hope and Phelia all die to X=1, and every creature it exiles is one Abiding Grace cannot return.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "creature cards in graveyards cannot enter the battlefield, so Abiding Grace and Emeria, the Sky Ruin both stop returning Martyr of Sands - one artifact that shuts the recursion loop off.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Fatal Push",
+     "count": 1,
+     "why": "a second cheap answer to a Serra Ascendant before it crosses 30 life or to a Martyr of Sands, one mana in a matchup they want to keep cheap.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Every removal spell they cast exiles a card and draws them one off Ketramose, so they win long games on attrition while our graveyard engine has nothing left to recur.",
+    "key_cards": [
+     {
+      "card": "Ketramose, the New Dawn",
+      "why": "indestructible with menace and lifelink, and every card their exile removal sends away on their own turn draws them one; our removal cannot answer it once it resolves."
+     },
+     {
+      "card": "Relic of Progenitus",
+      "why": "four maindeck copies that both feed Ketramose and exile our graveyard at instant speed, so Abiding Grace and Emeria, the Sky Ruin have nothing to return."
+     },
+     {
+      "card": "Prismatic Ending",
+      "why": "exiles a nonland permanent for its colours, so a Serra Ascendant, a Phelia or a resolved White Orchid Phantom is gone rather than dead in a graveyard we can rebuy."
+     },
+     {
+      "card": "Solitude",
+      "why": "free evoked exile removal on our threats, four copies maindeck, and Ephemerate rebuys it - exile, not death, so the creature never reaches the yard."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "White Orchid Phantom",
+     "verdict": "SURVIVES",
+     "why": "the land destruction is an enters trigger, paid the moment it resolves, and Grafdigger's Cage does not stop a creature entering from hand. The body is answered one-for-one - Solitude, Prismatic Ending and Fatal Push all exile or kill it - so cast it for the land and treat the 2/2 as collateral, never as the clock."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and White Orchid Phantom, or a threat that dodges Prismatic Ending; a lifegain-only hand loses to a maindeck Relic.",
+    "goldfish_for": "Phantom on their dual or fetch, blink it with Phelia for a second land, then a Serra Ascendant clock.",
+    "watch_for": "A maindeck Relic cracked at instant speed empties the yard - do not lead on Abiding Grace into it.",
+    "posture": "grind",
+    "posture_why": "their removal exiles one threat a turn and our engine grinds back on bodies, not the graveyard."
+   },
+   "play": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "1 Ephemerate"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "1 Ephemerate"
+    ]
+   }
+  },
+  {
+   "name": "esper goryo",
+   "meta_share": 2.093764223941739,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Sanctifier en-Vec's replacement effect exiles Atraxa instead of letting it reach the graveyard, which turns off Goryo's Vengeance's only target, and Thraben Charm answers the graveyard at instant speed on the turn they commit; neither costs our own plan anything. The pulled 75s for this label run the same core as the instant reanimator row - four Goryo's Vengeance, four Atraxa, Grand Unifier, four Solitude, four Ephemerate, three or four Thoughtseize - so the same package applies.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one blue mana with replicate, countering a triggered ability; ten of ten pulled boards, three or four copies in most of them. Solitude, Flickerwisp, Starfield Shepherd, Overlord of the Balemurk and the Abiding Grace end-step return are all triggers.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "X sweeper; ten of ten pulled boards at two or three copies. At X=1 it takes eight of our post-board cards - four Serra Ascendant and four Martyr of Sands - against nothing of theirs unless a Nihil Spellbomb is out.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 1,
+     "why": "one mana, no colour requirement, exiles our graveyard at instant speed: Abiding Grace and Emeria, the Sky Ruin then have nothing to return. Nine of ten pulled boards.",
+     "source_tournament_id": "9b8f8659-13ec-4146-994e-639f809a44a4"
+    },
+    {
+     "card": "Teferi, Time Raveler",
+     "count": 1,
+     "why": "each opponent can cast spells only when they could cast a sorcery, which turns off Thraben Charm on their combo turn, Orim's Chant on their upkeep and Ephemerate in response to removal. Nine of ten pulled boards.",
+     "source_tournament_id": "1ce5fb7b-6546-42ef-a0f4-4c7b1d39c3c8"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "ten of ten pulled boards. Its {2} discount only applies to a blue spell, so against our white 75 it is a full {2}{U} - and it still counters Sanctifier en-Vec or Thraben Charm unless we pay {3}.",
+     "source_tournament_id": "2c9f7ef6-1382-4cee-9bbb-10d882a1d1d4"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Goryo's Vengeance returns Atraxa on turn two or three, and a 7/7 flier kills through 30 life faster than Martyr of Sands can rebuild it.",
+    "key_cards": [
+     {
+      "card": "Goryo's Vengeance",
+      "why": "instant-speed two-mana reanimation, which is what makes the kill turn two or three rather than turn seven."
+     },
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "the payoff body: its enters trigger refuels them on the same turn the clock starts, so racing it is not an option."
+     },
+     {
+      "card": "Solitude",
+      "why": "four copies maindeck in most of the pulled lists, answering a resolved Sanctifier en-Vec for no mana."
+     },
+     {
+      "card": "Ephemerate",
+      "why": "rebuys the Atraxa trigger and dodges our Solitude, so one answer does not stop the fast draw."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "the replacement effect exiles Atraxa instead of letting it reach the graveyard, so Goryo's Vengeance has no target. Not a lock: Solitude in nine of ten pulled lists at three or four copies exiles it for free the turn it lands, Prismatic Ending at two colours reaches mana value 2, and Thoughtseize takes it from hand before any of that."
+    },
+    {
+     "card": "Thraben Charm",
+     "verdict": "SURVIVES",
+     "why": "an instant that exiles their graveyard in response to Goryo's Vengeance targeting; it is never a permanent, so nothing in their board that answers permanents touches it."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands plus Thraben Charm or Sanctifier en-Vec; a hand of only lifegain loses on turn three.",
+    "goldfish_for": "Sanctifier en-Vec on two, then Martyr of Sands with four white cards in hand.",
+    "watch_for": "Two open black mana with a full graveyard is the Goryo's turn - hold the Charm.",
+    "posture": "disrupt_first",
+    "posture_why": "we cannot race a turn-three Atraxa."
+   },
+   "play": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "2 Skyclave Apparition",
+     "1 Ephemerate"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Thraben Charm",
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "1 Kami of False Hope",
+     "1 Thraben Inspector",
+     "2 Skyclave Apparition",
+     "1 Ephemerate"
+    ]
+   }
+  },
+  {
+   "name": "45c aggro",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Sanctifier en-Vec's protection from red blanks every burn spell in the pulled 75s - Lightning Bolt and Tribal Flames - and no red creature blocks it profitably, on a body Phelia and Ephemerate rebuy; it costs our own plan nothing.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "ten of ten pulled boards. Its {2} discount only applies to a blue spell, so against our white 75 it is a full {2}{U} counter on Sanctifier en-Vec or Thraben Charm unless we pay {3}.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "ten of ten pulled boards. A 4/4 flier that destroys one of our thirteen nonbasics on arrival; its cost reduction counts lands that could produce {C}, and none of ours can, so it is always the full {3}{R}{R}.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 2,
+     "why": "ten of ten pulled boards. One mana with replicate, countering a triggered ability - Solitude, Flickerwisp, Starfield Shepherd, Overlord of the Balemurk and the Abiding Grace end-step return.",
+     "source_tournament_id": "7c483d49-5fb1-417c-9a4d-7f9f66f8505e"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "ten of ten pulled boards. At low X it sweeps Ragavan, Nimble Pilferer and their own Territorial Kavu (mana value 2) as readily as it sweeps ours - though not a resolved Scion of Draco, whose mana value is 12 whatever the domain reduction let them pay (CR 202.3) - so it is a card they hold rather than lead with.",
+     "source_tournament_id": "db6a0b32-ddac-4e71-81ba-004f6029881a"
+    },
+    {
+     "card": "Rest in Peace",
+     "count": 1,
+     "why": "nine of ten pulled boards. Exiles our graveyard and keeps it empty, which blanks Abiding Grace and Emeria, the Sky Ruin permanently.",
+     "source_tournament_id": "9b8f8659-13ec-4146-994e-639f809a44a4"
+    },
+    {
+     "card": "Containment Priest",
+     "count": 2,
+     "why": "seven of ten pulled boards. Flash 2/2 that exiles a nontoken creature entering that was not cast, so an Abiding Grace or Emeria return is exiled instead of resolving.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Ragavan, Nimble Pilferer on turn one and a domain manabase that turns Territorial Kavu and Scion of Draco into efficient bodies with keyword upside, backed by four Lightning Bolt, means the clock starts before our engine is online.",
+    "key_cards": [
+     {
+      "card": "Ragavan, Nimble Pilferer",
+      "why": "\"Whenever Ragavan deals combat damage to a player, create a Treasure token and exile the top card of that player's library. Until end of turn, you may cast that card.\" A turn-one clock that also generates card and mana advantage every hit."
+     },
+     {
+      "card": "Territorial Kavu",
+      "why": "\"Territorial Kavu's power and toughness are each equal to the number of basic land types among lands you control.\" A domain manabase of fetches and shocks routinely makes this a 4/4 or 5/5 for two mana."
+     },
+     {
+      "card": "Leyline of the Guildpact",
+      "why": "\"Lands you control are every basic land type in addition to their other types.\" One card turns every land into all five basic types, which is what powers Territorial Kavu, Scion of Draco and Leyline Binding's cost reduction at once, and it can start the game on the battlefield if opened in hand."
+     },
+     {
+      "card": "Leyline Binding",
+      "why": "\"Domain - This spell costs {1} less to cast for each basic land type among lands you control. When this enchantment enters, exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.\" A four- or five-domain hand casts this for one or two mana, and it is their answer to Sanctifier en-Vec or a Serra Ascendant."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Sanctifier en-Vec",
+     "verdict": "SURVIVES",
+     "why": "protection from red blanks Lightning Bolt and Tribal Flames, and no red creature blocks it profitably. It is not immune to everything: Leyline Binding is white-costed and exiles it outright regardless of protection, and their boarded Wrath of the Skies destroys it at X of 2 or more. Deploy it when they are not holding up a domain-reduced Leyline Binding."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a way to interact by turn two; no play before turn three loses to Ragavan alone.",
+    "goldfish_for": "Sanctifier en-Vec on turn two before their fourth land - wider domain only makes Leyline Binding cheaper.",
+    "watch_for": "A resolved Leyline of the Guildpact means Kavu and Scion are bigger than land count suggests.",
+    "posture": "disrupt_first",
+    "posture_why": "Ragavan starts the clock turn one, before Martyr of Sands matters."
+   },
+   "play": {
+    "in": [
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Sanctifier en-Vec"
+    ],
+    "out": [
+     "2 Overlord of the Balemurk"
+    ]
+   }
+  }
+ ],
+ "sideboard_audit": [
+  {
+   "card": "White Orchid Phantom",
+   "copies": 3,
+   "matchups_served": [
+    "eldrazi ramp",
+    "dimir control",
+    "esper blink",
+    "amulet titan",
+    "pinnacle affinity",
+    "esper control"
+   ],
+   "cumulative_meta_share": 19.7997,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The mana attack this shell does not otherwise have, on a body the rest of the deck already knows what to do with: a 2/2 first-strike flier that Phelia and Ephemerate rebuy for a second and third land. It is boarded against every recorded matchup whose lands do more than produce mana - urzatron's Urza lands, eldrazi ramp's Eldrazi Temple and Ugin's Labyrinth, amulet titan's bounce lands and Boseiju, pinnacle affinity's Urza's Saga, and the two- and three-colour manabases of dimir control, esper blink and esper control. urzatron is the only Tron deck of the seven. The compensation clause is why this is not a Stone Rain and also why it is better than one: they may search a basic and it enters tapped, so they keep a land but never that land. A basic does not assemble Tron, does not make the {C}{C} an Eldrazi Temple makes for colorless Eldrazi, is not a bounce land for an Amulet of Vigor to untap into two mana, and replaces one colour where the land it took was covering two or three. Running the basics out is the smaller half of the card and bites only where they are few - pinnacle affinity at two in eight of ten, urzatron at one or two in nine of ten, the tenth running six Islands and never running out. eldrazi ramp, amulet titan, dimir control, esper blink and esper control hold three to five, so there it is always the land taken that matters and never the search. urzatron left the field this pass; the remaining six rows still clear the versatile bar comfortably."
+  },
+  {
+   "card": "Thraben Charm",
+   "copies": 3,
+   "matchups_served": [
+    "instant reanimator",
+    "living end",
+    "reanimator",
+    "devoted combo",
+    "creatures toolbox",
+    "hollow one",
+    "esper goryo"
+   ],
+   "cumulative_meta_share": 21.0742,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Two mana at instant speed for graveyard exile against the four recursion decks - cast with the cascade trigger or the Persist on the stack rather than on an empty yard - and for the enchantment mode against both halves of the one green combo deck the field records under two labels, where four Leyline of Abundance in ten of ten recorded lists are the accelerant that gets Devoted Druid and Vizier of Remedies down a turn early. It replaces the boros ponza row this pass retired at 1.72pp; the mode that row was boarded for was the same one, aimed at Rest in Peace instead. The damage mode is the third use and the reason it is not a dead draw on an empty graveyard: damage equal to twice the creatures we control kills a 0/2 Devoted Druid or a 2/1 Vizier of Remedies off a single body, though Crystal Barricade in ten of ten devoted combo boards prevents it reaching anything except the Barricade. It is never a permanent, so it is the one piece of interaction in the board that Force of Vigor, Foundation Breaker and Meltdown are all blank against. This pass drops goryos vengeance from the field and adds esper goryo in its place - the same graveyard-reanimation shell under a different label, so the card's role is unchanged."
+  },
+  {
+   "card": "High Noon",
+   "copies": 2,
+   "matchups_served": [
+    "broodscale bloodchief",
+    "allosaurus combo",
+    "amulet titan"
+   ],
+   "cumulative_meta_share": 9.1944,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "A two-mana tax on the turn a combo deck goes off, which is the only interaction this 75 has against a kill that never touches the battlefield. It is paired with Orim's Chant in two of the three matchups it is boarded for - amulet titan is the exception and takes it alongside White Orchid Phantom instead - because each of those decks carries two to four answers to an enchantment in its recorded 75 and needs them on the turn they combo rather than a turn early. Its cumulative share FELL this pass while the field grew, and the reason is a decision rather than drift: the 19th row, devoted combo, is the one combo matchup in the field High Noon does not serve, because that kill is a single Green Sun's Zenith plus activated abilities and a loyalty ability, all of which resolve under a one-spell-per-turn tax. ruby storm left the field this pass; the remaining three rows still clear the 8.0pp versatile bar at 9.19pp."
+  },
+  {
+   "card": "Wrath of the Skies",
+   "copies": 3,
+   "matchups_served": [
+    "ur cutter prowess",
+    "devoted combo",
+    "creatures toolbox",
+    "boros energy",
+    "pinnacle affinity"
+   ],
+   "cumulative_meta_share": 14.4743,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The only card in the 75 that answers a board that has already gone wide. Every matchup it is boarded for is one where their threats are individually bigger than ours, so trading whole boards is the exchange that favours us. What makes a symmetric sweeper asymmetric is the rebuild afterwards, and that holds on one of the five rows rather than all five: boros energy keeps both halves, and even there it is not unconditional. Abiding Grace triggers at the beginning of our own end step and is modal - gain 1 life, or return a creature card with mana value 1 - so it is one creature per turn cycle at most and only on the turns we choose that mode. Emeria, the Sky Ruin returns a creature card at our upkeep only if we control seven or more Plains, which out of fifteen Plains-typed lands in twenty-two means seven of them on the battlefield rather than in the deck. ur cutter prowess boards Abiding Grace out against four Consign to Memory, and pinnacle affinity keeps it but plays into three or four maindeck Tormod's Crypt; on those two rows the sweeper is justified by what survives our own X instead, which is everything at mana value 2 or more. The two rows for the one green combo deck are where the exchange is widest, because their whole engine sits at mana value 2 or less - and the two labels disagree about the answer to it. Suncleanser, which takes the energy this card is the only source of, is five of ten boards under the retired `creatures toolbox` label and ONE of ten under the live `devoted combo` one, so the newer row is the more confident of the two. This pass adds 45c aggro, whose own domain one- and two-drops - Territorial Kavu and Scion of Draco - sit in the same mana-value band as our own creatures, so the exchange there reads the same as boros energy: a card they hold rather than lead with."
+  },
+  {
+   "card": "Sanctifier en-Vec",
+   "copies": 2,
+   "matchups_served": [
+    "instant reanimator",
+    "ur cutter prowess",
+    "boros aggro",
+    "reanimator",
+    "boros energy",
+    "esper goryo",
+    "45c aggro"
+   ],
+   "cumulative_meta_share": 18.3887,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Protection from black and from red on a two-mana body, plus a replacement effect that exiles their black and red cards instead of letting them reach a graveyard. Against the two reanimator decks it is a lock on the engine rather than an answer to one copy. Against the three red aggro decks it is a blocker none of their damage can touch, which is not the same as untouchable: boros energy plays a maindeck Static Prison in ten of ten lists that exiles it, a maindeck Thraben Charm whose damage mode is white, and a boarded Wrath of the Skies that destroys it at X of two or more. Both halves earn the slot at two copies. The cost is on our side and is recorded in NOTES.md: Overlord of the Balemurk is the only black card in the 75, and with a Sanctifier out our own Overlords are exiled rather than binned. This pass drops ruby storm and goryos vengeance and adds esper goryo, the same reanimation shell, and 45c aggro, whose burn suite (Lightning Bolt, Tribal Flames) is entirely red and cannot touch it."
+  },
+  {
+   "card": "Orim's Chant",
+   "copies": 2,
+   "matchups_served": [
+    "instant reanimator",
+    "broodscale bloodchief",
+    "living end",
+    "allosaurus combo",
+    "devoted combo",
+    "creatures toolbox"
+   ],
+   "cumulative_meta_share": 21.6659,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "One mana at instant speed for a Time Walk on the turn a combo deck kills. Kept at two copies as a maintainer decision recorded on mtg-decks#48 rather than argued from the field, and it clears the versatile bar on its own: it is boarded for the six recorded combo matchups - instant reanimator, broodscale bloodchief, allosaurus combo, both labels of the one green creature-combo deck (creatures toolbox and devoted combo), and living end - a 21.67pp cumulative share, the widest in the board. The green combo rows are the ones where the Time Walk half can be turned off rather than answered: Crystal Barricade gives its controller hexproof in ten of ten lists under the live creatures toolbox label, and the card then has to be pointed at us and kicked for the attack-denial clause, which is not targeted. This pass drops ruby storm and goryos vengeance and adds esper goryo, the same Goryo's Vengeance combo shell the card was already boarded for under the instant reanimator row."
+  }
+ ],
+ "deck_tech": [
+  {
+   "kind": "loop",
+   "name": "Abiding Grace returns Martyr of Sands every end step",
+   "cards": [
+    "Abiding Grace",
+    "Martyr of Sands",
+    "Serra Ascendant",
+    "Kami of False Hope"
+   ],
+   "quirk": "Nine life a turn off one enchantment, and the number that turns every Serra Ascendant into a 6/6 flier.",
+   "loop": [
+    "Martyr of Sands is in the graveyard and Abiding Grace is on the battlefield",
+    "at our end step Abiding Grace returns it: Martyr is mana value one",
+    "pay one, reveal three white cards, sacrifice Martyr for nine life",
+    "Martyr is back in the graveyard in time for the next end step"
+   ],
+   "lines": [
+    {
+     "mode": "gain the life",
+     "matchups": [
+      "boros aggro",
+      "boros energy",
+      "esper blink"
+     ],
+     "why": "Nine a turn outruns any fair clock, and thirty life makes every Ascendant a 6/6 flier. It needs three white cards still in hand each turn to keep paying."
+    },
+    {
+     "mode": "return Kami of False Hope instead",
+     "matchups": [
+      "broodscale bloodchief",
+      "allosaurus combo"
+     ],
+     "why": "One fog returned every end step answers a combo kill. Abiding Grace chooses one mode a turn, so it is the fog or the life and never both."
+    }
+   ]
+  },
+  {
+   "kind": "card",
+   "name": "Evoking Solitude costs Martyr its count",
+   "cards": [
+    "Solitude",
+    "Martyr of Sands"
+   ],
+   "quirk": "Evoke exiles a white card from hand, and that is a card Martyr of Sands was going to reveal for three life.",
+   "lines": [
+    {
+     "mode": "evoke it anyway",
+     "matchups": [
+      "instant reanimator",
+      "reanimator",
+      "creatures toolbox",
+      "devoted combo",
+      "allosaurus combo"
+     ],
+     "why": "A turn-two Archon or a resolved combo creature ends the game before any amount of life matters. The exiled card costs three life we were never going to get to spend."
+    },
+    {
+     "mode": "hard-cast it for five",
+     "matchups": [
+      "dimir control",
+      "esper blink"
+     ],
+     "why": "Nothing here kills us before turn five, so the hand keeps its white cards and Martyr keeps its count. Hard-cast it is also a lifelinking body that blocks."
+    },
+    {
+     "mode": "hold it for Clarion Conqueror",
+     "matchups": [
+      "boros energy"
+     ],
+     "why": "Conqueror turns off Martyr, Kami of False Hope and the Clue. It is a 3/3 with no protection, and Solitude's exile is an enters trigger it does not touch."
+    }
+   ]
+  },
+  {
+   "kind": "loop",
+   "name": "White Orchid Phantom blinked for a land a turn",
+   "cards": [
+    "White Orchid Phantom",
+    "Phelia, Exuberant Shepherd",
+    "Ephemerate"
+   ],
+   "quirk": "Land destruction that repeats, against the decks whose mana is their deck.",
+   "loop": [
+    "resolve White Orchid Phantom and destroy one of their nonbasic lands",
+    "attack with Phelia, Exuberant Shepherd and exile the Phantom",
+    "at the next end step the Phantom returns and destroys a second land",
+    "attack again the following turn and repeat"
+   ],
+   "lines": [
+    {
+     "mode": "go for it",
+     "matchups": [
+      "eldrazi ramp",
+      "amulet titan"
+     ],
+     "why": "One nonbasic a turn against a deck that needs three specific ones. Ephemerate is the second engine: rebound makes one card two blinks across two turns."
+    }
+   ]
+  },
+  {
+   "kind": "path",
+   "name": "The Serra clock, or the recursion grind",
+   "cards": [
+    "Serra Ascendant",
+    "Martyr of Sands",
+    "Emeria, the Sky Ruin",
+    "Overlord of the Balemurk"
+   ],
+   "quirk": "Which half of the deck this hand is: the fastest draw the deck has, or a game we win on cards.",
+   "lines": [
+    {
+     "mode": "the Serra clock",
+     "matchups": [
+      "boros aggro",
+      "ur cutter prowess"
+     ],
+     "why": "Turn-one Ascendant, turn-two Martyr revealing four white cards for twelve, then attack for six. Nothing else the deck does is this fast."
+    },
+    {
+     "mode": "the recursion grind",
+     "matchups": [
+      "dimir control",
+      "esper blink",
+      "esper control",
+      "boros energy"
+     ],
+     "why": "Emeria returns any creature at seven Plains and fifteen of the twenty-two lands carry the type. Against a deck answering one threat a turn we win on cards."
+    }
+   ]
+  }
+ ],
+ "meta_calls": [
+  {
+   "kind": "field",
+   "call": "control-heavy",
+   "trigger": {
+    "matchups": [
+     "dimir control",
+     "esper blink"
+    ],
+    "share_pp": 7.7378,
+    "over_pp": 12.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 White Orchid Phantom"
+    ],
+    "out": [
+     "1 Sanctifier en-Vec"
+    ]
+   },
+   "why": "The Phantom's land kill comes back every turn off Phelia and Ephemerate, which is the angle a deck answering one threat at a time cannot keep pace with.",
+   "cost": "One fewer permanent graveyard lock against Reanimator and the rest of the graveyard half of the field."
+  },
+  {
+   "kind": "archetype",
+   "call": "amulet titan",
+   "trigger": {
+    "matchups": [
+     "amulet titan"
+    ],
+    "share_pp": 2.0027,
+    "over_pp": 6.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 High Noon"
+    ],
+    "out": [
+     "1 Orim's Chant"
+    ]
+   },
+   "why": "Their kill is three spells in one turn. High Noon allows one, so Summoner's Pact and the Titan cannot both happen and the Amulet turn stops being lethal.",
+   "cost": "One fewer answer to Allosaurus, which the Chant was the board's whole plan against; ruby storm, its other target, left the field this pass."
+  },
+  {
+   "kind": "card",
+   "call": "Wrath of the Skies",
+   "trigger": {
+    "matchups": [
+     "45c aggro",
+     "boros aggro",
+     "boros energy",
+     "esper blink",
+     "esper control",
+     "esper goryo",
+     "instant reanimator"
+    ],
+    "share_pp": 21.1197,
+    "over_pp": 26.0
+   },
+   "main": {
+    "in": [
+     "1 Abiding Grace"
+    ],
+    "out": [
+     "1 Ephemerate"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "It returns a Martyr or an Ascendant each upkeep out of the yard the sweeper just filled, costing them more energy to answer than the one-drops it rebuys.",
+   "cost": "One fewer Solitude and Phantom rebuy, so the combo matchups lose a turn of tempo they were relying on."
+  }
+ ],
+ "gaps": [
+  {
+   "matchup": "allosaurus combo",
+   "why": "The Rider is free but Neoform is {G}{U} and Eldritch Evolution {1}{G}{G}, so the kill is turn two off two lands - which means Orim's Chant is castable on both the play and the draw, and the problem is not the timing. It is that the Chant is the whole plan and Pact of Negation counters it for free on the turn it matters: three maindeck in ten of ten lists, and a fourth from the board in six of ten. Behind those, a resolved High Noon is destroyed by two Nature's Claim, which is maindeck in six of ten lists and boarded in eight, by two Natural State in the two boards that play it instead, and by a maindeck Boseiju, Who Endures channelled from hand in nine of ten; an Into the Flood Maw in ten of ten boards bounces it with the gift promised, and a Spell Snare in one board of ten answers it on the stack rather than after it resolves. Their four maindeck Consign to Memory do not belong in the count of answers to the tax: it counters a triggered ability or a colourless spell, and both Orim's Chant and High Noon are white. That does not make it a dead card here - post-board it answers the Phelia, Flickerwisp, Solitude, Skyclave Apparition, Starfield Shepherd and Overlord of the Balemurk triggers, which is most of the rest of our 60. The Abiding Grace end step is not one of them, because this row boards both copies out. Martyr of Sands is the exception on either count, since its ability is activated rather than triggered and is not a spell. On the draw only the one-mana half of our tax is deployed in time."
+  }
+ ]
+}

@@ -116,12 +116,17 @@ def fixture_pool_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-def _faces(name: str) -> list[str]:
+def name_faces(name: str) -> list[str]:
     """A multi-face name split into its faces, casefolded.
 
     Scryfall writes "Wear // Tear"; MTGO decklists write "Wear/Tear"; both
     name the same card, and both turn up in `decks/*.txt`. Normalising the
     separator here is what lets one lookup rule serve both.
+
+    Public because the same two spellings collide outside card lookup:
+    `mtg_agent.driver.guides.held_faces` intersects a boarding plan's swap
+    names against the list the server dealt, and a plan writing "1 Wear"
+    against a list writing "Wear // Tear" names the same card there too.
     """
     return [face.strip().casefold() for face in name.replace("//", "/").split("/") if face.strip()]
 
@@ -138,7 +143,7 @@ def fixture_slug(name: str) -> str:
 
     Guessing any of the three wrong turns every pool hit into a miss, silently.
     """
-    faces = _faces(name)
+    faces = name_faces(name)
     front = faces[0] if faces else ""
     return "".join(c if c.isalnum() else "_" for c in front).strip("_")
 
@@ -152,8 +157,8 @@ def _pool_names_match(requested: str, found: str) -> bool:
     faces are punctuated) or the front face alone; anything else is a miss and
     falls through to Scryfall, which is the safe direction to be wrong in.
     """
-    wanted = _faces(requested)
-    faces = _faces(found)
+    wanted = name_faces(requested)
+    faces = name_faces(found)
     return bool(faces) and (wanted == faces or wanted == faces[:1])
 
 

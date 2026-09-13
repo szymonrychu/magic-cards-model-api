@@ -1,0 +1,35 @@
+4 Ancient Stirrings
+4 Basking Broodscale
+3 Blade of the Bloodchief
+2 Boseiju, Who Endures
+1 Cavern of Souls
+3 Devourer of Destiny
+2 Dismember
+4 Eldrazi Temple
+4 Emrakul, the Promised End
+6 Forest
+1 Gemstone Caverns
+1 Glaring Fleshraker
+1 Haywire Mite
+4 Kozilek's Command
+4 Malevolent Rumble
+1 Shifting Woodland
+1 Soul-Guide Lantern
+4 Sowing Mycospawn
+1 Springleaf Drum
+3 Ugin's Labyrinth
+4 Urza's Saga
+1 Vexing Bauble
+1 Yavimaya, Cradle of Growth
+
+Sideboard
+1 Dismember
+2 Grafdigger's Cage
+2 Nature's Claim
+1 Pithing Needle
+1 Sire of Seven Deaths
+2 Thief of Existence
+2 Torpor Orb
+1 Trinisphere
+1 Vexing Bauble
+2 Warping Wail

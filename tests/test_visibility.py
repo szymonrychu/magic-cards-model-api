@@ -291,3 +291,77 @@ def test_a_board_built_game_reports_no_decklist_at_all(client, game):
     uid = next(iter(store.seat_uids(game).keys()))
     seats = _seats(client, game, uid=uid)
     assert all(not seat.get("decklist") for seat in seats.values())
+
+
+# ---------------------------------------------------------------------------
+# the advisor credential: the human's own view, exactly
+# ---------------------------------------------------------------------------
+
+
+def advisors_for(game_id: str, player: str, uid: str = "advisor-uid") -> str:
+    """Register `uid` as an advisor on `player`'s seat and hand it back - the
+    credential a buddy pod is eventually given (its minting route is a later
+    task; the credential and its resolution are this one)."""
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    store.register_advisors(game_id, {uid: Advisor(player=player)})
+    return uid
+
+
+def test_an_advisor_uid_sees_exactly_what_its_human_sees(client, game):
+    """`resolve_viewer` resolves an advisor uid to the human's *username*, so
+    every redaction function downstream (`redact_view`, `redact_log_entry`,
+    `redact_pending_decision`) filters for the human without knowing an
+    advisor exists. Byte-identical is the assertion, deliberately: anything
+    less would mean the advisor is being handed a second, subtly different
+    view nobody is testing against the rules."""
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "hand")
+    add_card(client, game, "Mountain", "alice", "library")
+    uids = seats_for(client, game)
+    advisor = advisors_for(game, "alice")
+
+    as_alice = client.get(f"/api/games/{game}", params={"uid": uids["alice"]})
+    as_advisor = client.get(f"/api/games/{game}", params={"uid": advisor})
+
+    assert as_advisor.status_code == 200, as_advisor.text
+    assert as_advisor.content == as_alice.content
+
+
+def test_an_advisor_uid_reads_the_log_exactly_as_its_human_does(client, game):
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "hand")
+    uids = seats_for(client, game)
+    advisor = advisors_for(game, "alice")
+
+    as_alice = client.get(f"/api/games/{game}/log", params={"uid": uids["alice"]})
+    as_advisor = client.get(f"/api/games/{game}/log", params={"uid": advisor})
+
+    assert as_advisor.status_code == 200, as_advisor.text
+    assert as_advisor.content == as_alice.content
+
+
+def test_an_advisor_of_one_seat_does_not_see_the_other_seats_hand(client, game):
+    """The advisor inherits its human's blind spots too - it is the human's
+    view, not a privileged one."""
+    add_card(client, game, "Lightning Bolt", "alice", "hand")
+    add_card(client, game, "Grizzly Bears", "bob", "hand")
+    advisor = advisors_for(game, "alice")
+
+    board = state(client, game, uid=advisor)
+
+    assert [c["name"] for c in board["hands"]["alice"]] == ["Lightning Bolt"]
+    assert board["hands"]["bob"] == []
+    assert "libraries" not in board
+
+
+def test_an_advisor_uid_is_not_the_admin_key(client, game):
+    """An advisor resolves to a player, never to `visibility.ADMIN` - the
+    full board stays the operator's own eye."""
+    add_card(client, game, "Mountain", "alice", "library")
+    advisor = advisors_for(game, "alice")
+
+    board = state(client, game, uid=advisor)
+
+    assert "libraries" not in board

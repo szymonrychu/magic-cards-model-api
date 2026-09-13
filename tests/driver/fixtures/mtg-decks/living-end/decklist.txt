@@ -1,0 +1,35 @@
+4 Violent Outburst
+3 Living End
+4 Force of Negation
+4 Wistfulness
+4 Subtlety
+4 Endurance
+4 Generous Ent
+4 Shardless Agent
+4 Street Wraith
+2 Oliphaunt
+2 Curator of Mysteries
+2 Colossal Skyturtle
+2 Sink into Stupor
+1 Waker of Waves
+1 Breeding Pool
+1 Commercial District
+1 Forest
+1 Hedge Maze
+1 Island
+1 Otawara, Soaring City
+3 Misty Rainforest
+1 Mountain
+2 Scalding Tarn
+1 Steam Vents
+1 Stomping Ground
+1 Thundering Falls
+1 Boseiju, Who Endures
+
+Sideboard
+2 Anger of the Gods
+2 Damping Matrix
+3 Dismember
+3 Force of Vigor
+3 Mystical Dispute
+2 Tormod's Crypt

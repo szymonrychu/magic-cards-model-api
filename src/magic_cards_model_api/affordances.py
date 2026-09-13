@@ -91,7 +91,7 @@ from typing import Any
 from uuid import UUID
 
 from magic_cards_model.machines import AbilityOnStack
-from magic_cards_model.machines.casting import Casting
+from magic_cards_model.machines.casting import Casting, face_being_cast
 from magic_cards_model.machines.cost import spend_restriction
 from magic_cards_model.machines.modes import modal_profile, substitute_x
 from magic_cards_model.machines.targeting import (
@@ -100,7 +100,7 @@ from magic_cards_model.machines.targeting import (
     profile_for_text,
     targeting_profile,
 )
-from magic_cards_model.models import CardState, Game, Player, Zone
+from magic_cards_model.models import Card, CardState, Game, Player, Zone
 
 from .engine_api import dry_run_copy
 
@@ -295,8 +295,17 @@ def cast_hints(state: CardState) -> dict[str, Any]:
     return hints
 
 
-def _all_targetables(game: Game) -> list[Any]:
-    """Every object a target could name, drawn from the public zones only."""
+def all_targetables(game: Game) -> list[Any]:
+    """Every object a target could name, drawn from the public zones only.
+
+    Public because it is the one piece of this module worth hoisting: a whole
+    `legal-actions` request enumerates candidates for every targeting action
+    it lists, and every one of them walks the same board. `app.
+    get_legal_actions` calls this once per request and hands the list down to
+    each `target_candidates` call - one walk, not one per action, which is
+    the same N-into-one shape T11 already applied a layer up at the HTTP
+    boundary.
+    """
     things: list[Any] = list(game.players)
     for zone in CANDIDATE_ZONES:
         for state in game.shared_zones.get(zone, []):
@@ -315,6 +324,26 @@ def _all_targetables(game: Game) -> list[Any]:
 
 
 def _label(thing: Any) -> dict[str, Any]:
+    """One targetable object as `{id, kind, name, zone}`, plus `controller`
+    for a card.
+
+    **The face-up rule lives here**, once, rather than in each of the four
+    callers - `candidates`, `candidate_line`, `object_costs` and the
+    cost-component list all name objects through this. A face-down object
+    has no name to print (CR 708.2 for a permanent turned face down, and
+    `visibility._redact_facedown_card` is the same rule already applied to
+    the state view), and `all_targetables` walks the battlefield,
+    graveyards and exile - every zone a face-down card can sit in - so this
+    is reachable the moment a requirement accepts one. Whether any current
+    `TargetRequirement` does is beside the point: the rule belongs in the
+    one function that turns an object into a name.
+
+    Hidden from *everyone*, its own controller included, because this
+    function has no viewer to ask - and failing closed is the right way
+    round for a name that must not be guessable. The id is untouched: it is
+    what a target is named by, and knowing an object is there is public
+    (CR 400.2).
+    """
     if isinstance(thing, Player):
         return {"id": thing.username, "kind": "player", "name": thing.username, "zone": None}
     if isinstance(thing, AbilityOnStack):
@@ -327,10 +356,62 @@ def _label(thing: Any) -> dict[str, Any]:
     return {
         "id": str(thing.id),
         "kind": "card",
-        "name": thing.name,
+        "name": thing.name if getattr(thing, "face_up", True) else "a face-down card",
         "zone": thing.zone.value,
         "controller": thing.controller,
     }
+
+
+class FaceNotRead(ValueError):
+    """Raised by `_profile_for` when an announcement names a face whose own
+    targeting this cannot derive - see `_face_profile`.
+
+    A `ValueError` subclass so it lands in the same `except` every other
+    undecidable announcement already lands in, and its own class so
+    `target_candidates` can say *which* of the two happened: "the targeting
+    phrase is unreadable" and "the phrase is readable but belongs to a face
+    nobody may attribute to this announcement" are different sentences to a
+    seat, and only the second one is fixed by asking again.
+    """
+
+
+def _face_profile(card: Card, face: str) -> TargetingProfile:
+    """The profile for the one named face of a multi-face card, or
+    `FaceNotRead` when the card prints no such face.
+
+    The named face's own `oracle_text` through `profile_for_text`, never
+    `targeting_profile(card)`, which resolves `Card.front_oracle_text` and so
+    answers the *front* face's question for every face. Matching the engine
+    call for call is the whole contract `target_candidates` keeps: this list
+    can never disagree with the CR 601.2c check that follows it.
+
+    **Layout-blind, because the engine is** - the discriminator is the face
+    that was named, not the layout it is printed under. CR 709.3b ("while
+    it's on the stack, a split card has only the characteristics of the half
+    being cast") and CR 715.3b ("while on the stack as an Adventure, the
+    spell has only its alternative characteristics") are the same sentence
+    about two layouts, CR 601.3e being the general rule both instance:
+    "these alternative characteristics replace the object's characteristics
+    for this determination". This read was scoped to `Layout.SPLIT` while the
+    engine's own was, so an Adventure row came back `understood: false`; the
+    engine's `Casting.targeting`, `Game._announcement_profile` and
+    `Game._resolution_profile` all now key on the chosen face through
+    `machines.casting.face_being_cast`, which is what this calls, so the
+    three engine reads and this decoration are one reading rather than three
+    that agree and one that does not.
+
+    A name the card does not print raises: the engine's own announcement would
+    refuse it (`Casting.cast_as_split_half`, `cast_as_adventure`), so the
+    honest answer is to name the face that could not be read rather than hand
+    back the whole card's candidates for a cast that cannot happen.
+    """
+    chosen = face_being_cast(card, face)
+    if chosen is None:
+        raise FaceNotRead(
+            f"the announced face {face!r} is not a face of {card.name}, whose faces are "
+            f"{[one.name for one in card.card_faces or ()]}"
+        )
+    return profile_for_text(chosen.oracle_text or "")
 
 
 def _profile_for(
@@ -340,13 +421,17 @@ def _profile_for(
     ability_index: int | None,
     modes: list[int] | None,
     x_value: int | None,
+    face: str | None = None,
 ) -> tuple[TargetingProfile, list[tuple[int | None, str | None]] | None]:
     """The profile that governs this particular announcement.
 
-    Three shapes, in the order the engine itself would reach them:
+    Four shapes, in the order the engine itself would reach them:
 
     - an activated ability's own effect text (CR 602.2b), when `ability_index`
       names one;
+    - one named face of a multi-face card, when `face` names one - CR 709.3b's
+      split half reads its own text and nothing else can be derived at all
+      (`_face_profile`);
     - a modal spell's chosen modes (CR 700.2f), when `modes` names them - the
       only way a modal card's targeting is answerable at all, which is why
       `targeting_profile` refuses on its own;
@@ -381,6 +466,8 @@ def _profile_for(
         ability = game.activated_abilities(state)[ability_index]
         effect = getattr(ability, "effect", None) or getattr(ability, "text", "")
         return profile_for_text(substitute_x(effect, x_value)), None
+    if face is not None:
+        return _face_profile(state.card, face), None
     modal = modal_profile(state.card)
     if modes and modal is not None:
         chosen = modal.resolve(modes)
@@ -428,7 +515,7 @@ def candidates(
         return {**view, "candidates": []}
 
     found: list[dict[str, Any]] = []
-    for thing in _all_targetables(game):
+    for thing in all_targetables(game):
         if thing is state and state.zone is not Zone.STACK:
             # The object doing the targeting is not yet on the stack, so it is
             # not a candidate for its own "target other" clauses; `rejects`
@@ -443,6 +530,163 @@ def candidates(
         if slots:
             found.append({**_label(thing), "requirements": slots})
     return {**view, "candidates": found}
+
+
+#: How many candidates one target slot lists before it starts saying "and N
+#: more" instead of naming them. Measured: Lightning Bolt's "any target" on a
+#: 28-permanent board has 14 legal candidates, so 30 fits that and every other
+#: normal targeted spell whole - only a "target creature" on a board wider
+#: than any real one reaches it. The cap exists so a pathological board cannot
+#: make one answer unreadable, not to trim ordinary ones; a slot that does hit
+#: it keeps its true `count` and says what to call (`MORE_CANDIDATES_WITH`),
+#: because a seat weighing a sweeper needs the number even when it does not
+#: need the names.
+CANDIDATE_SLOT_CAP = 30
+
+#: What a truncated slot points at. There is no MCP tool that enumerates
+#: candidates on its own - deliberately, since asking one would mean the seat
+#: already knew which action it was about to take, which is the question it is
+#: trying to answer - so the pointer is at the board itself: every candidate
+#: is an object in a public zone (`CANDIDATE_ZONES`) or a player, and all of
+#: those are in `battlefield_state`.
+MORE_CANDIDATES_WITH = (
+    "battlefield_state - more candidates are legal than are listed here; `count` is the "
+    "true total, and every candidate is a permanent, a graveyard/exile card, a spell on "
+    "the stack, or a player, all of which that tool shows in full"
+)
+
+#: What is said instead of a candidate list when the parser could not read
+#: the targeting phrase at all. NOT an empty list, which would read as
+#: "nothing on this board is legal" - a different and false statement. Same
+#: contract `candidates` has kept since `ui/app.js` started branching on
+#: `understood` to choose between a free-entry box and a picker.
+UNREADABLE_TARGETING = (
+    "the engine could not parse this targeting phrase, so it will not guess at the "
+    "candidates - this is NOT 'nothing is legal'. Read the printed text and name "
+    "targets yourself; the engine still checks them (CR 601.2c)"
+)
+
+#: What is said instead of a candidate list when the announcement names a
+#: face this cannot derive a profile for (`_face_profile`/`FaceNotRead`).
+#: Deliberately a different sentence from `UNREADABLE_TARGETING`: the phrase
+#: is perfectly readable here, it just belongs to a face nobody may attribute
+#: to this announcement, and telling a seat the parser failed would send it
+#: looking for a defect that is not there. Same contract either way -
+#: `understood: false`, no slots, a note - so every reader branching on
+#: `understood` is unaffected.
+UNREADABLE_FACE_TARGETING = (
+    "this action announces a face this printing does not carry, so the candidates for it "
+    "cannot be determined and will not be guessed at - this is NOT 'nothing is legal'. Take "
+    "the face string from the row's own `spell_face`, unmodified, or name targets yourself; "
+    "the engine still checks them (CR 601.2c)"
+)
+
+
+def candidate_line(thing: Any) -> str:
+    """One legal candidate as a single string.
+
+    A string rather than the `_label` object `candidates` returns, and the
+    difference is not cosmetic: an action answer is serialised with
+    `json.dumps(indent=1)`, which puts every key of every dict on a line of
+    its own. The same fourteen candidates measured 2,384 bytes as objects and
+    972 as strings - and the object's fields were `id`, `kind`, `name`,
+    `zone`, `controller`, every one of which is in the string below.
+
+    The id is the whole uuid, never a prefix: it is exactly what `cast`'s
+    `targets` parameter takes back, and a prefix would have to be resolved
+    against a board the answer carrying this deliberately does not include.
+    A player is named the way `targets` names one - by username - and says
+    `(player)` so it is never mistaken for a card whose id went missing.
+    """
+    if isinstance(thing, Player):
+        return f"{thing.username} (player)"
+    label = _label(thing)
+    controller = label.get("controller") or getattr(thing, "controller", None) or "?"
+    return f"{label['id']} {label['name']} ({label['zone']}, {controller})"
+
+
+def target_candidates(
+    game: Game,
+    state: CardState,
+    caster: str,
+    *,
+    ability_index: int | None = None,
+    face: str | None = None,
+    targetables: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Every object this announcement could legally name, per requirement
+    slot, as strings - `candidates` narrowed to what a *seat* needs and
+    widened with the counts a seat needs to act on.
+
+    Same engine calls as `candidates`, and deliberately so: `TargetRequirement
+    .rejects` is the predicate `TargetingProfile._fill_slots` itself runs at
+    CR 601.2c, so this list can never disagree with the announcement that
+    follows it. The differences from `candidates` are all about who reads it:
+
+    - **per slot, not per candidate.** `candidates` answers "which slots can
+      this object fill", which is what a UI resolving a click needs;
+      a seat is filling one slot at a time and needs "what may go here", so
+      the inversion happens once, here, rather than in every reader.
+    - **strings** (`candidate_line`), for the byte reason spelled out there.
+    - **capped** at `CANDIDATE_SLOT_CAP` per slot, with the true `count` kept
+      whatever the cap did to the list.
+    - **no modes and no X.** CR 700.2c: a modal card's targeting is
+      unanswerable before its modes are chosen, and `targeting_profile`
+      already refuses on its own - which arrives here as `understood: False`
+      and a sentence saying so, never an empty list. This is asked before the
+      seat has announced anything, so there is nothing to substitute; the
+      browser's `/affordances` endpoint is where a half-announced spell is
+      re-asked with the modes and the X the player has picked so far.
+    - **`face` IS taken**, unlike the two above, because it is not a choice
+      still to be made: `Action.spell_face` is part of the row being
+      described, so a row for CR 709.3's second half must be enumerated
+      against that half's own text or not at all (`_face_profile`). A
+      whole-printing candidate list under a face's name is the one answer
+      this must never give - `seatkit.TARGETS_NOTE` tells a seat to hand a
+      candidate straight back, so a wrong list costs it the action.
+    """
+    try:
+        profile, _ = _profile_for(game, state, caster, ability_index, None, None, face=face)
+    except FaceNotRead as exc:
+        return {"understood": False, "note": f"{UNREADABLE_FACE_TARGETING} ({exc})"}
+    except (IndexError, ValueError) as exc:
+        return {"understood": False, "note": f"{UNREADABLE_TARGETING} ({exc})"}
+    if not profile.understood:
+        return {"understood": False, "note": UNREADABLE_TARGETING}
+    if not profile.requirements:
+        return {"understood": True, "slots": []}
+
+    listed: list[list[str]] = [[] for _ in profile.requirements]
+    counts = [0] * len(profile.requirements)
+    for thing in all_targetables(game) if targetables is None else targetables:
+        if thing is state and state.zone is not Zone.STACK:
+            # Same exclusion `candidates` makes, for the same reason: the
+            # object doing the targeting is not on the stack yet, so it is
+            # not a candidate for its own "target other" clauses.
+            continue
+        line: str | None = None
+        for index, requirement in enumerate(profile.requirements):
+            if requirement.rejects(thing, caster, game, state.id) is not None:
+                continue
+            counts[index] += 1
+            if len(listed[index]) < CANDIDATE_SLOT_CAP:
+                if line is None:
+                    line = candidate_line(thing)
+                listed[index].append(line)
+
+    slots: list[dict[str, Any]] = []
+    truncated_anywhere = False
+    for index, lines in enumerate(listed):
+        slot: dict[str, Any] = {"slot": index, "count": counts[index], "candidates": lines}
+        dropped = counts[index] - len(lines)
+        if dropped:
+            slot["truncated"] = dropped
+            truncated_anywhere = True
+        slots.append(slot)
+    block: dict[str, Any] = {"understood": True, "slots": slots}
+    if truncated_anywhere:
+        block["more_with"] = MORE_CANDIDATES_WITH
+    return block
 
 
 def alternative_costs(game: Game, state: CardState, caster: str) -> list[dict[str, Any]]:

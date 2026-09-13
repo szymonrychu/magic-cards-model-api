@@ -24,6 +24,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from magic_cards_model_api.api_client import InProcessApiClient
+from magic_cards_model_api.repository import Advisor
+from magic_cards_model_api.store import store
 
 # 52 Mountain (unlimited, basic) + 4 Grizzly Bears + 4 Lightning Bolt = 60,
 # legal under CR 100.2a's four-copy limit.
@@ -179,3 +181,84 @@ def test_start_game_refuses_an_illegal_deck_naming_the_problem(client: TestClien
     )
     assert response.status_code == 400
     assert "alice" in response.text
+
+
+# ---------------------------------------------------------------------------
+# `GET /api/lobby/games/{id}/seats`: a seat uid is a credential, not a label
+# ---------------------------------------------------------------------------
+#
+# This route used to hand back `uid` for EVERY seat of the game to any
+# caller, credential or not. That made every permitted read a way to obtain
+# an acting credential: the mtg-buddy advisor, whose whole design is a uid
+# the server refuses to let act, could ask this route for its human's seat
+# uid and then act as that human with no gate involvement at all. The
+# `decklist` field on this same route was already scoped to the caller's own
+# seat (`SeatDetail.decklist`); `uid` now is too, and so is the `uid` echoed
+# inside the `ai_seat` liveness block, which was a second copy of the same
+# secret.
+
+
+def _seat_uids(game_id: str) -> dict[str, str]:
+    return {player: uid for uid, player in store.seat_uids(game_id).items()}
+
+
+def test_game_seats_hides_every_uid_from_a_caller_with_no_credential(
+    client: TestClient, game: str
+) -> None:
+    response = client.get(f"/api/lobby/games/{game}/seats")
+
+    assert response.status_code == 200, response.text
+    seats = response.json()["seats"]
+    assert {seat["player"] for seat in seats} == {"alice", "bob"}
+    assert [seat.get("uid") for seat in seats] == [None, None], response.text
+    assert [(seat.get("ai_seat") or {}).get("uid") for seat in seats] == [None, None], response.text
+
+
+def test_game_seats_shows_only_the_callers_own_uid(client: TestClient, game: str) -> None:
+    """The same "own block only" rule `decklist` already followed."""
+    uids = _seat_uids(game)
+
+    response = client.get(f"/api/lobby/games/{game}/seats", params={"uid": uids["alice"]})
+
+    assert response.status_code == 200, response.text
+    shown = {seat["player"]: seat.get("uid") for seat in response.json()["seats"]}
+    assert shown == {"alice": uids["alice"], "bob": None}, response.text
+
+
+def test_game_seats_does_not_hand_an_advisor_its_humans_seat_uid(
+    client: TestClient, game: str
+) -> None:
+    """The escalation this closes. An advisor uid is allowed every GET on
+    purpose - it sees exactly what its human sees - so the only thing that
+    can stop this route being a credential vending machine is the route."""
+    store.register_advisors(game, {"advisor-uid": Advisor(player="alice")})
+
+    response = client.get(f"/api/lobby/games/{game}/seats", params={"uid": "advisor-uid"})
+
+    assert response.status_code == 200, response.text
+    seats = response.json()["seats"]
+    # Three rows, not two: B5 appends a row per advisor after the seats, so
+    # the count is pinned rather than left implicit in the list below - an
+    # empty answer must not be able to satisfy this test.
+    assert len(seats) == 3, response.text
+    assert [seat.get("uid") for seat in seats] == [None, None, None], response.text
+    # And not by value either. An advisor row carries no `uid` key at all
+    # (`SeatDetail.uid`), so the read above cannot tell "absent" from
+    # "leaked under another key" - this can.
+    assert "advisor-uid" not in response.text, response.text
+
+
+def test_game_seats_still_answers_the_admin_key_in_full(
+    client: TestClient, game: str, admin_key: str
+) -> None:
+    """The operator's own credential, the one identity in this api that is
+    already trusted with the whole board (`visibility.ADMIN`), still gets
+    every seat's uid - a harness that holds the admin key can drive both
+    seats, and nothing about that changes."""
+    uids = _seat_uids(game)
+
+    response = client.get(f"/api/lobby/games/{game}/seats", params={"uid": admin_key})
+
+    assert response.status_code == 200, response.text
+    shown = {seat["player"]: seat.get("uid") for seat in response.json()["seats"]}
+    assert shown == uids, response.text

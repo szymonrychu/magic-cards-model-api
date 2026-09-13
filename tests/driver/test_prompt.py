@@ -1,10 +1,26 @@
+import json
 from pathlib import Path
 
 import pytest
 
-from mtg_agent.driver.guides import DeckGuide
+from mtg_agent.driver.guides import (
+    CONFIDENT,
+    LOW,
+    NONE,
+    ArchetypeSignature,
+    Candidate,
+    DeckGuide,
+    Decklist,
+    GuideLibrary,
+    Identification,
+    SignatureClause,
+    parse_decklist,
+    slugify,
+)
+from mtg_agent.driver.matchup_card import CARD_HARD_CAP_BYTES
 from mtg_agent.driver.prompt import (
     Assignment,
+    advisor_turn_zero,
     memory_index,
     plan_path,
     reflection_turn,
@@ -33,16 +49,45 @@ def guide(tmp_path) -> DeckGuide:
     )
 
 
-def assignment(guide: DeckGuide | None, score: float = 1.0) -> Assignment:
+DECKLIST = "4 Psychic Frog\n4 Fatal Push\n\nSideboard\n2 Dress Down\n"
+
+
+def candidate(guide: DeckGuide, name: str, clauses: int, matched: int) -> Candidate:
+    """A `Candidate` with `clauses` clauses of which `matched` are satisfied -
+    the shape `GuideLibrary.identify` builds, without needing a real corpus
+    on disk to build it from."""
+    all_clauses = tuple(SignatureClause((f"Card {i}",), 4, f"clause {i}") for i in range(clauses))
+    return Candidate(guide, ArchetypeSignature(name, all_clauses), all_clauses[:matched])
+
+
+def identified(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -> Identification:
+    if guide is None and confidence == NONE:
+        return Identification(NONE)
+    candidates = kwargs.pop("candidates", None)
+    if candidates is None:
+        clauses = 3
+        matched = clauses if confidence == CONFIDENT else 2
+        candidates = (candidate(guide, "dimir frog", clauses, matched),)
+    return Identification(
+        confidence,
+        guide,
+        tuple(candidates),
+        kwargs.pop("archetype", candidates[0].archetype if candidates else None),
+    )
+
+
+def assignment(guide: DeckGuide | None, confidence: str = CONFIDENT, **kwargs) -> Assignment:
+    identification = kwargs.pop("identification", None)
+    if identification is None:
+        identification = identified(guide, NONE if guide is None else confidence, **kwargs)
     return Assignment(
         game_id="g-1",
         uid="secret-uid",
         player="bob",
         opponent="alice",
         api_base="http://game:8000",
-        decklist={"Psychic Frog": 4, "Fatal Push": 4},
-        guide=guide,
-        match_score=score,
+        decklist=parse_decklist(DECKLIST),
+        identification=identification,
     )
 
 
@@ -77,8 +122,92 @@ def test_current_game_never_names_the_opponents_deck(tmp_path, guide):
     assert "alice" in text, "the opponent's seat NAME is public at a real table"
 
 
+# ---- one briefing per classification outcome -----------------------------
+#
+# Three outcomes, three different things to say. Getting these wrong is not
+# cosmetic: a low-confidence match presented as a confident one is an agent
+# playing a guide written for somebody else's deck and never questioning it.
+
+
+def test_a_confident_match_states_the_deck_without_hedging(tmp_path, guide):
+    text = render_current_game(assignment(guide, CONFIDENT), tmp_path / "memory")
+    assert "You are piloting **dimir-frog**" in text
+    assert "dimir frog" in text, "the archetype's own name for itself, not just the slug"
+    assert "low-confidence" not in text
+    assert "plausible" not in text
+
+
+def test_a_low_confidence_match_says_so_and_names_the_other_candidate(tmp_path, guide):
+    """`low` hands over the guide AND says which other archetype is
+    plausible, so the agent knows the guide is a hypothesis."""
+    other = DeckGuide(slug="instant-reanimator", root=tmp_path, decklist=tmp_path / "d.txt")
+    text = render_current_game(
+        assignment(
+            guide,
+            LOW,
+            candidates=(
+                candidate(guide, "dimir frog", clauses=4, matched=2),
+                candidate(other, "instant reanimator", clauses=3, matched=2),
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    assert "probably piloting **dimir-frog**" in text
+    assert "low-confidence" in text
+    assert "2 of its 4 signature clauses" in text
+    assert "Also plausible: `instant-reanimator`" in text
+    assert str(guide.gameplan) in text, "low still hands over the guide"
+
+
+def test_a_family_match_names_the_family_and_hands_over_both_branches(tmp_path):
+    """The tron case: neither branch chosen, so neither branch's guide is
+    presented as THE guide - both are offered under their own heading."""
+    guides = []
+    for slug in ("eldrazi-tron", "prison-tron"):
+        root = tmp_path / slug
+        root.mkdir()
+        (root / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
+        guides.append(
+            DeckGuide(
+                slug=slug,
+                root=root,
+                decklist=root / "decklist.txt",
+                gameplan=root / "GAMEPLAN_GUIDE.md",
+            )
+        )
+    text = render_current_game(
+        assignment(
+            None,
+            LOW,
+            identification=Identification(
+                LOW,
+                None,
+                tuple(candidate(g, g.slug, clauses=3, matched=2) for g in guides),
+                "tron",
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    assert "some kind of **tron**" in text
+    assert "`eldrazi-tron`" in text
+    assert "`prison-tron`" in text
+    for offered in guides:
+        assert str(offered.gameplan) in text
+
+
+def test_the_briefing_keeps_the_maindeck_and_the_sideboard_apart(tmp_path, guide):
+    """The agent boards between games, so it has to be able to tell which
+    fifteen cards are not in its library."""
+    text = render_current_game(assignment(guide), tmp_path / "memory")
+    assert "Maindeck:" in text
+    assert "4 Psychic Frog" in text
+    assert "Sideboard" in text
+    assert "2 Dress Down" in text
+    assert text.index("4 Psychic Frog") < text.index("2 Dress Down")
+
+
 def test_current_game_says_so_when_there_is_no_guide(tmp_path):
-    text = render_current_game(assignment(None, score=0.2), tmp_path / "memory")
+    text = render_current_game(assignment(None), tmp_path / "memory")
     assert "no guide" in text.lower()
     assert "4 Psychic Frog" in text
 
@@ -205,7 +334,7 @@ def test_reflection_turn_names_the_files_to_write(tmp_path, guide):
 
 def test_reflection_turn_for_an_unguided_deck_still_writes_notes(tmp_path):
     memory = tmp_path / "memory"
-    text = reflection_turn(assignment(None, 0.1), memory, outcome="alice won")
+    text = reflection_turn(assignment(None), memory, outcome="alice won")
     assert str(memory / "unknown-deck" / "games" / "g-1.md") in text
 
 
@@ -218,3 +347,414 @@ def test_turn_zero_without_a_briefing_still_points_at_the_file(tmp_path, guide):
     text = turn_zero(assignment(guide), tmp_path / "current-game.md")
     assert str(tmp_path / "current-game.md") in text
     assert "BODY" not in text
+
+
+# ---- P2: the brief is the card, not a 58 KB read --------------------------
+#
+# An agent seat used to be handed its guide PATHS and told to read them,
+# which meant a 42-73 KB markdown `Read` (12-18k tokens) before its first
+# action - while the structured plan those guides are generated from sat
+# unread beside them. The briefing now inlines that plan as a matchup card,
+# and inlines the agent's own standing notes with it. The paths stay for a
+# deliberate look-up of one specific line.
+
+FIXTURE_GUIDES = Path(__file__).resolve().parents[1] / "fixtures" / "guides"
+
+
+@pytest.fixture
+def real_guide() -> DeckGuide:
+    """A real guide out of the vendored corpus - boarding plan, archetype
+    files and all. See `tests/fixtures/guides/README.md`."""
+    guide = GuideLibrary(FIXTURE_GUIDES).get("dimir-frog")
+    assert guide is not None and guide.boarding_plan is not None
+    return guide
+
+
+def test_current_game_inlines_the_matchup_card(tmp_path, real_guide):
+    text = render_current_game(assignment(real_guide), tmp_path / "memory")
+    assert "Matchup card" in text
+    # section 1, the deck's own plan
+    assert "Psychic Frog into Quantum Riddler" in text
+    # section 2, the tells table with another archetype's signature cards
+    assert "signature cards" in text
+    assert "`living-end`" in text
+    # section 3, the three biggest matchups, swaps included
+    assert "on the play" in text
+
+
+def test_current_game_still_lists_the_guide_paths_for_a_deliberate_read(tmp_path, real_guide):
+    """The card is the brief; the guide is still there for one specific line
+    the card does not carry."""
+    text = render_current_game(assignment(real_guide), tmp_path / "memory")
+    assert str(real_guide.boarding_plan) in text
+    assert str(real_guide.matchups_dir) in text
+
+
+def test_current_game_names_the_one_small_read_for_the_deduced_matchup(tmp_path, real_guide):
+    text = render_current_game(assignment(real_guide), tmp_path / "memory")
+    assert "<archetype>.json" in text
+    assert "unknown" in text
+
+
+def test_current_game_for_a_guide_with_no_boarding_plan_says_so(tmp_path, guide):
+    """The fixture `guide` has matchup files but no boarding plan - a guided
+    deck that predates the analysis pipeline. It must not raise, and it must
+    not pretend to a plan it has not got."""
+    text = render_current_game(assignment(guide), tmp_path / "memory")
+    assert "no boarding plan" in text.lower()
+    assert "4 Psychic Frog" in text
+
+
+def test_current_game_inlines_the_standing_notes_rather_than_their_paths(tmp_path, real_guide):
+    memory = tmp_path / "memory"
+    (memory / "dimir-frog").mkdir(parents=True)
+    (memory / "dimir-frog" / "vs-living-end.md").write_text(
+        "Their cascade trigger is the only window; hold Consign to Memory for it."
+    )
+    text = render_current_game(assignment(real_guide), memory)
+    assert "vs-living-end.md" in text
+    assert "hold Consign to Memory for it" in text
+
+
+def test_current_game_puts_the_deduced_matchups_note_first(tmp_path, real_guide):
+    memory = tmp_path / "memory"
+    (memory / "dimir-frog").mkdir(parents=True)
+    (memory / "dimir-frog" / "vs-amulet-titan.md").write_text("AMULET NOTE")
+    (memory / "dimir-frog" / "vs-living-end.md").write_text("LIVING END NOTE")
+    text = render_current_game(assignment(real_guide), memory, opponent_archetype="living end")
+    assert text.index("LIVING END NOTE") < text.index("AMULET NOTE")
+
+
+def test_current_game_caps_what_it_inlines_from_the_notes(tmp_path, real_guide):
+    """A note the agent has been revising for twenty games can be any size.
+    Inlining all of it would undo the saving the card just made."""
+    memory = tmp_path / "memory"
+    (memory / "dimir-frog").mkdir(parents=True)
+    (memory / "dimir-frog" / "vs-living-end.md").write_text("x" * 40_000)
+    text = render_current_game(assignment(real_guide), memory)
+    assert len(text.encode()) < 20_000
+    assert "vs-living-end.md" in text
+
+
+def test_current_game_still_lists_the_game_notes_as_paths(tmp_path, real_guide):
+    """Only the `vs-<archetype>.md` standing reads are inlined. A past game's
+    write-up is a path: there can be dozens of them."""
+    memory = tmp_path / "memory"
+    (memory / "dimir-frog" / "games").mkdir(parents=True)
+    (memory / "dimir-frog" / "games" / "g-0.md").write_text("PAST GAME BODY")
+    text = render_current_game(assignment(real_guide), memory)
+    assert "g-0.md" in text
+    assert "PAST GAME BODY" not in text
+
+
+def test_turn_zero_no_longer_requires_a_gameplan_guide_read(tmp_path, real_guide):
+    """The instruction this replaces was "Read your deck's gameplan guide" -
+    a 58 KB `Read` before the first action, every game."""
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = turn_zero(assignment(real_guide), tmp_path / "current-game.md", briefing=briefing)
+    assert "Read your deck's gameplan guide" not in text
+    # prose wraps, so compare against the text with its line breaks folded
+    flat = " ".join(text.lower().split())
+    assert "matchup card" in flat
+    assert "do not read the gameplan guide to get started" in flat
+    assert "42-73 kb" in flat
+
+
+def test_turn_zero_still_orders_the_brief_before_the_first_action(tmp_path, real_guide):
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = turn_zero(assignment(real_guide), tmp_path / "current-game.md", briefing=briefing)
+    lowered = text.lower()
+    assert lowered.index("before you take a single action") < lowered.index("wait_for_priority")
+    assert "matchup card" in lowered
+
+
+def test_turn_zero_points_at_the_one_small_read_once_the_opponent_shows_cards(tmp_path, real_guide):
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = turn_zero(assignment(real_guide), tmp_path / "current-game.md", briefing=briefing)
+    assert "<archetype>.json" in text
+
+
+def test_advisor_turn_zero_no_longer_requires_a_gameplan_guide_read(tmp_path, real_guide):
+    """Mirrors `test_turn_zero_no_longer_requires_a_gameplan_guide_read` for the
+    buddy: the advisor seat is the most inference-hungry one in the system (it
+    thinks at every decision point its human holds), and it was still being
+    sent to read a 42-73 KB gameplan guide that the briefing already inlines
+    as a matchup card."""
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = advisor_turn_zero(
+        assignment(real_guide), tmp_path / "current-game.md", briefing=briefing
+    )
+    assert "Read their deck's gameplan guide" not in text
+    flat = " ".join(text.lower().split())
+    assert "matchup card" in flat
+    assert "do not read the gameplan guide to get started" in flat
+
+
+def test_advisor_turn_zero_brief_carries_the_inlined_matchup_card(tmp_path, real_guide):
+    """The buddy's brief must carry the same inlined card the opponent seat
+    gets - it is advising on the human's own deck, so the card is rendered
+    from that deck's boarding plan, same as the seat's."""
+    briefing = render_current_game(assignment(real_guide), tmp_path / "memory")
+    text = advisor_turn_zero(
+        assignment(real_guide), tmp_path / "current-game.md", briefing=briefing
+    )
+    assert "Matchup card" in text
+    assert "Psychic Frog into Quantum Riddler" in text
+
+
+def test_reflection_turn_keys_the_note_on_a_canonical_archetype_or_unknown(tmp_path, guide):
+    """The tells table, the note the reflection turn writes and any later
+    pass over those notes have to key identically, or the pass finds
+    nothing."""
+    text = reflection_turn(assignment(guide), tmp_path / "memory", outcome="bob won")
+    assert "vs-<archetype>.md" in text
+    assert "tells table" in text
+    assert "`unknown`" in text
+
+
+# ---- P1 and P2 meet here -------------------------------------------------
+#
+# The classifier says WHICH deck the agent is holding and how sure it is; the
+# matchup card says what that deck does and what to look for across the
+# field. A briefing carrying one and not the other is half a brief, and the
+# two were built on separate branches, so this is the seam worth pinning.
+
+
+def _cards_in(text: str) -> list[str]:
+    """Every inlined matchup card in a briefing, as its own string.
+
+    A card's own headings are `###`/`####`; the only `##` after one is the
+    guide-paths heading that follows it.
+    """
+    return [chunk.split("\n## ")[0] for chunk in text.split("## Matchup card - ")[1:]]
+
+
+def test_the_briefing_carries_the_classifier_claim_and_the_card(tmp_path, real_guide):
+    text = render_current_game(assignment(real_guide, CONFIDENT), tmp_path / "memory")
+    assert "You are piloting **dimir-frog**" in text
+    assert "dimir frog" in text, "the archetype's own name for itself"
+    assert "## Matchup card - dimir-frog" in text
+    assert "matchup card below" in text, "the claim has to point at the card, not at a read"
+    assert text.index("You are piloting") < text.index("## Matchup card"), (
+        "which deck it is comes before what that deck does"
+    )
+
+
+def test_a_low_confidence_briefing_hedges_the_claim_and_still_inlines_the_card(
+    tmp_path, real_guide
+):
+    """The card is rendered from the guide the classifier is only PROBABLY
+    right about, so the hedge and the runner-up have to travel with it - a
+    card presented without them reads as settled fact."""
+    other = DeckGuide(slug="instant-reanimator", root=tmp_path, decklist=tmp_path / "d.txt")
+    text = render_current_game(
+        assignment(
+            real_guide,
+            LOW,
+            candidates=(
+                candidate(real_guide, "dimir frog", clauses=4, matched=2),
+                candidate(other, "instant reanimator", clauses=3, matched=2),
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    assert "probably piloting **dimir-frog**" in text
+    assert "low-confidence" in text
+    assert "Also plausible: `instant-reanimator`" in text
+    assert "## Matchup card - dimir-frog" in text
+    assert len(_cards_in(text)) == 1
+    assert "matchup card below" in text, "the hedge has to point at the card, not at a read"
+
+
+def family_briefing(tmp_path: Path, slugs: tuple[str, ...]) -> tuple[list[DeckGuide], list[str]]:
+    """A briefing for the family case, and the cards inlined in it.
+
+    `LOW` with no branch chosen is what `GuideLibrary.identify` returns for a
+    list holding only the clauses a family's branches share - the tron case
+    it was built for, and a routine one now that pilots bring their own
+    lists. Every leading branch's guide comes back in `Identification.guides`
+    and `render_current_game` renders a card for each.
+    """
+    library = GuideLibrary(FIXTURE_GUIDES)
+    branches = [library.get(slug) for slug in slugs]
+    assert all(b is not None and b.boarding_plan is not None for b in branches)
+    text = render_current_game(
+        assignment(
+            None,
+            LOW,
+            identification=Identification(
+                LOW,
+                None,
+                tuple(candidate(b, b.slug, clauses=3, matched=2) for b in branches),
+                "tron",
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    return branches, _cards_in(text)
+
+
+def watch_for_column(card: str) -> dict[str, str]:
+    """The tells table's `watch for` cell, keyed on the row's archetype - the
+    last column, when the card renders one at all."""
+    rows = [line.split("|") for line in card.splitlines() if line.startswith("| `")]
+    return {row[1].strip().strip("`"): row[6].strip() for row in rows}
+
+
+@pytest.mark.parametrize(
+    "slugs",
+    [
+        ("prison-tron", "orzhov-martyr"),
+        ("prison-tron", "orzhov-martyr", "dimir-frog"),
+    ],
+)
+def test_a_family_briefing_keeps_the_watch_for_on_every_row_of_every_branch(tmp_path, slugs):
+    """Acceptance 1 puts that matchup's `play_plan.watch_for` on every one of
+    the fifteen to nineteen tells rows, and a briefing with two branches in it
+    is still a briefing: the requirement is a property of the CARD, not of
+    how many cards the classifier happened to be undecided between.
+
+    This is the assertion the suite was missing, and the defect it was
+    missing: the family path handed each branch `CARD_TARGET_BYTES // len(
+    offered)` (5120) and a shared cap, which is below every rung that keeps
+    the column, so every card in a family briefing rendered with no `watch
+    for` column at all and `Tell.watch_for == ""` on every row - 34 rows
+    between the two branches of the real corpus tron case - while each of
+    those plans renders whole, column and all, under its own 12288 byte cap.
+    The briefing-wide budget that forced it is one the brief never set.
+    """
+    branches, cards = family_briefing(tmp_path, slugs)
+    assert len(cards) == len(branches), "one card per branch, neither dropped"
+    for branch, card in zip(branches, cards, strict=True):
+        assert len(card.encode()) <= CARD_HARD_CAP_BYTES, (
+            f"{branch.slug} rendered over the per-card hard cap"
+        )
+        assert "| watch for |" in card, f"{branch.slug} rendered with no `watch for` column"
+        matchups = json.loads(branch.boarding_plan.read_text())["matchups"]
+        written = {
+            slugify(str(m["name"])): " ".join(
+                str((m.get("play_plan") or {}).get("watch_for") or "").split()
+            )
+            for m in matchups
+        }
+        written = {archetype: prose for archetype, prose in written.items() if prose}
+        assert len(written) >= 10, "this plan has almost no watch_for text; assert nothing"
+        cells = watch_for_column(card)
+        assert len(cells) == len(matchups), f"{branch.slug}: a tells row went missing"
+        for archetype, prose in written.items():
+            cell = cells[archetype]
+            assert cell and cell != "-", (
+                f"{branch.slug}: {archetype} rendered an empty `watch for` cell"
+            )
+            assert prose.startswith(cell.removesuffix("...")), (
+                f"{branch.slug}: {archetype}'s `watch for` is not the plan's text"
+            )
+        assert "**Truncated**" not in card, (
+            f"{branch.slug} fits its own budget whole; nothing had to give"
+        )
+
+
+def test_a_family_briefing_inlines_an_honest_card_per_branch(tmp_path):
+    """`LOW` with no branch chosen hands over every leading branch's guide,
+    so it gets every branch's card, and each of those is a whole card.
+
+    The budget is per card, and it stays per card however many branches the
+    classifier could not separate. Dividing it between them - half the
+    target, a shared cap - was a briefing-wide budget the brief never set,
+    and what it bought came out of the fields the brief requires: first the
+    byte cut (tells rows, the brew case, the matchup-file read and all of
+    section 3, with each card's own notice still saying nothing had been
+    dropped), and then, once the cut was fixed, the `watch for` column off
+    every row of both cards. Two whole cards cost ~23 KB against the ~15 KB
+    that bought, and they are still under a tenth of the two boarding plans
+    and a fraction of the two gameplan guides they replace.
+    """
+    branches, cards = family_briefing(tmp_path, ("prison-tron", "orzhov-martyr"))
+    text = render_current_game(
+        assignment(
+            None,
+            LOW,
+            identification=Identification(
+                LOW,
+                None,
+                tuple(candidate(b, b.slug, clauses=3, matched=2) for b in branches),
+                "tron",
+            ),
+        ),
+        tmp_path / "memory",
+    )
+    assert "some kind of **tron**" in text
+    assert "matchup card below for each branch" in text
+    assert len(cards) == 2, "one card per branch, neither dropped"
+    assert cards[0].startswith("prison-tron")
+    assert cards[1].startswith("orzhov-martyr")
+    assert all(len(c.encode()) <= CARD_HARD_CAP_BYTES for c in cards)
+    assert sum(len(c.encode()) for c in cards) <= len(branches) * CARD_HARD_CAP_BYTES
+    assert sum(len(c.encode()) for c in cards) * 4 < sum(
+        b.boarding_plan.stat().st_size for b in branches
+    ), "a card per branch still has to be a fraction of the plans it replaces"
+    for branch, card in zip(branches, cards, strict=True):
+        assert str(branch.gameplan or branch.boarding_plan) in text
+        plan = json.loads(branch.boarding_plan.read_text())
+        rows = [line for line in card.splitlines() if line.startswith("| `")]
+        assert len(rows) == len(plan["matchups"]), "a branch's card lost tells rows"
+        assert "no matchup file" in card.lower(), "the brew case went with them"
+        assert str(branch.matchups_dir) in card, "and so did the one small read"
+        assert "cut here" not in card, "the byte cut is not a trim lever"
+        assert "**Truncated**" not in card, (
+            "a branch's card fits its own budget whole; it has nothing to notice"
+        )
+        assert "### 1." in card and "### 2." in card and "### 3." in card
+        assert "on the play" in card, "section 3 kept its detail, swaps and all"
+
+
+def test_an_unguided_briefing_still_names_the_note_key(tmp_path):
+    """The unclassifiable own-deck case. `NONE` has no guide, so no plan and
+    no tells - and the agent still has to file what it learns under a key the
+    next game's briefing looks up, which is `unknown`."""
+    text = render_current_game(assignment(None), tmp_path / "memory")
+    assert "no guide" in text.lower()
+    assert "`unknown`" in text
+    assert "4 Psychic Frog" in text
+
+
+def test_the_briefing_intersects_the_swaps_against_the_whole_75(tmp_path):
+    """End to end, through the briefing rather than the renderer: the seat is
+    handed the 75 the server dealt, the classifier reads the maindeck of it,
+    and the card's swaps are checked against both boards. Passing the
+    maindeck alone down to the card would stamp `(NOT IN YOUR LIST)` on
+    every card the plan boards in."""
+    guide = GuideLibrary(FIXTURE_GUIDES).get("dimir-frog")
+    dealt = parse_decklist(guide.decklist.read_text())
+    assert "Mystical Dispute" not in dealt.mainboard and dealt.sideboard["Mystical Dispute"] == 3
+    seat = Assignment(
+        game_id="g-1",
+        uid="secret-uid",
+        player="bob",
+        opponent="alice",
+        api_base="http://game:8000",
+        decklist=dealt,
+        identification=identified(guide, CONFIDENT),
+    )
+    text = render_current_game(seat, tmp_path / "memory")
+    assert "Mystical Dispute" in text
+    assert "(NOT IN YOUR LIST)" not in text
+
+
+def test_the_briefing_keeps_the_boards_apart_for_the_classifier_claim(tmp_path, real_guide):
+    """Both halves of the same list, read two different ways in one
+    briefing: the claim is about the maindeck, the swaps are about the 75."""
+    dealt = Decklist(mainboard={"Psychic Frog": 4}, sideboard={"Dress Down": 2})
+    seat = Assignment(
+        game_id="g-1",
+        uid="secret-uid",
+        player="bob",
+        opponent="alice",
+        api_base="http://game:8000",
+        decklist=dealt,
+        identification=identified(real_guide, CONFIDENT),
+    )
+    text = render_current_game(seat, tmp_path / "memory")
+    assert "Maindeck:" in text
+    assert text.index("4 Psychic Frog") < text.index("2 Dress Down")
+    assert "maindeck" in text.lower()

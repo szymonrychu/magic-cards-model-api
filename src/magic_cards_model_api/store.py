@@ -59,7 +59,14 @@ from magic_cards_model.models import Game
 from .db import configured_database_url, database_url_from_env, make_engine
 from .repository import GameRepository, InMemoryRepository
 
-__all__ = ["GameRepository", "GameStore", "known_players", "new_seat_uids", "store"]
+__all__ = [
+    "GameRepository",
+    "GameStore",
+    "known_players",
+    "new_seat_uids",
+    "player_for_advisor_uid",
+    "store",
+]
 
 GameStore = InMemoryRepository
 """Backward-compatible alias. Every existing `from .store import GameStore`
@@ -121,6 +128,22 @@ why nothing may rebind this name after import."""
 def new_seat_uids(game: Game) -> dict[str, str]:
     """A fresh secret uid for each of the game's players: uid -> username."""
     return {uuid4().hex: player.username for player in game.players}
+
+
+def player_for_advisor_uid(game_id: str, uid: str) -> str | None:
+    """Whose view this advisor uid reads, or `None` when it is not one of
+    this game's advisors (`repository.Advisor`).
+
+    The mirror of `store.player_for_uid` for the other kind of credential,
+    and deliberately a *separate* lookup rather than a widening of that one:
+    `player_for_uid` answers "this uid may act as that player", which is
+    exactly what an advisor uid may not do, and every existing caller of it
+    reads it that way. Keeping them apart is what lets `game_access.py`
+    decide with one unambiguous question which kind of credential it is
+    holding.
+    """
+    advisor = store.advisor_uids(game_id).get(uid)
+    return None if advisor is None else advisor.player
 
 
 def known_players(game_id: str) -> list[str]:

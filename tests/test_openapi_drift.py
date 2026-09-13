@@ -17,8 +17,11 @@ inlined objects.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from magic_cards_model_api.app import app
 
@@ -201,3 +204,123 @@ def test_every_mutating_game_route_declares_a_named_response_model() -> None:
     # Sanity: this suite actually walked a non-trivial number of routes,
     # rather than the loop above silently matching nothing.
     assert len(checked) >= 30
+
+
+# -- no named component may vanish -------------------------------------------
+#
+# The two allowlists above are the hole this half closes. They name the
+# schemas 2b's T1 required *by hand*, so a component nobody thought to list
+# there could be renamed or dropped and every test in this file stayed
+# green - which is exactly what happened to the engine's own `Action` when
+# `LegalActionsResponse.actions` was retyped to a subclass: the enrichment
+# was wanted, the disappearance of `Action` from `#/components/schemas` was
+# not, and nothing here could see it. A downstream repo pinned to the name
+# only found out at runtime.
+#
+# So the baseline is derived from the contract itself rather than listed:
+# every component name the committed `openapi.json` carried on `main` must
+# still be a component name now. Additions are free (that is what a growing
+# api does); a *removal* has to be argued for in `INTENTIONALLY_REMOVED_
+# COMPONENTS` below, in the same commit, which is what makes it impossible
+# to ship one silently.
+
+#: Refs tried, in order, for "the contract as `main` published it". `main`
+#: is the claim; `origin/main` is what a CI checkout actually has a ref for
+#: (`actions/checkout` fetches remote-tracking branches, not local ones);
+#: `HEAD` is the last resort on a checkout that has neither - a shallow
+#: clone of a branch - and still catches the case this guard is for, since
+#: it compares a working-tree regeneration against the last commit.
+_BASELINE_REFS = ("origin/main", "main", "HEAD")
+
+#: Component names deliberately taken out of the contract, each with the
+#: reason and the consumer that was told. Adding a name here is a public
+#: contract break: it means a client validating a body against that name
+#: now fails, so it belongs in a commit that says so and nowhere else.
+#: Empty, and the only honest way to keep it empty is to leave the schema
+#: named.
+INTENTIONALLY_REMOVED_COMPONENTS: frozenset[str] = frozenset()
+
+
+def _committed_at(ref: str) -> dict[str, Any] | None:
+    """`openapi.json` as of `ref`, or `None` when this checkout cannot
+    resolve that ref (or has no git at all - a source tarball)."""
+    try:
+        shown = subprocess.run(
+            ["git", "show", f"{ref}:openapi.json"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:  # pragma: no cover - no git binary on this machine
+        return None
+    if shown.returncode != 0:
+        return None
+    try:
+        return json.loads(shown.stdout)
+    except ValueError:  # pragma: no cover - a ref whose file was not json
+        return None
+
+
+def _baseline_components() -> tuple[str, set[str]]:
+    """The ref the baseline came from, and the component names it carried."""
+    for ref in _BASELINE_REFS:
+        committed = _committed_at(ref)
+        if committed is not None:
+            return ref, set(committed.get("components", {}).get("schemas", {}))
+    pytest.skip("no git ref for openapi.json to compare against")
+
+
+def _vanished(baseline: set[str], names: set[str]) -> set[str]:
+    """Names the baseline published that the contract no longer names, minus
+    the ones a commit argued for. Shared by the guard and the test that
+    proves the guard works, so neither can pass on a comparison the other
+    does not make."""
+    return baseline - names - INTENTIONALLY_REMOVED_COMPONENTS
+
+
+def test_no_named_component_disappears_from_the_contract() -> None:
+    """A component that existed on `main` may not stop being a component.
+
+    Renames included: a rename is a removal as far as a consumer looking the
+    old name up is concerned, and this is the test that says so. The fix for
+    a red here is to keep the name published - a model that grew a subclass
+    should have the subclass *reference* the base rather than replace it -
+    and never to add the name to `INTENTIONALLY_REMOVED_COMPONENTS` to get
+    to green."""
+    ref, baseline = _baseline_components()
+    assert baseline, f"{ref}:openapi.json carries no components to compare against"
+    names = set(_current_schema().get("components", {}).get("schemas", {}))
+    vanished = _vanished(baseline, names)
+    assert not vanished, (
+        f"these schema components existed in {ref}:openapi.json and are no longer "
+        f"named in the contract: {sorted(vanished)}. Downstream repos validate "
+        "request/response bodies against `#/components/schemas/<name>` BY NAME "
+        "(see this module's docstring), so dropping or renaming one is a public "
+        "break. Keep the name published - typically by having whatever replaced "
+        "it reference the original rather than inline it - or, if the removal is "
+        "genuinely intended, say so in INTENTIONALLY_REMOVED_COMPONENTS."
+    )
+
+
+def test_the_baseline_guard_reads_a_real_contract_and_sees_a_removal() -> None:
+    """The guard above, proven in both the directions that could make it
+    vacuous.
+
+    First that the baseline is a real contract and not an empty set: a
+    `_committed_at` that quietly answered `None` (a moved file, a ref that
+    stopped resolving, a git that is not there) would leave nothing to
+    compare and nothing would notice. `NewGame` stands in for "this parsed
+    an `openapi.json`" - it is one of the request models T1 names, so it has
+    been in every version of this artifact.
+
+    Then that the comparison itself reports a name the contract has stopped
+    publishing, through the same `_vanished` the guard calls."""
+    ref, baseline = _baseline_components()
+    assert "NewGame" in baseline, (
+        f"{ref}:openapi.json did not parse as a contract with named components - "
+        "the baseline this file's guard rests on is not being read"
+    )
+    names = set(_current_schema().get("components", {}).get("schemas", {}))
+    assert "NoSuchSchemaEverExisted" not in names
+    assert _vanished(baseline | {"NoSuchSchemaEverExisted"}, names) == {"NoSuchSchemaEverExisted"}

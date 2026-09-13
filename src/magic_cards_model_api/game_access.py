@@ -18,19 +18,31 @@ and see other's games."
 py`) is the OIDC subject (`oidc.AuthenticatedUser.sub`) of whoever created it
 through a request that carried a valid bearer token - set once, at creation,
 by `app.create_game`/`decks_api.start_game_from_decklists`, never
-reassigned. **A game with no owner is exactly as unrestricted as every game
-was before this module existed** - this is the whole migration story: no
-bearer token has ever reached this deployment (this api has no OIDC issuer
-configured yet, and even once oauth2-proxy fronts the play UI - GitHub PR
-#18 - the play UI itself does not forward a token to this api, and the api's
-own ingress carries no bypass past the proxy at all yet; see `oidc.py`'s own
+reassigned. **A game with no owner is as READABLE as every game was before
+this module existed** - this is the whole migration story: no bearer token
+has ever reached this deployment (this api has no OIDC issuer configured
+yet, and even once oauth2-proxy fronts the play UI - GitHub PR #18 - the
+play UI itself does not forward a token to this api, and the api's own
+ingress carries no bypass past the proxy at all yet; see `oidc.py`'s own
 note on what that bypass needs before it is safe), so every game created
-today gets no owner, and this module changes nothing about it. The moment a
-caller *does* start sending a valid bearer token -
-this task's own manual verification does, and a real OIDC-integrated
-frontend eventually will - every game it creates is owned, and this module's
-gate activates for exactly those games, immediately, with no further
-deployment change required.
+today gets no owner, and no read of one changed. The moment a caller *does*
+start sending a valid bearer token - this task's own manual verification
+does, and a real OIDC-integrated frontend eventually will - every game it
+creates is owned, and this module's ownership gate activates for exactly
+those games, immediately, with no further deployment change required.
+
+**Writing is the exception, and it is not about ownership at all.** Every
+mutating request - POST, PUT, PATCH, DELETE (`MUTATING_METHODS`) - requires
+a credential *for that game*, owned or not: a seat uid, the admin key, or
+the owner's own bearer token. An ownerless game used to be world-*writable*
+along with world-readable, and that is what made the advisor's read-only-ness
+unenforceable rather than merely undocumented: `_advisor_may` is a deny-list
+keyed on a credential, and a deny-list keyed on a credential cannot restrict
+a caller who omits the credential. With no `uid` the advisor branch never
+ran and the owner check answered `True`, so the buddy - which already knows
+the `game_id`, since it needs it to read - walked past its own restriction
+by dropping one query parameter. See
+`tests/test_mutation_needs_a_credential.py`.
 
 **A game that has an owner is reachable three ways, and three ways only:**
 
@@ -60,6 +72,35 @@ that genuinely does not exist (`app.py`'s `_key_error` handler is what turns
 it into the response). A caller who is not entitled to a game must not be
 able to tell "not yours" apart from "never existed" - a 403 already leaks
 that much, so this never returns one.
+
+## The advisor credential, the one gate that is not about ownership
+
+An advisor uid (`repository.Advisor`, stored in its own `games.advisors`
+map) is a fourth kind of credential, and the only one whose verdict depends
+on what the request is *doing* rather than only on who is asking. It reads
+its human's game - `visibility.resolve_viewer` resolves it to that human's
+username, so its view is byte-identical to the seat's - and it may not act:
+`_advisor_may` lets through any GET, a POST whose *matched route template*
+ends in `/advice` or `/report`, and a POST carrying `dry_run: true` to a
+route that actually declares a `dry_run` field (`DRY_RUN_ROUTES`), and
+refuses everything else through the same 404 as any other denial.
+
+Both of those read the route, never the caller's own spelling of the
+request. That is not fastidiousness: matching `request.url.path`'s tail is a
+trap for the first mutating route that ends in a path parameter, and reading
+`dry_run` off the raw body was the hole itself - pydantic discards an
+undeclared key silently, so on every shape that does not declare the field
+the gate said "probe" while the route committed for real. `schemas.
+RequestModel`'s `extra="forbid"` is the independent second half of that
+fix.
+
+That check runs *before* the ownership question, not after it, because the
+restriction is a property of the uid rather than of the game: an ownerless
+game (which is every game today) is otherwise reachable by anyone who knows
+its id, so an advisor asked about one would be waved through before its own
+rule was ever consulted. Enforcing it here, once, is also what makes it true
+of every mutating route at once - including ones written after this - rather
+than of the handful anybody remembered to guard.
 
 ## Where the gate actually runs
 
@@ -100,9 +141,115 @@ from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 
 from . import oidc
-from .store import store
+from .store import player_for_advisor_uid, store
 
-__all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game"]
+__all__ = ["GameAccessRoute", "authorize_game_access", "can_access_game", "seat_for_uid"]
+
+#: The only POST routes an advisor credential may reach. Both are ways of
+#: *saying* something about a game rather than doing something to it:
+#: `/advice` is the advisor's own channel (its route body is a separate
+#: task; this gate is what will let it through when it lands) and `/report`
+#: files a problem into the log, which anyone watching a game must be able
+#: to do. Matched on the tail of the **matched route template**
+#: (`_route_template`) so the same rule covers whichever router eventually
+#: owns them - never on the caller's own spelling of the path, which is the
+#: trap the first mutating route ending in a `{param}` would otherwise have
+#: walked into.
+ADVISOR_POST_SUFFIXES = ("/advice", "/report")
+
+#: Every POST route whose own request model declares `dry_run` - i.e. every
+#: route that can actually *honour* a probe (`engine_api.dry_run_copy`).
+#:
+#: This list exists because the body cannot be trusted to say what the route
+#: will do with it. Only these shapes declare the field; every other request
+#: model is a plain `BaseModel` whose `model_config` is empty, so pydantic
+#: **discards** an unexpected `dry_run` key rather than rejecting it, and the
+#: route then commits for real - a gate that read `dry_run` off the raw body
+#: was therefore reading a field most routes throw away. On `POST .../seats`
+#: that was privilege escalation rather than a stray mutation: `app.
+#: mint_seat` takes no uid, checks nothing beyond this gate, and hands back a
+#: fresh *unrestricted* seat credential, so one extra key let an advisor
+#: upgrade itself out of its own restriction. `schemas.py` now also sets
+#: `extra="forbid"` on the request models, which turns a `dry_run` a route
+#: cannot honour into a 422 instead of a silent commit - the two defences are
+#: independent on purpose, because `POST .../cards/{card_id}/tap` takes a
+#: raw `dict[str, bool]` that no `model_config` can ever protect.
+#:
+#: Asserted against `openapi.json` by
+#: `tests/test_game_access_advisor.py::
+#: test_the_dry_run_allowlist_matches_the_routes_that_declare_the_field`, so
+#: it cannot drift when a shape gains or loses the field.
+DRY_RUN_ROUTES = frozenset(
+    {
+        "/api/games/{game_id}/actions/activate",
+        "/api/games/{game_id}/actions/attack",
+        "/api/games/{game_id}/actions/cast",
+        "/api/games/{game_id}/actions/crew",
+        "/api/games/{game_id}/actions/cycle",
+        "/api/games/{game_id}/actions/foretell",
+        "/api/games/{game_id}/actions/play-land",
+        "/api/games/{game_id}/actions/plot",
+        "/api/games/{game_id}/actions/suspend",
+    }
+)
+
+#: The methods that can change a game, and so the ones the positive rule
+#: below applies to. `GET`/`HEAD`/`OPTIONS` are reads and keep the migration
+#: story an ownerless game has always had.
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def seat_for_uid(game_id: str, uid: str | None) -> str | None:
+    """The seat `uid` opens in `game_id`, or `None`. **Never an advisor, and
+    never the admin key.**
+
+    The authorization twin of `visibility.resolve_viewer`, and named apart
+    from it because the two answer different questions that were being asked
+    with one function. `resolve_viewer` answers *what may this uid see*, and
+    it resolves an advisor uid to the human seat it watches on purpose -
+    that is what makes an advisor's view byte-identical to its human's by
+    construction rather than by two code paths agreeing. Four routes then
+    used the same answer to decide *who is acting*
+    (`app.decide`, `app._answer_declaration`, `app._pregame_seat`), and
+    widening the viewer widened them too: an advisor uid started satisfying
+    "this uid opens the seat this request names", which left this module's
+    gate as the only thing between a read-only credential and a real move.
+
+    Every acting-seat check calls this instead, so the two questions cannot
+    be confused again. `app.declare_plan` and the archived-game check were
+    already doing it correctly through `store.player_for_uid` directly; this
+    is the same answer with a name that says which question it is.
+
+    **The archive counts.** A game the lobby has ended is soft-deleted -
+    `store.get` answers `None` for it - but the seat uid it was played with
+    is still that seat's credential, and `POST .../reflection` exists
+    precisely to be written afterwards (`app.declare_reflection` authorises
+    against `store.archived(...).seat_uids` for exactly this reason, and
+    the driver posts a game's reflection after the lobby has already ended
+    it). `store.archived` is consulted only when the live lookup found
+    nothing, so the ordinary path costs one dictionary read as before.
+    """
+    if not uid:
+        return None
+    player = store.player_for_uid(game_id, uid)
+    if player is not None:
+        return player
+    archived = store.archived(game_id)
+    return None if archived is None else archived.seat_uids.get(uid)
+
+
+async def _json_body(request: Request) -> dict[str, Any] | None:
+    """This request's JSON body as a dict, or `None` when it has none worth
+    reading - no body, not JSON, or JSON that is not an object. Never
+    raises. Starlette caches the bytes on first read, so asking here costs
+    the route's own later parse nothing."""
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return None
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
 
 
 async def _credentials(request: Request) -> tuple[str | None, str | None]:
@@ -116,36 +263,134 @@ async def _credentials(request: Request) -> tuple[str | None, str | None]:
     key = request.query_params.get("key")
     if uid is not None or key is not None:
         return uid, key
-    if request.method not in ("POST", "PUT", "PATCH"):
-        return uid, key
-    try:
-        body = await request.json()
-    except Exception:
-        return uid, key
-    if isinstance(body, dict):
+    body = await _json_body(request)
+    if body is not None:
         uid = uid or body.get("uid")
         key = key or body.get("key")
     return uid, key
 
 
+def _route_template(request: Request) -> str | None:
+    """The template of the route this request matched -
+    `/api/games/{game_id}/actions/cast`, never the caller's own
+    `/api/games/abc123/actions/cast` - or `None` when nothing matched.
+
+    FastAPI puts the matched `APIRoute` in the scope
+    (`fastapi.routing.APIRoute.matches`), and `GameAccessRoute` runs inside
+    that route's own handler, so by the time this is asked the scope always
+    carries one in the app. It can be absent when `can_access_game` is
+    asked directly about a hypothetical path (the tests do this for
+    `/advice`, whose route body is a later task), and every caller here
+    treats that as "no declared shape to consult" and fails closed.
+    """
+    path = getattr(request.scope.get("route"), "path", None)
+    return path if isinstance(path, str) else None
+
+
+async def _advisor_may(request: Request) -> bool:
+    """Whether an advisor credential may make *this* request
+    (`repository.Advisor`).
+
+    Read-only, enforced here rather than trusted to the client holding the
+    uid - that is the whole point of the credential being its own kind:
+
+    - **Any GET** on a `{game_id}` route. An advisor sees exactly what its
+      human sees (`visibility.resolve_viewer` resolves it to that
+      username), so no read this gate lets through can show it anything the
+      seat could not already see. `HEAD` rides along, being a GET with the
+      body dropped - Starlette registers one for every GET route.
+    - **A POST to `/advice` or `/report`** (`ADVISOR_POST_SUFFIXES`) - the
+      two ways of saying something rather than doing something.
+    - **A POST carrying `dry_run: true` to a route that declares a `dry_run`
+      field** (`DRY_RUN_ROUTES`) - a question, not a move: those routes
+      answer one against an isolated probe copy of the game
+      (`engine_api.dry_run_copy`) and commit nothing.
+
+    Both of those are decided off the **matched route template**, never off
+    the raw request path or the raw body. The route is what determines what
+    the request will actually *do*; the body is the caller's own claim about
+    it, and on every shape that does not declare `dry_run` that claim was
+    simply discarded by pydantic while this gate believed it - see
+    `DRY_RUN_ROUTES`.
+
+    Everything else is refused, which is every mutating route at once
+    because this is asked before any of them runs.
+    """
+    if request.method in ("GET", "HEAD"):
+        return True
+    if request.method != "POST":
+        return False
+    template = _route_template(request)
+    if template is None:
+        return False
+    if template.rstrip("/").endswith(ADVISOR_POST_SUFFIXES):
+        return True
+    if template not in DRY_RUN_ROUTES:
+        return False
+    body = await _json_body(request)
+    return body is not None and body.get("dry_run") is True
+
+
+def _is_admin(game_id: str, uid: str | None, key: str | None) -> bool:
+    """Whether either credential slot carries `game_id`'s admin key.
+
+    Both slots, because this repo has always accepted the admin key in
+    either: `visibility.resolve_viewer` checks `store.is_admin(game_id,
+    uid)` before anything else, `POST .../pregame/settle` *requires* it
+    that way, and `conftest.state()` plus a couple of dozen test call sites
+    hand it over as `uid=`. Checking only `key=` here - which is what this
+    gate used to do - would refuse every one of them the moment the
+    positive rule below started requiring a credential at all.
+    """
+    return any(store.is_admin(game_id, candidate) for candidate in (key, uid) if candidate)
+
+
 async def can_access_game(request: Request, game_id: str) -> bool:
-    """Whether `request` may reach `game_id` at all - see this module's
-    docstring for the three ways an owned game is reachable. `True` for an
-    unowned or unknown game: this function only ever narrows access for a
-    game that names an owner. Never raises for an *invalid* bearer token
-    either - the same rule `authorize_game_access` documents in more detail,
-    reused here so a filtered list can simply drop an entry the caller could
-    not prove instead of failing the whole listing over one bad token."""
-    owner = store.owner_user_id(game_id)
-    if owner is None:
-        return True
-    user = await run_in_threadpool(oidc.current_user, request)
-    if user is not None and user.sub == owner:
-        return True
+    """Whether `request` may reach `game_id` at all.
+
+    **Reading** an unowned game needs nothing, exactly as it always has -
+    see this module's docstring for the migration story, and
+    `test_user_separation.py` for the pin. An owned game is readable the
+    three ways that docstring lists.
+
+    **Mutating** one - POST, PUT, PATCH or DELETE (`MUTATING_METHODS`) -
+    needs a credential *for that game*, always: a uid that opens one of its
+    seats, its admin key, or a bearer token naming its owner. This is the
+    positive rule, and it exists because the advisor restriction could not
+    be enforced without it. `_advisor_may` is a deny-list keyed on a
+    credential, and a deny-list keyed on a credential cannot restrict a
+    caller who omits the credential - the buddy already knows the
+    `game_id`, so dropping `uid` walked past its own restriction into a
+    branch that answered `True` for every ownerless game, which is every
+    game in this deployment. An ownerless game being world-*writable* is
+    pre-existing behaviour rather than a regression this branch introduced,
+    but it makes the read-only guarantee unachievable, so it closes here.
+    World-*readable* is untouched.
+
+    Never raises for an *invalid* bearer token either - the same rule
+    `authorize_game_access` documents in more detail, reused here so a
+    filtered list can simply drop an entry the caller could not prove
+    instead of failing the whole listing over one bad token.
+    """
     uid, key = await _credentials(request)
-    if uid and store.player_for_uid(game_id, uid) is not None:
+    seat = seat_for_uid(game_id, uid)
+    # The advisor gate comes first, and before the ownership question, on
+    # purpose: an advisor uid is read-only *whatever* the game's ownership
+    # is, and an unowned game (every game today) would otherwise return
+    # `True` below before this was ever asked. A uid that is a seat of this
+    # game is never treated as an advisor, so a seat is unaffected even if
+    # the same string were somehow registered as both.
+    if uid and seat is None and player_for_advisor_uid(game_id, uid) is not None:
+        return await _advisor_may(request)
+    if seat is not None or _is_admin(game_id, uid, key):
         return True
-    return bool(key) and store.is_admin(game_id, key)
+    owner = store.owner_user_id(game_id)
+    if owner is not None:
+        user = await run_in_threadpool(oidc.current_user, request)
+        return user is not None and user.sub == owner
+    # An ownerless game, with no seat uid and no admin key: readable, as it
+    # has always been, and not writable.
+    return request.method not in MUTATING_METHODS
 
 
 async def authorize_game_access(request: Request, game_id: str) -> None:

@@ -1,0 +1,140 @@
+{
+ "name": "devoted combo",
+ "meta_share": 3.8818565400843883,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "statistics_matchups(format=modern, archetype_a=\"orzhov martyr\", archetype_b=\"devoted combo\") returned {\"hint\": \"No matchup data for this archetype/pair. Data depends on tournament pairing records.\", \"results\": []} -- zero rows. statistics_matchups with archetype_a=\"devoted combo\" alone is empty too, statistics_archetypes carries no winrate field for Modern, and this run's committed fingerprint (.protocol/meta-state.json, captured_at 2026-08-24) records winrate_vs_field as an EMPTY OBJECT, {} with zero keys. No head-to-head number exists to record, so no worst-case exemption is reachable for any sideboard slot in this plan."
+ },
+ "opponent_gameplan": "Badgermole Cub and Leyline of Abundance each read 'Whenever you tap a creature for mana, add an additional {G}', and the Leyline can start the game already on the battlefield out of the opening hand, so one Devoted Druid taps for two green with one doubler down and three with both. Devoted Druid's own 'Put a -1/-1 counter on this creature: Untap this creature' recurs that free and unbounded once the 1-of Vizier of Remedies reduces the counter to zero, and once per turn regardless off Tyvar, Jubilant Brawler's '+1: Untap up to one target creature'. Green Sun's Zenith and Nature's Rhythm then convert the pile of green into Craterhoof Behemoth, which seven of ten pulled lists run at one copy, or into Walking Ballista, which six run at one. All ten run four Badgermole Cub, four Delighted Halfling, four Devoted Druid, four Green Sun's Zenith, four Nature's Rhythm, four Leyline of Abundance, four Tyvar, Jubilant Brawler, two Birds of Paradise and exactly one Vizier of Remedies; three of the ten also run a maindeck Gemstone Caverns, which is live only when they are not the starting player and so only when WE are on the play.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Doubled dork mana kills on turn three or four off one tutor and a pile of activated abilities, and nothing in their deck interacts with ours, so they are outrunning our clock rather than fighting over it.",
+  "key_cards": [
+   {
+    "card": "Devoted Druid",
+    "why": "the engine half: a 0/2 that taps for green and untaps itself for a -1/-1 counter, free once Vizier of Remedies is down."
+   },
+   {
+    "card": "Leyline of Abundance",
+    "why": "the doubler that can be on the battlefield before our first land, and the only mana-value-4 permanent in their deck."
+   },
+   {
+    "card": "Craterhoof Behemoth",
+    "why": "the combat finisher in seven of ten lists: +X/+X and trample for X equal to their creature count, which a big life total can actually survive."
+   },
+   {
+    "card": "Walking Ballista",
+    "why": "the finisher in six of ten lists that our life total does not answer at all, because unbounded mana becomes unbounded damage with no attack step."
+   }
+  ]
+ },
+ "primary_gameplan": "Attack the mana engine at instant speed, reset an assembled board with Wrath of the Skies at two energy, and win on Serra Ascendant while Abiding Grace returns one mana-value-1 creature per end step. Skyclave Apparition is the load-bearing maindeck card and its mana value band is the reason: 'exile up to one target nonland, nontoken permanent you don't control with mana value 4 or less' reaches Leyline of Abundance at exactly 4 and Tyvar, Jubilant Brawler at 3, and it is the ONLY card in the 75 that answers the planeswalker at all - Solitude exiles a creature, Wrath of the Skies names artifacts, creatures and enchantments, and a Tyvar is none of those. Thraben Charm is the second and cheaper answer to the Leyline, because 'Destroy target enchantment' is an instant for {1}{W} and the Leyline is frequently on the battlefield before our first land. The exile is permanent even when they kill the Apparition: the leave-the-battlefield clause creates an X/X blue Illusion token, never the card, and the token has no mana ability, so a destroyed Apparition that took a Leyline leaves them a vanilla 4/4 rather than a doubler.",
+ "pitfalls": [
+  "Playing the lifegain half against the half it does not beat. Martyr of Sands reveals three white cards for nine life and thirty life makes every Serra Ascendant a 6/6 flier, and that is a real plan against Craterhoof Behemoth: its pump is +X/+X where X is the number of creatures they control, so a five-body board is a bounded number, and one Martyr activation plus a Kami of False Hope fog puts it out of range for a turn while the Ascendant clock keeps running. It is not a plan at all against Walking Ballista. 'Remove a +1/+1 counter from this creature: It deals 1 damage to any target' plus '{4}: Put a +1/+1 counter on this creature' converts unbounded mana into unbounded damage with no attack step and no regard for a life total, and six of the ten pulled lists run one - decks 882229, 882367, 882360, 881870, 881690 and 881864, four of which run a Craterhoof as well. So the life total buys turns against the combat kill and buys nothing against the Ballista kill, and it is never a substitute for answering the engine. This is the matchup where the deck's own axis is good and irrelevant at the same time, and which one you are in is decided by a card you cannot see until it kills you.",
+  "Treating this row as a second archetype. `devoted combo` and this wiki's `creatures toolbox` row are ONE deck under two unmerged archetype ids (c4fc27b7-4e36-4b08-a070-4d5824a6d1a6 versus c22029ff-3de2-424e-85bc-c270daf9558a), and the labels are temporally disjoint - zero `creatures toolbox` decks dated on or after 2026-08-13, zero `devoted combo` decks on or before 2026-08-10, overlapping only on 2026-08-11 and 2026-08-12. `creatures toolbox` is the RETIRED id and its reads are frozen at 08-12; every list pulled under the live label is dated 2026-08-19 to 2026-08-22. The shares are not double-counted: this run's committed fingerprint (.protocol/meta-state.json, captured_at 2026-08-24) partitions 100pp over deck counts at 0.074683pp per deck, so 44 devoted combo decks at 3.2860pp plus 43 creatures toolbox decks at 3.2114pp is 87 decks and 6.4974pp - the field's #3 archetype behind instant reanimator at 7.8417 and broodscale bloodchief at 6.6468, while each half alone reads as the #8 and #9 rows. A sideboard card that serves both rows is credited once per half and is worth more than either number says.",
+  "Evoking Solitude on the wrong turn. 'Evoke - Exile a white card from your hand' is free, instant speed, and EXILES rather than destroys, so neither Tyvar, Jubilant Brawler's '-2: Mill three cards, then you may return a creature card with mana value 2 or less from your graveyard to the battlefield' nor Dewdrop Cure can rebuy what it takes. It still costs two cards, and one of them is a white card Martyr of Sands was going to reveal for three life. Against a deck that replaces a dead Devoted Druid with Green Sun's Zenith for {2}{G}, evoking on any turn that is not the kill turn is a two-for-one in their favour: evoke when they have Devoted Druid plus a doubler and mana up for a tutor, and hard-cast for {3}{W}{W} otherwise, where it is also a 3/2 lifelink blocker. Never evoke into an untapped Vexing Bauble - 'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' counters an evoked Solitude outright, and five of ten pulled boards run exactly two copies.",
+  "Ephemerating a Skyclave Apparition. The Apparition's second clause is 'When this creature leaves the battlefield, the exiled card's owner creates an X/X blue Illusion creature token, where X is the mana value of the exiled card', and a blink IS a leave-the-battlefield event: Ephemerate on an Apparition that exiled Leyline of Abundance hands them a 4/4 first and exiles a second permanent second. The token has no mana ability so it does not restore the doubler, but it is a creature, and Craterhoof Behemoth's X is the number of creatures they control. That is as much of why all three Ephemerate are on this row's out list as the speed is.",
+  "Boarding High Noon. 'Each player can't cast more than one spell each turn' does not touch the kill turn: the kill is one Green Sun's Zenith or one Nature's Rhythm plus activated abilities, and Tyvar, Jubilant Brawler's '+1: Untap up to one target creature' is a loyalty ability of a planeswalker rather than a spell. It taxes their deployment and taxes ours identically on the turns we want Thraben Charm plus a body, and their 75 answers it five ways: Abrupt Decay in eight of ten pulled boards, uncounterable and aimed at exactly its mana value 2; Force of Vigor in seven; Guerrilla Gorilla in six; Chomping Changeling in five; and one or two maindeck Boseiju, Who Endures channelled in ten of ten. It stays in the box, and this row is the reason its recorded cumulative share went DOWN when the field grew.",
+  "Reading Collector Ouphe as a problem. 'Activated abilities of artifacts can't be activated' is in nine of ten pulled boards - absent only from deck 881870 - and reaches exactly one object in our 75: the Thraben Inspector Clue token. Martyr of Sands and Kami of False Hope are creatures, Emeria, the Sky Ruin is a land, and Abiding Grace is a triggered ability, so none of the four cards a pilot worries about is touched. Expect the Ouphe, record it, and do not sequence around it.",
+  "Crystal Barricade is the card that actually changes the plan, and it is in ten of ten pulled boards at one or two copies. 'You have hexproof' means Orim's Chant cannot target THEM at all, and 'Prevent all noncombat damage that would be dealt to other creatures you control' turns off Thraben Charm's damage mode on every creature except the Barricade itself. Both halves have an out and neither is free: the Chant can name US as target and the kicked 'creatures can't attack this turn' is not targeted, so the fog survives at the cost of our own spells for the turn; and the Barricade is a mana-value-2 artifact creature, so Wrath of the Skies at two energy destroys it with the rest of their board.",
+  "Boarding White Orchid Phantom against a manabase they are not relying on. Their mana is creatures - four Delighted Halfling, two Birds of Paradise and one or two Dryad Arbor in ten of ten - and every list holds two or three basic Forest, so the Phantom's compensation clause always finds one. Killing a Boseiju, Who Endures or a Gemstone Caverns takes a land out of a deck that wins without lands, and Kraul Harpooner's 'choose up to one target creature you don't control with flying ... then you may have this creature fight that creature' is in nine of ten boards and eats the 2/2 flier for two mana. It stays in the box.",
+  "Holding removal for the graveyard plan instead of the two cards that actually stop it. Abiding Grace and Emeria, the Sky Ruin both return creature cards from our graveyard, and what turns that off is Keen-Eyed Curator's repeatable '{1}: Exile target card from a graveyard' in eight of ten pulled boards and Endurance's flash 'puts all the cards from their graveyard on the bottom of their library in a random order' in eight boards plus two maindecks. Neither is answered by a removal spell held up, so the recursion plan has to bank its value the turn it is available rather than the turn it is convenient."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Wrath of the Skies at two energy destroys each artifact, creature and enchantment with mana value 2 or less, which here is Devoted Druid, Badgermole Cub, Delighted Halfling, Birds of Paradise, Vizier of Remedies, Fiend Artisan, Duskwatch Recruiter, Walking Ballista and Dryad Arbor at mana value 0, Agatha's Soul Cauldron, and any Crystal Barricade, Collector Ouphe, Keen-Eyed Curator or Vexing Bauble they boarded - and our Serra Ascendant, Martyr of Sands, Kami of False Hope, Thraben Inspector, its Clue and all four Phelia with them. That is the answer to the question this row exists to ask: a board of mana dorks IS a Wrath target at the X it wants, and neither doubler that matters is. Leyline of Abundance is mana value 4 and survives until six mana, and Tyvar, Jubilant Brawler is a planeswalker, which the card does not name at any X. So the sweeper resets the board without answering the engine, and Skyclave Apparition and Thraben Charm's enchantment mode are what answer the engine. Thraben Charm and Orim's Chant cost us nothing, so the whole symmetry is the sweeper's. Two recorded differences separate this row from the `creatures toolbox` row of the same deck and both point the same way: Suncleanser, whose second mode takes the energy this card is our only source of, is in ONE of ten pulled boards under the live label against five of ten under the retired one, and Crystal Barricade is in ten of ten against four of ten. The sweeper is therefore both safer than that row says and more necessary, because the Barricade is what blanks the cheaper Thraben Charm damage mode.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Crystal Barricade",
+   "count": 2,
+   "why": "ten of ten pulled boards at one or two copies, and the single card in their 75 that most changes this plan. 'You have hexproof' takes them off the table as a legal target for Orim's Chant, and 'Prevent all noncombat damage that would be dealt to other creatures you control' blanks Thraben Charm's damage mode on everything except the Barricade itself. It is a mana-value-2 artifact creature, so Wrath of the Skies at two energy destroys it.",
+   "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+  },
+  {
+   "card": "Collector Ouphe",
+   "count": 1,
+   "why": "nine of ten pulled boards, absent only from deck 881870. 'Activated abilities of artifacts can't be activated' reaches exactly one object in our 75, the Thraben Inspector Clue token: Martyr of Sands and Kami of False Hope are creatures, Emeria, the Sky Ruin is a land and Abiding Grace is a triggered ability. It is the card we should most expect to face and the one that does least, and it turns off their own Walking Ballista counter-adding ability while it is out.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Abrupt Decay",
+   "count": 3,
+   "why": "eight of ten pulled boards, three copies in five of them. 'This spell can't be countered. Destroy target nonland permanent with mana value 3 or less' answers Skyclave Apparition, Abiding Grace, Enduring Innocence, Flickerwisp and Phelia - and killing the Apparition does NOT return the exiled card, only an X/X Illusion token. It cannot touch Wrath of the Skies, Thraben Charm or Orim's Chant, which are the three cards this row brings in.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Endurance",
+   "count": 2,
+   "why": "eight of ten pulled boards plus a maindeck copy in decks 882360 and 881864. Flash, and the enters trigger puts our whole graveyard on the bottom of our library in random order, which is what Abiding Grace and Emeria, the Sky Ruin return creatures from. It is also a 3/4 reach blocker against the Serra Ascendant clock.",
+   "source_tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+  },
+  {
+   "card": "Keen-Eyed Curator",
+   "count": 1,
+   "why": "eight of ten pulled boards at one copy. '{1}: Exile target card from a graveyard' is repeatable rather than one-shot, so it beats Abiding Grace and Emeria, the Sky Ruin at instant speed for one mana a turn and there is no window to play around it the way there is with Endurance.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Kraul Harpooner",
+   "count": 1,
+   "why": "nine of ten pulled boards at one copy. The undergrowth trigger fights a creature we control WITH FLYING, which is Starfield Shepherd, Flickerwisp, a boarded White Orchid Phantom and a Serra Ascendant at thirty or more life - the last of which is our whole clock, and the Harpooner gets +X/+0 for their graveyard creature count.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Force of Vigor",
+   "count": 3,
+   "why": "seven of ten pulled boards. Free on our turn for a green card, and it destroys up to TWO of Abiding Grace, Enduring Innocence, Overlord of the Balemurk and the Clue in one card. It cannot answer Wrath of the Skies, a sorcery, which is part of why the sweeper is the right centrepiece here.",
+   "source_tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 2,
+   "why": "five of ten pulled boards, always exactly two copies. 'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' counters our evoked Solitude and the rebound cast of Ephemerate. Every card this row boards in is paid for with mana, so it taxes the maindeck only.",
+   "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+  },
+  {
+   "card": "Guerrilla Gorilla",
+   "count": 2,
+   "why": "six of ten pulled boards. 'Sacrifice this creature: Destroy target noncreature artifact or noncreature enchantment. Activate only as a sorcery' answers Abiding Grace, and it is one reason High Noon stays in the box. Enduring Innocence and Overlord of the Balemurk are enchantment CREATURES, so it cannot take either while it is on the battlefield as one.",
+   "source_tournament_id": "ff73d68a-de63-4c97-8ef8-283f647257cd"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "3 Thraben Charm",
+    "2 Wrath of the Skies",
+    "2 Orim's Chant"
+   ],
+   "out_cards": [
+    "4 Overlord of the Balemurk",
+    "3 Ephemerate"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "3 Thraben Charm",
+    "3 Wrath of the Skies",
+    "2 Orim's Chant"
+   ],
+   "out_cards": [
+    "4 Overlord of the Balemurk",
+    "3 Ephemerate",
+    "1 Thraben Inspector"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands with Thraben Charm or Skyclave Apparition; a Martyr-and-lands hand gains life at a deck that does not care.",
+  "goldfish_for": "Thraben Charm's enchantment mode on Leyline of Abundance before their third land.",
+  "watch_for": "On the play their Gemstone Caverns is live; hold the evoked Solitude for the tutor turn, not a turn-one Halfling.",
+  "posture": "disrupt_first",
+  "posture_why": "Walking Ballista in six of ten lists kills through any life total, so lifegain cannot be the plan."
+ },
+ "self_cost": "Wrath of the Skies destroys each artifact, creature and enchantment at or under the energy paid, not creatures only, and at two energy our half is thirteen permanents: four Serra Ascendant, four Martyr of Sands, one Kami of False Hope, one Thraben Inspector and any Clue it made, and all four Phelia, Exuberant Shepherd, which are {1}{W}. Kami of False Hope is the loss that decides how the exchange reads, because it is the fog on a Craterhoof Behemoth swing and this row boards all three Ephemerate out - so the only ways to see another are Starfield Shepherd, whose enters trigger searches a basic Plains or a creature card with mana value 1 or less, and Abiding Grace, which returns one mana-value-1 creature per end step and is what makes the two-energy exchange recoverable rather than terminal. Do not cast the sweeper before Abiding Grace has resolved. Four energy is the setting that would take Leyline of Abundance at mana value 4, and it is never right here: it costs {4}{W}{W}, and it also destroys Skyclave Apparition, Flickerwisp, Enduring Innocence and the Abiding Grace that was the rebuild, which is trading the recovery for the one permanent Thraben Charm and Skyclave Apparition already answer for two and three mana. Our only energy source is the Wrath itself, so nothing tops X up between copies; unspent energy does bank, which is the only way a second cast ever pays more than the X it announced."
+}

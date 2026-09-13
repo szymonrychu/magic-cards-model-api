@@ -15,6 +15,7 @@ collision.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -26,11 +27,26 @@ from mtg_agent.driver.config import DriverSettings
 
 DECKLIST = "4 Psychic Frog\n4 Fatal Push\n2 Consign to Memory\n"
 
+#: The guide's `archetype.json`, the shape `mtg-decks` writes and
+#: `guides.load_signature` reads - two clauses this world's `DECKLIST`
+#: satisfies, so the driver identifies the seat as `dimir-frog` confidently.
+#: A guide directory WITHOUT one is unclassifiable (`guides.NONE`), which is
+#: what `test_app.py`'s unguided-deck cases lean on.
+ARCHETYPE = {
+    "schema_version": 1,
+    "archetype": "dimir frog",
+    "signature": [
+        {"cards": ["Psychic Frog", "Quantum Riddler"], "min": 4, "why": "the threats"},
+        {"cards": ["Fatal Push", "Thoughtseize"], "min": 4, "why": "the cheap black answers"},
+    ],
+}
+
 
 def build_world(tmp_path) -> SimpleNamespace:
     guides = tmp_path / "guides" / "decks" / "dimir-frog"
     guides.mkdir(parents=True)
     (guides / "decklist.txt").write_text(DECKLIST)
+    (guides / "archetype.json").write_text(json.dumps(ARCHETYPE))
     (guides / "GAMEPLAN_GUIDE.md").write_text("# gameplan\n")
 
     state = {

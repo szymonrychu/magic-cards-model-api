@@ -103,13 +103,24 @@ def test_end_game_deletes_it_and_its_seat_uids_stop_opening_anything(client: Tes
         )
         # And it cannot act on the still-live game either: a pregame
         # declaration is the first move a stale browser tab would make.
+        #
+        # This used to be `_pregame_seat`'s own 400 ("that uid does not open
+        # alice's seat"), reached because the gate let any caller through to
+        # an ownerless game. `game_access.py`'s positive rule refuses a
+        # mutating call whose credential opens no seat of *this* game before
+        # the route runs, so the answer is now the module's standard
+        # refusal: a 404 identical to the one a game that never existed
+        # produces. That is this repo's own deliberate choice (see
+        # `game_access.py`'s docstring - a caller must not be able to tell
+        # "not yours" from "does not exist"), and it is a strictly stronger
+        # answer to the question this test asks.
         refused = client.post(
             f"/api/games/{second['game_id']}/pregame/mulligan",
             params={"uid": old_uid},
             json={"player": "alice", "take": True},
         )
-        assert refused.status_code == 400, refused.text
-        assert "seat" in refused.text
+        assert refused.status_code == 404, refused.text
+        assert refused.json()["detail"] == f"no game {second['game_id']}", refused.text
     finally:
         client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
 
@@ -280,3 +291,54 @@ def test_a_rejected_decklist_does_not_touch_the_running_game(client: TestClient)
     finally:
         client.delete(f"/api/games/{first['game_id']}", params={"key": first["admin_key"]})
         ai_pregame.stop(first["game_id"])
+
+
+def test_deleting_a_game_outright_releases_everything_end_game_releases(
+    client: TestClient, monkeypatch
+) -> None:
+    """`DELETE /api/games/{id}` is the other way a game ends, and until this
+    test it recorded the deletion and dropped the game without releasing
+    anything: the pregame watcher kept polling, and the registry kept both
+    the seat's process and its pollable status. In `wrapper` mode that leak
+    is permanent - the driver stays assigned to a game that no longer exists
+    and 409s every later dispatch (`mtg_agent.driver.app`: "it plays one
+    match per container and is free again once that game ends"), because
+    nothing ever tells it the game ended.
+
+    So this route delegates to the same `lobby.reset_game` End game uses.
+    Subprocess mode here, for the same reason
+    `test_the_subprocess_seat_is_terminated_and_forgotten_when_ended` uses
+    it: a real OS process, through the real code path, without paying for
+    the real `claude`.
+    """
+    monkeypatch.setenv("AI_SEAT_MODE", "subprocess")
+    monkeypatch.setattr(ai_seat, "claude_available", lambda: True)
+    monkeypatch.setattr(
+        ai_seat,
+        "command_for",
+        lambda prompt, agent: ["python3", "-c", "import time; time.sleep(60)"],
+    )
+    booted = boot(client, seed=1, ai=True)
+    game_id, ai_uid = booted["game_id"], booted["seat_uids"]["bob"]
+    started = client.post(f"/api/lobby/games/{game_id}/ai-seat/start", json={"uid": ai_uid}).json()
+    assert started["mechanism"] == "subprocess"
+    runner = ai_seat.registry._runners[ai_uid]
+    wait_until(runner.running)
+    assert ai_pregame.is_watching(game_id)
+
+    deleted = client.delete(f"/api/games/{game_id}", params={"key": booted["admin_key"]})
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"deleted": game_id}
+
+    assert not ai_pregame.is_watching(game_id), "the watcher was left polling a deleted game"
+    wait_until(lambda: not runner.running())
+    assert ai_seat.registry.status(ai_uid) is None, (
+        "the registry still answers for a seat of a game that no longer exists"
+    )
+
+    log = audit.entries(game_id)
+    assert log[-1]["action"] == "delete_game"
+    detail = log[-1]["detail"]
+    assert detail["reason"] == "deleted outright"
+    assert "seat uid(s) invalidated" in detail["note"]
+    assert detail["ai_seats_released"][0]["uid"] == ai_uid

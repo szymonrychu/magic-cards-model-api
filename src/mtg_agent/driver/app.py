@@ -22,7 +22,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -30,7 +30,16 @@ from pydantic import BaseModel
 
 from .config import DriverSettings
 from .guides import GuideLibrary, parse_decklist
-from .prompt import Assignment, reflection_turn, render_current_game, turn_zero
+from .prompt import (
+    Assignment,
+    advisor_turn_zero,
+    plan_header,
+    plan_path,
+    reflection_turn,
+    render_current_game,
+    turn_zero,
+)
+from .revision import guides_revision
 
 log = logging.getLogger("driver")
 
@@ -59,6 +68,18 @@ class DispatchIn(BaseModel):
     player: str
     api_base: str = ""
     agent: dict | None = None
+    role: Literal["seat", "advisor"] = "seat"
+    """Which kind of container this dispatch is for: a `seat` that plays
+    `player`, or an `advisor` - B5's buddy - that watches `player`'s own view
+    and proposes, and whose uid the game server refuses every action from
+    (`magic_cards_model_api.game_access`). It picks the prose `assign` pushes
+    as turn 0 (`prompt.advisor_turn_zero` rather than `prompt.turn_zero`) and
+    nothing else: a buddy reuses the whole of this driver, the wrapper beside
+    it and the wake loop a seat runs.
+
+    Defaulted, so a dispatch body written before roles existed - and
+    `k8s_seats`' own `DRIVER_ASSIGNMENT_JSON`, which writes the key only for
+    a non-default role - reads back as a seat, unchanged."""
 
 
 class ReleaseIn(BaseModel):
@@ -162,6 +183,18 @@ def build_app(
             pending=False,
             turnActive=False,
         )
+
+    def seed_plan_file(assignment: Assignment) -> None:
+        """Write the plan file's header, so the game's own artifact names the
+        guides revision it was played against whatever the agent does next.
+
+        Never overwrites: a redispatch of the same seat (an agent container
+        that restarted mid-match) must not throw away the plan the agent has
+        already written."""
+        path = plan_path(settings.memory_root, assignment)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(plan_header(assignment))
 
     def game_state(game_id: str, uid: str) -> dict:
         with make_client(settings.game_api) as client:
@@ -413,10 +446,11 @@ def build_app(
 
         Best-effort: a failure reaching the lobby route (or a game with no
         decklists at all, `POST /api/games` builds a board directly) answers
-        empty rather than aborting the dispatch - the honest "no list to
-        identify" answer `GuideLibrary.identify` already scores at 0 rather
-        than guessing a guide, and matchup-guide selection is not worth
-        making the actual seat assignment newly fragile over.
+        empty rather than aborting the dispatch - an empty mainboard satisfies
+        no archetype's signature, so `GuideLibrary.identify` already answers
+        the honest "no list to identify" rather than guessing a guide, and
+        matchup-guide selection is not worth making the actual seat
+        assignment newly fragile over.
         """
         try:
             with make_client(settings.game_api) as client:
@@ -470,7 +504,12 @@ def build_app(
             raise HTTPException(status_code=502, detail=f"game server: {exc}") from exc
 
         decklist = parse_decklist(seat_decklist(body.game_id, body.uid, body.player))
-        guide, score = library.identify(decklist)
+        identified = library.identify(decklist)
+        # Read per dispatch, not once at startup: a compose driver is a
+        # long-lived container over a bind-mounted checkout the operator can
+        # pull under it between two games, and the revision that matters is
+        # the one this game was played against.
+        revision = guides_revision(settings.guides_root)
         assignment = Assignment(
             game_id=body.game_id,
             uid=body.uid,
@@ -478,9 +517,10 @@ def build_app(
             opponent=opponent_of(state, body.player),
             api_base=body.api_base or settings.game_api,
             decklist=decklist,
-            guide=guide,
-            match_score=score,
+            identification=identified,
+            guides_revision=revision,
             agent=body.agent,
+            role=body.role,
         )
 
         settings.workspace.mkdir(parents=True, exist_ok=True)
@@ -491,8 +531,15 @@ def build_app(
         # operators to read.
         briefing = render_current_game(assignment, settings.memory_root)
         current_game_path.write_text(briefing)
+        # After the briefing, never before: `memory_index` lists every `*.md`
+        # under the deck's memory directory as "what you have already
+        # learned", and this game's own plan file is not a past game's note.
+        seed_plan_file(assignment)
 
-        text = turn_zero(assignment, current_game_path, briefing)
+        # An advisor gets its own prose, never the seat's with caveats bolted
+        # on: a buddy that is told to win the game will try to play it.
+        write_turn_zero = advisor_turn_zero if assignment.role == "advisor" else turn_zero
+        text = write_turn_zero(assignment, current_game_path, briefing)
         with lock:
             # Claim the agent before talking to it, so a second game arriving
             # while we are pushing gets the 409 rather than a race.
@@ -532,9 +579,11 @@ def build_app(
                 name="driver-push-turn-zero",
             ).start()
             return {
-                "deck": guide.slug if guide else None,
+                "deck": identified.guide.slug if identified.guide else None,
                 "turnId": None,
-                "matchScore": score,
+                "confidence": identified.confidence,
+                "archetype": identified.archetype,
+                "candidates": [c.slug for c in identified.candidates],
                 "pending": True,
                 "reason": f"the agent is restarting; turn 0 will be pushed when it answers ({exc})",
             }
@@ -543,19 +592,23 @@ def build_app(
             if current["assignment"] is assignment:
                 current.update(lastTurnId=turn_id, pending=False, turnActive=True)
         log.info(
-            "dispatched game=%s player=%s vs=%s deck=%s (match %.2f, %d cards) turn=%s",
+            "dispatched game=%s player=%s vs=%s deck=%s (%s: %s, %d cards) turn=%s",
             body.game_id,
             body.player,
             assignment.opponent or "?",
             assignment.deck_slug,
-            score,
-            sum(decklist.values()),
+            identified.confidence,
+            ", ".join(f"{c.slug} {c.matched}/{c.clauses}" for c in identified.candidates)
+            or "no candidate",
+            decklist.total,
             turn_id,
         )
         return {
-            "deck": guide.slug if guide else None,
+            "deck": identified.guide.slug if identified.guide else None,
             "turnId": turn_id,
-            "matchScore": score,
+            "confidence": identified.confidence,
+            "archetype": identified.archetype,
+            "candidates": [c.slug for c in identified.candidates],
             "pending": False,
         }
 

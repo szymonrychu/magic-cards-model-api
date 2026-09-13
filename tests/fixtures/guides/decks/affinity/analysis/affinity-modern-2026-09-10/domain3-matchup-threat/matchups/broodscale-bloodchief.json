@@ -1,0 +1,155 @@
+{
+  "name": "broodscale bloodchief",
+  "meta_share": 6.947052196770559,
+  "winrate": 0.4234,
+  "winrate_basis": {
+    "kind": "data",
+    "source": "statistics_matchups(format=modern, archetype_a='pinnacle affinity', limit=60), committed verbatim at .protocol/raw-matchups.json; row 'broodscale bloodchief' at 0.4234 over 58 matches / 137 games",
+    "n": 58
+  },
+  "meta_basis": {
+    "kind": "current"
+  },
+  "primary_gameplan": "Be the faster deck. Weapons Manufacturing on turn two, then every {0} artifact is a Munitions token and Claws of Gix converts each one into two damage for {1}. The drain does not care about a growing creature and does not ask us to block.",
+  "secondary_gameplan": "Where the drain is not assembled, Consign to Memory holds the game together: it counters Sowing Mycospawn and Thief of Existence as colorless spells, and it counters the Basking Broodscale spawn trigger, which is where their mana comes from.",
+  "opponent_gameplan": "Ten captured 2026-09-10 lists run Basking Broodscale with Blade of the Bloodchief: adapt puts a +1/+1 counter on the Broodscale, that makes an Eldrazi Spawn token, the token is sacrificed for mana, and Blade of the Bloodchief grows the creature every time something dies. Ancient Stirrings and Malevolent Rumble find the pieces, Sowing Mycospawn fetches Eldrazi Temple and can exile one of our lands when kicked, and Emrakul, the Promised End is the top end their Ugin's Labyrinth banks.",
+  "tournament_refs": [
+    {
+      "pilot": "makaaaa",
+      "tournament_date": "2026-09-09",
+      "tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "pitfalls": [
+    "Leading on Blood Moon. Ten of ten captured boards hold two Nature's Claim, and the Moon costs us four Urza's Saga and eleven coloured sources while it is on the battlefield.",
+    "Holding Engineered Explosives for a big number. Basking Broodscale is mana value 2 and Blade of the Bloodchief is mana value 1, so the numbers that matter are 1 and 2, and both are reachable off one blue and one red source.",
+    "Treating Eldrazi Spawn tokens as blockers to attack past. They are sacrificed for mana at instant speed, so Kappa Cannoneer's unblockable clause is what actually closes and Skateboard's haste is not."
+  ],
+  "hands_keep": [
+    {
+      "cards": "Two lands, Weapons Manufacturing, Claws of Gix, a {0} artifact",
+      "reason": "The drain assembles on turn three and does not interact with the size of their creature."
+    },
+    {
+      "cards": "Urza's Saga, blue source, Mox Opal, Kappa Cannoneer, Mishra's Bauble",
+      "reason": "Chapter three finds Claws of Gix or Welding Jar, and improvise casts a ward-4 unblockable threat on turn three."
+    }
+  ],
+  "hands_mulligan": [
+    {
+      "cards": "Blood Moon, Damping Sphere, four lands",
+      "reason": "Both hate pieces are answered by one Nature's Claim and neither of them wins a game; this hand does nothing for four turns."
+    },
+    {
+      "cards": "One land, Mox Opal, three {0} artifacts, Kappa Cannoneer",
+      "reason": "Metalcraft turns Mox Opal on, but one land and no second coloured source cannot cast the Cannoneer's {U} or Weapons Manufacturing's {R}."
+    }
+  ],
+  "phase_plan": {
+    "early": "Land, free artifacts, Weapons Manufacturing. Do not spend Metallic Rebuke on a two-drop when Trinisphere is in their board.",
+    "mid": "Claws of Gix online, Munitions pointed at Basking Broodscale first and the face after. Consign to Memory the spawn trigger if it is the mana they need.",
+    "late": "Damping Sphere caps Eldrazi Temple and Ugin's Labyrinth at one mana; Kappa Cannoneer closes through spawn tokens because it cannot be blocked."
+  },
+  "opponent_card_index": [
+    {
+      "card": "Basking Broodscale",
+      "role": "Engine",
+      "why_run": "Adapt makes a spawn token and the counters grow it",
+      "our_answer": "Two Munitions damage kills it before adapt; Consign to Memory answers the spawn trigger"
+    },
+    {
+      "card": "Blade of the Bloodchief",
+      "role": "Growth",
+      "why_run": "Every death anywhere puts counters on the equipped creature",
+      "our_answer": "Engineered Explosives at one counter"
+    },
+    {
+      "card": "Sowing Mycospawn",
+      "role": "Fetch and land denial",
+      "why_run": "Finds Eldrazi Temple, and kicked it exiles one of our lands",
+      "our_answer": "Consign to Memory - it is a devoid, colorless spell"
+    },
+    {
+      "card": "Trinisphere",
+      "role": "Postboard tax",
+      "why_run": "Every spell costs three, including our sixteen {0} artifacts",
+      "our_answer": "Nothing; it is why this matchup sits in `gaps`"
+    },
+    {
+      "card": "Emrakul, the Promised End",
+      "role": "Top end",
+      "why_run": "Costs one less per card type in their graveyard and takes our turn",
+      "our_answer": "Be dead or be winning first; protection from instants makes it untouchable for us"
+    }
+  ],
+  "opposing_sideboard_in": [
+    {
+      "card": "Nature's Claim",
+      "count": 2,
+      "why": "10 of the 10 captured boards run it. One green mana destroys Weapons Manufacturing, Mox Opal or a resolved Blood Moon, and the 4 life it gives us is irrelevant against a deck that wins with Munitions tokens.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Trinisphere",
+      "count": 2,
+      "why": "11 of the captured board slots are Trinisphere. Every spell costs three, and sixteen of our maindeck cards cost {0}, so it is the single worst card in the field against this shell.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Disruptor Flute",
+      "count": 2,
+      "why": "8 of the 10 captured boards run it. It names Kappa Cannoneer or Weapons Manufacturing for {3} more, and its second clause switches off the named card's activated abilities unless they are mana abilities.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    },
+    {
+      "card": "Vexing Bauble",
+      "count": 2,
+      "why": "8 of the 10 captured boards run it, and it counters every one of our sixteen {0} spells outright because no mana is spent to cast them.",
+      "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "At 6.95pp this is the second largest row in the recorded field and the capture records us at 0.4234 over 58 matches, so it is a recorded worst case. Their lists are Eldrazi Temple, Ugin's Labyrinth, Cavern of Souls, Urza's Saga and Yavimaya over two or three basic Forests, and the whole board is aimed at making that mana and their spawn-token engine cost more than it produces.",
+  "play_plan": {
+    "keep": "Two lands, at least one blue source, Weapons Manufacturing and two free artifacts; a Preordain-only hand is a mulligan here.",
+    "goldfish_for": "Weapons Manufacturing on turn two into Claws of Gix, so the Munitions tokens answer the Broodscale rather than the face.",
+    "watch_for": "A turn-one Ancient Stirrings means Trinisphere or Disruptor Flute is already found; deploy the {0} artifacts before they untap with three mana.",
+    "posture": "race",
+    "posture_why": "The capture records 0.4234 over 58 matches; long games belong to their engine."
+  },
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Basking Broodscale and Blade of the Bloodchief assemble a growing creature and free mana from turn two, so they close before a slower artifact draw is online.",
+    "key_cards": [
+      {
+        "card": "Basking Broodscale",
+        "why": "Adapt makes a spawn token, the token makes mana, and the counter grows it; the whole engine is one two-drop."
+      },
+      {
+        "card": "Blade of the Bloodchief",
+        "why": "Every death, including their own sacrificed spawn tokens, puts counters on the equipped creature."
+      },
+      {
+        "card": "Trinisphere",
+        "why": "Postboard, it prices our sixteen {0} artifacts at three mana each and ends the game on its own.",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      },
+      {
+        "card": "Nature's Claim",
+        "why": "Postboard, one green mana for Weapons Manufacturing, a Mox Opal or the Blood Moon we just resolved.",
+        "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+      }
+    ]
+  },
+  "card_names": [
+    "Basking Broodscale",
+    "Blade of the Bloodchief",
+    "Disruptor Flute",
+    "Emrakul, the Promised End",
+    "Nature's Claim",
+    "Sowing Mycospawn",
+    "Trinisphere",
+    "Vexing Bauble"
+  ],
+  "self_cost": "Blood Moon turns thirteen of our own seventeen lands into Mountains and takes the chapter abilities off all four Urza's Saga, leaving two Island and four Mox Opal to pay every {U} in the deck. Damping Sphere taxes our own multi-artifact turns by {1} per extra spell, which is the turn this deck is built around. Both are correct here only because their mana is greedier than ours and their engine casts more spells per turn than ours."
+}

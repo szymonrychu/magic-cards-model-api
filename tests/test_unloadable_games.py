@@ -439,7 +439,13 @@ def test_the_lobby_names_the_ledgers_record_of_an_undecodable_games_ending(
     game_id = bad["game_id"]
     conceded = client.post(
         f"/api/games/{game_id}/actions/concede",
-        json={"player": "alice", "uid": bad["seat_uids"]["alice"]},
+        # The credential belongs in the query string: `ConcedeRequest` has no
+        # `uid` field (only `/plan`, `/reflection` and the ai-seat routes
+        # declare one), so this was landing in the body to be discarded - the
+        # concede was authorised by the gate's own body fallback and would
+        # have worked without it.
+        params={"uid": bad["seat_uids"]["alice"]},
+        json={"player": "alice"},
     )
     assert conceded.status_code == 200, conceded.text
     ending = [e for e in audit.entries(game_id) if e["action"] == audit.GAME_OVER_ACTION]

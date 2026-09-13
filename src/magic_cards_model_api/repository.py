@@ -7,6 +7,7 @@ inherit from. It covers the surface every one of this store's 12 in-repo
 callers and 20+ test files actually uses: game lifecycle (`create`, `get`,
 `delete`, `ids`), the mutation boundary (`locked`), seat credentials
 (`register_seats`, `seat_uids`, `player_for_uid`, `admin_key`, `is_admin`),
+advisor credentials (`register_advisors`, `advisor_uids` - see `Advisor`),
 `created_at`, decklists, and the three lobby-owned collections
 (`register_agent_settings`/`agent_settings`, `register_ai_players`/
 `ai_players`, `register_ui_game`/`ui_games`/`live_ui_games`).
@@ -59,7 +60,7 @@ from __future__ import annotations
 import threading
 import time
 from bisect import bisect_right
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -145,6 +146,57 @@ class ArchivedGame:
     unloadable: str | None = None
     """The decoder's own refusal (`GameUnloadable.reason`), verbatim, or
     `None` for the ordinary case where `game` is there."""
+
+
+@dataclass(frozen=True)
+class Advisor:
+    """One advisor credential: whose view a uid reads, and what agent (if
+    any) is meant to run behind it.
+
+    An advisor is not a seat. It reads exactly what its `player` reads
+    (`visibility.resolve_viewer` resolves an advisor uid to that username,
+    so every redaction downstream filters for the human without knowing an
+    advisor exists) and it may not act: `game_access.py` refuses every
+    mutating request that presents one. That refusal is a property of the
+    uid itself rather than of whatever client is holding it, which is the
+    whole reason this is a separate map from `seat_uids` instead of a flag
+    beside one.
+
+    **`agent` lives inside the entry, deliberately.** The obvious-looking
+    alternative - reusing `register_agent_settings`, which is keyed by
+    *username* - cannot express this at all: an advisor watching a seat that
+    is itself an AI seat would collide with that seat's own entry, and two
+    advisors on one seat would collide with each other. Keying by uid is
+    what keeps "which settings belong to which credential" answerable, and
+    the settings then have nowhere else sensible to live.
+    """
+
+    player: str
+    """The username whose view this credential reads - a real player of the
+    game, never a name of its own."""
+    agent: AgentSettings | None = None
+    """What runs behind this advisor, when something does. `None` for an
+    advisor nobody has assigned an agent to (a human kibitzer, or one
+    registered before its runner exists)."""
+
+    def to_wire(self) -> dict[str, Any]:
+        """The JSON shape stored in the `games.advisors` column, and the one
+        an implementation must accept back from `from_wire`."""
+        return {
+            "player": self.player,
+            "agent": None if self.agent is None else self.agent.to_wire(),
+        }
+
+    @classmethod
+    def from_wire(cls, data: Mapping[str, Any]) -> Advisor:
+        """The inverse of `to_wire`. `AgentSettings` validates either
+        spelling of `max_thinking_tokens` (its `AliasChoices`), so a row
+        written by an older build reads back unchanged."""
+        agent = data.get("agent")
+        return cls(
+            player=data["player"],
+            agent=None if agent is None else AgentSettings.model_validate(agent),
+        )
 
 
 class _ReservationLedger:
@@ -499,6 +551,25 @@ class GameRepository(Protocol):
         game."""
         ...
 
+    def register_advisors(self, game_id: str, advisors: dict[str, Advisor]) -> None:
+        """Record `advisors` (uid -> `Advisor`) as this game's advisor
+        credentials. Replaces the whole map rather than merging into it,
+        exactly like `register_seats` - a caller adding one reads, modifies
+        and writes back under `locked()`."""
+        ...
+
+    def advisor_uids(self, game_id: str) -> dict[str, Advisor]:
+        """uid -> `Advisor`, for this game. Empty for an unknown game and
+        for a game nobody has given an advisor.
+
+        Durable, never process-local: the api runs several replicas
+        (`repository_postgres.py`'s note on per-replica watchers) and an
+        advisor uid minted on one of them must be recognised by all of them,
+        which is the same reason `seat_uids` lives here rather than in an
+        in-process registry.
+        """
+        ...
+
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""
         ...
@@ -660,6 +731,11 @@ class InMemoryRepository:
     def __init__(self) -> None:
         self._games: dict[str, Game] = {}
         self._seats: dict[str, dict[str, str]] = {}  # game_id -> uid -> username
+        # game_id -> uid -> the advisor that uid is. Separate from `_seats`
+        # on purpose: `game_access.py` refuses a mutating request that
+        # presents one of these, and it can only do that if an advisor uid
+        # is never mistakable for a seat uid. See `Advisor`.
+        self._advisors: dict[str, dict[str, Advisor]] = {}
         self._admin_keys: dict[str, str] = {}  # game_id -> admin key
         # game_id -> the OIDC subject that created it, only when the creating
         # request carried a valid bearer token - absent (never `None`, just
@@ -956,6 +1032,17 @@ class InMemoryRepository:
         with self._lock:
             return self._seats.get(game_id, {}).get(uid)
 
+    def register_advisors(self, game_id: str, advisors: dict[str, Advisor]) -> None:
+        """Record `advisors` (uid -> `Advisor`) as this game's advisor
+        credentials, replacing whatever was there."""
+        with self._lock:
+            self._advisors[game_id] = dict(advisors)
+
+    def advisor_uids(self, game_id: str) -> dict[str, Advisor]:
+        """uid -> `Advisor`, for this game."""
+        with self._lock:
+            return dict(self._advisors.get(game_id, {}))
+
     def get(self, game_id: str) -> Game | None:
         with self._lock:
             return self._games.get(game_id)
@@ -993,6 +1080,7 @@ class InMemoryRepository:
                     deleted_at=datetime.now(UTC).isoformat(),
                 )
             self._seats.pop(game_id, None)
+            self._advisors.pop(game_id, None)
             self._admin_keys.pop(game_id, None)
             self._owner_user_id.pop(game_id, None)
             self._created_at.pop(game_id, None)

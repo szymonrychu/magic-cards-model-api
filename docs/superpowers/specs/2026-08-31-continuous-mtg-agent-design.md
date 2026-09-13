@@ -274,7 +274,7 @@ itself.
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/dispatch` | `{uid, game_id, player, api_base}` -> 202 `{turnId, deck, matchScore, pending}`; 409 while a different game is live |
+| POST | `/dispatch` | `{uid, game_id, player, api_base}` -> 202 `{turnId, deck, confidence, archetype, candidates, pending}`; 409 while a different game is live |
 | POST | `/turn-done` | the wrapper's webhook target |
 | GET | `/status` | current game, deck, last turn id, whether turn 0 is still pending, and the last dispatch error |
 | GET | `/healthz` | liveness |

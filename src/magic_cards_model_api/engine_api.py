@@ -18,10 +18,11 @@ from magic_cards_model.machines import Casting, Step
 from magic_cards_model.machines.casting import (
     MarkedExile,
     PlayAction,
+    adventure_face,
     play_permissions_on,
 )
 from magic_cards_model.machines.targeting import profile_for_text, targeting_profile
-from magic_cards_model.models import CardState, Color, Game, Zone
+from magic_cards_model.models import CardState, Color, Game, Layout, Zone
 from magic_cards_model.models.card_state import Counter, counter_state_based_actions
 from pydantic import ValidationError
 
@@ -636,12 +637,60 @@ def _announce_printed_additional_costs(game: Game, req: CastRequest, casting: Ca
             setattr(casting, name, [find_card(game, card_id) for card_id in ids])
 
 
+def _announce_the_face(req: CastRequest, casting: Casting) -> None:
+    """CR 709.3's choice of which half is being cast: "A player chooses which
+    half of a split card they are casting before putting it onto the stack."
+    CR 715.3 puts the same choice on an adventurer card: "As a player plays an
+    adventurer card, the player chooses whether they play the card normally or
+    as an Adventure."
+
+    Before the stack is where both rules put it, and `Casting`'s own proposal
+    has already made CR 601.2a's move by the time any of `_drive_cast` runs -
+    so the earliest this api can name the face is here, first, ahead of every
+    step that reads it. All three do: `base_cost` (the chosen face's own
+    `mana_cost`, CR 709.3a/709.4b/715.3b), `targeting` (the chosen face's own
+    text, CR 709.3b/715.3b) and `determine_cost`.
+
+    Two engine doors, because the engine has two: `cast_as_adventure` for the
+    inset Adventure face (it enters CR 715.3's own branch and stamps
+    `CardState.face_played`, which is what CR 715.3d's exile-on-resolution
+    then reads), `cast_as_split_half` for a half of a split card. Both refuse
+    in the engine's own words - a face the card does not print, and a face
+    named on a card that has no halves to name - and neither refusal is
+    invented here.
+
+    This api used to refuse the Adventure branch itself, with a reason of its
+    own (`adventure_face_refusal`), because `Casting.targeting` was scoped to
+    `Layout.SPLIT` and announced an Adventure against the whole printing's
+    profile: measured, a targeted Stomp was refused "too many targets: 1
+    chosen where the spell takes at most 0" and a targetless one resolved
+    dealing no damage. Engine commit fd28021 made the chosen face - not the
+    layout - the discriminator on every casting path (CR 601.3e: alternative
+    characteristics "replace the object's characteristics for this
+    determination"), so the refusal now blocks something the engine performs
+    correctly, and the door is simply opened.
+    """
+    if req.spell_face is None:
+        return
+    card = casting.spell.card
+    inset = adventure_face(card) if card.layout is Layout.ADVENTURE else None
+    if inset is not None and req.spell_face == inset.name:
+        casting.cast_as_adventure()
+        return
+    casting.cast_as_split_half(req.spell_face)
+
+
 def _drive_cast(game: Game, req: CastRequest, casting: Casting, *, permitted: bool) -> Outcome:
     """Announce, pay and cast an already-proposed `Casting` (CR 601.2b-h).
 
     Every return that is not the final `Outcome` at the bottom leaves the
     casting unsettled on purpose - `cast_card`'s `finally` rewinds it.
     """
+    try:
+        _announce_the_face(req, casting)
+    except ValueError as exc:
+        return refused(exc)
+
     try:
         _announce_printed_additional_costs(game, req, casting)
     except (KeyError, ValueError) as exc:

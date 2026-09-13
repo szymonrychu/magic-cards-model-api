@@ -25,8 +25,8 @@ the mechanism and the brief the agent is given.
 The board is laid out the way MTGO and Arena lay it out: the opponent on top,
 the shared stack in the middle, you at the bottom. Everything the game ever
 asks you sits in one side panel on the right, top to bottom: the prompt, the
-priority verbs, the stops panel, and the game log. There is no confirm ribbon
-and no modal dialog.
+casting strip, the priority verbs, the stops panel, and the mtg-buddy
+advisor's current proposal. There is no confirm ribbon and no modal dialog.
 
 **One click when there is nothing left to choose.** Clicking a land in your
 hand plays it. Clicking a spell that has no modes, no X, no alternative cost
@@ -101,10 +101,24 @@ pass verb disarms it again. Once somebody has won or the game is drawn it
 goes away. The "keep priority" checkbox on
 the casting strip is CR 117.3c's retained priority.
 
-**The log.** The panel reads `GET /api/games/{id}/log?since=` incrementally
-and shows every action with its turn and step. A refused action appears in red
-with the engine's own words, which is the first place to look when a click did
-not do what you expected. The dashed row under your hand appears when
+**The advisor panel.** The bottom of that column shows the mtg-buddy
+advisor's current suggestion, if it has one: the decision summary, the
+agent's own rationale, which ledger entry and step it was proposed at, and
+Approve - which records the approval and then performs the play, so you do
+not have to click it out on the board yourself. It is a static panel showing
+exactly one proposal, never a list. Approve is enabled only while the
+proposal is still fresh (nothing has happened in the game since the board the
+agent read) and nothing else of yours is in flight; once the board moves, the
+summary and rationale stay readable but dimmed, the panel says which entry
+moved it, and the button is disabled until the advisor proposes again. A
+proposal the server could not dry-run is marked "unchecked".
+
+**The log.** Behind the topbar's **Log** button, next to Zones - it used to
+be the bottom of the side panel, and the advisor panel has that corner now.
+It reads `GET /api/games/{id}/log?since=` incrementally and shows every
+action with its turn and step. A refused action appears in red with the
+engine's own words, which is the first place to look when a click did not do
+what you expected. The dashed row under your hand appears when
 something grants you a play permission from a zone other than your hand.
 
 Starting a game from the lobby never touches another: games live side by side,
@@ -285,7 +299,7 @@ argv, the wrapper dispatch, or a Job's env), and shown back on `GET
 
 - `model`: any non-empty string. The UI suggests `sonnet`, `opus`, `haiku`,
   `fable`; the default when `agent` is omitted comes from `AGENT_DEFAULT_MODEL`
-  (env, default `sonnet`).
+  (env, default `opus`, for an AI seat and a buddy alike).
 - `effort`: one of `low`, `medium`, `high`, `xhigh`, `max`. Default `high`.
 - `max_thinking_tokens`: a non-negative integer, or `null`/omitted to leave
   Claude Code's own default. `0` disables thinking where the model allows it.
@@ -326,6 +340,84 @@ Deploying and operating the cluster - the ServiceAccount and RBAC, the
 `ReadWriteOnce` and has to be recreated**, since a PVC's access mode is
 immutable once bound), the NetworkPolicy, and the image tags - is all in
 `deploy/k8s/README.md`.
+
+## Measuring play strength
+
+There was no way to say whether a change made the agent play better: no
+self-play runner, no scripted opponent, no win-rate script anywhere in either
+repo, and 2 of the 15 recorded games had ever reached an end state. This is
+the measuring stick - a control to play against, and a scorecard to read.
+
+```sh
+mise run eval:gauntlet                            # 10 seeded games, agent vs baseline
+mise run eval:gauntlet -- --seeds 20 --agent baseline   # a zero-LLM control run
+mise run eval:gauntlet -- --seed 7 --decks a=decks/x.txt,b=decks/y.txt
+```
+
+The task brings postgres up itself and migrates it, then boots the seeded
+matchups with `python -m magic_cards_model_api.serve --match ...` (one process,
+one `--match` per seed - every game replayable by passing its seed back), plays
+them, and prints the scorecard. It refuses to run without a database: `serve`
+would otherwise record into an in-process store that dies with the server, and
+ten games played with nothing recorded is worse than not running.
+
+### The baseline seat
+
+`src/magic_cards_model_api/baseline_seat.py` is a deterministic, zero-LLM
+opponent driven by `GET .../legal-actions`. Play a land if one is legal; cast
+the highest-cost affordable permanent, then the highest-cost affordable spell;
+attack when the attacker survives the profitable block or when the race is
+lethal; block only to prevent lethal; answer every other question with the
+engine's own `machines/decisions.default_answer`. No randomness and no memory,
+so two runs of one seed produce the same games and any difference between arms
+belongs to the arm. It asks that endpoint with `candidates=true` and names a
+spell's targets out of the row it is about to act on, so a targeted cast is
+one round trip rather than two.
+
+It lives here and not in the engine on purpose. CR 118.6 makes an unpayable
+action a *legal* one, so the enumeration deliberately offers moves nobody
+would make - choosing among them is a seat's business, and the engine stays a
+stateless rules library.
+
+It cannot stall, which matters more than it sounds: a stalling baseline
+manufactures the very unfinished games the scorecard exists to count. Every
+answerable decision kind has a default, a refused action is not retried until
+the board moves, and a game where nothing has a move for long enough ends in a
+concession (CR 104.3a) rather than a hang - a real ending, scored as a loss.
+
+### The scorecard
+
+`scripts/eval_report.py` reads the `games` and `records` tables and prints,
+per seat: finish rate, record, turns to end, actions per game, reasoning
+coverage (twice - `records.require_reasoning` exempts a pass, so the overall
+share and the share over everything else are both shown), and refusal rate
+split into **rules errors** and **stale races**. That split is the point: a
+refusal because the seat misread a rule is a defect in how it plays, and one
+because the board moved under a decision it had already read is a defect in
+the harness that improving the agent will never fix. The split reads
+`detail.stale`; a ledger recorded before that flag existed carries none, and
+those are reported as unsplit rather than counted as rules errors.
+
+```sh
+uv run python scripts/eval_report.py --ledger run.json   # a captured run, no database
+uv run python scripts/eval_report.py --json              # the configured database
+```
+
+**Every rate carries a 95 percent interval and no bare percentage is ever
+printed**, because the numbers a small run produces are not what they look
+like. Roughly 20 games gives about +/-20pp on a win rate, 50 gives about
++/-14pp, and resolving a 10pp A/B difference needs roughly 200 games *per
+arm*. Refusal rate and finish rate are the exception, and the reason a 10-game
+run is worth doing at all: each carries hundreds of attempts rather than one
+outcome per game, so their intervals are tight immediately. Those two can gate
+a change today; a win rate is something to accumulate towards. The report says
+so in its own output.
+
+Nothing here grades a declared plan. `review.py` refuses to, and this refuses
+with it - a `plan_declared` row is not an action, not an attempt, and
+contributes to no metric. Grading outcomes (who won, how many turns, how many
+attempts were refused) is arithmetic over what the server wrote down; grading a
+prediction would be a judgement dressed as arithmetic.
 
 ## Run it
 
@@ -462,7 +554,7 @@ entry (snapshots included) still comes back unredacted for it.
 
 | | |
 |---|---|
-| `POST /api/games/{id}/actions/cast` | `{player, card_id | card, from_zone?, targets?: [card ids or usernames], modes?: [1,2], x_value?, keyword?, alternative_cost?, choosing?, sacrificing?, discarding?, exiling?, tapping?, delve?, convoke?, shares?, mana_sources?: [card ids or {card_id, colors: ["R"]}], dry_run?}` - `keyword` (e.g. "Plot", "Foretell") announces a cast under a keyword permission (CR 601.2b); a suspended card's own free cast is picked up automatically once its last time counter is off, no `keyword` needed. `targets` is the spell's own targets (CR 601.2c) and never a cost: an alternative cost that names objects takes `choosing` (Solitude's `Evoke-Exile a white card from your hand`, Force of Negation's pitch), and a printed "as an additional cost to cast this spell" sentence takes `sacrificing`/`discarding`/`exiling`/`tapping` (CR 118.8a - Fling, Cathartic Reunion, Abhorrent Oculus, Swallow Whole). `GET .../affordances/{card_id}` names, per option, how many objects are needed (`requires`) and which cards qualify (`candidates`) |
+| `POST /api/games/{id}/actions/cast` | `{player, card_id | card, from_zone?, spell_face?, targets?: [card ids or usernames], modes?: [1,2], x_value?, keyword?, alternative_cost?, choosing?, sacrificing?, discarding?, exiling?, tapping?, delve?, convoke?, shares?, mana_sources?: [card ids or {card_id, colors: ["R"]}], dry_run?}` - `keyword` (e.g. "Plot", "Foretell") announces a cast under a keyword permission (CR 601.2b); a suspended card's own free cast is picked up automatically once its last time counter is off, no `keyword` needed. `targets` is the spell's own targets (CR 601.2c) and never a cost: an alternative cost that names objects takes `choosing` (Solitude's `Evoke-Exile a white card from your hand`, Force of Negation's pitch), and a printed "as an additional cost to cast this spell" sentence takes `sacrificing`/`discarding`/`exiling`/`tapping` (CR 118.8a - Fling, Cathartic Reunion, Abhorrent Oculus, Swallow Whole). `GET .../affordances/{card_id}` names, per option, how many objects are needed (`requires`) and which cards qualify (`candidates`). `spell_face` is which face this cast announces - a half of a split card (CR 709.3) or an adventurer card's Adventure (CR 715.3) - by that face's printed name: the same string `GET .../legal-actions` put on the row being taken, handed back unchanged; absent means the front half, which is every single-faced card and an adventurer card's own creature half. An Adventure is charged its own cost, targets off its own text, and is exiled as it resolves (CR 715.3d) |
 | `POST /api/games/{id}/actions/target` | `{source_id, target, ability_index?}` - a spell on the stack, a card in hand, or an activated ability line |
 | `POST /api/games/{id}/actions/activate` | `{player, card_id, ability_index? (default 0), targets?, mana_sources?, sacrificing?, discarding?, dry_run?}` - mana abilities resolve straight into the pool; a card anywhere other than the battlefield (hand, graveyard, exile) whose own ability functions from there (CR 113.6j, CR 113.6m - Waker of Waves, Boseiju's or Otawara's Channel) is activated the same way, `ability_index` numbered off that card's own state view |
 | `POST /api/games/{id}/actions/suspend` | `{player, card_id | card, mana_sources?, dry_run?}` - CR 116.2f/702.62a: exile a card with suspend from hand, with N time counters |

@@ -1,14 +1,24 @@
-# One AI seat's Kubernetes Job, as a complete manifest with a closed set of
-# nine placeholders. `k8s_seats.build_job` reads this file (path from
-# `SEAT_JOB_TEMPLATE_PATH`, default this path), substitutes the nine
+# One AI agent's Kubernetes Job, as a complete manifest with a closed set of
+# placeholders - a playing seat, or (B5) a **buddy**: an advisor container
+# watching one human seat's own view and proposing rather than acting. Both
+# render from this one file, deliberately: same images, same driver sidecar,
+# same mcp-config, and the only differences are set in code by
+# `k8s_seats.build_job` - the `mtg-buddy-*` name, an extra `mtg/role=advisor`
+# label, and `role` inside `__ASSIGNMENT_JSON__`'s payload (which is why the
+# placeholder set below needs no entry for it, and why a seat's rendered
+# assignment is byte-identical to what it always was). `k8s_seats.build_job` reads this file (path from
+# `SEAT_JOB_TEMPLATE_PATH`, default this path), substitutes the
 # `__X__` tokens below with this seat's per-render values, then sets
-# `metadata.name`, `metadata.namespace`, the three labels
-# (`app.kubernetes.io/name`, `mtg/game-id`, `mtg/seat-uid`) and the
-# annotations in code. Every placeholder appears as the WHOLE value of a
+# `metadata.name`, `metadata.namespace`, the identity labels
+# (`app.kubernetes.io/name`, `mtg/game-id`, `mtg/seat-uid`, plus `mtg/role`
+# on an advisor) and the annotations in code. Every placeholder appears as the WHOLE value of a
 # mapping entry (never embedded inside a larger string), so substitution is
 # a plain per-node dict/list walk with no YAML-escaping to get wrong.
 #
-# The nine placeholders (M10 of docs/2b-plan.md's phase-2b plan):
+# The placeholders (`SEAT_JOB_PLACEHOLDERS`, the closed set both directions
+# of `tests/test_k8s_seats.py` pin this file against - M10 of
+# docs/2b-plan.md's phase-2b plan, plus the two images and the guides ref
+# added since):
 #   __GAME_ID__              - the game this seat belongs to
 #   __SEAT_UID__              - this seat's uid
 #   __PLAYER__                - which player in the game this seat plays
@@ -16,10 +26,12 @@
 #   __MCP_URL__                - the mcp service's URL (M2: stateless HTTP)
 #   __ASSIGNMENT_JSON__        - the driver's self-dispatch payload
 #   __MODEL__ / __EFFORT__ / __MAX_THINKING_TOKENS__ - this seat's AgentSettings
+#   __AGENT_IMAGE__ / __API_IMAGE__ - the pushed images this deploy pinned
+#   __GUIDES_REF__             - which deck-guides revision to check out
 #
 # Everything else in this file is deliberately NOT a placeholder - it is
-# deploy-time configuration (images, secrets, the memory PVC name, the
-# guides repo, the job deadline/ttl, the spellslinger URL) that used to be
+# deploy-time configuration (secrets, the memory PVC name, the guides repo
+# URL, the job deadline/ttl, the spellslinger URL) that used to be
 # read from `K8sSettings`/env and is now baked into this committed file, the
 # same way `deploy/k8s/*.yaml` already bakes its own. One known gap this
 # leaves, accepted for this task (see T9's report):
@@ -106,6 +118,16 @@ spec:
       - name: mcp
         emptyDir: {}
       initContainers:
+      # GUIDES_REF reaches `git fetch` as a positional argument, and git reads
+      # a leading `--` as an option wherever one appears - `--upload-pack=
+      # <command>` is a git option that runs a command. The value is quoted,
+      # so there was never a *shell* injection here, and this is operator-set
+      # deployment config rather than anything a player can reach; one
+      # copy-pasted ref was still all it took. Two guards below: the ref is
+      # validated against `[A-Za-z0-9][A-Za-z0-9._/-]*` before anything runs,
+      # and `fetch ... origin -- "$ref"` fences it off from git's own option
+      # parsing regardless. `tests/test_k8s_seats.py` runs this script
+      # verbatim against a real local repo and pins both.
       - name: guides
         image: __AGENT_IMAGE__
         imagePullPolicy: IfNotPresent
@@ -114,15 +136,33 @@ spec:
         - -euc
         - 'test -n "${GH_PAT}" || { echo "GH_PAT is empty" >&2; exit 1; }
 
-          git config --global --add safe.directory /guides
+          dir="${GUIDES_DIR:-/guides}"
 
-          find /guides -mindepth 1 -delete
+          ref="${GUIDES_REF:-main}"
 
-          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git" /guides
+          printf %s "$ref" | grep -Eq "^[A-Za-z0-9][A-Za-z0-9._/-]*$" || { echo "GUIDES_REF is not a ref: $ref" >&2; exit 1; }
 
-          git -C /guides remote set-url origin https://github.com/szymonrychu/mtg-decks.git
+          git config --global --add safe.directory "$dir"
 
-          ! grep -rq "x-access-token" /guides/.git/config
+          find "$dir" -mindepth 1 -delete
+
+          git -c init.defaultBranch=main init -q "$dir"
+
+          git -C "$dir" remote add origin "https://x-access-token:${GH_PAT}@github.com/szymonrychu/mtg-decks.git"
+
+          git -C "$dir" fetch --depth 1 origin -- "$ref"
+
+          git -C "$dir" checkout -q --detach FETCH_HEAD
+
+          git -C "$dir" remote set-url origin https://github.com/szymonrychu/mtg-decks.git
+
+          rm -f "$dir/.git/FETCH_HEAD"
+
+          ! grep -rq "x-access-token" "$dir/.git/config"
+
+          git -C "$dir" rev-parse HEAD > "$dir/.guides-revision"
+
+          echo "guides $ref at $(cat "$dir/.guides-revision")"
 
           '
         env:
@@ -131,6 +171,16 @@ spec:
             secretKeyRef:
               name: mtg-decks-git
               key: GH_PAT
+        # Which revision of the corpus this seat plays against. `main` - the
+        # latest guides - is the default and stays the default: play wants
+        # current guides, and only an evaluation harness, which needs two
+        # runs to have read the same corpus, sets this to a fixed branch,
+        # tag or commit sha. Whatever it resolves to is written to
+        # `/guides/.guides-revision` above, where the driver reads it back
+        # (`mtg_agent/driver/revision.py`) and stamps it into the briefing
+        # and the game's plan file.
+        - name: GUIDES_REF
+          value: __GUIDES_REF__
         - name: GIT_TERMINAL_PROMPT
           value: '0'
         - name: HOME

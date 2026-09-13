@@ -34,6 +34,28 @@
       </label>
       <button id="you-validate">Validate</button>
       <div class="validation" id="you-validation"></div>
+      <label class="buddy-toggle">
+        <input type="checkbox" id="you-buddy" />
+        Buddy - an AI advisor that watches your seat and proposes plays you approve
+      </label>
+      <fieldset id="you-buddy-settings" class="buddy-settings" disabled>
+        <legend>Buddy agent</legend>
+        <label>Model
+          <input type="text" id="you-buddy-model" list="ai-model-suggestions" placeholder="opus" />
+        </label>
+        <label>Effort
+          <select id="you-buddy-effort">
+            <option value="low">low</option>
+            <option value="medium" selected>medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
+        </label>
+        <label>Thinking budget (tokens, optional)
+          <input type="number" id="you-buddy-thinking" min="0" step="1" placeholder="model default" />
+        </label>
+      </fieldset>
     </div>
 
     <div class="deck-picker" id="picker-ai">
@@ -49,7 +71,7 @@
       <button id="ai-validate">Validate</button>
       <div class="validation" id="ai-validation"></div>
       <label>Model
-        <input type="text" id="ai-model" list="ai-model-suggestions" placeholder="sonnet" />
+        <input type="text" id="ai-model" list="ai-model-suggestions" placeholder="opus" />
         <datalist id="ai-model-suggestions">
           <option value="sonnet"></option>
           <option value="opus"></option>
@@ -126,6 +148,7 @@
       <div id="ai-panel"></div>
       <div id="conn-status-game" class="pill"></div>
       <button id="open-zones" class="ghost" title="Graveyards, exile, and what you may still cast from it">Zones</button>
+      <button id="open-log" class="ghost" title="This game's audit log, entry by entry">Log</button>
       <button id="report-problem" class="ghost">Report</button>
       <button id="leave-game" class="ghost">Lobby</button>
     </div>
@@ -199,18 +222,47 @@
        the board got uglier the more you clicked. It is also not an anchored
        menu over the card (`ui/menus.js` has the reasoning): it stays open
        while you click other cards to fill its slots, and a menu closes on
-       the first click-away. -->
+       the first click-away.
+
+       `#advice-box` (`ui/render/advice.js`) is the bottom of the column and
+       absorbs the height the rest leave, the role `#log-box` used to have
+       here: the mtg-buddy advisor's current proposal, with its rationale and
+       an Approve button, which is exactly the corner the owner asked to
+       reuse for it. It is a static panel showing one proposal, never a
+       scrolling list - the log itself moved to `#log-modal` below. -->
   <aside id="side-panel">
     <div id="prompt-box"></div>
     <div id="casting-strip" class="casting-strip" hidden></div>
     <div id="priority-box"></div>
     <div id="stops-box"></div>
-    <div id="log-box"></div>
+    <div id="advice-box"></div>
   </aside>
 
   <div id="card-preview" class="card-preview" hidden></div>
   <div id="toast" class="toast" hidden></div>
   <div id="popover" class="popover" hidden></div>
+
+  <!-- The game log, which used to be the bottom of `#side-panel` and is now
+       one click away behind the topbar's Log button. The advisor panel
+       (`#advice-box` above) took that corner, which is what the owner asked
+       for: a static proposal with a rationale and an Approve button, not a
+       scrolling history.
+
+       A modal of its own, and NOT a dialog built inside `#modal`.
+       `panels.js`'s `closeModal` empties `#modal`'s content, so a `#log-box`
+       in there would be destroyed the first time any other dialog closed -
+       and `mountLog`'s subscription, which keyed-patches this element for
+       the life of the page, would spend the rest of the game patching a
+       detached node. This one is built once, here, and only ever toggled
+       with `hidden`.
+
+       Before `#modal` on purpose: two `.modal` overlays share a z-index, so
+       DOM order decides which paints on top, and a zones popover or a report
+       form opened while the log is up belongs over it. `app.js`'s Escape
+       handler closes them in the same order. -->
+  <div id="log-modal" class="modal" hidden>
+    <div id="log-box"></div>
+  </div>
   <div id="modal" class="modal" hidden></div>
 </section>
 

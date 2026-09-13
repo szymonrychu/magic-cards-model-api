@@ -10,6 +10,7 @@ one origin.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -38,6 +39,7 @@ from . import (
     decks_api,
     engine_api,
     game_access,
+    lobby,
     oidc,
     opening,
     protocol,
@@ -56,6 +58,10 @@ from .schemas import (
     ActorRequest,
     AdvanceRequest,
     AdvanceResponse,
+    AdviceApprovedResponse,
+    AdviceApproveIn,
+    AdviceIn,
+    AdviceResponse,
     AffordancesResponse,
     AttackRequest,
     CardLookupResponse,
@@ -116,7 +122,7 @@ from .schemas import (
     TargetRequest,
 )
 from .serialize import state_view
-from .store import known_players, new_seat_uids, store
+from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 app = FastAPI(title="magic-cards-model-api", version="0.1.0")
 # `FastAPI.__init__` has no `route_class` parameter of its own (it silently
@@ -205,8 +211,74 @@ def _missing_plan(_: Request, exc: records.MissingPlan) -> JSONResponse:
     )
 
 
+@app.exception_handler(records.BoardMoved)
+async def _board_moved(request: Request, exc: records.BoardMoved) -> JSONResponse:
+    """409: this seat decided against a board that has since moved, and the
+    action was refused before the engine ran - see `records.BoardMoved`.
+
+    409 for the same reason `VersionConflict` and `CommandDivergenceError`
+    are: nothing about the request is malformed, and the caller cannot fix
+    it by sending something else - it has to re-read first. Not the 200
+    `allowed: False` an engine refusal takes, because this is not the engine
+    speaking; a status of its own is what lets a client tell the two apart
+    even before it looks at the body.
+
+    `allowed: False` and `reason` are there so `seatkit._normalise_non_2xx`
+    hands it on unchanged (a body carrying its own `allowed` is trusted as
+    already-refusal-shaped) and every existing caller reads it as the
+    refusal it is. `stale: True` is the discriminator - the same
+    key-you-can-branch-on convention `PregameOverruled`'s `overruled` and
+    `GameUnloadable`'s `unloadable` already set - and `moved_from`/
+    `moved_to` say by how much.
+
+    **`since` is the ledger, re-read through `GET .../log` itself** rather
+    than through a second, differently-redacted read of the same rows: the
+    same function, with the same credential this request actually carried. A
+    caller is therefore handed precisely what a log read of its own would
+    have given it and never a byte more - the redaction argument for this
+    body is `game_log`'s argument, unchanged - and it is handed it without
+    spending the round trip.
+
+    "The same credential" is `game_access._credentials`, the one function
+    that already knows every slot a credential arrives in - the query
+    string first, then the JSON body's own `uid`/`key` for the routes that
+    carry theirs there. Reading `request.query_params["uid"]` by hand, which
+    is what this did, sees neither a body-borne uid nor a `key=`, and the
+    consequence here is not under-redaction but the *maximum*: `game_log`'s
+    uid-less default is deliberately the debugger's eye, so a credential
+    this handler failed to see bought both players' hands rather than
+    neither (`serialize.state_view`'s `"hands"`). The reason that was
+    reachable at all was a mutating route answering a caller who presented
+    nothing, which `game_access.py`'s positive rule now refuses outright -
+    this is the second of the two locks, and the one that keeps holding if
+    a credential ever arrives somewhere new.
+    """
+    uid, key = await game_access._credentials(request)
+    since = game_log(exc.game_id, uid=uid or key, since=exc.expected_seq)
+    # Bounded at `current_seq`, the position the board had actually moved to
+    # when this call was refused - which excludes the refusal's own row,
+    # written a moment before this handler ran. "What moved while I was
+    # thinking" is the question; the caller is holding the answer to "what
+    # happened to my call" already.
+    moved = [entry for entry in since["log"] if entry["seq"] <= exc.current_seq]
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": str(exc),
+            "game_id": exc.game_id,
+            "allowed": False,
+            "reason": str(exc),
+            "stale": True,
+            "moved_from": exc.expected_seq,
+            "moved_to": exc.current_seq,
+            "since": moved,
+            "last_seq": exc.current_seq,
+        },
+    )
+
+
 @app.exception_handler(VersionConflict)
-def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
+async def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
     """409: another writer's `replace()` committed a newer version first
     (`repository_postgres.py`'s own module docstring - optimistic
     concurrency, no server-side retry). The body carries the game's current
@@ -214,9 +286,17 @@ def _version_conflict(request: Request, exc: VersionConflict) -> JSONResponse:
     same `uid` this request itself carried - the loser is never handed more
     than it was already entitled to see - so the loser can re-read and
     recompute its attempt against what is actually committed, rather than
-    retrying blind against the state it already knows is stale."""
-    uid = request.query_params.get("uid")
-    viewer = visibility.resolve_viewer(exc.game_id, uid)
+    retrying blind against the state it already knows is stale.
+
+    The credential is resolved through `game_access._credentials` for the
+    same reason `_board_moved` above does it: every slot one can arrive in,
+    in one place. This handler already failed *closed* on a credential it
+    could not see (`visibility.resolve_viewer(None)` is the viewer that sees
+    nothing hidden), so there was nothing leaking here - but the two
+    handlers answering the same question two ways is how one of them ends up
+    wrong."""
+    uid, key = await game_access._credentials(request)
+    viewer = visibility.resolve_viewer(exc.game_id, uid or key)
     return JSONResponse(
         status_code=409,
         content={
@@ -568,6 +648,15 @@ def _run_command(
             if dry_run
             else records.legal_actions_before(game, player, paused[2] if paused else None)
         )
+        # Both halves of "was this on offer" are in hand exactly here, and
+        # nowhere else: the command as the request spelled it, and the
+        # enumeration this api would have handed the same seat for the same
+        # board, a line above the engine being asked anything. Whatever row
+        # this request goes on to record is stamped from it
+        # (`audit._with_offered`), which is what lets the scorecard count a
+        # refusal of something never offered as the seat's own misreading and
+        # a refusal of something offered as anything but.
+        records.note_offered_action(command.kind, command.payload, legal_before)
         result = commands.run_command(game, command)
         seq: int | None = None
         if dry_run:
@@ -894,15 +983,27 @@ def mint_seat(game_id: str, req: MintSeatRequest) -> dict[str, Any]:
 
 @app.get("/api/seats/{uid}", response_model=SeatLookupResponse, response_model_exclude_unset=True)
 def find_seat(uid: str) -> dict[str, Any]:
-    """Resolve a seat uid to its game and player with no game id known in
-    advance - 2b's T8 (map's "seat back door"), the lookup half.
-    `whose_seat` above already answers this once the caller knows the game;
-    this is the reverse direction `store.seat_uids` gave an in-process caller
-    for free. 404 on a uid no live game recognises."""
+    """Resolve a uid to its game, its player and what kind of credential it
+    is, with no game id known in advance - 2b's T8 (map's "seat back door"),
+    the lookup half. `whose_seat` above already answers this once the caller
+    knows the game; this is the reverse direction `store.seat_uids` gave an
+    in-process caller for free. 404 on a uid no live game recognises.
+
+    **`role` is why this also resolves advisors** (`repository.Advisor`).
+    One mcp process holds several uids and is handed no game pin with any of
+    them, so this route is the only place it can learn what a uid *is*
+    before using it - and an advisor driven as if it were a seat would spend
+    its whole life being refused by `game_access.py`, one action at a time,
+    with nothing to say why. `player` means the same thing for both: the
+    seat whose view that uid reads.
+    """
     for game_id in store.ids():
         player = store.player_for_uid(game_id, uid)
         if player is not None:
-            return {"game_id": game_id, "player": player}
+            return {"game_id": game_id, "player": player, "role": "seat"}
+        advised = player_for_advisor_uid(game_id, uid)
+        if advised is not None:
+            return {"game_id": game_id, "player": advised, "role": "advisor"}
     raise KeyError(f"no seat {uid!r}")
 
 
@@ -1151,7 +1252,14 @@ def game_review(game_id: str, uid: str | None = None, key: str | None = None) ->
     A seat and the admin key see the same thing here. Post-game, so does
     everyone else who could be shown it - there is no hidden information
     left to protect and pretending otherwise would make the review useless
-    to the person it is for.
+    to the person it is for. This is a deliberate decision, stated explicitly
+    because it is easy to make by accident otherwise: `review.build_review`'s
+    `advice` stream (`review.ReviewAdvice`) carries the mtg-buddy advisor's
+    `summary`/`reasoning`/`body` for a human seat, which can name cards that
+    were in that seat's own hand at the time it was proposed - and there is
+    no redaction of it here, same as `declarations`. The opponent reads it
+    once the game is over, exactly as the advised seat does (see `test_review
+    .py`'s `test_the_opponent_reads_the_same_advice_the_human_seat_does`).
     """
     archived = store.archived(game_id)
     if archived is None:
@@ -1186,7 +1294,14 @@ def delete_game(game_id: str, uid: str | None = None, key: str | None = None) ->
     lobby-booted one) and `GET /api/ui/games` publishes every lobby-booted
     game's id with no credential required to read the list itself; without
     this check, reading the list would be enough to delete a game nobody
-    handed the caller a seat or an admin key for."""
+    handed the caller a seat or an admin key for.
+
+    The deletion itself is `lobby.reset_game`, the same release End game
+    runs, under this route's own audit action - see `lobby.py` for why
+    deleting without releasing left a watcher polling, a seat process alive,
+    a registry answering for uids of a game that no longer existed, and (in
+    `wrapper` mode) a driver that 409s every later dispatch for the life of
+    its container."""
     game = store.get(game_id)
     if game is None:
         raise KeyError(f"no game {game_id}")
@@ -1195,8 +1310,7 @@ def delete_game(game_id: str, uid: str | None = None, key: str | None = None) ->
     )
     if not allowed:
         raise KeyError("that uid is no seat in this game")
-    audit.record(game_id, "delete_game")  # before the game leaves the store
-    store.delete(game_id)
+    lobby.reset_game(game_id, reason="deleted outright", action="delete_game")
     return {"deleted": game_id}
 
 
@@ -1415,6 +1529,9 @@ def set_step(game_id: str, req: StepUpdate, uid: str | None = None) -> dict[str,
     beginning-of-step turn-based actions or triggers - CR 702.62a's suspend
     countdown among them, the same as a draw or a combat declaration.
     """
+    records.require_current_board(
+        game_id, "step", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
@@ -1451,6 +1568,14 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
     `engine_api.dry_run_copy` - never through the pause/resume tape), so it
     always completes; a real cast can pause on any CR 601.2 choice this
     engine still asks interactively (`choose_targets`, `choose_a_mode`, ...)."""
+    records.require_current_board(
+        game_id,
+        "cast",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "cast", req)
@@ -1462,6 +1587,7 @@ def action_cast(game_id: str, req: CastRequest) -> dict[str, Any]:
         player=req.player,
         card=req.card or str(req.card_id),
         from_zone=req.from_zone,
+        spell_face=req.spell_face,
         targets=req.targets,
         mana_sources=[str(source) for source in req.mana_sources or []],
         reasoning=req.reasoning,
@@ -1479,6 +1605,14 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2f/702.62a: exile a card with suspend from hand, paying its
     suspend cost, with N time counters. The free cast once the last counter
     comes off is picked up automatically by `actions/cast` - see `advance`."""
+    records.require_current_board(
+        game_id,
+        "suspend",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "suspend", req)
@@ -1504,6 +1638,14 @@ def action_suspend(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
 def action_plot(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2k/702.170b: exile a card with plot from hand, paying its plot
     cost. Cast it later with `actions/cast`, `keyword: "Plot"`, on a later turn."""
+    records.require_current_board(
+        game_id,
+        "plot",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "plot", req)
@@ -1530,6 +1672,14 @@ def action_foretell(game_id: str, req: SpecialActionRequest) -> dict[str, Any]:
     """CR 116.2h/702.143b: pay {2} and exile a card with foretell from hand,
     face down. Cast it later with `actions/cast`, `keyword: "Foretell"`, on a
     later turn, for its printed foretell cost."""
+    records.require_current_board(
+        game_id,
+        "foretell",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "foretell", req)
@@ -1556,6 +1706,14 @@ def action_cycle(game_id: str, req: CycleRequest) -> dict[str, Any]:
     """CR 702.29a: discard a card with cycling from hand, paying its cycling
     cost, to draw a card (or search for a typecycled one). Puts the ability on
     the stack, same as `actions/activate` - resolve it with `resolve-top`."""
+    records.require_current_board(
+        game_id,
+        "cycle",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "cycle", req)
@@ -1650,12 +1808,91 @@ def get_affordances(
     return result
 
 
+def _attach_target_candidates(
+    game: Game, player: str, actions: Sequence[Any], views: list[dict[str, Any]]
+) -> None:
+    """Fold each targeting action's legal candidates into its own entry.
+
+    `Action.target_slots` is the *shape* of a targeting requirement and never
+    its candidates - the engine's own `TargetSlot` docstring says so and
+    points at `Game.legal_targets` for the objects. That left a seat holding a
+    legal, affordable, targeting action with no idea what it could name, one
+    round trip - and so one whole inference cycle, which is what a seat's turn
+    latency is actually made of - short of being able to act. The candidates
+    are computed here, in the request that already enumerated the actions,
+    rather than in a second call per action.
+
+    **One board walk for the whole request.** `affordances.all_targetables` is
+    hoisted before the loop and handed to every `target_candidates` call, so
+    the cost of adding this is one traversal of the public zones plus the
+    `rejects` predicate per (object, requirement) pair - never one traversal
+    per action, which on a busy board with a hand full of removal would be the
+    N-calls shape T11 removed one layer up, reintroduced one layer down.
+    `tests/test_legal_actions_endpoint.py` pins both the single walk and the
+    time budget.
+
+    Two kinds of row are skipped, and each for its own reason:
+
+    - **nothing to enumerate.** An empty `target_slots` means this action does
+      not target (or its phrase was unreadable, which `Action` cannot tell
+      apart - `affordances`' own module docstring), so there is no slot to
+      fill and no key worth the bytes.
+    - **`affordable == "no"`.** CR 118.6 keeps the row - an unpayable cast is
+      still a legal one and is still listed - but a candidate list for a spell
+      that cannot be cast is a list the seat can do nothing with. Said once,
+      in `seatkit._actions_view`'s envelope, rather than as a key on every
+      such row.
+
+    `unknown` is emphatically not `no` and is enriched: an X spell before its
+    X is announced (CR 107.3a) may well be castable, and a seat weighing it
+    needs to know what it could point at.
+    """
+    targetables: list[Any] | None = None
+    for action, view in zip(actions, views, strict=True):
+        if not action.target_slots or view.get("affordable") == "no":
+            continue
+        if action.card_id is None:
+            continue
+        try:
+            source = affordances.find_source(game, action.card_id)
+        except ValueError:
+            # An action naming an object this game no longer holds is the
+            # enumeration's problem to answer for, not this decoration's to
+            # raise on: the row stays, without candidates.
+            continue
+        if targetables is None:
+            targetables = affordances.all_targetables(game)
+        view["targets"] = affordances.target_candidates(
+            game,
+            source,
+            player,
+            ability_index=action.ability_index,
+            # CR 709.3b: a split card on the stack "has only the
+            # characteristics of the half being cast", and CR 715.3b says the
+            # same of an Adventure - so the face this row announces is the
+            # only text its candidates may come from. Passed rather than
+            # dropped, which is what left the Tear row of Wear // Tear
+            # offering Wear's own artifact targets: both rows were derived
+            # from `targeting_profile(card)` and that reads
+            # `Card.front_oracle_text`. A seat is told to hand a candidate
+            # straight back (`seatkit.TARGETS_NOTE`), so the wrong list does
+            # not merely mislead - it costs the seat the action, refused at
+            # announcement for a target it was handed. `affordances.
+            # _face_profile` answers `understood: false` for a face the
+            # printing does not carry rather than guessing.
+            face=action.spell_face,
+            targetables=targetables,
+        )
+
+
 @app.get(
     "/api/games/{game_id}/legal-actions",
     response_model=LegalActionsResponse,
     response_model_exclude_unset=True,
 )
-def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict[str, Any]:
+def get_legal_actions(
+    game_id: str, player: str, uid: str | None = None, candidates: bool = False
+) -> dict[str, Any]:
     """Every action `player` could legally take right now
     (`machines.legal_actions.legal_actions`, Phase 1) - the api's own door
     onto the engine's enumeration surface, and what `seatkit.available_actions`
@@ -1676,7 +1913,10 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     the answer is that decision's own legal answers and nothing else, for
     the player it addresses only (`legal_actions`'s own module docstring).
 
-    **`uid` must open `player`'s own seat, or be this game's admin key.**
+    **`uid` must open `player`'s own seat, or be this game's admin key, or
+    be an advisor on that seat** (`repository.Advisor` - it resolves to the
+    same username through `visibility.resolve_viewer`, and an advisor is
+    allowed to know exactly what its human is allowed to know).
     Every action here is `player`'s own by construction - hand cards,
     controlled permanents, that player's own graveyard/exile cast options -
     and that is exactly why this is hidden information rather than why it is
@@ -1689,6 +1929,23 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     `visibility.py` is the rule that binds both: "a caller that presents
     nothing must never see more than one that presents garbage, and neither
     may see more than one that presents someone else's seat".
+
+    **`candidates=true` folds each targeting action's legal targets into its
+    own entry** (`_attach_target_candidates`), so a seat can choose AND issue
+    its next action out of one answer. Opt-in, and measured rather than
+    guessed: on a 28-permanent board with three targeting spells in hand the
+    enumeration costs ~106 ms on top of the ~350 ms the enumeration itself
+    already takes, because `TargetRequirement.rejects` reaches
+    `Game.characteristics_of` and `Game.computed_board` is deliberately
+    uncached in the engine (CR 613.5 - "continually and automatically
+    performed", so an anthem that left the battlefield a moment ago is
+    already not applying). That is a good trade for a seat, which pays it
+    once per action and saves a whole round trip - and so a whole inference
+    cycle, seconds rather than milliseconds - and a bad one for the browser,
+    which asks this on a 1.2s poll and already has the whole board on screen
+    to pick targets from. So `seatkit.available_actions` passes it and
+    `ui/app.js` does not, and the default is off: a caller that says nothing
+    pays nothing.
 
     `get_affordances` needs no such guard and is not a precedent for
     skipping one: every candidate it names is an object in a public zone
@@ -1706,6 +1963,16 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     names - `ValueError` -> 400, the same as `pregame_settle`'s admin-key
     check - rather than a 403, which appears nowhere else in this api.
     """
+    # Read *before* the board, never after. This number goes back to the
+    # caller as the position this answer describes, and a caller names it as
+    # `expected_seq` on the action it decides to take - so it has to be a
+    # position the board this enumeration was computed from is at least as
+    # new as. Read afterwards, a write landing in between would hand a seat a
+    # number newer than the board it actually read, and
+    # `require_current_board` would then stamp its refusal `stale: False` -
+    # "decided against a current board" - about a board that had already
+    # moved. Failing the other way costs a re-read and says so.
+    at_seq = audit.last_seq(game_id)
     game = game_or_404(game_id)
     viewer = visibility.resolve_viewer(game_id, uid)
     if viewer is not visibility.ADMIN and viewer != player:
@@ -1716,7 +1983,15 @@ def get_legal_actions(game_id: str, player: str, uid: str | None = None) -> dict
     paused = store.paused_command(game_id)
     pending = paused[2] if paused is not None else None
     actions = compute_legal_actions(game, player, pending=pending)
-    return {"actions": [action.model_dump(mode="json") for action in actions]}
+    views = [action.model_dump(mode="json") for action in actions]
+    if candidates:
+        _attach_target_candidates(game, player, actions, views)
+    # The ledger position this enumeration describes, handed back with it
+    # (`LegalActionsResponse.last_seq`): a seat names it as `expected_seq` on
+    # whatever it decides to do, and that is what makes its refusals
+    # splittable into races and rules errors at all. See `at_seq` above for
+    # why it is read before the board rather than here.
+    return {"actions": views, "last_seq": at_seq}
 
 
 @app.post(
@@ -1735,6 +2010,9 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     # a rule rather than an oversight: CR 104.3a lets a player concede at any
     # time, so a gate that could refuse a concession would be a gate that can
     # trap a seat in a game it has already given up.
+    records.require_current_board(
+        game_id, "concede", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     result, _, legal_before, seq = _run_command(game_id, "concede", req)
     if result.status is commands.RunStatus.PAUSED:
@@ -1777,6 +2055,14 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
     response_model_exclude_unset=True,
 )
 def action_activate(game_id: str, req: ActivateRequest) -> dict[str, Any]:
+    records.require_current_board(
+        game_id,
+        "activate",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "activate_ability", req)
@@ -1805,6 +2091,14 @@ def action_crew(game_id: str, req: CrewRequest) -> dict[str, Any]:
     """Crew a Vehicle (CR 702.122a). Its own endpoint rather than an
     `activate` against an ability index: the cost is the creatures tapped,
     not mana, and crew is the Vehicle's ability rather than theirs."""
+    records.require_current_board(
+        game_id,
+        "crew",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "crew", req)
@@ -1893,8 +2187,12 @@ def _answer_declaration(
             f"{expected_kind.value!r} - answer that one first (POST .../decide, "
             f"or the matching action)"
         )
-    viewer = visibility.resolve_viewer(game_id, uid)
-    if viewer != engine_decision.player or not isinstance(viewer, str):
+    # The acting seat, not the viewing one - see `decide` above and
+    # `game_access.seat_for_uid`. The admin key is refused here as it always
+    # was (it opens no seat, and CR 608.2d's "the player announces" is about
+    # a player), and an advisor uid now is too.
+    viewer = game_access.seat_for_uid(game_id, uid)
+    if viewer != engine_decision.player:
         # No enumeration on this branch, deliberately: the caller has just
         # been told this is not their decision, and "what else the deciding
         # seat could have done" is that seat's own hidden information.
@@ -1963,6 +2261,19 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     stands right now, the same probe it always was - so it needs no `uid`
     gate any more than any other dry run does; only a real declaration does.
     """
+    # `AttackRequest` carries no `player` of its own (see `_answer_declaration`),
+    # so the row this gate may write is attributed to the seat `uid` actually
+    # opens - the same resolved identity `_answer_declaration` checks against
+    # the deciding player, never a name off the request body.
+    attacker_viewer = visibility.resolve_viewer(game_id, uid)
+    records.require_current_board(
+        game_id,
+        "attack",
+        req.expected_seq,
+        player=attacker_viewer if isinstance(attacker_viewer, str) else None,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     attackers_detail = [
         {"card": str(pair.card_id), "defender": pair.defender} for pair in req.attackers
     ]
@@ -1991,6 +2302,14 @@ def action_attack(game_id: str, req: AttackRequest, uid: str | None = None) -> d
     response_model_exclude_unset=True,
 )
 def action_play_land(game_id: str, req: PlayLandRequest) -> dict[str, Any]:
+    records.require_current_board(
+        game_id,
+        "play_land",
+        req.expected_seq,
+        player=req.player,
+        reasoning=req.reasoning,
+        dry_run=req.dry_run,
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq = _run_command(game_id, "play_land", req)
@@ -2032,6 +2351,9 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
     # always the same sentence, and `seatkit.pass_until` posts to this very
     # route for every pass a run makes - see `records.require_reasoning`.
     # The field is still accepted and still audited below.
+    records.require_current_board(
+        game_id, "pass_priority", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning, pass_shaped=True)
     # Exempt from `reasoning`, NOT from the plan: passing can perfectly well
     # be the first thing a seat does on its own turn, and "I had nothing to
@@ -2127,6 +2449,9 @@ def action_declare_blockers(
     game_id: str, req: DeclareBlockersRequest, uid: str | None = None
 ) -> dict[str, Any]:
     """Declare blockers (CR 509.1) - see `_answer_declaration`."""
+    records.require_current_board(
+        game_id, "declare_blockers", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     blocks_detail = [{"blocker": str(b.blocker), "blocked": str(b.blocked)} for b in req.blocks]
     pairs = [DeclaredPairRequest(creature=b.blocker, defender=str(b.blocked)) for b in req.blocks]
     return _answer_declaration(
@@ -2167,6 +2492,9 @@ def state_based_actions(game_id: str, req: ActorRequest | None = None) -> dict[s
     describe a hole.
     """
     req = req or ActorRequest()
+    records.require_current_board(
+        game_id, "state_based_actions", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     result, _, legal_before, seq_hint = _run_command(game_id, "state_based_actions", req)
@@ -2217,6 +2545,9 @@ def resolve_top(
     game_id: str, req: ActorRequest | None = None, uid: str | None = None
 ) -> dict[str, Any]:
     if req is not None:
+        records.require_current_board(
+            game_id, "resolve_top", req.expected_seq, player=req.player, reasoning=req.reasoning
+        )
         records.require_reasoning(game_id, req.player, req.reasoning)
         records.require_plan(game_id, req.player)
     result, _, legal_before, seq_hint = _run_command(game_id, "resolve_top", req or ActorRequest())
@@ -2296,6 +2627,9 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     `pending_decision`, answerable through `POST .../decide` or its
     `actions/attack`/`actions/declare-blockers` aliases.
     """
+    records.require_current_board(
+        game_id, "advance", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     try:
@@ -2371,11 +2705,31 @@ def advance(game_id: str, req: AdvanceRequest, uid: str | None = None) -> dict[s
     response_model=ReportProblemResponse,
     response_model_exclude_unset=True,
 )
-def report_problem(game_id: str, req: ReportProblemRequest) -> dict[str, Any]:
-    """A player files a problem report straight into the game log."""
+def report_problem(
+    game_id: str, req: ReportProblemRequest, uid: str | None = None
+) -> dict[str, Any]:
+    """A player files a problem report straight into the game log.
+
+    **Attributed to the credential, never to `req.player`.** This is one of
+    the two POSTs an advisor uid may make (`game_access.
+    ADVISOR_POST_SUFFIXES`), and a row keyed on a plain request field let
+    any caller write into the log in another seat's name - an advisor of
+    alice filing "bob is cheating, signed bob" and the ledger agreeing. A
+    seat uid resolves to its own seat; an advisor uid resolves to the human
+    it watches, which is the one seat it is entitled to speak about.
+
+    `req.player` is still honoured for the admin key, which opens no seat
+    and so resolves to nobody: that is the operator filing on a seat's
+    behalf, and the only caller the field was ever really for.
+    """
     game = game_or_404(game_id)
-    game.player(req.player)
-    audit.record(game_id, "report_problem", player=req.player, text=req.text)
+    player = (
+        game_access.seat_for_uid(game_id, uid)
+        or (player_for_advisor_uid(game_id, uid) if uid else None)
+        or req.player
+    )
+    game.player(player)  # 400 for a player who is not in this game at all
+    audit.record(game_id, "report_problem", player=player, text=req.text)
     return {"recorded": True}
 
 
@@ -2434,6 +2788,154 @@ def declare_plan(game_id: str, req: DeclarePlanIn) -> dict[str, Any]:
         "player": req.player,
         "turn_number": turn.turn_number if turn is not None else None,
     }
+
+
+@app.post(
+    "/api/games/{game_id}/advice", response_model=AdviceResponse, response_model_exclude_unset=True
+)
+def record_advice(game_id: str, req: AdviceIn, uid: str | None = None) -> dict[str, Any]:
+    """Record one action an advisor thinks `req.player` should take
+    (`schemas.AdviceIn`), and record nothing else.
+
+    **This mutates no `Game`, exactly like `declare_plan`** - which is the
+    prior art this is modelled on, down to the shape of this docstring. It
+    calls `audit.record` and nothing else: no `store.replace`, no
+    compare-and-swap, no version bump. A proposal is a statement *about* the
+    game, and the whole point of advise mode is that the advisor never moves
+    it; a route that quietly committed one would hand a read-only credential
+    the authority its own gate exists to deny.
+
+    **The summary is derived here, not taken from the caller.**
+    `records.advice_summary` reads `req.body` against the live game - card
+    ids resolved to names, targets and cost spelled out - so what the human
+    reads can never disagree with the request it describes. `schemas.AdviceIn`
+    has no `summary` field at all, so an advisor cannot try.
+
+    **`based_on_seq` is read immediately before the row is written, under no
+    lock.** A command landing in between makes this proposal born-stale, and
+    that is the safe direction: the human's own action carries its own
+    `expected_seq` (`records.require_current_board`) and is refused against a
+    board that moved, so a stale proposal costs a refusal rather than a wrong
+    move. Taking the game's lock here would instead let a buddy pod's
+    thinking block the seat it is advising.
+
+    `legal_actions_before` is computed the same way every acting route
+    computes it, for `req.player` - what *else* was legal at the moment the
+    advice was given, which is the comparison a retrospective needs and
+    cannot reconstruct afterwards. It is hidden information (it names cards
+    in that player's hand), which is why it rides in the row rather than the
+    response, and `visibility.redact_log_entry` keeps it - and the whole
+    proposal - out of the opponent's read of the same log.
+
+    Authorised on whoever may already *see* `req.player`'s hand: this game's
+    advisor for that seat (`visibility.resolve_viewer` resolves an advisor
+    uid to its human's username), the seat itself, or the admin key. A
+    proposal names hidden information, so nobody else may write one into that
+    seat's name - the same rule, and the same 404, `declare_plan` enforces.
+    """
+    game = game_or_404(game_id)
+    viewer = visibility.resolve_viewer(game_id, uid)
+    if viewer is not visibility.ADMIN and viewer != req.player:
+        raise KeyError("that uid does not advise that seat in this game")
+    game.player(req.player)  # 400 for a player who is not in this game at all
+    legal_before = records.legal_actions_before(
+        game, req.player, (store.paused_command(game_id) or (None, None, None))[2]
+    )
+    summary = records.advice_summary(game, req.method, req.path, req.body, legal_before)
+    based_on_seq = audit.last_seq(game_id)
+    seq = audit.record(
+        game_id,
+        audit.ADVICE_ACTION,
+        player=req.player,
+        method=req.method,
+        path=req.path,
+        body=req.body,
+        summary=summary,
+        reasoning=req.reasoning,
+        based_on_seq=based_on_seq,
+        validated=req.validated,
+        legal_actions_before=legal_before,
+    )
+    return {
+        "proposed": True,
+        "log_seq": seq,
+        "player": req.player,
+        "summary": summary,
+        "validated": req.validated,
+        "based_on_seq": based_on_seq,
+    }
+
+
+@app.post(
+    "/api/games/{game_id}/advice/{seq}/approve",
+    response_model=AdviceApprovedResponse,
+    response_model_exclude_unset=True,
+)
+def approve_advice(
+    game_id: str, seq: int, req: AdviceApproveIn, uid: str | None = None
+) -> dict[str, Any]:
+    """Record that the advised human said yes to the `advice` row at `seq`.
+
+    **Mutates no `Game`** - one more `audit.record` call, for the same
+    reasons `record_advice` above makes none.
+
+    **The human's client calls this BEFORE sending the action itself**, and
+    must not send the action if this fails. That ordering is the whole
+    purpose of the row: an `advice_approved` row sitting immediately before
+    the action in the same ledger is what lets a retrospective say "this move
+    came from the buddy" rather than inferring it from adjacency, and a
+    refused approval leaves no row at all, so an action taken anyway is
+    visibly unpaired. (The browser half of that is a later task; the contract
+    it must honour is pinned by this repo's own tests now, not then.)
+
+    **Human uid only, checked twice.** `game_access.py` already refuses an
+    advisor uid here - this path is neither `/advice` nor `/report`, and the
+    body claims no `dry_run` - and that is correct and deliberate: an advisor
+    approving its own advice would make the human's agreement a formality.
+    This route checks it again itself, against `store.player_for_uid` (a
+    *seat* credential, never `resolve_viewer`, which an advisor uid passes by
+    design), because a rule this load-bearing should not rest on one gate
+    remembering to run.
+    """
+    game_or_404(game_id)
+    advised = _advice_player_at(game_id, seq)
+    if advised is None:
+        raise KeyError(f"no advice at {seq} in this game")
+    if advised != req.player:
+        raise KeyError("that advice was not given to that player")
+    if not uid or (
+        store.player_for_uid(game_id, uid) != req.player and not store.is_admin(game_id, uid)
+    ):
+        raise KeyError("that uid is not that seat in this game")
+    approved_seq = audit.record(
+        game_id,
+        audit.ADVICE_APPROVED_ACTION,
+        player=req.player,
+        advice_seq=seq,
+    )
+    return {
+        "recorded": True,
+        "log_seq": approved_seq,
+        "advice_seq": seq,
+        "player": req.player,
+    }
+
+
+def _advice_player_at(game_id: str, seq: int) -> str | None:
+    """Whom the `advice` row at `seq` was given to, or `None` when `seq` is
+    not an `advice` row of this game at all.
+
+    Reads from `seq` forward (`audit.entries_since(game_id, seq - 1)`) rather
+    than the whole ledger: the approval follows its proposal within seconds
+    in the one flow that calls this, so the tail it walks is short, and the
+    ledger's full-snapshot rows make reading all of them genuinely expensive
+    (see `audit.entries`' own docstring)."""
+    for entry in audit.entries_since(game_id, seq - 1):
+        if entry["seq"] == seq:
+            if entry["action"] != audit.ADVICE_ACTION:
+                return None
+            return (entry.get("detail") or {}).get("player")
+    return None
 
 
 @app.post(
@@ -2523,10 +3025,18 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         )
         return {"accepted": False, "reason": reason, "log_seq": seq}
 
+    records.require_current_board(
+        game_id, "decide", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     game = game_or_404(game_id)
     legal_before: records.LegalActionsBefore | None = None
-    player = visibility.resolve_viewer(game_id, uid)
-    if player != req.player or not isinstance(player, str):
+    # `game_access.seat_for_uid`, never `visibility.resolve_viewer`: this is
+    # an authorization question ("who is acting"), and `resolve_viewer`
+    # answers the visibility one ("what may this uid see"), which resolves an
+    # advisor uid to the human it watches. Asking the read filter who is
+    # acting is what let an advisor credential answer its human's decisions.
+    player = game_access.seat_for_uid(game_id, uid)
+    if player != req.player:
         # Refused before anything is enumerated: `req.player` is a request
         # field, and enumerating a seat the caller has merely *named* is
         # what put another seat's hidden information into a row the caller
@@ -2735,10 +3245,9 @@ def _pregame_seat(game_id: str, uid: str | None, player: str) -> None:
     trust level `visibility.ADMIN` already grants the full board - which is
     what lets a harness or a boot script drive a seat it owns.
     """
-    viewer = visibility.resolve_viewer(game_id, uid)
-    if viewer is visibility.ADMIN:
+    if uid and store.is_admin(game_id, uid):
         return
-    if viewer != player:
+    if game_access.seat_for_uid(game_id, uid) != player:
         raise ValueError(f"that uid does not open {player}'s seat")
 
 
@@ -2787,6 +3296,9 @@ def pregame_mulligan(game_id: str, req: MulliganRequest, uid: str | None = None)
     and there is no reason it alone should be unexplained.
     """
     _pregame_seat(game_id, uid, req.player)
+    records.require_current_board(
+        game_id, "mulligan_declared", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
@@ -2847,6 +3359,23 @@ def pregame_opening_hand_finish(
     if not req.player:
         raise ValueError("finishing CR 103.6's actions needs the player who is finishing")
     _pregame_seat(game_id, uid, req.player)
+    # P4, and the one route it was missing. This takes `schemas.ActorRequest`
+    # and so has accepted `expected_seq` (via `BoardRead`) since the field
+    # existed, while never comparing it to anything: a seat could name the
+    # ledger position it decided against here and be allowed to act on a
+    # board that had already moved, with no `stale` refusal and no row to say
+    # it happened - the single guarantee this guard is documented to make
+    # ("called first in every mutating route") broken on the one route
+    # nobody had listed. CR 103.6's pass is as raceable as any other move:
+    # the other seat's own mulligan or pass resolves the round, and this one
+    # arriving after that is exactly the race.
+    #
+    # After `_pregame_seat` rather than before it, for the reason
+    # `pregame_settle` states: the refusal writes a ledger row, and a caller
+    # who cannot open this seat has no business writing one.
+    records.require_current_board(
+        game_id, "opening_hand_done", req.expected_seq, player=req.player, reasoning=req.reasoning
+    )
     records.require_reasoning(game_id, req.player, req.reasoning)
     records.require_plan(game_id, req.player)
     with store.locked(game_id) as game:
@@ -2884,8 +3413,16 @@ def pregame_settle(
     over the other's.
     """
     req = req or PregameSettleRequest()
-    if visibility.resolve_viewer(game_id, uid) is not visibility.ADMIN:
+    if not (uid and store.is_admin(game_id, uid)):
         raise ValueError("settling the whole pregame for every seat needs this game's admin key")
+    # P4, and after the admin gate rather than before it (the one place this
+    # guard is not the very first thing a route does): the refusal writes a
+    # ledger row, and a caller who has not shown the admin key has no
+    # business writing one into a game they cannot otherwise touch. Both
+    # branches below are covered by this single call - `use_defaults=True`
+    # runs the whole pregame to completion in its own lock without going
+    # through `_run_command` at all, so it has no other guard anywhere.
+    records.require_current_board(game_id, "pregame_settle", req.expected_seq)
     viewer = visibility.resolve_viewer(game_id, uid)
     seq_hint: int | None = None
     if req.use_defaults:

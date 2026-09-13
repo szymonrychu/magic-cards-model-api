@@ -1,0 +1,2419 @@
+{
+ "field": {
+  "cutoff_share": 2.002730996813837,
+  "count": 19
+ },
+ "sideboard_access": {
+  "kind": "boarded"
+ },
+ "matchups": [
+  {
+   "name": "instant reanimator",
+   "meta_share": 4.415111515703232,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Their whole deck is a graveyard: Goryo's Vengeance and Ephemerate rebuy Atraxa, Grand Unifier off a Faithful Mending discard. Graveyard exile answers the engine rather than the body, and Consign to Memory answers the Atraxa trigger that draws them back into the game.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "answers our colorless spells and, more importantly, our triggered abilities; three copies at one mana.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "{U} against a blue spell - every counter and every threat in our 60 except the black removal.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "a sweeper that costs them nothing, because their threat lives in the graveyard and ours live on the battlefield.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 2,
+     "why": "they board graveyard hate against us too, for Psychic Frog's exile-three ability and Murktide-class delve.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two or turn-three Atraxa off Goryo's Vengeance ends the game on card advantage alone; the disruption they carry exists to buy the one turn the reanimation needs, not to grind.",
+    "key_cards": [
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "reanimated on turn two she draws four cards and blocks everything; the enters trigger is the game, not the body."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "one mana answers the colorless half of our board and any trigger we build a turn around.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     },
+     {
+      "card": "Mystical Dispute",
+      "why": "our entire interaction suite is blue, so it taxes every counter we hold for one mana.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "sweeps Psychic Frog, Orcish Bowmasters and Tamiyo at once while their own threat is in the graveyard.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "SURVIVES",
+     "why": "an artifact against a board with no artifact removal in either list we pulled; the only risk is Consign to Memory on its sacrifice trigger."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "it answers their trigger at one mana and their own Consign to Memory cannot counter it, because Consign to Memory is a blue spell."
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "their deck is four colors of blue and white; Dispute costs one against everything that matters and nothing in their board answers an instant."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a one-mana disruption spell and a way to interact by turn two.",
+    "goldfish_for": "Nihil Spellbomb, then hold it until they discard Atraxa.",
+    "watch_for": "An untapped Marsh Flats on turn two is Goryo's Vengeance mana, not Solitude.",
+    "posture": "disrupt_first",
+    "posture_why": "Their threat is faster than ours, so the graveyard has to go before we start attacking."
+   },
+   "play": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Fatal Push",
+     "1 Quantum Riddler",
+     "1 Sink into Stupor"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "2 Mystical Dispute"
+    ],
+    "out": [
+     "2 Fatal Push",
+     "2 Quantum Riddler",
+     "1 Sink into Stupor",
+     "1 Sheoldred's Edict"
+    ]
+   }
+  },
+  {
+   "name": "broodscale bloodchief",
+   "meta_share": 4.961310878470642,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Basking Broodscale plus Blade of the Bloodchief is an ability-based infinite, so the answers that work are the ones that turn abilities off or sweep the enablers rather than the ones that target a creature. Dress Down and Toxic Deluge both do that, and both cost us our own board.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Damping Sphere",
+     "count": 2,
+     "why": "one more mana for each spell after the first, against a deck whose plan is a threat plus held-up interaction.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Nature's Claim",
+     "count": 2,
+     "why": "{G} instant, destroys an artifact - our Engineered Explosives and our Nihil Spellbomb are both artifacts.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 1,
+     "why": "a fourth copy alongside the two maindeck, so the free-spell half of our 60 is taxed in every game.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Grafdigger's Cage",
+     "count": 1,
+     "why": "boarded against the graveyard decks, it also stops nothing of ours; it is here because it comes in on the play by habit.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "lock",
+    "posture_why": "Vexing Bauble in the maindeck and Damping Sphere from the board tax the free spells and the fetch-heavy manabase, so the combo assembles behind a soft prison rather than racing it.",
+    "key_cards": [
+     {
+      "card": "Basking Broodscale",
+      "why": "the combo half that has to resolve; every other card in the deck is a way to find it or protect it."
+     },
+     {
+      "card": "Vexing Bauble",
+      "why": "counters any spell cast for no mana - that is three Force of Negation and three evoked Subtlety in our 60.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     },
+     {
+      "card": "Damping Sphere",
+      "why": "taxes our second spell each turn, which is exactly how a tempo deck holds up interaction and deploys at once.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     },
+     {
+      "card": "Nature's Claim",
+      "why": "answers our Engineered Explosives and our Nihil Spellbomb for one mana at instant speed.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "Kozilek's Command and Ancient Stirrings are the deck's engine and Consign answers the colorless one; nothing in their board counters a one-mana blue instant."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "SURVIVES",
+     "why": "Nature's Claim answers it, but a Claim spent on Explosives is a Claim not spent on the Spellbomb, and Explosives is sacrificed at instant speed in response."
+    },
+    {
+     "card": "Dress Down",
+     "verdict": "SURVIVES",
+     "why": "Basking Broodscale with no abilities is a vanilla creature, and the enchantment is gone at end of turn before their Nature's Claim matters."
+    },
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "pay-X-life is not mana, so Damping Sphere does not scale it and no permanent in their 75 protects a creature from -X/-X."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a one-mana answer; Fatal Push on Basking Broodscale is the whole first turn.",
+    "goldfish_for": "Engineered Explosives at one for Blade of the Bloodchief.",
+    "watch_for": "Urza's Saga chapter three fetches Haywire Mite or Walking Ballista, not a combo piece.",
+    "posture": "disrupt_first",
+    "posture_why": "They win from an empty board, so our clock is worthless until the combo is answered."
+   },
+   "play": {
+    "in": [
+     "2 Consign to Memory",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "1 Kaito, Bane of Nightmares",
+     "1 Sink into Stupor"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Consign to Memory",
+     "2 Engineered Explosives",
+     "1 Dress Down",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "1 Kaito, Bane of Nightmares",
+     "2 Sink into Stupor",
+     "1 Sheoldred's Edict",
+     "1 Counterspell"
+    ]
+   },
+   "self_cost": "Dress Down turns off Psychic Frog's pump and its exile-three flying, Quantum Riddler's flying, and Orcish Bowmasters' amass trigger; Toxic Deluge for two kills Orcish Bowmasters and Quantum Riddler and everything else we have except a Frog that has already grown and Tamiyo, Inquisitive Student, whose 0/3 body survives -2/-2 as a 0/1."
+  },
+  {
+   "name": "eldrazi ramp",
+   "meta_share": 5.052344105598544,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Harbinger of the Seas is the card that beats this deck and it is the card that hurts us most: Eldrazi Temple and Ugin's Labyrinth stop producing anything but {U}, which strands every Emrakul and every Kozilek's Command in their hand.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 3,
+     "why": "{3} for every spell, against a deck whose interaction costs one and two - it is the hardest card in the field for us.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Chalice of the Void",
+     "count": 2,
+     "why": "set to one it counters four Fatal Push, four Thoughtseize, two Spell Snare, two Consign to Memory and two Tamiyo.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Endurance",
+     "count": 2,
+     "why": "free flash 3/4 reach that answers a Psychic Frog attack and resets a graveyard we were exiling.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "free, and this is the matchup where our only boarded artifact would otherwise be safe.",
+     "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Every card is either a mana source or something that ends the game on resolution, so the plan is to be casting a seven-drop before a tempo deck has assembled a clock.",
+    "key_cards": [
+     {
+      "card": "Emrakul, the Promised End",
+      "why": "cast off Temple and Labyrinth mana on turn four, it takes our turn and our board in one trigger."
+     },
+     {
+      "card": "Trinisphere",
+      "why": "taxes every one-mana disruption spell in our deck to three, which is our whole early game.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     },
+     {
+      "card": "Endurance",
+      "why": "a free three-mana flash body that also shuffles a graveyard away, blanking a Nihil Spellbomb plan.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     },
+     {
+      "card": "Force of Vigor",
+      "why": "two-for-one artifact and enchantment removal for no mana, aimed at our Engineered Explosives.",
+      "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Harbinger of the Seas",
+     "verdict": "SURVIVES",
+     "why": "a 2/2 body against a deck whose cheapest interaction from the board is a three-mana Trinisphere; Endurance can block it but cannot remove it, and the static ability has already done its work."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "Kozilek's Command, Sowing Mycospawn and Emrakul's cast trigger are all colorless or triggered, so one mana answers the most expensive card in their deck."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands with a blue source and either Harbinger of the Seas or two counters.",
+    "goldfish_for": "Harbinger of the Seas by turn three, before Ugin's Labyrinth has a card imprinted.",
+    "watch_for": "Sowing Mycospawn finds a basic Forest, so Harbinger does not end the game by itself.",
+    "posture": "lock",
+    "posture_why": "Turning off their mana beats answering their threats, which cost more than we can counter."
+   },
+   "play": {
+    "in": [
+     "3 Harbinger of the Seas",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "4 Fatal Push",
+     "1 Sheoldred's Edict"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Harbinger of the Seas",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "4 Fatal Push",
+     "1 Sheoldred's Edict"
+    ]
+   },
+   "self_cost": "Harbinger makes our own seventeen nonbasic lands Islands too. Fetchlands become Islands and can no longer fetch; the manabase collapses to two Island, one Swamp and a field of Islands, so Fatal Push, Thoughtseize, Drown in the Loch, Sheoldred's Edict and Orcish Bowmasters all become uncastable off anything but the single Swamp. That is why four Fatal Push leave for it rather than something cheaper."
+  },
+  {
+   "name": "dimir control",
+   "meta_share": 2.5034137460172965,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "The mirror is decided by which side's threat resolves and sticks, and every relevant card on both sides is blue. Mystical Dispute costs one mana against all of it, which is the cheapest way to win a counter war we are otherwise even in.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "one mana, replicate, counters a triggered ability or a colorless spell; four copies in the board we pulled.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "count": 3,
+     "why": "nonbasic lands are Islands, which strands the black half of a Dimir deck that kept its removal in.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "the same card we bring in, for the same reason: every card that matters is blue.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Engineered Explosives",
+     "count": 3,
+     "why": "at two it answers the entire two-drop half of the mirror in one card.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Both decks answer everything at parity, so the winner is whoever converts a resolved Psychic Frog into cards first; their Consign to Memory and Engineered Explosives are aimed at exactly that.",
+    "key_cards": [
+     {
+      "card": "Psychic Frog",
+      "why": "the only card in the mirror that turns a stalled board into cards; whoever resolves one first is ahead."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "four copies at one mana, and it answers Quantum Riddler's enters trigger as well as any colorless spell.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Harbinger of the Seas",
+      "why": "makes both manabases Islands, which hurts the side holding more black cards - usually us after boarding.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Engineered Explosives",
+      "why": "Engineered Explosives destroys by mana value equal to its charge counters, and Psychic Frog and Orcish Bowmasters are both mana value two, so at two it sweeps both in one card; Tamiyo, Inquisitive Student is mana value one and is not hit by this setting.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "it costs one against every card in their deck that matters and their own Mystical Dispute answers it at the same rate, which is a trade we want on the play."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "their four copies answer the same class of card ours do; neither side's Consign can counter the other, because both are blue spells."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a one-mana counter and a two-mana threat; pure land-and-counters loses to Psychic Frog.",
+    "goldfish_for": "Psychic Frog on turn two with Spell Snare backup.",
+    "watch_for": "Open double blue on turn three is Force of Negation, not Counterspell.",
+    "posture": "grind",
+    "posture_why": "Neither side dies quickly, so the game is decided on cards drawn off a resolved Frog."
+   },
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Kaito, Bane of Nightmares",
+     "1 Sheoldred's Edict",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Kaito, Bane of Nightmares",
+     "1 Sheoldred's Edict",
+     "1 Drown in the Loch"
+    ]
+   }
+  },
+  {
+   "name": "ur cutter prowess",
+   "meta_share": 2.6854802002730995,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Cori-Steel Cutter makes a Monk every time they cast their second spell, and Slickshot Show-Off ends games out of nowhere. One-for-one removal loses to the token half, so Toxic Deluge comes in - and it kills our own board with theirs.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana against triggered abilities and colorless spells - our Engineered Explosives and Nihil Spellbomb both die to it.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Spell Snare",
+     "count": 2,
+     "why": "counters the entire two-drop half of our deck for one mana.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Unholy Heat",
+     "count": 3,
+     "why": "one mana, six damage with delirium, which their Baubles and Lava Darts turn on by turn two.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    },
+    {
+     "card": "Surgical Extraction",
+     "count": 2,
+     "why": "free, and it strips the one card we are digging toward once a fetch has put something in our graveyard.",
+     "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Every card is one mana or free, so they are attacking on turn two and using Mutagenic Growth to push the last points through a blocker rather than trading with it.",
+    "key_cards": [
+     {
+      "card": "Cori-Steel Cutter",
+      "why": "a one-mana artifact that makes a Monk and equips itself every turn they cast two spells; removal on the creature does nothing."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "three copies at one mana, and Cori-Steel Cutter's trigger and our own colorless artifacts are both in range.",
+      "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+     },
+     {
+      "card": "Spell Snare",
+      "why": "our Psychic Frog, Orcish Bowmasters and Counterspell are all mana value two.",
+      "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+     },
+     {
+      "card": "Unholy Heat",
+      "why": "delirium is trivial for them, and six damage answers every creature we play.",
+      "source_tournament_id": "ceedc259-a05c-458c-927e-f988d65ff5d4"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "their Spell Snare answers mana value two and Dispute is three; it is the one card of ours their boarded counters cannot catch cheaply."
+    },
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery with no target, so Consign to Memory does not touch it and neither Spell Snare nor Unholy Heat is a counterspell for it."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and two pieces of one-mana removal; counters alone lose to Cori-Steel Cutter.",
+    "goldfish_for": "Toxic Deluge, held until Cori-Steel Cutter has made a second Monk.",
+    "watch_for": "Untapped red mana at four or fewer life is Slickshot Show-Off plus Mutagenic Growth.",
+    "posture": "disrupt_first",
+    "posture_why": "Their clock beats ours, so the Cutter has to be answered before we attack."
+   },
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares",
+     "1 Quantum Riddler"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares",
+     "1 Quantum Riddler"
+    ]
+   },
+   "self_cost": "Toxic Deluge for one or two takes Psychic Frog and Orcish Bowmasters along with their Monks and Dragon's Rage Channeler; Tamiyo, Inquisitive Student is a 0/3 and survives both numbers as a 0/2 or a 0/1. Against a deck that rebuilds off one Cutter trigger, losing Frog and Bowmasters is still a real cost."
+  },
+  {
+   "name": "boros aggro",
+   "meta_share": 3.0040964952207556,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Their board is wide and cheap - Ocelot Pride, Guide of Souls, Ragavan and Ajani tokens - so the answer is a sweeper rather than one-for-one removal. Toxic Deluge is that sweeper and it kills our own Psychic Frog and Orcish Bowmasters with it.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "{2}{R} 4/3 that destroys a nonbasic land on entry; we run seventeen and three basics.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "one spell per turn, which is the tax a hold-up-interaction deck cannot pay.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "sweeps our Psychic Frog and Orcish Bowmasters after they have committed to a board.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "counters Force of Negation and evoked Subtlety, the two cards that let us interact while tapped out.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Every threat is one or two mana and Voice of Victory stops us casting anything on their turn, so the game is decided before our five-drops are live.",
+    "key_cards": [
+     {
+      "card": "Voice of Victory",
+      "why": "our opponents cannot cast spells during their turn - it turns off every counterspell and every flash creature we hold."
+     },
+     {
+      "card": "Obsidian Charmaw",
+      "why": "destroys a nonbasic land for two mana against a manabase that is seventeen nonbasics deep.",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "their own sweeper, brought in because our Frogs outclass their tokens in a long game.",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     },
+     {
+      "card": "High Noon",
+      "why": "one spell each turn caps a deck built to deploy a threat and hold up an answer.",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery against a deck whose only board interaction is Orim's Chant on their own turn; Ocelot Pride's token trigger rebuilds, which is why it is cast on their board and not ours."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "SURVIVES",
+     "why": "Wear / Tear answers it, but at one counter it has already killed Ocelot Pride, Ragavan and Guide of Souls before they can spend the card."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and two pieces of one-mana interaction; a threat-only hand loses on turn four.",
+    "goldfish_for": "Toxic Deluge, cast for two after they have committed the second wave.",
+    "watch_for": "Voice of Victory means our counters are dead on their turn - use the mana on our own.",
+    "posture": "disrupt_first",
+    "posture_why": "Their curve ends before ours starts, so surviving to turn five is the whole game."
+   },
+   "play": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Thoughtseize"
+    ]
+   },
+   "self_cost": "Toxic Deluge for two or three takes every creature we control except a Psychic Frog that has already eaten cards, and except Tamiyo, Inquisitive Student, whose 0/3 body only dies to the three; Engineered Explosives at one still kills our own Tamiyo, since its destroy effect keys off mana value one rather than toughness."
+  },
+  {
+   "name": "esper blink",
+   "meta_share": 5.2344105598543464,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Every card that matters is a creature with an enters trigger rebought by Ephemerate or Phelia, and the whole deck is blue and white. Mystical Dispute at one mana answers Quantum Riddler, Teferi and their own Consign to Memory; Consign to Memory answers the blink triggers themselves.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana against triggered abilities, and half our board is enters triggers and artifacts.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "an X sweeper aimed at exactly the one and two-mana creatures we play.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "caps us at one spell per turn against a deck that plays four free creatures.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "the mirror of our own boarding: they are answering our blue cards for one mana too.",
+     "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Free evoke creatures plus Ephemerate generate two or three cards a turn without ever tapping out, so the plan is to bury us in value rather than to close quickly.",
+    "key_cards": [
+     {
+      "card": "Teferi, Time Raveler",
+      "why": "our whole deck is instants and flash creatures, and Teferi makes every one of them sorcery speed."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "three copies at one mana, aimed at Quantum Riddler's enters trigger and our colorless artifacts.",
+      "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "sweeps our board of one and two-drops while their own value engine is in the graveyard.",
+      "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+     },
+     {
+      "card": "High Noon",
+      "why": "one spell each turn, which stops the deploy-and-hold-up turns this deck is built around.",
+      "source_tournament_id": "3eeb3bf5-cea4-49c8-80fd-20dc04cdceef"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "their deck is entirely blue and white, so it costs one against Quantum Riddler, Teferi and Ephemerate alike, and their own Dispute is a mirror trade we are happy with."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "Ephemerate, Phelia and every enters trigger in the deck is a triggered ability; the only thing that answers ours is their own, at parity."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a one-mana counter and a threat; pure removal loses to free creatures.",
+    "goldfish_for": "Mystical Dispute, held for Ephemerate rather than for the creature.",
+    "watch_for": "Teferi, Time Raveler flips the game to sorcery speed, so untapped mana stops being a threat.",
+    "posture": "grind",
+    "posture_why": "Neither side kills fast, and their free creatures beat us only if the game goes long."
+   },
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "2 Sink into Stupor",
+     "1 Kaito, Bane of Nightmares"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "2 Sink into Stupor",
+     "1 Kaito, Bane of Nightmares"
+    ]
+   }
+  },
+  {
+   "name": "living end",
+   "meta_share": 2.913063268092854,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "The deck casts one spell that matters and it is never cast for its mana cost, so the answers are the ones that intercept a cascade trigger or empty the graveyard in response to it. Consign to Memory and Nihil Spellbomb do exactly that, and Mystical Dispute covers the Shardless Agent half.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "one mana against every counterspell in our deck, on the turn they are trying to resolve the cascade.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Foundation Breaker",
+     "count": 3,
+     "why": "evoked for free to destroy the artifact we are holding as the answer.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Leyline of the Void",
+     "count": 4,
+     "why": "turn-zero graveyard exile, which stops Psychic Frog gaining flying and shuts off Drown in the Loch's count.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    },
+    {
+     "card": "Brotherhood's End",
+     "count": 2,
+     "why": "sweeps our whole board of one and two-drops for three mana.",
+     "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Living End on turn three off Violent Outburst rebuilds a full board from an empty one; every other card in the deck exists to make that turn arrive or to stop us stopping it.",
+    "key_cards": [
+     {
+      "card": "Violent Outburst",
+      "why": "cascades into Living End at instant speed for three mana, which is the entire deck in one card."
+     },
+     {
+      "card": "Mystical Dispute",
+      "why": "every counter we hold is blue and one mana is what it costs them to answer it.",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     },
+     {
+      "card": "Leyline of the Void",
+      "why": "boarded against us, it also blanks Psychic Frog's exile-three flying and any delve plan.",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     },
+     {
+      "card": "Foundation Breaker",
+      "why": "free evoke that destroys our Nihil Spellbomb or Engineered Explosives before the cascade turn.",
+      "source_tournament_id": "4219694d-23d9-4fa3-99ad-bd33153c779e"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "SURVIVES",
+     "why": "Foundation Breaker answers it, but the Spellbomb is sacrificed at instant speed in response to the evoke trigger and the graveyard is exiled anyway."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "the cascade trigger is a triggered ability, so this is the one answer in the field their Mystical Dispute cannot profitably race - both cost one."
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "Violent Outburst is red but Shardless Agent, Subtlety and Force of Negation are blue, and Dispute at one mana beats a Force of Negation pitch on rate."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a one-mana blue source and either Consign to Memory or a graveyard answer.",
+    "goldfish_for": "Consign to Memory, held for the cascade trigger rather than the spell.",
+    "watch_for": "Three untapped lands on their turn three is Violent Outburst, not Force of Negation.",
+    "posture": "disrupt_first",
+    "posture_why": "One resolved Living End is the game, so every turn is spent holding the answer up."
+   },
+   "play": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "4 Fatal Push",
+     "1 Sheoldred's Edict",
+     "2 Sink into Stupor"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "4 Fatal Push",
+     "1 Sheoldred's Edict",
+     "2 Sink into Stupor"
+    ]
+   }
+  },
+  {
+   "name": "reanimator",
+   "meta_share": 2.1847974510696404,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Persist and Unearth put Archon of Cruelty into play from a graveyard filled by Faithless Looting, so the graveyard is the deck. Nihil Spellbomb answers it, Consign to Memory answers the Archon trigger, and Toxic Deluge answers the body once it is already there - at the cost of ours.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana for a triggered ability - Quantum Riddler's enters trigger and our Nihil Spellbomb sacrifice both die to it.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "count": 2,
+     "why": "nonbasic lands are Islands, which strands the black half of our deck behind one Swamp.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "counters any spell cast for no mana, aimed at Force of Negation and evoked Subtlety.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 2,
+     "why": "they board graveyard hate too, because Psychic Frog and delve are on both sides of this matchup.",
+     "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two Archon of Cruelty is a three-for-one on entry and again on every attack, so the deck is built to present it before we have a board to defend with.",
+    "key_cards": [
+     {
+      "card": "Archon of Cruelty",
+      "why": "reanimated on turn two, its enters trigger takes a card, a creature and three life at once."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "three copies, and the mirror of our own plan: it answers Archon triggers and our Quantum Riddler alike.",
+      "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+     },
+     {
+      "card": "Harbinger of the Seas",
+      "why": "they board it against us, and our seventeen nonbasics are exactly what it is for.",
+      "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+     },
+     {
+      "card": "Vexing Bauble",
+      "why": "counters our Force of Negation and our evoked Subtlety, the two free answers we hold up.",
+      "source_tournament_id": "5a17b2c8-6374-41a4-a97e-475c138a1524"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "SURVIVES",
+     "why": "their board carries Meltdown, but the Spellbomb is sacrificed at instant speed and the two decks are racing to exile the same graveyard, which favours the one already holding it."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "their own copies are blue and cannot counter ours; Archon of Cruelty's enters trigger is the most expensive triggered ability in the field and this answers it for one mana."
+    },
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery with no target, so Consign to Memory and Vexing Bauble both miss it, and paying life gets past Archon of Cruelty's toughness where damage would not."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a Thoughtseize or a counter, and a graveyard answer if the hand has one.",
+    "goldfish_for": "Nihil Spellbomb, held for the Persist rather than cracked on sight.",
+    "watch_for": "A turn-one Faithless Looting means Archon of Cruelty on turn two, so counters go up now.",
+    "posture": "disrupt_first",
+    "posture_why": "Their threat arrives before ours and outclasses it, so the graveyard has to go first."
+   },
+   "play": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "2 Fatal Push",
+     "1 Sheoldred's Edict",
+     "2 Sink into Stupor",
+     "1 Kaito, Bane of Nightmares"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "2 Fatal Push",
+     "1 Sheoldred's Edict",
+     "2 Sink into Stupor",
+     "1 Kaito, Bane of Nightmares"
+    ]
+   },
+   "self_cost": "Toxic Deluge for four or more is what it takes to kill Archon of Cruelty, and that number kills every creature we control several times over; boarding it means accepting that our own board is a cost we pay to reset theirs."
+  },
+  {
+   "name": "allosaurus combo",
+   "meta_share": 2.2303140646335917,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Their protection is Veil of Summer and Pact of Negation, which answer counterspells but not triggered abilities, so a Summoner's Pact upkeep trigger is still a legal Consign to Memory target through Veil - but countering it does not punish them. Summoner's Pact's oracle text is one triggered ability: 'At the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.' Per CR 701.6a, a countered ability's effects do not occur at all, including its own loss-the-game clause, so countering that trigger cancels the payment demand and the loss together and hands them a free pass. Consign to Memory must never be pointed at the Pact trigger. Its real use in this matchup is countering Atraxa, Grand Unifier's enters trigger if the Neoform or Eldritch Evolution line resolves into her, which denies the card-advantage payoff without stopping the body; Thoughtseize on turn one, taking the Pact or the Neoform before it is cast, is the actual answer to the combo.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Mystical Dispute",
+     "count": 4,
+     "why": "one mana against a blue spell; every counter we hold and every threat we play is blue.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Veil of Summer",
+     "count": 2,
+     "why": "two more copies on top of the two maindeck, so four of their cards blank our counterspells outright.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Nature's Claim",
+     "count": 2,
+     "why": "one-mana instant artifact removal; it is aimed at graveyard hate but hits anything we board.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    },
+    {
+     "card": "Thundertrap Trainer",
+     "count": 2,
+     "why": "a fair plan for post-board games where the combo has been answered twice.",
+     "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "The deck wins on turn one or two through a hand of free spells, and its interaction is entirely defensive: Veil of Summer and Pact of Negation exist to make that turn stick, not to answer us.",
+    "key_cards": [
+     {
+      "card": "Allosaurus Rider",
+      "why": "cast for free by pitching two green cards, it is the body every combo line converts."
+     },
+     {
+      "card": "Veil of Summer",
+      "why": "spells they control cannot be countered this turn, which turns off nine counterspells in our 60.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Mystical Dispute",
+      "why": "four copies at one mana against every blue card we have, on the turn they are comboing.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     },
+     {
+      "card": "Thundertrap Trainer",
+      "why": "a boarded threat for the games where we have answered the combo and they need a fair plan.",
+      "source_tournament_id": "6a17baa7-6295-4907-b49e-83323a23d046"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "Veil of Summer stops spells being countered, not triggered abilities, so this card still resolves through it. That does not make the Pact trigger a good target: per CR 701.6a a countered ability's effects, including its own 'if you don't pay, you lose the game' clause, do not occur, so countering it removes their loss condition instead of enforcing it. What survives Veil here is the option to counter Atraxa, Grand Unifier's enters trigger if their combo line resolves into her, denying the draw without stopping the body."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and two pieces of one-mana disruption; anything slower loses to a turn-two kill.",
+    "goldfish_for": "Thoughtseize on turn one, taking the Neoform over the Rider.",
+    "watch_for": "A green source untapped on our turn is Veil of Summer, so counters are dead that turn.",
+    "posture": "disrupt_first",
+    "posture_why": "They kill through an empty board on turn two, so our clock never matters."
+   },
+   "play": {
+    "in": [
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Fatal Push"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Fatal Push"
+    ]
+   }
+  },
+  {
+   "name": "creatures toolbox",
+   "meta_share": 2.3213472917614935,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Toxic Deluge and Dress Down are the two cards that answer an assembled engine, and both are symmetric: Deluge for two is set where it kills the great bulk of their creature suite - the toolbox curve is dominated by one- and two-toughness bodies (THEORY, read off the pulled 75s; not a counted statistic) - and that number kills almost everything we have too - Tamiyo, Inquisitive Student's 0/3 body is the exception, surviving -2/-2 as a 0/1. Consign to Memory is the one-sided card in the plan and it only reaches the Craterhoof Behemoth trigger.",
+   "self_cost": "Toxic Deluge at two kills Psychic Frog and Orcish Bowmasters along with their board, so it is cast from behind rather than on curve; Tamiyo, Inquisitive Student's 0/3 body survives as a 0/1. Dress Down turns off Psychic Frog's pump and its exile-three flying and Orcish Bowmasters' amass trigger for the turn it is out. Both are the price of answering a combo that does not care about our clock.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Fatal Push",
+     "count": 3,
+     "why": "ten of ten boards at two or three copies. Psychic Frog, Orcish Bowmasters and Kaito are all mana value 2 or less, so their generic removal is fully live against our threats without them boarding anything matchup-specific.",
+     "source_tournament_id": "6d356cda-7779-49e1-8393-a7637ec06f90"
+    },
+    {
+     "card": "Collector Ouphe",
+     "count": 1,
+     "why": "ten of ten boards at one copy. 'Activated abilities of artifacts can't be activated' turns off both Engineered Explosives and both Nihil Spellbomb, which is four of our fifteen board slots, and it is why neither is boarded in this row.",
+     "source_tournament_id": "6d356cda-7779-49e1-8393-a7637ec06f90"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "eight of ten boards at exactly two copies. It counters a spell cast for no mana, which is our three pitched Force of Negation and our three evoked Subtlety - six of the sixty. It taxes rather than blanks: both are still castable for mana, and Consign to Memory for {U} counters the Bauble trigger itself.",
+     "source_tournament_id": "4e332ca6-b46d-4f8e-82d0-c756dc5bcbda"
+    },
+    {
+     "card": "Endurance",
+     "count": 3,
+     "why": "seven of ten boards at one to three copies. A flash 3/4 reach blocker that outclasses every creature we have, and its enters trigger puts our graveyard on the bottom of the library, which shrinks Drown in the Loch and denies Psychic Frog the three cards it exiles for flying.",
+     "source_tournament_id": "709cd217-f83f-4fd1-b8a7-38398d8c65df"
+    },
+    {
+     "card": "Kraul Harpooner",
+     "count": 1,
+     "why": "six of ten boards at one copy. It fights a creature we don't control with flying, which is an unconditional two-mana kill on Tamiyo, Inquisitive Student, a 0/3 with printed flying. It does not answer Psychic Frog: the Frog is a 1/2 with no printed flying and we simply decline to exile three cards on their turn, leaving the trigger no legal target.",
+     "source_tournament_id": "6d356cda-7779-49e1-8393-a7637ec06f90"
+    },
+    {
+     "card": "Crystal Barricade",
+     "count": 1,
+     "why": "six of ten boards at one copy. 'You have hexproof' blanks all four Thoughtseize, and the prevention clause walls Orcish Bowmasters against their other creatures. It is a {1}{W} 0/4 artifact creature, so Fatal Push kills it and Spell Snare counters it.",
+     "source_tournament_id": "7f209355-6979-485b-949d-dd5e96fed0a1"
+    },
+    {
+     "card": "Drannith Magistrate",
+     "count": 1,
+     "why": "nine of ten boards at one copy, and close to a blank against us - nothing in our sixty is cast from anywhere but hand. Recorded because it is the card most likely to be misread as relevant; it is a 1/3 that dies to Fatal Push.",
+     "source_tournament_id": "4e332ca6-b46d-4f8e-82d0-c756dc5bcbda"
+    },
+    {
+     "card": "Suncleanser",
+     "count": 1,
+     "why": "five of ten boards at one copy, and it does much less than it looks like. Mode one shrinks one Psychic Frog by stopping the +1/+1 counters, but the discard is a cost, so the Frog still fuels the graveyard, still flies and still draws on damage. Mode two removes counters from the PLAYER, so it never reaches Kaito's loyalty.",
+     "source_tournament_id": "4e332ca6-b46d-4f8e-82d0-c756dc5bcbda"
+    },
+    {
+     "card": "Grist, the Hunger Tide",
+     "count": 1,
+     "why": "seven of ten boards at one copy. A three-mana planeswalker that grinds one-for-one against a board of small creatures and is a creature everywhere but the battlefield, so it is a legal Fatal Push and Spell Snare target on the stack.",
+     "source_tournament_id": "4e332ca6-b46d-4f8e-82d0-c756dc5bcbda"
+    },
+    {
+     "card": "Veil of Summer",
+     "count": 3,
+     "why": "one of ten boards, and recorded because of what it does rather than how common it is. Against a mono-UB deck it makes their spell uncounterable and gives them and their permanents hexproof from blue and black for the turn, which turns off every interactive card in our seventy-five at once and cantrips while doing it.",
+     "source_tournament_id": "6d356cda-7779-49e1-8393-a7637ec06f90"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Devoted Druid plus Vizier of Remedies is unbounded mana the turn it assembles and Nature's Rhythm puts Craterhoof Behemoth onto the battlefield to end the game on the same turn, so they outrun us rather than grind.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "combo half one, four copies in ten of ten lists: '{T}: Add {G}' plus 'put a -1/-1 counter on this creature: untap this creature'."
+     },
+     {
+      "card": "Vizier of Remedies",
+      "why": "combo half two: the -1/-1 counter is reduced to none, so the untap is free and the mana is unbounded. It costs {1}{W} and they run one white land, but it never needs casting - Nature's Rhythm and Fiend Artisan put it onto the battlefield."
+     },
+     {
+      "card": "Nature's Rhythm",
+      "why": "four copies in ten of ten lists. It searches for ANY creature card and puts it onto the battlefield, so it is both the colorless tutor for the white half and the Craterhoof Behemoth delivery, and it has harmonize from the graveyard."
+     },
+     {
+      "card": "Craterhoof Behemoth",
+      "why": "eight of ten lists at one copy. The enters trigger, not the body, is the kill: trample and +X/+X for the number of creatures they control."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery, so Collector Ouphe does not reach it and there is no permanent for Force of Vigor or the sacrifice creatures to destroy. It is the only sweeper in our box that is immune to their whole artifact-hate package."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "one mana at instant speed, and their board carries no counterspell except Vexing Bauble, which does not see a spell cast for mana."
+    },
+    {
+     "card": "Dress Down",
+     "verdict": "SURVIVES",
+     "why": "an enchantment, and only three of ten boards carry Force of Vigor while the sacrifice creatures - Guerrilla Gorilla in five lists, Outland Liberator in the other five - are sorcery-speed or cost mana. It is sacrificed at the end step anyway, so it is rarely worth answering."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "BLANKED",
+     "why": "Collector Ouphe is a one-of in ten of ten boards and stops activated abilities of artifacts, which is the only way Explosives does anything. Not boarded here for that reason."
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "BLANKED",
+     "why": "same Collector Ouphe clause, and their graveyard use is thin anyway - Fiend Artisan's static count and Nature's Rhythm's harmonize. Not boarded here."
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "verdict": "BLANKED",
+     "why": "not by a card of theirs but by their mana. Basic Forests, Birds of Paradise and Devoted Druid are untouched, and Leyline of Abundance and Badgermole Cub turn a neutered Dryad Arbor or Delighted Halfling back into green. Not boarded here."
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "BLANKED",
+     "why": "zero blue cards appear in any of the ten lists, main or board, so it never gets its {2} discount and is a three-mana soft counter in a tempo deck. Not boarded here."
+    }
+   ],
+   "play": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Consign to Memory",
+     "1 Dress Down"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "2 Quantum Riddler",
+     "1 Sheoldred's Edict"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Consign to Memory",
+     "1 Dress Down"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "1 Quantum Riddler",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares"
+    ]
+   },
+   "play_plan": {
+    "keep": "Two lands and a one-mana answer; Fatal Push on the turn-two Devoted Druid.",
+    "goldfish_for": "Counterspell mana up on their Green Sun's Zenith turn.",
+    "watch_for": "A Delighted Halfling means the Tyvar cannot be countered.",
+    "posture": "disrupt_first",
+    "posture_why": "They kill from an empty board, so our clock is worth nothing until the mana engine is answered."
+   }
+  },
+  {
+   "name": "amulet titan",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Their mana is the deck: Simic Growth Chamber and Gruul Turf with Amulet of Vigor, Crumbling Vestige, and Urza's Saga. Harbinger of the Seas makes every one of those an Island with no bounce trigger and no colorless, which is a shutdown rather than a tax - and it does the same to us.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Trinisphere",
+     "count": 3,
+     "why": "three mana for every spell we cast, from a deck that can have six mana on turn two.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Dismember",
+     "count": 2,
+     "why": "{1}{B/P}{B/P}, payable entirely with life - it kills Harbinger of the Seas off Forests.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "free artifact and enchantment removal, which is what our Dress Down and Engineered Explosives are.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Keen-Eyed Curator",
+     "count": 2,
+     "why": "graveyard hate that also blanks Psychic Frog's flying ability.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two or turn-three Primeval Titan fetching two lands ends the game, and the deck plays almost no interaction, so it simply tries to be faster than whatever we are doing.",
+    "key_cards": [
+     {
+      "card": "Primeval Titan",
+      "why": "the fetch trigger is the win condition; the 6/6 body is incidental."
+     },
+     {
+      "card": "Trinisphere",
+      "why": "taxes every one-mana disruption spell we have to three against a deck making six mana on turn two.",
+      "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+     },
+     {
+      "card": "Force of Vigor",
+      "why": "free two-for-one on our Engineered Explosives, Nihil Spellbomb or a boarded artifact.",
+      "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+     },
+     {
+      "card": "Dismember",
+      "why": "one black mana and four life answers Harbinger of the Seas without needing their colors.",
+      "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Harbinger of the Seas",
+     "verdict": "SURVIVES",
+     "why": "Dismember from their board answers it, but by then the bounce lands have already spent turns as Islands, and they have to draw one of two copies."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "Primeval Titan's fetch trigger, Amulet of Vigor's untap trigger and Urza's Saga's chapters are all triggered abilities, so one mana answers the deck's engine."
+    },
+    {
+     "card": "Dress Down",
+     "verdict": "SURVIVES",
+     "why": "Force of Vigor can destroy it, but it is sacrificed at end of turn anyway, and a Primeval Titan with no abilities is a 6/6 that fetches nothing."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands with a blue source and either Harbinger of the Seas or two counters.",
+    "goldfish_for": "Harbinger of the Seas, or Consign to Memory held for the Titan trigger.",
+    "watch_for": "Amulet of Vigor on turn one means turn-two Primeval Titan, so counters go up immediately.",
+    "posture": "lock",
+    "posture_why": "Their mana is the deck, and turning it off beats racing a turn-two Titan."
+   },
+   "play": {
+    "in": [
+     "3 Harbinger of the Seas",
+     "2 Consign to Memory",
+     "1 Dress Down"
+    ],
+    "out": [
+     "4 Fatal Push",
+     "1 Sheoldred's Edict",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Harbinger of the Seas",
+     "2 Consign to Memory",
+     "1 Dress Down"
+    ],
+    "out": [
+     "4 Fatal Push",
+     "1 Sheoldred's Edict",
+     "1 Drown in the Loch"
+    ]
+   },
+   "self_cost": "Harbinger turns our own seventeen nonbasics into Islands, so the fetchlands stop fetching and every black card is castable only off the single Swamp. Dress Down also blanks our Psychic Frog and Quantum Riddler for the turn it is out."
+  },
+  {
+   "name": "hollow one",
+   "meta_share": 2.321347291761493,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Burning Inquiry and Faithless Looting fill a graveyard that Vengevine, Hollow One and Detective's Phoenix all return from, so the graveyard is the engine and the board is the clock. Nihil Spellbomb answers the first and Toxic Deluge the second, at the cost of our own creatures.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Leyline of the Void",
+     "count": 4,
+     "why": "turn-zero graveyard exile, which stops our own Psychic Frog gaining flying and turns Drown in the Loch off.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana for our Nihil Spellbomb sacrifice trigger or any colorless spell.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Thoughtseize",
+     "count": 4,
+     "why": "takes Toxic Deluge out of our hand on turn one, which is the only card that beats their board.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    },
+    {
+     "card": "Meltdown",
+     "count": 2,
+     "why": "sweeps our Engineered Explosives and Nihil Spellbomb for X equal to their mana value.",
+     "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-one Burning Inquiry can put a free Hollow One and two Vengevine into play, so the deck simply presents more power on turn two than any fair deck can answer.",
+    "key_cards": [
+     {
+      "card": "Hollow One",
+      "why": "costs zero after two discards, so a turn-one 4/4 is the normal draw rather than the lucky one."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "three copies at one mana, and every colorless artifact we board dies to it.",
+      "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+     },
+     {
+      "card": "Leyline of the Void",
+      "why": "four copies from turn zero, which blanks Psychic Frog's flying and Drown in the Loch entirely.",
+      "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+     },
+     {
+      "card": "Thoughtseize",
+      "why": "four copies from the board, taking the sweeper before we can cast it.",
+      "source_tournament_id": "6585b070-afa1-4e8b-b9b7-99f7d4fd7565"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "SURVIVES",
+     "why": "Meltdown answers it at X of one, but the Spellbomb is sacrificed at instant speed in response and the Vengevine plan goes with the graveyard."
+    },
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery with no target; their boarded Thoughtseize can take it from our hand, which is the only interaction in the deck that touches it at all."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and a cheap answer; Orcish Bowmasters in the opener is close to a free win.",
+    "goldfish_for": "Toxic Deluge for three, cast once Vengevine has already returned.",
+    "watch_for": "Burning Inquiry is a two-damage Orcish Bowmasters trigger, so hold it for their turn.",
+    "posture": "disrupt_first",
+    "posture_why": "They present lethal power on turn two, so nothing matters until the board is reset."
+   },
+   "play": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Toxic Deluge"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Drown in the Loch"
+    ]
+   },
+   "self_cost": "Toxic Deluge for three kills Vengevine (4/3) once it has returned, but a 4/4 Hollow One drops to a 1/1 and survives - killing it needs Deluge for four instead. Either number kills our own Psychic Frog (1/2), Orcish Bowmasters (1/1) and Tamiyo, Inquisitive Student (0/3) along with them. Quantum Riddler is untouched at either number: it is a 4/6 whether or not it was cast for its Warp cost, since Warp is only an alternative way to pay for the spell and does not change its power or toughness, so killing it needs Deluge for six - past what this matchup calls for."
+  },
+  {
+   "name": "boros energy",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Guide of Souls energy and Ocelot Pride tokens make a board that one-for-one removal cannot keep up with, so the answer is Toxic Deluge. It is symmetric: our Psychic Frog and Orcish Bowmasters die to it as readily as their Ocelot Pride does.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Obsidian Charmaw",
+     "count": 3,
+     "why": "{2}{R} 4/3 destroying a nonbasic land on entry, aimed at manabases exactly like ours.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "High Noon",
+     "count": 2,
+     "why": "caps us at one spell a turn, which turns a threat-plus-counter turn into a threat-only turn.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "their sweeper for our Frogs, brought in because our two-drops outclass their one-drops on rate.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "counters Force of Negation and evoked Subtlety, the free half of our interaction.",
+     "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Their curve tops out at three and Static Prison plus Goblin Bombardment converts any board into damage, so the game is over before a five-mana Quantum Riddler is castable.",
+    "key_cards": [
+     {
+      "card": "Guide of Souls",
+      "why": "each creature entering is a life and an energy, which outruns any life we spend on fetches and Thoughtseize."
+     },
+     {
+      "card": "Obsidian Charmaw",
+      "why": "destroys one of our seventeen nonbasic lands for two mana and leaves a 4/3 behind.",
+      "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+     },
+     {
+      "card": "High Noon",
+      "why": "one spell each turn is the tax a deck that holds up interaction cannot pay.",
+      "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "resets our board after we have committed, which is the only way they lose a long game.",
+      "source_tournament_id": "edd82326-69aa-4cbf-aefc-0a1a24930267"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery they can answer only with Orim's Chant on their own turn, and paying life for X is not something Guide of Souls can tax."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "SURVIVES",
+     "why": "Wear / Tear answers it, but at one counter it has already taken Ocelot Pride, Ragavan and Guide of Souls, which is more than the card they spend on it."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and two one-mana answers; a hand with no turn-one play is behind immediately.",
+    "goldfish_for": "Toxic Deluge for two, after Guide of Souls has been answered or has resolved twice.",
+    "watch_for": "Static Prison and Goblin Bombardment mean a stabilised board still loses to reach.",
+    "posture": "disrupt_first",
+    "posture_why": "They kill on turn four, so nothing we do matters until their curve is broken."
+   },
+   "play": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Drown in the Loch"
+    ]
+   },
+   "self_cost": "Toxic Deluge takes our own two-drops, and Engineered Explosives at one kills Tamiyo, Inquisitive Student. Cutting three Force of Negation for them also removes the only free interaction we have on their turn, which is the turn Voice of Victory would have stopped us anyway."
+  },
+  {
+   "name": "pinnacle affinity",
+   "meta_share": 2.6399635867091487,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Four Urza's Saga is a third of the mana and most of the threat density. Harbinger of the Seas makes every Saga an Island with no chapters, and Engineered Explosives at one sweeps Mox Opal, Welding Jar, Mishra's Bauble and Claws of Gix in a single card.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 3,
+     "why": "one mana against a colorless spell or a triggered ability, and our whole boarded plan here is artifacts.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Damping Sphere",
+     "count": 3,
+     "why": "taxes the second spell each turn, which is how we would answer a threat and hold up a counter.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Galvanic Blast",
+     "count": 3,
+     "why": "four damage for one mana with metalcraft, which kills every creature in our 60.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    },
+    {
+     "card": "Metallic Rebuke",
+     "count": 2,
+     "why": "a counterspell that costs one after improvise, so their threat resolves and ours does not.",
+     "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Mox Opal and Urza's Saga produce a threat and the mana for it on the same turn, so the deck deploys a ward creature by turn three and protects it with Welding Jar rather than interacting with us.",
+    "key_cards": [
+     {
+      "card": "Kappa Cannoneer",
+      "why": "a ward creature that grows and cannot be blocked profitably; targeted removal is not an answer to it."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "three copies at one mana, and it counters our colorless spells as well as Urza's Saga triggers on the stack.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     },
+     {
+      "card": "Damping Sphere",
+      "why": "if a land is tapped for two or more mana it makes {C}, and every spell after the first costs one more.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     },
+     {
+      "card": "Metallic Rebuke",
+      "why": "improvised down to one mana, it counters the answer we finally draw.",
+      "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Harbinger of the Seas",
+     "verdict": "SURVIVES",
+     "why": "Galvanic Blast kills it, but the four Urza's Saga have already stopped making Constructs, and they have to spend a removal spell on a card that is not blocking anything."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "SURVIVES",
+     "why": "Consign to Memory can counter it and Welding Jar can regenerate one target, but at one counter it is answering three or four permanents at once, which no single card of theirs matches."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "their own Consign to Memory is blue and cannot counter ours; Metallic Rebuke can, which is a two-card trade in our favour on a one-mana spell."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and either Engineered Explosives or Harbinger of the Seas; removal-only hands lose to Kappa Cannoneer.",
+    "goldfish_for": "Engineered Explosives at one, before their third land.",
+    "watch_for": "An untapped Welding Jar means Explosives will be regenerated, so wait a turn.",
+    "posture": "disrupt_first",
+    "posture_why": "Their threats outclass ours on rate, so the artifact base has to break first."
+   },
+   "play": {
+    "in": [
+     "3 Harbinger of the Seas",
+     "2 Engineered Explosives",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "1 Sheoldred's Edict",
+     "2 Thoughtseize",
+     "2 Sink into Stupor"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Harbinger of the Seas",
+     "2 Engineered Explosives",
+     "2 Consign to Memory"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "1 Sheoldred's Edict",
+     "2 Thoughtseize",
+     "2 Sink into Stupor"
+    ]
+   },
+   "self_cost": "Harbinger turns our own seventeen nonbasics into Islands, which caps our own Engineered Explosives sunburst at one counter - one is the number that matters here, but it means Explosives can never answer Kappa Cannoneer or Pinnacle Emissary once Harbinger has resolved."
+  },
+  {
+   "name": "devoted combo",
+   "meta_share": 4.8247610377787895,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Fatal Push and Spell Snare do the one-for-one work maindeck, but neither answers an engine already assembled, and the two cards in the box that do are both symmetric. Toxic Deluge for two kills Birds of Paradise, Delighted Halfling, Devoted Druid, Badgermole Cub, Vizier of Remedies, Duskwatch Recruiter, Collector Ouphe, Sylvan Safekeeper, an eighteen-copies-in-ten-lists Dryad Arbor and the 1/1 land Badgermole Cub earthbends - it is the only sweeper in the box that is also land destruction here - and it does it as a sorcery with no permanent for Boseiju, Force of Vigor, Abrupt Decay or Guerrilla Gorilla to destroy, and with no targeting for Crystal Barricade or Sylvan Safekeeper's shroud to dodge. Dress Down for two turns Devoted Druid back into a vanilla 0/2 at flash speed. Consign to Memory is the one-sided card in the plan and it only reaches the triggers, chiefly Craterhoof Behemoth's.",
+   "self_cost": "Toxic Deluge at two kills Psychic Frog and Orcish Bowmasters along with their board and costs two life, so it is cast from behind rather than on curve; Tamiyo, Inquisitive Student is a 0/3 and survives -2/-2 as a 0/1. Dress Down strips Psychic Frog's pump and its exile-three flying, Tamiyo's flying and Orcish Bowmasters' trigger for as long as it is out. Both are the price of answering a combo that never has to interact with our clock.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Collector Ouphe",
+     "count": 1,
+     "why": "nine of ten boards at one copy, absent only from the selesneal list. 'Activated abilities of artifacts can't be activated' turns off both Engineered Explosives and both Nihil Spellbomb, four of our fifteen board slots, and it is the single reason neither is boarded here.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Crystal Barricade",
+     "count": 2,
+     "why": "ten of ten boards at one or two copies, the most universal card in their fifteen. 'You have hexproof' blanks all four Thoughtseize and the prevention clause walls Orcish Bowmasters off their creatures. It is a {1}{W} 0/4 artifact creature, so Fatal Push kills it and Spell Snare counters it.",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    },
+    {
+     "card": "Abrupt Decay",
+     "count": 3,
+     "why": "eight of ten boards at two or three copies. 'This spell can't be countered. Destroy target nonland permanent with mana value 3 or less' takes a Dress Down at mana value 2 and an Engineered Explosives at mana value 0, and there is no fighting it on the stack. Toxic Deluge is the only card we board that it cannot answer.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Kraul Harpooner",
+     "count": 1,
+     "why": "nine of ten boards at one copy. Its enters trigger fights a creature we don't control WITH FLYING, which is an unconditional two-mana kill on Tamiyo, Inquisitive Student, a 0/3 with printed flying. It does not reach Psychic Frog: the Frog is a 1/2 with no printed flying and we decline to exile three cards on their turn, leaving the trigger no legal target.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Endurance",
+     "count": 2,
+     "why": "eight of ten boards at one or two copies, plus two lists that run it maindeck. A flash 3/4 reach blocker that survives Toxic Deluge for two and outclasses everything we have, and its enters trigger bottoms our graveyard, which shrinks Drown in the Loch and denies Psychic Frog the three cards it exiles for flying.",
+     "source_tournament_id": "a55b856d-2dd2-460e-a653-95689eb9b2ac"
+    },
+    {
+     "card": "Force of Vigor",
+     "count": 2,
+     "why": "seven of ten boards at one to three copies. Free off-turn destruction of two artifacts or enchantments, which is the answer to Dress Down that Collector Ouphe does not already cover and the reason the single Dress Down is the third line of defence here rather than the first.",
+     "source_tournament_id": "a6dd2380-6f45-4e60-ae6a-290ebc04f100"
+    },
+    {
+     "card": "Keen-Eyed Curator",
+     "count": 1,
+     "why": "eight of ten boards at one copy. '{1}: Exile target card from a graveyard' is an activated ability of a CREATURE, so their own Collector Ouphe does not turn it off; it grinds Psychic Frog's exile-three-for-flying fuel and Drown in the Loch's count one card at a time. A {G}{G} 3/3 that survives Toxic Deluge for two.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Grist, the Hunger Tide",
+     "count": 1,
+     "why": "eight of ten boards at one copy. '-2: You may sacrifice a creature. When you do, destroy target creature or planeswalker' grinds one-for-one through our board, and it is 'a 1/1 Insect creature in addition to its other types' everywhere but the battlefield, so it is a legal Subtlety target on the stack.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Guerrilla Gorilla",
+     "count": 1,
+     "why": "six of ten boards at one or two copies. 'Sacrifice this creature: Destroy target noncreature artifact or noncreature enchantment' reads like an answer to Dress Down and is not one: under Dress Down the Gorilla is a creature that has lost all abilities, including that one. Sorcery-speed only, so it also cannot be held up.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Vexing Bauble",
+     "count": 2,
+     "why": "five of ten boards at exactly two copies, down from eight of ten under the retired `creatures toolbox` label. 'Whenever a player casts a spell, if no mana was spent to cast it, counter that spell' taxes our three pitched Force of Negation and three evoked Subtlety - six of the sixty. Consign to Memory for {U} counters the Bauble trigger itself.",
+     "source_tournament_id": "6dfd0ff5-9fdb-47cc-a059-cdb62f5ecf8b"
+    },
+    {
+     "card": "Thoughtseize",
+     "count": 2,
+     "why": "three of ten boards at exactly two copies. They take the Toxic Deluge, which is the card the rest of their board cannot answer, and it is the reason Deluge is cast on the turn it is drawn rather than held for a second combo piece.",
+     "source_tournament_id": "2d5b078d-9a51-46ed-8ead-37b75bedf3c5"
+    },
+    {
+     "card": "Sylvan Safekeeper",
+     "count": 1,
+     "why": "two of ten boards at one copy, recorded for what it does rather than how common it is. 'Sacrifice a land: Target creature you control gains shroud until end of turn' blanks Fatal Push, Spell Snare on the stack aside, on the one dork that matters, for free and repeatedly. It does nothing against Toxic Deluge, which never targets, and it is a 1/1 that Deluge for two kills.",
+     "source_tournament_id": "45f908e0-304e-435a-9b1d-9169c08ce8d3"
+    },
+    {
+     "card": "Teferi, Time Raveler",
+     "count": 3,
+     "why": "one of ten boards, and the only blue card in the whole twenty-list sample - which is also why Mystical Dispute stays in the box. 'Each opponent can cast spells only any time they could cast a sorcery' turns off every counterspell in our seventy-five plus flashed Orcish Bowmasters, evoked Subtlety, Dress Down and Sink into Stupor at once. Rare, and the worst single card they can have.",
+     "source_tournament_id": "ff73d68a-de63-4c97-8ef8-283f647257cd"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Doubled dork mana kills through an empty board on turn three or four, faster than a Psychic Frog clock, so they never need to interact with us at all.",
+    "key_cards": [
+     {
+      "card": "Devoted Druid",
+      "why": "engine half one, four copies in ten of ten lists: a 0/2 that taps for green and untaps itself for a -1/-1 counter."
+     },
+     {
+      "card": "Leyline of Abundance",
+      "why": "the doubler as an enchantment, so it starts on the battlefield for free out of the opening hand and no removal in our sixty touches it."
+     },
+     {
+      "card": "Tyvar, Jubilant Brawler",
+      "why": "a loyalty-ability untap, uncounterable whenever Delighted Halfling's legendary-mana ability paid for it, and the static that lets a fresh dork tap on arrival."
+     },
+     {
+      "card": "Nature's Rhythm",
+      "why": "the only tutor that finds the white Vizier of Remedies, it puts the creature onto the battlefield uncast, and it harmonizes back from the graveyard."
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery, so there is no permanent for Boseiju, Who Endures, Force of Vigor, Abrupt Decay, Guerrilla Gorilla or Chomping Changeling to destroy, and Collector Ouphe does not reach it. It never targets, so Crystal Barricade's hexproof and Sylvan Safekeeper's shroud both miss it. Their only answer is the two Thoughtseize in three of ten boards."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "one mana at instant speed, and the only counter in their seventy-five is Vexing Bauble, which sees a spell only when no mana was spent on it. Teferi, Time Raveler would turn it off outright, and Teferi is in one of ten boards."
+    },
+    {
+     "card": "Dress Down",
+     "verdict": "SURVIVES",
+     "why": "flashed in, it draws a card and sacrifices itself at the end step, so a card spent answering it is usually wasted. Guerrilla Gorilla in six of ten boards specifically cannot answer it - under Dress Down the Gorilla has lost its own sacrifice ability. Force of Vigor, Abrupt Decay and a Boseiju channel do answer it, which is why one copy is the third line here and not the first."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "BLANKED",
+     "why": "Collector Ouphe is a one-of in nine of ten boards and 'activated abilities of artifacts can't be activated' is the only way Explosives does anything. Abrupt Decay also kills it at mana value 0. Not boarded here."
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "BLANKED",
+     "why": "the same Collector Ouphe clause, and Boseiju is maindeck in ten of ten. Their graveyard use is real - Nature's Rhythm harmonizes, Tyvar's -2 rebuys a mana-value-2 creature, Dewdrop Cure is in four of ten boards - but the card that answers it cannot be activated. Not boarded here."
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "verdict": "BLANKED",
+     "why": "not by a card of theirs but by their mana. Twenty-four basic Forest, twenty Birds of Paradise and forty Devoted Druid across the ten lists are untouched, Leyline of Abundance is an enchantment, and an Islanded Dryad Arbor is still a creature, so Leyline and Badgermole Cub launder its {U} back into {G}. Not boarded here."
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "BLANKED",
+     "why": "three Teferi, Time Raveler in one of ten boards is the only blue card in the sample, so Dispute never gets its {2} discount and is a three-mana 'pay {3}' tax against a deck making six green on turn three. Not boarded here."
+    }
+   ],
+   "play": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Consign to Memory",
+     "1 Dress Down"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "1 Quantum Riddler",
+     "1 Kaito, Bane of Nightmares",
+     "1 Sheoldred's Edict"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Consign to Memory",
+     "1 Dress Down"
+    ],
+    "out": [
+     "2 Drown in the Loch",
+     "2 Quantum Riddler",
+     "1 Kaito, Bane of Nightmares"
+    ]
+   },
+   "play_plan": {
+    "keep": "Two lands and a one-mana answer; Thoughtseize on turn one, Fatal Push or Spell Snare on their two-drop.",
+    "goldfish_for": "Toxic Deluge at two on the turn the second doubler lands.",
+    "watch_for": "An untapped Delighted Halfling: only a LEGENDARY spell it pays for is uncounterable, and Sink into Stupor still bounces it.",
+    "posture": "disrupt_first",
+    "posture_why": "They kill from an empty board on turn three or four, so our clock is worth nothing until the mana engine is answered."
+   }
+  },
+  {
+   "name": "esper control",
+   "meta_share": 2.3668639053254434,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "Their engine is triggered abilities plus a colorless artifact, which Consign to Memory answers at one mana, and their manabase is three colors over three basics, which Harbinger of the Seas attacks; the counter war over their blue half is won by Mystical Dispute at one mana.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "for two energy it sweeps Psychic Frog, Orcish Bowmasters and Tamiyo in one card, and every card it exiles from the battlefield feeds Ketramose.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "nearly every spell we cast is blue; one mana against our whole deck.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Fatal Push",
+     "count": 1,
+     "why": "an extra one-mana answer to Psychic Frog before it grows.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    },
+    {
+     "card": "Spell Snare",
+     "count": 1,
+     "why": "a second copy against our two-drop core: Psychic Frog, Orcish Bowmasters, Drown in the Loch.",
+     "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "grind",
+    "posture_why": "Every removal spell they cast draws them a card through Ketramose, so they win long games on attrition; their post-board Wrath of the Skies is aimed at sweeping the two-drop board we grind with.",
+    "key_cards": [
+     {
+      "card": "Ketramose, the New Dawn",
+      "why": "indestructible with menace and lifelink, and every card their removal exiles during their turn draws them one; the removal we kept in cannot answer it once resolved."
+     },
+     {
+      "card": "Relic of Progenitus",
+      "why": "four maindeck copies that feed Ketramose, blank Drown in the Loch and eat the graveyard Psychic Frog needs for flying."
+     },
+     {
+      "card": "Solitude",
+      "why": "free evoked exile removal on our Frog or Bowmasters, and Ephemerate rebuys it; the evoke exile is a trigger, which is exactly what Consign to Memory counters."
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "post-board energy sweeper: two energy paid clears our entire Frog, Bowmasters and Tamiyo board, and it is a white spell so Consign cannot touch it.",
+      "source_tournament_id": "7a2a310c-b38b-432e-8ffd-4d46b2c3dbd0"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "an instant in hand that nothing in their 75 touches, and Psychic Frog, Quantum Riddler, No More Lies and Teferi, Time Raveler are all blue targets it answers for one mana."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "an instant; their Mystical Dispute can tax it, but the Relic of Progenitus or exile trigger it answers has usually already cost them a card, and it dodges every piece of their removal."
+    },
+    {
+     "card": "Harbinger of the Seas",
+     "verdict": "SURVIVES",
+     "why": "it resolves through only two No More Lies and two Spell Snare, and while four Solitude, four Prismatic Ending and three Wrath of the Skies can kill it, every removal spell it eats is one not pointed at Psychic Frog, and each untapped turn strands a three-color manabase over three basics."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, a threat and a cheap counter; removal-heavy hands are dead weight against an indestructible threat.",
+    "goldfish_for": "Turn-two Psychic Frog with counter backup held for the Solitude evoke.",
+    "watch_for": "One open white source is a free Solitude; a lone Plains up is not mana screw.",
+    "posture": "grind",
+    "posture_why": "Every exile feeds Ketramose card advantage; resolve Frog first and counter the engine instead of trading removal into an indestructible god."
+   },
+   "play": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Consign to Memory",
+     "3 Harbinger of the Seas"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Drown in the Loch",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares",
+     "2 Fatal Push"
+    ]
+   },
+   "draw": {
+    "in": [
+     "3 Mystical Dispute",
+     "2 Consign to Memory",
+     "3 Harbinger of the Seas"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Drown in the Loch",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares",
+     "2 Fatal Push"
+    ]
+   }
+  },
+  {
+   "name": "esper goryo",
+   "meta_share": 2.093764223941739,
+   "winrate": null,
+   "stance": "counter",
+   "stance_rationale": "The deck's two axes share one bottleneck: Goryo's Vengeance needs a stocked graveyard and Atraxa needs her enters trigger, and the fair Psychic Frog / Quantum Riddler half is the same blue-black shell we run ourselves. Nihil Spellbomb cracked in response to the reanimation and Consign to Memory on the enters trigger answer the unfair half, and boarded Mystical Dispute fights the fair blue half at the same one-mana rate they board it against us.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Consign to Memory",
+     "count": 4,
+     "why": "ten of ten boards pulled (tournament 6155ae5b-73fd-41d5-a188-9e945f069765) run it, most at 3-4 copies. \"Counter target triggered ability or colorless spell\" answers Quantum Riddler's enters trigger and our Nihil Spellbomb sacrifice trigger alike.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Mystical Dispute",
+     "count": 3,
+     "why": "ten of ten boards, at two or three copies. \"This spell costs {2} less to cast if it targets a blue spell... Counter target spell unless its controller pays {3}\" - every counter and threat we hold except the black removal is blue.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 3,
+     "why": "ten of ten boards, at two or three copies. Our threats live on the battlefield and theirs live in the graveyard, so a board sweeper costs them nothing.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "count": 1,
+     "why": "nine of ten boards at one to two copies. Graveyard hate back at us: \"{T}, Sacrifice this artifact: Exile target player's graveyard\" starves Psychic Frog's exile-three flying and blanks Drown in the Loch's count.",
+     "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "A turn-two or turn-three Atraxa off Goryo's Vengeance ends the game on card advantage alone, and the fair Psychic Frog / Quantum Riddler half wins long games on cards, so the deck simply out-resources us on both clocks.",
+    "key_cards": [
+     {
+      "card": "Atraxa, Grand Unifier",
+      "why": "\"When Atraxa enters, reveal the top ten cards of your library. For each card type, you may put a card of that type from among the revealed cards into your hand.\" Reanimated on turn two or three, she draws four-plus cards and blocks everything."
+     },
+     {
+      "card": "Goryo's Vengeance",
+      "why": "\"Return target legendary creature card from your graveyard to the battlefield. That creature gains haste. Exile it at the beginning of the next end step.\" One mana at instant speed turns a discarded Atraxa or Griselbrand into the whole game."
+     },
+     {
+      "card": "Consign to Memory",
+      "why": "one mana answers the colorless half of our board and any trigger we build a turn around; four copies in most boards.",
+      "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+     },
+     {
+      "card": "Wrath of the Skies",
+      "why": "sweeps Psychic Frog, Orcish Bowmasters and Tamiyo at once while their own threat is safely in the graveyard.",
+      "source_tournament_id": "6155ae5b-73fd-41d5-a188-9e945f069765"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Nihil Spellbomb",
+     "verdict": "SURVIVES",
+     "why": "Wrath of the Skies and Prismatic Ending can remove it, but it is sacrificed at instant speed in response and the graveyard exile happens before either resolves."
+    },
+    {
+     "card": "Consign to Memory",
+     "verdict": "SURVIVES",
+     "why": "an instant their own Consign cannot touch (it counters triggered abilities or colorless spells, not blue instants); it answers the Atraxa enters trigger for one mana."
+    },
+    {
+     "card": "Mystical Dispute",
+     "verdict": "SURVIVES",
+     "why": "nothing in their seventy-five hard-counters an instant outright; it costs one against Atraxa, Psychic Frog, Faithful Mending and Ephemerate, though their own Mystical Dispute is the same trade at parity."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands, graveyard or stack interaction, and a turn-two play; a hand with no answer to a turn-three Goryo's is a mulligan.",
+    "goldfish_for": "Early Nihil Spellbomb, cracked in response to Goryo's Vengeance rather than on sight.",
+    "watch_for": "Faithful Mending with two mana open on their turn is the Goryo's turn; a bare Mending is the fair Frog game.",
+    "posture": "disrupt_first",
+    "posture_why": "The reanimation half outraces our clock; answer the graveyard and the Atraxa trigger first, then win the Frog mirror on tempo."
+   },
+   "play": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Fatal Push",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Nihil Spellbomb",
+     "2 Consign to Memory",
+     "3 Mystical Dispute"
+    ],
+    "out": [
+     "2 Sink into Stupor",
+     "2 Fatal Push",
+     "1 Sheoldred's Edict",
+     "1 Kaito, Bane of Nightmares",
+     "1 Drown in the Loch"
+    ]
+   }
+  },
+  {
+   "name": "45c aggro",
+   "meta_share": 2.002730996813837,
+   "winrate": null,
+   "stance": "symmetric_counter",
+   "stance_rationale": "Territorial Kavu and Scion of Draco are Domain payoffs that scale with basic land types, so their bodies arrive bigger than one-for-one removal can profitably answer once the manabase is online, and Stubborn Denial protects the rest for one mana. Toxic Deluge sweeps regardless of size and Engineered Explosives answers the cheap early half (Ragavan, a mana dork's worth of fixing); both cost us our own board.",
+   "self_cost": "Toxic Deluge at two takes Psychic Frog and Orcish Bowmasters along with Ragavan, Territorial Kavu and Phelia, Exuberant Shepherd; Tamiyo, Inquisitive Student is a 0/3 and survives -2/-2 as a 0/1. Engineered Explosives at one still kills our own Tamiyo, since it destroys by mana value rather than damage.",
+   "opposing_sideboard_in": [
+    {
+     "card": "Mystical Dispute",
+     "count": 2,
+     "why": "ten of ten boards pulled (tournament c170ed81-057a-45d0-967c-2c6869913def), at two or three copies. \"This spell costs {2} less to cast if it targets a blue spell\" - every counter and threat we hold except the black removal is blue.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Obsidian Charmaw",
+     "count": 2,
+     "why": "ten of ten boards, at two or three copies. A cheap body that also answers a resolved threat of ours.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Consign to Memory",
+     "count": 2,
+     "why": "ten of ten boards, at one to four copies. One mana against our colorless artifacts and any triggered ability.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    },
+    {
+     "card": "Wrath of the Skies",
+     "count": 2,
+     "why": "ten of ten boards, at two copies. Sweeps our whole two-drop board once they have already committed their own wide start.",
+     "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+    }
+   ],
+   "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Ragavan on turn one and a Domain-reduced Territorial Kavu or Scion of Draco on turn two, backed by Stubborn Denial protection, is a faster clock than our removal-and-counter shell can answer one-for-one.",
+    "key_cards": [
+     {
+      "card": "Ragavan, Nimble Pilferer",
+      "why": "\"Whenever Ragavan deals combat damage to a player, create a Treasure token and exile the top card of that player's library. Until end of turn, you may cast that card.\" A one-mana clock that snowballs into free spells if it connects even once."
+     },
+     {
+      "card": "Territorial Kavu",
+      "why": "\"Territorial Kavu's power and toughness are each equal to the number of basic land types among lands you control.\" On a five-color Leyline of the Guildpact manabase this is regularly a 4/4 or 5/5 for two."
+     },
+     {
+      "card": "Leyline Binding",
+      "why": "\"Flash... This spell costs {1} less to cast for each basic land type among lands you control... exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.\" A flash O-Ring that can hit our Psychic Frog for as little as one mana off a full domain board."
+     },
+     {
+      "card": "Obsidian Charmaw",
+      "why": "a boarded body that also answers a resolved threat of ours once it lands.",
+      "source_tournament_id": "c170ed81-057a-45d0-967c-2c6869913def"
+     }
+    ]
+   },
+   "survives_opposing_board": [
+    {
+     "card": "Toxic Deluge",
+     "verdict": "SURVIVES",
+     "why": "a sorcery with no target and no mana value cap; none of the ten pulled boards run graveyard, artifact, or protection-from-black answers that reach it."
+    },
+    {
+     "card": "Engineered Explosives",
+     "verdict": "SURVIVES",
+     "why": "none of the ten pulled boards run artifact or enchantment removal (no Force of Vigor, no Nature's Claim); it resolves and sweeps Ragavan and the one-mana half of their board unanswered."
+    }
+   ],
+   "play_plan": {
+    "keep": "Two lands and two pieces of cheap interaction; a hand with no turn-two answer is behind before Territorial Kavu resolves.",
+    "goldfish_for": "Toxic Deluge for two, cast once their Domain threats have already grown.",
+    "watch_for": "An open blue source is Stubborn Denial; sequence removal before counters where possible.",
+    "posture": "disrupt_first",
+    "posture_why": "Their curve is faster than ours, so surviving to a Toxic Deluge turn beats trading removal one for one."
+   },
+   "play": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Drown in the Loch"
+    ]
+   },
+   "draw": {
+    "in": [
+     "2 Toxic Deluge",
+     "2 Engineered Explosives"
+    ],
+    "out": [
+     "3 Force of Negation",
+     "1 Thoughtseize"
+    ]
+   }
+  }
+ ],
+ "sideboard_audit": [
+  {
+   "card": "Consign to Memory",
+   "copies": 2,
+   "matchups_served": [
+    "allosaurus combo",
+    "amulet titan",
+    "broodscale bloodchief",
+    "creatures toolbox",
+    "devoted combo",
+    "dimir control",
+    "eldrazi ramp",
+    "esper blink",
+    "esper control",
+    "esper goryo",
+    "instant reanimator",
+    "living end",
+    "pinnacle affinity",
+    "reanimator"
+   ],
+   "cumulative_meta_share": 45.7442,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "One mana for a triggered ability or a colorless spell, which is the widest answer in the box against this field: Atraxa and Archon of Cruelty enters triggers (instant reanimator, reanimator, esper goryo), the Living End cascade trigger, Primeval Titan's fetch, Urza's Saga chapters, Kozilek's Command, and the Craterhoof Behemoth enters trigger that is how devoted combo and creatures toolbox actually kill. Against allosaurus combo it reaches through Veil of Summer the same way, because a triggered ability is not a spell, but only for Atraxa's enters trigger if their Neoform or Eldritch Evolution line resolves into her - countering the Summoner's Pact upkeep trigger itself does not punish them. Per CR 701.6a a countered ability's effects, including its own 'if you don't pay, you lose the game' clause, do not occur, so that specific target must never be taken. Two copies here rather than four because two are already maindeck."
+  },
+  {
+   "card": "Dress Down",
+   "copies": 1,
+   "matchups_served": [
+    "amulet titan",
+    "broodscale bloodchief",
+    "creatures toolbox",
+    "devoted combo"
+   ],
+   "cumulative_meta_share": 14.1102,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Flash, draws a card, and every creature loses all abilities while it is out. It is the answer to the three ability-based engines in the field that removal does not reach: Basking Broodscale with Blade of the Bloodchief stops being a combo, Primeval Titan stops fetching, and a Devoted Druid becomes a vanilla 0/2 in both halves of the split devoted combo / creatures toolbox archetype. One copy, because each of those matchups also has counterspell, sweeper or Harbinger of the Seas answers in this board, so Dress Down is the third line of defence rather than the first."
+  },
+  {
+   "card": "Engineered Explosives",
+   "copies": 2,
+   "matchups_served": [
+    "45c aggro",
+    "boros aggro",
+    "boros energy",
+    "broodscale bloodchief",
+    "pinnacle affinity"
+   ],
+   "cumulative_meta_share": 14.6108,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "The only sweeper in the box that scales to a mana value rather than to toughness, which is what the cheap-permanent decks in this field need. At one it takes Ocelot Pride, Ragavan, Mox Opal, Welding Jar and Blade of the Bloodchief; at two it takes Ruby Medallion, Artist's Talent and the whole two-drop half of a fair board. Our two colors cap sunburst at two, which is why it is not boarded against anything that needs three."
+  },
+  {
+   "card": "Harbinger of the Seas",
+   "copies": 3,
+   "matchups_served": [
+    "amulet titan",
+    "eldrazi ramp",
+    "esper control",
+    "pinnacle affinity"
+   ],
+   "cumulative_meta_share": 12.0619,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Nonbasic lands are Islands. Against eldrazi ramp, amulet titan and pinnacle affinity that is not a tax but a shutdown - Eldrazi Temple, Simic Growth Chamber and Urza's Saga all stop being what they are. Three copies because it has to arrive by turn three to matter and because Dismember and Galvanic Discharge answer the first one. It is the most symmetric card in the box: it turns our own seventeen nonbasics into Islands, which is why every row that boards it also boards out the black removal."
+  },
+  {
+   "card": "Mystical Dispute",
+   "copies": 3,
+   "matchups_served": [
+    "dimir control",
+    "esper blink",
+    "esper control",
+    "esper goryo",
+    "instant reanimator",
+    "living end",
+    "ur cutter prowess"
+   ],
+   "cumulative_meta_share": 22.2121,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "One mana against a blue spell, three against anything else. The blue-heavy half of this field is over 20pp and the mirror is decided by which side's counter costs less, which is exactly the question this card answers - including the esper goryo shell, whose fair half is the same Psychic Frog / Quantum Riddler package we run. Three copies because in the mirror and against instant reanimator it is the best card in the box, not a role-player."
+  },
+  {
+   "card": "Nihil Spellbomb",
+   "copies": 2,
+   "matchups_served": [
+    "esper goryo",
+    "hollow one",
+    "instant reanimator",
+    "living end",
+    "reanimator"
+   ],
+   "cumulative_meta_share": 13.9281,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Instant-speed exile of a whole graveyard for one mana up front and zero to use, which is what the graveyard decks in this field need: it is held for the Goryo's Vengeance, the Persist, the cascade trigger or the Past in Flames, not cracked on sight. Two copies rather than three because Consign to Memory and Mystical Dispute overlap on the same matchups and a third Spellbomb is the worst of the three cards in the games where they do not draw the engine."
+  },
+  {
+   "card": "Toxic Deluge",
+   "copies": 2,
+   "matchups_served": [
+    "45c aggro",
+    "boros aggro",
+    "boros energy",
+    "broodscale bloodchief",
+    "creatures toolbox",
+    "devoted combo",
+    "hollow one",
+    "reanimator",
+    "ur cutter prowess"
+   ],
+   "cumulative_meta_share": 26.3086,
+   "role": "versatile",
+   "verdict": "EARNS_SLOT",
+   "why": "Pay X life, all creatures get -X/-X: no targeting, no damage, and no mana value cap, so it answers the go-wide boards and the oversized ones alike, including 45c aggro's Domain-scaled Territorial Kavu and Scion of Draco. It is the only card in the box that beats a Leyline of the Guildpact board, a resolved Archon of Cruelty and a Vengevine loop with the same card, and against both halves of the devoted combo / creatures toolbox split it is also land destruction, because Dryad Arbor and a Badgermole-earthbent land are creatures. Two copies, and it is symmetric every time - the rows that board it record what it costs us."
+  }
+ ],
+ "deck_tech": [
+  {
+   "kind": "loop",
+   "name": "Psychic Frog into Quantum Riddler",
+   "cards": [
+    "Psychic Frog",
+    "Quantum Riddler"
+   ],
+   "quirk": "Emptying our own hand is the Frog's cost and the switch that turns Quantum Riddler on.",
+   "loop": [
+    "discard to Psychic Frog until one or fewer cards are left in hand",
+    "Quantum Riddler's replacement now adds one to every draw we make",
+    "the Frog connects and its trigger draws two instead of one",
+    "discard the surplus back to the Frog for another counter",
+    "the hand is empty again before the next attack"
+   ],
+   "lines": [
+    {
+     "mode": "run it",
+     "matchups": [
+      "dimir control",
+      "esper blink"
+     ],
+     "why": "Two cards a hit beats a deck that answers one threat a turn. Exiling three from the yard for flying comes before the counters do: an unblocked Frog is the whole engine."
+    },
+    {
+     "mode": "keep the hand",
+     "matchups": [
+      "boros aggro",
+      "boros energy",
+      "ur cutter prowess"
+     ],
+     "why": "Every card discarded here was a removal spell we needed. Against a turn-four clock the Frog is a blocker and the counters are a luxury."
+    }
+   ]
+  },
+  {
+   "kind": "card",
+   "name": "Which counter answers what",
+   "cards": [
+    "Consign to Memory",
+    "Spell Snare",
+    "Force of Negation",
+    "Counterspell"
+   ],
+   "quirk": "Three of the four are conditional, and the wrong one in hand against the wrong deck is a blank card.",
+   "lines": [
+    {
+     "mode": "Consign to Memory, for the trigger",
+     "matchups": [
+      "living end",
+      "amulet titan",
+      "eldrazi ramp"
+     ],
+     "why": "It counters a triggered ability or a colourless spell. Hold it for the cascade trigger, the Primeval Titan trigger or an Eldrazi cast trigger, never for the spell that made it."
+    },
+    {
+     "mode": "Spell Snare, at mana value two exactly",
+     "matchups": [
+      "dimir control",
+      "instant reanimator",
+      "hollow one"
+     ],
+     "why": "Two and only two. Goryo's Vengeance is two and so is their own Psychic Frog; a one-mana cantrip and a three-mana threat are both out of range."
+    },
+    {
+     "mode": "Force of Negation, free on their turn",
+     "matchups": [
+      "allosaurus combo",
+      "living end"
+     ],
+     "why": "The free mode is noncreature only and only on their turn, so it answers the combo turn and nothing on ours. A blue card from hand is the cost."
+    },
+    {
+     "mode": "Counterspell",
+     "matchups": [
+      "any"
+     ],
+     "why": "The only one with no condition attached, so it is what answers the threat the other three cannot. Spend the narrow counters first, while their targets are still on the table."
+    }
+   ]
+  },
+  {
+   "kind": "path",
+   "name": "The Frog clock, or the Harbinger lock",
+   "cards": [
+    "Psychic Frog",
+    "Tamiyo, Inquisitive Student",
+    "Harbinger of the Seas"
+   ],
+   "quirk": "Which half of the deck this hand is: a two-mana threat that draws cards, or land denial that ends the game on its own.",
+   "lines": [
+    {
+     "mode": "the Harbinger lock",
+     "matchups": [
+      "eldrazi ramp",
+      "amulet titan"
+     ],
+     "why": "Nonbasic lands are Islands, which turns off Tron, Eldrazi Temple and every bounce land at once. It is the plan against a deck whose mana is its deck."
+    },
+    {
+     "mode": "the Frog clock",
+     "matchups": [
+      "dimir control",
+      "esper blink",
+      "instant reanimator"
+     ],
+     "why": "A turn-two threat that replaces itself beats a deck holding one answer a turn. Tamiyo is the second one-drop and flips once the Frog starts drawing."
+    }
+   ]
+  }
+ ],
+ "meta_calls": [
+  {
+   "kind": "field",
+   "call": "combo-heavy",
+   "trigger": {
+    "matchups": [
+     "instant reanimator",
+     "broodscale bloodchief",
+     "allosaurus combo",
+     "reanimator"
+    ],
+    "share_pp": 13.7915,
+    "over_pp": 29.0
+   },
+   "main": {
+    "in": [
+     "1 Force of Negation",
+     "1 Spell Snare"
+    ],
+    "out": [
+     "2 Fatal Push"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "Removal is dead against a deck whose only creature is the payoff. The free counter and Spell Snare answer Goryo's Vengeance, Neoform and Basking Broodscale at two mana.",
+   "cost": "Ragavan and Guide of Souls both resolve, and every fair matchup gets worse on the draw. Devoted combo is deliberately out of the cluster: its engine is all mana value 2 creatures, so cutting Fatal Push is wrong there."
+  },
+  {
+   "kind": "archetype",
+   "call": "living end",
+   "trigger": {
+    "matchups": [
+     "living end"
+    ],
+    "share_pp": 2.9131,
+    "over_pp": 6.0
+   },
+   "main": {
+    "in": [],
+    "out": []
+   },
+   "board": {
+    "in": [
+     "1 Nihil Spellbomb"
+    ],
+    "out": [
+     "1 Dress Down"
+    ]
+   },
+   "why": "A third Spellbomb is the answer that can be cracked in response to the cascade trigger, before the Living End returns anything, and it costs one colourless to deploy.",
+   "cost": "Dress Down was the one clean answer to Basking Broodscale and to Devoted Druid."
+  },
+  {
+   "kind": "card",
+   "call": "Harbinger of the Seas",
+   "trigger": {
+    "matchups": [
+     "dimir control",
+     "reanimator"
+    ],
+    "share_pp": 4.6882,
+    "over_pp": 12.0
+   },
+   "main": {
+    "in": [
+     "1 Swamp",
+     "1 Island"
+    ],
+    "out": [
+     "1 Gloomlake Verge",
+     "1 Undercity Sewers"
+    ]
+   },
+   "board": {
+    "in": [],
+    "out": []
+   },
+   "why": "Their Harbinger turns every dual into an Island and the black half of the sixty stops casting. Basics are the only lands it does not touch.",
+   "cost": "One fewer untapped black source on turn one and one fewer surveil land, which is the mana this deck's fetch counts were built around."
+  }
+ ],
+ "gaps": [
+  {
+   "matchup": "allosaurus combo",
+   "why": "Veil of Summer is four cards across their maindeck and board (two and two in the BesmirchTheKing 75, tournament 6a17baa7-6295-4907-b49e-83323a23d046) and it blanks three Counterspell, two Spell Snare, three Force of Negation and two Drown in the Loch for the turn they combo, on top of three Pact of Negation. That is ten of our counterspell-and-removal answers turned off by one one-mana card. This gap is worse than an earlier pass of this plan claimed: countering the Summoner's Pact upkeep trigger with Consign to Memory does not punish them. Summoner's Pact's oracle text is a single triggered ability ('At the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.'), and per CR 701.6a a countered ability's effects do not occur at all, so countering it cancels the payment demand and the loss together - it is a line that helps the Pact controller, not one that kills them, and it must not be played. The one real line through Veil is Subtlety on whichever creature spell it evokes into. Consign to Memory's only genuine use here is countering Atraxa, Grand Unifier's enters trigger if the Neoform or Eldritch Evolution line resolves into her, which denies the card-advantage payoff but does not stop the body from resolving. Neither is a card we can count on drawing by turn two, so pre-emptive Thoughtseize on the Pact or the Neoform before it is cast remains the more reliable answer, and this matchup has no reliable way to punish a resolved combo turn once Veil is up."
+  }
+ ]
+}

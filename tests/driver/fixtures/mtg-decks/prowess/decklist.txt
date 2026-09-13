@@ -1,0 +1,27 @@
+2 Arid Mesa
+3 Bloodstained Mire
+4 Cori-Steel Cutter
+4 Dragon's Rage Channeler
+4 Expressive Iteration
+2 Fiery Islet
+4 Lava Dart
+4 Lightning Bolt
+4 Mishra's Bauble
+4 Monastery Swiftspear
+3 Mountain
+4 Mutagenic Growth
+4 Preordain
+2 Scalding Tarn
+4 Slickshot Show-Off
+3 Steam Vents
+1 Thundering Falls
+2 Violent Urge
+2 Wooded Foothills
+
+Sideboard
+3 Consign to Memory
+2 Meltdown
+2 Spell Pierce
+2 Spell Snare
+2 Surgical Extraction
+4 Unholy Heat

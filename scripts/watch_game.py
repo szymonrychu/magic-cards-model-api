@@ -8,6 +8,8 @@ blocks until exactly one of those edges fires and prints it as JSON:
     {"edge": "game_over", "winner": ...}   the game ended
     {"edge": "stalled", ...}               no log entry for --stall-seconds
     {"edge": "timeout"}                    --max-seconds elapsed, game still live
+    {"edge": "game_gone", "status": ..., "body": ...}     the game 404s mid-watch
+    {"edge": "watcher_error", "status": ..., "body": ...} any other surprise
 
 Usage:
 
@@ -25,27 +27,138 @@ from typing import Any
 import httpx
 
 
+class WatchFailure(Exception):
+    """A response `watch` did not get to interpret as game state.
+
+    Carries the real HTTP status and body rather than letting the caller
+    index into whatever came back: that indexing is exactly what used to
+    raise a bare `KeyError: 'log'` the one time a watched game's row
+    disappeared from postgres mid-run (a sibling test run truncated the
+    shared `games` table) and every 404 that followed turned into an
+    unreadable `watcher_failed {"error": "'log'"}` instead of "the game is
+    gone".
+
+    Two edges come out of this, not one, because they mean different
+    things to an operator: `game_gone` (a 404) is a specific, well
+    understood cause - the game itself no longer exists on the server, so
+    there is nothing left to poll and no point retrying. `watcher_error` is
+    everything else this watcher did not plan for - a non-2xx that is not a
+    404, or a 2xx body missing the key it was fetched for - and it is the
+    general safety net: whatever new way a server response can surprise this
+    loop, it becomes a named, JSON-serialisable outcome, never a second
+    flavour of unhandled exception.
+
+    `game_gone` is deliberately its own edge and not folded into `stalled`
+    or `timeout`: both of those mean the game is still there and merely
+    quiet or has run long - each keeps `seq`, and a caller may reasonably
+    resume watching from where it left off. A vanished game cannot be
+    resumed at all, which is a different fact worth a different name.
+    """
+
+    def __init__(self, edge: str, status: int, body: Any) -> None:
+        super().__init__(f"{edge}: HTTP {status}")
+        self.edge = edge
+        self.status = status
+        self.body = body
+
+
+def _get_json(
+    client: httpx.Client,
+    url: str,
+    *,
+    key: str | None = None,
+    expect: type | tuple[type, ...] | None = None,
+) -> Any:
+    """GET `url` and return its body (or `body[key]` when `key` is given),
+    or raise `WatchFailure` naming exactly what was wrong - never a bare
+    `KeyError`/`TypeError` from indexing an unexpected shape.
+
+    `expect` is the type the extracted value has to be, and it is the other
+    half of that promise: validating only that the key is PRESENT left
+    `entries[since:]` to raise the `TypeError` this docstring says cannot
+    happen. Pass it wherever the caller is about to index or iterate what
+    comes back.
+    """
+    response = client.get(url)
+    try:
+        body: Any = response.json()
+    except ValueError:
+        body = response.text
+    if response.status_code == 404:
+        raise WatchFailure("game_gone", response.status_code, body)
+    if (
+        response.status_code != 200
+        or not isinstance(body, dict)
+        or (key is not None and key not in body)
+    ):
+        raise WatchFailure("watcher_error", response.status_code, body)
+    value = body[key] if key is not None else body
+    if expect is not None and not isinstance(value, expect):
+        raise WatchFailure("watcher_error", response.status_code, body)
+    return value
+
+
 def latest_game(client: httpx.Client) -> str:
-    games = client.get("/api/games").json()["games"]
+    """The newest game on the server - the `--game` unset default the module
+    docstring's own usage line shows.
+
+    Through `_get_json` like every other fetch, and called inside the
+    caller's `try`: this used to index `.json()["games"]` directly, from
+    outside it, so the default CLI path answered a vanished game with
+    `KeyError: 'games'` - the bare indexing `WatchFailure` exists to prevent,
+    on the very case `game_gone` was added for.
+    """
+    games = _get_json(client, "/api/games", key="games", expect=list)
     if not games:
         raise SystemExit("watch_game: no game on the server")
-    return str(games[-1]["game_id"])
+    newest = games[-1]
+    if not isinstance(newest, dict) or "game_id" not in newest:
+        raise WatchFailure("watcher_error", 200, {"games": games})
+    return str(newest["game_id"])
+
+
+def _log_entries(client: httpx.Client, game_id: str) -> list[dict[str, Any]]:
+    """This game's ledger, validated far enough that reading `action` off a
+    row cannot raise. A row that is not a dict at all is a shape this watcher
+    cannot interpret, so it becomes `watcher_error` carrying the real body
+    rather than a `KeyError` the gauntlet's blanket except would report as
+    `watcher_failed {"error": "'action'"}`. A dict row with no `action` is
+    NOT an error: it is simply not a problem report, and has no verb to show
+    in a `stalled` tail."""
+    entries = _get_json(client, f"/api/games/{game_id}/log", key="log", expect=list)
+    if not all(isinstance(entry, dict) for entry in entries):
+        raise WatchFailure("watcher_error", 200, {"log": entries})
+    return entries
 
 
 def watch(
-    api: str, game: str | None, since: int, max_seconds: float, stall_seconds: float, poll: float
+    api: str,
+    game: str | None,
+    since: int,
+    max_seconds: float,
+    stall_seconds: float,
+    poll: float,
+    transport: httpx.BaseTransport | None = None,
 ) -> dict[str, Any]:
-    with httpx.Client(base_url=api, timeout=30.0) as client:
-        gid = game or latest_game(client)
+    with httpx.Client(base_url=api, timeout=30.0, transport=transport) as client:
+        try:
+            gid = game or latest_game(client)
+        except WatchFailure as exc:
+            # `game` rather than `gid`: nothing was resolved, so there is no
+            # game id to name, and `None` says exactly that.
+            return {"edge": exc.edge, "game": game, "status": exc.status, "body": exc.body}
         deadline = time.monotonic() + max_seconds
         last_len, last_change = since, time.monotonic()
         while True:
-            entries = client.get(f"/api/games/{gid}/log").json()["log"]
-            fresh = entries[since:]
-            reports = [e for e in fresh if e["action"] == "report_problem"]
-            if reports:
-                return {"edge": "report", "game": gid, "seq": len(entries), "reports": reports}
-            state = client.get(f"/api/games/{gid}").json()
+            try:
+                entries = _log_entries(client, gid)
+                fresh = entries[since:]
+                reports = [e for e in fresh if e.get("action") == "report_problem"]
+                if reports:
+                    return {"edge": "report", "game": gid, "seq": len(entries), "reports": reports}
+                state = _get_json(client, f"/api/games/{gid}")
+            except WatchFailure as exc:
+                return {"edge": exc.edge, "game": gid, "status": exc.status, "body": exc.body}
             if state.get("winner") or state.get("drawn"):
                 return {
                     "edge": "game_over",
@@ -64,7 +177,7 @@ def watch(
                     "game": gid,
                     "seq": len(entries),
                     "quiet_seconds": round(now - last_change),
-                    "tail": [e["action"] for e in entries[-5:]],
+                    "tail": [e.get("action") for e in entries[-5:]],
                     "turn": state.get("turn"),
                     "step": state.get("step"),
                     "priority_holder": state.get("priority_holder"),

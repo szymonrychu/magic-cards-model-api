@@ -1,0 +1,110 @@
+{
+ "name": "pinnacle affinity",
+ "meta_share": 2.6582278481012658,
+ "meta_basis": {
+  "kind": "current"
+ },
+ "winrate": null,
+ "winrate_basis": {
+  "kind": "absent",
+  "why": "no head-to-head winrate exists for Modern in any source this repo can reach: statistics_matchups returns zero rows for the format, statistics_archetypes carries no winrate field, and this run's own fingerprint records winrate_vs_field as all-zero. Recording a number here would be inventing one."
+ },
+ "opponent_gameplan": "Urza's Saga making Constructs alongside Kappa Cannoneer and Pinnacle Emissary off Mox Opal and Mishra's Bauble, with Weapons Manufacturing making a Munitions token whenever a nontoken artifact they control enters, each of which deals 2 damage to any target when it leaves the battlefield rather than when it arrives, and three or four maindeck Tormod's Crypt aimed at the graveyard; the board is lethal by turn three. Metallic Rebuke is in all ten recorded lists - maindeck in seven of them - so the deck is not the permanents alone.",
+ "opponent_plan": {
+  "posture": "race",
+  "posture_why": "Kappa Cannoneer is unblockable on any turn an artifact enters and Weapons Manufacturing converts the rest of the board into direct damage, so neither blocking nor a sweeper buys the turns we need.",
+  "key_cards": [
+   {
+    "card": "Urza's Saga",
+    "why": "a land that makes a scaling Construct on chapter II and tutors an artifact of mana cost {0} or {1} on chapter III, then sacrifices itself. It is an Enchantment Land with no mana cost, so it is mana value 0 and our own Wrath of the Skies destroys it at any X - what it has already tutored is what survives the sweeper, not the Saga."
+   },
+   {
+    "card": "Metallic Rebuke",
+    "why": "{2}{U} with improvise, so on a board of four Mox Opal and four Mishra's Bauble it is close to free. It is a tax and not a hard counter - 'counter target spell unless its controller pays {3}' - so what it changes is the turn we sweep rather than whether we can: X=2 is four mana and paying through the Rebuke is seven. It is in all ten recorded lists, maindeck in seven of them."
+   },
+   {
+    "card": "Kappa Cannoneer",
+    "why": "mana value 6 with ward {4}, and it grows and becomes unblockable on every artifact that enters - out of Skyclave Apparition's range and out of Wrath of the Skies at any X worth paying."
+   },
+   {
+    "card": "Weapons Manufacturing",
+    "why": "every nontoken artifact makes a Munitions token that deals 2 when it leaves, and three Claws of Gix sacrifice them at will, so their reach does not need an attack step."
+   }
+  ]
+ },
+ "primary_gameplan": "White Orchid Phantom on Urza's Saga before the second chapter, then Wrath of the Skies at X=2 for the mana rocks, the tokens and Weapons Manufacturing. Skyclave Apparition answers Pinnacle Emissary at mana value 3. Kappa Cannoneer is the hard one - mana value 6 with ward {4}, and every artifact that enters puts a +1/+1 counter on it and makes it unblockable for that turn, so it grows every time and is unblockable on any turn they deploy one. The practical answer is an evoked Solitude plus four mana for the ward. The other is the sweeper already in the plan: Wrath of the Skies destroys rather than targets, so the ward never triggers - but reaching mana value 6 costs {6}{W}{W}, which is a different game from the X=2 above. Martyr of Sands buys turns and does not win on its own.",
+ "pitfalls": [
+  "Whipflare deals two to each nonartifact creature, so their artifact board lives and every creature in ours dies except Overlord of the Balemurk and a Serra Ascendant past 30 life.",
+  "Urza's Saga does not rebuild after the sweeper - Wrath of the Skies destroys it at mana value 0 like everything else. What the sweeper cannot take back is chapter III: the Saga tutors a {0} or {1} artifact and sacrifices itself two turns after it lands - chapter I as it enters, II after the next draw step, III after the one after that - so a turn-one Saga has found its card and gone by turn three, a turn before we can cast the sweeper. The Phantom answers the chapter, not the rebuild, and only if it lands before III resolves. Expect them to search a basic Island for it; one to three are maindeck in ten of ten lists.",
+  "Three or four maindeck Tormod's Crypt in ten of ten lists turn off Abiding Grace and Emeria in game one, before any graveyard hate is boarded - the loop is not the plan here, combat is.",
+  "Consign to Memory in eight of ten recorded boards counters the Skyclave Apparition, Flickerwisp and White Orchid Phantom triggers, which is where all of our interaction lives; the bodies resolve and do nothing."
+ ],
+ "stance": "symmetric_counter",
+ "stance_rationale": "Their board goes both wide and tall on turn three, so an X sweeper is the only card that answers it. White Orchid Phantom is not there to stop the Saga rebuilding after the sweeper - the sweeper destroys the Saga too - it is there because Wrath is a four-mana sorcery and the Saga has tutored and sacrificed itself by turn three, which is one turn earlier than we can sweep.",
+ "opposing_sideboard_in": [
+  {
+   "card": "Consign to Memory",
+   "count": 3,
+   "why": "three or four copies in eight of ten recorded boards: one mana counters the White Orchid Phantom land destruction and the Skyclave Apparition exile, both of which are enters triggers. Wrath of the Skies is a white spell, so the Consign does not stop the sweeper - Metallic Rebuke taxes it by {3} instead, and it is in all ten lists, so the sweeper resolves on the turn we can pay seven mana or on the turn they cannot hold the improvise mana up.",
+   "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+  },
+  {
+   "card": "Galvanic Blast",
+   "count": 3,
+   "why": "four damage with metalcraft, which is always on here: it kills every creature in our mainboard except Overlord of the Balemurk and a Serra Ascendant past 30 life, both 5/5 or larger. Sanctifier en-Vec's protection from red would blank it, and it is not boarded in this matchup. Ten of ten boards.",
+   "source_tournament_id": "3a843720-3302-42da-9714-bc4927870bcf"
+  },
+  {
+   "card": "Whipflare",
+   "count": 2,
+   "why": "two damage to each nonartifact creature is one-sided in a matchup where their board is artifacts and ours is not. Seven of ten boards.",
+   "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+  },
+  {
+   "card": "Blood Moon",
+   "count": 1,
+   "why": "thirteen of our twenty-two lands become Mountains, which is every white source but the nine Plains and stops the fetchlands fetching. Six of ten boards.",
+   "source_tournament_id": "0f9a2b49-95b9-409d-bfe7-d330656b12d2"
+  },
+  {
+   "card": "Vexing Bauble",
+   "count": 1,
+   "why": "counters a spell cast for no mana. Post-board that is the evoked Solitude and nothing else - this row boards all three Ephemerate out, so the rebound copy is not exposed here. It is symmetric and it is not free for them: four Mox Opal and four Mishra's Bauble in ten of ten maindecks and one to four Welding Jar in ten of ten all cost {0}, as does the Memnite in the one list that plays it, so their own Bauble counters every one of them. That is a reason to let it resolve rather than a reason to fear it. Nine of ten boards, one copy each, and it replaces itself.",
+   "source_tournament_id": "9518c175-dc15-4b8f-b81d-d9d6b14227fd"
+  }
+ ],
+ "sideboard_plans": [
+  {
+   "mode": "play",
+   "in_cards": [
+    "3 Wrath of the Skies",
+    "3 White Orchid Phantom"
+   ],
+   "out_cards": [
+    "3 Ephemerate",
+    "2 Overlord of the Balemurk",
+    "1 Kami of False Hope"
+   ]
+  },
+  {
+   "mode": "draw",
+   "in_cards": [
+    "3 Wrath of the Skies",
+    "3 White Orchid Phantom"
+   ],
+   "out_cards": [
+    "3 Ephemerate",
+    "2 Overlord of the Balemurk",
+    "1 Kami of False Hope"
+   ]
+  }
+ ],
+ "play_plan": {
+  "keep": "Two lands and Wrath of the Skies, or two lands and White Orchid Phantom.",
+  "goldfish_for": "Phantom on Urza's Saga turn two, Wrath of the Skies at X=2 on turn four; {2}{W}{W} is four mana.",
+  "watch_for": "Whipflare is one-sided against us - do not hold a fifth creature back for value.",
+  "posture": "disrupt_first",
+  "posture_why": "their turn-three board is lethal and rebuilds itself."
+ },
+ "self_cost": "Wrath of the Skies at X=2 takes every Construct, Drone and Munitions token, Mox Opal, Mishra's Bauble, Welding Jar, Claws of Gix, Pithing Needle, Tormod's Crypt, Weapons Manufacturing - and Urza's Saga, which is an Enchantment Land with no mana cost and so mana value 0. The Munitions tokens are the half of this exchange that bites back. Weapons Manufacturing is three or four copies in nine of the ten maindecks and makes one token per nontoken artifact that enters, and each token reads 'when this token leaves the battlefield, it deals 2 damage to any target'. They are mana value 0, so our own sweeper destroys all of them at any X and every one of them then points 2 at us: three or four tokens on a normal turn-three board is six to eight damage handed over on the turn we reset, which in a race is the whole question. The sweeper is the answer to the Saga; the Phantom is only the earlier one. One Welding Jar sacrificed in response regenerates a single artifact through it, and cannot save the Saga, which is a land and not an artifact. It takes sixteen of our own permanents with them: four Serra Ascendant, four Martyr of Sands, four Phelia, the Thraben Inspector and - the trap in this row - all three White Orchid Phantom, which are {W}{W} and therefore mana value 2. A Thraben Inspector Clue is a mana-value-0 artifact and dies too. Not Kami of False Hope, which this row boards out. Losing the Phantoms is acceptable only because their work is already done when they enter: the land is destroyed on the enters trigger and the 2/2 body is collateral, so cast the Phantom first and sweep afterwards, never the other way round. It leaves Kappa Cannoneer at mana value 6 and Pinnacle Emissary at 3, and Skyclave Apparition at mana value 3 survives on our side. The recursion does not pay for this exchange and must not be counted on to: three or four maindeck Tormod's Crypt in ten of ten lists turn Abiding Grace and Emeria off in game one, so what we are actually trading is a board that does not come back for one they rebuild out of hand off four Mox Opal and whatever the Saga has already tutored."
+}

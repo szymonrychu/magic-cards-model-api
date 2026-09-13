@@ -1,0 +1,105 @@
+{
+  "name": "pinnacle affinity",
+  "meta_share": 3.1543372136687946,
+  "winrate": null,
+  "winrate_basis": {
+    "kind": "absent",
+    "why": "The committed 2026-09-10 capture holds no row named 'pinnacle affinity', and no row named 'affinity' either. It carries 'ur affinity' at 0.5246 over 737 matches and 'cutter affinity' at 0.576 over 173, and the 2026-09-10 signature validation joins 'affinity' to 'pinnacle affinity' - not those two variant labels, which are different decks in the shares vocabulary and both outside this deck's boarding field. There is therefore no row this name resolves to, and the dossier records the absence rather than a number."
+  },
+  "meta_basis": {
+    "kind": "current"
+  },
+  "primary_gameplan": "Race and then sweep. Our draw is faster than theirs for the first two turns, so the plan is to deploy, attack, and hold Wrath of the Skies for the turn their board is worth more than ours - which is usually the turn Weapons Manufacturing resolves rather than the turn Kappa Cannoneer does.",
+  "secondary_gameplan": "If Wrath of the Skies is not in hand, Wear // Tear on Weapons Manufacturing is the card that stops the Munitions damage, and Galvanic Discharge answers Emry, Lurker of the Loch before Urza's Saga rebuilds.",
+  "opponent_gameplan": "The ten lists pulled 2026-09-04 to 2026-09-08 (meta/snapshots/decks-pinnacle-affinity-2026-09-10.json) run 4 Weapons Manufacturing, 4 Pinnacle Emissary, 4 Mishra's Bauble, 4 Urza's Saga and 4 Engineered Explosives in 10 of 10, with 3.6 Mox Opal, 3.6 Kappa Cannoneer, 3.3 Tormod's Crypt and 2.9 Metallic Rebuke. Free and one-mana artifacts flood the board, Weapons Manufacturing turns each of them into a Munitions token worth two damage on the way out, and Urza's Saga tutors whichever cheap piece is missing; Kappa Cannoneer is the threat that ends the game if the race stalls.",
+  "tournament_refs": [
+    {
+      "pilot": "Varo",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "pilot": "sidisi",
+      "tournament_date": "2026-09-08",
+      "tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+    },
+    {
+      "pilot": "littesir095",
+      "tournament_date": "2026-09-07",
+      "tournament_id": "a48e3549-0e22-4683-b9c9-cb38223f9c6c"
+    },
+    {
+      "pilot": "Navigator_2505",
+      "tournament_date": "2026-09-07",
+      "tournament_id": "2059b453-ec7b-4c00-beef-fb14b547d06e"
+    }
+  ],
+  "stance": "symmetric_counter",
+  "stance_rationale": "Every permanent that matters in the 10 recorded lists is an artifact or an enchantment: 4 Weapons Manufacturing, 4 Pinnacle Emissary, 4 Mishra's Bauble, 3.6 Mox Opal, 4 Urza's Saga and 4 Engineered Explosives. Wrath of the Skies destroys each artifact, creature and enchantment at or under the energy paid, so one card answers the whole board, and Wear // Tear answers the two halves it is too slow for.",
+  "opposing_sideboard_in": [
+    {
+      "card": "Galvanic Blast",
+      "count": 3,
+      "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.5; four damage with metalcraft kills anything in our 60 for one mana",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Whipflare",
+      "count": 2,
+      "why": "In 10 of 10 pulled boards at 1.5; two damage to each nonartifact creature is a one-sided sweeper against a board of 1/1 Cats and 1/2 one-drops",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Consign to Memory",
+      "count": 3,
+      "why": "In 10 of 10 pulled boards at 3.0; counters a triggered ability, which is what Ocelot Pride, Guide of Souls and Ajani, Nacatl Pariah all win with",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    },
+    {
+      "card": "Damping Sphere",
+      "count": 2,
+      "why": "In 10 of 10 pulled boards at 2.2; each extra spell in a turn costs one more, which is the tax our cheap multi-spell turns least want",
+      "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+    }
+  ],
+  "opponent_plan": {
+    "posture": "race",
+    "posture_why": "Free artifacts and Urza's Saga build a board on turn one and two, and Weapons Manufacturing converts each new artifact into two damage.",
+    "key_cards": [
+      {
+        "card": "Weapons Manufacturing",
+        "why": "The 4-of enchantment in 10 of 10 recorded lists that makes a Munitions token, and two damage, for each nontoken artifact that enters"
+      },
+      {
+        "card": "Kappa Cannoneer",
+        "why": "A 3.6-average artifact creature that our removal cannot answer cleanly once it is online"
+      },
+      {
+        "card": "Urza's Saga",
+        "why": "A 4-of land that tutors the cheap artifacts and makes a Construct on its own"
+      },
+      {
+        "card": "Whipflare",
+        "why": "Postboard, a one-sided sweeper that kills our whole board and none of theirs",
+        "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+      }
+    ]
+  },
+  "play_plan": {
+    "keep": "Two lands, two threats, and an answer to a turn-two artifact.",
+    "goldfish_for": "Six damage by turn three, so a Whipflare still leaves them dead to Goblin Bombardment.",
+    "watch_for": "Metallic Rebuke mana, and whether Weapons Manufacturing is already converting artifacts into damage.",
+    "posture": "race",
+    "posture_why": "Their board compounds faster than ours does, so the sweeper is a tempo play in the middle of a race, not a reset."
+  },
+  "card_names": [
+    "Consign to Memory",
+    "Damping Sphere",
+    "Galvanic Blast",
+    "Kappa Cannoneer",
+    "Urza's Saga",
+    "Weapons Manufacturing",
+    "Whipflare"
+  ],
+  "self_cost": "Wrath of the Skies at X=1 destroys Mox Opal, Springleaf Drum, Mishra's Bauble and Emry, Lurker of the Loch - and every Cat token, Guide of Souls and Ocelot Pride we have on the battlefield, because it destroys creatures at that mana value too. It is right here because their board is worth more than ours once Weapons Manufacturing is making Munitions, and because Wear covers the half a sweeper misses."
+}

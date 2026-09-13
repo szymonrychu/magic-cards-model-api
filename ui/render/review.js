@@ -50,6 +50,7 @@ import {
   perspectiveOf,
   reflectionOf,
   collapseRoutine,
+  adviceOf,
 } from "../review_model.js";
 
 /** How many printings to look up at once. The lookups are one HTTP call per
@@ -183,7 +184,9 @@ function exileRow(cards) {
  * reads end to end. A frame the agent gave a reason for opens by default -
  * those are the moments the page exists for. */
 function frameNode(frame, you, catalogue) {
-  const el = h("div", { class: `frame${frame.routine ? " routine" : ""}${frame.refused ? " refused" : ""}` });
+  const el = h("div", {
+    class: `frame${frame.routine ? " routine" : ""}${frame.refused ? " refused" : ""}${frame.isApproval ? " approval" : ""}`,
+  });
   const head = h(
     "div",
     { class: "frame-head" },
@@ -382,6 +385,119 @@ function declarationContext(declared) {
   return box;
 }
 
+// ------------------------------------------------------------------ advice --
+
+/** One row of `advice.refused`, drawn like `frameNode`'s own refusal box -
+ * what was attempted, and the engine's verbatim reason. This is the single
+ * most instructive line the review can show: the engine's whole reason for
+ * existing is saying out loud why a refused action is illegal, and dropping
+ * that line here (in favour of a blank "nothing happened") would be keeping
+ * the least useful half. */
+function adviceRefusalNode(frame) {
+  return h(
+    "div",
+    { class: "advice-refusal" },
+    h("span", { class: "seq" }, seqLabel(frame.seq)),
+    h("span", { class: "what" }, frame.label),
+    " - the engine refused it: ",
+    h("span", { class: "refusal" }, frame.reason || "(no reason given)")
+  );
+}
+
+/** Whether what the seat actually did is what was proposed, drawn as its own
+ * line above the `did` frame.
+ *
+ * `review.py` computes `followed` (same action kind for the proposal's
+ * `path`, same card where its `body` names one) and `review_model.js`
+ * mirrors it, and for a while no renderer read it - so "they approved it and
+ * did exactly that" and "they approved it and then did something else"
+ * rendered byte-identically, both an `approved` tag over a `did` frame. The
+ * second is the one a trainer most needs to see.
+ *
+ * Deliberately independent of `approved`, because `followed` is: a human can
+ * do exactly what the buddy proposed without ever pressing approve, and the
+ * tag and this line compose to say so. Only rendered where `did` exists - a
+ * "they did something else" line over no move at all would be a claim about
+ * a move nobody made, and those two outcomes are already told apart by the
+ * refusal box and the empty-outcome line.
+ */
+function adviceFollowThroughNode(advice) {
+  return h(
+    "div",
+    { class: `advice-followthrough ${advice.followed ? "followed" : "diverged"}` },
+    advice.followed
+      ? "and that is what they did:"
+      : "but they did something else:"
+  );
+}
+
+/** One piece of mtg-buddy advice: what it proposed, why, whether the human
+ * approved it, and what actually happened - four distinguishable outcomes,
+ * never a verdict on whether the advice was *good* (`review.py`'s stand on
+ * that, restated for the same reason as the declaration pairing above).
+ *
+ * - **approved and followed** - the follow-through line says "and that is
+ *   what they did", and `did` is drawn as a normal `frameNode`, so the
+ *   reader sees the same evidence (reasoning, refusal if any, board) any
+ *   other row gets.
+ * - **approved, then something else** - the same `approved` tag and a real
+ *   `did` frame, with the follow-through line saying "but they did something
+ *   else". That line is the whole of what separates this from the outcome
+ *   above (`adviceFollowThroughNode`).
+ * - **approved, attempted, and refused by the engine** - `did` is `None` (a
+ *   refusal is a failed attempt, never handed back as "what happened"), but
+ *   `advice.refused` is not empty, so an `adviceRefusalNode` renders the
+ *   engine's own words in place of the empty-outcome line. It is never left
+ *   as an ambiguous blank.
+ * - **ignored, something else instead** - the tag reads "never approved",
+ *   and `did` is a real frame.
+ * - **ignored, nothing at all** - `did` is `None` and `advice.refused` is
+ *   also empty, so the honest empty-outcome line is what renders; this is
+ *   the only case that reaches it now.
+ */
+function adviceNode(advice, you, catalogue) {
+  const el = h("div", { class: "advice" });
+  el.appendChild(
+    h(
+      "div",
+      { class: "advice-label" },
+      h("span", { class: "tag" }, "advice"),
+      `${text(advice.player)} was advised at `,
+      h("span", { class: "seq" }, seqLabel(advice.seq)),
+      advice.ts ? `, ${stamp(advice.ts)}` : ""
+    )
+  );
+  el.appendChild(h("div", { class: "advice-summary" }, text(advice.summary)));
+  if (advice.reasoning) {
+    el.appendChild(h("blockquote", { class: "advice-reasoning" }, text(advice.reasoning)));
+  }
+  el.appendChild(
+    h(
+      "div",
+      { class: `advice-tag ${advice.approved ? "approved" : "ignored"}` },
+      advice.approved
+        ? `approved at ${seqLabel(advice.approvedSeq)}`
+        : "never approved"
+    )
+  );
+  for (const refused of advice.refused || []) {
+    el.appendChild(adviceRefusalNode(refused));
+  }
+  if (advice.did) {
+    el.appendChild(adviceFollowThroughNode(advice));
+    el.appendChild(frameNode(advice.did, you, catalogue));
+  } else if (!(advice.refused && advice.refused.length)) {
+    el.appendChild(
+      h(
+        "div",
+        { class: "advice-outcome-empty" },
+        `nothing before ${text(advice.player)}'s next piece of advice`
+      )
+    );
+  }
+  return el;
+}
+
 // ----------------------------------------------------------------- turns --
 
 /** The turn's own name. `turn 0` is the engine's own stamp for CR 103.5 and
@@ -415,6 +531,9 @@ function turnNode(group, you, catalogue, expectDeclarations) {
   // exempts it for exactly that reason).
   if (!group.declarations.length && expectDeclarations && group.turn) {
     section.appendChild(h("div", { class: "no-declaration" }, "No plan was declared for this turn."));
+  }
+  for (const advice of group.advice || []) {
+    section.appendChild(adviceNode(advice, you, catalogue));
   }
   const frames = h("div", { class: "frames" });
   for (const item of collapseRoutine(group.frames)) {
@@ -499,12 +618,14 @@ function headNode(review, handlers, onBack) {
   // covers, and the answer is "all of it" - so it is said in numbers.
   const rows = (review.entries || []).length;
   const declarations = (review.declarations || []).length;
+  const advice = adviceOf(review).length;
   head.appendChild(
     h(
       "div",
       { class: "review-counts" },
       `${rows} recorded action${rows === 1 ? "" : "s"}, `,
-      `${declarations} declaration${declarations === 1 ? "" : "s"}`,
+      `${declarations} declaration${declarations === 1 ? "" : "s"}, `,
+      `${advice} piece${advice === 1 ? "" : "s"} of advice`,
       rows ? `, ledger ${seqLabel(review.entries[0].seq)} to ${seqLabel(review.entries[rows - 1].seq)}` : ""
     )
   );

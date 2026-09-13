@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "archetype": "living end",
+  "signature": [
+    {
+      "cards": [
+        "Living End",
+        "Violent Outburst",
+        "Shardless Agent"
+      ],
+      "min": 7,
+      "why": "The cascade half. Every field list runs 3 Living End and at least one full four-copy cascade spell, and it is the only combination in Modern that casts a sorcery it never pays for: every cascade spell in the deck costs three, so Living End is the sole hit. Seven is the floor a single-cascade-spell build runs, not the eleven the common Violent Outburst plus Shardless Agent list has."
+    },
+    {
+      "cards": [
+        "Street Wraith",
+        "Generous Ent",
+        "Oliphaunt",
+        "Curator of Mysteries",
+        "Colossal Skyturtle",
+        "Waker of Waves",
+        "Striped Riverwinder",
+        "Architects of Will"
+      ],
+      "min": 8,
+      "why": "The bodies the cascade returns, all of which reach the graveyard for free. Wistfulness and Living End do nothing off an empty yard, so a build of this archetype cannot omit the cyclers - which eight of them it runs is a curve decision."
+    },
+    {
+      "cards": [
+        "Force of Negation",
+        "Subtlety",
+        "Endurance",
+        "Wistfulness"
+      ],
+      "min": 8,
+      "why": "The free interaction, 4-of in 10/10 field lists. These are pitched, not cast: a deck whose manabase makes eleven green and thirteen blue sources holds them up on the turn it cascades, which is the whole reason this shell is three colours."
+    }
+  ]
+}

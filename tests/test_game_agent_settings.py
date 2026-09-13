@@ -17,7 +17,7 @@ def create(client: TestClient, agent: dict | None = None, ai: bool = True) -> di
 def test_agent_settings_default_and_show_on_the_player(client: TestClient) -> None:
     created = create(client)
     assert created["agents"] == {
-        "bot": {"model": "sonnet", "effort": "medium", "max_thinking_tokens": None}
+        "bot": {"model": "opus", "effort": "medium", "max_thinking_tokens": None}
     }
     # 2b's T8: the game-state view no longer carries `agent` on any player
     # block at all - it moved to the lobby's own `GET
@@ -32,7 +32,7 @@ def test_agent_settings_default_and_show_on_the_player(client: TestClient) -> No
 
     seats = client.get(f"/api/lobby/games/{created['game_id']}/seats").json()["seats"]
     bot_seat = next(s for s in seats if s["player"] == "bot")
-    assert bot_seat["agent"] == {"model": "sonnet", "effort": "medium", "max_thinking_tokens": None}
+    assert bot_seat["agent"] == {"model": "opus", "effort": "medium", "max_thinking_tokens": None}
     you_seat = next(s for s in seats if s["player"] == "you")
     assert you_seat.get("agent") is None
 

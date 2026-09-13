@@ -265,6 +265,14 @@
             "title": "Modes",
             "type": "array"
           },
+          "pays_with": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ManaPlanEntry"
+            },
+            "title": "Pays With",
+            "type": "array"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -471,6 +479,365 @@
         "title": "ActionOutcome",
         "type": "object"
       },
+      "ActionTargets": {
+        "description": "What one action may legally name, per requirement slot.\n\n`understood: false` carries NO slots and a `note` saying why, which is\n`affordances.candidates`' existing contract kept intact: an empty\ncandidate list would read as \"nothing on this board is legal\", a\ndifferent and false statement, and `ui/app.js`'s `isPickingTargets`\nalready branches on exactly that difference.",
+        "properties": {
+          "more_with": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "More With"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "slots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TargetSlotCandidates"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slots"
+          },
+          "understood": {
+            "title": "Understood",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "understood"
+        ],
+        "title": "ActionTargets",
+        "type": "object"
+      },
+      "ActionWithTargets": {
+        "description": "The engine's own `Action`, plus the candidates the api enumerates for\nit (`app._attach_target_candidates`). A subclass rather than a re-shape:\nevery field of `Action` is passed through untouched and by inheritance,\nso a field the engine adds arrives here without this file changing.\n\n`targets` is **required**, which is what makes this a distinguishable\nbranch of `LegalActionsResponse.actions` rather than a replacement for\n`Action` - see there.",
+        "properties": {
+          "ability_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ability Index"
+          },
+          "affordable": {
+            "$ref": "#/components/schemas/Affordability",
+            "default": "unknown"
+          },
+          "alternative_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Cost"
+          },
+          "attacker_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attacker Id"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          },
+          "color_choice_count": {
+            "default": 0,
+            "title": "Color Choice Count",
+            "type": "integer"
+          },
+          "color_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Color"
+            },
+            "title": "Color Options",
+            "type": "array"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "decision_candidates": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Decision Candidates",
+            "type": "array"
+          },
+          "decision_option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Option"
+          },
+          "decision_player_candidates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Decision Player Candidates",
+            "type": "array"
+          },
+          "decision_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Seq"
+          },
+          "defender": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defender"
+          },
+          "from_zone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Zone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActionKind"
+          },
+          "land_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Face"
+          },
+          "mana_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Cost"
+          },
+          "modes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "pays_with": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ManaPlanEntry"
+            },
+            "title": "Pays With",
+            "type": "array"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "produces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produces"
+          },
+          "restriction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction"
+          },
+          "restriction_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction Understood"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
+          },
+          "splice_options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SpliceOption"
+            },
+            "title": "Splice Options",
+            "type": "array"
+          },
+          "target_slots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TargetSlot"
+            },
+            "title": "Target Slots",
+            "type": "array"
+          },
+          "targets": {
+            "$ref": "#/components/schemas/ActionTargets"
+          },
+          "unaffordable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unaffordable Reason"
+          },
+          "x_range": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Range"
+          }
+        },
+        "required": [
+          "kind",
+          "player",
+          "rule",
+          "targets"
+        ],
+        "title": "ActionWithTargets",
+        "type": "object"
+      },
       "ActivateRequest": {
         "properties": {
           "ability_index": {
@@ -528,6 +895,17 @@
               }
             ],
             "title": "Exiling"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "mana_sources": {
             "anyOf": [
@@ -615,8 +993,20 @@
         "type": "object"
       },
       "ActorRequest": {
+        "additionalProperties": false,
         "description": "An optional body for endpoints that take no other input: just who is\ncalling, so the audit log can attribute the action.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "anyOf": [
               {
@@ -678,8 +1068,20 @@
         "type": "object"
       },
       "AdvanceRequest": {
+        "additionalProperties": false,
         "description": "Who is advancing the turn - required, unlike `ActorRequest`, because\n`Game.advance` now authorizes the call against the active player (or\ntheir controller, CR 723.5) rather than merely logging who asked.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -1007,6 +1409,134 @@
         "title": "AdvanceResponse",
         "type": "object"
       },
+      "AdviceApproveIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/advice/{seq}/approve` - the human saying\nyes to one proposal, by its ledger `seq`.\n\nHuman uid only. An advisor's own uid is refused by `game_access.py`\nbefore this route ever runs (the path is neither `/advice` nor `/report`\nand the body claims no `dry_run`), and the route checks the same thing\nagain against `store.player_for_uid`: an advisor must never be able to\napprove its own advice, and that must hold whether or not the gate is\nthe thing enforcing it on any given day.",
+        "properties": {
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player"
+        ],
+        "title": "AdviceApproveIn",
+        "type": "object"
+      },
+      "AdviceApprovedResponse": {
+        "description": "`POST .../advice/{seq}/approve`'s answer. Mutates no `Game` either.",
+        "properties": {
+          "advice_seq": {
+            "title": "Advice Seq",
+            "type": "integer"
+          },
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "log_seq",
+          "advice_seq",
+          "player"
+        ],
+        "title": "AdviceApprovedResponse",
+        "type": "object"
+      },
+      "AdviceIn": {
+        "additionalProperties": false,
+        "description": "`POST /api/games/{game_id}/advice` - one action an **advisor** thinks\nits human should take, recorded and never performed.\n\nAn advisor credential (`repository.Advisor`) is read-only by\nconstruction: `game_access.py` refuses every mutating POST it makes\nexcept this one and `/report`. So this is not a convenience - it is the\nonly way a buddy pod reaches the game it is watching at all, and the\nreason it is a *ledger row* rather than anything held in memory is that\nthe api is multi-replica: a proposal kept in one process would be\ninvisible to the replica the human's next poll happens to hit.\n\n`method`/`path`/`body` are the **request the human's client will post\nverbatim** once it agrees, built by `seatkit` (which already knows how to\nshape every action) rather than hand-written by a model - see\n`seatkit.Seat._advise_answer`. `body` names the human as `player` and\ncarries no `dry_run`: an approved proposal is a real action.\n\nThere is deliberately no `summary` field here. What the proposal *says*\nis derived server-side from `body` and the live game\n(`records.advice_summary`), so it cannot disagree with the request it\ndescribes - an agent-written summary naming a different card from the one\n`body` would actually cast is exactly the failure that shape invites.\n\n`reasoning` is the half that *is* the agent's own words, and the half the\nhuman actually reads before deciding. Required and non-blank: a proposal\nwith no argument for it is a button, not advice.",
+        "properties": {
+          "body": {
+            "additionalProperties": true,
+            "title": "Body",
+            "type": "object"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "player": {
+            "minLength": 1,
+            "title": "Player",
+            "type": "string"
+          },
+          "reasoning": {
+            "minLength": 1,
+            "title": "Reasoning",
+            "type": "string"
+          },
+          "validated": {
+            "default": false,
+            "title": "Validated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "player",
+          "method",
+          "path",
+          "reasoning"
+        ],
+        "title": "AdviceIn",
+        "type": "object"
+      },
+      "AdviceResponse": {
+        "description": "`POST .../advice`'s answer. No state view: recording a proposal\nmutates no `Game`, so there is nothing about the board it could have\nchanged - the same reason `DeclarePlanResponse` carries none.",
+        "properties": {
+          "based_on_seq": {
+            "title": "Based On Seq",
+            "type": "integer"
+          },
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "player": {
+            "title": "Player",
+            "type": "string"
+          },
+          "proposed": {
+            "title": "Proposed",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "validated": {
+            "title": "Validated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "proposed",
+          "log_seq",
+          "player",
+          "summary",
+          "validated",
+          "based_on_seq"
+        ],
+        "title": "AdviceResponse",
+        "type": "object"
+      },
       "Affordability": {
         "description": "Whether an action's cost could be paid right now - reported\n*alongside* legality, never used to decide it. CR 118.6: \"Attempting to\ncast a spell, activate an ability, or take a special action that has an\nunpayable cost is a legal action.\" Casting with no red mana in play is\nstill casting; this is what tells the difference between \"legal and\npayable\" and \"legal and not\".",
         "enum": [
@@ -1120,6 +1650,7 @@
         "type": "object"
       },
       "AgentSettings": {
+        "additionalProperties": false,
         "properties": {
           "effort": {
             "default": "medium",
@@ -1242,6 +1773,7 @@
         "type": "object"
       },
       "AttackPair": {
+        "additionalProperties": false,
         "properties": {
           "card_id": {
             "format": "uuid",
@@ -1261,6 +1793,7 @@
         "type": "object"
       },
       "AttackRequest": {
+        "additionalProperties": false,
         "properties": {
           "attackers": {
             "items": {
@@ -1273,6 +1806,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "reasoning": {
             "anyOf": [
@@ -1290,6 +1834,7 @@
         "type": "object"
       },
       "BlockPair": {
+        "additionalProperties": false,
         "properties": {
           "blocked": {
             "format": "uuid",
@@ -2330,6 +2875,7 @@
         "type": "object"
       },
       "CastRequest": {
+        "additionalProperties": false,
         "properties": {
           "alternative_cost": {
             "anyOf": [
@@ -2447,6 +2993,17 @@
             ],
             "title": "Exiling"
           },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "from_zone": {
             "default": "hand",
             "title": "From Zone",
@@ -2542,6 +3099,17 @@
               }
             ],
             "title": "Shares"
+          },
+          "spell_face": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spell Face"
           },
           "tapping": {
             "anyOf": [
@@ -2674,8 +3242,20 @@
         "type": "string"
       },
       "ConcedeRequest": {
+        "additionalProperties": false,
         "description": "CR 104.3a: a player may concede at any time, and leaves the game\nimmediately. No priority is required and nothing can refuse it, so unlike\nevery other action request this one has no `dry_run` - there is nothing to\nask permission for.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -2754,6 +3334,7 @@
         "type": "object"
       },
       "ConvokeChoice": {
+        "additionalProperties": false,
         "description": "One creature tapped to pay one symbol of a convoke spell's cost.\n\nCR 702.51b: convoke \"isn't an additional or alternative cost and applies\nonly after the total cost of the spell with convoke is determined\", so\nthis is not part of the announcement - it is which objects the payer\noffers against the already-determined cost.",
         "properties": {
           "card_id": {
@@ -2827,6 +3408,7 @@
         "type": "object"
       },
       "CrewRequest": {
+        "additionalProperties": false,
         "description": "CR 702.122a: \"Crew N\" means \"Tap any number of other untapped\ncreatures you control with total power N or greater: This permanent\nbecomes an artifact creature until end of turn.\"\n\nCrew is an activated ability of the Vehicle, not of the creatures, and it\nhas no `{T}` symbol of its own - so this is not an `ActivateRequest`\nagainst an ability index. The creatures are the cost.",
         "properties": {
           "card_id": {
@@ -2847,6 +3429,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",
@@ -2873,6 +3466,7 @@
         "type": "object"
       },
       "CycleRequest": {
+        "additionalProperties": false,
         "description": "CR 702.29a: \"[Cost], Discard this card: Draw a card.\" An activated\nability, but one `Game.begin_activating`/`activate_ability` cannot reach -\nthey only ever activate a battlefield permanent's ability, and cycling\n\"functions only while the card... is in a player's hand\" (CR 702.29b) - so\nit gets its own request shape and endpoint rather than reusing\n`ActivateRequest`.",
         "properties": {
           "ability_index": {
@@ -2907,6 +3501,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "mana_sources": {
             "anyOf": [
@@ -2977,6 +3582,7 @@
         "type": "object"
       },
       "DecideRequest": {
+        "additionalProperties": false,
         "properties": {
           "accept": {
             "anyOf": [
@@ -3017,6 +3623,17 @@
               }
             ],
             "title": "Energy Amount"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "generation": {
             "anyOf": [
@@ -3242,6 +3859,7 @@
         "type": "object"
       },
       "DeclareBlockersRequest": {
+        "additionalProperties": false,
         "properties": {
           "blocks": {
             "items": {
@@ -3249,6 +3867,17 @@
             },
             "title": "Blocks",
             "type": "array"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",
@@ -3273,6 +3902,7 @@
         "type": "object"
       },
       "DeclarePlanIn": {
+        "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/plan` - a seat's declaration, made before\nit acts, of how it reads this turn.\n\nDeliberately five fields and no more. Each one is something the post-game\nreview has to show and cannot reconstruct from the board: what the seat\nsaw (`board_read`), where it thought it stood in the matchup\n(`my_role`), what it meant to do (`plan`), and what it expected back\n(`prediction`, with its own reason and confidence). Anything longer and\nan agent fills it in with filler; anything shorter and the review is\nnarrative again rather than evidence.\n\n`uid` is the seat's own credential, carried in the body beside `player`\nrather than in the query string: a plan is hidden information about how\na seat intends to play, so the server checks that the caller *is* the\nseat it is declaring for before writing anything into its name.",
         "properties": {
           "board_read": {
@@ -3351,6 +3981,7 @@
         "type": "object"
       },
       "DeclaredPairRequest": {
+        "additionalProperties": false,
         "description": "One `(creature, defender)` pair for the `declare_attackers`/\n`declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the\nrequest-side twin of the engine's `machines.decisions.DeclaredPair`.\n\n`defender` is a card id (UUID string) or a player's username, the same\ntoken shape `CastRequest.targets`/`ActivateRequest.targets`/\n`DecideRequest.targets` already use for \"a card or a player\" - told apart\nthe same way (`decisions.declared_pairs_answer`). A blocker always blocks\na creature (CR 509.1a), so `defender` is a card id for every\n`declare_blockers` pair; an attacker's defender is overwhelmingly a\nplayer (CR 508.1b) but can also be a planeswalker or a battle's card id.",
         "properties": {
           "creature": {
@@ -3425,6 +4056,11 @@
       },
       "EndGameResponse": {
         "properties": {
+          "advisors_invalidated": {
+            "default": 0,
+            "title": "Advisors Invalidated",
+            "type": "integer"
+          },
           "ai_seats_released": {
             "items": {
               "additionalProperties": true,
@@ -3541,6 +4177,13 @@
       "GameReviewResponse": {
         "description": "`GET /api/games/{game_id}/review` - post-game only, and never open.",
         "properties": {
+          "advice": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewAdvice"
+            },
+            "title": "Advice",
+            "type": "array"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -4129,14 +4772,26 @@
         "type": "string"
       },
       "LegalActionsResponse": {
-        "description": "`GET .../legal-actions` (T11) - the engine's own `Action` model,\nreused as-is rather than re-shaped: `get_legal_actions` returns exactly\n`[action.model_dump(mode=\"json\") for action in actions]`, and\n`records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as\n`LogEntry.legal_actions_before`) is the identical dump.",
+        "description": "`GET .../legal-actions` (T11) - the engine's own `Action` model,\nreused as-is rather than re-shaped: `get_legal_actions` returns exactly\n`[action.model_dump(mode=\"json\") for action in actions]`, and\n`records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as\n`LogEntry.legal_actions_before`) is the identical dump - now with the\nlegal candidates for each targeting action folded in alongside.\n\n**Both names stay in `#/components/schemas`, and the union is why.**\nTyping this `list[ActionWithTargets]` alone read as an enrichment and was\none: every `Action` field is still there, by inheritance. But FastAPI\nnames a component only where a route references it, and the subclass was\nthe only thing referenced - so the engine's `Action`, which downstream\nrepos validate against **by name** (`tests/test_openapi_drift.py`'s own\ndocstring), silently stopped being published at all. The union restores\nit without touching the wire, because it is also the truth about the\nanswer: `candidates=false` (the default, and what `ui/app.js` asks for)\nanswers plain engine `Action` rows, and `candidates=true` adds `targets`\nto the targeting ones - `_attach_target_candidates` sets that key or\nleaves it off, never sets it to null. `targets` being required on the\nsubclass is what keeps the two branches apart: a row carrying candidates\nmatches `ActionWithTargets` and only it, a row without matches `Action`\nand only it, so neither branch is decoration and a client can tell which\nit is holding by the one key that differs.",
         "properties": {
           "actions": {
             "items": {
-              "$ref": "#/components/schemas/Action"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ActionWithTargets"
+                },
+                {
+                  "$ref": "#/components/schemas/Action"
+                }
+              ]
             },
             "title": "Actions",
             "type": "array"
+          },
+          "last_seq": {
+            "default": 0,
+            "title": "Last Seq",
+            "type": "integer"
           }
         },
         "required": [
@@ -4194,6 +4849,14 @@
       },
       "LobbyGameSummary": {
         "properties": {
+          "advisors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Advisors",
+            "type": "object"
+          },
           "agents": {
             "additionalProperties": {
               "$ref": "#/components/schemas/AgentSettings"
@@ -4324,7 +4987,12 @@
         "title": "LoyaltyHintView",
         "type": "object"
       },
+      "ManaPlanEntry": {
+        "additionalProperties": true,
+        "type": "object"
+      },
       "ManaPoolUpdate": {
+        "additionalProperties": false,
         "properties": {
           "add": {
             "anyOf": [
@@ -4404,6 +5072,7 @@
         "type": "object"
       },
       "ManaSource": {
+        "additionalProperties": false,
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -4443,6 +5112,7 @@
         "type": "object"
       },
       "MintSeatRequest": {
+        "additionalProperties": false,
         "description": "2b's T8, the seat back door's mint half. `player` must already be\nregistered on the game (`Game.players`) - this mints a fresh credential\nfor an existing seat, it does not add a player to the game.",
         "properties": {
           "player": {
@@ -4558,6 +5228,7 @@
         "type": "object"
       },
       "MoveCard": {
+        "additionalProperties": false,
         "properties": {
           "controller": {
             "anyOf": [
@@ -4913,7 +5584,8 @@
         "type": "object"
       },
       "MulliganRequest": {
-        "description": "One seat's CR 103.5 declaration: \"a player who is dissatisfied with\ntheir initial hand may take a mulligan\".",
+        "additionalProperties": false,
+        "description": "One seat's CR 103.5 declaration: \"a player who is dissatisfied with\ntheir initial hand may take a mulligan\".\n\n`BoardRead` because this is a mutating move a seat makes and records\n(`mulligan_declared`, one of `scripts/eval_report.py`'s `PLAY_ACTIONS`),\nso a refusal of it belongs in the same measured split as every other:\nwithout an `expected_seq` to name, a seat's first declaration of the game\nwas the one move whose refusals could not be told apart from a lost race.\nOptional here exactly as it is everywhere else - the browser names no\nboard and is refused on nothing new.",
         "properties": {
           "bottom": {
             "anyOf": [
@@ -4929,6 +5601,17 @@
               }
             ],
             "title": "Bottom"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",
@@ -4987,6 +5670,7 @@
         "type": "object"
       },
       "NewGame": {
+        "additionalProperties": false,
         "properties": {
           "active_player": {
             "anyOf": [
@@ -5292,6 +5976,7 @@
         "type": "object"
       },
       "NewPlayer": {
+        "additionalProperties": false,
         "properties": {
           "is_agent": {
             "default": false,
@@ -5316,6 +6001,7 @@
         "type": "object"
       },
       "NewUiGame": {
+        "additionalProperties": false,
         "properties": {
           "players": {
             "items": {
@@ -5357,6 +6043,14 @@
             ],
             "title": "Admin Key"
           },
+          "advisor_uids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Advisor Uids",
+            "type": "object"
+          },
           "agents": {
             "additionalProperties": {
               "$ref": "#/components/schemas/AgentSettings"
@@ -5393,6 +6087,7 @@
         "type": "object"
       },
       "NewUiPlayer": {
+        "additionalProperties": false,
         "properties": {
           "agent": {
             "anyOf": [
@@ -5408,6 +6103,21 @@
             "default": false,
             "title": "Ai",
             "type": "boolean"
+          },
+          "buddy": {
+            "default": false,
+            "title": "Buddy",
+            "type": "boolean"
+          },
+          "buddy_agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decklist_text": {
             "minLength": 1,
@@ -5533,6 +6243,7 @@
         "type": "object"
       },
       "OpeningHandActionRequest": {
+        "additionalProperties": false,
         "description": "One CR 103.6 action with a card in this seat's own opening hand -\n\"some cards allow a player to take actions with them from their opening\nhand\".",
         "properties": {
           "card_id": {
@@ -5655,6 +6366,7 @@
         "type": "object"
       },
       "OpponentPrediction": {
+        "additionalProperties": false,
         "description": "What a seat expects its opponent to do next, and why.\n\nThe prediction is the part of a declaration that makes it evidence\nrather than commentary: it is checkable against what the opponent then\nactually did, and `review.py` puts the two side by side without grading\neither. `because` is required for the same reason - a call with no read\nbehind it is a guess, and a guess that happens to land proves nothing.",
         "properties": {
           "because": {
@@ -5686,7 +6398,19 @@
         "type": "object"
       },
       "PassPriorityRequest": {
+        "additionalProperties": false,
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "title": "Player",
             "type": "string"
@@ -5798,6 +6522,7 @@
         "type": "object"
       },
       "PatchCard": {
+        "additionalProperties": false,
         "properties": {
           "counters": {
             "anyOf": [
@@ -6125,6 +6850,7 @@
         "type": "object"
       },
       "PatchPlayer": {
+        "additionalProperties": false,
         "properties": {
           "counters": {
             "anyOf": [
@@ -6179,6 +6905,28 @@
               }
             ],
             "title": "Amount"
+          },
+          "answer_field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Field"
+          },
+          "answer_with": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer With"
           },
           "card_details": {
             "anyOf": [
@@ -6363,6 +7111,7 @@
         "type": "object"
       },
       "PlayLandRequest": {
+        "additionalProperties": false,
         "properties": {
           "card": {
             "anyOf": [
@@ -6391,6 +7140,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "player": {
             "title": "Player",
@@ -6561,8 +7321,20 @@
         "type": "object"
       },
       "PregameSettleRequest": {
-        "description": "Admin-only: run the whole pregame (CR 103.5's mulligan process, CR\n103.6's opening-hand actions) forward, all at once, over every seat.",
+        "additionalProperties": false,
+        "description": "Admin-only: run the whole pregame (CR 103.5's mulligan process, CR\n103.6's opening-hand actions) forward, all at once, over every seat.\n\n`BoardRead` for the same reason every other mutating request carries it:\nthis is a command like any other (`commands._run_pregame_settle`), it\nreaches the same `records.legal_actions_before` sites, and an operator\nsettling a pregame against a board that has since moved is owed the news\nthat it moved rather than a settled game they did not ask for.",
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "use_defaults": {
             "default": false,
             "title": "Use Defaults",
@@ -6943,6 +7715,7 @@
         "type": "object"
       },
       "PutCard": {
+        "additionalProperties": false,
         "properties": {
           "card": {
             "title": "Card",
@@ -7261,6 +8034,7 @@
         "type": "string"
       },
       "ReflectionIn": {
+        "additionalProperties": false,
         "description": "`POST /api/games/{game_id}/reflection` - a seat's own post-game\nwrite-up, filed once the result is already known.\n\nDeliberately the only shape this ever takes: one seat, one block of\nfree text. Unlike `DeclarePlanIn`'s five structured fields, there is\nnothing here a post-game review has to show and cannot reconstruct from\nthe board - the whole point of a reflection is that it is the agent's\nown words, in its own shape, written after the game rather than during\nit. Splitting it into board-read/plan/prediction fields the way a\ndeclaration is split would dress up a narrative as evidence it never\nwas; `review.py`'s reflection section already says in words that\nnothing here is evidence of anything the review pairs above it.\n\n`uid` mirrors `DeclarePlanIn.uid`: the seat's own credential, carried in\nthe body, so nobody may write a reflection into another seat's name.",
         "properties": {
           "player": {
@@ -7341,6 +8115,7 @@
         "type": "object"
       },
       "ReportProblemRequest": {
+        "additionalProperties": false,
         "properties": {
           "player": {
             "title": "Player",
@@ -7739,6 +8514,180 @@
         "title": "RestrictionView",
         "type": "object"
       },
+      "ReviewAdvice": {
+        "description": "One `audit.ADVICE_ACTION` row - the mtg-buddy advisor's own proposal\nto a human seat - paired with whether it was approved and what the seat\ndid about it (`review.py`'s `_advice`).\n\nA stream of its own, beside `declarations` rather than folded into it: a\ndeclaration's window runs from one `plan_declared` row to the next *by\nany seat*; an advice row is per-decision-point and would fragment that\nwindow if it were treated as a second kind of marker. It is not - see\n`_advice`'s own docstring.\n\nNothing here grades the advice either, for the same reason\n`ReviewDeclaration` grades no prediction: whether it was *good* is a\njudgement, not an outcome. What is reported is one of four things:\napproved and followed; approved, attempted, and refused by the engine\n(`did` is `None` - a refusal is a failed attempt, never the outcome -\nbut `refused` carries the row and the engine's own verbatim reason, so\nnothing is lost); never approved and the seat did something else (`did`\nis that row); or never approved and the seat did nothing before the next\npiece of advice (`did` is `None`, `refused` is empty).\n\n`approved` and `followed` are independent, and the pair a reader is most\noften after is `approved: true, followed: false` - the seat agreed to\nthis and then did something else. That takes BOTH fields to see: `did`\nalone cannot say it, and `approved` alone cannot either.",
+        "properties": {
+          "approved": {
+            "default": false,
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "approved_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Seq"
+          },
+          "based_on_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Based On Seq"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "did": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "followed": {
+            "default": false,
+            "title": "Followed",
+            "type": "boolean"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "player": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "refused": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewEntry"
+            },
+            "title": "Refused",
+            "type": "array"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn"
+          },
+          "validated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "ReviewAdvice",
+        "type": "object"
+      },
       "ReviewDeclaration": {
         "description": "One `plan_declared` row, paired with what happened next.\n\nNothing on this model grades the prediction - no score, no hit flag, no\nverdict. See `review.py` for why the raw pairing is the thing a sceptic\ncannot argue with.",
         "properties": {
@@ -8005,14 +8954,29 @@
             "title": "Player",
             "type": "string"
           },
-          "uid": {
-            "title": "Uid",
+          "role": {
+            "default": "seat",
+            "enum": [
+              "seat",
+              "advisor"
+            ],
+            "title": "Role",
             "type": "string"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
           }
         },
         "required": [
-          "player",
-          "uid"
+          "player"
         ],
         "title": "SeatDetail",
         "type": "object"
@@ -8026,6 +8990,15 @@
           },
           "player": {
             "title": "Player",
+            "type": "string"
+          },
+          "role": {
+            "default": "seat",
+            "enum": [
+              "seat",
+              "advisor"
+            ],
+            "title": "Role",
             "type": "string"
           }
         },
@@ -8334,6 +9307,7 @@
         "type": "object"
       },
       "SpecialActionRequest": {
+        "additionalProperties": false,
         "description": "A CR 116.2 special action that exiles a card from hand to cast later:\nsuspend (CR 116.2f), plot (CR 116.2k), or foretell (CR 116.2h). All three\nshare this shape - locate the card, pay its special-action cost, exile it\ninto its own marked pile - so one request body serves all three actions.",
         "properties": {
           "card": {
@@ -8363,6 +9337,17 @@
             "default": false,
             "title": "Dry Run",
             "type": "boolean"
+          },
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
           },
           "mana_sources": {
             "anyOf": [
@@ -8915,15 +9900,19 @@
         "type": "object"
       },
       "StartAiSeat": {
+        "additionalProperties": false,
         "properties": {
+          "advisor_uid": {
+            "default": "",
+            "title": "Advisor Uid",
+            "type": "string"
+          },
           "uid": {
+            "default": "",
             "title": "Uid",
             "type": "string"
           }
         },
-        "required": [
-          "uid"
-        ],
         "title": "StartAiSeat",
         "type": "object"
       },
@@ -9250,7 +10239,19 @@
         "type": "object"
       },
       "StepUpdate": {
+        "additionalProperties": false,
         "properties": {
+          "expected_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Seq"
+          },
           "player": {
             "anyOf": [
               {
@@ -9385,6 +10386,7 @@
         "type": "object"
       },
       "TargetRequest": {
+        "additionalProperties": false,
         "properties": {
           "ability_index": {
             "anyOf": [
@@ -9536,6 +10538,50 @@
         "title": "TargetSlot",
         "type": "object"
       },
+      "TargetSlotCandidates": {
+        "description": "The legal candidates for ONE of an announcement's targeting\nrequirements (`affordances.target_candidates`), by that requirement's own\nindex into `Action.target_slots` - so `slot` says which phrase these\nanswer, and the phrase itself is not repeated here.\n\n`count` is the true total whatever the caps did to `candidates`: a seat\nweighing a sweeper needs the number even when it does not need the names,\nand a list that quietly shrank while its count shrank with it would be a\nlist that lies. `truncated` and the absence of `candidates` are the two\nways it can shrink - the per-slot cap (`affordances.CANDIDATE_SLOT_CAP`)\nand the whole answer's candidate budget (`mcp.MAX_CANDIDATE_BYTES`).",
+        "properties": {
+          "candidates": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "slot": {
+            "title": "Slot",
+            "type": "integer"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          }
+        },
+        "required": [
+          "slot",
+          "count"
+        ],
+        "title": "TargetSlotCandidates",
+        "type": "object"
+      },
       "TargetingProfileView": {
         "description": "What an announcement's targeting looks like right now\n(`affordances._profile_view`) - shared by `CardView.cast.targeting`,\nevery `AbilityView.targeting`, and `AffordancesResponse` itself.",
         "properties": {
@@ -9596,6 +10642,7 @@
         "type": "object"
       },
       "ValidateRequest": {
+        "additionalProperties": false,
         "properties": {
           "text": {
             "minLength": 1,
@@ -10047,7 +11094,7 @@
     },
     "/api/games/{game_id}": {
       "delete": {
-        "description": "Delete a game outright. `uid` must be a seat uid of this game, or `key`\nthis game's admin key - the same guard `decks_api.end_lobby_game` uses,\nmirrored here because this route deletes *any* game (not only a\nlobby-booted one) and `GET /api/ui/games` publishes every lobby-booted\ngame's id with no credential required to read the list itself; without\nthis check, reading the list would be enough to delete a game nobody\nhanded the caller a seat or an admin key for.",
+        "description": "Delete a game outright. `uid` must be a seat uid of this game, or `key`\nthis game's admin key - the same guard `decks_api.end_lobby_game` uses,\nmirrored here because this route deletes *any* game (not only a\nlobby-booted one) and `GET /api/ui/games` publishes every lobby-booted\ngame's id with no credential required to read the list itself; without\nthis check, reading the list would be enough to delete a game nobody\nhanded the caller a seat or an admin key for.\n\nThe deletion itself is `lobby.reset_game`, the same release End game\nruns, under this route's own audit action - see `lobby.py` for why\ndeleting without releasing left a watcher polling, a seat process alive,\na registry answering for uids of a game that no longer existed, and (in\n`wrapper` mode) a driver that 409s every later dispatch for the life of\nits container.",
         "operationId": "delete_game_api_games__game_id__delete",
         "parameters": [
           {
@@ -10924,6 +11971,147 @@
         "summary": "Advance"
       }
     },
+    "/api/games/{game_id}/advice": {
+      "post": {
+        "description": "Record one action an advisor thinks `req.player` should take\n(`schemas.AdviceIn`), and record nothing else.\n\n**This mutates no `Game`, exactly like `declare_plan`** - which is the\nprior art this is modelled on, down to the shape of this docstring. It\ncalls `audit.record` and nothing else: no `store.replace`, no\ncompare-and-swap, no version bump. A proposal is a statement *about* the\ngame, and the whole point of advise mode is that the advisor never moves\nit; a route that quietly committed one would hand a read-only credential\nthe authority its own gate exists to deny.\n\n**The summary is derived here, not taken from the caller.**\n`records.advice_summary` reads `req.body` against the live game - card\nids resolved to names, targets and cost spelled out - so what the human\nreads can never disagree with the request it describes. `schemas.AdviceIn`\nhas no `summary` field at all, so an advisor cannot try.\n\n**`based_on_seq` is read immediately before the row is written, under no\nlock.** A command landing in between makes this proposal born-stale, and\nthat is the safe direction: the human's own action carries its own\n`expected_seq` (`records.require_current_board`) and is refused against a\nboard that moved, so a stale proposal costs a refusal rather than a wrong\nmove. Taking the game's lock here would instead let a buddy pod's\nthinking block the seat it is advising.\n\n`legal_actions_before` is computed the same way every acting route\ncomputes it, for `req.player` - what *else* was legal at the moment the\nadvice was given, which is the comparison a retrospective needs and\ncannot reconstruct afterwards. It is hidden information (it names cards\nin that player's hand), which is why it rides in the row rather than the\nresponse, and `visibility.redact_log_entry` keeps it - and the whole\nproposal - out of the opponent's read of the same log.\n\nAuthorised on whoever may already *see* `req.player`'s hand: this game's\nadvisor for that seat (`visibility.resolve_viewer` resolves an advisor\nuid to its human's username), the seat itself, or the admin key. A\nproposal names hidden information, so nobody else may write one into that\nseat's name - the same rule, and the same 404, `declare_plan` enforces.",
+        "operationId": "record_advice_api_games__game_id__advice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdviceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Advice"
+      }
+    },
+    "/api/games/{game_id}/advice/{seq}/approve": {
+      "post": {
+        "description": "Record that the advised human said yes to the `advice` row at `seq`.\n\n**Mutates no `Game`** - one more `audit.record` call, for the same\nreasons `record_advice` above makes none.\n\n**The human's client calls this BEFORE sending the action itself**, and\nmust not send the action if this fails. That ordering is the whole\npurpose of the row: an `advice_approved` row sitting immediately before\nthe action in the same ledger is what lets a retrospective say \"this move\ncame from the buddy\" rather than inferring it from adjacency, and a\nrefused approval leaves no row at all, so an action taken anyway is\nvisibly unpaired. (The browser half of that is a later task; the contract\nit must honour is pinned by this repo's own tests now, not then.)\n\n**Human uid only, checked twice.** `game_access.py` already refuses an\nadvisor uid here - this path is neither `/advice` nor `/report`, and the\nbody claims no `dry_run` - and that is correct and deliberate: an advisor\napproving its own advice would make the human's agreement a formality.\nThis route checks it again itself, against `store.player_for_uid` (a\n*seat* credential, never `resolve_viewer`, which an advisor uid passes by\ndesign), because a rule this load-bearing should not rest on one gate\nremembering to run.",
+        "operationId": "approve_advice_api_games__game_id__advice__seq__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "title": "Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdviceApproveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceApprovedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Advice"
+      }
+    },
     "/api/games/{game_id}/affordances/{card_id}": {
       "get": {
         "description": "Which objects this announcement could legally target right now.\n\nThe expensive half of `affordances.py` - it walks every object in the\npublic zones against every requirement - so it is asked for on demand,\nwhen the player picks a card up, rather than folded into the 1.2s state\npoll for the whole board. The cheap half (does it target, how many, is\nthere an X, is it modal) already rides along on each card view.\n\n`modes` is a comma-separated list of 1-based mode numbers: a modal\nspell's targeting is unanswerable until the modes are chosen (CR 700.2f),\nso the UI asks again with them once the player has picked.\n\nNothing here is hidden information: every candidate is an object in a\npublic zone (`affordances.CANDIDATE_ZONES`) or a player, so this needs no\n`visibility.redact_view` pass of its own.",
@@ -11337,7 +12525,7 @@
     },
     "/api/games/{game_id}/legal-actions": {
       "get": {
-        "description": "Every action `player` could legally take right now\n(`machines.legal_actions.legal_actions`, Phase 1) - the api's own door\nonto the engine's enumeration surface, and what `seatkit.available_actions`\ncalls instead of brute-forcing one HTTP `dry_run` per candidate (T11).\n\nEach entry carries the engine's own `affordable` verdict\n(`\"yes\"`/`\"no\"`/`\"unknown\"`) alongside its legality - CR 118.6: an\nunpayable cast is still a legal one, so it is still listed, never dropped.\n`\"unknown\"` is a real, distinct answer (a modal or X spell before its\nparameters are announced) and is reported as such rather than folded into\n`\"no\"`, which is the whole reason this replaces the old probe: a dry run\ncan only ever say yes or no, never \"I cannot tell yet\".\n\nReads whichever decision is currently paused for this game straight off\nthe repository's own paused-command slot (`store.paused_command`, the\nsame source `serialize.state_view`'s own `pending_decision` reads from)\nand hands it to `legal_actions` as `pending` - when one is outstanding,\nthe answer is that decision's own legal answers and nothing else, for\nthe player it addresses only (`legal_actions`'s own module docstring).\n\n**`uid` must open `player`'s own seat, or be this game's admin key.**\nEvery action here is `player`'s own by construction - hand cards,\ncontrolled permanents, that player's own graveyard/exile cast options -\nand that is exactly why this is hidden information rather than why it is\nnot: the answer names each card in the seat's hand by id, its exact cost,\nthe zone it would be cast from, what it would target, and whether that\nseat can pay for it. `player` is a bare query parameter with nothing\nauthenticating it, so without this check naming the opponent was enough\nto read their hand out of the answer - while `GET /api/games/{game_id}`,\none route up, correctly hands the same caller `hands.<opponent> == []`.\n`visibility.py` is the rule that binds both: \"a caller that presents\nnothing must never see more than one that presents garbage, and neither\nmay see more than one that presents someone else's seat\".\n\n`get_affordances` needs no such guard and is not a precedent for\nskipping one: every candidate it names is an object in a public zone\n(CR 400.2) or a player, so there is nothing hidden in its answer to\nbegin with.\n\nRefused rather than answered empty, and this is the deliberate half of\nthe choice: `{\"actions\": []}` is a real answer this endpoint gives (a\nseat has nothing legal while a decision addressed to the *other* player\nstands - see `legal_actions`'s own docstring), so redacting to an empty\nlist would make \"you may not ask that\" indistinguishable from \"there is\nnothing you can do\", which is precisely the ambiguity\n`seatkit.available_actions` must be able to tell apart. The refusal is\nthe api's own existing shape for a credential that does not open what it\nnames - `ValueError` -> 400, the same as `pregame_settle`'s admin-key\ncheck - rather than a 403, which appears nowhere else in this api.",
+        "description": "Every action `player` could legally take right now\n(`machines.legal_actions.legal_actions`, Phase 1) - the api's own door\nonto the engine's enumeration surface, and what `seatkit.available_actions`\ncalls instead of brute-forcing one HTTP `dry_run` per candidate (T11).\n\nEach entry carries the engine's own `affordable` verdict\n(`\"yes\"`/`\"no\"`/`\"unknown\"`) alongside its legality - CR 118.6: an\nunpayable cast is still a legal one, so it is still listed, never dropped.\n`\"unknown\"` is a real, distinct answer (a modal or X spell before its\nparameters are announced) and is reported as such rather than folded into\n`\"no\"`, which is the whole reason this replaces the old probe: a dry run\ncan only ever say yes or no, never \"I cannot tell yet\".\n\nReads whichever decision is currently paused for this game straight off\nthe repository's own paused-command slot (`store.paused_command`, the\nsame source `serialize.state_view`'s own `pending_decision` reads from)\nand hands it to `legal_actions` as `pending` - when one is outstanding,\nthe answer is that decision's own legal answers and nothing else, for\nthe player it addresses only (`legal_actions`'s own module docstring).\n\n**`uid` must open `player`'s own seat, or be this game's admin key, or\nbe an advisor on that seat** (`repository.Advisor` - it resolves to the\nsame username through `visibility.resolve_viewer`, and an advisor is\nallowed to know exactly what its human is allowed to know).\nEvery action here is `player`'s own by construction - hand cards,\ncontrolled permanents, that player's own graveyard/exile cast options -\nand that is exactly why this is hidden information rather than why it is\nnot: the answer names each card in the seat's hand by id, its exact cost,\nthe zone it would be cast from, what it would target, and whether that\nseat can pay for it. `player` is a bare query parameter with nothing\nauthenticating it, so without this check naming the opponent was enough\nto read their hand out of the answer - while `GET /api/games/{game_id}`,\none route up, correctly hands the same caller `hands.<opponent> == []`.\n`visibility.py` is the rule that binds both: \"a caller that presents\nnothing must never see more than one that presents garbage, and neither\nmay see more than one that presents someone else's seat\".\n\n**`candidates=true` folds each targeting action's legal targets into its\nown entry** (`_attach_target_candidates`), so a seat can choose AND issue\nits next action out of one answer. Opt-in, and measured rather than\nguessed: on a 28-permanent board with three targeting spells in hand the\nenumeration costs ~106 ms on top of the ~350 ms the enumeration itself\nalready takes, because `TargetRequirement.rejects` reaches\n`Game.characteristics_of` and `Game.computed_board` is deliberately\nuncached in the engine (CR 613.5 - \"continually and automatically\nperformed\", so an anthem that left the battlefield a moment ago is\nalready not applying). That is a good trade for a seat, which pays it\nonce per action and saves a whole round trip - and so a whole inference\ncycle, seconds rather than milliseconds - and a bad one for the browser,\nwhich asks this on a 1.2s poll and already has the whole board on screen\nto pick targets from. So `seatkit.available_actions` passes it and\n`ui/app.js` does not, and the default is off: a caller that says nothing\npays nothing.\n\n`get_affordances` needs no such guard and is not a precedent for\nskipping one: every candidate it names is an object in a public zone\n(CR 400.2) or a player, so there is nothing hidden in its answer to\nbegin with.\n\nRefused rather than answered empty, and this is the deliberate half of\nthe choice: `{\"actions\": []}` is a real answer this endpoint gives (a\nseat has nothing legal while a decision addressed to the *other* player\nstands - see `legal_actions`'s own docstring), so redacting to an empty\nlist would make \"you may not ask that\" indistinguishable from \"there is\nnothing you can do\", which is precisely the ambiguity\n`seatkit.available_actions` must be able to tell apart. The refusal is\nthe api's own existing shape for a credential that does not open what it\nnames - `ValueError` -> 400, the same as `pregame_settle`'s admin-key\ncheck - rather than a 403, which appears nowhere else in this api.",
         "operationId": "get_legal_actions_api_games__game_id__legal_actions_get",
         "parameters": [
           {
@@ -11372,6 +12560,16 @@
                 }
               ],
               "title": "Uid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "candidates",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Candidates",
+              "type": "boolean"
             }
           }
         ],
@@ -11955,7 +13153,7 @@
     },
     "/api/games/{game_id}/report": {
       "post": {
-        "description": "A player files a problem report straight into the game log.",
+        "description": "A player files a problem report straight into the game log.\n\n**Attributed to the credential, never to `req.player`.** This is one of\nthe two POSTs an advisor uid may make (`game_access.\nADVISOR_POST_SUFFIXES`), and a row keyed on a plain request field let\nany caller write into the log in another seat's name - an advisor of\nalice filing \"bob is cheating, signed bob\" and the ledger agreeing. A\nseat uid resolves to its own seat; an advisor uid resolves to the human\nit watches, which is the one seat it is entitled to speak about.\n\n`req.player` is still honoured for the admin key, which opens no seat\nand so resolves to nobody: that is the operator filing on a seat's\nbehalf, and the only caller the field was ever really for.",
         "operationId": "report_problem_api_games__game_id__report_post",
         "parameters": [
           {
@@ -11965,6 +13163,22 @@
             "schema": {
               "title": "Game Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
             }
           }
         ],
@@ -12077,7 +13291,7 @@
     },
     "/api/games/{game_id}/review": {
       "get": {
-        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct. See `_post_game` for\n  what stands in for `Game.is_over` when the board cannot be decoded -\n  and note that neither gate is loosened by that case: an undecodable\n  game with nothing recording an ending is refused exactly as a live one\n  is.\n\n**Never 409 for a snapshot this build cannot decode.** That is what\nstranded a 191-action game the day the engine's schema moved: the whole\nreview is built from the ledger's own frames, none of which needs the\nengine to decode anything, so it is rebuilt from them and marked\n`reconstructed` rather than refused. The engine's refusal is untouched -\nit rides along in `unloadable`, and no `Game` is decoded from that\nsnapshot anywhere.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for.",
+        "description": "The post-game review: every declaration this game's seats made,\npaired with what actually happened next, over the whole ledger.\n\n**Deliberately not `game_or_404`.** That call is exactly what stranded\nthe live deployment's only substantively played game: `records` carries\nno foreign key and its rows outlive the game they describe, but\n`GET .../log` checks the game exists before it ever reads them, so 144\nrows became unreachable the moment the game was ended. This route reads\n`store.archived`, which sees past the soft delete, and 404s only when no\nsuch game was ever created.\n\n**Never open, and never mid-game.** Two gates, in this order:\n\n- the caller must hold this game's admin key or one of its seat uids\n  (either may be passed as `uid` or as `key`; both are checked against\n  the credentials the *archived* row kept, so they still work after the\n  game has ended). Anything else is a 404 - the same answer `DELETE\n  /api/games/{id}` gives, and one that does not confirm which uids\n  exist. This is not `visibility.resolve_viewer`: that path treats \"no\n  uid\" as a viewer in its own right, which is right for a debugger's\n  view of a live board and wrong for a credential check.\n- the game must be over (`Game.is_over` - CR 104.1, \"A game ends\n  immediately when a player wins, when the game is a draw, or when the\n  game is restarted\") or ended (`archived.deleted_at`). Otherwise 409.\n  A review shows both seats' plans and reasoning side by side, which is\n  the entire point after a game and would be handing one seat the\n  other's plan during one. Refusing outright is the only version of this\n  that cannot leak: a redacted mid-game review would be a second,\n  subtler copy of the same rule to keep correct. See `_post_game` for\n  what stands in for `Game.is_over` when the board cannot be decoded -\n  and note that neither gate is loosened by that case: an undecodable\n  game with nothing recording an ending is refused exactly as a live one\n  is.\n\n**Never 409 for a snapshot this build cannot decode.** That is what\nstranded a 191-action game the day the engine's schema moved: the whole\nreview is built from the ledger's own frames, none of which needs the\nengine to decode anything, so it is rebuilt from them and marked\n`reconstructed` rather than refused. The engine's refusal is untouched -\nit rides along in `unloadable`, and no `Game` is decoded from that\nsnapshot anywhere.\n\nA seat and the admin key see the same thing here. Post-game, so does\neveryone else who could be shown it - there is no hidden information\nleft to protect and pretending otherwise would make the review useless\nto the person it is for. This is a deliberate decision, stated explicitly\nbecause it is easy to make by accident otherwise: `review.build_review`'s\n`advice` stream (`review.ReviewAdvice`) carries the mtg-buddy advisor's\n`summary`/`reasoning`/`body` for a human seat, which can name cards that\nwere in that seat's own hand at the time it was proposed - and there is\nno redaction of it here, same as `declarations`. The opponent reads it\nonce the game is over, exactly as the advised seat does (see `test_review\n.py`'s `test_the_opponent_reads_the_same_advice_the_human_seat_does`).",
         "operationId": "game_review_api_games__game_id__review_get",
         "parameters": [
           {
@@ -12555,6 +13769,7 @@
     },
     "/api/lobby/games/{game_id}/ai-seat/start": {
       "post": {
+        "description": "Start (or report) the AI seat or buddy this body names.\n\nThe restart half of a buddy's lifecycle: creation starts one\n(`decks_api.start_game_from_decklists`), and this is how a human brings\nback one that fell over, or one whose game they have rejoined in a new\nbrowser. Never raises for a runner that cannot start -\n`AiSeatRegistry.start`'s own contract - so a buddy that will not come up\nanswers 200 with `mechanism: \"fallback\"` and a reason, exactly as a seat\ndoes.",
         "operationId": "start_ai_seat_api_lobby_games__game_id__ai_seat_start_post",
         "parameters": [
           {
@@ -12662,6 +13877,7 @@
     },
     "/api/lobby/games/{game_id}/ai-seat/stop": {
       "post": {
+        "description": "Stop the AI seat or buddy this body names. The uid is resolved the\nsame way `start` resolves it, so stopping something this game has never\nheard of is a 404 rather than a cheerful `stopped: false`.",
         "operationId": "stop_ai_seat_api_lobby_games__game_id__ai_seat_stop_post",
         "parameters": [
           {
@@ -12716,7 +13932,7 @@
     },
     "/api/lobby/games/{game_id}/seats": {
       "get": {
-        "description": "2b's T8 (map's S6/S7): per-seat agent settings and liveness, in one\nanswer. Replaces three things at once - `serialize._player_view` reading\nlobby-owned `agent_settings` *and* `decklists` on every state poll (S6),\nand the play UI's own separate 1.2s `/ai-seat/status` poll (S7) - with a\nsingle lobby-owned route the play UI now polls every 5s instead.\n\n`decklist` moved here rather than being dropped outright: it is still\ngenuinely needed (`mtg_agent.driver.app`'s `seat_decklist`, matchup-guide\nselection - see `tests/driver/test_app.py`'s\n`test_the_real_game_server_carries_the_field_seat_decklist_reads`), and\nit is still hidden information (CR 401.2) - so it is redacted the same\nway `visibility._redact_player` redacted it on the old route: present\nonly for the seat whose own `uid` the caller presents, absent for every\nother entry and for a caller with no `uid` or an unrecognised one.",
+        "description": "2b's T8 (map's S6/S7): per-seat agent settings and liveness, in one\nanswer. Replaces three things at once - `serialize._player_view` reading\nlobby-owned `agent_settings` *and* `decklists` on every state poll (S6),\nand the play UI's own separate 1.2s `/ai-seat/status` poll (S7) - with a\nsingle lobby-owned route the play UI now polls every 5s instead.\n\n`decklist` moved here rather than being dropped outright: it is still\ngenuinely needed (`mtg_agent.driver.app`'s `seat_decklist`, matchup-guide\nselection - see `tests/driver/test_app.py`'s\n`test_the_real_game_server_carries_the_field_seat_decklist_reads`), and\nit is still hidden information (CR 401.2) - so it is redacted the same\nway `visibility._redact_player` redacted it on the old route: present\nonly for the seat whose own `uid` the caller presents, absent for every\nother entry and for a caller with no `uid` or an unrecognised one.\n\n**`uid` is scoped exactly the same way**, and for a stronger reason: a\nseat uid is not a label, it is the authority to act as that seat\n(`SeatDetail.uid`). Handing every seat's uid to every caller made this\npermitted read a credential vending machine - the advisor credential,\nwhose entire design is a uid that may read and may not act, could ask\nthis route for its human's seat uid and then act as the human, with\n`game_access.py`'s gate never consulted. The `uid` echoed inside the\n`ai_seat` liveness block is redacted with it: it was the same secret,\nspelled twice, and nothing reads it (`ui/store.js` reads `state`,\n`mechanism`, `activity` and the error fields, never `uid`).\n\nThe admin key is the one credential answered in full. It is the\noperator's own - `visibility.ADMIN`, already trusted with the whole\nboard - and a harness holding it drives both seats by design.",
         "operationId": "game_seats_api_lobby_games__game_id__seats_get",
         "parameters": [
           {
@@ -12775,7 +13991,7 @@
     },
     "/api/seats/{uid}": {
       "get": {
-        "description": "Resolve a seat uid to its game and player with no game id known in\nadvance - 2b's T8 (map's \"seat back door\"), the lookup half.\n`whose_seat` above already answers this once the caller knows the game;\nthis is the reverse direction `store.seat_uids` gave an in-process caller\nfor free. 404 on a uid no live game recognises.",
+        "description": "Resolve a uid to its game, its player and what kind of credential it\nis, with no game id known in advance - 2b's T8 (map's \"seat back door\"),\nthe lookup half. `whose_seat` above already answers this once the caller\nknows the game; this is the reverse direction `store.seat_uids` gave an\nin-process caller for free. 404 on a uid no live game recognises.\n\n**`role` is why this also resolves advisors** (`repository.Advisor`).\nOne mcp process holds several uids and is handed no game pin with any of\nthem, so this route is the only place it can learn what a uid *is*\nbefore using it - and an advisor driven as if it were a seat would spend\nits whole life being refused by `game_access.py`, one action at a time,\nwith nothing to say why. `player` means the same thing for both: the\nseat whose view that uid reads.",
         "operationId": "find_seat_api_seats__uid__get",
         "parameters": [
           {

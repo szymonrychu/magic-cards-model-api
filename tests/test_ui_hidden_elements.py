@@ -32,6 +32,17 @@ from pathlib import Path
 
 UI = Path(__file__).resolve().parents[1] / "ui"
 STYLE_CSS = UI / "style.css"
+INDEX_HTML = UI / "index.html"
+
+#: Every element `ui/index.html` ships as an overlay - each one covers part
+#: or all of the viewport when it is up, and each one is toggled from JS with
+#: `.hidden`. Listed by id because the failure mode is silent: an overlay
+#: that ships WITHOUT the attribute is up from the moment the page loads, and
+#: `.modal`'s own `position: fixed; inset: 0` then swallows every click on
+#: the board behind it - the greyed-out, dead-button outage this file exists
+#: for. `#log-modal` (the game log, moved out of the control ribbon when the
+#: mtg-buddy advisor panel took that corner) is the newest of them.
+OVERLAYS = ("card-preview", "toast", "popover", "log-modal", "modal")
 
 #: Every module that can toggle `.hidden` - the still-classic `app.js` plus
 #: the buildless ES modules under `ui/` and `ui/render/` (`board.js` and
@@ -86,3 +97,46 @@ def test_no_element_id_gets_a_display_rule_without_the_global_guard() -> None:
     for selector in ("#game {", ".modal {"):
         assert selector in css, f"{selector} vanished from style.css - update this test"
     assert GLOBAL_RULE.search(css)
+
+
+def test_every_overlay_ships_hidden_in_the_markup() -> None:
+    """The other half of the guarantee. The global rule above makes `hidden`
+    WORK; this makes sure the overlays actually start out carrying it.
+
+    An overlay is only safe to add to the page because it is hidden at rest:
+    `.modal` is `position: fixed; inset: 0` with a dark background, so one
+    that shipped visible would cover the whole viewport and intercept every
+    click, which is exactly the outage this file was written for."""
+    html = INDEX_HTML.read_text()
+    for overlay in OVERLAYS:
+        tag = re.search(rf'<div id="{overlay}"([^>]*)>', html)
+        assert tag, f"#{overlay} is no longer in ui/index.html - update this test"
+        assert "hidden" in tag.group(1), (
+            f"#{overlay} ships visible; it is toggled with `.hidden`, so it must start hidden"
+        )
+
+
+def test_the_two_newest_toggles_go_through_hidden_and_not_style_display() -> None:
+    """The log overlay (`panels.js`'s `toggleLogModal`/`closeLogModal`) and
+    the advisor panel (`render/advice.js`, which takes itself out of the
+    control ribbon when it has nothing to propose) are the newest things in
+    this UI to appear and disappear, and both do it through `hidden` - so the
+    single global rule above covers them with no per-element CSS.
+
+    `style.display` would be outside that guarantee and would also fight it:
+    `!important` beats an inline `display` only while the attribute is set,
+    so the two mechanisms disagree exactly when both are in play.
+    (`ui/cards.js` does set `style.display`, legitimately and not as a
+    visibility toggle: it swaps a card's <img> for its text fallback on
+    `onerror`, and the fallback needs `display: flex` specifically. Neither
+    element is ever `hidden`.)"""
+    for module in ("render/panels.js", "render/advice.js"):
+        text = (UI / module).read_text()
+        assert not re.search(r"\.style\.display\s*=", text), (
+            f"ui/{module} toggles visibility with style.display instead of `el.hidden`"
+        )
+    panels = (UI / "render" / "panels.js").read_text()
+    assert re.search(r"#log-modal", panels), "nothing in panels.js touches #log-modal any more"
+    assert re.search(r"modal\.hidden\s*=", panels), (
+        "the log overlay is no longer toggled through `.hidden`"
+    )

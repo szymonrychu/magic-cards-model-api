@@ -266,11 +266,115 @@ ACTION_ANSWER_SECTIONS: tuple[str, ...] = (
 #: board is never misread as an empty one - the same promise
 #: `battlefield_state`'s own `focus.omitted_sections` makes.
 _READ_THE_BOARD_WITH = (
-    "battlefield_state - this answer carries the spine, the stack, combat and "
-    "both players only. The battlefield, hands, graveyards, exile and command "
-    "zone are not missing from the game, only from this answer; ask for them "
-    "there, with `sections` to narrow further."
+    "battlefield_state - this answer carries the spine, the stack, combat, both players, "
+    "and one summary line per permanent under `board.battlefield_digest`. The full "
+    "battlefield card views, hands, graveyards, exile and command zone are not missing "
+    "from the game, only from this answer; ask for them there, with `sections` to narrow "
+    "further."
 )
+
+
+#: How many bytes the battlefield digest may take before the WHOLE thing is
+#: replaced by a pointer at `battlefield_state`. At the measured ~62 bytes a
+#: permanent that is about 128 permanents - so it never fires on a real board,
+#: which is the point: this is a bound against a pathological state, not a
+#: routine trim. 28 permanents (`test_action_answer_size.py`'s already-busy
+#: board) cost 1,726 bytes, a fifth of it.
+MAX_DIGEST_BYTES = 8_000
+
+#: What replaces the digest when it will not fit. Wholesale, never partial,
+#: and this is the one rule of this block worth stating twice: a seat that
+#: misses a blocker because the digest ran out of room is the exact failure
+#: this must not have. `omitted_sections` already makes the same promise for
+#: the sections it names - say what is missing, never quietly hand over less
+#: than was asked for and let it read as all there was.
+_DIGEST_TOO_BIG = (
+    "battlefield_state - this board has more permanents than one answer can summarise, "
+    "so NONE of them are listed here rather than some of them. Ask there for the whole "
+    "battlefield; nothing about it is missing from the game, only from this answer."
+)
+
+
+def _digest_line(card: dict[str, Any], attacking: str | None) -> str:
+    """One permanent, in one line.
+
+    `id` first because it is what every tool takes back, then the name, then
+    only what is actually true of this object: its power and toughness if it
+    has any, `T` if it is tapped, `sick` if it could not attack or tap for an
+    ability (CR 302.6), each kind of counter it carries, what it is attached
+    to, and what it is attacking. A vanilla untapped land is its id and its
+    name and nothing else.
+
+    ~62 bytes against the ~1,300 of the card view this is drawn from - the
+    oracle text, the image links, the parsed ability list and the printed
+    characteristics are all `battlefield_state`'s job and none of them change
+    what a seat is choosing between this instant.
+    """
+    parts = [f"{card.get('id')} {card.get('name')}"]
+    power, toughness = card.get("power"), card.get("toughness")
+    if power is not None or toughness is not None:
+        parts.append(f"{power}/{toughness}")
+    if card.get("tapped"):
+        parts.append("T")
+    if card.get("summoning_sick"):
+        parts.append("sick")
+    counters = card.get("counters")
+    if isinstance(counters, dict):
+        parts.extend(f"{kind}x{count}" for kind, count in counters.items() if count)
+    attached = card.get("attached_to")
+    if isinstance(attached, dict) and attached.get("name"):
+        parts.append(f"on {attached['name']}")
+    if attacking is not None:
+        parts.append(f"attacking {attacking}")
+    return " ".join(parts)
+
+
+def _battlefield_digest(state: dict[str, Any]) -> dict[str, list[str]] | str | None:
+    """The battlefield the answer left out, one line per permanent, keyed by
+    who controls it - or `_DIGEST_TOO_BIG` when that will not fit.
+
+    Built from the `state` `_action_answer` already receives and currently
+    throws away whole, so this costs no fetch and no engine call: it is a
+    reshaping of bytes that were already in hand.
+
+    This is emphatically NOT the `battlefield` section, and `omitted_sections`
+    goes on saying so. The section is every card's full view; this is a
+    summary of it, and calling it the section would be a lie
+    `tests/test_action_answer_size.py` correctly catches.
+
+    A player with an empty board gets an empty list rather than no key: an
+    empty battlefield is a real, common state, and it is the digest being
+    *absent* that a reader could not tell from a digest that was never built.
+    """
+    battlefield = state.get("battlefield")
+    if not isinstance(battlefield, list):
+        return None
+    attacks = (state.get("combat") or {}).get("attacks") or []
+    defender_of = {
+        attack.get("attacker"): attack.get("defender")
+        for attack in attacks
+        if isinstance(attack, dict)
+    }
+    players = state.get("players")
+    digest: dict[str, list[str]] = (
+        {
+            player["username"]: []
+            for player in players
+            if isinstance(player, dict) and player.get("username")
+        }
+        if isinstance(players, list)
+        else {}
+    )
+    for card in battlefield:
+        if not isinstance(card, dict):
+            continue
+        controller = card.get("controller") or card.get("owner") or "?"
+        digest.setdefault(controller, []).append(
+            _digest_line(card, defender_of.get(card.get("id")))
+        )
+    if len(json.dumps(digest, indent=1)) > MAX_DIGEST_BYTES:
+        return _DIGEST_TOO_BIG
+    return digest
 
 
 def _without_empty(entry: dict[str, Any]) -> dict[str, Any]:
@@ -290,16 +394,149 @@ def _without_empty(entry: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in entry.items() if value not in (None, [], {}, "")}
 
 
+#: How many bytes of target candidates one whole answer may carry, every
+#: action entry together. Spent in list order (`_spend_candidate_budget`),
+#: and applied here rather than server-side because here is where the token
+#: budget actually lives: the api answers one caller with 45,000 bytes to
+#: spend and another - the browser - with a whole screen and no budget at all.
+#:
+#: 12,000 is chosen off the measurement, not off a round number. Fourteen
+#: candidates - Lightning Bolt's "any target" on a 28-permanent board - cost
+#: 972 bytes as strings, so this is room for roughly a dozen fully-enumerated
+#: targeted spells in one hand, which is more targeted spells than a hand
+#: holds. An entry that does not fit keeps its `slots[].count` and its
+#: `more_with` and loses only the names: the seat still knows the shape of
+#: what it could do and where to look, which is the difference between a
+#: budget and a silent truncation.
+MAX_CANDIDATE_BYTES = 12_000
+
+#: What an entry says when the budget above ran out before it. Distinct from
+#: `affordances.MORE_CANDIDATES_WITH` on purpose - "there are more than I
+#: listed" and "I listed none of them, for reasons that have nothing to do
+#: with your board" are different facts, and a seat reading the second one
+#: needs to know its own `count` is still exact.
+_BUDGET_SPENT_WITH = (
+    "battlefield_state - this answer's candidate budget was spent on the actions above, "
+    "so this one lists none of its own. `count` is still the true total, and every "
+    "candidate is a permanent, a graveyard/exile card, a spell on the stack, or a player"
+)
+
+
+def _spend_candidate_budget(actions: list[Any]) -> list[Any]:
+    """`actions`, with candidate lists kept while `MAX_CANDIDATE_BYTES` lasts
+    and dropped once it does not.
+
+    In list order, deliberately: the engine's own enumeration order puts a
+    seat's own cast and activation options where it put them, and spending
+    the budget in that order means the entries a reader meets first are the
+    ones that still have their names. The alternative - trimming every entry
+    a little - is the silent partial answer this whole shape exists to avoid.
+
+    Nothing is mutated in place. The entries here are the ones
+    `seatkit.available_actions` handed over, and `run_action`'s own return
+    (which `seat_cli.py` prints in full) is built from the same objects; a
+    budget applied at the MCP boundary must not reach back through them.
+    """
+    spent = 0
+    budgeted: list[Any] = []
+    for action in actions:
+        targets = action.get("targets") if isinstance(action, dict) else None
+        slots = targets.get("slots") if isinstance(targets, dict) else None
+        if not isinstance(slots, list):
+            budgeted.append(action)
+            continue
+        cost = len(json.dumps([slot.get("candidates") or [] for slot in slots], indent=1))
+        if spent + cost <= MAX_CANDIDATE_BYTES:
+            spent += cost
+            budgeted.append(action)
+            continue
+        stripped = {key: value for key, value in targets.items() if key != "more_with"}
+        stripped["slots"] = [
+            {key: value for key, value in slot.items() if key != "candidates"} for slot in slots
+        ]
+        stripped["more_with"] = _BUDGET_SPENT_WITH
+        budgeted.append({**action, "targets": stripped})
+    return budgeted
+
+
+#: How many bytes of `pays_with` one whole answer may carry with the tapped
+#: source's own `name` still attached, every action entry together - spent
+#: in list order like `MAX_CANDIDATE_BYTES` above, and for the same reason:
+#: `pays_with` was unbudgeted (nothing in this module capped it, or even
+#: acknowledged it existed) until an answer-size audit caught it.
+#:
+#: Measured, not guessed: `test_action_answer_size.py`'s busy board (28
+#: permanents, a five-card hand) casting Solitude left three other hand
+#: cards affordable, one mana source apiece, and their `pays_with` cost 373
+#: bytes for the three entries together - about 124 bytes each, almost all
+#: of it the source's own name. 4,000 is room for roughly thirty such
+#: entries - a hand of ten multi-source casts - well past anything a real
+#: hand holds, while still bounding an adversarial one.
+MAX_PAYS_WITH_BYTES = 4_000
+
+#: What a `pays_with` entry's `name` becomes once the budget above is spent.
+#: `Action.pays_with` is purely informational (its own docstring: nothing
+#: reads one of these back in, and no entry point takes one), so losing the
+#: label costs a seat one `battlefield_state`/`card_id` lookup - never the
+#: plan itself. `card_id`, `ability_index`, `adds` and `restriction` all
+#: survive untouched, which is the difference between this and dropping the
+#: field outright: an entry trimmed this way is still a complete, honest
+#: statement of what would be tapped and why, only less convenient to read
+#: without a second call.
+_PAYS_WITH_NAME_OMITTED = (
+    "name omitted - this answer's pays_with budget was spent; look this card_id "
+    "up with battlefield_state"
+)
+
+
+def _spend_pays_with_budget(actions: list[Any]) -> list[Any]:
+    """`actions`, with each `pays_with` entry's own `name` kept while
+    `MAX_PAYS_WITH_BYTES` lasts and replaced with `_PAYS_WITH_NAME_OMITTED`
+    once it does not.
+
+    In list order, deliberately, the same reasoning `_spend_candidate_budget`
+    already carries: the entries a reader meets first keep their names.
+    Nothing is mutated in place - a new dict replaces `pays_with` only on
+    the entries beyond the budget, the same non-destructive shape
+    `_spend_candidate_budget` uses.
+    """
+    spent = 0
+    budgeted: list[Any] = []
+    for action in actions:
+        pays_with = action.get("pays_with") if isinstance(action, dict) else None
+        if not isinstance(pays_with, list) or not pays_with:
+            budgeted.append(action)
+            continue
+        cost = len(json.dumps(pays_with, indent=1))
+        if spent + cost <= MAX_PAYS_WITH_BYTES:
+            spent += cost
+            budgeted.append(action)
+            continue
+        trimmed = [
+            {**entry, "name": _PAYS_WITH_NAME_OMITTED} if isinstance(entry, dict) else entry
+            for entry in pays_with
+        ]
+        budgeted.append({**action, "pays_with": trimmed})
+    return budgeted
+
+
 def _compact_actions(available: Any) -> Any:
-    """`available_actions` with each action entry stripped to what it says."""
+    """`available_actions` with each action entry stripped to what it says,
+    its target candidates trimmed to what the answer can afford, and its
+    `pays_with` entries trimmed to what a separate, smaller budget affords."""
     if not isinstance(available, dict):
         return available
     compacted = _without_empty(available)
     actions = compacted.get("actions")
     if isinstance(actions, list):
-        compacted["actions"] = [
-            _without_empty(action) if isinstance(action, dict) else action for action in actions
-        ]
+        compacted["actions"] = _spend_candidate_budget(
+            _spend_pays_with_budget(
+                [
+                    _without_empty(action) if isinstance(action, dict) else action
+                    for action in actions
+                ]
+            )
+        )
     return compacted
 
 
@@ -329,11 +566,23 @@ def _action_answer(payload: dict[str, Any]) -> dict[str, Any]:
     paused on a decision it could not see through, and dropping that key would
     turn "it has not finished yet" into "nobody said". `pass_until` carries
     neither, and no null placeholder is invented for it.
+
+    `board.battlefield_digest` is the one thing this adds rather than removes
+    (`_battlefield_digest`): one line per permanent, built out of the `state`
+    this function already receives and used to discard whole. The board is
+    what a seat needs to *choose* its next action, and re-serialising every
+    card view to give it is what made this answer 25,397 tokens; ~62 bytes a
+    permanent gives the same choice for a two-hundredth of the cost.
+    `battlefield` stays in `omitted_sections` regardless - a summary of a
+    section is not the section.
     """
     state = payload.get("state")
     state = state if isinstance(state, dict) else {}
     board = _select_sections(state, list(ACTION_ANSWER_SECTIONS))
     board.pop("pending_decision", None)
+    digest = _battlefield_digest(state)
+    if digest is not None:
+        board["battlefield_digest"] = digest
     board["omitted_sections"] = sorted(
         section
         for section in SECTION_KEYS
@@ -500,6 +749,14 @@ def build_server(seats: Seats) -> MCPServer:
                 same way right after it runs, so you normally do not need this
                 separately - it exists for "I have done nothing yet, is it my
                 turn", and for the wait itself when the answer is "not yet".
+
+        **An advisor uid also gets `available_actions` on a real wake** - the
+                same compacted list, target `candidates` and `pays_with`
+                included, that a seat gets on `pass`/`pass_until`. An advisor is
+                refused `pass_until`, so this is the answer that wakes it. It
+                is fetched only when a wake condition holds: an answer saying
+                `nothing new yet` carries no list. A seat's own wait carries
+                none either - its list rides the actions it takes.
         """
         seat = resolve(player_uid)
         if seat is None:
@@ -507,6 +764,16 @@ def build_server(seats: Seats) -> MCPServer:
         woken = seatkit.block_until_wake(seat, before=None, max_seconds=max_seconds)
         woken["state"]["wake_reason"] = woken["wake_reason"]
         woken["state"]["recent_log"] = woken["recent_log"]
+        if seat.advise and woken["wake_reason"] != seatkit.NOTHING_NEW_YET:
+            # The advisor's legal plays, on the one answer that wakes it
+            # (`pass_until` is refused to an advise seat). A GET, like every
+            # other read here, and only on a real wake: an idle poll would pay
+            # ~106 ms of server time for a list nobody can use. Shaped by the
+            # action answers' own `_compact_actions`, so it spends the same
+            # candidate and `pays_with` budgets and says so when it runs out.
+            woken["state"]["available_actions"] = _compact_actions(
+                seatkit.available_actions(seat, woken["state"])
+            )
         return _tool_result(seat, woken["state"], ctx.protocol_version if ctx is not None else None)
 
     @server.tool()
@@ -632,6 +899,7 @@ def build_server(seats: Seats) -> MCPServer:
     def cast(
         player_uid: str,
         card: str,
+        spell_face: str = "",
         targets: str = "",
         mana_sources: str = "",
         modes: str = "",
@@ -657,6 +925,29 @@ def build_server(seats: Seats) -> MCPServer:
                 engine taps only what the cost needs). Set `dry_run` to true to ask
                 "could I cast this?" without changing anything (a dry run never
                 blocks).
+
+        **A split card is two casts, and `spell_face` is how you say which.**
+                Wear // Tear is offered to you as TWO `cast` entries in
+                `available_actions`, one per half, each carrying its own
+                `spell_face` and its own cost - because CR 709.3 makes the half a
+                choice you announce "before putting it onto the stack", and
+                CR 709.3b gives the spell on the stack "only the characteristics of
+                the half being cast". Pass back the `spell_face` string from the row
+                you picked, exactly as you read it (`spell_face="Tear"`): it is the
+                engine's own spelling of that half's name and nothing here
+                transforms it. Leave it empty for the front half, which is every
+                ordinary, single-faced card. Tear takes an enchantment and costs
+                {W} where Wear takes an artifact and costs {1}{R}, so sending the
+                wrong one is refused on the target rather than silently cast.
+
+                An adventurer card (CR 715) works the same way - the creature as a
+                faceless row, its Adventure as a `spell_face` one. Take the
+                Adventure by sending its row's `spell_face`
+                (`spell_face="Swift End"`): CR 715.3a evaluates only the
+                Adventure's own characteristics, so it costs what the Adventure
+                costs, targets what the Adventure targets, and CR 715.3d exiles
+                the card as it resolves rather than putting it in your graveyard -
+                from where you may later cast the creature half.
 
                 A card sitting in your graveyard or exile is castable too, but only
                 under a *named* permission (CR 601.3: "a player can begin to cast a
@@ -786,6 +1077,12 @@ def build_server(seats: Seats) -> MCPServer:
             body["card_id"] = card.strip()
         else:
             body["card"] = card
+        if spell_face.strip():
+            # CR 709.3's announcement, carried verbatim: the value a seat read
+            # off `Action.spell_face` is the value `CastRequest.spell_face`
+            # takes, with only the MCP wire's empty-string default stripped off
+            # (every string parameter on this server spells "absent" that way).
+            body["spell_face"] = spell_face.strip()
         if targets:
             body["targets"] = _parse_ids(targets)
         sources = seat.sources_or_all(mana_sources, state)
@@ -1248,8 +1545,12 @@ def build_server(seats: Seats) -> MCPServer:
         seat = resolve(player_uid)
         if seat is None:
             return NO_SUCH_SEAT
+        # No `player`: `AttackRequest` carries no such field, on purpose -
+        # `app.action_attack` resolves the declaring seat from the uid and
+        # refuses to trust a name off the body (CR 608.2d's "the player
+        # announces"). Pydantic used to drop this key without a word; it is
+        # a 422 now, so it goes.
         body: dict[str, Any] = {
-            "player": seat.player,
             "attackers": [
                 {"card_id": pair["card"], "defender": pair["defender"]}
                 for pair in _parse_pairs(attackers)
@@ -1323,12 +1624,24 @@ def build_server(seats: Seats) -> MCPServer:
         choice: str = "",
         top: bool | None = None,
         order: str = "",
+        generation: int | None = None,
         hold_priority: bool = False,
         reasoning: str = "",
         ctx: Context | None = None,
     ) -> str | InputRequiredResult:
         """Answer your pending decision (CR 608.2d) - `battlefield_state`'s
         `pending_decision` field says what is being asked, by `kind`.
+
+        **Read `pending_decision.answer_with` and paste it.** Every pending
+        decision carries the call that answers it, already filled in with
+        this question's own `generation` and naming the one parameter that
+        carries the answer (`pending_decision.answer_field`) - so the mapping
+        below is a reference for *what to choose*, never a lookup you have to
+        run before you can answer at all. A `may` arrives with
+        `answer_with: "decide(accept=true, generation=7)"`; a `choose_cards`
+        with `answer_with: "decide(card_ids=\"<one of pending_decision.cards>\",
+        generation=12)"`. Fill in the angle-bracket placeholder, keep the
+        parameter name and the generation, send it.
 
         - `choose_cards` (the cleanup discard, a "discard N" effect, a
           "reveal the top N, choose among them" effect - and **every
@@ -1520,6 +1833,17 @@ def build_server(seats: Seats) -> MCPServer:
           `pending_decision.prompt`, which numbers each source positionally
           against `cards`: entry N of the prompt is entry N of `cards`.
 
+        `generation` is `pending_decision.generation`, echoed back to say
+        WHICH question this answer is for - `answer_with` already carries it,
+        so pasting the template opts you in. One resolution can ask two
+        decisions in a row (a fetchland's search, then the shockland's "pay 2
+        life"), and accepting the first replaces the standing question with
+        the second immediately. Without the generation, an answer assembled
+        from the earlier read is either applied to the wrong question or
+        refused with a flat "no pending decision for you" that says nothing
+        about why; with it, the refusal names both generations and tells you
+        to re-read. Omit it only if you have no read to name.
+
         `may`, `pay_life`, `scry`, and `surveil` were not answerable through
         this tool before this wave: the request simply parked until its
         timeout and the engine's documented default was taken instead,
@@ -1576,6 +1900,8 @@ def build_server(seats: Seats) -> MCPServer:
             body["top"] = top
         if order:
             body["order"] = _parse_ids(order)
+        if generation is not None:
+            body["generation"] = generation
         if reasoning:
             body["reasoning"] = reasoning
 

@@ -10,9 +10,28 @@ Now the server is the only place the rule lives.
 
 `resolve_viewer` answers one of three ways:
 
-- a player's username - the seat this uid opens. Its own hand is visible,
-  the opponent's is not, and neither library nor sideboard is - not even
-  the viewer's own, matching the real game (nobody reads their own library).
+- a player's username - the seat this uid opens, or, for an advisor uid
+  (`repository.Advisor`), the human seat that advisor watches. Its own hand
+  is visible, the opponent's is not, and neither library nor sideboard is -
+  not even the viewer's own, matching the real game (nobody reads their own
+  library). **An advisor resolving to a username, rather than to a fourth
+  kind of viewer, is the whole design**: every function below then filters
+  for the human without knowing an advisor exists, so an advisor's view is
+  byte-identical to its human's by construction rather than by two code
+  paths agreeing. What an advisor may *do* is a different question, and one
+  this module never asks - `game_access.py` answers it.
+
+  **This function is for visibility only.** Nothing that decides *who is
+  acting* may call it, precisely because of the resolution above: an
+  advisor uid resolves to its human here, so "does this uid open the seat
+  this request names" comes back `True` for a credential whose entire
+  point is that it may not act. `app.decide`, `app._answer_declaration`
+  and `app._pregame_seat` each asked it that question and each therefore
+  waved an advisor through, leaving `game_access.py`'s gate as the only
+  thing refusing. They call `game_access.seat_for_uid` now - the
+  authorization twin, which never resolves an advisor - and that is what
+  makes the sentence above ("one this module never asks") true rather than
+  merely intended.
 - `ADMIN` - the game's admin key (store.py), minted once at creation and
   handed only to whoever created the game. Full visibility, no redaction -
   the operator's own eye, the same trust level `audit.snapshot` already
@@ -27,8 +46,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audit import PLAN_ACTION
-from .store import store
+from .audit import ADVICE_ACTION, PLAN_ACTION
+from .store import player_for_advisor_uid, store
 
 
 class _Admin:
@@ -47,7 +66,10 @@ def resolve_viewer(game_id: str, uid: str | None) -> Viewer:
         return None
     if store.is_admin(game_id, uid):
         return ADMIN
-    return store.player_for_uid(game_id, uid)
+    player = store.player_for_uid(game_id, uid)
+    if player is not None:
+        return player
+    return player_for_advisor_uid(game_id, uid)
 
 
 def redact_view(view: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
@@ -468,6 +490,15 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
       damaging thing in this ledger to hand the other seat. The row itself
       stays visible, because "bob declared a plan at this point" is public
       the way "bob took a long time" is; its content does not.
+    - an `advice` row (`audit.ADVICE_ACTION`) keeps only its `player`, for
+      exactly the same reason and by the same rule. A proposal names cards in
+      the advised player's own hand, the targets it would pick and the mana it
+      would spend, plus the advisor's reasoning for all of it - a plan
+      declaration with the specifics filled in. Its author is that `player`:
+      an advisor uid resolves to its human's username (`resolve_viewer`), so
+      the human and the buddy advising it both read the row whole and nobody
+      else reads any of it. "alice was given advice at this point" stays
+      public, the way a plan declaration's own existence does.
 
     Both are keyed on `detail["player"]`, which is what the acting route
     recorded. That is safe *in this direction* and only in this direction:
@@ -491,7 +522,7 @@ def redact_log_entry(entry: dict[str, Any], viewer: Viewer) -> dict[str, Any]:
     own = viewer is ADMIN or (isinstance(viewer, str) and detail_player == viewer)
     if not own:
         entry["reasoning"] = None
-        if entry.get("action") == PLAN_ACTION:
+        if entry.get("action") in (PLAN_ACTION, ADVICE_ACTION):
             entry["detail"] = {"player": detail_player} if detail_player else {}
     detail_notices = (entry.get("detail") or {}).get("notices")
     if detail_notices:

@@ -91,6 +91,7 @@ from .commands import Command
 from .db import games, make_engine, records
 from .repository import (
     DEFAULT_RESERVATION_TTL_SECONDS,
+    Advisor,
     ArchivedGame,
     GameUnloadable,
     _ReservationLedger,
@@ -499,6 +500,7 @@ class PostgresRepository:
                     admin_key=admin_key,
                     owner_user_id=owner_user_id,
                     seats={},
+                    advisors={},
                     decklists={},
                     agent_settings={},
                     ai_players=[],
@@ -816,6 +818,19 @@ class PostgresRepository:
 
     def player_for_uid(self, game_id: str, uid: str) -> str | None:
         return self.seat_uids(game_id).get(uid)
+
+    # -- advisor credentials ----------------------------------------------
+
+    def register_advisors(self, game_id: str, advisors: dict[str, Advisor]) -> None:
+        self._update_column(
+            game_id, advisors={uid: advisor.to_wire() for uid, advisor in advisors.items()}
+        )
+
+    def advisor_uids(self, game_id: str) -> dict[str, Advisor]:
+        row = self._select_one(game_id, games.c.advisors)
+        if row is None or not row[0]:
+            return {}
+        return {uid: Advisor.from_wire(value) for uid, value in row[0].items()}
 
     # -- admin key --------------------------------------------------------
 

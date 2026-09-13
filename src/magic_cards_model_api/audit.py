@@ -69,16 +69,48 @@ GAME_OVER_ACTION = "game_over"
 #: starts reaching the ledger rather than needing the page changed again.
 REFLECTION_ACTION = "game_reflection"
 
+#: An advisor's proposal: one action it says its human should take, validated
+#: against the engine where the request shape allowed it, recorded but never
+#: performed (`POST /api/games/{id}/advice`, `schemas.AdviceIn`). The row
+#: carries the suggested request (`method`/`path`/`body`), the server-derived
+#: `summary` of it (card names resolved from ids, targets, cost), the agent's
+#: own `reasoning` for proposing it, `based_on_seq` (the ledger position the
+#: proposal was made against), and `validated` (whether the shape could be
+#: probed with `dry_run` before ever reaching the human - `False` for a
+#: request shape with no `dry_run` support, per
+#: `game_access.DRY_RUN_ROUTES`).
+#:
+#: The advisor credential is read-only by construction (`game_access.py`), so
+#: this row is the *only* way a buddy pod reaches the game at all - and,
+#: because the api is multi-replica and `AiSeatRegistry`/`K8sSeats._seats`
+#: are process-local caches, the ledger is the only place a proposal can live
+#: and still be visible to the replica the human's next poll happens to hit.
+ADVICE_ACTION = "advice"
+
+#: The human saying yes to one `ADVICE_ACTION` row, by its `seq`
+#: (`POST /api/games/{id}/advice/{seq}/approve`). `detail` carries
+#: `advice_seq` - the approved row's own `seq`, which is how `review.py` pairs
+#: the two (by seq, never by comparing bodies: `mana_sources` and similar
+#: fields legitimately differ between what was proposed and what the engine
+#: actually taps). Recorded *before* the action itself is sent, so the
+#: retrospective can pair a proposal with the move it actually produced
+#: rather than guessing from adjacency. Like `ADVICE_ACTION`, mutates no game
+#: state - the approval is a marker; the real attempt that follows, if any, is
+#: its own ordinary action row with its own `allowed`.
+ADVICE_APPROVED_ACTION = "advice_approved"
+
 #: The actions that get a banner at WARNING rather than one compact line.
-LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION)
+LOUD_ACTIONS = (PROBLEM_ACTION, OVERRULE_ACTION, PLAN_ACTION, ADVICE_ACTION)
 
 #: The heading each loud action's banner carries, preposition included: one
-#: is something the seat did, the next something done to it, the last
-#: something the seat said it was about to do.
+#: is something the seat did, the next something done to it, the third
+#: something the seat said it was about to do, the last something somebody
+#: else is suggesting it do.
 _LOUD_HEADINGS = {
     PROBLEM_ACTION: "PROBLEM REPORTED by",
     OVERRULE_ACTION: "PREGAME DECISION OVERRULED for",
     PLAN_ACTION: "PLAN DECLARED by",
+    ADVICE_ACTION: "ADVICE PROPOSED for",
 }
 
 logger = logging.getLogger("mcm.audit")
@@ -88,6 +120,68 @@ if not logger.handlers:  # import-guarded: no duplicate handlers on re-import
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 logger.propagate = False
+
+
+def _with_stale(detail: dict[str, Any], named_a_current_board: bool) -> dict[str, Any]:
+    """`detail` with `stale: False` added when this row is a refusal that the
+    engine actually ruled on, against a board the caller had named and that
+    was current.
+
+    Three conditions, each carrying its own weight:
+
+    - **`allowed is False`.** Only a refusal has a race to be mistaken for.
+      An allowed action and a pause (`allowed: None`, a question the engine
+      asked part way through) are not refusals at all, and
+      `scripts/eval_report.py` never reads `stale` on either.
+    - **`stale` not already present.** `records.require_current_board` writes
+      its own `stale: True` and must win: that row is the refusal that says
+      the board moved, recorded from inside the very guard this flag reads.
+    - **the caller named a board position that was current.** Absent that,
+      the row gets no `stale` key and stays in the report's `unknown` bucket
+      - see `records.named_a_current_board` for why that third state is kept
+      rather than folded into `False`.
+
+    Done here, once, rather than at each of the six places this api writes a
+    refusal row (enumerated in `records._NAMED_A_CURRENT_BOARD`), because the
+    version of this feature that left each site to pass the flag got `False`
+    written by none of them: the bucket existed and was structurally always
+    zero while every rate in the report still read healthy
+    (MEMORY.md 2026-09-12).
+    """
+    if not named_a_current_board:
+        return detail
+    if detail.get("allowed") is not False or "stale" in detail:
+        return detail
+    return {**detail, "stale": False}
+
+
+def _with_offered(detail: dict[str, Any], offered: bool | None) -> dict[str, Any]:
+    """`detail` with `offered` added when this row is a refusal and this api
+    knows whether its own enumeration had offered the action being refused
+    (`records.offered_action`).
+
+    The other half of the same split `_with_stale` starts. `stale` says
+    whether the engine was asked at all; this says whether what it was asked
+    about was something this api had itself just listed as legal for this
+    seat. Only a refusal of an action that was *never offered* is
+    unambiguously the seat's own misreading, and that is the only thing
+    `scripts/eval_report.py` counts as a rules error.
+
+    Written here, once, for the same reason the `stale` flag is: six places
+    in this api record a refusal row (`records._NAMED_A_CURRENT_BOARD`
+    enumerates them), and a flag each of them has to remember to pass is a
+    flag that ends up written by none of them.
+
+    `offered is None` means there was nothing to know - an action shape no
+    enumeration lists as a row, or a refusal recorded before any command was
+    built - and gets no key, so the report can say which rows it could not
+    check rather than counting an unchecked one as a defect.
+    """
+    if offered is None:
+        return detail
+    if detail.get("allowed") is not False or "offered" in detail:
+        return detail
+    return {**detail, "offered": offered}
 
 
 def record(
@@ -137,10 +231,12 @@ def record(
     `audit_outcome` and the `resolve-top`/`advance`/`pass-priority`
     endpoints) against a later read, rather than guessing from a blind retry.
     """
+    from .records import named_a_current_board, offered_action  # lazy, with `store` below
     from .repository import GameUnloadable  # lazy, with `store` below
     from .serialize import snapshot  # lazy: keep module import light
     from .store import store  # lazy: audit imports nothing of the app at load
 
+    detail = _with_offered(_with_stale(detail, named_a_current_board()), offered_action())
     # A game whose snapshot this build cannot decode still gets its entry -
     # every board-derived field simply comes out `None`, exactly as it
     # already does for a game that is gone. Raising here would take out the
@@ -277,7 +373,10 @@ def _loud_block(entry: dict[str, Any]) -> str:
     turn = entry["turn"] if entry["turn"] is not None else "?"
     step = entry["step"] or "?"
     who = detail.get("player") or "?"
-    text = str(detail.get("text") or _plan_text(detail) or "").strip() or "(no text)"
+    text = (
+        str(detail.get("text") or _plan_text(detail) or _advice_text(entry) or "").strip()
+        or "(no text)"
+    )
     heading = _LOUD_HEADINGS.get(entry["action"], f"{entry['action'].upper()} by")
     lines = [
         "=" * 72,
@@ -309,6 +408,34 @@ def _plan_text(detail: dict[str, Any]) -> str | None:
         f"because: {prediction.get('because') or '?'}",
     ]
     return "\n".join(lines)
+
+
+def _advice_text(entry: dict[str, Any]) -> str | None:
+    """An `ADVICE_ACTION` entry rendered for the console banner - `None` for
+    any other entry, so `_loud_block`'s ordinary `text` path is untouched.
+
+    Both halves, on purpose. `summary` is what the proposal *is*, derived
+    server-side from the request body so it cannot disagree with it
+    (`records.advice_summary`); `reasoning` is the advisor's own words, which
+    is the half a person watching the log actually wants to judge. Printing
+    only one of them would either hide what was proposed or hide why.
+
+    Takes the whole `entry`, not only its `detail`, because those two halves
+    live in different places: the summary is detail this route wrote, while
+    the reasoning is `record`'s own top-level `reasoning` field - the same one
+    every acting route's reasoning lands in, so an advisor's words are
+    redacted, reviewed and read back by exactly the mechanisms a seat's
+    already are rather than by a second set written for this row alone."""
+    detail = entry.get("detail") or {}
+    if entry.get("action") != ADVICE_ACTION:
+        return None
+    validated = "validated" if detail.get("validated") else "NOT validated"
+    return "\n".join(
+        [
+            f"proposes: {detail.get('summary') or '?'} ({validated})",
+            f"because : {entry.get('reasoning') or '?'}",
+        ]
+    )
 
 
 def _console_line(entry: dict[str, Any]) -> str:

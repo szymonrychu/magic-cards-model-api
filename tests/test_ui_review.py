@@ -580,6 +580,349 @@ def test_a_reconstructed_review_says_so_and_quotes_the_engines_refusal() -> None
     assert result["pairings"] == 1, "and the whole argument is still on the page"
 
 
+# ---------------------------------------------------------------------------
+# mtg-buddy's advice
+# ---------------------------------------------------------------------------
+
+ADVICE_DID_ROW = {
+    "seq": 202,
+    "ts": "2026-09-08T20:05:00+00:00",
+    "turn": 4,
+    "step": "precombat_main",
+    "phase": "precombat_main",
+    "action": "play_land",
+    "reasoning": None,
+    "detail": {"player": "claude", "card_id": "c1", "allowed": True},
+    "player": "claude",
+}
+
+IGNORED_DID_ROW = {
+    "seq": 203,
+    "ts": "2026-09-08T20:05:30+00:00",
+    "turn": 4,
+    "step": "precombat_main",
+    "phase": "precombat_main",
+    "action": "pass_priority",
+    "reasoning": None,
+    "detail": {"player": "claude", "allowed": True},
+    "player": "claude",
+}
+
+REFUSAL_REASON = "claude cannot play a land: 1 of the 1 they may play this turn already used"
+
+REFUSED_ROW = {
+    "seq": 204,
+    "ts": "2026-09-08T20:05:45+00:00",
+    "turn": 4,
+    "step": "precombat_main",
+    "phase": "precombat_main",
+    "action": "play_land",
+    "reasoning": None,
+    "detail": {"player": "claude", "card_id": "c1", "allowed": False, "reason": REFUSAL_REASON},
+    "player": "claude",
+}
+
+
+def advice_item(seq: int, **over: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "seq": seq,
+        "ts": "2026-09-08T20:04:30+00:00",
+        "turn": 4,
+        "step": "precombat_main",
+        "phase": "precombat_main",
+        "player": "claude",
+        "summary": "play the Forest",
+        "reasoning": "a fourth land keeps the curve on track",
+        "path": "/api/games/g1/actions/play-land",
+        "body": {"card_id": "c1"},
+        "based_on_seq": 199,
+        "validated": True,
+        "approved": False,
+        "approved_seq": None,
+        "did": None,
+        "followed": False,
+        "refused": [],
+    }
+    row.update(over)
+    return row
+
+
+def _advice_review(
+    advice_item_row: dict[str, Any], *extra_entries: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        **REVIEW,
+        "advice": [advice_item_row],
+        "entries": [
+            *REVIEW["entries"],
+            entry(200, "advice", detail={"player": "claude"}),
+            *extra_entries,
+        ],
+    }
+
+
+def test_advice_approved_and_followed_shows_the_summary_reasoning_and_a_frame() -> None:
+    """The fixture sets `followed=True` and, until the follow-through
+    assertions below, every assertion in this test passed identically with
+    `False` - which is how a whole acceptance condition (four outcomes, each
+    rendered distinctly) survived a green suite. `followedText` is what makes
+    the flag load-bearing here."""
+    review = _advice_review(
+        advice_item(200, approved=True, approved_seq=201, did=ADVICE_DID_ROW, followed=True),
+    )
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const advice = findAll(els.body, "advice");
+          return {
+            adviceCount: advice.length,
+            adviceText: advice.length ? advice[0].textContent : "",
+            tagText: findAll(els.body, "advice-tag").map((el) => el.textContent),
+            emptyOutcomes: findAll(els.body, "advice-outcome-empty").length,
+            followedText: findAll(els.body, "advice-followthrough").map((el) => el.textContent),
+            followedClass: findAll(els.body, "advice-followthrough").map((el) => el.className),
+          };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+    assert result["adviceCount"] == 1
+    assert "play the Forest" in result["adviceText"]
+    assert "a fourth land keeps the curve on track" in result["adviceText"]
+    assert "play_land" in result["adviceText"]
+    assert result["tagText"] == ["approved at #201"]
+    assert result["emptyOutcomes"] == 0
+    assert len(result["followedText"]) == 1, (
+        "nothing on the page reads `followed`, so this outcome renders "
+        "byte-identically to 'approved, then did something else'"
+    )
+    assert "that is what they did" in result["followedText"][0]
+    assert "followed" in result["followedClass"][0].split()
+
+
+def test_advice_approved_but_refused_is_distinct_from_advice_ignored() -> None:
+    """`did: null` renders the same empty-outcome line whether the approved
+    attempt was refused or nothing else happened - the `advice-tag` (approved
+    vs never approved) is what tells the two apart, exactly as `review.py`
+    intends."""
+    refused = _advice_review(
+        advice_item(200, approved=True, approved_seq=201, did=None, followed=False)
+    )
+    ignored = _advice_review(
+        advice_item(200, approved=False, approved_seq=None, did=None, followed=False)
+    )
+
+    def outcomes(review: dict[str, Any]) -> dict[str, Any]:
+        return drive(
+            """
+            (async () => {
+              const els = mountInto();
+              const calls = [];
+              const status = 200;
+              const detailText = "";
+              """
+            + FETCH
+            + """
+              const api = m.mountReview(document, { onBack: () => {} });
+              await api.open({ gameId: "g1", uid: "u1" });
+              await new Promise((r) => setTimeout(r, 30));
+              return {
+                tagText: findAll(els.body, "advice-tag").map((el) => el.textContent),
+                emptyText: findAll(els.body, "advice-outcome-empty").map((el) => el.textContent),
+              };
+            })()
+            """,
+            review=review,
+            card=CARD_ANSWER,
+        )
+
+    refused_result = outcomes(refused)
+    ignored_result = outcomes(ignored)
+    assert refused_result["tagText"] == ["approved at #201"]
+    assert ignored_result["tagText"] == ["never approved"]
+    assert len(refused_result["emptyText"]) == 1
+    assert len(ignored_result["emptyText"]) == 1
+    assert refused_result["emptyText"] == ignored_result["emptyText"], (
+        "the same honest line either way - only the tag says which outcome this is"
+    )
+
+
+def test_advice_approved_and_refused_shows_the_engines_own_reason() -> None:
+    """The fourth outcome, visibly distinct from the ambiguous blank above:
+    when `advice.refused` actually carries a row, the engine's own verbatim
+    words render in its place rather than the generic empty-outcome line."""
+    review = _advice_review(
+        advice_item(
+            200,
+            approved=True,
+            approved_seq=201,
+            did=None,
+            followed=False,
+            refused=[REFUSED_ROW],
+        ),
+    )
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return {
+            tagText: findAll(els.body, "advice-tag").map((el) => el.textContent),
+            refusalText: findAll(els.body, "advice-refusal").map((el) => el.textContent),
+            emptyOutcomes: findAll(els.body, "advice-outcome-empty").length,
+          };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+    assert result["tagText"] == ["approved at #201"]
+    assert len(result["refusalText"]) == 1
+    assert REFUSAL_REASON in result["refusalText"][0]
+    assert "play_land" in result["refusalText"][0]
+    assert result["emptyOutcomes"] == 0, (
+        "the refusal replaces the ambiguous blank - both must never render together"
+    )
+
+
+def test_advice_ignored_in_favour_of_something_else_shows_that_frame() -> None:
+    review = _advice_review(
+        advice_item(200, approved=False, approved_seq=None, did=IGNORED_DID_ROW, followed=False),
+    )
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return {
+            tagText: findAll(els.body, "advice-tag").map((el) => el.textContent),
+            adviceText: findAll(els.body, "advice")[0].textContent,
+            emptyOutcomes: findAll(els.body, "advice-outcome-empty").length,
+          };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+    assert result["tagText"] == ["never approved"]
+    assert "pass_priority" in result["adviceText"]
+    assert result["emptyOutcomes"] == 0
+
+
+def test_an_advice_approval_is_a_low_weight_frame_of_its_own() -> None:
+    """The approval marker rides in the ledger's own frames (`review_model.js`'s
+    `reviewTurns` never treats it as a turn header), drawn quietly - not
+    folded into an unrelated run of `advance`/`pass_priority` rows."""
+    review = {
+        **REVIEW,
+        "advice": [advice_item(200, approved=True, approved_seq=201)],
+        "entries": [
+            *REVIEW["entries"],
+            entry(200, "advice", detail={"player": "claude"}),
+            entry(201, "advice_approved", detail={"advice_seq": 200}),
+        ],
+    }
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const approvals = findAll(els.body, "approval");
+          return {
+            count: approvals.length,
+            text: approvals.length ? approvals[0].textContent : "",
+          };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+    assert result["count"] == 1
+    assert "approving advice #200" in result["text"]
+
+
+def test_the_head_counts_the_pieces_of_advice() -> None:
+    review = _advice_review(advice_item(200))
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return { headText: els.head.textContent };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+    assert "1 piece of advice" in result["headText"]
+
+
+def test_a_game_with_no_advice_counts_zero_pieces_of_advice() -> None:
+    result = drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          return { headText: els.head.textContent };
+        })()
+        """,
+        review=REVIEW,
+        card=CARD_ANSWER,
+    )
+    assert "0 pieces of advice" in result["headText"]
+
+
 def test_an_unestablished_outcome_is_never_rendered_as_the_game_is_over() -> None:
     """`is_over: null` means nothing established that this game finished.
     Saying "the game is over" there would be the page inventing the one fact
@@ -613,3 +956,100 @@ def test_an_unestablished_outcome_is_never_rendered_as_the_game_is_over() -> Non
     )
     assert "the game is over" not in result["headText"]
     assert "not recorded" in result["headText"]
+
+
+def _advice_outcomes(review: dict[str, Any]) -> dict[str, Any]:
+    """What one advice item renders: its tag, its follow-through line, and
+    the whole of its own text."""
+    return drive(
+        """
+        (async () => {
+          const els = mountInto();
+          const calls = [];
+          const status = 200;
+          const detailText = "";
+          """
+        + FETCH
+        + """
+          const api = m.mountReview(document, { onBack: () => {} });
+          await api.open({ gameId: "g1", uid: "u1" });
+          await new Promise((r) => setTimeout(r, 30));
+          const advice = findAll(els.body, "advice");
+          return {
+            adviceText: advice.length ? advice[0].textContent : "",
+            tagText: findAll(els.body, "advice-tag").map((el) => el.textContent),
+            followedText: findAll(els.body, "advice-followthrough").map((el) => el.textContent),
+            followedClass: findAll(els.body, "advice-followthrough").map((el) => el.className),
+          };
+        })()
+        """,
+        review=review,
+        card=CARD_ANSWER,
+    )
+
+
+def test_approved_and_followed_never_renders_the_same_as_approved_and_diverged() -> None:
+    """The outcome a trainer most needs to see, and the one the page could not
+    show: `review.py` computes `followed` and `review_model.js` mirrors it,
+    and no renderer read it - so "they approved it and did exactly that" and
+    "they approved it and then did something else" rendered byte-identically.
+    Both have an `approved` tag and both draw `did` as a frame; only the
+    follow-through line tells them apart."""
+    followed = _advice_outcomes(
+        _advice_review(
+            advice_item(200, approved=True, approved_seq=201, did=ADVICE_DID_ROW, followed=True)
+        )
+    )
+    diverged = _advice_outcomes(
+        _advice_review(
+            advice_item(200, approved=True, approved_seq=201, did=IGNORED_DID_ROW, followed=False)
+        )
+    )
+
+    assert followed["tagText"] == diverged["tagText"] == ["approved at #201"], (
+        "the tag says approval, which both of these are - it is not what distinguishes them"
+    )
+    assert followed["adviceText"] != diverged["adviceText"], (
+        "the two outcomes still render identically"
+    )
+    assert "that is what they did" in followed["followedText"][0]
+    assert "something else" in diverged["followedText"][0]
+    assert "followed" in followed["followedClass"][0].split()
+    assert "diverged" in diverged["followedClass"][0].split()
+
+
+def test_never_approved_but_followed_anyway_says_both_halves() -> None:
+    """`followed` does not depend on approval: a human can do exactly what the
+    buddy proposed without ever pressing approve. The tag and the
+    follow-through line compose, so that outcome reads as itself rather than
+    collapsing into "never approved"."""
+    result = _advice_outcomes(
+        _advice_review(
+            advice_item(200, approved=False, approved_seq=None, did=ADVICE_DID_ROW, followed=True)
+        )
+    )
+    assert result["tagText"] == ["never approved"]
+    assert "that is what they did" in result["followedText"][0]
+    assert "followed" in result["followedClass"][0].split()
+
+
+def test_no_follow_through_line_where_nothing_was_done() -> None:
+    """`did` is `None` for two of the four outcomes - the approved attempt the
+    engine refused, and nothing at all - and `followed` is `False` for both.
+    A "but they did something else" line there would be a claim about a move
+    nobody made; the refusal box and the honest empty line already say which
+    of the two it is."""
+    for did, refused in ((None, []), (None, [REFUSED_ROW])):
+        result = _advice_outcomes(
+            _advice_review(
+                advice_item(
+                    200,
+                    approved=True,
+                    approved_seq=201,
+                    did=did,
+                    followed=False,
+                    refused=refused,
+                )
+            )
+        )
+        assert result["followedText"] == [], result["followedText"]

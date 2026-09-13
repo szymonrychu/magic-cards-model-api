@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "archetype": "izzet prowess",
+  "signature": [
+    {
+      "cards": [
+        "Cori-Steel Cutter",
+        "Dragon's Rage Channeler",
+        "Monastery Swiftspear",
+        "Slickshot Show-Off"
+      ],
+      "min": 8,
+      "why": "The threats. All ten current field lists run Cori-Steel Cutter, Dragon's Rage Channeler and Monastery Swiftspear at four copies each; the deck is one-mana bodies that grow when a spell is cast, and Cutter is what turns the second spell each turn into a second body."
+    },
+    {
+      "cards": [
+        "Mishra's Bauble",
+        "Lava Dart",
+        "Mutagenic Growth",
+        "Lightning Bolt",
+        "Preordain"
+      ],
+      "min": 8,
+      "why": "The cheap spells the threats are counting. 10/10 field lists run Bauble, Lava Dart, Bolt and Preordain at 4 each: a prowess deck without a critical mass of zero-and-one-mana spells is an izzet tempo deck that never triggers."
+    },
+    {
+      "cards": [
+        "Steam Vents",
+        "Scalding Tarn",
+        "Fiery Islet",
+        "Thundering Falls",
+        "Mountain",
+        "Wooded Foothills",
+        "Bloodstained Mire",
+        "Arid Mesa",
+        "Spirebluff Canal"
+      ],
+      "min": 8,
+      "why": "An izzet manabase with fetches, because Dragon's Rage Channeler's delirium and Lava Dart's flashback both want lands in the graveyard and the deck casts two spells a turn from turn two."
+    }
+  ]
+}

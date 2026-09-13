@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "archetype": "esper blink",
+  "signature": [
+    {
+      "cards": [
+        "Phelia, Exuberant Shepherd",
+        "Ephemerate",
+        "Flickerwisp"
+      ],
+      "min": 6,
+      "why": "The blink engine the archetype is named for. All ten current field lists run 4 Phelia and 3 Flickerwisp; something has to re-trigger an enters ability every turn or the deck is a pile of value creatures."
+    },
+    {
+      "cards": [
+        "Solitude",
+        "Overlord of the Balemurk",
+        "Witch Enchanter",
+        "Emperor of Bones"
+      ],
+      "min": 8,
+      "why": "The enters abilities worth re-triggering, and 10/10 of the field runs Solitude and Overlord at 4 each. Blinking is only an engine when the bodies pay: Solitude exiles, Overlord returns a card, Witch Enchanter and Emperor of Bones rebuild the board."
+    },
+    {
+      "cards": [
+        "Thoughtseize",
+        "Fatal Push",
+        "Prismatic Ending",
+        "Consign to Memory"
+      ],
+      "min": 6,
+      "why": "The black and white interaction that makes this esper rather than a mono-white blink deck. It is the clause that separates it from orzhov-martyr, which runs the same Phelia, Ephemerate, Flickerwisp, Solitude and Overlord and none of these."
+    }
+  ]
+}

@@ -160,7 +160,239 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-13"
+PROTOCOL_VERSION = "seatkit-16"
+#: `seatkit-16` is a **response** shape change: `wait_for_priority` answers an
+#: advisor uid with `available_actions` on a real wake.
+#:
+#: An opponent seat has always been handed the engine's legal-action list -
+#: target candidates and `pays_with` included - on its `pass`/`pass_until`
+#: answers. An advise seat is refused `pass_until` (driving the game is not
+#: advising it), so `wait_for_priority` is the answer that wakes it, and that
+#: answer carried the whole board and no list. The buddy, the seat that thinks
+#: at every decision point its human holds, was left to reason out legality
+#: the engine would simply have told it. Now `mcp.wait_for_priority` adds the
+#: list, shaped by the action answers' own `_compact_actions` (same candidate
+#: and `pays_with` budgets, same stated truncation), when the seat is an
+#: advisor AND a wake condition holds. An idle `nothing new yet` answer fetches
+#: nothing, and a seat uid's wait is unchanged.
+#:
+#: Why a bump rather than a fold, against the precedent above: the widening
+#: entry below declined one because no shape moved and nothing was unsendable,
+#: and the response fields folded into an earlier version shipped in the same
+#: build, with no build in between to describe. Neither holds here. A key is
+#: added to an existing tool's answer, this build's advisor prose now says the
+#: legal plays arrive on the wake and names no other way to look them up, and
+#: the MCP server is a separate process spawned once and never reloaded. A
+#: stale seatkit-15 MCP process serving a buddy that runs this prose would
+#: answer every wake without the list, silently, leaving the advisor told to
+#: choose from a list it never receives. That is the stale-process case the
+#: PROTOCOL MISMATCH sentence exists to make loud, the same reasoning that
+#: bumped seatkit-13 for a response-only change.
+#:
+#: What did NOT change: no request parameter anywhere, no api route (the
+#: `legal-actions?candidates=true` read already existed), nothing an advisor
+#: can use to move the game - the list is one more GET on a path that is
+#: already a GET, and `pass_until` stays refused.
+#:
+#: `seatkit-15` is an **additive request** change: `cast` gained `spell_face`,
+#: the half of a split card this cast announces (CR 709.3).
+#:
+#: The engine has always enumerated a split card as TWO `cast` actions, one
+#: per half, each carrying `Action.spell_face` and its own cost - and this api
+#: could not act on either of them. `CastRequest` had no face field and
+#: `engine_api._drive_cast` never called `Casting.cast_as_split_half`, so
+#: every cast of Wear // Tear resolved as Wear whatever row the seat thought
+#: it was taking. A seat handed "cast Tear" in `available_actions` followed
+#: its instructions and got the front half, or a refusal it could not
+#: diagnose; `baseline_seat._plain_cast` skipped every `spell_face` row for
+#: exactly that reason. The api was advertising an action it could not
+#: perform, which is the same defect class as prose describing a field that
+#: does not exist, except here the api itself was the liar.
+#:
+#: The value is the engine's own string, unmodified: what `Action.spell_face`
+#: says is what `spell_face` takes, so a seat posts back what it read. That
+#: round trip is the reason the field is named after the engine's own field
+#: rather than given a parallel vocabulary of this api's invention - there is
+#: no second place to look the spelling up.
+#:
+#: An MCP process built before this bump has no `spell_face` parameter to
+#: forward however clearly the prompt tells it to announce one, so the silent
+#: misbehaviour would be the old one: a seat casting the front half while
+#: believing it cast the back. That is what turning this into the PROTOCOL
+#: MISMATCH sentence prevents - same reasoning as `seatkit-8` and
+#: `seatkit-12`, both of which closed a "the tool has no parameter for it"
+#: gap on this same tool.
+#:
+#: What did NOT change: `spell_face` is the only parameter this bump touches
+#: anywhere, additive and optional, and absent still means the plain front
+#: face on every card. No response shape moved. Deliberately not folded in:
+#: fuse (CR 702.102, casting both halves as one spell, `Casting.cast_fused`),
+#: which is a second announcement with its own field and its own tests.
+#:
+#: **Widened in place, deliberately not a bump to `seatkit-16`.** This entry
+#: used to end by excluding CR 715.3's Adventure, which this api refused with
+#: a reason of its own: the engine's `Casting.targeting` was scoped to
+#: `Layout.SPLIT`, so an Adventure was announced against the whole printing's
+#: profile and a targeted Stomp came back "too many targets: 1 chosen where
+#: the spell takes at most 0" while a targetless one resolved dealing no
+#: damage. Engine commit fd28021 made the chosen face the discriminator on
+#: every casting path (CR 601.3e: alternative characteristics "replace the
+#: object's characteristics for this determination", the general rule CR
+#: 709.3a and CR 715.3a both instance), so `spell_face` now accepts an
+#: adventurer card's Adventure face too and `Action.target_slots` on that row
+#: describes the Adventure rather than the printing's creature front.
+#:
+#: That is a widening of the accepted *value space* of a parameter that has
+#: existed since this very version, with no request or response shape moved -
+#: and this constant's own rule is "bump alongside any change to a tool's
+#: request/response shape". A bump would make every `seatkit-15` MCP process
+#: announce PROTOCOL MISMATCH and stop playing over a change that costs it
+#: nothing: it already has the parameter, already forwards whatever
+#: `Action.spell_face` string it read, and gains only that one more string now
+#: works. The mismatch sentence exists for the opposite case - a build that
+#: *cannot express* what the api now expects, which is why `seatkit-8`,
+#: `seatkit-12` and `seatkit-15` itself were all bumps: each added a parameter
+#: an older build had no way to send. Nothing here is unsendable by a
+#: `seatkit-15` build. A newer build talking to an older api gets the old
+#: api's refusal in its own words, which is diagnosable prose rather than a
+#: silent wrong cast.
+#:
+#: `seatkit-14` is an **additive request** change and a **response** shape
+#: change, and every half of it is one thing: handing a seat everything it
+#: needs to *issue* its next action, not merely to choose one, in the answer
+#: it has already been given.
+#:
+#: (1) **`available_actions.actions[].targets`.** Every entry that targets and
+#: is not flatly unaffordable gains the legal candidates for each of its
+#: requirement slots: `{understood, slots: [{slot, count, candidates,
+#: truncated}], more_with}`, candidates as plain strings shaped
+#: `"<uuid> <name> (<zone>, <controller>)"` or `"<player> (player)"` - the
+#: exact spellings `targets` takes back, so a seat casts straight out of the
+#: answer it just read. `Action.target_slots` was only ever the *shape* of a
+#: requirement (the engine's own `TargetSlot` docstring points at
+#: `Game.legal_targets` for the objects), so before this a seat holding a
+#: legal, affordable, targeting action still had to spend a `battlefield_state`
+#: round trip - and so a whole inference cycle - to find out what it could
+#: name. `understood: false` carries no candidates and says why, never an
+#: empty list, which would read as "nothing is legal"; a row with
+#: `affordable: "no"` carries none either, which the new envelope key
+#: `available_actions.targets_note` states once rather than every row
+#: repeating.
+#:
+#: (2) **`board.battlefield_digest`.** One line per permanent, keyed by
+#: controller: id, name, power/toughness, tapped, counters, summoning
+#: sickness, what it is attached to, what it is attacking. `_action_answer`
+#: already received the whole board and threw it away; ~62 bytes a permanent
+#: is what it costs to stop doing that. `battlefield` STAYS in
+#: `omitted_sections` - the digest is a summary of the section, not the
+#: section - and a digest that will not fit its cap is replaced whole by a
+#: pointer at `battlefield_state`, never emitted partially.
+#:
+#: (3) **Request, additive: `decide` gained `generation`.** Nothing else about
+#: the call moved, and omitting it behaves exactly as before -
+#: `DecideRequest.generation` has been `None`-means-skip since it was added,
+#: `app.py`'s `decide` has enforced it with the right refusal text for as
+#: long, and `seat_cli.py` has exposed `--generation` for as long. Only the
+#: MCP tool had no parameter to send it with, so a diagnostic that already
+#: existed server-side was unreachable from the one surface agents actually
+#: call: a stale read earned the flat "no pending decision for you" (11
+#: measured occurrences in the cluster's records table) instead of the
+#: refusal that names both generations and says the resolution moved on.
+#:
+#: (4) **`pending_decision.answer_field` / `.answer_with`.** Every
+#: `pending_decision` block - the state view's, the one an action's own answer
+#: lifts to the top level, and the one an `input_required` result carries -
+#: gained both keys. `answer_field` names the single tool parameter that
+#: carries this kind's answer; `answer_with` is the whole call, paste-ready,
+#: already carrying this question's own generation. The mapping they encode
+#: (`decisions.TOOL_FIELD_FOR_KIND`/`TOOL_FOR_KIND`) disagrees with the
+#: engine-facing field name on ten of the eighteen kinds and lived only in
+#: `decide`'s own ~200-line docstring before this, which is exactly the
+#: "how" thinking a seat had to do before it could answer at all - and where
+#: it guessed wrong, the guess was a real parameter of `decide` accepted by
+#: the tool and refused by the route ("this decision needs a yes/no answer
+#: ('accept')", 2 measured occurrences).
+#:
+#: (5) **`available_actions.actions[].pays_with`.** The engine's `Action`
+#: gained `pays_with` (`machines/cost.plan_mana_payment` in the engine, at
+#: `4ad120c`): the tap plan `auto_tap` would actually execute for that cast,
+#: one entry per source it would tap - `card_id`, `name`, `ability_index`,
+#: `adds`, and `restriction` when that source's mana carries a CR 106.6
+#: sentence. Present only on a `cast` action that owes mana and that the
+#: engine has already said is payable (`affordable: "yes"`); absent
+#: everywhere else, including on a payable cost the seat's own floating mana
+#: already covers, where the honest answer is that nothing gets tapped.
+#: Purely informational and never a request shape: nothing here asks a
+#: caller to name mana sources back, and `mana_sources` is unchanged by this
+#: entry - a seat spends its own reasoning on *which* of its sources a cast
+#: eats ("this Bolt takes the Cavern of Souls I wanted for the
+#: counterspell"), not on the mechanics of paying, which the engine already
+#: does either way. The field reached `GET .../legal-actions` for free
+#: (`schemas.ActionWithTargets` subclasses the engine's `Action` and passes
+#: every field through untouched) and `mcp._compact_actions`/`_without_empty`
+#: already dropped an empty list the same way they drop every other
+#: empty/null key - so no code moved to carry it, and this paragraph is what
+#: makes that fact into the standing contract rather than an accident an
+#: unrelated refactor could quietly undo. An MCP process built before this
+#: bump reads an answer whose `cast` entries carry a key it does not know and
+#: goes on choosing mana sources the only way it ever could - by leaving
+#: `mana_sources` empty and letting the engine pick - so the silent
+#: misbehaviour this check exists to catch is a seat missing a reasoning cue
+#: it did not know to look for, not a broken call.
+#:
+#: (6) **Advise mode: the action tools' answer shape, for an advisor uid
+#: only.** `GET /api/seats/{uid}` now reports a `role` (`"seat"` or
+#: `"advisor"`, wave 1), `Seats.seat_for` reads it - on every transport,
+#: including the `--game`-pinned stdio branch, which did not consult that
+#: endpoint at all before - and an advisor gets `Seat(advise=True)`. For such
+#: a seat every *committing* POST is answered `{"proposed": true, "log_seq":
+#: int, "summary": str, "outcome": ..., "state": ...}` instead of an action
+#: outcome: the action is validated with `dry_run: true` where the request
+#: shape has the field (exactly 7 of the 12 action shapes -
+#: `DRY_RUN_SHAPES`), recorded as one `advice` ledger row, and never
+#: performed. The other 5 shapes send no mutating request at all and are
+#: marked `validated: false`. `run_action` stops before its auto-pass for an
+#: advise seat (`held_priority: null`, `wake_reason` saying nothing moved),
+#: `pass_until` is refused outright, and `declare_plan` returns the server's
+#: own seat-only refusal. Nothing about a *seat* uid's answers moves.
+#:
+#: (7) **New api surface: `POST /api/games/{id}/advice` and
+#: `POST /api/games/{id}/advice/{seq}/approve`** (`schemas.AdviceIn`,
+#: `AdviceApproveIn`). Both record one ledger row and mutate no game.
+#: `/advice` derives its own `summary` server-side from the request body it
+#: is handed, so what a human reads can never disagree with what it would
+#: send, and requires a non-blank `reasoning`; `/advice/{seq}/approve` is
+#: human-uid only. The `advice` row is redacted to `{player}` for anyone but
+#: its author (`visibility.redact_log_entry`) - a proposal names cards in
+#: that player's hand.
+#:
+#: Items (6) and (7) are the *same* protocol version as (1)-(5) on purpose:
+#: wave 1 (the advisor credential and its gate) and wave 2 (what the toolset
+#: does with it) ship together, so there is no build in between for a
+#: separate number to describe.
+#:
+#: An MCP process built before this bump neither sends `generation` nor knows
+#: the new keys: it reads an answer whose action entries, `board` and
+#: `pending_decision` carry keys it does not know, and goes on making the
+#: extra round trip it was written to make - which is the silent,
+#: slower-than-necessary behaviour this check exists to turn loud instead.
+#:
+#: What did NOT change, said plainly: `generation` on `decide` is the only
+#: parameter this bump touches anywhere - additive, optional, and the sole
+#: reason `contract/tools.json` moves at all. No tool lost or renamed a
+#: parameter. Deliberately not folded in either: a `focus`/`for_action`
+#: parameter to narrow which action's candidates come back. That shape was
+#: considered and rejected - a seat must already know what it is about to do
+#: in order to ask, which is exactly the question it was trying to answer.
+#:
+#: The api's own `GET .../legal-actions` grew `candidates=true` for this, and
+#: that half is opt-in on purpose: the walk costs ~106 ms on a 28-permanent
+#: board (`TargetRequirement.rejects` reaches `Game.characteristics_of`, and
+#: `Game.computed_board` is uncached in the engine by CR 613.5's own
+#: reasoning). A seat pays it once per action and saves a round trip;
+#: `ui/app.js`, which polls the same endpoint every 1.2s and already has the
+#: board on screen, does not ask and does not pay.
+#:
 #: `seatkit-13` is a **response** shape change: every mana source an action
 #: tool offers now says what it actually makes and what it is allowed to pay
 #: for. The engine's `Action` gained `produces`, `restriction` and
@@ -465,6 +697,136 @@ UNKNOWN_OUTCOME = (
 )
 
 
+# ------------------------------------------------------------- advise mode --
+#
+# An advisor is a *role of the uid*, not a separate toolset: a buddy pod is
+# the seat Job with a different uid, gets the same 19 MCP tools an opponent
+# pod gets, and nothing about its dispatch (no CLI flag, no MCP config, no new
+# Job placeholder) says which it is. `GET /api/seats/{uid}` does - `role` is
+# `"seat"` or `"advisor"` - and `Seats.seat_for` turns that into
+# `Seat(advise=True)`.
+#
+# Everything the role changes is enforced in `Seat._advise_answer`, because
+# `Seat.call`/`Seat.call_json` are the one place every HTTP request this
+# module makes leaves. Enforcing it per tool would mean 19 places to forget
+# it, and the 20th tool written next month would not be covered at all.
+#
+# The server refuses an advisor's mutating POST anyway (`game_access.py`), so
+# none of this is the only line of defence - but "refused, one action at a
+# time, with nothing to say why" is a useless thing to hand an agent, and the
+# gate's own `dry_run: true` carve-out is exactly as wide as the request
+# shapes that *have* that field. See `DRY_RUN_SHAPES` for why that matters.
+
+#: Every game-mutating action path a seat's own tools POST to, and the request
+#: shape each one takes (`schemas.py`). Fourteen paths, twelve shapes - the
+#: three CR 116.2 special actions share `SpecialActionRequest`.
+#:
+#: Frozen here, and pinned against `openapi.json` by
+#: `tests/test_advise_mode.py`, so the split below cannot drift silently: a
+#: shape that gains or loses `dry_run` changes which of an advisor's calls get
+#: validated before they are proposed, and - far worse - which of them would
+#: start being *sent*.
+ACTION_REQUEST_SHAPES: dict[str, str] = {
+    "actions/activate": "ActivateRequest",
+    "actions/attack": "AttackRequest",
+    "actions/cast": "CastRequest",
+    "actions/concede": "ConcedeRequest",
+    "actions/crew": "CrewRequest",
+    "actions/cycle": "CycleRequest",
+    "actions/declare-blockers": "DeclareBlockersRequest",
+    "actions/foretell": "SpecialActionRequest",
+    "actions/pass-priority": "PassPriorityRequest",
+    "actions/play-land": "PlayLandRequest",
+    "actions/plot": "SpecialActionRequest",
+    "actions/suspend": "SpecialActionRequest",
+    "advance": "AdvanceRequest",
+    "decide": "DecideRequest",
+}
+
+#: The 7 of those 12 shapes that carry `dry_run` - the ones an advisor can ask
+#: the engine to *validate* before proposing, against an isolated probe copy
+#: of the game (`engine_api.dry_run_copy`) that commits nothing.
+#:
+#: The other 5 (`DecideRequest`, `DeclareBlockersRequest`,
+#: `PassPriorityRequest`, `ConcedeRequest`, `AdvanceRequest`) are the
+#: dangerous case, and the reason this set is a frozen constant rather than a
+#: runtime check. `game_access._advisor_may` authorises a POST whose raw body
+#: says `dry_run: true`; a shape with no such field either drops it as an
+#: unknown key or refuses the body outright, and then the route commits for
+#: real. So an advise `Seat` must never lean on that carve-out for these five:
+#: it sends **no mutating request at all** for them, builds the proposal from
+#: `available_actions` instead, and marks it `validated: false`.
+DRY_RUN_SHAPES = frozenset(
+    {
+        "ActivateRequest",
+        "AttackRequest",
+        "CastRequest",
+        "CrewRequest",
+        "CycleRequest",
+        "PlayLandRequest",
+        "SpecialActionRequest",
+    }
+)
+
+#: The POST paths an advise `Seat` sends exactly as a seat would. All four are
+#: ways of *saying* something about a game rather than doing something to it,
+#: and the server already decides which of them an advisor may use: `/advice`
+#: is advise mode's own channel (proposing through it must not recurse),
+#: `/report` files a problem, and `/plan`/`/reflection` are seat-only - their
+#: own refusal is the honest answer to give, not a proposal dressed up as one.
+ADVISE_PASSTHROUGH_SUFFIXES = ("/advice", "/report", "/plan", "/reflection")
+
+#: Why an advise `Seat` cannot run an auto-pass. A `pass_until` run gives up
+#: priority over and over until a named point in the turn - which is not
+#: advising, it is playing: the seat it advises would arrive at its own next
+#: window to find the turn already spent.
+ADVISE_NO_PASS_UNTIL = (
+    "advisors propose one action at a time; use pass - a run that keeps "
+    "passing priority until a named step is driving the game, not advising "
+    "it, and the seat you advise is the one who gets to decide whether its "
+    "turn is over"
+)
+
+#: What an advise `Seat` says in place of `run_action`'s wake reason. There is
+#: nothing to wake for: nothing was performed, priority never moved, and the
+#: board below is the same board the proposal was built against.
+ADVISE_WAKE_REASON = (
+    "proposed, not performed: this is recorded in the game log for the seat "
+    "you advise to approve or ignore. Nothing has moved - it is still their "
+    "move, and you still hold no priority of your own"
+)
+
+#: The reason carried by a proposal nobody validated - the 5 shapes with no
+#: `dry_run` to ask with. Said out loud in the answer *and* recorded in the
+#: ledger row (`validated: false`), because "the engine agreed this is legal"
+#: and "seatkit thinks this is the shape of a legal action" are different
+#: claims and a human approving one should know which they were handed.
+ADVISE_UNVALIDATED_REASON = (
+    "NOT validated: this action's request shape has no `dry_run`, so there "
+    "is no way to ask the engine whether it is legal without actually doing "
+    "it - and an advisor never does. The proposal was built from "
+    "`available_actions` below; the seat you advise will find out for certain "
+    "when it sends it"
+)
+
+
+def _action_key(path: str) -> str | None:
+    """Which `ACTION_REQUEST_SHAPES` entry `path` names, or `None` for a path
+    that is not one of them. Matched on the tail, so it is independent of the
+    game id in the middle and of whichever router owns the route."""
+    tail = path.rstrip("/")
+    for key in ACTION_REQUEST_SHAPES:
+        if tail.endswith("/" + key):
+            return key
+    return None
+
+
+def _status_line(status: int | None) -> str:
+    """The first line of `Seat.call`'s text answer. `None` is the ambiguous
+    timeout case, which has no status to report - see `UNKNOWN_OUTCOME`."""
+    return "HTTP TIMEOUT" if status is None else f"HTTP {status}"
+
+
 def _reason_from_detail(detail: Any) -> str:
     """A human sentence out of whatever shape a non-2xx body's `detail`
     carries. Every exception handler in `app.py` writes `detail` as a plain
@@ -567,11 +929,25 @@ class Seat:
         api: str,
         game_id: str | None,
         timeout: float | httpx.Timeout | None = None,
+        *,
+        advise: bool = False,
+        wake_signatures: dict[str, Any] | None = None,
     ) -> None:
         self.player = player
         self.uid = uid
         self.api = api.rstrip("/")
         self._game_id = game_id
+        #: Advise mode: this uid is an *advisor* of `player` rather than
+        #: `player`'s own seat (`GET /api/seats/{uid}`'s `role`, read by
+        #: `Seats.seat_for` - never a flag a caller sets by hand, and never
+        #: anything the agent holding this uid gets to choose).
+        #:
+        #: It reads exactly what `player` reads (the server resolves an
+        #: advisor uid to that username - `visibility.resolve_viewer`) and it
+        #: never moves the game: every committing POST becomes a proposal
+        #: instead (`_advise_answer`), `run_action` stops before its auto-pass
+        #: and `pass_until` is refused outright.
+        self.advise = advise
         #: `timeout` is normally `Seats.http.timeout` - `Seats.seat_for`
         #: passes it down so the many `Seat` objects it mints all share one
         #: value. `None` (a `Seat` built directly, outside `Seats`) falls
@@ -587,6 +963,61 @@ class Seat:
         # unrelated default. A real `httpx.Client` already has this timeout
         # from the constructor; re-setting it is a no-op there.
         self.http.timeout = timeout.read if isinstance(timeout, httpx.Timeout) else timeout
+        #: P4: the newest ledger position this seat has actually been shown -
+        #: `recent_log`'s own `last_seq`, which every `run_action` answer
+        #: carries back to the caller. `None` until this seat has read the
+        #: log even once, which is the "name no board" default every caller
+        #: had before `expected_seq` existed.
+        #:
+        #: It lives on the `Seat` on purpose: an MCP action tool must not
+        #: grow a parameter for this. An agent reasoning about a sequence
+        #: number is an agent spending a decision on bookkeeping, and it
+        #: would get it wrong (the number it would reach for is whatever it
+        #: last saw in a transcript, not what it last read). The seat has the
+        #: fact already and hands it over without being asked.
+        self.last_seq: int | None = None
+        #: Armed by `send_expected_seq_once`, consumed by the very next
+        #: mutating `call_json`. One-shot rather than sticky, because the
+        #: action itself moves the ledger: `run_action`'s auto-pass, sent
+        #: after that action landed, would be stale by construction if this
+        #: stayed armed.
+        self._expect_seq_once: int | None = None
+        #: `uid` -> the `board_signature` this seat last saw on a genuine
+        #: wake, read and written by `block_until_wake` alone. `Seats.seat_for`
+        #: mints a brand new `Seat` on every single tool call (only the
+        #: `(player, role, game_id)` lookup persists, on `Seats` itself), so
+        #: this dict is handed down from there rather than owned outright: an
+        #: instance attribute on this ephemeral `Seat` would reset to nothing
+        #: on the very next call and could never remember anything across
+        #: separate MCP tool invocations, which is exactly the case that
+        #: matters (see `block_until_wake`). A bare `Seat` built directly
+        #: (tests, `seat_cli`'s one-shot process) gets its own private dict -
+        #: correct there too, since nothing else ever calls in with the same
+        #: uid for it to share.
+        self._wake_signatures: dict[str, Any] = (
+            wake_signatures if wake_signatures is not None else {}
+        )
+
+    def send_expected_seq_once(self, seq: int | None) -> None:
+        """Arm the next mutating call this seat makes to name `seq` as the
+        board it was decided against (`schemas.BoardRead.expected_seq`).
+
+        Consumed by that one call and no other - see `_expect_seq_once`.
+        `None` disarms, which is what a seat that has never read the log
+        stays at."""
+        self._expect_seq_once = seq
+
+    def _with_expected_seq(self, method: str, body: dict[str, Any] | None) -> Any:
+        """`body` with the armed `expected_seq` folded in, and the arming
+        spent. A GET spends nothing: there is no mutating action on one to
+        name a board for."""
+        if method.upper() == "GET":
+            return body
+        seq = self._expect_seq_once
+        self._expect_seq_once = None
+        if seq is None:
+            return body
+        return {**(body or {}), "expected_seq": seq}
 
     def game_id(self) -> str:
         """The game to play: the one given, or the only live one."""
@@ -605,7 +1036,17 @@ class Seat:
         that carries a state view is already filtered to this uid by the time
         it gets here. This only trims image URLs, pure token weight with no
         bearing on what may be seen.
+
+        For an advise `Seat` a committing POST never leaves this method as
+        itself - see `_advise_answer`, which is asked first and, when it
+        answers, has already recorded the proposal this returns instead.
         """
+        advised = self._advise_answer(method, path, body)
+        if advised is not None:
+            status, payload = advised
+            if isinstance(payload, dict):
+                _trim_images(payload)
+            return f"{_status_line(status)}\n{json.dumps(payload, indent=1, sort_keys=True)}"
         try:
             response = self.http.request(method, path, json=body, params={"uid": self.uid})
             try:
@@ -642,11 +1083,33 @@ class Seat:
         `unknown_outcome`, which `_refused`/`_paused`/`_unknown_outcome` all
         missed and `run_action` read as a completed action. See this
         module's own defect writeup (2026-09-08) for the live reproduction.
+
+        For an advise `Seat` a committing POST is answered by
+        `_advise_answer` - asked before `expected_seq` is folded in, so the
+        body recorded in the proposal is the one the human's own client will
+        post rather than one naming a board position somebody else read.
         """
+        advised = self._advise_answer(method, path, body)
+        if advised is not None:
+            return advised[1]
+        body = self._with_expected_seq(method, body)
+        return self._request_json(method, path, body)[1]
+
+    def _request_json(
+        self, method: str, path: str, body: dict[str, Any] | None
+    ) -> tuple[int | None, Any]:
+        """`(status, body)` for one request, the body already normalised into
+        the tri-state shape `call_json` promises. `status` is `None` for the
+        ambiguous-timeout case, which never had one.
+
+        Split out of `call_json` so `_advise_answer` can make requests of its
+        own (the `dry_run` probe, the `/advice` record) through exactly the
+        same normalisation as every other call, and still report the real
+        status code back to `Seat.call`'s text form."""
         try:
             response = self.http.request(method, path, json=body, params={"uid": self.uid})
         except _AMBIGUOUS_TIMEOUTS as exc:
-            return {
+            return None, {
                 "allowed": False,
                 "reason": f"{UNKNOWN_OUTCOME} ({exc})",
                 "unknown_outcome": True,
@@ -656,10 +1119,99 @@ class Seat:
         except ValueError:
             parsed = None
         if response.status_code >= 400:
-            return _normalise_non_2xx(response.status_code, parsed, response.text)
+            return response.status_code, _normalise_non_2xx(
+                response.status_code, parsed, response.text
+            )
         if parsed is None:
-            return {"allowed": False, "reason": f"HTTP {response.status_code}: {response.text}"}
-        return parsed
+            return response.status_code, {
+                "allowed": False,
+                "reason": f"HTTP {response.status_code}: {response.text}",
+            }
+        return response.status_code, parsed
+
+    def _advise_answer(
+        self, method: str, path: str, body: dict[str, Any] | None
+    ) -> tuple[int | None, Any] | None:
+        """`None` when this request may be sent as it is; `(status, answer)`
+        when this is an advise `Seat` making a committing call, in which case
+        the proposal has already been recorded by the time this returns.
+
+        The one choke point advise mode is enforced at - `call` and
+        `call_json` both ask it, and between them they are every HTTP request
+        this module makes. The order of the guards below is the contract:
+
+        1. **Not an advise seat, or not a POST.** Sent. A read is a read, and
+           an advisor reads exactly what its human reads.
+        2. **A path that is a channel for saying something**
+           (`ADVISE_PASSTHROUGH_SUFFIXES`). Sent. `/plan` and `/reflection`
+           are seat-only and the server's own refusal is the right answer to
+           hand back; `/report` is allowed; `/advice` is this method's own
+           output and must not recurse.
+        3. **A body that already says `dry_run: true`.** Sent. That is
+           already a question rather than a move - an advisor probing the
+           engine on purpose gets exactly what a seat would.
+        4. **A shape that supports `dry_run`** (`DRY_RUN_SHAPES`). Probed with
+           `dry_run: true`; an outcome the engine refuses is handed straight
+           back, verbatim and unrecorded, so the advisor tries something else
+           rather than proposing something illegal.
+        5. **Anything else.** *Nothing is sent.* The proposal is built from
+           `available_actions` and marked `validated: false` - see
+           `DRY_RUN_SHAPES` for why leaning on the gate's own `dry_run`
+           carve-out here would be a way to commit a real action by accident.
+
+        The `/advice` POST itself can be refused (a blank `reasoning`, most
+        likely - the route requires the advisor's own words), and that
+        refusal is returned rather than swallowed: a proposal nobody recorded
+        must never read as one that was.
+        """
+        if not self.advise or method.upper() != "POST":
+            return None
+        if path.rstrip("/").endswith(ADVISE_PASSTHROUGH_SUFFIXES):
+            return None
+        sending = dict(body or {})
+        if sending.get("dry_run") is True:
+            return None
+        shape = ACTION_REQUEST_SHAPES.get(_action_key(path) or "")
+        validated = shape in DRY_RUN_SHAPES
+        outcome: Any
+        if validated:
+            status, outcome = self._request_json(method, path, {**sending, "dry_run": True})
+            if not (isinstance(outcome, dict) and outcome.get("allowed") is True):
+                return status, outcome
+        else:
+            outcome = {
+                "allowed": None,
+                "validated": False,
+                "reason": ADVISE_UNVALIDATED_REASON,
+            }
+        # The body the human's own client will post verbatim once it agrees:
+        # the human as `player`, and no `dry_run` left in it (the probe above
+        # was ours, not theirs). No `expected_seq` either - the row carries
+        # `based_on_seq`, read server-side at the moment it is written, and
+        # the human's client names its own board when it finally acts.
+        ready = {key: value for key, value in sending.items() if key != "dry_run"}
+        ready["player"] = self.player
+        status, advice = self._request_json(
+            "POST",
+            f"/api/games/{self.game_id()}/advice",
+            {
+                "player": self.player,
+                "method": method.upper(),
+                "path": path,
+                "body": ready,
+                "reasoning": ready.get("reasoning") or "",
+                "validated": validated,
+            },
+        )
+        if not (isinstance(advice, dict) and advice.get("proposed") is True):
+            return status, advice
+        return status, {
+            "proposed": True,
+            "log_seq": advice["log_seq"],
+            "summary": advice.get("summary"),
+            "outcome": outcome,
+            "state": self.fetch_state(),
+        }
 
     def fetch_state(self) -> dict[str, Any]:
         """This seat's filtered view of the game, right now (`battlefield_state`'s
@@ -713,9 +1265,17 @@ class Seat:
             )
         entries = [entry for entry in (payload.get("log") or []) if isinstance(entry, dict)]
         kept = entries[-limit:] if limit and len(entries) > limit else entries
+        last_seq = payload.get("last_seq", since)
+        # P4: this is the moment the seat is *handed* a ledger position, so
+        # this is where the watermark it will name on its next action is set.
+        # Only on a real read - `_log_unavailable`'s early returns above never
+        # reach here, so a failed log call leaves the previous watermark
+        # standing rather than pretending the seat has seen up to `since`.
+        if isinstance(last_seq, int):
+            self.last_seq = last_seq
         return {
             "entries": [log_headline(entry) for entry in kept],
-            "last_seq": payload.get("last_seq", since),
+            "last_seq": last_seq,
             "omitted": len(entries) - len(kept),
         }
 
@@ -783,13 +1343,25 @@ class Seat:
         (its payment stops at the shortfall); an agent may also pass an
         explicit, smaller set of source ids to any mana-paying tool.
         """
-        return [
-            card["id"]
-            for card in state["battlefield"]
-            if card["controller"] == self.player
-            and not card["tapped"]
-            and any(ability["mana"] for ability in card["abilities"])
-        ]
+        return untapped_mana_sources(state, self.player)
+
+
+def untapped_mana_sources(state: dict[str, Any], player: str) -> list[str]:
+    """Every untapped mana source `player` controls, read off a state view.
+
+    One rule, one place: `Seat.my_untapped_sources` is this, and so is what
+    `baseline_seat.py` offers the engine when it pays for a cast. Offering
+    all of them lets the engine tap only what the cost needs (CR 601.2g -
+    its payment stops at the shortfall), which is why a caller with no
+    opinion should always offer the lot rather than pick.
+    """
+    return [
+        card["id"]
+        for card in state["battlefield"]
+        if card["controller"] == player
+        and not card["tapped"]
+        and any(ability["mana"] for ability in card["abilities"])
+    ]
 
 
 class Seats:
@@ -812,7 +1384,17 @@ class Seats:
         #: from the process itself being dead.
         self._pinned_game_id = game_id
         self._last_seen_game_id: str | None = None
-        self._by_uid: dict[str, str] = {}
+        #: uid -> what `GET /api/seats/{uid}` said about it: `(player, role,
+        #: game_id)`. One lookup per uid for the life of this process - a
+        #: buddy pod or a seat pod makes thousands of tool calls and the
+        #: answer cannot change for a uid that is still valid (a uid is
+        #: never reissued for a different seat, game or role).
+        self._by_uid: dict[str, tuple[str, str, str]] = {}
+        #: uid -> last-woken `board_signature`, shared by reference into
+        #: every `Seat` this mints (`seat_for`) so it survives exactly as
+        #: long as `_by_uid` does - the cross-call watermark `block_until_wake`
+        #: needs, since a `Seat` itself is remade fresh on every call.
+        self._wake_signatures: dict[str, Any] = {}
         #: 2b T11: the http transport is one long-running process that may
         #: serve several concurrently-live games at once - "the one live
         #: game" (`game_id()` below) stops being a coherent idea for it, and
@@ -856,34 +1438,84 @@ class Seats:
         return current
 
     def seat_for(self, uid: str) -> Seat | None:
-        """The seat this uid opens, or None when the uid is nobody's."""
-        if self._resolve_by_uid:
-            return self._seat_for_any_game(uid)
-        game_id = self.game_id()
-        player = self._by_uid.get(uid)
-        if player is None:
-            response = self.http.get(f"/api/games/{game_id}/seat", params={"uid": uid.strip()})
-            if response.status_code != 200:
-                return None
-            player = response.json()["player"]
-            self._by_uid[uid.strip()] = player
-        return Seat(player, uid.strip(), self.api, game_id, timeout=self.http.timeout)
+        """The seat this uid opens, or `None` when the uid is nobody's - an
+        **advise** `Seat` when the uid is an advisor's rather than a seat's.
 
-    def _seat_for_any_game(self, uid: str) -> Seat | None:
-        """`resolve_by_uid=True` path: one round trip to `GET
-        /api/seats/{uid}` finds this uid's game and player with no game id
-        assumed up front - what the http transport needs to serve several
-        live games from one process. No `_by_uid` caching here: unlike the
-        single/pinned-game path, there is no one "current live game" whose
-        restart would tell this process to drop a stale cache (see
-        `game_id`'s docstring) - every call simply asks fresh."""
-        response = self.http.get(f"/api/seats/{uid.strip()}")
+        One lookup for both, `GET /api/seats/{uid}` (`app.find_seat`), for
+        every transport. That endpoint is the only place a uid's *role* is
+        answered at all, and a buddy pod is dispatched as the seat Job with a
+        different uid - no flag, no MCP config change, no new placeholder
+        says which it is - so asking here is what makes advise mode work
+        identically for stdio, shared-HTTP and `mcp-seat` subprocess mode.
+
+        The pinned (`--game`) path used to ask `GET /api/games/{id}/seat`
+        instead, which knows nothing about roles and 404s an advisor uid
+        outright, so a buddy pinned to its game was simply nobody. It now
+        asks the same question as everyone else and keeps its own isolation
+        by *checking* the answer: a uid whose own game is not the pinned one
+        is still nobody here, which is what `--game` is for.
+        """
+        uid = uid.strip()
+        # Asked first, and only on the single-game path: it is what drops a
+        # `_by_uid` cache belonging to a game that has since been replaced
+        # (see `game_id`), so it has to run before `_lookup` reads that cache.
+        expected_game = None if self._resolve_by_uid else self.game_id()
+        found = self._lookup(uid)
+        if found is None:
+            return None
+        player, role, uid_game = found
+        if expected_game is not None and expected_game != uid_game:
+            # `--game` pins this process to one game on purpose, and the
+            # unpinned single-game path follows whichever one is live.
+            # Resolving through the global uid lookup must not turn either
+            # into a hint: a uid minted for another live game is nobody here,
+            # exactly as it was when this path asked that game directly.
+            return None
+        return Seat(
+            player,
+            uid,
+            self.api,
+            uid_game,
+            timeout=self.http.timeout,
+            advise=role == "advisor",
+            wake_signatures=self._wake_signatures,
+        )
+
+    def _lookup(self, uid: str) -> tuple[str, str, str] | None:
+        """`(player, role, game_id)` for `uid` from `GET /api/seats/{uid}`,
+        cached in `_by_uid` - `None` for a uid no live game recognises.
+
+        Cached because it is on the path of every single tool call and the
+        answer cannot change while the uid is still valid. It can stop being
+        valid (the game it belongs to ends), and the cache is dropped for
+        that: `game_id()` clears `_by_uid` the moment the live game id
+        changes under an unpinned process, which is why `seat_for` asks it
+        before calling this.
+
+        The `resolve_by_uid` (shared-HTTP) path has no such trigger - it
+        serves several live games at once, so there is no single "current"
+        one whose replacement would signal a stale cache - and it used to ask
+        fresh every call for exactly that reason. It now caches too, and the
+        cost of that is narrow and visible: a uid whose game has since ended
+        resolves to a `Seat` pointed at a game that is gone, and every call
+        it makes answers 404 rather than the cleaner "no such seat". That is
+        the right trade for a transport whose whole job is thousands of tool
+        calls per uid, and the failure is loud either way."""
+        cached = self._by_uid.get(uid)
+        if cached is not None:
+            return cached
+        response = self.http.get(f"/api/seats/{uid}")
         if response.status_code != 200:
             return None
         body = response.json()
-        return Seat(
-            body["player"], uid.strip(), self.api, body["game_id"], timeout=self.http.timeout
-        )
+        # `role` is T11/wave-1's own field. Defaulted rather than required so
+        # a toolset built after an api that predates it still resolves seats:
+        # "no role reported" can only mean the api has none to report, and an
+        # ordinary seat is the safe reading (an advisor uid would be refused
+        # by that api's routes anyway, having no advisor support at all).
+        found = (body["player"], body.get("role") or "seat", body["game_id"])
+        self._by_uid[uid] = found
+        return found
 
 
 def _trim_images(state: dict[str, Any]) -> None:
@@ -963,11 +1595,16 @@ def _parse_pairs(value: str) -> list[dict[str, str]]:
 # -- the "one call, one action" flow ----------------------------------------
 
 
-def _board_signature(state: dict[str, Any]) -> Any:
+def board_signature(state: dict[str, Any]) -> Any:
     """A fingerprint of everything about the board this seat may see, used
     only to tell "the board changed since the call began" apart from "priority
     bounced straight back with nothing new". Two filtered views compare equal
-    under this exactly when nothing visible to this seat differs."""
+    under this exactly when nothing visible to this seat differs.
+
+    Public because `baseline_seat.py` needs the same question answered - it
+    forgets a refused action only once the board has actually moved - and
+    this project has twice shipped two implementations of one rule that
+    quietly drifted apart (see this module's own docstring)."""
     return {key: value for key, value in state.items() if key not in _NOT_THE_BOARD}
 
 
@@ -1040,7 +1677,7 @@ def compute_wake_reason(
         # other reason fall back to `advance` and bounce off that refusal too.
         return "the stack is non-empty and you have priority: pass_priority to let it resolve"
     if state.get("priority_holder") == player and (
-        before is None or _board_signature(state) != _board_signature(before)
+        before is None or board_signature(state) != board_signature(before)
     ):
         return "you have priority and the board has changed"
     return None
@@ -1071,6 +1708,12 @@ MAX_WAIT_SECONDS = 25.0
 #: wake condition is noticed promptly once it actually holds; long enough not
 #: to hammer the game API with a read every few milliseconds.
 WAIT_POLL_SECONDS = 1.0
+
+#: `Seat._wake_signatures.get(seat.uid, ...)`'s "nothing cached yet" default -
+#: never a real `board_signature`, which is always a `dict` (possibly empty),
+#: so `is` against this tells "never woken" apart from "last woken on a board
+#: whose signature happened to be falsy".
+_NO_CACHED_WAKE_SIGNATURE = object()
 
 
 def block_until_wake(
@@ -1109,7 +1752,31 @@ def block_until_wake(
     Never touches `store.locked` even while waiting - see the module
     docstring's "why this cannot deadlock": every iteration is an ordinary
     read, and `time.sleep` between them holds nothing.
+
+    `before=None` is not "no baseline" any more - it is "no baseline *for
+    this call*", and falls back to `seat`'s own cached `board_signature` from
+    the last time a wait woke it (`seat._wake_signatures`, keyed by
+    `seat.uid`; empty the first time this uid is ever seen). Without that
+    fallback, `compute_wake_reason`'s priority branch treats `before is None`
+    as "always different", so a caller with nothing to hand in - `wait_for_
+    priority`, `seat_cli wait` - woke on *every* call merely because its
+    player held priority, board unchanged or not: an advisor sitting on its
+    human's decision spun forever, burning an inference each time. A caller
+    that DOES have a real prior board (`run_action`) still passes it
+    explicitly and this cache is never consulted for it - only ever a
+    fallback for "nothing to compare against", never a second opinion on top
+    of one the caller already has.
+
+    The cache is written back on every genuine wake (`reason is not None`),
+    regardless of which `before` produced it - `run_action`'s own explicit-
+    `before` wake refreshes it too, so a seat's next *bare* wait always diffs
+    against the most recent board this seat has actually been shown, whoever
+    last saw it.
     """
+    if before is None:
+        cached = seat._wake_signatures.get(seat.uid, _NO_CACHED_WAKE_SIGNATURE)
+        if cached is not _NO_CACHED_WAKE_SIGNATURE:
+            before = cached
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     while True:
@@ -1117,9 +1784,11 @@ def block_until_wake(
         reason = compute_wake_reason(state, before, seat.player)
         remaining = deadline - time.monotonic()
         if reason is not None or remaining <= 0:
+            if reason is not None:
+                seat._wake_signatures[seat.uid] = board_signature(state)
             # `recent_log` is a sibling of `state`, never a key inside it:
             # callers hand this very `state` back as the next call's `before`
-            # (`run_action`, and `test_action_flow.py`), and `_board_signature`
+            # (`run_action`, and `test_action_flow.py`), and `board_signature`
             # would then read a growing log as "the board has changed" and
             # wake the seat for its own history.
             return {
@@ -1188,7 +1857,17 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     try:
         response = seat.http.get(
             f"/api/games/{seat.game_id()}/legal-actions",
-            params={"uid": seat.uid, "player": seat.player},
+            params={
+                "uid": seat.uid,
+                "player": seat.player,
+                # Opt in to the per-action legal-target candidates
+                # (`app._attach_target_candidates`). A seat pays ~106 ms of
+                # server time for them on a 28-permanent board and saves a
+                # whole round trip - and so a whole inference cycle - per
+                # action; the browser, which does not set this, asks the same
+                # endpoint on a 1.2s poll and already has the board on screen.
+                "candidates": True,
+            },
         )
     except _AMBIGUOUS_TIMEOUTS as exc:
         return _actions_unavailable(state, f"the legal-actions call timed out: {exc}")
@@ -1206,6 +1885,23 @@ def available_actions(seat: Seat, state: dict[str, Any]) -> dict[str, Any]:
     return _actions_view(state, payload.get("actions") or [], None)
 
 
+#: What the envelope says once, rather than every row saying it twenty times.
+#: Two facts a reader of `actions` needs and cannot get from any single entry:
+#: that a `targets` block is ready to be handed straight back, and that a row
+#: without one is not a row with no legal targets. CR 118.6 keeps an unpayable
+#: cast in the list, and enumerating what it could point at would be bytes
+#: spent on a list the seat can do nothing with - so `affordable: "no"` rows
+#: carry no candidates, and that is a statement about affordability, never
+#: about the board.
+TARGETS_NOTE = (
+    "an action that targets carries `targets.slots[].candidates` - hand one straight back "
+    'as `targets`. A row with `affordable: "no"` is listed (CR 118.6: an unpayable cast is '
+    "still a legal one) but carries no candidates, because it cannot be taken yet - that is "
+    "NOT 'nothing is legal for it'. `targets.understood: false` means the engine could not "
+    "read the targeting phrase and will not guess; name targets yourself."
+)
+
+
 def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) -> dict[str, Any]:
     pending = state.get("pending_decision")
     kind = pending.get("kind") if pending is not None else None
@@ -1215,6 +1911,8 @@ def _actions_view(state: dict[str, Any], actions: list[Any], error: str | None) 
         "blockers_requested": kind == "declare_blockers",
         "pending_decision": pending,
     }
+    if any(isinstance(action, dict) and action.get("target_slots") for action in actions):
+        view["targets_note"] = TARGETS_NOTE
     if error is not None:
         view["actions_error"] = error
     return view
@@ -1282,6 +1980,27 @@ def _paused(outcome: Any) -> bool:
     loop rarely gets a chance to fire at all - this is the check that
     actually catches it now."""
     return isinstance(outcome, dict) and outcome.get("paused") is True
+
+
+def is_stale(outcome: Any) -> bool:
+    """Whether `outcome` is the server's own board-moved refusal
+    (`records.BoardMoved`, `app._board_moved`): this seat named a ledger
+    position the game had already moved past, and nothing was done.
+
+    **The boolean, never the text.** This reads `stale`, the key the refusal
+    carries precisely so no client has to match on prose - the house rule
+    from the browser fix of 2026-09-08 ("a refused pass is two different
+    things"): ask the board, never pattern-match refusal text, because
+    engine wording is not a client contract. A stale refusal is a lost race,
+    a rules refusal is a misread, and a run that treats the first as the
+    second dies on a board it could simply have re-read.
+
+    Distinct from `_refused` on purpose, even though a stale refusal also
+    carries `allowed: False`: this one is the single case where retrying the
+    identical action is the *right* move, which is what `run_action` does
+    with it - once.
+    """
+    return isinstance(outcome, dict) and outcome.get("stale") is True
 
 
 #: Marker `_call_watching_for_self_decision` returns in place of an outcome
@@ -1409,6 +2128,10 @@ def run_action(
     nothing here would know how to fill in honestly.
     """
     before = seat.fetch_state()
+    # Read by `answered` below, and set here rather than beside the retry
+    # that flips it: every return path goes through `answered`, the advise
+    # short-circuit included, so it has to be bound before any of them.
+    stale_retry = False
 
     def answered(state: dict[str, Any], **fields: Any) -> dict[str, Any]:
         """One answer shape for all eight of this function's returns, so a
@@ -1418,14 +2141,71 @@ def run_action(
         the state the action left behind, this seat's legal actions in it,
         and the tail of what has actually happened (`recent_log` - see
         `Seat.recent_log`)."""
-        return {
+        answer = {
             **fields,
             "state": state,
             "available_actions": available_actions(seat, state),
             "recent_log": seat.recent_log(),
         }
+        if stale_retry:
+            # P4, and only when it happened: this action was refused as
+            # stale once and re-sent against a freshly read board. A reader
+            # of the answer (and of `recent_log`, which carries both rows)
+            # can see the race rather than wonder why there are two.
+            answer["stale_retry"] = True
+        return answer
 
+    if seat.advise:
+        # Advise mode short-circuits **before** the auto-pass and the wake
+        # check below, and that is the whole point: an advisor releasing
+        # priority, or sitting in `block_until_wake` on the strength of an
+        # action it did not take, would be driving the game rather than
+        # advising it. `perform()` itself does not move the game either -
+        # `Seat._advise_answer` turns it into a recorded proposal - so there
+        # is nothing here to wake for and nothing to hold.
+        #
+        # None of the machinery above is reached either: no `expected_seq` is
+        # armed (the proposal carries the server's own `based_on_seq`), no
+        # stale retry is possible (nothing was committed to be stale against)
+        # and `_call_watching_for_self_decision` has no in-flight mutation to
+        # watch for a self-addressed decision behind.
+        proposal = perform()
+        state = proposal.get("state") if isinstance(proposal, dict) else None
+        outcome = (
+            {key: value for key, value in proposal.items() if key != "state"}
+            if isinstance(proposal, dict)
+            else proposal
+        )
+        return answered(
+            state if isinstance(state, dict) else seat.fetch_state(),
+            outcome=outcome,
+            held_priority=None,
+            wake_reason=ADVISE_WAKE_REASON,
+        )
+
+    # P4: name the board this action was decided against - the newest ledger
+    # position this seat has been handed (`Seat.last_seq`, set by every
+    # `recent_log` this function's own answers already carry). One-shot, so
+    # the auto-pass below - sent after this action has itself moved the
+    # ledger - names nothing and is never refused as stale.
+    seat.send_expected_seq_once(seat.last_seq)
     outcome, self_decision = _call_watching_for_self_decision(seat, perform)
+    if self_decision is None and is_stale(outcome):
+        # The board moved between this seat's read and this call - a lost
+        # race, not a misread. Ask the board what it actually is (the house
+        # rule from MEMORY.md 2026-09-08: never pattern-match refusal text),
+        # then send the same action once more against it.
+        #
+        # Once, and never a loop. A seat losing the race twice is a seat
+        # whose decision is genuinely out of date, and the honest thing to
+        # hand it back is the refusal - with `recent_log` alongside saying
+        # what moved - rather than a spin that hides how contended the board
+        # is from the very corpus this field exists to feed.
+        stale_retry = True
+        seat.recent_log()  # re-read: this is what moves `seat.last_seq` on
+        seat.send_expected_seq_once(seat.last_seq)
+        before = seat.fetch_state()
+        outcome, self_decision = _call_watching_for_self_decision(seat, perform)
     if self_decision is None and _paused(outcome):
         # `perform()` itself paused (`commands.py`) rather than a decision
         # surfacing mid-flight through the polling race above - see
@@ -1951,6 +2731,20 @@ def pass_until(
     the exact log noise the owner reported. This is that same bounded wait,
     on this tool too.
     """
+    if seat.advise:
+        # Refused up front, before a single priority is passed: see
+        # `ADVISE_NO_PASS_UNTIL`. The answer keeps `_pass_until_once`'s own
+        # shape so a caller reads this refusal the one way it already knows.
+        state = seat.fetch_state()
+        return {
+            "stopped_because": ADVISE_NO_PASS_UNTIL,
+            "passes": 0,
+            "finished": True,
+            "until": {"step": until_step, "whose_turn": whose_turn},
+            "state": state,
+            "available_actions": available_actions(seat, state),
+            "recent_log": seat.recent_log(),
+        }
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {

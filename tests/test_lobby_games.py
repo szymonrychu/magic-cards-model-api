@@ -33,7 +33,7 @@ def test_lobby_lists_live_games_with_only_your_uids(client: TestClient) -> None:
         assert set(by_id) == {first["game_id"], second["game_id"]}
         assert by_id[first["game_id"]]["seats"] == {"you": my_uid}
         assert by_id[second["game_id"]]["seats"] == {}
-        assert by_id[first["game_id"]]["agents"]["bot"]["model"] == "sonnet"
+        assert by_id[first["game_id"]]["agents"]["bot"]["model"] == "opus"
     finally:
         client.delete(
             f"/api/lobby/games/{first['game_id']}", params={"uid": first["seat_uids"]["you"]}

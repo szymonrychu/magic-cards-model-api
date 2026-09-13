@@ -109,7 +109,7 @@ def test_agent_body_from_fields() -> None:
     ) == {"model": "fable", "effort": "low", "max_thinking_tokens": None}
     assert run_module(
         "lobby_model.js", "m.agentFrom({ model: '', effort: 'high', thinking: '0' })"
-    ) == {"model": "sonnet", "effort": "high", "max_thinking_tokens": 0}
+    ) == {"model": "opus", "effort": "high", "max_thinking_tokens": 0}
 
 
 def test_agent_body_falls_back_to_medium_effort() -> None:
@@ -837,7 +837,6 @@ def test_an_unopenable_game_with_no_recorded_ending_offers_no_review_button() ->
     assert result["shown"] == []
 
 
-
 # --------------------------------------------------------------------------
 # telling two games apart: a short game id, a relative timestamp, and
 # newest-first ordering (see magic_cards_model_api.decks_api.
@@ -873,8 +872,7 @@ def test_relative_time_buckets() -> None:
     now = 1_800_000_000_000  # an arbitrary fixed instant, ms since epoch
     assert run_module("lobby_model.js", "m.relativeTime(iso, now)", iso=None, now=now) is None
     assert (
-        run_module("lobby_model.js", "m.relativeTime(iso, now)", iso="not-a-date", now=now)
-        is None
+        run_module("lobby_model.js", "m.relativeTime(iso, now)", iso="not-a-date", now=now) is None
     )
     assert (
         run_module(
@@ -1043,3 +1041,245 @@ def test_the_games_table_shows_a_short_id_and_a_populated_started_cell() -> None
     assert result["rowText"][2] != "-"
     assert result["startedTitle"] and "2026-09-08" in result["startedTitle"]
     assert "state-playing" in (result["stateClass"] or "")
+
+
+# ---------------------------------------------------------------------------
+# the create-game form: the buddy opt-in and the Opus defaults
+# ---------------------------------------------------------------------------
+
+#: The create-game form, on top of `FAKE_DOM`: every field `startGame` reads,
+#: a stubbed `fetch` that validates every deck and captures the create body,
+#: and `submitCreate(opts)`, which mounts the real lobby, clicks the real
+#: `#start-game` and returns what was POSTed. Shared with
+#: `test_buddy_lifecycle.py`, which sends the captured body to the real server.
+LOBBY_FORM = """
+function field(id, value, tag = "input") {
+  const el = document.createElement(tag);
+  el.setAttribute("id", id);
+  el.value = value;
+  document.appendChild(el);
+  return el;
+}
+
+function lobbyForm(o) {
+  field("you-name", o.youName || "you");
+  field("ai-name", o.aiName || "claude");
+  field("you-text", o.youDeck || "52 Mountain", "textarea");
+  field("ai-text", o.aiDeck || "52 Forest", "textarea");
+  field("you-validation", "", "div");
+  field("ai-validation", "", "div");
+  field("start-error", "", "div");
+  field("seed", "");
+  field("ai-model", o.aiModel || "");
+  field("ai-effort", o.aiEffort || "", "select");
+  field("ai-thinking", o.aiThinking || "");
+  const toggle = field("you-buddy", "on");
+  toggle.type = "checkbox";
+  toggle.checked = Boolean(o.buddy);
+  const settings = field("you-buddy-settings", "", "fieldset");
+  field("you-buddy-model", o.buddyModel || "");
+  field("you-buddy-effort", o.buddyEffort || "", "select");
+  const thinking = field("you-buddy-thinking", o.buddyThinking || "");
+  if (o.validatingThinking) {
+    thinking.validity = "";
+    thinking.setCustomValidity = (msg) => { thinking.validity = msg; };
+  }
+  if (o.rogueAiBuddy) {
+    const rogue = field("ai-buddy", "on");
+    rogue.type = "checkbox";
+    rogue.checked = true;
+  }
+  return { toggle, settings, thinking, start: field("start-game", "", "button") };
+}
+
+const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function submitCreate(o) {
+  const form = lobbyForm(o);
+  const posted = [];
+  globalThis.fetch = async (path, opts) => {
+    const method = (opts && opts.method) || "GET";
+    const ok = (payload) => ({ ok: true, status: 200, json: async () => payload });
+    if (method === "POST" && path === "/api/lobby/games") {
+      posted.push(JSON.parse(opts.body));
+      const seat_uids = {};
+      seat_uids[o.youName || "you"] = "u1";
+      seat_uids[o.aiName || "claude"] = "u2";
+      return ok({ game_id: "g1", seat_uids });
+    }
+    if (path === "/api/decks/validate") {
+      return ok({ valid: true, mainboard_size: 60, sideboard_size: 0, errors: [], warnings: [] });
+    }
+    if (path.startsWith("/api/decks")) return ok({ decks: [] });
+    return ok({ games: [] });
+  };
+  const store = { get: () => ({}), set: () => {}, subscribe: () => () => {} };
+  const started = [];
+  m.mountLobby(document, store, { startGame: (t) => started.push(t) });
+  await tick(20);
+  if (o.afterMount) o.afterMount(form);
+  form.start.listeners.click();
+  await tick(50);
+  return {
+    posted,
+    started,
+    error: document.querySelector("#start-error").textContent,
+    thinkingValidity: form.thinking.validity === undefined ? null : form.thinking.validity,
+  };
+}
+"""
+
+
+def _submit(opts: dict[str, Any]) -> dict[str, Any]:
+    return run_module("render/lobby.js", FAKE_DOM + LOBBY_FORM + "submitCreate(opts)", opts=opts)
+
+
+def test_opting_in_sends_buddy_and_its_agent_settings_on_the_human_seat() -> None:
+    result = _submit(
+        {"buddy": True, "buddyModel": " fable ", "buddyEffort": "high", "buddyThinking": "2048"}
+    )
+    assert len(result["posted"]) == 1, f"no create request was sent: {result}"
+    human, ai = result["posted"][0]["players"]
+    assert human == {
+        "username": "you",
+        "decklist_text": "52 Mountain",
+        "ai": False,
+        "buddy": True,
+        "buddy_agent": {"model": "fable", "effort": "high", "max_thinking_tokens": 2048},
+    }
+    assert ai["username"] == "claude" and ai["ai"] is True
+    assert "buddy" not in ai and "buddy_agent" not in ai
+
+
+def test_not_opting_in_sends_neither_buddy_field() -> None:
+    """Settings typed into the buddy fields must not ride along when the
+    toggle is off - the server refuses `buddy_agent` without `buddy`."""
+    result = _submit({"buddy": False, "buddyModel": "fable", "buddyEffort": "max"})
+    assert len(result["posted"]) == 1, f"no create request was sent: {result}"
+    human, ai = result["posted"][0]["players"]
+    assert human == {"username": "you", "decklist_text": "52 Mountain", "ai": False}
+    assert ai["ai"] is True and "agent" in ai
+    assert "buddy" not in ai and "buddy_agent" not in ai
+
+
+def test_an_ai_seat_never_carries_a_buddy_even_with_a_checked_control_for_it() -> None:
+    """The buddy is tied to the seat being human, not to which checkbox
+    exists: a checked `#ai-buddy` (no such control ships, but nothing about
+    the AI seat's entry may depend on that) still yields no buddy on it,
+    while the human's own opt-in in the same request still goes through."""
+    result = _submit({"buddy": True, "rogueAiBuddy": True})
+    assert len(result["posted"]) == 1, f"no create request was sent: {result}"
+    human, ai = result["posted"][0]["players"]
+    assert human["buddy"] is True
+    assert ai["ai"] is True
+    assert "buddy" not in ai and "buddy_agent" not in ai
+
+
+def test_seat_entry_drops_a_buddy_on_an_ai_seat() -> None:
+    entry = run_module(
+        "lobby_model.js",
+        "m.seatEntry({ username: 'bot', decklistText: 'd', ai: true, buddy: true,"
+        " agent: { model: 'haiku', effort: 'low' }, buddyAgent: { model: 'fable' } })",
+    )
+    assert entry == {
+        "username": "bot",
+        "decklist_text": "d",
+        "ai": True,
+        "agent": {"model": "haiku", "effort": "low", "max_thinking_tokens": None},
+    }
+    human = run_module(
+        "lobby_model.js",
+        "m.seatEntry({ username: 'you', decklistText: 'd', ai: false, buddy: true,"
+        " agent: { model: 'haiku' }, buddyAgent: {} })",
+    )
+    assert human == {
+        "username": "you",
+        "decklist_text": "d",
+        "ai": False,
+        "buddy": True,
+        "buddy_agent": {"model": "opus", "effort": "medium", "max_thinking_tokens": None},
+    }
+
+
+def test_the_buddy_controls_follow_the_seat_and_the_toggle() -> None:
+    assert run_module("lobby_model.js", "m.buddyControlState({ ai: true, buddy: true })") == {
+        "toggleDisabled": True,
+        "settingsDisabled": True,
+    }
+    assert run_module("lobby_model.js", "m.buddyControlState({ ai: false, buddy: false })") == {
+        "toggleDisabled": False,
+        "settingsDisabled": True,
+    }
+    assert run_module("lobby_model.js", "m.buddyControlState({ ai: false, buddy: true })") == {
+        "toggleDisabled": False,
+        "settingsDisabled": False,
+    }
+
+
+def test_the_mounted_lobby_enables_buddy_settings_only_while_opted_in() -> None:
+    result = run_module(
+        "render/lobby.js",
+        FAKE_DOM
+        + LOBBY_FORM
+        + """
+        (async () => {
+          const seen = {};
+          await submitCreate({
+            buddy: false,
+            afterMount: (form) => {
+              seen.mounted = [form.toggle.disabled, form.settings.disabled];
+              form.toggle.checked = true;
+              form.toggle.listeners.change();
+              seen.checked = [form.toggle.disabled, form.settings.disabled];
+              form.toggle.checked = false;
+              form.toggle.listeners.change();
+              seen.unchecked = [form.toggle.disabled, form.settings.disabled];
+            },
+          });
+          return seen;
+        })()
+        """,
+    )
+    assert result == {
+        "mounted": [False, True],
+        "checked": [False, False],
+        "unchecked": [False, True],
+    }
+
+
+def test_blank_model_fields_default_both_the_opponent_and_the_buddy_to_opus() -> None:
+    result = _submit({"buddy": True})
+    assert len(result["posted"]) == 1, f"no create request was sent: {result}"
+    human, ai = result["posted"][0]["players"]
+    assert ai["agent"] == {"model": "opus", "effort": "medium", "max_thinking_tokens": None}
+    assert human["buddy_agent"] == {
+        "model": "opus",
+        "effort": "medium",
+        "max_thinking_tokens": None,
+    }
+
+
+def test_a_bad_buddy_thinking_budget_refuses_to_start() -> None:
+    result = _submit({"buddy": True, "buddyThinking": "5.5", "validatingThinking": True})
+    assert result["posted"] == [], "a fractional buddy thinking budget still created a game"
+    assert "thinking" in result["error"]
+    assert result["thinkingValidity"], "the buddy thinking field was never marked invalid"
+
+
+def test_a_bad_buddy_thinking_budget_is_ignored_when_not_opted_in() -> None:
+    result = _submit({"buddy": False, "buddyThinking": "5.5", "validatingThinking": True})
+    assert len(result["posted"]) == 1, f"an unused buddy field blocked the game: {result}"
+
+
+def test_the_page_offers_the_buddy_on_the_human_picker_alone() -> None:
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parents[1] / "ui" / "index.html").read_text()
+    you_start = html.index('id="picker-you"')
+    ai_start = html.index('id="picker-ai"')
+    you_picker, ai_picker = html[you_start:ai_start], html[ai_start:]
+    ai_picker = ai_picker[: ai_picker.index('class="lobby-footer"')]
+    for control in ("you-buddy", "you-buddy-model", "you-buddy-effort", "you-buddy-thinking"):
+        assert f'id="{control}"' in you_picker, f"#{control} is not on the human picker"
+    assert "buddy" not in ai_picker.lower(), "the AI seat's picker offers a buddy"
+    assert 'id="ai-model" list="ai-model-suggestions" placeholder="opus"' in ai_picker

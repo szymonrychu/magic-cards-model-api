@@ -14,7 +14,46 @@ from magic_cards_model.models import Action, Card
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
-class NewPlayer(BaseModel):
+class RequestModel(BaseModel):
+    """The base every request body in this api is built on, and it exists for
+    one line: `extra="forbid"`.
+
+    Pydantic's default is to **discard** a key a model does not declare,
+    silently, and that turned a request field into something a caller could
+    claim without the route ever honouring it. `game_access._advisor_may`
+    permitted a POST carrying `dry_run: true` - a probe, changing nothing -
+    but only nine routes declare `dry_run`, so on every other shape pydantic
+    threw the key away and the route committed for real. `MintSeatRequest.
+    model_validate({"player": "alice", "dry_run": True})` produced
+    `player='alice'` and nothing else, and `POST .../seats` then handed the
+    caller a fresh, unrestricted seat credential.
+
+    The gate reads the route's own declared shape now rather than the body
+    (`game_access.DRY_RUN_ROUTES`), and that is the fix for *that* hole.
+    This is the invariant that catches the next one: a caller that sends a
+    field the route cannot honour gets a 422 saying so, instead of a 200
+    that did something other than what it asked for. It applies to the
+    shape a route added tomorrow declares, without anybody listing it
+    anywhere.
+
+    Two things it cannot cover, both worth knowing:
+
+    - `POST .../cards/{card_id}/tap` takes a raw `dict[str, bool]`, not a
+      model, so no `model_config` reaches it. `{"dry_run": true}` there
+      simply defaults `tapped` to `True` and taps for real - the gate is the
+      only thing that can refuse it.
+    - `uid`/`key` are read off the raw request by `game_access._credentials`
+      rather than declared as parameters, precisely so no route's OpenAPI
+      shape changes because of the gate. A body-borne credential therefore
+      *is* an undeclared field on most shapes - so the four models whose
+      route carries one (`DeclarePlanIn`, `ReflectionIn`, and
+      `ai_seat_api.StartAiSeat`) declare `uid` for real, and always did.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NewPlayer(RequestModel):
     username: str = Field(min_length=1)
     life: int = 20
     is_agent: bool = False
@@ -27,7 +66,7 @@ class NewPlayer(BaseModel):
     mutating action needs `reasoning`."""
 
 
-class NewGame(BaseModel):
+class NewGame(RequestModel):
     players: list[NewPlayer] = Field(min_length=1)
     active_player: str | None = None
     """Defaults to the first player listed."""
@@ -35,7 +74,7 @@ class NewGame(BaseModel):
     """Step the game starts in. Any Step value."""
 
 
-class PutCard(BaseModel):
+class PutCard(RequestModel):
     card: str
     """A card name. Always fetched from Scryfall (cache first)."""
     player: str
@@ -46,7 +85,7 @@ class PutCard(BaseModel):
     face_up: bool = True
 
 
-class MoveCard(BaseModel):
+class MoveCard(RequestModel):
     to_zone: str
     player: str | None = None
     """The player whose zone receives the card (their hand, library, ...)."""
@@ -57,7 +96,7 @@ class MoveCard(BaseModel):
     face_up: bool | None = None
 
 
-class PatchCard(BaseModel):
+class PatchCard(RequestModel):
     tapped: bool | None = None
     face_up: bool | None = None
     damage: int | None = None
@@ -66,13 +105,13 @@ class PatchCard(BaseModel):
     """Counter kind (e.g. "+1/+1", "loyalty") -> count to set."""
 
 
-class PatchPlayer(BaseModel):
+class PatchPlayer(RequestModel):
     life: int | None = None
     counters: dict[str, int] | None = None
     """Counter kind (e.g. "poison", "energy") -> count to set."""
 
 
-class ManaPoolUpdate(BaseModel):
+class ManaPoolUpdate(RequestModel):
     empty: bool = False
     add: dict[str, int] | None = None
     """Color letter ("W", "U", "B", "R", "G", "C") -> amount."""
@@ -80,7 +119,52 @@ class ManaPoolUpdate(BaseModel):
     """Replace the whole pool with this."""
 
 
-class StepUpdate(BaseModel):
+class BoardRead(RequestModel):
+    """P4: the ledger position a seat decided against, named by the seat.
+
+    **Optional, and it stays optional.** Every caller that existed before
+    this field - the browser above all - sends no `expected_seq` and is
+    refused on nothing new; `None` means "I am not naming a board", which is
+    exactly the behaviour this api always had.
+
+    When it *is* given, `records.require_current_board` compares it to
+    `audit.last_seq(game_id)` before anything else runs, and refuses the
+    call outright when the two differ. That is what makes the corpus answer
+    the question it could not answer before: how many of a seat's refusals
+    were races (it acted on a board that had already moved) and how many
+    were genuine misreads of the rules. The two used to be
+    indistinguishable - losing a race produced `claude does not have
+    priority, you does`, prose a reader can only guess at.
+
+    **`detail.stale` on the ledger row carries all three answers**, and
+    naming the field is only half of it - `scripts/eval_report.py` reads
+    every one:
+
+    - `true` - the board had moved; the engine was never asked.
+    - `false` - this seat named the board it decided against, that board was
+      current, and the engine judged the action illegal on it. A rules error
+      only when the api had not itself offered that action for that board
+      (`detail.offered`, `records.offered_action`) - a refusal of an action
+      this api's own enumeration listed is not the seat misreading anything.
+    - absent - the caller sent no `expected_seq`, so nothing can be said
+      about which of the two it was.
+
+    The `false` case is the reason sending this field is worth a seat's
+    while beyond the refusal itself: without it every rules refusal is
+    indistinguishable from an unmeasured one, and `eval_report`'s rules
+    bucket is structurally zero (MEMORY.md 2026-09-12).
+
+    It is a *ledger* position and not a game version on purpose: `records
+    .seq` is the number every answer already hands a seat back
+    (`log_seq`, `GET .../log`'s `last_seq`, `seatkit.Seat.recent_log`), so
+    a seat names the board it read using the number it was already given,
+    with nothing new to track.
+    """
+
+    expected_seq: int | None = None
+
+
+class StepUpdate(BoardRead):
     step: str
     player: str | None = None
     """Who is moving the marker, for the log's who-did-what line."""
@@ -94,7 +178,7 @@ class StepUpdate(BaseModel):
     stated why is exactly what this gate exists to prevent."""
 
 
-class ActorRequest(BaseModel):
+class ActorRequest(BoardRead):
     """An optional body for endpoints that take no other input: just who is
     calling, so the audit log can attribute the action."""
 
@@ -112,7 +196,7 @@ class ActorRequest(BaseModel):
 Stated = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class OpponentPrediction(BaseModel):
+class OpponentPrediction(RequestModel):
     """What a seat expects its opponent to do next, and why.
 
     The prediction is the part of a declaration that makes it evidence
@@ -133,7 +217,7 @@ class OpponentPrediction(BaseModel):
     will argue with a 65% far harder than with a "medium"."""
 
 
-class DeclarePlanIn(BaseModel):
+class DeclarePlanIn(RequestModel):
     """`POST /api/games/{game_id}/plan` - a seat's declaration, made before
     it acts, of how it reads this turn.
 
@@ -181,7 +265,7 @@ class DeclarePlanResponse(BaseModel):
     """The turn this plan is for, as the ledger stamped it."""
 
 
-class ReflectionIn(BaseModel):
+class ReflectionIn(RequestModel):
     """`POST /api/games/{game_id}/reflection` - a seat's own post-game
     write-up, filed once the result is already known.
 
@@ -216,13 +300,117 @@ class ReflectionResponse(BaseModel):
     player: str
 
 
-class ReportProblemRequest(BaseModel):
+class AdviceIn(RequestModel):
+    """`POST /api/games/{game_id}/advice` - one action an **advisor** thinks
+    its human should take, recorded and never performed.
+
+    An advisor credential (`repository.Advisor`) is read-only by
+    construction: `game_access.py` refuses every mutating POST it makes
+    except this one and `/report`. So this is not a convenience - it is the
+    only way a buddy pod reaches the game it is watching at all, and the
+    reason it is a *ledger row* rather than anything held in memory is that
+    the api is multi-replica: a proposal kept in one process would be
+    invisible to the replica the human's next poll happens to hit.
+
+    `method`/`path`/`body` are the **request the human's client will post
+    verbatim** once it agrees, built by `seatkit` (which already knows how to
+    shape every action) rather than hand-written by a model - see
+    `seatkit.Seat._advise_answer`. `body` names the human as `player` and
+    carries no `dry_run`: an approved proposal is a real action.
+
+    There is deliberately no `summary` field here. What the proposal *says*
+    is derived server-side from `body` and the live game
+    (`records.advice_summary`), so it cannot disagree with the request it
+    describes - an agent-written summary naming a different card from the one
+    `body` would actually cast is exactly the failure that shape invites.
+
+    `reasoning` is the half that *is* the agent's own words, and the half the
+    human actually reads before deciding. Required and non-blank: a proposal
+    with no argument for it is a button, not advice.
+    """
+
+    player: Stated
+    """The human seat being advised - the `player` an approved `body` acts
+    as, and (via `visibility.resolve_viewer`) the only viewer other than that
+    seat's own advisor who may read this row back."""
+    method: Stated
+    """The HTTP method of the request being proposed - `POST` for every
+    action shape there is; carried rather than assumed so the row stays a
+    complete, replayable description of a request."""
+    path: Stated
+    """The request path, e.g. `/api/games/{id}/actions/cast`."""
+    body: dict[str, Any] = Field(default_factory=dict)
+    """The exact ready-to-post request body: `player` is the human, and
+    `dry_run` is absent."""
+    reasoning: Stated
+    """Why, in the advisor's own words. This is the rationale the human
+    reads."""
+    validated: bool = False
+    """Whether the engine itself has already agreed this action is legal.
+    `True` only for the 7 of 12 action shapes that carry `dry_run`
+    (`seatkit.DRY_RUN_SHAPES`), which an advisor probes before proposing.
+    `False` says "nobody has checked this" - the honest answer for the other
+    5, whose shapes have no way to ask, and which an advisor therefore must
+    not send at all."""
+
+
+class AdviceResponse(BaseModel):
+    """`POST .../advice`'s answer. No state view: recording a proposal
+    mutates no `Game`, so there is nothing about the board it could have
+    changed - the same reason `DeclarePlanResponse` carries none."""
+
+    proposed: bool
+    log_seq: int
+    """The `records` row this proposal became - the `seq` the human's client
+    passes back to `POST .../advice/{seq}/approve`."""
+    player: str
+    summary: str
+    """What the server read this proposal as (`records.advice_summary`) -
+    returned as well as recorded so the advisor can see whether the body it
+    built says what it meant."""
+    validated: bool
+    based_on_seq: int
+    """The ledger head this proposal was recorded against. A command that
+    landed between the advisor's read and this row makes the proposal
+    born-stale, which is the safe direction: the human's own action carries
+    `expected_seq` and is refused rather than applied to a board that moved."""
+
+
+class AdviceApproveIn(RequestModel):
+    """`POST /api/games/{game_id}/advice/{seq}/approve` - the human saying
+    yes to one proposal, by its ledger `seq`.
+
+    Human uid only. An advisor's own uid is refused by `game_access.py`
+    before this route ever runs (the path is neither `/advice` nor `/report`
+    and the body claims no `dry_run`), and the route checks the same thing
+    again against `store.player_for_uid`: an advisor must never be able to
+    approve its own advice, and that must hold whether or not the gate is
+    the thing enforcing it on any given day.
+    """
+
+    player: Stated
+    """The approving human - must be the advised `player` of the row at
+    `seq`, and must be the seat the caller's own uid opens."""
+
+
+class AdviceApprovedResponse(BaseModel):
+    """`POST .../advice/{seq}/approve`'s answer. Mutates no `Game` either."""
+
+    recorded: bool
+    log_seq: int
+    """The `advice_approved` row this became."""
+    advice_seq: int
+    """The `advice` row it approves."""
+    player: str
+
+
+class ReportProblemRequest(RequestModel):
     player: str
     text: str = Field(min_length=1)
     """What the player thinks is wrong, written by the player."""
 
 
-class ManaSource(BaseModel):
+class ManaSource(RequestModel):
     card_id: UUID
     colors: list[str] | None = None
     """Which colors to tap it for; defaults to the ability's own production."""
@@ -254,12 +442,60 @@ class ManaSource(BaseModel):
     """
 
 
-class CastRequest(BaseModel):
+class CastRequest(BoardRead):
     player: str
     card_id: UUID | None = None
     card: str | None = None
     """Card name, used when no card_id is given: first match in from_zone."""
     from_zone: str = "hand"
+    spell_face: str | None = None
+    """Which face this cast announces - a half of a split card (CR 709.3) or
+    an adventurer card's Adventure (CR 715.3) - by that face's own printed
+    name: `"Tear"` for Wear // Tear's back half, `"Swift End"` for Murderous
+    Rider's Adventure.
+
+    **The value is the engine's own.** It is exactly the string the engine put
+    in `Action.spell_face` on the row this cast is taking, so a seat hands back
+    what it was offered, unmodified and untransformed - post `GET
+    .../legal-actions`'s `"Tear"` straight into this field. That round trip is
+    the whole point of naming the field after the engine's own: a caller that
+    had to convert what it read into some parallel vocabulary of this api's
+    invention is a caller that will convert it wrong, and there is no second
+    place to look up the spelling.
+
+    `None` - absent, or explicitly null - is the card's plain front-face cast,
+    which is what every caller written before this field existed sends, what a
+    single-faced card only ever has, and how an adventurer card's creature
+    half is cast (CR 715.3's other branch names no face at all).
+
+    CR 709.3a: "Only the chosen half is evaluated to see if it can be cast";
+    CR 715.3a says the same of an Adventure, "only the alternative
+    characteristics are evaluated to see if it can be cast", and CR 601.3e is
+    the general rule both instance - those characteristics "replace the
+    object's characteristics for this determination". So the named face is
+    what decides the cost paid (`Casting.base_cost` reads that face's own
+    `mana_cost`, not the combined `{1}{R} // {W}` the printing carries, CR
+    709.4b), what the spell may target (CR 709.3b/715.3b: on the stack it has
+    only that face's characteristics) - Tear takes an enchantment where Wear
+    takes an artifact - and, for an Adventure, where the card goes as it
+    resolves (CR 715.3d exiles it instead of putting it into a graveyard).
+
+    Two refusals, both in the engine's own words, neither of them a silent
+    fallback to the front half:
+
+    - a face this card does not print ("Wear has no half called Naturalize");
+    - a face named on a card that has no halves to choose between
+      ("Lightning Bolt is not a split card (CR 709)").
+
+    An Adventure face used to be a third: the api refused it with a reason of
+    its own while the engine's `Casting.targeting` read the whole printing for
+    every layout but a split card, which measurably announced Stomp with no
+    target requirement at all. Engine commit fd28021 reads the chosen face on
+    every casting path, so it is cast rather than refused.
+
+    Casting *both* halves of a split card with fuse (CR 702.102) is a different
+    announcement again (`Casting.cast_fused`), and this api does not offer it
+    yet: this field always names exactly one face."""
     targets: list[str] | None = None
     """Card ids or player names."""
     modes: list[int] | None = None
@@ -380,7 +616,7 @@ class CastRequest(BaseModel):
     (`records.require_reasoning`), optional for a human one."""
 
 
-class ConvokeChoice(BaseModel):
+class ConvokeChoice(RequestModel):
     """One creature tapped to pay one symbol of a convoke spell's cost.
 
     CR 702.51b: convoke "isn't an additional or alternative cost and applies
@@ -395,7 +631,7 @@ class ConvokeChoice(BaseModel):
     symbol instead."""
 
 
-class CrewRequest(BaseModel):
+class CrewRequest(BoardRead):
     """CR 702.122a: "Crew N" means "Tap any number of other untapped
     creatures you control with total power N or greater: This permanent
     becomes an artifact creature until end of turn."
@@ -416,7 +652,7 @@ class CrewRequest(BaseModel):
     optional for a human one."""
 
 
-class CycleRequest(BaseModel):
+class CycleRequest(BoardRead):
     """CR 702.29a: "[Cost], Discard this card: Draw a card." An activated
     ability, but one `Game.begin_activating`/`activate_ability` cannot reach -
     they only ever activate a battlefield permanent's ability, and cycling
@@ -438,7 +674,7 @@ class CycleRequest(BaseModel):
     optional for a human one."""
 
 
-class SpecialActionRequest(BaseModel):
+class SpecialActionRequest(BoardRead):
     """A CR 116.2 special action that exiles a card from hand to cast later:
     suspend (CR 116.2f), plot (CR 116.2k), or foretell (CR 116.2h). All three
     share this shape - locate the card, pay its special-action cost, exile it
@@ -455,7 +691,7 @@ class SpecialActionRequest(BaseModel):
     optional for a human one."""
 
 
-class TargetRequest(BaseModel):
+class TargetRequest(RequestModel):
     source_id: UUID
     """A spell on the stack, a card in hand, or a permanent."""
     ability_index: int | None = None
@@ -465,7 +701,30 @@ class TargetRequest(BaseModel):
     """A card id or a player name."""
 
 
-class ActivateRequest(BaseModel):
+class ActivateRequest(BoardRead):
+    # The ONE request shape exempt from `RequestModel`'s `extra="forbid"`,
+    # and the exemption is about `shares`.
+    #
+    # `ui/actions.js`'s `bodyFor` sends `shares` for any targeting action
+    # whose affordance carries a division, an activated ability included
+    # (`tests/test_ui_actions.py::
+    # test_an_activated_abilitys_division_sends_shares_too` asserts it does),
+    # and this shape has never declared the field - so pydantic has always
+    # dropped it and `engine_api.activate_ability` has never seen one. Making
+    # that a 422 would turn a silent wrong answer into a human player unable
+    # to activate a divided ability at all, mid-game, and honouring it needs
+    # division support on the activation path in `magic-cards-model` (the
+    # engine's `announce_division` lives on `Casting`, i.e. the cast path
+    # only) - a change in the other repo, not this one.
+    #
+    # So: accepted and dropped, exactly as before, with a note rather than a
+    # pretence. This costs nothing here, because the advisor gate no longer
+    # reads the body at all - it reads this route's own declared shape
+    # (`game_access.DRY_RUN_ROUTES`), and `dry_run` below is a real field, so
+    # a probe on this route is the permitted case and any other extra key is
+    # inert.
+    model_config = ConfigDict(extra="ignore")
+
     player: str
     card_id: UUID
     ability_index: int = 0
@@ -512,13 +771,13 @@ class ActivateRequest(BaseModel):
     optional for a human one."""
 
 
-class AttackPair(BaseModel):
+class AttackPair(RequestModel):
     card_id: UUID
     defender: str
     """A player name or a planeswalker card id."""
 
 
-class AttackRequest(BaseModel):
+class AttackRequest(BoardRead):
     attackers: list[AttackPair] = Field(default_factory=list)
     """Empty is a legal answer, not a missing one: CR 508.1a's "if any" makes
     "declare nobody" a real attack declaration, the one an autopilot run
@@ -535,7 +794,7 @@ class AttackRequest(BaseModel):
     named on this request."""
 
 
-class PlayLandRequest(BaseModel):
+class PlayLandRequest(BoardRead):
     player: str
     card_id: UUID | None = None
     card: str | None = None
@@ -545,14 +804,14 @@ class PlayLandRequest(BaseModel):
     optional for a human one."""
 
 
-class PassPriorityRequest(BaseModel):
+class PassPriorityRequest(BoardRead):
     player: str
     reasoning: str | None = None
     """T10: required for an agent seat (`records.require_reasoning`),
     optional for a human one."""
 
 
-class ConcedeRequest(BaseModel):
+class ConcedeRequest(BoardRead):
     """CR 104.3a: a player may concede at any time, and leaves the game
     immediately. No priority is required and nothing can refuse it, so unlike
     every other action request this one has no `dry_run` - there is nothing to
@@ -564,7 +823,7 @@ class ConcedeRequest(BaseModel):
     optional for a human one."""
 
 
-class AdvanceRequest(BaseModel):
+class AdvanceRequest(BoardRead):
     """Who is advancing the turn - required, unlike `ActorRequest`, because
     `Game.advance` now authorizes the call against the active player (or
     their controller, CR 723.5) rather than merely logging who asked."""
@@ -575,14 +834,14 @@ class AdvanceRequest(BaseModel):
     optional for a human one."""
 
 
-class BlockPair(BaseModel):
+class BlockPair(RequestModel):
     blocker: UUID
     """The creature declaring the block."""
     blocked: UUID
     """The attacking creature it blocks."""
 
 
-class DeclareBlockersRequest(BaseModel):
+class DeclareBlockersRequest(BoardRead):
     player: str
     blocks: list[BlockPair] = Field(default_factory=list)
     """(blocker, blocked) pairs, in the order damage should be assigned
@@ -599,7 +858,7 @@ class DeclareBlockersRequest(BaseModel):
     above."""
 
 
-class DeclaredPairRequest(BaseModel):
+class DeclaredPairRequest(RequestModel):
     """One `(creature, defender)` pair for the `declare_attackers`/
     `declare_blockers` kinds' `decide` answer (CR 508.1, CR 509.1) - the
     request-side twin of the engine's `machines.decisions.DeclaredPair`.
@@ -617,7 +876,7 @@ class DeclaredPairRequest(BaseModel):
     defender: str
 
 
-class DecideRequest(BaseModel):
+class DecideRequest(BoardRead):
     player: str
     """Must be the pending decision's own player; anyone else is rejected."""
     card_ids: list[str] = Field(default_factory=list)
@@ -714,9 +973,17 @@ class DecideRequest(BaseModel):
     optional for a human one."""
 
 
-class MulliganRequest(BaseModel):
+class MulliganRequest(BoardRead):
     """One seat's CR 103.5 declaration: "a player who is dissatisfied with
-    their initial hand may take a mulligan"."""
+    their initial hand may take a mulligan".
+
+    `BoardRead` because this is a mutating move a seat makes and records
+    (`mulligan_declared`, one of `scripts/eval_report.py`'s `PLAY_ACTIONS`),
+    so a refusal of it belongs in the same measured split as every other:
+    without an `expected_seq` to name, a seat's first declaration of the game
+    was the one move whose refusals could not be told apart from a lost race.
+    Optional here exactly as it is everywhere else - the browser names no
+    board and is refused on nothing new."""
 
     player: str
     take: bool
@@ -735,7 +1002,7 @@ class MulliganRequest(BaseModel):
     """
 
 
-class OpeningHandActionRequest(BaseModel):
+class OpeningHandActionRequest(RequestModel):
     """One CR 103.6 action with a card in this seat's own opening hand -
     "some cards allow a player to take actions with them from their opening
     hand"."""
@@ -747,9 +1014,15 @@ class OpeningHandActionRequest(BaseModel):
     optional for a human one."""
 
 
-class PregameSettleRequest(BaseModel):
+class PregameSettleRequest(BoardRead):
     """Admin-only: run the whole pregame (CR 103.5's mulligan process, CR
-    103.6's opening-hand actions) forward, all at once, over every seat."""
+    103.6's opening-hand actions) forward, all at once, over every seat.
+
+    `BoardRead` for the same reason every other mutating request carries it:
+    this is a command like any other (`commands._run_pregame_settle`), it
+    reaches the same `records.legal_actions_before` sites, and an operator
+    settling a pregame against a board that has since moved is owed the news
+    that it moved rather than a settled game they did not ask for."""
 
     use_defaults: bool = False
     """`False` (the default): run as an ordinary command
@@ -1215,6 +1488,19 @@ class PendingDecisionView(BaseModel):
     """Only for the deciding player - the full view of exactly the ids
     `cards` names, resolved from zones `redact_view` otherwise strips
     entirely (`visibility.redact_pending_decision`)."""
+    answer_field: str | None = None
+    """Which single MCP tool parameter carries this kind's answer
+    (`decisions.TOOL_FIELD_FOR_KIND`) - `accept` for a `may`, `card_ids` for
+    a `choose_cards`, `choice` for a mode, `moved` for a scry."""
+    answer_with: str | None = None
+    """The call that answers this exact question, paste-ready, naming this
+    decision's own `generation` (`decisions.PendingDecision.answer_with`).
+
+    Emitted rather than derived because the mapping from `kind` to parameter
+    disagrees with the engine-facing field name on ten of the eighteen
+    kinds, and lived only in the MCP `decide` tool's own docstring before
+    this - see `decisions.TOOL_FIELD_FOR_KIND`'s note for the table of
+    divergences and the refusal it was costing."""
 
 
 class CombatAttackView(BaseModel):
@@ -1364,7 +1650,7 @@ class SeatResponse(BaseModel):
     player: str
 
 
-class MintSeatRequest(BaseModel):
+class MintSeatRequest(RequestModel):
     """2b's T8, the seat back door's mint half. `player` must already be
     registered on the game (`Game.players`) - this mints a fresh credential
     for an existing seat, it does not add a player to the game."""
@@ -1385,6 +1671,13 @@ class SeatLookupResponse(BaseModel):
 
     game_id: str
     player: str
+    role: Literal["seat", "advisor"] = "seat"
+    """What kind of credential this uid is: a seat that plays `player`, or an
+    advisor that reads `player`'s view and may not act (`repository.Advisor`,
+    enforced by `game_access.py`). Defaulted to `"seat"` so a caller written
+    before advisors existed reads exactly what it always read; a client that
+    holds uids without a game pin - one mcp process serving several games -
+    needs it to know which of the two it is driving."""
 
 
 class GameSummary(BaseModel):
@@ -1493,6 +1786,83 @@ class ReviewDeclaration(BaseModel):
     """What the opponent actually did in the same window."""
 
 
+class ReviewAdvice(BaseModel):
+    """One `audit.ADVICE_ACTION` row - the mtg-buddy advisor's own proposal
+    to a human seat - paired with whether it was approved and what the seat
+    did about it (`review.py`'s `_advice`).
+
+    A stream of its own, beside `declarations` rather than folded into it: a
+    declaration's window runs from one `plan_declared` row to the next *by
+    any seat*; an advice row is per-decision-point and would fragment that
+    window if it were treated as a second kind of marker. It is not - see
+    `_advice`'s own docstring.
+
+    Nothing here grades the advice either, for the same reason
+    `ReviewDeclaration` grades no prediction: whether it was *good* is a
+    judgement, not an outcome. What is reported is one of four things:
+    approved and followed; approved, attempted, and refused by the engine
+    (`did` is `None` - a refusal is a failed attempt, never the outcome -
+    but `refused` carries the row and the engine's own verbatim reason, so
+    nothing is lost); never approved and the seat did something else (`did`
+    is that row); or never approved and the seat did nothing before the next
+    piece of advice (`did` is `None`, `refused` is empty).
+
+    `approved` and `followed` are independent, and the pair a reader is most
+    often after is `approved: true, followed: false` - the seat agreed to
+    this and then did something else. That takes BOTH fields to see: `did`
+    alone cannot say it, and `approved` alone cannot either.
+    """
+
+    seq: int
+    ts: str | None = None
+    turn: int | None = None
+    step: str | None = None
+    phase: str | None = None
+    player: str | None = None
+    summary: str | None = None
+    """Server-derived from the proposal's request body - card names resolved
+    from ids, targets, cost."""
+    reasoning: str | None = None
+    """The advisor's own stated reason for proposing this."""
+    path: str | None = None
+    """The route the proposal would have posted to."""
+    body: dict[str, Any] | None = None
+    """The proposed request body, verbatim."""
+    based_on_seq: int | None = None
+    """The ledger position the proposal was made against."""
+    validated: bool | None = None
+    """Whether the proposal could be checked with `dry_run` before ever
+    reaching the human - `False` for a request shape with no `dry_run`
+    support, and therefore not probed."""
+    approved: bool = False
+    approved_seq: int | None = None
+    """The matching `advice_approved` row's own `seq` - paired by `seq`,
+    never by comparing bodies, since a field like `mana_sources` legitimately
+    differs between what was proposed and what the engine actually taps."""
+    did: ReviewEntry | None = None
+    """The first real move this seat made after the advice and before its
+    own next piece of advice, excluding any row the engine refused. `None`
+    covers two different situations distinguished only by `approved`: the
+    approved attempt was refused, or nothing followed at all."""
+    followed: bool = False
+    """Whether `did` actually matches the proposal - same action kind for
+    `path`, and the same card where `body` names one. Independent of
+    `approved`: a human can do exactly what was proposed without ever
+    approving it, and can approve a proposal and then do something else.
+    Rendered as its own line above the `did` frame (`ui/render/review.js`'s
+    `adviceFollowThroughNode`), because without it the two approved outcomes
+    are the same page."""
+    refused: list[ReviewEntry] = Field(default_factory=list)
+    """Every row by this seat, in the same window, that the engine refused -
+    carrying its verbatim `reason` inside each row's own `detail`, exactly as
+    `GET .../log` shows it. `did` never covers this: a refusal is a failed
+    attempt, not "what happened", but the reason it failed is not thrown
+    away either - "you approved this and the engine refused it because X" is
+    the single most instructive line this page can show. Ordinarily zero or
+    one row; not assumed to be at most one, since nothing stops a seat
+    retrying a refused attempt more than once."""
+
+
 class GameReviewResponse(BaseModel):
     """`GET /api/games/{game_id}/review` - post-game only, and never open."""
 
@@ -1526,6 +1896,11 @@ class GameReviewResponse(BaseModel):
     all, and which are therefore `None` rather than a value. Empty for every
     review built from a decodable final state."""
     declarations: list[ReviewDeclaration] = Field(default_factory=list)
+    advice: list[ReviewAdvice] = Field(default_factory=list)
+    """Every piece of advice the mtg-buddy advisor made to a seat in this
+    game, paired with whether it was approved and what happened next - a
+    stream of its own, beside `declarations` rather than folded into it. See
+    `ReviewAdvice`."""
     entries: list[dict[str, Any]] = Field(default_factory=list)
     """The whole ledger, oldest first, each row carrying its own
     full-information `snapshot` - the frames a reviewer renders. Left
@@ -1698,14 +2073,111 @@ class OpeningHandFinishResponse(BaseModel):
     settled_through: list[str] | None = None
 
 
+class TargetSlotCandidates(BaseModel):
+    """The legal candidates for ONE of an announcement's targeting
+    requirements (`affordances.target_candidates`), by that requirement's own
+    index into `Action.target_slots` - so `slot` says which phrase these
+    answer, and the phrase itself is not repeated here.
+
+    `count` is the true total whatever the caps did to `candidates`: a seat
+    weighing a sweeper needs the number even when it does not need the names,
+    and a list that quietly shrank while its count shrank with it would be a
+    list that lies. `truncated` and the absence of `candidates` are the two
+    ways it can shrink - the per-slot cap (`affordances.CANDIDATE_SLOT_CAP`)
+    and the whole answer's candidate budget (`mcp.MAX_CANDIDATE_BYTES`).
+    """
+
+    slot: int
+    count: int
+    candidates: list[str] | None = None
+    """`"<uuid> <name> (<zone>, <controller>)"`, or `"<player> (player)"`.
+    Strings rather than objects on purpose - see `affordances.candidate_line`
+    for the byte measurement that decided it. Absent (never empty) when the
+    answer's candidate budget was spent before this entry."""
+    truncated: int | None = None
+    """How many legal candidates this slot has beyond the ones listed.
+    Absent, never `0`, when the list is complete."""
+
+
+class ActionTargets(BaseModel):
+    """What one action may legally name, per requirement slot.
+
+    `understood: false` carries NO slots and a `note` saying why, which is
+    `affordances.candidates`' existing contract kept intact: an empty
+    candidate list would read as "nothing on this board is legal", a
+    different and false statement, and `ui/app.js`'s `isPickingTargets`
+    already branches on exactly that difference.
+    """
+
+    understood: bool
+    slots: list[TargetSlotCandidates] | None = None
+    more_with: str | None = None
+    """Where the rest of the candidates are, present only when something was
+    cut."""
+    note: str | None = None
+    """Why there are no candidates, present only when `understood` is false."""
+
+
+class ActionWithTargets(Action):
+    """The engine's own `Action`, plus the candidates the api enumerates for
+    it (`app._attach_target_candidates`). A subclass rather than a re-shape:
+    every field of `Action` is passed through untouched and by inheritance,
+    so a field the engine adds arrives here without this file changing.
+
+    `targets` is **required**, which is what makes this a distinguishable
+    branch of `LegalActionsResponse.actions` rather than a replacement for
+    `Action` - see there.
+    """
+
+    targets: ActionTargets
+
+
 class LegalActionsResponse(BaseModel):
     """`GET .../legal-actions` (T11) - the engine's own `Action` model,
     reused as-is rather than re-shaped: `get_legal_actions` returns exactly
     `[action.model_dump(mode="json") for action in actions]`, and
     `records.LegalActionsBefore.actions` (surfaced redacted, per-viewer, as
-    `LogEntry.legal_actions_before`) is the identical dump."""
+    `LogEntry.legal_actions_before`) is the identical dump - now with the
+    legal candidates for each targeting action folded in alongside.
 
-    actions: list[Action]
+    **Both names stay in `#/components/schemas`, and the union is why.**
+    Typing this `list[ActionWithTargets]` alone read as an enrichment and was
+    one: every `Action` field is still there, by inheritance. But FastAPI
+    names a component only where a route references it, and the subclass was
+    the only thing referenced - so the engine's `Action`, which downstream
+    repos validate against **by name** (`tests/test_openapi_drift.py`'s own
+    docstring), silently stopped being published at all. The union restores
+    it without touching the wire, because it is also the truth about the
+    answer: `candidates=false` (the default, and what `ui/app.js` asks for)
+    answers plain engine `Action` rows, and `candidates=true` adds `targets`
+    to the targeting ones - `_attach_target_candidates` sets that key or
+    leaves it off, never sets it to null. `targets` being required on the
+    subclass is what keeps the two branches apart: a row carrying candidates
+    matches `ActionWithTargets` and only it, a row without matches `Action`
+    and only it, so neither branch is decoration and a client can tell which
+    it is holding by the one key that differs.
+    """
+
+    actions: list[ActionWithTargets | Action]
+
+    last_seq: int = 0
+    """The ledger position this enumeration was computed against
+    (`audit.last_seq`) - the number a seat names back as
+    `BoardRead.expected_seq` on whatever it decides to do about it.
+
+    Here rather than in a second call, because a seat that has to *ask* for
+    the position it just read at has already lost the thing worth naming: one
+    more round trip is one more window for the board to move, and in a
+    parallel gauntlet it is also one more read through the single `serve`
+    process every game shares. This is the same number `GET .../log` answers
+    as its own `last_seq` and the same one `seatkit.Seat.last_seq` carries
+    from a `recent_log`; a seat driven by `api_client.SeatApiClient` has no
+    log read in its loop at all (three calls, deliberately - see there), so
+    without this it could name no board and every refusal it collected was
+    unsplittable (`scripts/eval_report.py`'s `unknown` bucket).
+
+    `0` for a game with no ledger, which is the same "name nothing" answer
+    `require_current_board` already short-circuits on."""
 
 
 class CandidateView(BaseModel):

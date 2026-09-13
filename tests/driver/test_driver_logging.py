@@ -82,12 +82,16 @@ def test_pushing_a_turn_names_the_game_and_the_seat(world, driver_log):  # noqa:
     assert "game=g-1" in driver_log.text
 
 
-def test_dispatch_logs_the_deck_it_identified_and_how_well_it_matched(world, driver_log):  # noqa: F811
+def test_dispatch_logs_the_deck_it_identified_and_how_sure_it_is(world, driver_log):  # noqa: F811
+    """The confidence and the clause counts, not a similarity score: a
+    reader of `docker compose logs` has to be able to tell a confident match
+    from a coin flip between two archetypes."""
     client = world.client
     driver_log.clear()
     dispatch(client)
     assert "deck=dimir-frog" in driver_log.text
-    assert "match 1.00" in driver_log.text
+    assert "confident" in driver_log.text
+    assert "dimir-frog 2/2" in driver_log.text
 
 
 def test_the_end_of_the_match_is_logged(world, driver_log):  # noqa: F811

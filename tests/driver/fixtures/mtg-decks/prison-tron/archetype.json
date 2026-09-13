@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "archetype": "urzatron",
+  "parent": "tron",
+  "signature": [
+    {
+      "cards": [
+        "Urza's Tower",
+        "Urza's Mine",
+        "Urza's Power Plant"
+      ],
+      "min": 9,
+      "why": "The tron family's shared clause: three copies of each is what assembling Tron means, and no list in the field runs fewer than nine while claiming either branch. It is shared on purpose and it is deliberately not enough on its own - a list that holds nine Tron lands and neither branch's package matches NO signature and resolves to nothing. That is the intended answer rather than a gap: naming a branch whose cards are absent hands a pilot the guide for a deck they are not playing, and a caller that knows the list is some kind of tron can say so from this clause without this file guessing which kind."
+    },
+    {
+      "cards": [
+        "Eldrazi Temple",
+        "Ugin's Labyrinth"
+      ],
+      "min": 6,
+      "why": "The family's second shared clause. Both branches run 4 Eldrazi Temple and 4 Ugin's Labyrinth, because the deck's mana story is lands that produce more than one and Labyrinth is what makes an opening hand holding a 7-drop keepable."
+    },
+    {
+      "cards": [
+        "Mind Stone",
+        "Chalice of the Void",
+        "Thought-Knot Seer",
+        "Glaring Fleshraker",
+        "All Is Dust",
+        "Trinisphere",
+        "Vexing Bauble"
+      ],
+      "min": 6,
+      "why": "What makes this branch urzatron rather than the field's eldrazi tron: rocks and taxing artifacts that buy the turns Tron needs, not a green ramp package. 10/10 current urzatron lists run Mind Stone at 3.6 average and 9/10 run Chalice of the Void; 0/10 eldrazi tron lists run either."
+    }
+  ],
+  "exclude": [
+    {
+      "cards": [
+        "Sowing Mycospawn",
+        "Giant's Boulder"
+      ],
+      "min": 6,
+      "why": "The eldrazi tron package, 10/10 in that archetype at about seven combined copies and 0/10 here. A list holding six of these two is playing the green Mycospawn ramp deck the field files under eldrazi tron, whatever else it also holds."
+    }
+  ]
+}

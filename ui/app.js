@@ -31,9 +31,19 @@ import {
   updatePopoverItems,
 } from "./render/ribbon.js";
 import { mountLog } from "./render/log.js";
+import { mountAdvice } from "./render/advice.js";
+import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
-import { mountTopbar, openZonesModal, mountHoverPreview, closeModal } from "./render/panels.js";
+import {
+  mountTopbar,
+  openZonesModal,
+  mountHoverPreview,
+  closeModal,
+  toggleLogModal,
+  closeLogModal,
+  logModalIsOpen,
+} from "./render/panels.js";
 import { loadSavedGames, saveGames, upsertSavedGame, seatsFromRow } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
@@ -111,6 +121,20 @@ export const store = createStore({
  * resubmission whether or not it is a submission by this definition. */
 function isSubmission(method, body) {
   return method !== "GET" && !(body && body.dry_run);
+}
+
+/** `path` with this seat's own `uid` on it, unless it already carries one.
+ *
+ * Idempotent by design, so the six call sites that already wrap themselves
+ * in `withUid` keep working untouched and `send()` can apply this to every
+ * path without caring which did. A path with no uid available is returned
+ * as it came: the server's refusal is a better answer than a `uid=null`
+ * query string, and the lobby screen (where there is no seat yet) never
+ * calls this. */
+function uidOf(path) {
+  if (/[?&]uid=/.test(path)) return path;
+  const uid = store.get().uid;
+  return uid ? withUid(path, uid) : path;
 }
 
 /** The in-flight state, on the page rather than only in the store: `body`
@@ -197,6 +221,22 @@ const inFlight = new Set();
  * the previous `store.set` call unmade).
  */
 export async function send(method, path, body) {
+  // This seat's own credential, on every request, and the reason it is here
+  // rather than at each call site: the server now REFUSES a mutating call on
+  // a game that presents no credential at all (`game_access.py`'s positive
+  // rule). A deny-list keyed on a uid cannot restrict a caller who omits the
+  // uid, so an ownerless game - which is every game in this deployment -
+  // used to be writable by anyone who knew its id, which made the mtg-buddy
+  // advisor's read-only-ness unenforceable.
+  //
+  // Nine of this file's own paths sent nothing: both halves of the cast
+  // flow (the `dry_run` probe and the real `fire()`), `play-land`, the
+  // keyword special actions, `cycle`, both `pass-priority` calls (the
+  // player's own and autopass acting for the AI seat), `report` and
+  // `concede`. Six others already wrapped themselves in `withUid` by hand,
+  // which is exactly the shape that leaves a tenth path to forget. One
+  // place, applied to whatever the caller did not already spell out.
+  path = uidOf(path);
   // Double-submit protection, and the reason it lives here rather than in
   // nine handlers: a request that is byte-for-byte a request already in
   // flight is the same submission, not a second one. That is exactly the
@@ -572,12 +612,23 @@ async function refresh() {
  * liveness together - `app.aiStatus` reads out the one entry matching
  * `app.aiUid`, the same shape `GET .../ai-seat/status` used to hand back
  * directly. A missing or unreachable game (a stale poll after leaving it)
- * or no AI seat at all is a silent no-op - the next tick tries again. */
+ * or no AI seat at all is a silent no-op - the next tick tries again.
+ *
+ * The `uid` query parameter is what makes the match possible now: that
+ * route only puts a seat's `uid` on the entry matching the credential the
+ * caller actually presents (`decks_api.SeatDetail.uid`), because a seat uid
+ * is the authority to act as that seat and handing every one of them to
+ * every reader made this route a way to obtain one. This browser holds the
+ * AI seat's uid already - it is what `?uid=` presents - so the entry it is
+ * looking for is exactly the entry it is answered about. */
 async function pollSeats() {
   const app = store.get();
   if (!app.gameId || !app.aiUid) return;
   try {
-    const { seats } = await api("GET", `${lobbyBase()}/games/${app.gameId}/seats`);
+    const { seats } = await api(
+      "GET",
+      withUid(`${lobbyBase()}/games/${app.gameId}/seats`, app.aiUid)
+    );
     const mine = (seats || []).find((seat) => seat.uid === app.aiUid);
     if (mine) store.set({ aiStatus: mine.ai_seat });
   } catch {
@@ -1391,6 +1442,45 @@ async function reportProblem(text) {
   await refresh();
 }
 
+/** The mtg-buddy advisor's proposal, approved: recorded as approved, then
+ * performed as this seat's own play.
+ *
+ * THE ORDER IS THE CONTRACT, and it is record-then-act. The approval row is
+ * what lets the post-match retrospective pair a play with the advice that
+ * proposed it; a play performed before (or without) that row is, in the only
+ * ledger anyone reads afterwards, indistinguishable from one the human
+ * thought of themselves - and the advisor cannot be judged on games it
+ * cannot be shown to have influenced. So a record the server would not take
+ * - a transport failure or a non-2xx (`send()` returns `null` and has
+ * already toasted), or a 2xx refusal - performs nothing at all.
+ *
+ * `advice` is what `render/advice.js` hands over: `{seq, method, path,
+ * body}`, the request verbatim out of the ledger row. Nothing here rewrites
+ * it except to take the advisor's own uid off the path (`withoutUid`) so
+ * `send()`'s single `uidOf` can put THIS seat's on: the advisor is read-only
+ * server-side, and an approved play is a play the human made.
+ *
+ * The residual race - the board moving between the 1.2s log read the panel
+ * judged freshness on and this click - is the same window every human click
+ * in this UI already has. The engine's own refusal and the existing toast
+ * are the backstop, exactly as for a manual click; there is deliberately no
+ * second mechanism for it here.
+ *
+ * Exported for `tests/test_ui_app.py`, which pins that ordering against a
+ * stubbed fetch. */
+export async function approveAdvice(advice) {
+  if (!advice || !advice.method || !advice.path) return;
+  const recorded = await send("POST", gamePath(`advice/${advice.seq}/approve`), { player: you() });
+  if (recorded === null) return;
+  if (recorded.allowed === false) {
+    toast(recorded.reason);
+    return;
+  }
+  const res = await send(advice.method, withoutUid(advice.path), advice.body);
+  if (res !== null && res.allowed === false) toast(res.reason);
+  await refresh();
+}
+
 async function passForAiSeat(aiPlayer) {
   const app = store.get();
   if (!aiPlayer || !app.aiUid) return;
@@ -1675,8 +1765,10 @@ async function main() {
     onAdvance: advanceStep,
   });
   mountLog(document, store);
+  mountAdvice(document, store, { onApprove: approveAdvice });
   mountTopbar(document, store, {
     onOpenZones,
+    onToggleLog: () => toggleLogModal(document),
     onLeaveGame: leaveGame,
     onPassForAiSeat: passForAiSeat,
     onReportProblem: reportProblem,
@@ -1687,6 +1779,14 @@ async function main() {
     const modal = document.querySelector("#modal");
     if (modal && !modal.hidden) {
       closeModal(document);
+      return;
+    }
+    // The log's own overlay, closed after the shared one and never through
+    // `closeModal`: that empties `#modal`'s content, and emptying this one
+    // would tear `#log-box` out from under `mountLog`'s subscription for the
+    // rest of the page's life. It is only ever toggled.
+    if (logModalIsOpen(document)) {
+      closeLogModal(document);
       return;
     }
     cancel();

@@ -1,0 +1,1805 @@
+{
+  "field": {
+    "cutoff_share": 1.9902365752910252,
+    "count": 15
+  },
+  "sideboard_access": {
+    "kind": "boarded"
+  },
+  "matchups": [
+    {
+      "name": "esper blink",
+      "meta_share": 7.660533233195643,
+      "winrate": 0.5379,
+      "stance": "strengthen",
+      "stance_rationale": "Their interaction is one-for-one - 4 Fatal Push and 3.6 Solitude across 10 of 10 lists in the 2026-09-10 capture - and their engine is recursion, so the only sideboard card that changes this matchup is one that refills faster than they trade. Nothing in our fifteen answers Overlord of the Balemurk and nothing needs to: the 60 curves under it and Ocelot Pride rebuilds through a one-for-one exchange for free.",
+      "play": {
+        "in": [
+          "1 The Legend of Roku"
+        ],
+        "out": [
+          "1 Seasoned Pyromancer"
+        ]
+      },
+      "draw": {
+        "in": [
+          "1 The Legend of Roku"
+        ],
+        "out": [
+          "1 Seasoned Pyromancer"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 3,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 3.0 copies; the X sweeper that answers a wide Cat board at X=1 for three mana",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Clarion Conqueror",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.1; its static line stops activated abilities of creatures, which is Ranger-Captain of Eos's sacrifice ability and transformed Ajani's loyalty abilities",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "High Noon",
+          "count": 2,
+          "why": "In 9 of 10 pulled boards at 2.2; caps a deck built on twelve one-drops at a single spell per turn",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "White Orchid Phantom",
+          "count": 2,
+          "why": "In 9 of 10 pulled boards at 2.1; strips a nonbasic from a manabase carrying only four basic lands",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "The Legend of Roku",
+          "verdict": "SURVIVES",
+          "why": "Its chapter abilities are triggered rather than activated, so a resolved Clarion Conqueror does not switch them off, and chapter I banks three playable cards on the turn it lands - a later Wrath of the Skies at X=4 cannot take those back."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "Recursion and flicker value bury a one-for-one exchange over eight turns rather than racing our clock with damage.",
+        "key_cards": [
+          {
+            "card": "Overlord of the Balemurk",
+            "why": "The 4-of recursion engine that returns a creature or planeswalker out of their graveyard every time it is impended or cast"
+          },
+          {
+            "card": "Phelia, Exuberant Shepherd",
+            "why": "Exiles and returns their own Solitude for a second free removal trigger every combat step"
+          },
+          {
+            "card": "Solitude",
+            "why": "Free removal for our best attacker on a turn we are tapped out, at the cost of a white card"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "The postboard reset that answers the token board Ocelot Pride and Ajani build",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands and two one-drops, or one land and Ocelot Pride plus Guide of Souls.",
+        "goldfish_for": "Turn-one Ocelot Pride, turn-two Guide of Souls plus a second one-drop, so the end-step trigger is live before Solitude.",
+        "watch_for": "Whether they hold two white sources for Solitude, and whether Phelia, Exuberant Shepherd is out to rebuy it.",
+        "posture": "race",
+        "posture_why": "Their engine wins any long game, so the clock has to be lethal before Overlord of the Balemurk stabilises."
+      },
+      "notes": [
+        "Ranger-Captain of Eos's sacrifice ability stops noncreature spells for the turn: hold it for the turn they untap with three mana and a Wrath of the Skies, not for a Fatal Push."
+      ]
+    },
+    {
+      "name": "broodscale bloodchief",
+      "meta_share": 6.947052196770559,
+      "winrate": 0.5192,
+      "stance": "symmetric_counter",
+      "stance_rationale": "This is the largest deck in the recorded field at 6.95pp and it kills out of nowhere off an artifact engine. Our maindeck has no answer to an artifact or to Urza's Saga, so all four of the in-cards attack the pieces rather than the creature: Wrath of the Skies destroys artifacts as well as creatures, Wear kills Blade of the Bloodchief, Obsidian Charmaw is discounted to {1}{R}{R} by their own colorless lands, and Orim's Chant buys the turn we need to finish.",
+      "play": {
+        "in": [
+          "2 Wrath of the Skies",
+          "2 Obsidian Charmaw",
+          "1 Orim's Chant",
+          "1 Wear"
+        ],
+        "out": [
+          "2 Thraben Charm",
+          "1 Solitude",
+          "2 Seasoned Pyromancer",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Wrath of the Skies",
+          "2 Obsidian Charmaw",
+          "1 Orim's Chant",
+          "1 Wear"
+        ],
+        "out": [
+          "2 Thraben Charm",
+          "1 Solitude",
+          "2 Seasoned Pyromancer",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Trinisphere",
+          "count": 2,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 1.8; every card in our 60 costs one or two, so a resolved copy triples the whole curve",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Nature's Claim",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.0; a one-mana instant that destroys Goblin Bombardment, Blood Moon or the Wear we just resolved",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Dismember",
+          "count": 1,
+          "why": "In 10 of 10 pulled boards at 1.2; four life and one mana kills Guide of Souls or Ragavan, Nimble Pilferer off a colorless manabase",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Sire of Seven Deaths",
+          "count": 1,
+          "why": "In 8 of 10 pulled boards at 1.2; the only creature in their pool that outsizes a 4/4 Obsidian Charmaw",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Wrath of the Skies",
+          "verdict": "SURVIVES",
+          "why": "It is a sorcery, so Nature's Claim cannot answer it, and Trinisphere taxes it to three mana - which is the turn we were casting it at X=1 anyway."
+        },
+        {
+          "card": "Obsidian Charmaw",
+          "verdict": "SURVIVES",
+          "why": "Eldrazi Temple, Ugin's Labyrinth and Urza's Saga are all in 10 of 10 recorded lists and all produce colorless, so the cost reduction is live and it lands as a {1}{R}{R} 4/4 flier that destroys Urza's Saga on the way in."
+        },
+        {
+          "card": "Orim's Chant",
+          "verdict": "SURVIVES",
+          "why": "A one-mana instant; no pulled board carries a counterspell, and Trinisphere taxes it to three, which is still castable on the turn it matters."
+        },
+        {
+          "card": "Wear",
+          "verdict": "SURVIVES",
+          "why": "Blade of the Bloodchief is a 3-of artifact in 10 of 10 recorded lists and Springleaf Drum is in all ten; Wear answers either at instant speed for two mana, and Nature's Claim can only trade with it one-for-one."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "They assemble a colorless artifact engine off Urza's Saga and Ancient Stirrings and convert it into a kill several turns before a fair deck can interact.",
+        "key_cards": [
+          {
+            "card": "Basking Broodscale",
+            "why": "The 4-of creature the whole loop is built around; it is in 10 of 10 recorded lists"
+          },
+          {
+            "card": "Blade of the Bloodchief",
+            "why": "The equipment that turns the loop into lethal damage rather than into tokens"
+          },
+          {
+            "card": "Urza's Saga",
+            "why": "A 4-of land that tutors the cheap artifacts and makes a Construct if the engine never shows"
+          },
+          {
+            "card": "Trinisphere",
+            "why": "Postboard, it triples the cost of a 60 whose most expensive card costs three",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, a one-drop and something that interacts by turn three.",
+        "goldfish_for": "Eight damage by the end of turn three, so a swept board still leaves them dead to Goblin Bombardment.",
+        "watch_for": "Urza's Saga's chapter counters and whether Blade of the Bloodchief is already on the battlefield.",
+        "posture": "disrupt_first",
+        "posture_why": "Their kill is faster than ours from a standing start, so the first answer has to land before the last piece does."
+      },
+      "self_cost": "Wrath of the Skies at X=2 answers Basking Broodscale, Blade of the Bloodchief, Springleaf Drum and Vexing Bauble, and it kills every Cat token and every one-drop we spent the first two turns deploying. It is correct only because their board converts to a kill and ours converts to damage over time: we cast it from behind, after Goblin Bombardment has already turned the tokens we are about to lose into reach.",
+      "notes": [
+        "Blood Moon is not boarded here even though 10 of 10 lists play three colorless lands: their green half runs 2.5 basic Forests and Yavimaya, Cradle of Growth, and Obsidian Charmaw kills the one land that actually tutors."
+      ]
+    },
+    {
+      "name": "devoted combo",
+      "meta_share": 4.769057453999249,
+      "winrate": null,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Their whole engine is a two-card creature combo behind mana dorks, and 10 of 10 lists in the 2026-09-10 capture run 4 Devoted Druid, 4 Delighted Halfling and 4 Leyline of Abundance. A sweeper at X=1 or X=2 answers the accelerant and the combo piece with the same card, and High Noon stops the turn they cast the second half; neither asks us to hold up mana we would rather spend on threats.",
+      "play": {
+        "in": [
+          "2 Wrath of the Skies",
+          "2 High Noon",
+          "1 Orim's Chant"
+        ],
+        "out": [
+          "2 Thraben Charm",
+          "1 Solitude",
+          "2 Seasoned Pyromancer"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Wrath of the Skies",
+          "2 High Noon",
+          "1 Orim's Chant"
+        ],
+        "out": [
+          "2 Thraben Charm",
+          "1 Solitude",
+          "2 Seasoned Pyromancer"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Abrupt Decay",
+          "count": 2,
+          "why": "In 8 of 10 pulled 2026-09-10 boards at 2.4; it cannot be countered and destroys Goblin Bombardment, High Noon or Blood Moon",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Force of Vigor",
+          "count": 1,
+          "why": "In 7 of 10 pulled boards at 1.4; free on our turn by exiling a green card, and it destroys up to two of the enchantments we just resolved",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Endurance",
+          "count": 1,
+          "why": "In 9 of 10 pulled boards at 1.1; a free 3/4 reach blocker that walls the whole Cat board on the turn we attack",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Fatal Push",
+          "count": 2,
+          "why": "In 7 of 10 pulled boards at 1.7; one mana kills Ocelot Pride, Guide of Souls or Ragavan, Nimble Pilferer",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Wrath of the Skies",
+          "verdict": "SURVIVES",
+          "why": "A sorcery, so Force of Vigor and Abrupt Decay cannot answer it; the only thing that beats it is an Endurance flashed in after we have already committed to an X value."
+        },
+        {
+          "card": "High Noon",
+          "verdict": "SURVIVES",
+          "why": "Force of Vigor answers it for free in 7 of 10 pulled boards, but at the price of a card and a green card exiled - and a Force of Vigor spent on High Noon is one that is not protecting the combo turn."
+        },
+        {
+          "card": "Orim's Chant",
+          "verdict": "SURVIVES",
+          "why": "One mana at instant speed with no counterspell in any pulled board; kicked, it also stops the attack step, so it answers a resolved Craterhoof Behemoth turn as well as a combo turn."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Mana creatures on turn one and two set up a two-card creature combo that ends the game on turn three or four, well inside our clock.",
+        "key_cards": [
+          {
+            "card": "Devoted Druid",
+            "why": "The 4-of half of the combo; untapping it with a counter is what generates the mana that ends the game"
+          },
+          {
+            "card": "Vizier of Remedies",
+            "why": "The one-of second half, findable with Green Sun's Zenith and Nature's Rhythm in 10 of 10 recorded lists"
+          },
+          {
+            "card": "Delighted Halfling",
+            "why": "Turn-one acceleration in 10 of 10 lists that makes their key spell uncounterable as well as a turn faster"
+          },
+          {
+            "card": "Force of Vigor",
+            "why": "Postboard, a free instant that answers both of our enchantments in one card",
+            "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands and two threats, or a hand with a turn-three sweeper and a one-drop.",
+        "goldfish_for": "Six damage by turn two so the game is over before Devoted Druid untaps twice.",
+        "watch_for": "Delighted Halfling on turn one, and green mana held open for Endurance during our attack.",
+        "posture": "race",
+        "posture_why": "Their combo is faster than our answers, so damage first and interaction only on the turn it stops a kill."
+      },
+      "self_cost": "Both in-cards tax us as well. Wrath of the Skies at X=1 or X=2 kills their mana creatures and every Cat we have made; High Noon caps our own one-drop turns at a single spell, which is the turn pattern this deck wins with. They are correct because their combo needs several spells on one turn and ours needs a body a turn, so the same symmetry costs them a kill and costs us tempo."
+    },
+    {
+      "name": "eldrazi ramp",
+      "meta_share": 4.618850920015021,
+      "winrate": 0.4494,
+      "stance": "symmetric_counter",
+      "stance_rationale": "This is the one recorded losing matchup we can attack structurally: 0.4494 over 453 matches in the committed capture, and the reason is that their whole mana advantage is four colorless lands. Blood Moon strands Eldrazi Temple's second mana and Ugin's Labyrinth entirely, and those same lands discount Obsidian Charmaw to {1}{R}{R}, so the deck that punishes their manabase is also the deck that gets a 4/4 flier out of doing it.",
+      "play": {
+        "in": [
+          "1 Blood Moon",
+          "3 Obsidian Charmaw"
+        ],
+        "out": [
+          "1 Thraben Charm",
+          "1 Ranger-Captain of Eos",
+          "2 Goblin Bombardment"
+        ]
+      },
+      "draw": {
+        "in": [
+          "1 Blood Moon",
+          "3 Obsidian Charmaw"
+        ],
+        "out": [
+          "1 Thraben Charm",
+          "1 Ranger-Captain of Eos",
+          "2 Goblin Bombardment"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Trinisphere",
+          "count": 3,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.6; our entire 60 costs one to three, so it is the single worst card we can face",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Dismember",
+          "count": 2,
+          "why": "In 7 of 10 pulled boards at 1.7; one mana and four life off a colorless manabase kills any creature in our 60",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Torpor Orb",
+          "count": 1,
+          "why": "In 5 of 10 pulled boards at 1.2; it blanks the enters triggers on Ajani, Nacatl Pariah, Ranger-Captain of Eos, Seasoned Pyromancer and Solitude at once",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Force of Vigor",
+          "count": 2,
+          "why": "In 6 of 10 pulled boards at 2.2; free on our turn and the only card in their pool that answers a resolved Blood Moon",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Blood Moon",
+          "verdict": "SURVIVES",
+          "why": "Force of Vigor answers it in 6 of 10 pulled boards, but only by exiling a green card on our turn - and the copy that resolves before their third land has already stranded Eldrazi Temple's second colorless and Ugin's Labyrinth completely, which is the mana the rest of their turn was built on."
+        },
+        {
+          "card": "Obsidian Charmaw",
+          "verdict": "SURVIVES",
+          "why": "Eldrazi Temple and Ugin's Labyrinth are 4-ofs in 10 of 10 recorded lists and both produce colorless, so this costs {1}{R}{R} and lands on turn three; Trinisphere raises that to three mana, which it already costs."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "Colorless lands and Malevolent Rumble ramp into Emrakul, the Promised End and Ugin, Eye of the Storms, then win on card quality rather than on speed.",
+        "key_cards": [
+          {
+            "card": "Eldrazi Temple",
+            "why": "A 4-of land in 10 of 10 recorded lists that makes two colorless for their Eldrazi and is a Mountain under Blood Moon"
+          },
+          {
+            "card": "Sowing Mycospawn",
+            "why": "A 4-of that tutors the missing land and destroys one of ours on the way"
+          },
+          {
+            "card": "Emrakul, the Promised End",
+            "why": "The 3.4-average top end that takes our turn and ends the game if the ramp connects"
+          },
+          {
+            "card": "Trinisphere",
+            "why": "Postboard, it makes every one-drop in our 60 cost three",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands including a basic, a one-drop, and a Blood Moon or Obsidian Charmaw if we are on the draw.",
+        "goldfish_for": "A fetched Plains before Blood Moon, then eight damage by turn three.",
+        "watch_for": "Sowing Mycospawn tutoring a land, and green mana up for Force of Vigor on our turn.",
+        "posture": "race",
+        "posture_why": "This is a recorded losing matchup at 0.4494, and the games we win are the ones we end before their fourth land untaps."
+      },
+      "self_cost": "Blood Moon turns our own fourteen nonbasic lands into Mountains and switches off all ten fetchlands with them, so a hand holding the second copy and no basic Plains casts nothing white afterwards. It comes down only after a fetched Plains is already on the battlefield, and that sequencing is what makes it a two-mana Time Walk against them rather than a two-mana Time Walk against us.",
+      "notes": [
+        "Sequence a fetchland before Blood Moon, never after: once it resolves, our own Arid Mesa, Flooded Strand and Marsh Flats are Mountains with no activated ability at all."
+      ]
+    },
+    {
+      "name": "instant reanimator",
+      "meta_share": 4.506196019526849,
+      "winrate": null,
+      "stance": "counter",
+      "stance_rationale": "Their kill is a discard outlet plus Goryo's Vengeance on a pitched Atraxa, Grand Unifier, and both halves of that are answerable for one mana. Rest in Peace turns the 4-of Goryo's Vengeance into a blank outright, and Vexing Bauble counters Force of Negation and evoked Solitude - the two free spells 10 of 10 and 9 of 10 recorded lists use to protect the turn. Neither in-card slows our own clock down.",
+      "play": {
+        "in": [
+          "2 Vexing Bauble",
+          "1 Rest in Peace"
+        ],
+        "out": [
+          "2 Goblin Bombardment",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Vexing Bauble",
+          "1 Rest in Peace"
+        ],
+        "out": [
+          "2 Goblin Bombardment",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 3,
+          "why": "In 9 of 10 pulled 2026-09-10 boards at an average of 2.6; the sweeper that resets a board of one-drops and Cat tokens",
+          "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "In 9 of 10 pulled boards at 3.6; one blue mana counters a triggered ability, which is what Ocelot Pride, Guide of Souls, Ragavan, Nimble Pilferer and Ajani, Nacatl Pariah all are",
+          "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+        },
+        {
+          "card": "Teferi, Time Raveler",
+          "count": 1,
+          "why": "In 7 of 10 pulled boards at 1.1; its static line forces our instants to sorcery speed and bounces a resolved Rest in Peace",
+          "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+        },
+        {
+          "card": "Clarion Conqueror",
+          "count": 1,
+          "why": "In 5 of 10 pulled boards at 1.4; a 2/1 flier whose static line stops Ranger-Captain of Eos's sacrifice ability",
+          "source_tournament_id": "ce383ba2-494c-46cd-958c-4f6cb17d7b0a"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Vexing Bauble",
+          "verdict": "SURVIVES",
+          "why": "Consign to Memory counters a colorless spell, and Vexing Bauble is one - so in 9 of 10 pulled boards they CAN counter it on the stack for one blue mana. It still earns the slot: the counter has to be paid on the turn they wanted to reanimate, and a copy that does resolve then counters the Force of Negation and evoked Solitude that protect the kill turn."
+        },
+        {
+          "card": "Rest in Peace",
+          "verdict": "SURVIVES",
+          "why": "It is a white enchantment spell, so Consign to Memory cannot counter it, and nothing in the pulled boards destroys an enchantment; only a Teferi, Time Raveler already on the battlefield answers it, and that costs three mana and a card."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Discard Atraxa, Grand Unifier on turn one or two, cast Goryo's Vengeance on it, and attack for lethal with a haste angel before a fair deck has four lands.",
+        "key_cards": [
+          {
+            "card": "Goryo's Vengeance",
+            "why": "The 4-of that reanimates the discarded threat at instant speed with haste; 10 of 10 recorded lists run four"
+          },
+          {
+            "card": "Atraxa, Grand Unifier",
+            "why": "The 4-of reanimation target whose enters trigger refills their hand even if the body is answered"
+          },
+          {
+            "card": "Psychic Frog",
+            "why": "The 4-of discard outlet that puts the target in the graveyard and grows while doing it"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, the sweeper that answers our whole board while their combo is still live",
+            "source_tournament_id": "bc856377-56fd-4150-bc55-9b3c11fd43a5"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "A one-drop, two lands, and one of Rest in Peace or Vexing Bauble.",
+        "goldfish_for": "Turn-one hate on the play, then six damage by turn three before Faithful Mending fills the graveyard.",
+        "watch_for": "Black mana up for Goryo's Vengeance and a blue card in hand for Force of Negation.",
+        "posture": "disrupt_first",
+        "posture_why": "Their kill lands on turn two or three, which is earlier than ours, so the first hate piece is worth more than the fourth point of damage."
+      }
+    },
+    {
+      "name": "boros ponza",
+      "meta_share": 3.379647014645137,
+      "winrate": null,
+      "stance": "counter",
+      "stance_rationale": "Their maindeck is a prison shell - 4 Erode, 4 Cleansing Wildfire, 4 Demolition Field and 4 Field of Ruin in 10 of 10 recorded lists, behind 3.9 Wrath of the Skies - and 10 of 10 also run 2.7 Relic of Progenitus while 9 of 10 pulled boards bring 3.7 High Noon. Wear // Tear is the one card in our fifteen that answers a permanent on either of those two types, and fused it answers both for {1}{R}{W}.",
+      "play": {
+        "in": [
+          "2 Wear"
+        ],
+        "out": [
+          "1 Solitude",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Wear"
+        ],
+        "out": [
+          "1 Solitude",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "High Noon",
+          "count": 4,
+          "why": "In 9 of 10 pulled 2026-09-10 boards at an average of 3.7; one spell a turn against a 60 built on cheap multi-spell turns is close to a lock",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Wrath of God",
+          "count": 2,
+          "why": "In 8 of 10 pulled boards at 2.0; a second sweeper on top of the 3.9 Wrath of the Skies already in their maindeck",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Disruptor Flute",
+          "count": 2,
+          "why": "In 8 of 10 pulled boards at 2.0; names Ocelot Pride or Ajani, Nacatl Pariah and taxes every copy for the rest of the game",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Surgical Extraction",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.0; free, and it removes the rest of a playset after the first copy is answered",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Wear",
+          "verdict": "SURVIVES",
+          "why": "Tear destroys High Noon, which 9 of 10 pulled boards bring in at 3.7 copies, and Wear destroys the Relic of Progenitus 10 of 10 maindecks run; nothing in their pulled boards counters a spell, so the only way either half is answered is by not having a target."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "lock",
+        "posture_why": "Strip our lands with Erode and Cleansing Wildfire, reset the board with Wrath of the Skies, and win at leisure once we cannot deploy anything.",
+        "key_cards": [
+          {
+            "card": "Erode",
+            "why": "A 4-of in 10 of 10 recorded lists; the repeatable land destruction the prison plan is built on"
+          },
+          {
+            "card": "Cleansing Wildfire",
+            "why": "A 4-of that destroys a land and replaces itself, so the attrition costs them no cards"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "3.9 maindeck copies in 10 of 10 lists - the reset that answers a board of one-drops for two or three mana"
+          },
+          {
+            "card": "High Noon",
+            "why": "Postboard, it caps a deck of one-mana spells at one spell a turn",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Three lands and two threats, or two lands with Voice of Victory and a one-drop.",
+        "goldfish_for": "Voice of Victory on turn two so their instant-speed removal is dead on our attack step.",
+        "watch_for": "The land count they hold up for Erode, and whether they have kept a Wrath of the Skies for our third threat.",
+        "posture": "grind",
+        "posture_why": "Their sweepers punish an all-in board, so the plan is a threat a turn and reach from Goblin Bombardment rather than one big attack."
+      }
+    },
+    {
+      "name": "ur cutter prowess",
+      "meta_share": 3.2294404806609087,
+      "winrate": null,
+      "stance": "symmetric_counter",
+      "stance_rationale": "10 of 10 lists in the 2026-09-10 capture run 4 Cori-Steel Cutter, 4 Monastery Swiftspear, 4 Dragon's Rage Channeler and 4 Lava Dart, and the deck's damage comes from casting several cheap spells in a turn rather than from the bodies. High Noon attacks the multiplier instead of the creatures, which is what our four Galvanic Discharge already do.",
+      "play": {
+        "in": [
+          "2 High Noon"
+        ],
+        "out": [
+          "2 Seasoned Pyromancer"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 High Noon"
+        ],
+        "out": [
+          "2 Seasoned Pyromancer"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Unholy Heat",
+          "count": 3,
+          "why": "In 9 of 10 pulled 2026-09-10 boards at an average of 3.0; two damage kills every creature in our 60 except Ranger-Captain of Eos, and six with delirium kills that too",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "In 10 of 10 pulled boards at 3.4; one blue mana counters a triggered ability, which is what our whole engine is made of",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        },
+        {
+          "card": "Spell Snare",
+          "count": 2,
+          "why": "In 8 of 10 pulled boards at 2.2; counters Ajani, Nacatl Pariah, Voice of Victory, Goblin Bombardment and Thraben Charm for one mana",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        },
+        {
+          "card": "Spell Pierce",
+          "count": 2,
+          "why": "In 8 of 10 pulled boards at 1.8; taxes the noncreature half of our board, High Noon included",
+          "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "High Noon",
+          "verdict": "SURVIVES",
+          "why": "Nothing in the pulled boards destroys an enchantment - Meltdown hits artifacts only - and Consign to Memory counters a triggered ability or a colorless spell, which a white enchantment spell is not. Spell Pierce taxes it by two, so cast it on a turn we can pay."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Cheap spells grow a one-drop and make Monk tokens off Cori-Steel Cutter, killing on turn three or four through blockers with Slickshot Show-Off.",
+        "key_cards": [
+          {
+            "card": "Cori-Steel Cutter",
+            "why": "A 4-of equipment in 10 of 10 recorded lists that makes a Monk on their second spell each turn and equips for free"
+          },
+          {
+            "card": "Monastery Swiftspear",
+            "why": "A 4-of one-drop whose prowess turns every cantrip into damage"
+          },
+          {
+            "card": "Slickshot Show-Off",
+            "why": "A 3.6-average threat that gives their creature flying and haste and ends a stalled board out of nowhere"
+          },
+          {
+            "card": "Unholy Heat",
+            "why": "Postboard removal that answers any creature we deploy for one mana",
+            "source_tournament_id": "caf37d8c-7e11-4065-9441-e2e899a02961"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, a one-drop, and a Galvanic Discharge or a second blocker.",
+        "goldfish_for": "Guide of Souls on turn one, so the life total moves the wrong way for a burn-shaped clock.",
+        "watch_for": "Cori-Steel Cutter on the battlefield with one card already cast this turn.",
+        "posture": "grind",
+        "posture_why": "We win the damage race on life gain and first strike, so the plan is to survive the fast draws rather than to trade damage with them."
+      },
+      "self_cost": "High Noon caps us at one spell a turn too, and this 60 wins by casting a one-drop and a Galvanic Discharge on the same turn. It is correct anyway because Cori-Steel Cutter is a 4-of in 10 of 10 recorded lists and needs their second spell each turn to make a Monk, so the same tax costs us a tempo turn and costs them their engine."
+    },
+    {
+      "name": "pinnacle affinity",
+      "meta_share": 3.1543372136687946,
+      "winrate": null,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Every permanent that matters in the 10 recorded lists is an artifact or an enchantment: 4 Weapons Manufacturing, 4 Pinnacle Emissary, 4 Mishra's Bauble, 3.6 Mox Opal, 4 Urza's Saga and 4 Engineered Explosives. Wrath of the Skies destroys each artifact, creature and enchantment at or under the energy paid, so one card answers the whole board, and Wear // Tear answers the two halves it is too slow for.",
+      "play": {
+        "in": [
+          "2 Wrath of the Skies",
+          "2 Wear"
+        ],
+        "out": [
+          "1 Solitude",
+          "2 Seasoned Pyromancer",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Wrath of the Skies",
+          "2 Wear"
+        ],
+        "out": [
+          "1 Solitude",
+          "2 Seasoned Pyromancer",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Galvanic Blast",
+          "count": 3,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.5; four damage with metalcraft kills anything in our 60 for one mana",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Whipflare",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 1.5; two damage to each nonartifact creature is a one-sided sweeper against a board of 1/1 Cats and 1/2 one-drops",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "In 10 of 10 pulled boards at 3.0; counters a triggered ability, which is what Ocelot Pride, Guide of Souls and Ajani, Nacatl Pariah all win with",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        },
+        {
+          "card": "Damping Sphere",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.2; each extra spell in a turn costs one more, which is the tax our cheap multi-spell turns least want",
+          "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Wrath of the Skies",
+          "verdict": "SURVIVES",
+          "why": "It is a sorcery, and their only counterspell is Metallic Rebuke at 2.9 maindeck copies, which taxes three and is paid off by tapping the very artifacts the sweeper is aimed at; casting it on a turn they are tapped out on the combo is the line."
+        },
+        {
+          "card": "Wear",
+          "verdict": "SURVIVES",
+          "why": "Wear destroys Mox Opal or Claws of Gix and Tear destroys Weapons Manufacturing, a 4-of enchantment in 10 of 10 recorded lists; fused for {1}{R}{W} it takes both, and no pulled board carries a way to protect a permanent from an instant."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Free artifacts and Urza's Saga build a board on turn one and two, and Weapons Manufacturing converts each new artifact into two damage.",
+        "key_cards": [
+          {
+            "card": "Weapons Manufacturing",
+            "why": "The 4-of enchantment in 10 of 10 recorded lists that makes a Munitions token, and two damage, for each nontoken artifact that enters"
+          },
+          {
+            "card": "Kappa Cannoneer",
+            "why": "A 3.6-average artifact creature that our removal cannot answer cleanly once it is online"
+          },
+          {
+            "card": "Urza's Saga",
+            "why": "A 4-of land that tutors the cheap artifacts and makes a Construct on its own"
+          },
+          {
+            "card": "Whipflare",
+            "why": "Postboard, a one-sided sweeper that kills our whole board and none of theirs",
+            "source_tournament_id": "ce4982e5-f3b0-4654-acce-939e83a20ef5"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, two threats, and an answer to a turn-two artifact.",
+        "goldfish_for": "Six damage by turn three, so a Whipflare still leaves them dead to Goblin Bombardment.",
+        "watch_for": "Metallic Rebuke mana, and whether Weapons Manufacturing is already converting artifacts into damage.",
+        "posture": "race",
+        "posture_why": "Their board compounds faster than ours does, so the sweeper is a tempo play in the middle of a race, not a reset."
+      },
+      "self_cost": "Wrath of the Skies at X=1 destroys Mox Opal, Springleaf Drum, Mishra's Bauble and Emry, Lurker of the Loch - and every Cat token, Guide of Souls and Ocelot Pride we have on the battlefield, because it destroys creatures at that mana value too. It is right here because their board is worth more than ours once Weapons Manufacturing is making Munitions, and because Wear covers the half a sweeper misses."
+    },
+    {
+      "name": "living end",
+      "meta_share": 3.0792339466766805,
+      "winrate": 0.5153,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Their kill is a free spell cast off cascade, and 10 of 10 lists in the 2026-09-10 capture run 4 Violent Outburst and 3 Living End. Every in-card attacks a different half of that: Vexing Bauble counters the free cast, Rest in Peace empties the graveyard the payoff reads, and High Noon stops the two-spell turn. None of them asks us to stop attacking.",
+      "play": {
+        "in": [
+          "2 Vexing Bauble",
+          "1 Rest in Peace",
+          "2 High Noon"
+        ],
+        "out": [
+          "3 Goblin Bombardment",
+          "1 Solitude",
+          "1 Seasoned Pyromancer"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Vexing Bauble",
+          "1 Rest in Peace",
+          "2 High Noon"
+        ],
+        "out": [
+          "3 Goblin Bombardment",
+          "1 Solitude",
+          "1 Seasoned Pyromancer"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Force of Vigor",
+          "count": 2,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.0; free on our turn and it destroys two of our three in-cards in one card",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Brotherhood's End",
+          "count": 2,
+          "why": "In 9 of 10 pulled boards at 2.0; a sweeper that answers a board of one-toughness Cats and our artifacts at the same time",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Inevitable Betrayal",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.3; suspended for free, it steals a creature out of our library rather than off the battlefield",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Clarion Conqueror",
+          "count": 3,
+          "why": "In 5 of 10 pulled boards at 3.8; its static line stops Ranger-Captain of Eos's sacrifice ability, which is our only way to stop a cascade turn from the maindeck",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Vexing Bauble",
+          "verdict": "SURVIVES",
+          "why": "Force of Vigor is in 10 of 10 pulled boards and answers all three of our in-cards - but it is cast for no mana, so a Vexing Bauble already on the battlefield counters the card that would have destroyed it."
+        },
+        {
+          "card": "Rest in Peace",
+          "verdict": "SURVIVES",
+          "why": "Living End exiles creature cards from graveyards and returns them; with all graveyards already exiled it resolves for nothing at all, and the only answer in the pulled boards is Force of Vigor, which Vexing Bauble counters."
+        },
+        {
+          "card": "High Noon",
+          "verdict": "SURVIVES",
+          "why": "It only has to be on the battlefield when they cascade, and their answer to it is the same Force of Vigor already spoken for; Brotherhood's End does not destroy enchantments."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Cycle creatures into the graveyard for two turns, then cascade into Living End for free and attack with a board that is much bigger than ours.",
+        "key_cards": [
+          {
+            "card": "Living End",
+            "why": "The 3-of payoff that exiles every creature card in graveyards and returns them, refilling their board and emptying ours"
+          },
+          {
+            "card": "Violent Outburst",
+            "why": "The 4-of cascade enabler that casts Living End for no mana at instant speed"
+          },
+          {
+            "card": "Shardless Agent",
+            "why": "The second 4-of cascade enabler and a body, so the deck has eight ways to find the payoff"
+          },
+          {
+            "card": "Force of Vigor",
+            "why": "Postboard, the free instant that answers our whole hate package for no mana",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, two one-drops, and a hate piece we can cast by turn two.",
+        "goldfish_for": "Twelve damage by the end of turn three, so the cascade turn arrives with them already dead on board.",
+        "watch_for": "Three mana up on our turn for Violent Outburst, and a green card in hand for Force of Vigor.",
+        "posture": "race",
+        "posture_why": "A resolved Living End usually wins the board outright, so the plan is to be lethal before the turn they can cascade profitably."
+      },
+      "self_cost": "High Noon caps our own turns at one spell, and a deck of one-drops loses real damage to that. It is correct because a cascade turn is Violent Outburst plus the Living End it casts, which is two spells in one turn: the same tax that costs us a point of tempo costs them the only way they win.",
+      "notes": [
+        "Lead with Vexing Bauble, not Rest in Peace: Force of Vigor is in 10 of 10 pulled boards and is cast for no mana, so the Bauble that is already down counters the card that answers everything else."
+      ]
+    },
+    {
+      "name": "izzet prowess",
+      "meta_share": 2.778820878708224,
+      "winrate": 0.5253,
+      "stance": "symmetric_counter",
+      "stance_rationale": "The measured row is 0.5253 over 617 matches, so this is a matchup the 60 already wins on lifegain and first strike; the sideboard card is there to close the fast draws. 10 of 10 lists run 4 Cori-Steel Cutter and 4 Monastery Swiftspear, both of which scale with spells per turn, so High Noon is the one card in our fifteen that attacks the multiplier rather than a body.",
+      "play": {
+        "in": [
+          "2 High Noon"
+        ],
+        "out": [
+          "2 Seasoned Pyromancer"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 High Noon"
+        ],
+        "out": [
+          "2 Seasoned Pyromancer"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Unholy Heat",
+          "count": 3,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 3.4; two damage answers every creature in our 60 except Ranger-Captain of Eos",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "In 10 of 10 pulled boards at 3.7; one blue mana counters a triggered ability, and Ocelot Pride, Guide of Souls and Ragavan, Nimble Pilferer are all triggered abilities",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Spell Snare",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.0; counters Ajani, Nacatl Pariah, Voice of Victory and Goblin Bombardment for one mana",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Spell Pierce",
+          "count": 2,
+          "why": "In 8 of 10 pulled boards at 1.6; the tax that makes a turn-three High Noon into a turn-five one",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "High Noon",
+          "verdict": "SURVIVES",
+          "why": "No pulled board carries an enchantment answer - Meltdown destroys artifacts only - and Consign to Memory counters a triggered ability or a colorless spell, neither of which a white enchantment spell is. Play around Spell Pierce by casting it with two extra mana."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Cheap spells grow a one-drop and trigger Cori-Steel Cutter, killing on turn three or four before a creature board can stabilise.",
+        "key_cards": [
+          {
+            "card": "Cori-Steel Cutter",
+            "why": "A 4-of equipment in 10 of 10 recorded lists that makes a Monk whenever they cast their second spell in a turn"
+          },
+          {
+            "card": "Dragon's Rage Channeler",
+            "why": "A 4-of one-drop that grows and gains flying once delirium is on, which our ground blockers cannot answer"
+          },
+          {
+            "card": "Mutagenic Growth",
+            "why": "A 3.9-average pump spell paid for with life rather than mana, so it wins combat on a turn they are tapped out"
+          },
+          {
+            "card": "Unholy Heat",
+            "why": "Postboard removal that kills any of our creatures for one mana",
+            "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, a one-drop, and either a Galvanic Discharge or a second blocker.",
+        "goldfish_for": "Guide of Souls on turn one, so the life total starts moving the wrong way for their clock.",
+        "watch_for": "Mutagenic Growth in combat and whether Cori-Steel Cutter is already attached.",
+        "posture": "grind",
+        "posture_why": "The lifegain half of our engine wins a long game outright, so the risk is only the fast draws in the first three turns."
+      },
+      "self_cost": "High Noon costs us the turns where a one-drop and a Galvanic Discharge both happen, which is a real part of how this 60 wins. It is right because their damage is multiplicative in the number of spells cast per turn and ours is additive: the same restriction takes a point of tempo from us and takes the top half of their curve away entirely."
+    },
+    {
+      "name": "goryos vengeance",
+      "meta_share": 2.290649643259482,
+      "winrate": 0.4462,
+      "stance": "counter",
+      "stance_rationale": "This is the second recorded losing matchup at 0.4462 over 163 matches, and the reason is that a turn-two kill beats any curve. Both in-cards are one-mana answers that do not cost us tempo: Rest in Peace makes the 4-of Goryo's Vengeance a blank, and Vexing Bauble counters the free Force of Negation and evoked Solitude they protect the turn with.",
+      "play": {
+        "in": [
+          "2 Vexing Bauble",
+          "1 Rest in Peace"
+        ],
+        "out": [
+          "2 Goblin Bombardment",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Vexing Bauble",
+          "1 Rest in Peace"
+        ],
+        "out": [
+          "2 Goblin Bombardment",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 3,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.7; the sweeper that answers a board of one-drops for two or three mana",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 4,
+          "why": "In 10 of 10 pulled boards at 3.9; one blue mana counters a triggered ability, which is the whole of our token engine",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Spell Snare",
+          "count": 2,
+          "why": "In 9 of 10 pulled boards at 1.6; counters Ajani, Nacatl Pariah and Voice of Victory, our two best two-drops",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Teferi, Time Raveler",
+          "count": 1,
+          "why": "In 8 of 10 pulled boards at 1.1; bounces a resolved Rest in Peace and forces the rest of our answers to sorcery speed",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Vexing Bauble",
+          "verdict": "SURVIVES",
+          "why": "Vexing Bauble is a colorless spell, so the 3.9 Consign to Memory in 10 of 10 pulled boards do counter it on the stack. That is the point of running two: the first one eats a counter on their turn two, and the second resolves into a turn where Force of Negation and evoked Solitude are the cards they needed."
+        },
+        {
+          "card": "Rest in Peace",
+          "verdict": "SURVIVES",
+          "why": "A white enchantment spell, so Consign to Memory cannot counter it and no pulled board destroys an enchantment; only a Teferi, Time Raveler already on the battlefield answers it, and bouncing it costs them the turn we needed."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Put Atraxa, Grand Unifier into the graveyard on turn one, cast Goryo's Vengeance on it, and attack for lethal with a haste angel on turn two.",
+        "key_cards": [
+          {
+            "card": "Goryo's Vengeance",
+            "why": "The 4-of in 10 of 10 recorded lists that reanimates the discarded threat at instant speed with haste"
+          },
+          {
+            "card": "Atraxa, Grand Unifier",
+            "why": "The 4-of target whose enters trigger refills their hand even when the body is answered"
+          },
+          {
+            "card": "Faithful Mending",
+            "why": "A 3.7-average discard outlet that puts the target in the graveyard while digging for the reanimation spell"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, the reset for the board we built while they were setting up",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, a hate piece castable on turn one or two, and a threat.",
+        "goldfish_for": "Rest in Peace or Vexing Bauble on turn one on the play, then six damage by turn three.",
+        "watch_for": "A discard outlet with black mana up, which is the tell for the Goryo's Vengeance turn.",
+        "posture": "disrupt_first",
+        "posture_why": "At 0.4462 recorded, the games we lose are decided before turn three, so the first hate piece outranks the fourth point of damage."
+      },
+      "notes": [
+        "This row and the instant reanimator row are the same 75 under two labels: 10 of 10 lists in each snapshot run 4 Goryo's Vengeance and 4 Atraxa, Grand Unifier. They are graded separately because only 'goryos vengeance' has its own row in the committed capture."
+      ]
+    },
+    {
+      "name": "boros aggro",
+      "meta_share": 2.2906496432594814,
+      "winrate": 0.5,
+      "stance": "strengthen",
+      "stance_rationale": "This row covers BOTH of the field's boros labels. The 2026-09-10 signature validation showed 10 of 10 lists filed as 'boros aggro' and 10 of 10 filed as 'boros energy' each carry 4 Ocelot Pride, 4 Guide of Souls, 4 Ragavan, Nimble Pilferer, 4 Ajani, Nacatl Pariah and 4 Galvanic Discharge, and all twenty classify identically under decks/boros-aggro/archetype.json - so the mirror is one matchup with two names, and only 'boros aggro' is in this boarding field. Our fifteen is nine hosers aimed at combo, graveyards, artifacts and greedy manabases, and not one of them beats a deck playing our own cards; the mirror is decided inside the 60 by Galvanic Discharge, the energy Guide of Souls banks, and who gets Ocelot Pride's end-step trigger online first.",
+      "play": {
+        "in": [],
+        "out": [],
+        "no_changes": "Nothing in the fifteen improves the mirror. Blood Moon and Obsidian Charmaw punish nonbasics we also play, Wrath of the Skies kills our own wider board, and Rest in Peace and Vexing Bauble answer graveyards and free spells neither deck has. Wear // Tear is the only card with a live target - Tear answers the maindeck Blood Moon that 8 of 10 recorded lists run, or the 3.1 Goblin Bombardment in all ten - but both of those are cards we also play, so it is a reactive two-mana instant in a race decided by who curves out, and a blank against the two lists in ten that run neither. The correct number of swaps is zero, and the matchup is recorded in gaps because that is a real hole rather than a plan."
+      },
+      "draw": {
+        "in": [],
+        "out": [],
+        "no_changes": "Same as on the play, and the extra card does not change it: the board has no card that is better than the fifteenth-best card of a mirror deck. On the draw the plan changes inside the 60 instead - hold Galvanic Discharge for their Ocelot Pride rather than spending it on the first one-drop."
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 2,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.0; in the mirror it is the card that punishes whoever committed more to the board",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Vexing Bauble",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 1.7; against us it is mostly a cantrip, which is why the mirror is decided inside the 60",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Wear/Tear",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 1.7, spelled as the capture spells it; the only maindeck target it has in the mirror is Goblin Bombardment",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "High Noon",
+          "count": 2,
+          "why": "In 9 of 10 pulled boards at 2.0; a symmetric tax that hurts whichever pilot is behind on board",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        }
+      ],
+      "survives_opposing_board": [],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "The same deck we play: one-drops on turn one, energy into a flying Guide of Souls attack, and Ocelot Pride tokens compounding every end step.",
+        "key_cards": [
+          {
+            "card": "Ocelot Pride",
+            "why": "A 4-of in 10 of 10 lists under both labels; first strike and lifelink make it the best blocker and the token engine at once"
+          },
+          {
+            "card": "Guide of Souls",
+            "why": "A 4-of under both labels; the energy it banks turns an attacker into a flier with two extra counters"
+          },
+          {
+            "card": "Ragavan, Nimble Pilferer",
+            "why": "A 4-of under both labels; the one-drop that wins the game outright if it connects unanswered on turn one"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, the mirror-breaker that answers whoever built the wider board",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands and two one-drops; a hand with no turn-one play is a mulligan in the mirror.",
+        "goldfish_for": "Ocelot Pride on turn one and a second creature on turn two, so the end-step token trigger is live before theirs.",
+        "watch_for": "Their energy count, and whether Goblin Bombardment is on the battlefield before we commit to an attack.",
+        "posture": "race",
+        "posture_why": "Both decks are the same clock, so the pilot who lands the first token trigger and spends removal on the engine wins."
+      },
+      "notes": [
+        "The field carries this deck under two labels. 'boros aggro' is 2.29pp of the 2026-09-10 fingerprint and is in this boarding field; 'boros energy' is 1.39pp and is not. Treat a 'boros energy' pairing at the table as this row."
+      ]
+    },
+    {
+      "name": "45c aggro",
+      "meta_share": 2.102891475779196,
+      "winrate": null,
+      "stance": "symmetric_counter",
+      "stance_rationale": "Every card that makes this deck function is an artifact or an enchantment, and the oracle text is what says so. Leyline of the Guildpact is 'Lands you control are every basic land type in addition to their other types', which is the whole manabase and the whole domain count; Leyline Binding is a {5}{W} enchantment reduced by that domain; Scion of Draco is an Artifact Creature reduced by it; Territorial Kavu's power and toughness are literally the number of basic land types. Wear destroys the artifact half, Tear destroys either Leyline, and Blood Moon attacks the same axis from the manabase side.",
+      "play": {
+        "in": [
+          "2 Wear",
+          "1 Blood Moon"
+        ],
+        "out": [
+          "2 Seasoned Pyromancer",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "2 Wear",
+          "1 Blood Moon"
+        ],
+        "out": [
+          "2 Seasoned Pyromancer",
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Wrath of the Skies",
+          "count": 2,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 2.2; the sweeper that punishes the wide Cat board",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Obsidian Charmaw",
+          "count": 2,
+          "why": "In 9 of 10 pulled boards at 2.1; a 4/4 flier that also destroys one of our fourteen nonbasic lands, and it is discounted by nothing we play - none of our lands produces {C}",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "In 10 of 10 pulled boards at 2.9; one blue mana counters a triggered ability, which is what our whole engine is",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        },
+        {
+          "card": "Rest in Peace",
+          "count": 1,
+          "why": "In 10 of 10 pulled boards at 1.3; against us it only stops Seasoned Pyromancer's graveyard activation, so it usually stays in the box",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Wear",
+          "verdict": "SURVIVES",
+          "why": "Tear destroys Leyline of the Guildpact, a 4-of enchantment in 10 of 10 recorded lists, or a Leyline Binding, which returns whatever it exiled; Wear destroys Scion of Draco, which is an Artifact Creature. Nothing in their pulled boards answers an instant, and Consign to Memory reads 'triggered ability or colorless spell', which a red and white split card is not."
+        },
+        {
+          "card": "Blood Moon",
+          "verdict": "SURVIVES",
+          "why": "Their only answer to an enchantment is a Wrath of the Skies at X=3, and the timestamp is the real question rather than the removal: 'nonbasic lands are Mountains' replaces land types where Leyline of the Guildpact adds them, so the effect that resolved later wins. A Leyline that started the game on the battlefield always has the earlier timestamp, which is the common case; a Leyline cast after our Blood Moon undoes it, so hold the card against a hand that has not shown one yet."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "race",
+        "posture_why": "Leyline of the Guildpact turns eight lands into every basic type, so a two-mana Territorial Kavu is a 5/5 and Scion of Draco costs four rather than twelve.",
+        "key_cards": [
+          {
+            "card": "Leyline of the Guildpact",
+            "why": "A 4-of in 10 of 10 recorded lists that can start on the battlefield; it makes their lands every basic land type, which is the mana, the domain count and Territorial Kavu's size at once"
+          },
+          {
+            "card": "Territorial Kavu",
+            "why": "A 4-of two-drop whose power and toughness are the number of basic land types among their lands - a 5/5 for {R}{G} behind the Leyline"
+          },
+          {
+            "card": "Leyline Binding",
+            "why": "A 4-of flash enchantment that exiles any nonland permanent for one white mana once domain is five"
+          },
+          {
+            "card": "Wrath of the Skies",
+            "why": "Postboard, the sweeper aimed at the token board",
+            "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands, a one-drop, and a Galvanic Discharge for their turn-one play.",
+        "goldfish_for": "Ocelot Pride or Guide of Souls on turn one and Voice of Victory on turn two, with Tear held for the Leyline.",
+        "watch_for": "Whether Leyline of the Guildpact started on the battlefield, and white mana up for a flashed Leyline Binding.",
+        "posture": "race",
+        "posture_why": "Their creatures outsize ours from turn two, so the game has to be decided on damage while their domain payoffs are still expensive."
+      },
+      "self_cost": "Blood Moon turns our own fourteen nonbasics into Mountains and takes the fetch ability off all ten fetchlands, so it comes down only behind a fetched Plains and our white half is stranded on whatever basics are already out. Against this deck it is worth it: their two basic lands are one Plains and one Mountain across 10 of 10 recorded lists, so the same effect costs us a colour and costs them four.",
+      "notes": [
+        "Tear before Wear. Leyline of the Guildpact is the card the other three are priced off, and it is also the one they can replay; Scion of Draco is only a four-mana threat while the Leyline is on the battlefield.",
+        "Blood Moon and Leyline of the Guildpact are both land-type effects and the later one wins, so a Leyline that began the game on the battlefield loses to a Blood Moon cast on turn three - and a Leyline cast on turn four beats it back."
+      ]
+    },
+    {
+      "name": "dimir control",
+      "meta_share": 2.102891475779196,
+      "winrate": 0.5374,
+      "stance": "symmetric_counter",
+      "stance_rationale": "The measured row is 0.5374 over 274 matches, so this is already a favourable matchup, and the boarding plan is about the games where they answer the first three threats. Blood Moon attacks the manabase their whole answer suite runs on, and The Legend of Roku is a threat their removal does not answer - both of them convert a matchup we win on tempo into one we also win on attrition.",
+      "play": {
+        "in": [
+          "1 Blood Moon",
+          "1 The Legend of Roku"
+        ],
+        "out": [
+          "1 Ranger-Captain of Eos",
+          "1 Thraben Charm"
+        ]
+      },
+      "draw": {
+        "in": [
+          "1 Blood Moon",
+          "1 The Legend of Roku"
+        ],
+        "out": [
+          "1 Ranger-Captain of Eos",
+          "1 Thraben Charm"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Engineered Explosives",
+          "count": 2,
+          "why": "In 10 of 10 pulled 2026-09-10 boards at an average of 1.6; at X=1 it destroys every one-drop and Cat token at once, and at X=3 it answers Blood Moon",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Damnation",
+          "count": 2,
+          "why": "In 6 of 10 pulled boards at 2.0; an unconditional four-mana sweeper against a board of cheap creatures",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Requiting Hex",
+          "count": 2,
+          "why": "In 6 of 10 pulled boards at 2.0; extra interaction they bring specifically against creature decks",
+          "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+        },
+        {
+          "card": "Toxic Deluge",
+          "count": 2,
+          "why": "In 4 of 10 pulled boards at 1.8; three mana and three life sweeps the entire board regardless of what we have deployed",
+          "source_tournament_id": "520459fa-37c7-4eff-800b-ce71168468e6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Blood Moon",
+          "verdict": "SURVIVES",
+          "why": "Engineered Explosives at X=3 answers it, but their recorded manabase is fifteen nonbasic lands against a single Swamp in 9 of 10 lists - a copy that resolves on turn three usually strands blue entirely before three coloured sources for Explosives are available."
+        },
+        {
+          "card": "The Legend of Roku",
+          "verdict": "SURVIVES",
+          "why": "Counterspell answers it on the stack, but nothing in the pulled boards destroys a resolved enchantment except Engineered Explosives at X=4; chapter I has already banked three playable cards by the time that is castable, so the card is never a blank."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "Counter or remove each threat one for one, then win with a single large blue finisher once our hand is empty.",
+        "key_cards": [
+          {
+            "card": "Counterspell",
+            "why": "A 3.8-average 4-of in 10 of 10 recorded lists; the reason our threats have to be deployed under open mana rather than into it"
+          },
+          {
+            "card": "Wan Shi Tong, Librarian",
+            "why": "A 3.9-average finisher in 8 of 10 lists that ends the game once they have stabilised"
+          },
+          {
+            "card": "Fatal Push",
+            "why": "A 3.6-average one-mana answer to any creature in our 60"
+          },
+          {
+            "card": "Engineered Explosives",
+            "why": "Postboard, the one card that answers our whole board and our Blood Moon",
+            "source_tournament_id": "6471891c-eca6-4e44-8698-db2c5e3a4a71"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands including a basic, two threats, and something to do on turn one.",
+        "goldfish_for": "Voice of Victory on turn two, then Blood Moon on turn three off a fetched Plains.",
+        "watch_for": "Two blue sources up for Counterspell, and Field of Ruin aimed at our only white source.",
+        "posture": "race",
+        "posture_why": "Every turn they untap with mana is a turn they answer something, so the plan is to be lethal before the fourth land."
+      },
+      "self_cost": "Blood Moon makes our own fourteen nonbasics Mountains and switches off all ten fetchlands, so it goes down only once a basic Plains is already on the battlefield - and after it resolves our white cards are stuck behind whatever basics we have fetched. That is a real cost against a deck holding Counterspell, and it is worth paying because their manabase is fifteen nonbasics against one Swamp in 9 of 10 recorded lists.",
+      "notes": [
+        "Fetch a basic Plains before casting Blood Moon, not after. Once it resolves our own Arid Mesa, Flooded Strand and Marsh Flats are Mountains with no fetch ability, and the white half of the deck is stranded."
+      ]
+    },
+    {
+      "name": "dimir frog",
+      "meta_share": 1.9902365752910252,
+      "winrate": null,
+      "stance": "symmetric_counter",
+      "stance_rationale": "They interact one-for-one with Fatal Push, Spell Snare and Counterspell off a manabase that is almost entirely nonbasic, and their threats are two-mana creatures our Galvanic Discharge already answers. The single card that changes the matchup is the one that stops them casting spells at all, so the swap is Blood Moon for the slowest card in our 60 and nothing else.",
+      "play": {
+        "in": [
+          "1 Blood Moon"
+        ],
+        "out": [
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "draw": {
+        "in": [
+          "1 Blood Moon"
+        ],
+        "out": [
+          "1 Ranger-Captain of Eos"
+        ]
+      },
+      "opposing_sideboard_in": [
+        {
+          "card": "Harbinger of the Seas",
+          "count": 2,
+          "why": "In 9 of 10 pulled 2026-09-10 boards at an average of 2.1; its static line makes nonbasic lands Islands, which strands our white half exactly as our own Blood Moon strands theirs",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Engineered Explosives",
+          "count": 2,
+          "why": "In 10 of 10 pulled boards at 2.0; at X=1 it destroys every one-drop and Cat token on the battlefield at once",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Consign to Memory",
+          "count": 3,
+          "why": "In 10 of 10 pulled boards at 2.5; one blue mana counters a triggered ability, which is the whole of the Ocelot Pride engine",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        },
+        {
+          "card": "Toxic Deluge",
+          "count": 1,
+          "why": "In 8 of 10 pulled boards at 1.2; three mana and three life sweeps a board of one-toughness and two-toughness creatures",
+          "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+        }
+      ],
+      "survives_opposing_board": [
+        {
+          "card": "Blood Moon",
+          "verdict": "SURVIVES",
+          "why": "Harbinger of the Seas in 9 of 10 pulled boards sets land types in the same way; the two do not cancel, the later timestamp wins, and either way their fetchlands stop fetching. Engineered Explosives at X=3 answers Blood Moon, but under it they usually cannot make three coloured sources at all."
+        }
+      ],
+      "opponent_plan": {
+        "posture": "grind",
+        "posture_why": "Cheap interaction and a two-mana threat that draws cards, winning on card quality and a growing Psychic Frog rather than on speed.",
+        "key_cards": [
+          {
+            "card": "Psychic Frog",
+            "why": "A 3.6-average two-drop in 10 of 10 recorded lists that grows every turn and converts spare cards into damage"
+          },
+          {
+            "card": "Orcish Bowmasters",
+            "why": "A 2.6-average two-drop that kills Ocelot Pride and every Cat token at instant speed on our own draw step"
+          },
+          {
+            "card": "Fatal Push",
+            "why": "A 4-of one-mana answer to any creature in our 60"
+          },
+          {
+            "card": "Harbinger of the Seas",
+            "why": "Postboard, the card that turns our fourteen nonbasics into Islands and strands the white half of the deck",
+            "source_tournament_id": "2e769108-457c-405a-ba05-e005fc0d1ea6"
+          }
+        ]
+      },
+      "play_plan": {
+        "keep": "Two lands including a basic, two threats, and a turn-one play.",
+        "goldfish_for": "Four damage by turn two, then a turn-three Blood Moon off a basic Plains.",
+        "watch_for": "One black mana up for Orcish Bowmasters before we make a token, and Psychic Frog's card count.",
+        "posture": "race",
+        "posture_why": "Their card quality wins a long game, so the plan is to end it while their answers still cost them a card each."
+      },
+      "self_cost": "Blood Moon turns our own fourteen nonbasics into Mountains and takes the fetch ability off all ten fetchlands, so it is only cast with a basic Plains already down. Against this deck it is still the right card: 10 of 10 recorded lists play three or fewer basics behind a manabase of Polluted Delta, Watery Grave, Undercity Sewers and Marsh Flats."
+    }
+  ],
+  "sideboard_audit": [
+    {
+      "card": "Blood Moon",
+      "copies": 1,
+      "matchups_served": [
+        "45c aggro",
+        "dimir control",
+        "dimir frog",
+        "eldrazi ramp"
+      ],
+      "cumulative_meta_share": 10.81,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "Four of the recorded field's fifteen rows run a manabase it strands - eldrazi ramp's four Eldrazi Temple and four Ugin's Labyrinth, dimir control's fifteen nonbasics against one Swamp, dimir frog's Polluted Delta and Watery Grave shell, and 45c aggro's twelve fetchlands behind one Plains and one Mountain, where it also takes away the domain count Leyline Binding and Scion of Draco are priced off. It is the only card in the box that answers a mana advantage rather than a permanent, and the sideboard copy exists because the maindeck one is a card we do not want to draw in the other eleven rows."
+    },
+    {
+      "card": "High Noon",
+      "copies": 2,
+      "matchups_served": [
+        "devoted combo",
+        "izzet prowess",
+        "living end",
+        "ur cutter prowess"
+      ],
+      "cumulative_meta_share": 13.86,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "The four rows it serves are the field's multi-spell decks: devoted combo needs a tutor and a combo piece in one turn, living end needs a cascade and the spell it casts, and both prowess rows need a second spell each turn for Cori-Steel Cutter. Two copies because it is the card those matchups have to answer and 9 of 10 recorded boros lists agree."
+    },
+    {
+      "card": "Obsidian Charmaw",
+      "copies": 3,
+      "matchups_served": [
+        "broodscale bloodchief",
+        "eldrazi ramp"
+      ],
+      "cumulative_meta_share": 11.57,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "It is priced by the two rows it serves rather than by its printed cost: eldrazi ramp and broodscale bloodchief both run four Eldrazi Temple and colorless lands beside it, so the reduction makes it a turn-three {1}{R}{R} 4/4 flier that also destroys Urza's Saga or Ugin's Labyrinth. Three copies because both rows want to see it early, and it is a threat as well as an answer."
+    },
+    {
+      "card": "Orim's Chant",
+      "copies": 1,
+      "matchups_served": [
+        "broodscale bloodchief",
+        "devoted combo"
+      ],
+      "cumulative_meta_share": 11.72,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "One copy of a one-mana instant against the two rows whose kill happens on a single identifiable turn. Broodscale bloodchief at 6.95pp is the largest deck in the recorded field and devoted combo at 4.77pp is the fourth; against both, buying the turn is worth as much as answering a permanent, and kicked it also stops a Craterhoof Behemoth attack."
+    },
+    {
+      "card": "Rest in Peace",
+      "copies": 1,
+      "matchups_served": [
+        "goryos vengeance",
+        "instant reanimator",
+        "living end"
+      ],
+      "cumulative_meta_share": 9.88,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "One copy, because the three rows it serves are all one-card matchups - Goryo's Vengeance and Living End both read the graveyard and both become blanks - and because a second copy is dead in the other twelve. It is a white enchantment, so Consign to Memory, the most-boarded card in the recorded field, cannot answer it."
+    },
+    {
+      "card": "The Legend of Roku",
+      "copies": 1,
+      "matchups_served": [
+        "dimir control",
+        "esper blink"
+      ],
+      "cumulative_meta_share": 9.76,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "The two rows it serves are the field's attrition decks: esper blink trades one-for-one with Fatal Push and Solitude, and dimir control counters or removes each threat as it lands. It is the only card in our fifteen that generates cards rather than answering permanents, and it is an enchantment, which neither row's pulled boards can destroy."
+    },
+    {
+      "card": "Vexing Bauble",
+      "copies": 2,
+      "matchups_served": [
+        "goryos vengeance",
+        "instant reanimator",
+        "living end"
+      ],
+      "cumulative_meta_share": 9.88,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "It is not graveyard hate: it counters a spell cast with no mana spent, which is Violent Outburst's cascade, Force of Negation's alternate cost and evoked Solitude. All three rows it serves run at least two of those in 10 of 10 recorded lists, and against living end it is specifically the card that counters the Force of Vigor that would answer the rest of our hate."
+    },
+    {
+      "card": "Wear",
+      "copies": 2,
+      "matchups_served": [
+        "45c aggro",
+        "boros ponza",
+        "broodscale bloodchief",
+        "pinnacle affinity"
+      ],
+      "cumulative_meta_share": 15.58,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "Wear // Tear is two answers on one card and all four rows it serves have targets on both types: boros ponza runs 2.7 maindeck Relic of Progenitus and boards 3.7 High Noon, pinnacle affinity runs four Weapons Manufacturing and 3.6 Mox Opal, broodscale bloodchief runs three Blade of the Bloodchief, and 45c aggro runs four Leyline of the Guildpact and four Scion of Draco, which is an Artifact Creature. Fused for {1}{R}{W} it answers one of each."
+    },
+    {
+      "card": "Wrath of the Skies",
+      "copies": 2,
+      "matchups_served": [
+        "broodscale bloodchief",
+        "devoted combo",
+        "pinnacle affinity"
+      ],
+      "cumulative_meta_share": 14.87,
+      "role": "versatile",
+      "verdict": "EARNS_SLOT",
+      "why": "Two copies because it is the only card in our fifteen that answers a board rather than a permanent, and because it is symmetric - the three rows it serves are the ones whose board is worth more than ours by turn three. Against pinnacle affinity it destroys artifacts too, which is the whole of their deck rather than half of it."
+    }
+  ],
+  "deck_tech": [
+    {
+      "kind": "card",
+      "name": "How much energy Galvanic Discharge spends",
+      "cards": [
+        "Galvanic Discharge",
+        "Guide of Souls",
+        "Ocelot Pride"
+      ],
+      "quirk": "Galvanic Discharge gives three energy and then lets you pay any amount of it, so the choice is how much of the deck's other energy sink you spend killing this creature.",
+      "lines": [
+        {
+          "mode": "pay one energy",
+          "matchups": [
+            "izzet prowess",
+            "ur cutter prowess",
+            "45c aggro"
+          ],
+          "why": "One damage kills Monastery Swiftspear, Dragon's Rage Channeler and a turn-one Ragavan, Nimble Pilferer before they grow, and banks two energy for Guide of Souls."
+        },
+        {
+          "mode": "pay two energy",
+          "matchups": [
+            "dimir frog",
+            "dimir control",
+            "esper blink",
+            "boros aggro"
+          ],
+          "why": "Psychic Frog, Orcish Bowmasters, Phelia, Exuberant Shepherd and a mirror Guide of Souls all die to two, which still leaves one energy banked."
+        },
+        {
+          "mode": "pay all three energy",
+          "matchups": [
+            "broodscale bloodchief",
+            "devoted combo",
+            "pinnacle affinity"
+          ],
+          "why": "Against a combo deck the creature has to die now; banking energy for a flying attack is a plan that assumes a turn six these matchups do not give us."
+        },
+        {
+          "mode": "any",
+          "matchups": [
+            "any"
+          ],
+          "why": "Default to the least energy that kills the creature. The surplus is what pays for Guide of Souls's attack trigger, and that trigger is the deck's only evasion."
+        }
+      ]
+    },
+    {
+      "kind": "loop",
+      "name": "The Ocelot Pride end-step loop",
+      "cards": [
+        "Ocelot Pride",
+        "Guide of Souls",
+        "Ajani, Nacatl Pariah",
+        "Goblin Bombardment",
+        "Voice of Victory"
+      ],
+      "quirk": "The token engine is a loop, not a card: each new creature feeds Guide of Souls, which feeds Ocelot Pride's end-step check, which makes the next creature.",
+      "loop": [
+        "A creature enters, so Guide of Souls triggers: gain one life and bank one energy.",
+        "At our end step Ocelot Pride sees that we gained life this turn and makes a 1/1 Cat.",
+        "With the city's blessing, Ocelot Pride then copies every token that entered this turn, so the board doubles rather than grows by one.",
+        "Ajani, Nacatl Pariah's 0 ability and Voice of Victory's mobilize add more bodies, each of which re-triggers Guide of Souls and restarts the loop next end step."
+      ],
+      "lines": [
+        {
+          "mode": "hold the tokens on the battlefield",
+          "matchups": [
+            "esper blink",
+            "dimir control",
+            "dimir frog",
+            "boros ponza"
+          ],
+          "why": "Against one-for-one removal the board is the resource; each Cat costs them a card and none of them can answer the end-step trigger itself."
+        },
+        {
+          "mode": "convert the tokens to damage",
+          "matchups": [
+            "broodscale bloodchief",
+            "devoted combo",
+            "pinnacle affinity",
+            "living end"
+          ],
+          "why": "Against a sweeper or a combo turn, sacrifice to Goblin Bombardment in response: ten tokens on the battlefield are worth nothing after a Wrath of the Skies and ten damage before it."
+        }
+      ]
+    },
+    {
+      "kind": "path",
+      "name": "Blood Moon first or fetchlands first",
+      "cards": [
+        "Blood Moon",
+        "Arid Mesa",
+        "Flooded Strand",
+        "Marsh Flats",
+        "Plains",
+        "Mountain",
+        "Sacred Foundry"
+      ],
+      "quirk": "Our own manabase is fourteen nonbasics and four basics, so a resolved Blood Moon turns ten fetchlands into Mountains with no activated ability at all - the sequencing decides whether it is a Time Walk for us or for them.",
+      "lines": [
+        {
+          "mode": "fetch a basic Plains, then cast Blood Moon",
+          "matchups": [
+            "eldrazi ramp",
+            "dimir control",
+            "dimir frog",
+            "45c aggro"
+          ],
+          "why": "White is the colour we cannot lose - eleven of our nonland cards need it - so the Plains has to be on the battlefield before the enchantment resolves."
+        },
+        {
+          "mode": "leave Blood Moon in hand and keep the fetchlands live",
+          "matchups": [
+            "boros aggro",
+            "boros ponza",
+            "izzet prowess",
+            "pinnacle affinity"
+          ],
+          "why": "These rows play basics or a manabase close enough to ours that the tax lands on us, so our own fixing is worth more than their inconvenience."
+        },
+        {
+          "mode": "any",
+          "matchups": [
+            "any"
+          ],
+          "why": "If the maindeck copy is the only spell in hand and both basics are already down, cast it; otherwise it is a fetchland that draws no cards."
+        }
+      ]
+    }
+  ],
+  "meta_calls": [
+    {
+      "kind": "field",
+      "call": "graveyard-kill-heavy room",
+      "trigger": {
+        "matchups": [
+          "instant reanimator",
+          "goryos vengeance",
+          "living end"
+        ],
+        "share_pp": 9.88,
+        "over_pp": 13.0
+      },
+      "main": {
+        "in": [
+          "1 Rest in Peace"
+        ],
+        "out": [
+          "1 Thraben Charm"
+        ]
+      },
+      "board": {
+        "in": [
+          "1 Rest in Peace"
+        ],
+        "out": [
+          "1 The Legend of Roku"
+        ]
+      },
+      "why": "Above that bar a maindeck Rest in Peace is live in game one against a quarter of the room, and Thraben Charm's graveyard mode is the slower half of the same answer.",
+      "cost": "Thraben Charm is our only maindeck answer to an enchantment, and The Legend of Roku is the card that beats esper blink and dimir control on cards."
+    },
+    {
+      "kind": "archetype",
+      "call": "eldrazi ramp",
+      "trigger": {
+        "matchups": [
+          "eldrazi ramp"
+        ],
+        "share_pp": 4.62,
+        "over_pp": 7.0
+      },
+      "main": {
+        "in": [
+          "1 Blood Moon"
+        ],
+        "out": [
+          "1 Thraben Charm"
+        ]
+      },
+      "board": {
+        "in": [
+          "1 Obsidian Charmaw"
+        ],
+        "out": [
+          "1 Orim's Chant"
+        ]
+      },
+      "why": "It is our worst recorded matchup at 0.4494 over 453 matches, and both swaps attack the four colorless lands the deck is built on rather than the spells it casts.",
+      "cost": "A second maindeck Blood Moon is dead against the mirror and the prowess rows, and cutting Orim's Chant leaves broodscale bloodchief without a way to buy the kill turn."
+    },
+    {
+      "kind": "card",
+      "call": "Consign to Memory",
+      "trigger": {
+        "matchups": [
+          "45c aggro",
+          "dimir frog",
+          "goryos vengeance",
+          "instant reanimator",
+          "izzet prowess",
+          "pinnacle affinity",
+          "ur cutter prowess"
+        ],
+        "share_pp": 20.05,
+        "over_pp": 24.0
+      },
+      "main": {
+        "in": [
+          "1 Lightning Bolt"
+        ],
+        "out": [
+          "1 Seasoned Pyromancer"
+        ]
+      },
+      "board": {
+        "in": [
+          "1 Lightning Bolt"
+        ],
+        "out": [
+          "1 The Legend of Roku"
+        ]
+      },
+      "why": "It counters a triggered ability for one blue mana, and this deck is triggered abilities. Above that bar the cards whose value is an enters trigger stop being reliable.",
+      "cost": "Seasoned Pyromancer and The Legend of Roku are our two best cards against removal-heavy decks, and Lightning Bolt trades card advantage for damage that cannot be countered this way."
+    }
+  ],
+  "gaps": [
+    {
+      "matchup": "boros aggro",
+      "why": "The mirror - under either of the field's two labels for it - is served by no card in our fifteen, and the boarding plan for it is zero swaps. Every sideboard slot is aimed at a graveyard, an artifact, a free spell or a nonbasic manabase; the only one with a live target is Tear on a maindeck Blood Moon or Goblin Bombardment, and both of those are cards we play ourselves, so the swap is card-neutral and tempo-negative in a race. The matchup is decided inside the maindeck, which means the sideboard is doing nothing in 2.29pp of the recorded field (3.68pp if the separate 'boros energy' row at 1.39pp is counted, which the aliases map in .protocol/raw-matchups.json says it should be)."
+    },
+    {
+      "matchup": "eldrazi ramp",
+      "why": "This is the worst recorded matchup in the field at 0.4494 over 453 matches and the plan does not fix it, it only attacks it. Trinisphere is in 10 of 10 pulled boards at 2.6 copies and every card in our 60 costs one to three mana; we have no answer to a resolved copy at all, and Obsidian Charmaw and Blood Moon are both three-mana plays that a Trinisphere on turn three arrives ahead of on the play."
+    }
+  ]
+}

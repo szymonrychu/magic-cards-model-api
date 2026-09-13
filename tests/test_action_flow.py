@@ -308,6 +308,113 @@ def test_no_deadlock_block_until_wake_never_holds_the_game_lock(client, game, mo
     assert result["wake_reason"] == NOTHING_NEW_YET
 
 
+# -- the cached wake baseline (`before=None`) ---------------------------------
+#
+# `mcp.wait_for_priority` and `seat_cli wait` both call `block_until_wake(seat,
+# before=None, ...)` - there is no prior board for either to hand in, because
+# neither one performed the action whose "before" a poll like `run_action`'s
+# own call has on hand. Before this fix, `compute_wake_reason`'s priority
+# branch treated `before is None` as "always different", so a seat that
+# merely holds priority woke on *every* call, board unchanged or not - an
+# advisor sitting on its human's decision spun on an unchanged board forever.
+#
+# `Seats.seat_for` mints a brand new `Seat` object on every single tool call
+# (only the `(player, role, game_id)` lookup is cached, on `Seats` itself) -
+# exactly what a real MCP server process does across separate tool calls from
+# the same long-lived process - so these tests mint a fresh `Seat` per check,
+# the same way `resolve()` does, rather than reusing one Python object. A fix
+# that only remembered the signature on the ephemeral `Seat` instance would
+# look identical to no fix at all here.
+
+
+def test_a_second_bare_wait_on_an_unchanged_board_does_not_spin_on_priority_alone(
+    client, game, monkeypatch
+):
+    """Requirement 1, the busy-spin defect itself: alice holds priority
+    throughout, the board never moves, and a second bare wait must sit out
+    its bound rather than manufacture a wake from nothing."""
+    seats, uids = wired_seats(monkeypatch, game)
+
+    first = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+    assert "you have priority" in first["wake_reason"], first
+
+    started = time.monotonic()
+    second = block_until_wake(seats.seat_for(uids["alice"]), before=None, max_seconds=0.2)
+    elapsed = time.monotonic() - started
+
+    assert second["wake_reason"] == NOTHING_NEW_YET, second
+    assert elapsed >= 0.2, "returned early instead of actually sitting out the bound"
+
+
+def test_a_seats_first_ever_bare_wait_wakes_on_priority_alone(client, game, monkeypatch):
+    """Requirement 2: with nothing cached yet, holding priority is itself a
+    wake - the same "name no board" default `Seat.last_seq` uses."""
+    seats, uids = wired_seats(monkeypatch, game)
+
+    result = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+
+    assert "you have priority" in result["wake_reason"], result
+
+
+def test_a_board_change_while_still_holding_priority_wakes_the_cached_baseline(
+    client, game, monkeypatch
+):
+    """Requirement 3: the cache is a baseline to diff against, not a
+    permanent snooze - once the board actually moves under a seat that still
+    holds priority, the next bare wait wakes."""
+    seats, uids = wired_seats(monkeypatch, game)
+
+    first = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+    assert "you have priority" in first["wake_reason"], first
+
+    add_card(client, game, "Forest", "alice", "battlefield")
+
+    second = block_until_wake(seats.seat_for(uids["alice"]), before=None, max_seconds=0.2)
+    assert "you have priority" in second["wake_reason"], second
+
+
+def test_the_seat_acts_the_board_changes_and_priority_returns_wakes(client, game, monkeypatch):
+    """Requirement 4: alice's own bolt goes on the stack and resolves, bob's
+    life total drops and the stack empties - a real round trip, not a single
+    board edit - and her next bare wait, on a freshly minted `Seat` exactly
+    as a new MCP call would mint, still recognises the change against the
+    baseline cached by her very first wait."""
+    seats, uids = wired_seats(monkeypatch, game)
+    alice = seats.seat_for(uids["alice"])
+    bolt_id, mountain_id = stock_a_bolt(client, game)
+
+    baseline = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+    assert "you have priority" in baseline["wake_reason"], baseline
+
+    result = run_action(alice, cast_bolt_action(alice, game, bolt_id, mountain_id))
+    assert result["outcome"]["allowed"] is True
+    passed = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert passed.json()["allowed"] is True
+
+    woken = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+    assert "you have priority" in woken["wake_reason"], woken
+    assert life_of(woken["state"], "bob") == 17
+    assert woken["state"]["stack"] == []
+
+
+def test_other_wake_reasons_fire_every_bare_wait_cache_or_no_cache(client, game, monkeypatch):
+    """Requirement 5: the cache only gates the priority-and-unchanged-board
+    branch. A pending decision does not need `before` at all, so it must
+    keep waking every single bare wait, back to back, exactly as it always
+    has."""
+    seats, uids = wired_seats(monkeypatch, game)
+    for _ in range(8):
+        add_card(client, game, "Mountain", "alice", "hand")
+    paused = advance_into_cleanup(game, "alice")
+    assert paused is not None, "the discard should have asked, not defaulted silently"
+
+    first = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+    assert "a decision is waiting for you" in first["wake_reason"], first
+
+    second = block_until_wake(seats.seat_for(uids["alice"]), before=None)
+    assert "a decision is waiting for you" in second["wake_reason"], second
+
+
 # -- the bounded wait (`max_seconds`) -----------------------------------------
 #
 # The owner's report: an agent seat busy-polling with `Bash sleep 2` (then 3,

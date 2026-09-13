@@ -34,7 +34,7 @@ from magic_cards_model_api.agent_settings import AgentSettings
 from magic_cards_model_api.commands import Command
 from magic_cards_model_api.db import make_engine
 from magic_cards_model_api.decks import load_deck_into_game
-from magic_cards_model_api.repository import GameRepository, InMemoryRepository
+from magic_cards_model_api.repository import Advisor, GameRepository, InMemoryRepository
 from magic_cards_model_api.repository_postgres import PostgresRepository
 
 #: Set by `mise run test:pg` (or by hand) to a postgres DSN whose schema is
@@ -245,6 +245,84 @@ def test_seat_uids_returned_dict_is_a_copy(repo: GameRepository) -> None:
     repo.seat_uids(game_id)["uid-1"] = "tampered"
 
     assert repo.seat_uids(game_id) == {"uid-1": "you"}
+
+
+# ---------------------------------------------------------------------------
+# advisor credentials
+# ---------------------------------------------------------------------------
+
+
+def test_advisor_uids_defaults_to_empty(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+
+    assert repo.advisor_uids(game_id) == {}
+
+
+def test_register_advisors_round_trips_through_advisor_uids(repo: GameRepository) -> None:
+    """The whole entry, agent settings included: an advisor's agent lives
+    *inside* its own entry rather than in a second name-keyed map beside it
+    (`repository.Advisor`), so an advisor for a seat that already has an AI
+    agent of its own cannot collide with it."""
+    game_id = repo.create(_real_game())
+    advisors = {
+        "advisor-1": Advisor(player="you", agent=AgentSettings(model="sonnet", effort="high")),
+        "advisor-2": Advisor(player="bot"),
+    }
+    repo.register_advisors(game_id, advisors)
+
+    assert repo.advisor_uids(game_id) == advisors
+
+
+def test_an_advisors_agent_is_none_when_it_has_none(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_advisors(game_id, {"advisor-1": Advisor(player="you")})
+
+    assert repo.advisor_uids(game_id)["advisor-1"].agent is None
+
+
+def test_advisor_uids_is_empty_for_an_unknown_game(repo: GameRepository) -> None:
+    assert repo.advisor_uids("no-such-game") == {}
+
+
+def test_advisors_and_seats_are_separate_maps(repo: GameRepository) -> None:
+    """Registering advisors must not disturb the seat uids, and an advisor
+    uid must never answer `player_for_uid` - the read-only gate is built on
+    exactly that distinction."""
+    game_id = repo.create(_real_game())
+    repo.register_seats(game_id, {"uid-1": "you"})
+    repo.register_advisors(game_id, {"advisor-1": Advisor(player="you")})
+
+    assert repo.seat_uids(game_id) == {"uid-1": "you"}
+    assert repo.player_for_uid(game_id, "advisor-1") is None
+    assert repo.advisor_uids(game_id).keys() == {"advisor-1"}
+
+
+def test_register_advisors_replaces_the_whole_map(repo: GameRepository) -> None:
+    """Same contract `register_seats` has: the map is replaced, not merged
+    into, so a caller that means to add one reads-modifies-writes under
+    `locked()`."""
+    game_id = repo.create(_real_game())
+    repo.register_advisors(game_id, {"advisor-1": Advisor(player="you")})
+    repo.register_advisors(game_id, {"advisor-2": Advisor(player="bot")})
+
+    assert repo.advisor_uids(game_id) == {"advisor-2": Advisor(player="bot")}
+
+
+def test_advisor_uids_returned_dict_is_a_copy(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_advisors(game_id, {"advisor-1": Advisor(player="you")})
+
+    repo.advisor_uids(game_id)["advisor-1"] = Advisor(player="tampered")
+
+    assert repo.advisor_uids(game_id) == {"advisor-1": Advisor(player="you")}
+
+
+def test_advisors_are_gone_once_the_game_is_deleted(repo: GameRepository) -> None:
+    game_id = repo.create(_real_game())
+    repo.register_advisors(game_id, {"advisor-1": Advisor(player="you")})
+    repo.delete(game_id)
+
+    assert repo.advisor_uids(game_id) == {}
 
 
 # ---------------------------------------------------------------------------

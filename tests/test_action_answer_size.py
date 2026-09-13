@@ -33,12 +33,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from conftest import add_card, find, state
+from conftest import find, state
 from fastapi.testclient import TestClient
+from magic_cards_model.models import Game
 from test_cast_cost_choices import answer, text_of
 from test_mcp_input_required import call_tool, wired
 
+from magic_cards_model_api import affordances
+from magic_cards_model_api import mcp as mcp_module
 from magic_cards_model_api.mcp import build_server
+from magic_cards_model_api.store import store
 
 #: A board with something on it - fourteen permanents a side, eight cards in
 #: each graveyard, a seven-card hand. Smaller than the pod's real board, which
@@ -71,10 +75,22 @@ GRAVE = [
 ]
 
 #: The bound one answer must stay under, in bytes. 25,000 tokens was the
-#: client's own ceiling and roughly 100,000 bytes of JSON; this is a fifth of
-#: that, on a board that is already busy, so an answer has to grow fivefold
-#: from here before a seat is anywhere near unable to read its own result.
-MAX_ANSWER_BYTES = 20_000
+#: client's own ceiling and roughly 100,000 bytes of JSON; this stays under
+#: half of it, so an answer still has to more than double from here before a
+#: seat is anywhere near unable to read its own result.
+#:
+#: Raised from 20,000 deliberately, and this is the reasoning: 20,000 was
+#: defensive padding chosen when the only question was "how small can this
+#: get", not a constraint anything actually needed. It is now spent on the
+#: two things that let a seat act out of one answer instead of three -
+#: `targets` candidates (`mcp.MAX_CANDIDATE_BYTES`, 12,000) and the
+#: battlefield digest (`mcp.MAX_DIGEST_BYTES`, 8,000). Those two caps plus
+#: the measured base of an already-busy board is ~33.5 KB, which
+#: `test_the_worst_case_an_answer_can_reach_still_fits` proves from the real
+#: numbers rather than from this comment. A round trip saved is a whole
+#: inference cycle saved; 25,000 bytes of headroom that no client was ever
+#: going to use is not worth one.
+MAX_ANSWER_BYTES = 45_000
 
 #: The zones an action answer must not re-serialise, by the key each occupies
 #: in a state view - `battlefield_state` serves all of them, with `sections` to
@@ -87,15 +103,78 @@ BULK_KEYS = ("battlefield", "hands", "graveyards", "exile", "exile_pile", "comma
 BULK_SECTIONS = ("battlefield", "hands", "graveyards", "exile", "command")
 
 
-def busy_board(client: TestClient, game: str) -> None:
+#: The busy board's `Game`, staged once and then adopted (a deep copy of its
+#: `players`/`shared_zones`) by every test's own fresh game rather than
+#: rebuilding it forty-four `add_card` calls at a time, eleven times over.
+#:
+#: `POST /api/games/{id}/cards` (`add_card`) does three things: fetch the
+#: card, place it (`engine_api.put_card_in_zone`, which only ever touches
+#: `Game.shared_zones` or a `Player`'s own zones - never `turn`/`priority`/
+#: `combat`), and serialise a whole `state_view` for the HTTP response. That
+#: third part was the entire measured cost: `computed_board`/
+#: `characteristics_of` (`magic_cards_model/models/game.py`) re-parses every
+#: permanent's oracle text from scratch on every single request, so building
+#: a board one card at a time recomputes it once per card as the board grows
+#: - and every one of the eleven tests here built the identical board this
+#: way. `_stage_busy_board` places the same cards directly
+#: (`engine_api.put_card_in_zone`), the same way `conftest.force_turn_position`
+#: reaches past the API for test setup, and never asks for a view - so no
+#: test pays for a `state_view` it was going to throw away. What it builds is
+#: cached once (`_BUSY_BOARD_TEMPLATE`) and deep-copied onto each test's own
+#: game, so even that one-time construction happens exactly once per session
+#: rather than once per test.
+_BUSY_BOARD_TEMPLATE: Game | None = None
+
+
+def stage_card(game_id: str, name: str, player: str, zone_name: str) -> None:
+    """`add_card`'s own placement, minus the `state_view` it always computes
+    for the HTTP response - straight to `engine_api.put_card_in_zone`, the
+    same reach past the API `conftest.force_turn_position` already uses for
+    test setup. Every caller here throws the response away anyway, so
+    nothing changes except which of them pays for a board recompute nobody
+    reads."""
+    from magic_cards_model.models import Card, CardState, Zone
+
+    from magic_cards_model_api import engine_api, scryfall
+
+    game = store.get(game_id)
+    assert game is not None
+    raw = scryfall.fetch_card(name)
+    card = Card.model_validate(raw)
+    zone = Zone(zone_name)
+    if zone in engine_api.SHARED_ZONES:
+        state = CardState(card=card, zone=zone, controller=player, owner=player)
+    else:
+        state = CardState(card=card, controller=player)
+    state.tapped = False
+    state.face_up = True
+    engine_api.put_card_in_zone(game, state, player, zone, None)
+
+
+def _stage_busy_board(game_id: str) -> None:
     for name in BOARD:
-        add_card(client, game, name, "alice", "battlefield")
-        add_card(client, game, name, "bob", "battlefield")
+        stage_card(game_id, name, "alice", "battlefield")
+        stage_card(game_id, name, "bob", "battlefield")
     for name in GRAVE:
-        add_card(client, game, name, "alice", "graveyard")
-        add_card(client, game, name, "bob", "graveyard")
+        stage_card(game_id, name, "alice", "graveyard")
+        stage_card(game_id, name, "bob", "graveyard")
     for name in ["Lightning Bolt", "Preordain", "Subtlety", "Living End", "Treasure Cruise"]:
-        add_card(client, game, name, "alice", "hand")
+        stage_card(game_id, name, "alice", "hand")
+
+
+def busy_board(client: TestClient, game: str) -> None:
+    global _BUSY_BOARD_TEMPLATE
+    if _BUSY_BOARD_TEMPLATE is None:
+        _stage_busy_board(game)
+        current = store.get(game)
+        assert current is not None
+        _BUSY_BOARD_TEMPLATE = current.model_copy(deep=True)
+        return
+    template = _BUSY_BOARD_TEMPLATE.model_copy(deep=True)
+    existing = store.get(game)
+    assert existing is not None
+    existing.players = template.players
+    existing.shared_zones = template.shared_zones
 
 
 def cast_solitude(server: Any, uid: str, **extra: Any) -> Any:
@@ -115,8 +194,8 @@ def test_a_refused_cast_answers_with_the_refusal_first_and_nothing_else_ahead_of
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     result = cast_solitude(server, uids["alice"], reasoning="evoking")
     text = text_of(result)
@@ -140,8 +219,8 @@ def test_an_action_answer_stays_small_enough_for_a_seat_to_read_in_one_go(
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     text = text_of(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -154,8 +233,8 @@ def test_an_action_answer_carries_no_board_dump_but_says_so_out_loud(client, gam
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     payload = answer(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -174,8 +253,8 @@ def test_an_action_answer_still_carries_what_a_seat_needs_to_act_again(client, g
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
     pitched = find(state(client, game)["hands"]["alice"], "Savannah Lions")["id"]
 
     payload = answer(
@@ -205,8 +284,8 @@ def test_a_legal_action_entry_carries_only_the_fields_it_actually_uses(client, g
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Solitude", "alice", "hand")
-    add_card(client, game, "Savannah Lions", "alice", "hand")
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
 
     payload = answer(cast_solitude(server, uids["alice"], reasoning="evoking"))
 
@@ -230,7 +309,7 @@ def test_every_action_tool_shares_the_same_narrowed_answer(client, game, monkeyp
     seats, uids = wired(client, monkeypatch, game)
     server = build_server(seats)
     busy_board(client, game)
-    add_card(client, game, "Plains", "alice", "hand")
+    stage_card(game, "Plains", "alice", "hand")
     sol_ring = next(
         card
         for card in state(client, game)["battlefield"]
@@ -255,3 +334,156 @@ def test_every_action_tool_shares_the_same_narrowed_answer(client, game, monkeyp
         assert "state" not in payload, (name, list(payload))
         assert next(iter(payload)) == "outcome", (name, list(payload))
         assert "omitted_sections" in payload["board"], (name, payload["board"])
+
+
+# -- the caps, and the worst case they add up to ----------------------------
+#
+# Four numbers bound one answer, and each is a deliberate choice rather than a
+# round number. They are pinned here, together, because they only make sense
+# read against one another: the three inner caps have to leave the outer one
+# room on a board busier than any of them was measured on.
+
+
+def test_the_four_caps_are_where_the_reasoning_says_they_are():
+    """A cap moved without its comment moving is the failure this catches -
+    each of these carries the measurement that chose it at its definition."""
+    assert MAX_ANSWER_BYTES == 45_000
+    assert mcp_module.MAX_CANDIDATE_BYTES == 12_000
+    assert mcp_module.MAX_DIGEST_BYTES == 8_000
+    assert affordances.CANDIDATE_SLOT_CAP == 30
+
+
+def test_the_worst_case_an_answer_can_reach_still_fits(client, game, monkeypatch):
+    """Not a guess: the base is measured off this very board with both new
+    blocks emptied, and the two caps are then added at full value. An answer
+    physically cannot exceed that sum, because neither block can pass its own
+    cap - so if this holds, `MAX_ANSWER_BYTES` holds for every board."""
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    busy_board(client, game)
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
+
+    caps = mcp_module.MAX_DIGEST_BYTES + mcp_module.MAX_CANDIDATE_BYTES
+    monkeypatch.setattr(mcp_module, "MAX_DIGEST_BYTES", 0)
+    monkeypatch.setattr(mcp_module, "MAX_CANDIDATE_BYTES", 0)
+    base = len(text_of(cast_solitude(server, uids["alice"], reasoning="evoking")))
+
+    assert base + caps < MAX_ANSWER_BYTES, f"base {base} + caps {caps}"
+
+
+def test_a_real_enriched_answer_is_nowhere_near_the_cap(client, game, monkeypatch):
+    """The worst case above is arithmetic; this is the board. Nothing on a
+    normal, busy board comes close, which is what the headroom is for."""
+    seats, uids = wired(client, monkeypatch, game)
+    server = build_server(seats)
+    busy_board(client, game)
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
+
+    text = text_of(cast_solitude(server, uids["alice"], reasoning="evoking"))
+
+    assert len(text) < MAX_ANSWER_BYTES, f"{len(text)} bytes"
+    payload = json.loads(text)
+    assert payload["board"]["battlefield_digest"], "the digest must actually be in there"
+
+
+# -- an advisor's wake answer, which now carries the action list too --------
+#
+# `wait_for_priority` is not an action answer: it hands back the whole state
+# view, which is what that tool exists to give, and
+# `test_advise_mode.test_an_advisors_mcp_wait_carries_the_state_and_the_log`
+# pins it whole for an advisor. `MAX_ANSWER_BYTES` above bounds action answers
+# only, and on this board the advisor's wake answer was already 51,255 bytes
+# before it carried any action list - over that cap before this change.
+#
+# For an advise seat a real wake now also carries `available_actions` (the one
+# answer that wakes an advisor, since `pass_until` is refused to it): +7,911
+# bytes on this board, 59,470 in all. That list is shaped by the SAME
+# `mcp._compact_actions` the action answers use - empty keys dropped,
+# `MAX_CANDIDATE_BYTES` and `MAX_PAYS_WITH_BYTES` spent in list order, a
+# trimmed entry saying so in `more_with`/`name` - so its growth is bounded by
+# those two caps rather than by a second budget, which the test below proves.
+
+
+def advisor_server(client: TestClient, game: str, monkeypatch) -> Any:
+    """A fresh MCP server - a fresh `Seats`, so an empty wake-signature cache
+    (`seatkit.Seats._wake_signatures`) - pointed at whatever board `game`
+    already carries. Split out of `advisor_on_the_busy_board` so the caps
+    test below can take two independent first-ever-wait measurements of the
+    identical board: since the busy-spin fix, a second wake through the SAME
+    `Seats` would see nothing new and stop carrying `available_actions`
+    altogether, which is correct there and simply the wrong tool here."""
+    seats, _ = wired(client, monkeypatch, game)
+    return build_server(seats)
+
+
+def advisor_on_the_busy_board(client: TestClient, game: str, monkeypatch) -> Any:
+    from magic_cards_model_api.repository import Advisor
+
+    busy_board(client, game)
+    stage_card(game, "Solitude", "alice", "hand")
+    stage_card(game, "Savannah Lions", "alice", "hand")
+    store.register_advisors(game, {"buddy-uid": Advisor(player="alice")})
+    return advisor_server(client, game, monkeypatch)
+
+
+def advisor_wake(server: Any) -> str:
+    return text_of(call_tool(server, "wait_for_priority", {"player_uid": "buddy-uid"}))
+
+
+def test_an_advisors_wake_answer_carries_a_compacted_action_list_on_the_busy_board(
+    client, game, monkeypatch
+):
+    """The measured cost, and proof the list went through the action answers'
+    own compaction rather than arriving as the raw `ActionView` dump - while
+    the board beside it stays the whole state view it always was."""
+    payload = json.loads(advisor_wake(advisor_on_the_busy_board(client, game, monkeypatch)))
+
+    actions = payload["available_actions"]["actions"]
+    assert actions, payload["available_actions"]
+    for action in actions:
+        assert not [key for key, value in action.items() if value in (None, [], {})], action
+    assert any(
+        slot.get("candidates")
+        for action in actions
+        for slot in (action.get("targets") or {}).get("slots") or []
+    ), "no action on the busy board carries its target candidates"
+    for key in BULK_KEYS:
+        assert key in payload, f"carrying the action list narrowed the wake's `{key}` away"
+    assert "omitted_sections" not in payload
+
+
+def test_an_advisors_wake_list_grows_only_inside_the_action_answers_own_caps(
+    client, game, monkeypatch
+):
+    """Not a guess, the same arithmetic the action answer's worst case uses:
+    the same wake on the same board, once with both budgets emptied and once
+    with them at full value. Everything the second answer carries beyond the
+    first is candidate names and `pays_with` names, so it can never exceed
+    the two caps added together - and the starved answer says out loud that
+    its candidates were cut rather than handing over less and staying quiet.
+
+    Two independent `Seats` (`advisor_server`), not one wake called twice: the
+    busy-spin fix means a second bare wait on an unchanged board through the
+    same `Seats` sees nothing new and drops `available_actions` altogether -
+    correct there, but this test wants two first looks at one board, not a
+    look and then a spin."""
+    board = advisor_on_the_busy_board(client, game, monkeypatch)
+    full = len(advisor_wake(board))
+
+    caps = mcp_module.MAX_CANDIDATE_BYTES + mcp_module.MAX_PAYS_WITH_BYTES
+    monkeypatch.setattr(mcp_module, "MAX_CANDIDATE_BYTES", 0)
+    monkeypatch.setattr(mcp_module, "MAX_PAYS_WITH_BYTES", 0)
+    starved_text = advisor_wake(advisor_server(client, game, monkeypatch))
+    starved = json.loads(starved_text)["available_actions"]["actions"]
+
+    trimmed = [
+        action
+        for action in starved
+        if (action.get("targets") or {}).get("more_with") == mcp_module._BUDGET_SPENT_WITH
+    ]
+    assert trimmed, "a spent candidate budget went unannounced on the advisor's wake"
+    for action in trimmed:
+        assert all("count" in slot for slot in action["targets"]["slots"]), action
+    assert full - len(starved_text) <= caps, f"full {full} - starved {len(starved_text)}"

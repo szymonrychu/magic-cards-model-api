@@ -130,6 +130,17 @@ spec:
               value: harbor.szymonrichert.pl/containers/magic-cards-model-api:__TAG__
             - name: API_SERVICE_URL
               value: http://mtg-stack.mtg-engine.svc.cluster.local:8000
+            # Which revision of the deck-guides corpus every seat Job checks
+            # out (`__GUIDES_REF__` in `deploy/seat-job.yaml`): any branch,
+            # tag or commit sha. `main` - the latest guides - is the default
+            # and stays the default, because play wants current guides; an
+            # evaluation harness that needs two runs to have read the same
+            # corpus is the only caller that pins it. Whatever it resolves
+            # to is stamped into the agent's briefing and into the header of
+            # the game's plan file, so a game's artifacts always name the
+            # corpus they were played against.
+            - name: GUIDES_REF
+              value: main
             - name: SPELLSLINGER_MCP_URL
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES

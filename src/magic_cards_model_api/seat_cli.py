@@ -171,6 +171,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     cast = sub.add_parser("cast", help="cast a spell (hand, or graveyard/exile with --keyword)")
     cast.add_argument("card", help="card name or id")
+    cast.add_argument(
+        "--spell-face",
+        default="",
+        help=(
+            "which face this cast announces - a half of a split card (CR 709.3) "
+            "or an adventurer card's Adventure (CR 715.3) - by that face's "
+            "printed name: --spell-face Tear for Wear // Tear's back half, "
+            "--spell-face 'Swift End' for Murderous Rider's Adventure. "
+            "The value is the engine's own: it is the `spell_face` string on the "
+            "action row you are taking, handed back unchanged. Omit it for the "
+            "front half, which is every single-faced card and an adventurer "
+            "card's own creature half"
+        ),
+    )
     cast.add_argument("--target", default="", help="comma-separated card ids or player names")
     cast.add_argument(
         "--sources",
@@ -797,6 +811,8 @@ def run(argv: list[str] | None = None) -> int:
             body["card_id"] = args.card.strip()
         else:
             body["card"] = args.card
+        if args.spell_face.strip():
+            body["spell_face"] = args.spell_face.strip()
         if args.target:
             body["targets"] = _parse_ids(args.target)
         sources = sources_or_all(args.sources)
@@ -900,8 +916,10 @@ def run(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
     elif args.command == "attackers":
+        # No `player` - see `mcp.py`'s `declare_attackers`: the route
+        # resolves the declaring seat from the uid and `AttackRequest` has no
+        # such field to put it in.
         body = {
-            "player": seat.player,
             "attackers": [
                 {"card_id": pair["card"], "defender": pair["defender"]}
                 for pair in _parse_pairs(args.pairs)

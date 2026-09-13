@@ -78,6 +78,8 @@
   "pending_decision": {
     "affirmative_is_legal": true,
     "amount": 0,
+    "answer_field": "order",
+    "answer_with": "decide(order=\"<every id in pending_decision.cards, comma-separated, bottom of the stack first>\", generation=1)",
     "card_labels": [
       "Delver of Secrets - At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
       "Delver of Secrets - At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature."

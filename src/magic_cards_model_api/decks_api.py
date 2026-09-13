@@ -31,7 +31,8 @@ limits, CR 103's start-of-game sequence) is enforced by the engine through
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -40,8 +41,9 @@ from . import ai_pregame, ai_seat, audit, game_access, lobby, oidc
 from .agent_settings import AgentSettings
 from .api_client import ApiClient, InProcessApiClient
 from .decks import load_deck_into_game
-from .repository import RECENT_RECORDS_WINDOW, GameUnloadable
-from .store import known_players, new_seat_uids, store
+from .repository import RECENT_RECORDS_WINDOW, Advisor, GameUnloadable
+from .schemas import RequestModel
+from .store import known_players, new_seat_uids, player_for_advisor_uid, store
 
 router = APIRouter(prefix="/api/lobby", tags=["lobby"], route_class=game_access.GameAccessRoute)
 
@@ -60,7 +62,7 @@ def max_live_games() -> int:
     return int(os.environ.get("MAX_LIVE_GAMES", "4") or 4)
 
 
-class NewUiPlayer(BaseModel):
+class NewUiPlayer(RequestModel):
     username: str = Field(min_length=1)
     decklist_text: str = Field(min_length=1)
     ai: bool = False
@@ -70,9 +72,34 @@ class NewUiPlayer(BaseModel):
     agent: AgentSettings | None = None
     """How the AI seat runs (model, effort, thinking). Only with `ai: true`;
     absent, the server's defaults apply (`AgentSettings.default`)."""
+    buddy: bool = False
+    """Whether this seat gets a **buddy** - an advisor (`repository.Advisor`)
+    watching this player's own view, proposing plays and never making one
+    (`game_access.py` refuses every mutating request an advisor uid makes).
+
+    Creation-time only, by design: a buddy is minted here, with its own uid,
+    and from then on it is restarted and stopped through the same
+    `ai-seat/start|stop` routes a seat uses. There is no mid-game toggle.
+
+    **Only with `ai: false`.** A buddy advises a human; an AI seat acts
+    through its own seat uid and never reads the advice ledger, so the pair
+    is refused rather than minting an advisor nothing would read."""
+    buddy_agent: AgentSettings | None = None
+    """How the buddy runs. Only with `buddy: true`; absent, the server's
+    defaults apply, exactly as for `agent`.
+
+    **These settings are stored inside the advisor's own entry, never in
+    `store.register_agent_settings`.** That map is keyed by *username*, and
+    the lobby decides which seat is the human's by looking for the seat with
+    no entry in it (`ui/lobby_model.js`'s `seatsFromRow`) - so a buddy's
+    settings filed under the human's name would make the browser read the
+    human as the AI seat and hand them the wrong uid. `repository.Advisor`'s
+    own docstring gives the other half of the reason (two advisors on one
+    seat, and an advisor on a seat that is itself an AI seat, both collide in
+    a name-keyed map)."""
 
 
-class NewUiGame(BaseModel):
+class NewUiGame(RequestModel):
     players: list[NewUiPlayer] = Field(min_length=2, max_length=2)
     seed: int | None = None
 
@@ -85,6 +112,16 @@ class NewUiGameResponse(BaseModel):
     agents: dict[str, AgentSettings]
     """Every AI seat's chosen (or defaulted) model, effort and thinking
     budget - `AgentSettings.default` when the request left it unset."""
+    advisor_uids: dict[str, str] = {}
+    """player name -> that player's buddy uid, for every seat the request
+    asked a buddy for. A credential, handed back exactly as `seat_uids` is:
+    to the caller that created the game and to nobody else (the lobby
+    listing's own `advisors` re-answers it later, for the owner alone).
+
+    Left unset - and so absent from the response entirely, under
+    `response_model_exclude_unset=True` - for a game with no buddy, so a
+    browser written before buddies existed reads exactly what it always
+    read."""
 
 
 @router.post("/games", response_model=NewUiGameResponse, response_model_exclude_unset=True)
@@ -116,10 +153,33 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     for player in req.players:
         if player.agent is not None and not player.ai:
             raise ValueError(f"{player.username}: agent settings are only for an ai seat")
+        if player.buddy_agent is not None and not player.buddy:
+            raise ValueError(f"{player.username}: buddy agent settings are only for a buddy")
+        if player.buddy and player.ai:
+            # A buddy advises a human. An AI seat acts through its own seat
+            # uid and never reads the advice ledger, so an advisor minted
+            # here would propose into a stream with no reader - and in
+            # kubernetes mode it would cost a second full Job (agent plus
+            # driver) to do it. `docs/ai_buddy_brief.md` opens by telling the
+            # advisor it sits beside a human; this is what makes that true.
+            raise ValueError(
+                f"{player.username}: a buddy advises a human seat - an ai seat plays "
+                "through its own uid and never reads the advice its buddy would write"
+            )
     agents = {
         player.username: player.agent or AgentSettings.default(os.environ)
         for player in req.players
         if player.ai
+    }
+    # Keyed by uid, never by name - see `NewUiPlayer.buddy_agent` for why
+    # this must not go through `register_agent_settings`.
+    advisors = {
+        uuid4().hex: Advisor(
+            player=player.username,
+            agent=player.buddy_agent or AgentSettings.default(os.environ),
+        )
+        for player in req.players
+        if player.buddy
     }
 
     # M8: reserve-then-create, never create-then-reserve. `reserve_slot`
@@ -167,6 +227,8 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
         game_id, {player.username: player.decklist_text for player in req.players}
     )
     store.register_agent_settings(game_id, agents)
+    if advisors:
+        store.register_advisors(game_id, advisors)
     # Nothing runs CR 103.5 or CR 103.6 here. `Match.start_game` has already
     # left the game resting in `Step.MULLIGAN` (turn 0), and the seats drive it
     # from there through `POST /api/games/{id}/pregame/...` - see `opening.py`
@@ -196,25 +258,44 @@ def start_game_from_decklists(req: NewUiGame, request: Request) -> dict[str, Any
     # happens to be on this machine's PATH.
     mode = ai_seat.ai_seat_mode()
     api_base = ai_seat.api_service_url()
-    for player in req.players:
-        if not player.ai:
-            continue
-        if mode == "subprocess" and not ai_seat.claude_available():
-            continue
-        ai_seat.registry.start(
-            uid=seat_uids[player.username],
-            game_id=game_id,
-            player=player.username,
-            api_base=api_base,
-            agent=agents[player.username],
-        )
-    return {
+    if mode != "subprocess" or ai_seat.claude_available():
+        for player in req.players:
+            if not player.ai:
+                continue
+            ai_seat.registry.start(
+                uid=seat_uids[player.username],
+                game_id=game_id,
+                player=player.username,
+                api_base=api_base,
+                agent=agents[player.username],
+            )
+        # The buddies, beside them and through the same registry - the same
+        # three mechanisms, the same idempotent start, the same never-raises
+        # stance (`AiSeatRegistry.start`). A buddy that cannot start comes
+        # back a `fallback`, pollable on `game_seats` for the UI to render;
+        # it never fails this request, because the game is fully playable
+        # without one.
+        for uid, advisor in advisors.items():
+            ai_seat.registry.start(
+                uid=uid,
+                game_id=game_id,
+                player=advisor.player,
+                api_base=api_base,
+                agent=advisor.agent or AgentSettings.default(os.environ),
+                role=ai_seat.ROLE_ADVISOR,
+            )
+    answer: dict[str, Any] = {
         "game_id": game_id,
         "seat_uids": seat_uids,
         "admin_key": store.admin_key(game_id),
         "ai_players": [player.username for player in req.players if player.ai],
         "agents": {name: settings.model_dump() for name, settings in agents.items()},
     }
+    if advisors:
+        # Set only when there is one, so `response_model_exclude_unset=True`
+        # leaves the key out entirely for every game that has no buddy.
+        answer["advisor_uids"] = {advisor.player: uid for uid, advisor in advisors.items()}
+    return answer
 
 
 class LobbyGameSummary(BaseModel):
@@ -225,6 +306,16 @@ class LobbyGameSummary(BaseModel):
     is_over: bool
     agents: dict[str, AgentSettings]
     seats: dict[str, str]
+    advisors: dict[str, str] = {}
+    """player name -> that player's buddy uid, under exactly the rule
+    `seats` above follows: the uids the caller already presented in `?uids=`,
+    or every one of them for the game's own **owner** and nobody else.
+
+    A uid is a credential, and this is the only route that hands one back
+    after creation - which is what makes a buddy survive a reload, and makes
+    "start the game on one computer and finish on the other" cover the buddy
+    too rather than stranding it. `{}` for a caller with neither claim, and
+    for every game that has no buddy."""
     created_at: str | None = None
     unloadable: str | None = None
     """Set only when this game's row exists but this build cannot decode the
@@ -357,6 +448,8 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
             continue
         all_seats = {name: uid for uid, name in store.seat_uids(game_id).items()}
         seats = {name: uid for name, uid in all_seats.items() if uid in mine}
+        all_advisors = {advisor.player: uid for uid, advisor in store.advisor_uids(game_id).items()}
+        advisors = {name: uid for name, uid in all_advisors.items() if uid in mine}
         owner = store.owner_user_id(game_id)
         if owner is not None and user is not None and user.sub == owner:
             # The owner, and only the owner, gets every seat of her own game -
@@ -369,6 +462,7 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
             # keeps the pre-existing guarantee that it never learns a uid it
             # did not already present.
             seats = all_seats
+            advisors = all_advisors
         elif owner is not None and not seats:
             continue
         games.append(
@@ -388,6 +482,7 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
                     for name, settings in store.agent_settings(game_id).items()
                 },
                 "seats": seats,
+                "advisors": advisors,
                 "created_at": store.created_at(game_id),
                 "unloadable": unloadable,
                 # Only for the row that cannot be decoded - see
@@ -402,7 +497,36 @@ async def list_lobby_games(request: Request, uids: str | None = None) -> dict[st
 
 class SeatDetail(BaseModel):
     player: str
-    uid: str
+    uid: str | None = None
+    """This row's credential - present only on a SEAT row, and only the
+    entry matching the caller's own `uid` query parameter, or on every seat
+    entry for the game's admin key. `None` for every other seat, and for a
+    caller presenting nothing. **Never present at all on an advisor row.**
+
+    A seat uid *is* the authority to act as that seat, for the life of the
+    game, with no reference to who is logged in (`game_access.py`'s module
+    docstring). Handing every one of them to any caller who knew the
+    `game_id` therefore made this read a way to *obtain* an acting
+    credential - which is exactly how the mtg-buddy advisor, a uid the
+    server refuses to let act, could have got hold of its human's seat uid
+    and acted as the human instead. Scoped the same way `decklist` below
+    already was.
+
+    An advisor's uid is held to the same rule from the other direction, and
+    it is the one credential a buddy's whole read-only guarantee rests on:
+    an advisor row names the advisor's presence, its player, its agent and
+    its liveness, and says nothing about how to authenticate as it. The key
+    is left *unset* on such a row rather than set to `None`, so
+    `response_model_exclude_unset=True` drops it from the answer entirely
+    instead of replying `uid: null`.
+    """
+    role: Literal["seat", "advisor"] = "seat"
+    """What kind of credential this row describes, the same field and the
+    same meaning `schemas.SeatLookupResponse.role` carries. Defaulted, and
+    left unset on a seat row, so this route's answer for a game with no
+    buddy is byte-identical to what it always was. It is declared here so
+    the two seat-shaped responses this api has cannot drift into disagreeing
+    about how a role is spelled."""
     agent: AgentSettings | None = None
     """This seat's `AgentSettings`, if it is an AI seat - `None` for a human
     one, same as `NewUiGameResponse.agents`."""
@@ -410,7 +534,11 @@ class SeatDetail(BaseModel):
     """`ai_seat.registry.status(uid)` verbatim, or the same `not_started`
     fallback `GET .../ai-seat/status` used to hand back for an unstarted
     uid - `None` only means this seat's liveness was never tracked at all,
-    which in practice never happens once a uid exists."""
+    which in practice never happens once a uid exists.
+
+    Verbatim on a *seat* row. On an advisor row it is put through
+    `_advisor_row_status` first, which takes the advisor uid out of it - see
+    `uid` above for why that row may not name one."""
     decklist: str | None = None
     """This seat's own decklist text (`store.decklists`) - present only on
     the entry matching the caller's own `uid` query parameter, the same
@@ -421,6 +549,78 @@ class SeatDetail(BaseModel):
 
 class GameSeatsResponse(BaseModel):
     seats: list[SeatDetail]
+
+
+#: Status keys that spell an advisor's uid out in full, dropped whole from an
+#: advisor's row rather than redacted: `prompt` is the brief with the uid
+#: substituted into it (`ai_seat.build_prompt`) and `command` is the argv that
+#: prompt is joined into (`ai_seat.command_for`), both handed back by a
+#: `mechanism: "fallback"` start so a human holding the uid can run the session
+#: by hand. Without the uid they are a wall of text nobody can act on, and the
+#: human who *can* act on them reads them where the uid is already known:
+#: `GET .../ai-seat/status?uid=<the advisor uid>`, which is unchanged.
+_UID_BEARING_KEYS = ("uid", "prompt", "command")
+
+#: What a redacted uid reads as. Named rather than blank so an operator
+#: looking at a buddy's row sees that something was taken out, and why.
+_REDACTED = "<advisor uid redacted>"
+
+
+def _scrub(value: Any, uid: str) -> Any:
+    """`value` with every occurrence of the full `uid` replaced - through
+    dicts, lists and strings alike, because a status value is not always a
+    flat string (`stdout_tail` and `stderr_tail` are lists of process
+    output)."""
+    if isinstance(value, str):
+        return value.replace(uid, _REDACTED)
+    if isinstance(value, dict):
+        return {key: _scrub(item, uid) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item, uid) for item in value]
+    return value
+
+
+def _advisor_row_status(status: dict[str, Any], uid: str) -> dict[str, Any]:
+    """One `ai_seat.registry.status` answer with the advisor uid taken out of
+    it - keys and quoted occurrences both.
+
+    An advisor's row on this broadly-readable route must carry no advisor uid
+    at all (`SeatDetail.uid`), and a status dict names it in more places than
+    the obvious one. Two passes, because the leaks are two different shapes:
+
+    - **`_UID_BEARING_KEYS` are dropped.** Every producer names the uid it is
+      about (`AiSeatRunner.status`, `K8sSeats.status`'s base, both fallback
+      shapes), and a fallback also hands back the `prompt` and the `command`
+      it was built from, each with the uid inside it.
+    - **Whatever is left is scrubbed of the uid as a substring.** A value this
+      module does not compose can still quote the credential: a kubernetes
+      `reason` is `could not read pod status: {exc}`, and the exception is
+      raised against a label selector of `mtg/seat-uid=<the full uid>`
+      (`K8sSeats._pod`), so the uid rides out in the API error's own text. A
+      subprocess runner's `stdout_tail` is the agent's own output, which
+      quotes its credential freely. Neither key can be enumerated ahead of
+      time, so the uid is removed by value rather than by name, which also
+      covers the mechanism nobody has written yet.
+
+    Doing it here, on the way out, rather than asking each producer not to say
+    it, is what makes the guarantee hold for a status shape this module does
+    not own: there is exactly one place a uid can reach an advisor row from,
+    and this is it.
+
+    `job` survives on a kubernetes status, uid prefix and all
+    (`k8s_seats.job_name` truncates both ids to eight characters, so the
+    scrub - which matches the whole uid - leaves it alone): it is what an
+    operator greps for, the remaining 96 bits of the uid are not in it, and
+    this same route already hands out every *seat* uid in full - so an
+    attacker after a credential has a strictly better one to take, and
+    dropping the Job name would cost the human the pod name without closing
+    anything."""
+    kept = {key: value for key, value in status.items() if key not in _UID_BEARING_KEYS}
+    if not uid:
+        # No credential to scrub for, and `str.replace("")` would splice the
+        # marker between every character of every value.
+        return kept
+    return {key: _scrub(value, uid) for key, value in kept.items()}
 
 
 @router.get(
@@ -441,18 +641,51 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
     way `visibility._redact_player` redacted it on the old route: present
     only for the seat whose own `uid` the caller presents, absent for every
     other entry and for a caller with no `uid` or an unrecognised one.
+
+    **`uid` is scoped exactly the same way**, and for a stronger reason: a
+    seat uid is not a label, it is the authority to act as that seat
+    (`SeatDetail.uid`). Handing every seat's uid to every caller made this
+    permitted read a credential vending machine - the advisor credential,
+    whose entire design is a uid that may read and may not act, could ask
+    this route for its human's seat uid and then act as the human, with
+    `game_access.py`'s gate never consulted. The `uid` echoed inside the
+    `ai_seat` liveness block is redacted with it: it was the same secret,
+    spelled twice, and nothing reads it (`ui/store.js` reads `state`,
+    `mechanism`, `activity` and the error fields, never `uid`).
+
+    The admin key is the one credential answered in full. It is the
+    operator's own - `visibility.ADMIN`, already trusted with the whole
+    board - and a harness holding it drives both seats by design.
     """
     if store.get(game_id) is None:
         raise KeyError(f"no game {game_id}")
     agents = store.agent_settings(game_id)
     decklists = store.decklists(game_id)
+    operator = bool(uid) and store.is_admin(game_id, uid)
+    # Whose own block this caller is entitled to see, resolved from the one
+    # credential it presented: its own seat, or - for a buddy reading the
+    # deck it advises on - the human whose view its advisor uid opens. An
+    # advisor sees exactly what its human sees (`visibility.resolve_viewer`,
+    # and `game_access.py` lets every GET through for that reason), and its
+    # human's own decklist is part of that; without it the buddy's driver
+    # cannot identify the deck it is advising on at all
+    # (`mtg_agent.driver.app`'s `seat_decklist`). `None` for a caller that
+    # presented nothing, or a uid this game does not know.
+    own_block = (
+        None
+        if uid is None
+        else (store.player_for_uid(game_id, uid) or player_for_advisor_uid(game_id, uid))
+    )
     seats = []
     for seat_uid, player in store.seat_uids(game_id).items():
         status = ai_seat.registry.status(seat_uid)
+        own = operator or (uid is not None and uid == seat_uid)
+        if status is not None and not own and "uid" in status:
+            status = {**status, "uid": None}
         seats.append(
             {
                 "player": player,
-                "uid": seat_uid,
+                "uid": seat_uid if own else None,
                 # `.model_dump()`, not the bare `AgentSettings` instance: T1's
                 # own lesson (`MEMORY.md`) - `response_model_exclude_unset=
                 # True` tracks each *response* instance's own
@@ -467,8 +700,32 @@ def game_seats(game_id: str, uid: str | None = None) -> dict[str, Any]:
                 "agent": agents[player].model_dump() if player in agents else None,
                 "ai_seat": status
                 if status is not None
-                else {"uid": seat_uid, "mechanism": None, "state": "not_started"},
-                "decklist": decklists.get(player) if uid is not None and uid == seat_uid else None,
+                else {"uid": seat_uid if own else None, "mechanism": None, "state": "not_started"},
+                # `own_block`, not `own`: `decklist` is still never widened to
+                # the admin key (`own_block` resolves a seat or an advisor
+                # credential, never `is_admin`), so it stays exactly as scoped
+                # as it was documented to be - the one addition is the buddy
+                # reading the deck it advises on, which is its human's own
+                # block and nothing more.
+                "decklist": decklists.get(player) if player == own_block else None,
+            }
+        )
+    # The buddies, after the seats and WITHOUT their uids - see
+    # `SeatDetail.uid`. `role` is what tells the two kinds of row apart, and
+    # appending them last also keeps the first row for any given player the
+    # seat row, which is what `mtg_agent.driver.app`'s `seat_decklist` reads.
+    for advisor_uid, advisor in store.advisor_uids(game_id).items():
+        status = ai_seat.registry.status(advisor_uid)
+        seats.append(
+            {
+                "player": advisor.player,
+                "role": ai_seat.ROLE_ADVISOR,
+                # From the advisor's own entry, never the name-keyed
+                # `agent_settings` map - `NewUiPlayer.buddy_agent` says why.
+                "agent": None if advisor.agent is None else advisor.agent.model_dump(),
+                "ai_seat": _advisor_row_status(status, advisor_uid)
+                if status is not None
+                else {"mechanism": None, "state": "not_started", "role": ai_seat.ROLE_ADVISOR},
             }
         )
     return {"seats": seats}
@@ -478,6 +735,11 @@ class EndGameResponse(BaseModel):
     game_id: str
     players: list[str]
     seats_invalidated: int
+    advisors_invalidated: int = 0
+    """How many buddy uids this game had, all of them released and
+    invalidated with the seats (`lobby.reset_game`). Counted separately
+    rather than folded into `seats_invalidated`, which means seats and is
+    read that way by everything that already displays it."""
     watcher_stopped: bool
     ai_seats_released: list[dict[str, Any]]
     """Per-uid release detail from `ai_seat.registry.release` - shape varies

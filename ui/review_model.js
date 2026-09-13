@@ -40,6 +40,13 @@
 export const PLAN_ACTION = "plan_declared";
 export const GAME_OVER_ACTION = "game_over";
 
+//: The mtg-buddy advisor's own proposal to a human seat, and the seat's
+//: one-click approval of one - `audit.ADVICE_ACTION`/`ADVICE_APPROVED_
+//: ACTION`. Neither mutates the game; see `adviceOf` for what is built from
+//: them.
+export const ADVICE_ACTION = "advice";
+export const ADVICE_APPROVED_ACTION = "advice_approved";
+
 //: The actions a post-game write-up would arrive as, should one ever be
 //: written into the ledger. Today nothing writes any of them: the agent's
 //: reflection turn (`mtg_agent/driver/prompt.py`'s `reflection_turn`) writes
@@ -372,9 +379,217 @@ function pairingFromRow(entry, players) {
   );
 }
 
+// -------------------------------------------------- mtg-buddy's advice -----
+//
+// A stream of its own, beside the declaration pairing above rather than
+// folded into it: a declaration's window runs from one `plan_declared` row
+// to the next *by any seat*, and an advice row - one per decision point,
+// potentially several a turn - would slice that window into fragments it was
+// never meant to have. `reviewTurns` below marks `PLAN_ACTION` and
+// `ADVICE_ACTION` independently for exactly that reason.
+//
+// This mirrors `review.py`'s `_advice` line for line rather than trusting the
+// server's own computed `review.advice` alone, because `adviceOf` (like
+// `pairingOf`/`pairingFromRow` above) has to answer for a payload that
+// carries no such list at all - every game reviewed before this facility
+// existed, or a hand-assembled payload in a test.
+
+/** The ledger's own name for a proposal's `path` - the route's last segment,
+ * hyphens turned to underscores (`/actions/play-land` -> `play_land`),
+ * exactly how every action route's own path relates to the name it audits
+ * under. `null` for a path that names nothing (or is itself absent). */
+function kindOfPath(path) {
+  if (!path) return null;
+  const tail = String(path)
+    .replace(/\/+$/, "")
+    .split("/")
+    .pop();
+  const kind = (tail || "").replace(/-/g, "_");
+  return kind || null;
+}
+
+/** Whether `didRow` (a raw ledger row, not yet a frame) actually matches an
+ * advice proposal: the same action kind for `path`, and the same card where
+ * `body` names one by id or name. A proposal that names no card - a pass,
+ * most often - has nothing further to check, so the kind match is enough. */
+function adviceFollowed(path, body, didRow) {
+  if (!didRow) return false;
+  const kind = kindOfPath(path);
+  if (!kind || didRow.action !== kind) return false;
+  const proposed = (body || {}).card_id !== undefined ? body.card_id : (body || {}).card;
+  if (proposed === undefined || proposed === null) return true;
+  const didDetail = didRow.detail || {};
+  const didCard = didDetail.card_id !== undefined ? didDetail.card_id : didDetail.card;
+  return didCard !== undefined && didCard !== null && String(didCard) === String(proposed);
+}
+
+/** The first row in `entries[start, end)` that is a real move by `player`:
+ * never an `advice`/`advice_approved` marker (neither mutates the game), and
+ * never a row the engine refused - a refusal is a failed attempt, not a
+ * thing that happened, and is deliberately never handed back as `did` (see
+ * `refusedInWindow` for where a refusal *is* reported). */
+function firstRealAction(entries, start, end, player) {
+  for (let index = start; index < end; index += 1) {
+    const candidate = entries[index];
+    if (candidate.action === ADVICE_ACTION || candidate.action === ADVICE_APPROVED_ACTION) continue;
+    if ((candidate.detail || {}).player !== player) continue;
+    if ((candidate.detail || {}).allowed === false) continue;
+    return candidate;
+  }
+  return null;
+}
+
+/** Every row in `entries[start, end)` that is `player`'s own attempt and
+ * that the engine refused - the evidence `firstRealAction` deliberately
+ * excludes from `did`. Carries the engine's verbatim reason (`frameOf`'s own
+ * `reason`/`refused` fields), since "you approved this and the engine
+ * refused it because X" is the single most instructive line a retrospective
+ * can contain - never assumed to be at most one row, since nothing stops a
+ * seat retrying a refused attempt more than once. */
+function refusedInWindow(entries, start, end, player) {
+  const refused = [];
+  for (let index = start; index < end; index += 1) {
+    const candidate = entries[index];
+    if (candidate.action === ADVICE_ACTION || candidate.action === ADVICE_APPROVED_ACTION) continue;
+    if ((candidate.detail || {}).player !== player) continue;
+    if ((candidate.detail || {}).allowed !== false) continue;
+    refused.push(candidate);
+  }
+  return refused;
+}
+
+/** Every `ADVICE_ACTION` row in `entries`, paired with whether it was
+ * approved and what the seat did about it - the full derivation `adviceOf`
+ * falls back to when `review.advice` is absent. See the section banner above
+ * for why this is a separate pass from `reviewTurns`'s declaration pairing. */
+function deriveAdvice(entries) {
+  const approvals = entries.filter((row) => row.action === ADVICE_APPROVED_ACTION);
+  const result = [];
+  entries.forEach((row, index) => {
+    if (row.action !== ADVICE_ACTION) return;
+    const detail = row.detail || {};
+    const player = detail.player || null;
+    const seq = row.seq;
+    const approvedRow =
+      approvals.find((a) => (a.detail || {}).advice_seq === seq) || null;
+    let boundary = entries.length;
+    for (let later = index + 1; later < entries.length; later += 1) {
+      const candidate = entries[later];
+      if (candidate.action === ADVICE_ACTION && (candidate.detail || {}).player === player) {
+        boundary = later;
+        break;
+      }
+    }
+    const didRow = firstRealAction(entries, index + 1, boundary, player);
+    const refusedRows = refusedInWindow(entries, index + 1, boundary, player);
+    result.push({
+      seq,
+      ts: row.ts,
+      turn: row.turn,
+      step: row.step,
+      phase: row.phase,
+      player,
+      summary: detail.summary === undefined ? null : detail.summary,
+      reasoning: row.reasoning || detail.reasoning || null,
+      path: detail.path === undefined ? null : detail.path,
+      body: detail.body === undefined ? null : detail.body,
+      basedOnSeq: detail.based_on_seq === undefined ? null : detail.based_on_seq,
+      validated: detail.validated === undefined ? null : detail.validated,
+      approved: approvedRow !== null,
+      approvedSeq: approvedRow ? approvedRow.seq : null,
+      did: didRow ? frameOf(didRow) : null,
+      followed: adviceFollowed(detail.path, detail.body, didRow),
+      refused: refusedRows.map(frameOf),
+    });
+  });
+  return result;
+}
+
+/** One server-computed `review.advice` item (snake_case, `did` a paired
+ * `ReviewEntry`-shaped object with no `snapshot`), reshaped into the same
+ * camelCase form `deriveAdvice` returns - so a caller never has to know
+ * which of the two produced the item it is holding. */
+function reshapeServerAdvice(item) {
+  return {
+    seq: item.seq,
+    ts: item.ts,
+    turn: item.turn,
+    step: item.step,
+    phase: item.phase,
+    player: item.player || null,
+    summary: item.summary === undefined ? null : item.summary,
+    reasoning: item.reasoning || null,
+    path: item.path === undefined ? null : item.path,
+    body: item.body === undefined ? null : item.body,
+    basedOnSeq: item.based_on_seq === undefined ? null : item.based_on_seq,
+    validated: item.validated === undefined ? null : item.validated,
+    approved: !!item.approved,
+    approvedSeq: item.approved_seq === undefined ? null : item.approved_seq,
+    did: item.did ? frameOf(item.did) : null,
+    followed: !!item.followed,
+    refused: (item.refused || []).map(frameOf),
+  };
+}
+
+/** Every piece of advice in this review, as the page reads it - `pairingOf`'s
+ * mirror for the advice stream. Prefers the server's own computed `review.
+ * advice` (reshaped to camelCase); falls back to deriving it directly from
+ * `review.entries` for a payload that carries no such list at all. */
+export function adviceOf(review) {
+  const provided = review && Array.isArray(review.advice) ? review.advice : null;
+  if (provided) return provided.map(reshapeServerAdvice);
+  return deriveAdvice((review && review.entries) || []);
+}
+
+/** An `ADVICE_ACTION` row `adviceOf`'s own list does not cover - the
+ * row-level fallback `pairingFromRow` is for declarations. Everything the
+ * row itself carries still shows; only the cross-referenced pairing
+ * (`approved`/`did`/`followed`) is left at its unknown default, since
+ * establishing those needs the rest of the ledger this single row does not
+ * carry. */
+function adviceFromRow(row) {
+  const detail = row.detail || {};
+  return {
+    seq: row.seq,
+    ts: row.ts,
+    turn: row.turn,
+    step: row.step,
+    phase: row.phase,
+    player: detail.player || null,
+    summary: detail.summary === undefined ? null : detail.summary,
+    reasoning: row.reasoning || detail.reasoning || null,
+    path: detail.path === undefined ? null : detail.path,
+    body: detail.body === undefined ? null : detail.body,
+    basedOnSeq: detail.based_on_seq === undefined ? null : detail.based_on_seq,
+    validated: detail.validated === undefined ? null : detail.validated,
+    approved: false,
+    approvedSeq: null,
+    did: null,
+    followed: false,
+    refused: [],
+  };
+}
+
+/** One `ADVICE_APPROVED_ACTION` row as a low-weight frame: never routine (so
+ * `collapseRoutine` never folds it into an unrelated run of `advance`/
+ * `pass_priority` rows under that run's own fixed label), but labelled
+ * plainly by the advice it approves rather than by `frameLabel`'s generic
+ * "advice_approved". */
+function approvalFrameOf(entry) {
+  const detail = entry.detail || {};
+  const adviceSeq = detail.advice_seq === undefined ? null : detail.advice_seq;
+  return {
+    ...frameOf(entry),
+    isApproval: true,
+    adviceSeq,
+    label: `approving advice #${adviceSeq === null ? "?" : adviceSeq}`,
+  };
+}
+
 /**
  * The ledger as the page reads it: one group per turn, in order, each
- * carrying the declarations made in it and every other row as a frame.
+ * carrying the declarations made in it, the advice given in it, and every
+ * other row as a frame.
  *
  * A new group starts whenever the row's `turn` changes rather than by
  * bucketing on the number, so the order the ledger was written in is the
@@ -382,7 +597,11 @@ function pairingFromRow(entry, players) {
  * re-sorting of it.
  *
  * A `plan_declared` row is never a frame: it is the turn's header, and
- * showing it twice would make a declaration look like an action taken.
+ * showing it twice would make a declaration look like an action taken. An
+ * `ADVICE_ACTION` row is the same - the turn's header for that piece of
+ * advice - and for the identical reason. An `ADVICE_APPROVED_ACTION` row
+ * *is* a frame, since it belongs to the ledger's own order of events rather
+ * than to any one turn's header, just a low-weight one (`approvalFrameOf`).
  */
 export function reviewTurns(review) {
   const entries = [...((review && review.entries) || [])].sort((a, b) => a.seq - b.seq);
@@ -390,6 +609,7 @@ export function reviewTurns(review) {
   const declaredBySeq = new Map(
     ((review && review.declarations) || []).map((d) => [d.seq, pairingOf(d, players)])
   );
+  const adviceBySeq = new Map(adviceOf(review).map((a) => [a.seq, a]));
   const groups = [];
   let current = null;
   for (const entry of entries) {
@@ -398,12 +618,17 @@ export function reviewTurns(review) {
         key: `turn-${entry.turn === null || entry.turn === undefined ? "pregame" : entry.turn}-${entry.seq}`,
         turn: entry.turn === undefined ? null : entry.turn,
         declarations: [],
+        advice: [],
         frames: [],
       };
       groups.push(current);
     }
     if (entry.action === PLAN_ACTION) {
       current.declarations.push(declaredBySeq.get(entry.seq) || pairingFromRow(entry, players));
+    } else if (entry.action === ADVICE_ACTION) {
+      current.advice.push(adviceBySeq.get(entry.seq) || adviceFromRow(entry));
+    } else if (entry.action === ADVICE_APPROVED_ACTION) {
+      current.frames.push(approvalFrameOf(entry));
     } else {
       current.frames.push(frameOf(entry));
     }

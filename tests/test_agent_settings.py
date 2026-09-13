@@ -19,7 +19,8 @@ def test_defaults_come_from_env() -> None:
     # still choose `high` for a combo-heavy deck - this is only the default.
     assert settings.effort == "medium"
     assert settings.max_thinking_tokens is None
-    assert AgentSettings.default({}).model == "sonnet"
+    assert AgentSettings.default({}).model == "opus"
+    assert AgentSettings.default({"AGENT_DEFAULT_MODEL": "  "}).model == "opus"
     # Straight from the model's own API, not grepped off the source line.
     assert AgentSettings.model_fields["effort"].default == "medium"
 

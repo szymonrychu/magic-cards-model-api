@@ -32,7 +32,7 @@ def test_a_minted_seat_resolves_back_to_its_game_and_player(client: TestClient) 
 
         looked_up = client.get(f"/api/seats/{uid}")
         assert looked_up.status_code == 200, looked_up.text
-        assert looked_up.json() == {"game_id": game_id, "player": "alice"}
+        assert looked_up.json() == {"game_id": game_id, "player": "alice", "role": "seat"}
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -51,7 +51,7 @@ def test_minting_a_seat_does_not_invalidate_the_original_uids(client: TestClient
 
         still_works = client.get(f"/api/seats/{original_uid}")
         assert still_works.status_code == 200, still_works.text
-        assert still_works.json() == {"game_id": game_id, "player": "bob"}
+        assert still_works.json() == {"game_id": game_id, "player": "bob", "role": "seat"}
     finally:
         client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
 
@@ -91,10 +91,77 @@ def test_seat_lookup_finds_a_uid_minted_before_the_lookup_knew_the_game(
         assert client.get(f"/api/seats/{first_uid}").json() == {
             "game_id": first["game_id"],
             "player": "alice",
+            "role": "seat",
         }
         assert client.get(f"/api/seats/{second_uid}").json() == {
             "game_id": second["game_id"],
             "player": "bob",
+            "role": "seat",
+        }
+    finally:
+        client.delete(f"/api/games/{first['game_id']}", params={"key": first["admin_key"]})
+        client.delete(f"/api/games/{second['game_id']}", params={"key": second["admin_key"]})
+
+
+# ---------------------------------------------------------------------------
+# advisor credentials resolve through the same door
+# ---------------------------------------------------------------------------
+
+
+def _register_advisor(game_id: str, player: str, uid: str) -> str:
+    from magic_cards_model_api.repository import Advisor
+    from magic_cards_model_api.store import store
+
+    store.register_advisors(game_id, {uid: Advisor(player=player)})
+    return uid
+
+
+def test_an_advisor_uid_resolves_to_its_game_its_player_and_the_advisor_role(
+    client: TestClient,
+) -> None:
+    """One process holding several uids has to be able to learn what a uid
+    *is* without being told a game up front - that is what this route is for,
+    and an advisor uid is a kind of uid it will be handed. `role` is how it
+    tells the two apart; without it an advisor would look exactly like a seat
+    and would be driven as one."""
+    info = _boot(client)
+    game_id = info["game_id"]
+    try:
+        uid = _register_advisor(game_id, "alice", "advisor-uid")
+
+        looked_up = client.get(f"/api/seats/{uid}")
+
+        assert looked_up.status_code == 200, looked_up.text
+        assert looked_up.json() == {"game_id": game_id, "player": "alice", "role": "advisor"}
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_a_seat_uid_reports_the_seat_role_even_when_the_game_has_advisors(
+    client: TestClient,
+) -> None:
+    info = _boot(client)
+    game_id = info["game_id"]
+    try:
+        _register_advisor(game_id, "alice", "advisor-uid")
+
+        looked_up = client.get(f"/api/seats/{info['seat_uids']['alice']}")
+
+        assert looked_up.json() == {"game_id": game_id, "player": "alice", "role": "seat"}
+    finally:
+        client.delete(f"/api/games/{game_id}", params={"key": info["admin_key"]})
+
+
+def test_an_advisor_uid_is_found_among_several_live_games(client: TestClient) -> None:
+    first = _boot(client)
+    second = _boot(client)
+    try:
+        uid = _register_advisor(second["game_id"], "bob", "advisor-of-the-second-game")
+
+        assert client.get(f"/api/seats/{uid}").json() == {
+            "game_id": second["game_id"],
+            "player": "bob",
+            "role": "advisor",
         }
     finally:
         client.delete(f"/api/games/{first['game_id']}", params={"key": first["admin_key"]})

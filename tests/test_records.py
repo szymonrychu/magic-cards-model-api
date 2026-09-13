@@ -12,6 +12,8 @@ from conftest import add_card, find, state
 from fastapi.testclient import TestClient
 from test_flow import cast_and_resolve_bears, seats_for
 
+from magic_cards_model_api import records
+
 
 def _boot(client: TestClient, *, agent: str, human: str, active: str) -> dict:
     """A fresh two-seat game, one seat flagged an agent at creation
@@ -644,3 +646,63 @@ def test_a_refused_attack_still_names_the_deciding_seat(client: TestClient, game
     log = log_of(client, game, uid=uids["alice"])
     entry = entries_for(log, "attack")[-1]
     assert entry["detail"]["player"] == "alice"
+
+
+# -- was the refused action one this api had offered -------------------------
+
+
+def _enumeration(*rows: dict) -> records.LegalActionsBefore:
+    return records.LegalActionsBefore(player="alice", actions=list(rows))
+
+
+def test_an_offered_plain_cast_does_not_vouch_for_a_face_that_was_never_offered() -> None:
+    """The match has to be as sharp as the announcement, or `offered: True`
+    would file a seat's own mistake under the api's. An Adventure card is two
+    rows (CR 715.3): the plain cast with `spell_face: None` and the Adventure
+    naming its face. A request naming a face the enumeration did not list
+    must not match the plain row sitting beside it - and "no face named" must
+    not match the face row either."""
+    card = "11111111-1111-1111-1111-111111111111"
+    plain = {"kind": "cast", "card_id": card, "spell_face": None, "from_zone": "hand"}
+    stomp = {**plain, "spell_face": "Stomp"}
+
+    assert records._was_offered("cast", {"card_id": card}, _enumeration(plain)) is True
+    assert (
+        records._was_offered("cast", {"card_id": card, "spell_face": "Stomp"}, _enumeration(plain))
+        is False
+    )
+    assert (
+        records._was_offered(
+            "cast", {"card_id": card, "spell_face": "Stomp"}, _enumeration(plain, stomp)
+        )
+        is True
+    )
+    assert records._was_offered("cast", {"card_id": card}, _enumeration(stomp)) is False
+    # a different kind for the same card is not the same offer
+    assert (
+        records._was_offered(
+            "cast", {"card_id": card}, _enumeration({"kind": "play_land", "card_id": card})
+        )
+        is False
+    )
+
+
+def test_an_action_the_enumeration_cannot_be_searched_for_makes_no_claim() -> None:
+    """`None`, never `False`: a request that names its card by printed name
+    rather than by id, a command kind with no enumerated row to look for, and
+    a request with no enumeration at all are all rows nothing was checked
+    on, and `False` would claim "never offered" - which is the one answer
+    the scorecard counts as the seat's fault."""
+    card = "11111111-1111-1111-1111-111111111111"
+    row = {"kind": "cast", "card_id": card}
+
+    assert records._was_offered("cast", {"card": "Lightning Bolt"}, _enumeration(row)) is None
+    assert records._was_offered("advance", {"player": "alice"}, _enumeration(row)) is None
+    assert records._was_offered("crew", {"card_id": card}, _enumeration(row)) is None
+    assert records._was_offered("cast", {"card_id": card}, None) is None
+    assert (
+        records._was_offered(
+            "pass_priority", {"player": "alice"}, _enumeration({"kind": "pass_priority"})
+        )
+        is True
+    )

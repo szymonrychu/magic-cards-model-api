@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "archetype": "boros aggro",
+  "signature": [
+    {
+      "cards": [
+        "Ocelot Pride",
+        "Guide of Souls",
+        "Ragavan, Nimble Pilferer",
+        "Ajani, Nacatl Pariah"
+      ],
+      "min": 12,
+      "why": "The one-drops, 4-of in 10/10 lists under BOTH of the field's two names for this deck. Guide of Souls and Ocelot Pride are the energy engine, Ajani is the energy payoff and Ragavan is the free win when it connects; a boros deck missing three of these four is a different boros deck."
+    },
+    {
+      "cards": [
+        "Galvanic Discharge",
+        "Goblin Bombardment",
+        "Seasoned Pyromancer",
+        "Voice of Victory",
+        "Ranger-Captain of Eos"
+      ],
+      "min": 8,
+      "why": "The red half: energy removal, a free sacrifice outlet that turns every Ocelot token into damage, and the three-drops that refuel. 10/10 field lists run 4 Galvanic Discharge and about 3 each of Bombardment, Pyromancer and Voice of Victory."
+    },
+    {
+      "cards": [
+        "Arid Mesa",
+        "Sacred Foundry",
+        "Elegant Parlor",
+        "Dalkovan Encampment",
+        "Arena of Glory",
+        "Flooded Strand",
+        "Marsh Flats",
+        "Windswept Heath",
+        "Plains",
+        "Mountain"
+      ],
+      "min": 8,
+      "why": "A boros manabase built to cast a white one-drop and a red one-drop on turn one. 10/10 field lists run 4 Arid Mesa and 3 Sacred Foundry; the count is what makes the colour claim checkable offline, where the cache holds one front-face type line per card."
+    }
+  ]
+}

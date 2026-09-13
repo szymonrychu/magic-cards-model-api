@@ -13,10 +13,25 @@ the seat command line.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .guides import DeckGuide
+from .guides import (
+    CONFIDENT,
+    LOW,
+    UNKNOWN_ARCHETYPE,
+    Candidate,
+    DeckGuide,
+    Decklist,
+    Identification,
+)
+from .matchup_card import (
+    guide_paths,
+    matchup_note_key,
+    render_matchup_card,
+)
+from .revision import UNKNOWN_REVISION
 
 UNKNOWN_DECK = "unknown-deck"
 
@@ -28,18 +43,52 @@ class Assignment:
     player: str
     opponent: str
     api_base: str
-    decklist: dict[str, int]
-    guide: DeckGuide | None
-    match_score: float
+    decklist: Decklist
+    identification: Identification
+    """What the archetype classifier could say about `decklist`: the guide,
+    how sure it is, and the runners-up. Carried whole rather than reduced to
+    a guide, because what the agent is told in turn 0 differs per outcome -
+    a confident match, a low-confidence one that has to name the other
+    plausible archetype, and no match at all."""
+
+    guides_revision: str = UNKNOWN_REVISION
+    """Which revision of the deck-guides corpus this seat was handed
+    (`revision.guides_revision` over the driver's `GUIDES_ROOT`). The corpus
+    moves under a running lobby, so a game whose artifacts do not name it
+    cannot be reproduced or compared against another game."""
+
     agent: dict | None = None
     """The chosen model/effort/thinking budget (`AgentSettings.to_wire()`,
     camelCase - see `contract/agent-settings.schema.json`), carried through
     from the dispatch that created this assignment - `None` for a caller
     that dispatched before agent settings existed."""
 
+    role: str = "seat"
+    """`seat` (this container plays `player`) or `advisor` (B5's buddy: this
+    container watches `player`'s own view and proposes, and the game server
+    refuses every action it tries - `magic_cards_model_api.game_access`).
+    Carried from `DispatchIn.role`, and the one thing that picks
+    `advisor_turn_zero` over `turn_zero`. Defaulted, so a dispatch from a
+    caller that predates roles is a seat, unchanged."""
+
+    @property
+    def guide(self) -> DeckGuide | None:
+        """The one guide this seat is playing from, if the classifier could
+        name one."""
+        return self.identification.guide
+
     @property
     def deck_slug(self) -> str:
         return self.guide.slug if self.guide else UNKNOWN_DECK
+
+    @property
+    def matchups_dir(self) -> Path | None:
+        """Where the per-opponent matchup files are, across every guide the
+        classifier handed over."""
+        for guide in self.identification.guides:
+            if guide.matchups_dir is not None:
+                return guide.matchups_dir
+        return None
 
 
 def memory_index(memory_root: Path, deck_slug: str) -> list[Path]:
@@ -60,12 +109,156 @@ def plan_path(memory_root: Path, assignment: Assignment) -> Path:
     return Path(memory_root) / assignment.deck_slug / "games" / f"{assignment.game_id}.md"
 
 
-def _decklist_block(decklist: dict[str, int]) -> str:
-    return "\n".join(f"{count} {name}" for name, count in sorted(decklist.items()))
+def plan_header(assignment: Assignment) -> str:
+    """The header the driver seeds the plan file with, before the agent has
+    written a word of it.
+
+    Written by the driver rather than asked of the agent on purpose: the
+    guides revision is the driver's own knowledge, and a fact the agent is
+    merely told to copy is one it can get wrong or forget. Seeding the file
+    means every game leaves behind an artifact naming the corpus it was
+    played against, even if the agent never gets as far as writing a plan.
+    """
+    return "\n".join(
+        [
+            f"# {assignment.deck_slug} - game {assignment.game_id}",
+            "",
+            f"- seat: {assignment.player} vs {assignment.opponent}",
+            f"- deck guides revision: `{assignment.guides_revision}`",
+            "",
+            "",
+        ]
+    )
 
 
-def render_current_game(assignment: Assignment, memory_root: Path) -> str:
-    guide = assignment.guide
+def _board_block(board: dict[str, int]) -> str:
+    return "\n".join(f"{count} {name}" for name, count in sorted(board.items()))
+
+
+def _clause_count(candidate: Candidate) -> str:
+    return f"{candidate.matched} of its {candidate.clauses} signature clauses"
+
+
+def _named(candidates: Sequence[Candidate]) -> str:
+    return ", ".join(f"`{c.slug}` ({_clause_count(c)})" for c in candidates)
+
+
+def _deck_claim(identification: Identification) -> list[str]:
+    """What the agent is told about which deck it is holding.
+
+    Three outcomes, three different things to say - and the `none` branch is
+    load-bearing: it is the behaviour a list with no guide has always had,
+    and a pasted list reaching it must still be playable.
+    """
+    guide = identification.guide
+    others = identification.alternatives
+    if identification.confidence == CONFIDENT:
+        top = identification.candidates[0]
+        return [
+            f"You are piloting **{guide.slug}** - `{identification.archetype}` in the "
+            f"guides corpus. Every one of its {top.clauses} signature clauses is in "
+            "your maindeck, so the matchup card below is the plan for the deck you "
+            "are actually holding.",
+        ]
+    if identification.confidence == LOW:
+        if guide is None:
+            # A family, with no branch chosen: both branches' guides are
+            # handed over below rather than one of them picked by coin flip.
+            return [
+                f"This list is some kind of **{identification.archetype}**, but which "
+                "branch of it is not settled: "
+                f"{_named(identification.leaders)} match equally well, on the clauses "
+                "they share and on nothing that tells them apart. There is a matchup "
+                "card below for each branch: take the parts they agree on, and trust "
+                "the board over either of them where they disagree.",
+            ]
+        top = identification.candidates[0]
+        plausible = (
+            f" Also plausible: {_named(others)}."
+            if others
+            else " No other archetype came close, but this one is not certain either."
+        )
+        return [
+            f"You are probably piloting **{guide.slug}** - `{identification.archetype}` "
+            f"in the guides corpus - but this is a **low-confidence** match: it "
+            f"answers {_clause_count(top)}, not all of them.{plausible} "
+            "Take the matchup card below for what it is worth and trust the board "
+            "over it where they disagree.",
+        ]
+    return [
+        "There is **no guide** for this decklist - no archetype in the guides corpus "
+        "answers even half its signature clauses from your maindeck. So there is no "
+        "deck plan and no field tells to hand you: play it from the list itself and "
+        "from what the board tells you.",
+    ]
+
+
+#: How much of the agent's own standing `vs-<archetype>.md` notes the
+#: briefing inlines. A note the agent has been revising for twenty games can
+#: be any size, and inlining all of it would spend the context the matchup
+#: card just saved.
+VS_NOTE_BUDGET_BYTES = 4 * 1024
+
+
+def _standing_notes(
+    notes: list[Path],
+    opponent_archetype: str | None,
+) -> tuple[list[Path], list[Path]]:
+    """The `vs-<archetype>.md` standing reads, and everything else.
+
+    Standing reads are inlined; a past game's write-up stays a path, because
+    there can be dozens of those and each is about one game rather than about
+    the matchup.
+    """
+    standing = [p for p in notes if p.name.startswith("vs-") and p.parent.name != "games"]
+    rest = [p for p in notes if p not in standing]
+    if opponent_archetype:
+        wanted = f"vs-{matchup_note_key(opponent_archetype)}.md"
+        standing.sort(key=lambda p: (p.name != wanted, p.name))
+    return standing, rest
+
+
+def _inlined_notes(standing: list[Path], budget: int) -> list[str]:
+    """The standing reads' bodies, in fenced blocks, until the budget runs
+    out - and then the paths of the ones that did not fit, said out loud."""
+    lines: list[str] = []
+    spent = 0
+    for path in standing:
+        try:
+            body = path.read_text()
+        except OSError:
+            lines.append(f"- `{path}` (unreadable)")
+            continue
+        room = budget - spent
+        if room <= 0:
+            lines.append(
+                f"- `{path}` - not inlined, the note budget was spent; read it if you want it"
+            )
+            continue
+        clipped = body.encode()[:room].decode(errors="ignore")
+        spent += len(clipped.encode())
+        lines += [f"**`{path}`** - your standing read on this matchup:", "", "````"]
+        lines.append(clipped.rstrip())
+        if len(clipped) < len(body):
+            lines.append(f"[...cut at {room} bytes - the rest is in the file]")
+        lines += ["````", ""]
+    return lines
+
+
+def render_current_game(
+    assignment: Assignment,
+    memory_root: Path,
+    opponent_archetype: str | None = None,
+) -> str:
+    """The briefing, which turn 0 inlines verbatim.
+
+    `opponent_archetype` is normally unknown at turn 0 and stays that way -
+    the owner's doctrine is that the agent deduces the matchup from the cards
+    it sees. It exists for the case where a caller already knows (a resumed
+    game, a study run), and only changes which standing note is inlined
+    first.
+    """
+    identification = assignment.identification
     lines = [
         "# This game",
         "",
@@ -74,46 +267,80 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         f"- you are: **{assignment.player}**",
         f"- your opponent's seat: **{assignment.opponent}**",
         f"- game server: {assignment.api_base}",
+        f"- deck guides revision: `{assignment.guides_revision}` "
+        "(which revision of the guides corpus you are being handed)",
         "",
         "## Your deck",
         "",
     ]
-    if guide is not None:
+    lines += [*_deck_claim(identification), ""]
+    lines += ["Maindeck:", "", "```", _board_block(assignment.decklist.mainboard), "```", ""]
+    if assignment.decklist.sideboard:
         lines += [
-            f"You are piloting **{guide.slug}** "
-            f"(matched at {assignment.match_score:.0%} against the guided list).",
+            "Sideboard (yours to board with between games; nothing here is on the "
+            "battlefield or in your library):",
+            "",
+            "```",
+            _board_block(assignment.decklist.sideboard),
+            "```",
             "",
         ]
-    else:
-        lines += [
-            "There is **no guide** for this decklist - it matches none of the guided "
-            f"decks (best match {assignment.match_score:.0%}). Play it from the list "
-            "itself and from what the board tells you.",
-            "",
-        ]
-    lines += ["```", _decklist_block(assignment.decklist), "```", ""]
 
-    if guide is not None:
-        lines += ["## Your guides", ""]
-        for label, path in (
-            ("gameplan", guide.gameplan),
-            ("sideboard", guide.sideboard),
-            ("meta calls", guide.meta_calls),
-        ):
-            if path is not None:
-                lines.append(f"- {label}: `{path}`")
+    offered = identification.guides
+    for guide in offered:
+        # Inlined, not referenced: this is the whole point of the card. The
+        # gameplan guide it is rendered from is 42-73 KB of generated
+        # markdown, and the plan behind it fits in ~11 KB of context.
+        #
+        # Every branch gets the card's OWN budget - the module's target and
+        # cap, unshared - because the budget the brief sets is per card, and
+        # a card is what each branch needs. Dividing it by the number of
+        # branches was a briefing-wide budget nothing asked for, and the
+        # thing it bought was paid for out of the one field the brief
+        # requires on every row: at 5120 bytes with a shared cap there is no
+        # rung left that keeps the tells table's `watch for` column, so the
+        # tron case rendered both branches with it deleted off every one of
+        # their 34 rows. Rendered at its own budget each of those two comes
+        # in whole, with every field, at 10026 and 11659 bytes.
+        #
+        # So a two-branch briefing carries ~21 KB of card rather than ~15,
+        # and that is the cheaper half of the trade by a wide margin: it is
+        # still a fraction of the two 45-73 KB gameplan guides it replaces,
+        # and it happens only when the classifier could not tell two branches
+        # of one family apart, which is the case where the agent most needs
+        # both plans intact.
+        card = render_matchup_card(guide, assignment.decklist)
+        lines += [card.text, ""]
+        lines += [
+            "## Your guides, for a deliberate look-up"
+            if len(offered) == 1
+            else f"## `{guide.slug}` guides, for a deliberate look-up",
+            "",
+            "The card above is your brief. These are here for one specific line it "
+            "does not carry - not for a read before your first action.",
+            "",
+        ]
+        for label, path in guide_paths(guide):
+            lines.append(f"- {label}: `{path}`")
         if guide.matchups_dir is not None:
             lines += [
-                f"- per-matchup detail: `{guide.matchups_dir}/<archetype>.json`",
+                f"- per-matchup detail, one small read once you have the read: "
+                f"`{guide.matchups_dir}/<archetype>.json`",
                 "",
                 "Archetypes with a matchup file: " + ", ".join(f"`{a}`" for a in guide.archetypes),
             ]
         lines.append("")
+    if not offered:
+        lines += [render_matchup_card(None, assignment.decklist).text, ""]
 
     notes = memory_index(memory_root, assignment.deck_slug)
+    standing, rest = _standing_notes(notes, opponent_archetype)
     lines += ["## What you have already learned on this deck", ""]
-    if notes:
-        lines += [f"- `{path}`" for path in notes]
+    if standing or rest:
+        lines += _inlined_notes(standing, VS_NOTE_BUDGET_BYTES)
+        if rest:
+            lines += ["Past games, as paths - open one only if you have a reason to:", ""]
+            lines += [f"- `{path}`" for path in rest]
     else:
         lines.append("Nothing yet - this is your first recorded game on it.")
     lines += [
@@ -121,7 +348,9 @@ def render_current_game(assignment: Assignment, memory_root: Path) -> str:
         "## Your plan file for this game",
         "",
         f"`{plan_path(memory_root, assignment)}` - yours to write once, near the start "
-        "of the game. Keep it short; you will finish it after the game.",
+        "of the game. It already exists, with a header naming this game and the guides "
+        "revision above: keep that header and write under it. Keep it short; you will "
+        "finish it after the game.",
         "",
     ]
     return "\n".join(lines)
@@ -135,10 +364,9 @@ def turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "
     file only the driver can open. The guides stay as paths - `/guides` is
     mounted in both containers, and they run to hundreds of lines each.
     """
-    guide = assignment.guide
     matchups = (
-        f"`{guide.matchups_dir}/<archetype>.json`"
-        if guide is not None and guide.matchups_dir is not None
+        f"`{assignment.matchups_dir}/<archetype>.json`"
+        if assignment.matchups_dir is not None
         else "(none for this deck)"
     )
     briefing_block = (
@@ -154,14 +382,82 @@ who is playing through a web UI against the same game server you act on.
 ## Before you take a single action
 
 {briefing_block}
-2. Read your deck's gameplan guide, and any notes you have already written
-   about this deck. You are expected to arrive at the first action already
-   knowing what this deck is trying to do.
+2. That briefing IS your brief. Its matchup card carries your deck's plan,
+   a row per archetype in the field with the signature cards that give each
+   one away, and the three biggest matchups in detail - rendered from the
+   same structured plan the gameplan guide is generated from - and your own
+   standing notes on this deck are inlined underneath it. So **do not read
+   the gameplan guide to get started**: you already have what is in it, and
+   that file is 42-73 KB. Open a guide file only for one specific line the
+   card does not carry. Once the cards they play tell you what you are
+   facing, one small read of {matchups} (3-9 KB) gets you that whole
+   matchup. You are expected to arrive at the first action already knowing
+   what this deck is trying to do.
 3. Write your opening plan into the plan file named in the briefing (see
    "Your plan file" below) - once, near the start. You do not update this
    file turn to turn any more; see "Declare your plan before you act" for
    what replaced that.
 4. Only then call `wait_for_priority`.
+
+## The loop
+
+Your steady state is two tool calls, and **nothing in between**:
+
+1. **a wait** - `pass_until` to a destination, or `pass` when you hold
+   priority once and already know what you are doing with the very next
+   window.
+2. **EXACTLY ONE committing call**, read straight off the answer that wait
+   handed you: `cast`, `decide`, `activate`, `play_land`,
+   `declare_attackers` or `declare_blockers`.
+
+Then wait again. That is the default, not an optimisation for when you are in
+a hurry: every answer you are handed already carries what you need to *issue*
+your next action, not merely to choose one, so a third call in the middle
+buys you nothing and costs you a whole turn of thinking. A seat was measured
+spending 65 tool calls on a single activation this way.
+
+What that means concretely, for the five calls you will be tempted to make:
+
+- **Do NOT call `battlefield_state`.** The answer you were just handed
+  carries `board.battlefield_digest` - the whole board, one line per
+  permanent, keyed by who controls it: id, name, power/toughness, `T` if it
+  is tapped, each kind of counter, `sick` for summoning sickness, what it is
+  attached to, what it is attacking. Alongside it, `available_actions.actions`
+  carries every legal action with what it would cost (`cost`/`mana_cost`),
+  the engine's own `affordable` verdict, and - for every action that targets -
+  that action's legal target candidates per slot under
+  `targets.slots[].candidates`, each candidate a plain string whose leading
+  id is exactly what `targets` takes back. Choosing what to do and issuing it
+  both come off that one answer.
+- **Do NOT call `game_log`.** `recent_log` rides every answer: the tail of
+  what both seats have actually done, allowed and refused, in the game's own
+  words.
+- **Do NOT pass `mana_sources`.** Leaving it empty is the correct answer in
+  essentially every case: `seatkit.sources_or_all` then offers the engine
+  every untapped source you control, and the engine taps only what the cost
+  needs, stopping the moment the pool can pay. Naming a subset by hand can
+  only take options away from it. An action's own payment plan is
+  INFORMATIONAL - `pays_with` tells you what casting that spell would
+  actually eat, which is a WHAT question worth thinking about ("does this
+  Bolt cost me the blue mana I was holding for my counterspell?"), never a
+  parameter to fill in.
+- **Do NOT go hunting for more target candidates.** The slots you were handed
+  are complete unless a slot actually carries `truncated`, which only happens
+  on a genuinely mass-targeting board - more than thirty legal candidates for
+  one slot. There is no tool that enumerates candidates on their own; a
+  `truncated` slot keeps its true `count` and names its own escape hatch in
+  `more_with` (`battlefield_state`, because every candidate is a permanent, a
+  graveyard/exile card, a spell on the stack, or a player). That is an escape
+  hatch for a pathological board, not a step in the loop.
+- **To answer a pending decision, use its `answer_with` template verbatim.**
+  Every `pending_decision` carries the whole call that answers it, already
+  filled in with that question's own `generation` and naming the one
+  parameter that carries the answer (`answer_field`). Fill in the
+  angle-bracket placeholder, keep the parameter name and the generation, send
+  it. Do NOT derive the parameter from the `decide` docstring instead: ten of
+  the eighteen decision kinds do not answer on the parameter their name
+  suggests, and a guess there is a real parameter of `decide` that the server
+  refuses.
 
 ## How you act
 
@@ -186,31 +482,35 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   `max_seconds` again. Leave `max_seconds` at 0 (its default) only when you
   specifically want the immediate poll-and-return, right after your own
   action, when something has plausibly already changed.
-- `battlefield_state(player_uid)` is the board as you are allowed to see it,
-  and it answers the other half of the same question in the same breath:
-  every answer that carries the board also carries `recent_log`, the tail of
-  what both seats have actually done since - allowed and refused, in the
-  game's own words. That holds for `wait_for_priority`, `pass_until` and
-  every action tool too, so "what happened while I was not looking" and
-  "what can I do now" are one call between them. Never spend a second call
-  asking for what the first one already handed you.
 
-  It is also the only tool that hands you the zones. An action tool's answer
-  is about the action: `outcome` first (whether it was allowed, and if not,
-  the engine's own refusal in its own words - read that before you do
-  anything else, it is the whole reason the call did what it did), then
-  `wake_reason`, any `pending_decision`, a `board` block with the turn, the
-  step, whose priority it is, the stack, combat and both players, then your
-  legal actions and the log tail. The battlefield, both hands, both
-  graveyards, exile and the command zone are deliberately not in it - they
-  are named in `board.omitted_sections`, and this is where you come for them.
-  An action answer is small enough to read whole; do not grep it, and do not
-  treat the absence of a battlefield in it as an empty board.
+  What it hands back is a whole state view - every zone you are allowed to
+  see, with `recent_log` merged into it - and NOT an action list: it is the
+  one answer with no `available_actions`, because it only looks, it never
+  acts. That is why the loop's wait is `pass_until`, not this: a
+  `pass_until`/`pass` answer carries the action list as well. Open your
+  activation with this one, answer any `input_required` decision it hands
+  you straight from that decision's `answer_with`, and go back to the loop.
+- An action tool's answer is about the action: `outcome` first (whether it
+  was allowed, and if not, the engine's own refusal in its own words - read
+  that before you do anything else, it is the whole reason the call did what
+  it did), then `wake_reason`, any `pending_decision`, a `board` block with
+  the turn, the step, whose priority it is, the stack, combat, both players
+  and `board.battlefield_digest`, then your legal actions and `recent_log`.
+  The full battlefield card views, both hands, both graveyards, exile and the
+  command zone are deliberately not in it - they are named in
+  `board.omitted_sections`. An action answer is small enough to read whole;
+  do not grep it, and do not read the absence of a battlefield section as
+  an empty board when the digest right above it lists the permanents.
+- `battlefield_state(player_uid)` is the ESCAPE HATCH, not a step in your
+  loop (see "The loop"). Four questions are worth it, and they are the only
+  four: what is in a graveyard or exile, what a card's actual oracle text and
+  parsed abilities say, what `cast_options` a card in a zone currently
+  offers, and the candidates behind a slot that came back `truncated`. If the
+  question you are about to ask is "what does the board look like" or "what
+  can I do", you already have the answer.
 
-  Called with your uid alone it hands you everything, which is the right
-  default. Two options narrow it when your next question is about one part
-  of the board - they only ever leave things out, never show you anything
-  you could not otherwise see:
+  Two options narrow it - they only ever leave things out, never show you
+  anything you could not otherwise see:
 
       battlefield_state(player_uid=..., sections="graveyards,exile")
       battlefield_state(player_uid=..., sections="battlefield", side="opponent")
@@ -224,9 +524,8 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   card names; the answer's focus block names which seats each side resolved
   to and which sections you left out. Whatever you narrow to, the turn, the
   step, the phase, the active player and the priority holder always come
-  back. Reach for the options when one narrowed call answers a question two
-  calls would have - not to make a single answer shorter, which buys you
-  nothing.
+  back. Ask for the one section your question is about; a bare call for the
+  whole board is the call the loop does not need.
 - `cast`, `play_land`, `suspend`, `plot`, `foretell`, `cycle`, `activate`,
   `declare_attackers`, `declare_blockers`, `decide`, `pass`, `pass_until` act.
   Priority has exactly those two pass verbs and no more, because the rules give
@@ -259,6 +558,19 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   refusal instead of guessing another parameter. A card's `cast_options` in
   `battlefield_state` names every keyword it currently offers and what that
   keyword would cost.
+
+  **A split card is two casts.** Wear // Tear arrives as two `cast` rows in
+  the actions you are offered, one per half, each with its own cost and its own
+  `spell_face` - the half is a choice you announce before the spell is on the
+  stack, and on the stack it has only the chosen half's characteristics. Send
+  the row's `spell_face` back exactly as you read it
+  (`cast(card="Wear // Tear", spell_face="Tear", targets="<an enchantment>")`)
+  and leave it out for the front half, which is every ordinary card. An
+  adventurer card works the same way: send its Adventure row's `spell_face`
+  (`spell_face="Swift End"`) to cast the Adventure, which costs and targets
+  what the Adventure does and is exiled as it resolves instead of going to
+  your graveyard - you may cast the creature half from exile later. Leave
+  `spell_face` out to cast the creature half now.
 
   Any of those - and `pass` and `pass_until` too, since a pass is exactly
   where a spell or ability on the stack resolves - can hand back a `notices`
@@ -294,12 +606,13 @@ Every tool is on the `mtg` MCP server and takes your uid as `player_uid`:
   turn. Skip it and that first action is refused (422, naming `plan`) until
   you call it. See "Declare your plan before you act" below for what to put
   in it and why it is worth writing honestly.
-- `game_log` is the whole history, with each entry's full board snapshot -
-  reach for it only when the `recent_log` you were already given says
-  `omitted` above zero, when you need further back than it goes, or when you
-  want one entry's snapshot. It takes `since` (a `seq` you already hold, so
-  you get only what is new) as well as `limit`. `report_problem` files an
-  engine bug.
+- `game_log` is the whole history, with each entry's full board snapshot, and
+  it is the other escape hatch: the `recent_log` on the answer in front of
+  you is the log, tailed, and the ONLY reasons to go past it are a
+  `recent_log.omitted` above zero, a question about something further back
+  than it reaches, or wanting one entry's whole board snapshot. It takes
+  `since` (a `seq` you already hold, so you get only what is new) as well as
+  `limit`. `report_problem` files an engine bug.
 
 Each action tool performs the action, then checks once for your next moment
 to act (never blocks) - one call, one meaningful action.
@@ -584,9 +897,14 @@ Write up what you learned, so the next game on this deck starts from it.
    or three decisions that actually decided it, and what you would do
    differently.
 2. `{deck_dir / "vs-<archetype>.md"}` - your standing read on this matchup,
-   using the archetype you deduced. Create it if it does not exist, and revise
-   it rather than appending if it does: their threats, your answers, which
-   cards are dead, what the race maths looks like, mulligan policy.
+   keyed on the archetype you deduced, spelled exactly as the matchup card's
+   tells table spells it, or on `{UNKNOWN_ARCHETYPE}` if what they played
+   matched none of those rows. Never a name of your own invention: the next
+   game's briefing looks this file up by exactly that key, and a note filed
+   under a name nobody looks up is a note you wrote for nothing. Create it if
+   it does not exist, and revise it rather than appending if it does: their
+   threats, your answers, which cards are dead, what the race maths looks
+   like, mulligan policy.
 3. `{Path(memory_root) / "MEMORY.md"}` - one line per note, `- [title](path) -
    hook`. Add lines for anything new; do not restate the note's contents there.
 
@@ -594,3 +912,218 @@ Be specific and short. A note that says "play carefully" is worth nothing; a
 note that says "their turn-three Cutter is the card that beats us, hold Push
 for it rather than the one-drop" is worth the whole file. Write only what this
 game actually showed you."""
+
+
+def advisor_turn_zero(assignment: Assignment, current_game_path: Path, briefing: str = "") -> str:
+    """Turn 0 for a **buddy** - an advisor container (B5), not a seat.
+
+    Deliberately its own function rather than a branch inside `turn_zero`.
+    The two jobs share a board and almost nothing else: a seat is told to win
+    a game and given every verb that changes one, while a buddy is told to
+    read the same board through its human's eyes, propose, and never act -
+    and the server enforces that half whatever this prose says
+    (`magic_cards_model_api.game_access` refuses every mutating request an
+    advisor uid makes). A single function with an `if` in it would have to
+    hedge every one of the seat's imperatives, which is how a buddy ends up
+    trying to play.
+
+    What it does share is the **wake loop**, and that is the point of the
+    design: the owner's choice was that a buddy thinks at every decision
+    point the human holds, instant-speed windows on the opponent's turn
+    included. `seatkit.compute_wake_reason` resolves an advisor uid to its
+    human (`visibility.resolve_viewer`), so `wait_for_priority` already wakes
+    on "your human has priority and the board has changed" and "a decision is
+    waiting for them" with no advisor-specific code at all - and, because
+    `seatkit._NOT_THE_BOARD` excludes `recent_log`, a ledger row (the buddy's
+    own advice included) is not a board change and never wakes it.
+    """
+    matchups = (
+        f"`{assignment.matchups_dir}/<archetype>.json`"
+        if assignment.matchups_dir is not None
+        else "(none for this deck)"
+    )
+    briefing_block = (
+        f"1. Here is everything about the game you are advising on (the driver "
+        f"wrote the same text to `{current_game_path}` on its own disk):\n\n{briefing}\n"
+        if briefing
+        else f"1. Read `{current_game_path}`. It names the seat you advise, your "
+        "uid, their decklist and their guides.\n"
+    )
+    return f"""You are a buddy: a second pair of eyes for {assignment.player!r}, a human
+playing a real game of Magic: the Gathering through a web UI against the same
+game server you read. They decide and they act. You watch the same board they
+see, and at the moments that matter you say what you would do and why.
+
+You are not a seat and you cannot become one. Your uid is an *advisor*
+credential and its read-only-ness is enforced by the server rather than by
+your good behaviour: you see exactly what {assignment.player!r} sees - their
+hand, the board as they are allowed to see it, never their opponent's hand -
+and any attempt to actually move the game is refused as though the game did
+not exist. That is deliberate, and it is freeing: you cannot misplay this
+game for them, so propose honestly.
+
+## Before you say a single thing
+
+{briefing_block}
+2. That briefing IS your brief. Its matchup card carries {assignment.player}'s
+   deck's plan, a row per archetype in the field with the signature cards that
+   give each one away, and the three biggest matchups in detail - rendered
+   from the same structured plan the gameplan guide is generated from - and
+   their own standing notes on this deck are inlined underneath it. So **do
+   not read the gameplan guide to get started**: you already have what is in
+   it, and that file is 42-73 KB. Open a guide file only for one specific line
+   the card does not carry. Once the cards the opponent plays tell you what
+   they are facing, one small read of {matchups} (3-9 KB) gets you that whole
+   matchup. You are expected to arrive at your first piece of advice already
+   knowing what {assignment.player}'s deck is trying to do.
+3. Only then call `wait_for_priority`.
+
+## The tools you read the game with
+
+Every tool is on the `mtg` MCP server and takes your advisor uid as
+`player_uid`: `{assignment.uid}`.
+
+- `wait_for_priority(player_uid, max_seconds=20)` is your wake loop, and it
+  is the same one an opponent's agent runs - it simply runs for your human
+  instead of for you. It checks now and, if nothing has changed yet, keeps
+  checking on the server for up to `max_seconds` before telling you so. Pass
+  `max_seconds`; never reach for `Bash: sleep` and a bare call.
+
+  **Its answer is the whole game you are allowed to see**, in one call: the
+  board as your human may see it - the battlefield, both hands as they are
+  visible to them, both graveyards, exile and the command zone - and
+  `recent_log` merged into it, the tail of what both seats have actually done
+  since, allowed and refused, in the game's own words.
+
+  **When it wakes you, it also hands you your human's legal plays** under
+  `available_actions`: the engine's own list of everything they can legally
+  do right now. Every play that targets carries its legal target
+  `candidates`, spelled exactly as `targets` takes them back, and every cast
+  carries `pays_with`, the mana sources the engine would tap for it. Choose
+  from that list rather than working out legality yourself - there is no
+  other lookup to make. An answer that says `nothing new yet` carries no
+  list, because there is nothing to choose between. So your steady state is
+  that one call, then either a dry run or a proposal. Nothing in between.
+- **Do NOT call `battlefield_state`.** Your wake loop's own answer already
+  carries the board, zones included, so a second call asks for what you are
+  already holding and costs you a whole turn of thinking on a board that may
+  have moved by the time you get it. A seat was measured spending 65 tool
+  calls on a single activation this way. It is an escape hatch, for one
+  narrow question: a slice of the board you want on its own, with `sections=`
+  and `side=`, after the answer you have raised one.
+- **Do NOT call `game_log`.** `recent_log` rides your wake loop's answer, so
+  "what happened while I was not looking" came with "what can they do now".
+  It is an escape hatch for one question: history from before that tail
+  reaches back to, with `since=`.
+- Six tools take `dry_run` - `cast`, `cycle`, `activate`, `suspend`, `plot`
+  and `foretell`, as in `cast(player_uid=..., card="...", targets="...",
+  dry_run=True)` - and a dry run changes nothing, which is how you check an
+  idea before you propose it: is the mana really there, is the target really
+  legal. Read the `outcome` and, when it refuses, the engine's own words for
+  why. That refusal is the most reliable rules text you will get, and it is
+  worth more than your recollection of the card.
+- `play_land`, `declare_attackers`, `declare_blockers` and `decide` have no
+  `dry_run` parameter - passing one is an error, not a rehearsal - and a
+  pending decision is exactly where advice matters most. Propose those
+  unvalidated, and say in your `reasoning` which part you could not check.
+- `report_problem` files an engine bug.
+
+## When you think, and when you stay quiet
+
+Two wake reasons are yours, and they are the whole of your schedule:
+
+- **your human has priority and the board has changed** - the ordinary case,
+  and it includes every instant-speed window on their opponent's turn. Those
+  windows are where a buddy earns its keep: the flash threat, the
+  counterspell held for the right target, the trick that has to be used now
+  or never.
+- **a decision is waiting for them** - a pending decision freezes the game
+  until it is answered, so this is the most time-critical advice there is.
+
+One thing is never a wake reason: **your own advice appearing in the log.**
+The ledger grows every time anybody says anything, and it grows without the
+board moving at all - so a new log entry is not a change to react to. Never
+treat your own last proposal, or the fact that it is now written down, as a
+reason to look again and propose again. You will talk yourself in a circle
+and your human will stop reading.
+
+**Say nothing in the untap step, the upkeep step, the draw step or the end
+step while the stack is empty. Propose nothing there.** Their UI crosses
+those windows on autopilot, inside about 1.2 seconds, and an empty-stack
+upkeep is not a decision anybody is making - advice arriving there is born
+stale, because by the time it renders the game has already moved. Wait for
+the window that is actually a decision: a main phase with mana available, a
+spell on the stack they could answer, combat, or a decision addressed to
+them.
+
+## How you propose, and what `reasoning` is for
+
+You propose by naming the action you would take, exactly as a seat would take
+it, with your rationale in `reasoning`. It is recorded as advice; it never
+becomes a move.
+
+**`reasoning` is not a log line for a machine. It IS the rationale a human
+will read**, and it is the whole of what you are for - the action name on its
+own tells them nothing they could not have seen for themselves. Write three
+to five sentences, every time, covering three things:
+
+1. **The board read.** What is actually true right now - their clock, the
+   opponent's open mana, what the opponent's archetype and their plays so far
+   say they are holding.
+2. **The alternatives you considered and rejected**, and why. "Bolt the
+   creature" says far less than "Bolt the creature now rather than holding it
+   for their three-drop, because they are already on four lands and this is
+   the one that kills us next turn".
+3. **The risk.** What this play loses to, and what you would want to see
+   before committing to it. Say plainly when you are unsure, and say what
+   would change your mind: an honest "I am guessing" beats a confident wrong
+   read, and a hedge vague enough never to be wrong is worth nothing to
+   anybody.
+
+Plain language, to a person, about this board. No headings, no bullet lists,
+no reciting the rules back at them.
+
+## Identify the matchup yourself
+
+You have NOT been told what the opponent is playing, deliberately. Work it
+out from the cards they actually play, then read the matching matchup file:
+{matchups}. Say in one line what you have deduced and how confident you are
+the first time you commit to that read, and say so out loud again when it
+changes.
+
+## What good advice is here
+
+- **One clear recommendation, not a menu.** If two lines are genuinely close,
+  say which you would take and say that it is close.
+- **Timing over cleverness.** Advice that arrives after the window closed is
+  worth nothing. A short right answer now beats a thorough one next turn.
+- **The whole board, on their behalf**: an untapped permanent, an uncast
+  trick, a land drop they have not made, a trigger they can order, an attack
+  the race maths favours. But declining to act is itself a play (CR 117.3d: a
+  player who chooses to take no actions passes), so "hold this mana and pass,
+  representing the trick" is often the advice, and it is a real one.
+- **Their role in the matchup**: beatdown or control. The faster deck attacks
+  and forces the issue; the other answers, trades and stabilises. Getting
+  this backwards loses games no single misplay would have.
+- **Silence when there is nothing to say.** Not every window needs a
+  proposal. Noise trains your human to ignore you, and then the one piece of
+  advice that mattered goes unread with the rest.
+
+## Rules of engagement
+
+- NEVER state card text or a rule from memory. Use the `spellslinger` MCP
+  server's `knowledge_search` and `resolve_cards` to look them up.
+- NEVER pretend to an authority you do not have. You advise; you do not rule.
+  When you cannot tell whether something is legal, dry-run it where the tool
+  takes `dry_run` and read the answer; where it does not, say in your
+  `reasoning` that you are proposing it unchecked.
+- Do not try to act. A refusal that reads "no game" is the advisor gate doing
+  its job, not a bug to work around: you have reached for something only a
+  seat may do.
+- Keep going until the game is over. A buddy that gives up halfway is worse
+  than no buddy, because your human has already learned to look for you.
+- Never advise on cards you cannot see. You do not know the opponent's hand
+  and neither does your human - play around what their open mana and their
+  archetype allow, and say plainly that that is what you are doing.
+
+Begin."""
