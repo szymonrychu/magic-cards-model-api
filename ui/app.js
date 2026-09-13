@@ -382,11 +382,21 @@ export function planPermanentClick(card, app, state) {
   if (card.controller !== seat) return { kind: "none" };
   const abilities = card.abilities || [];
   const vehicle = /vehicle/i.test(card.type_line || "");
-  if (!abilities.length && !vehicle) {
+  // CR 702.6a: equip has no entry in `card.abilities` (`Game.
+  // activated_abilities` never synthesises it - `action_rows.is_equip_row`'s
+  // own docstring), so nothing here can say whether it is legal *right now*
+  // off the card alone the way a real activated ability can. This only
+  // routes an Equipment permanent to the menu rather than "none" or the
+  // single-ability auto-activate; `openPermanentMenu` decides whether Equip
+  // actually appears in it, from the engine's own legal-actions answer.
+  const equipment = /\bequipment\b/i.test(card.type_line || "");
+  if (!abilities.length && !vehicle && !equipment) {
     return { kind: "none", reason: `${card.name} has no activated abilities` };
   }
-  if (abilities.length === 1 && !vehicle) return { kind: "activate", abilityIndex: 0 };
-  return { kind: "menu", abilities, vehicle };
+  if (abilities.length === 1 && !vehicle && !equipment) return { kind: "activate", abilityIndex: 0 };
+  const menu = { kind: "menu", abilities, vehicle };
+  if (equipment) menu.equipment = true;
+  return menu;
 }
 
 // -------------------------------------------------------------- polling --
@@ -966,6 +976,13 @@ export async function onPermanent(card, event) {
     if (plan.reason) toast(plan.reason);
     return;
   }
+  // An Equipment's menu cannot open from local state alone (see
+  // `planPermanentClick`'s own comment) - it has to ask the engine whether
+  // Equip is legal right now before it can say whether the item belongs in
+  // the menu at all, not merely whether to grey it out.
+  if (plan.kind === "menu" && plan.equipment) {
+    return openPermanentMenu(card, event, plan);
+  }
   // `activate` and `menu` alike: `abilityMenuItems` reads the one ability an
   // `activate` plan names off the card, so a one-ability permanent opens the
   // same menu with one item in it rather than activating on the click.
@@ -973,6 +990,100 @@ export async function onPermanent(card, event) {
     if (key === "crew") return beginCrew(card);
     if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
   });
+}
+
+/** The menu for an Equipment permanent (`planPermanentClick`'s `equipment`
+ * flag): unlike every other action click, this one has to ask the engine
+ * BEFORE opening anything, rather than opening from local state and
+ * enriching afterwards (`enrichActionMenu`'s own pattern). Equip's CR 702.6a
+ * "activate only as a sorcery" timing makes the engine drop the row
+ * entirely outside a main phase (`action_rows.legal_action_rows`) rather
+ * than mark it unaffordable, and `menus.js`'s `enrichItems` only ever
+ * disables a row it can already see - so an item added unconditionally and
+ * enriched afterwards would sit there, enabled, offering an action the
+ * engine never listed at all. One `candidates=true` legal-actions read
+ * settles both questions at once: whether Equip belongs in the menu, and,
+ * if so, which creatures it may legally attach to - so `beginEquip` never
+ * has to ask again.
+ *
+ * The anchor is resolved before the read, not after, for the reason
+ * `openActionMenu`'s own comment gives: the browser nulls `event.
+ * currentTarget` once the click's dispatch is over, and this function's own
+ * `await` outlives it. */
+async function openPermanentMenu(card, event, plan) {
+  const anchor = actionAnchor(card, event);
+  const app = store.get();
+  let answer = { actions: [], last_seq: 0 };
+  if (app.gameId && app.uid && app.state) {
+    try {
+      answer = await api(
+        "GET",
+        withUid(gamePath(`legal-actions?player=${encodeURIComponent(you())}&candidates=true`), app.uid)
+      );
+    } catch {
+      // The same silent no-op every enrichment failure gets: the click
+      // asked and got nothing back, so this card offers exactly what its
+      // own abilities/vehicle status already say.
+      answer = { actions: [], last_seq: 0 };
+    }
+  }
+  const rows = (answer && answer.actions) || [];
+  const equipRow = rows.find((row) => row.card_id === card.id && row.kind === "equip");
+  const items = M.enrichItems(
+    M.abilityMenuItems({ ...plan, equipment: Boolean(equipRow) }, card),
+    rows
+  );
+  if (!items.length) return;
+  openCardMenuAt(anchor, card, items, (key) => {
+    if (key === "crew") return beginCrew(card);
+    if (key === "equip") return beginEquip(anchor, card, equipRow, answer.last_seq);
+    if (key.startsWith("activate:")) return beginActivate(card, Number(key.slice("activate:".length)));
+  });
+}
+
+/** Picking "Equip" out of that menu: a second small popover, over the same
+ * card, listing the row's own candidates (CR 702.6a's "target creature you
+ * control") - `showPopover` already replaces the first popover with this
+ * one, the same two-step shape `settlePin` uses for a mana source's
+ * ability-then-colour choice. Equip carries no modes, no X and exactly one
+ * target (CR 301.5c), so picking a candidate here IS the confirm; nothing
+ * further is asked. */
+function beginEquip(anchor, card, row, lastSeq) {
+  const slot = row && row.targets && row.targets.slots && row.targets.slots[0];
+  const lines = (slot && slot.candidates) || [];
+  if (!lines.length) {
+    hidePopover();
+    toast(`${card.name} has no legal creature to equip`);
+    return;
+  }
+  openCardMenuAt(anchor, card, M.equipTargetMenuItems(lines), (key) => {
+    fireEquip(card, key.slice("target:".length), lastSeq);
+  });
+}
+
+/** `POST .../actions/equip` (CR 702.6a) - the route the api, the CLI and the
+ * MCP server already share (`schemas.EquipRequest`). `expectedSeq` is the
+ * `last_seq` the menu's own legal-actions read carried, named back as
+ * `expected_seq` so a board that moved between that read and this click is a
+ * refusal (`records.require_current_board`) rather than a stale action fired
+ * blind. No `mana_sources`: the engine's own `payment.pay()` auto-taps the
+ * rest, exactly as `playLand`/`fireSpecial`/`cycle` already leave it to. */
+async function fireEquip(card, targetId, expectedSeq) {
+  hidePopover();
+  const body = { player: you(), card_id: card.id, target: targetId };
+  if (expectedSeq !== undefined && expectedSeq !== null) body.expected_seq = expectedSeq;
+  const res = await send("POST", gamePath("actions/equip"), body);
+  if (res === null) return;
+  if (res.allowed === false) {
+    toast(res.reason);
+    return;
+  }
+  // CR 117.3c already gives priority back; equip has no ribbon panel of its
+  // own to carry a per-action hold tick, so this follows the stops panel's
+  // standing default exactly as `fire()` does when nothing overrides it.
+  const hold = store.get().stops.keepPriorityByDefault !== false;
+  if (!hold) await passOnce();
+  await refresh();
 }
 
 async function beginActivate(card, index) {
