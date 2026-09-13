@@ -52,9 +52,13 @@ export function begin(kind, card, extra) {
     card,
     abilityIndex: extra.abilityIndex === undefined ? null : extra.abilityIndex,
     keyword: extra.keyword || null,
-    // CR 601.3's dynamic play permissions (cascade, suspend's third ability)
-    // let a card be cast from a zone other than the hand - `null` here means
-    // "hand", `CastRequest.from_zone`'s own default (`schemas.py`).
+    // CR 601.3's dynamic play permissions (a flashback grant, an exiled card
+    // made playable "this turn") let a card be cast from a zone other than
+    // the hand - `null` here means "hand", `CastRequest.from_zone`'s own
+    // default (`schemas.py`). Cascade's hit and suspend's third ability no
+    // longer grant one of these (battle 8): each casts inline while the
+    // permitting spell or ability is still resolving, answered as an ordinary
+    // `pending_decision` instead.
     fromZone: extra.fromZone || null,
     modes: [],
     xValue: null,
@@ -407,9 +411,12 @@ export function bodyFor(action, you, untapped) {
     if (action.delve.length) body.delve = action.delve;
     if (action.altCost !== null) body.alternative_cost = action.altCost;
     if (action.choosing.length) body.choosing = action.choosing;
-    // CR 601.3's dynamic play permissions (cascade, suspend's own third
-    // ability): `CastRequest.from_zone` (`schemas.py`) defaults to "hand",
-    // so this is only sent when the cast began from `beginCastFromPermission`.
+    // CR 601.3's dynamic play permissions (a flashback grant, an exiled card
+    // made playable "this turn"): `CastRequest.from_zone` (`schemas.py`)
+    // defaults to "hand", so this is only sent when the cast began from
+    // `beginCastFromPermission`. Cascade and suspend no longer reach here at
+    // all (battle 8) - accepting either is answered as an ordinary
+    // `pending_decision`, not a permission a seat drives through `cast`.
     if (action.fromZone) body.from_zone = action.fromZone;
   } else if (action.kind === "activate" && action.xValue !== null) {
     body.x_value = action.xValue;

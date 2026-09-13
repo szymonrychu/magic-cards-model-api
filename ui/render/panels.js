@@ -391,9 +391,11 @@ function zoneSection(inner, app, handlers, label, cards) {
   }
   const grid = h("div", { class: "zone-grid" });
   // CR 601.3's dynamic play permissions can name a card sitting in exile or
-  // a graveyard (cascade, suspend's own third ability) - clicking one of
-  // those begins casting it from there instead of an ordinary targeting
-  // click, the same choice `render/board.js`'s `#permitted-row` offers.
+  // a graveyard (a flashback grant, an exiled card made playable "this
+  // turn" - cascade's hit and suspend's own third ability no longer grant
+  // one of these, battle 8) - clicking one of those begins casting it from
+  // there instead of an ordinary targeting click, the same choice
+  // `render/board.js`'s `#permitted-row` offers.
   const permissions = (app.state.play_permissions && app.state.play_permissions[app.state.you]) || [];
   for (const card of cards) {
     const opts = targetingOpts(app, card.id);

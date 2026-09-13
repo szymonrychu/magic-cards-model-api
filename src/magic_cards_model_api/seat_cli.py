@@ -219,9 +219,13 @@ def build_parser() -> argparse.ArgumentParser:
             "it for that keyword's cost instead of its printed mana cost "
             "- read the card's own cast_options in `battlefield_state` for "
             "which keyword and cost actually apply right now, rather than "
-            "guessing. A card covered by a live PlayPermission instead (suspend's "
-            "free cast once its last time counter is off, cascade, Past in "
-            "Flames) needs no --keyword: it is picked up automatically."
+            "guessing. A card covered by a live PlayPermission instead (Past in "
+            "Flames' graveyard grant, a flashback grant, a card exiled and made "
+            "playable this turn) needs no --keyword: it is picked up "
+            "automatically. Cascade's hit and suspend's own free cast are not "
+            "PlayPermissions any more (battle 8): accepting either casts the "
+            "card immediately while the permitting spell or ability is still "
+            "resolving, answered through `decide`, not through a later `cast`."
         ),
     )
     cast.add_argument(

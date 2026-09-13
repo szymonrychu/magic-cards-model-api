@@ -424,6 +424,18 @@
       }
     ]
   },
+  "known_cards": {
+    "alice": {
+      "hand": [],
+      "library": [],
+      "sideboard": []
+    },
+    "bob": {
+      "hand": [],
+      "library": [],
+      "sideboard": []
+    }
+  },
   "libraries": {
     "alice": [
       {

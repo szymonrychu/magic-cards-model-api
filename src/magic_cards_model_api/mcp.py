@@ -176,6 +176,7 @@ SECTION_KEYS: dict[str, tuple[str, ...]] = {
     "pregame": ("pregame",),
     "pending_decision": ("pending_decision",),
     "recent_log": ("recent_log",),
+    "known_cards": ("known_cards",),
 }
 
 #: Sections whose entries are card views carrying whose they are - the two
@@ -185,7 +186,13 @@ SECTION_KEYS: dict[str, tuple[str, ...]] = {
 _CARD_LIST_KEYS = ("battlefield", "exile", "exile_pile", "command", "stack")
 
 #: Sections shaped `{username: [...]}` - `side` filters these by key.
-_BY_USERNAME_KEYS = ("hands", "graveyards", "play_permissions")
+#: `known_cards` is keyed by the player who *knows*, not by whose cards they
+#: are, but the filter is the same one line either way: after `visibility.
+#: redact_view` a non-admin viewer's own entry is the only one ever present,
+#: so `side="opponent"` (which never names the viewer) drops it and
+#: `side="mine"`/`"both"` keep it - exactly "is this the viewer's own
+#: knowledge", asked the same way `hands`' own key already is.
+_BY_USERNAME_KEYS = ("hands", "graveyards", "play_permissions", "known_cards")
 
 #: What `side` accepts. Deliberately not usernames: the caller already
 #: identified itself with `player_uid`, and a mirror match - both seats on
@@ -796,9 +803,17 @@ def build_server(seats: Seats) -> MCPServer:
         what you read: `battlefield`, `hands`, `graveyards`, `exile` (which
         brings `exile_pile` with it), `command`, `stack`, `combat`,
         `players`, `play_permissions`, `pregame`, `pending_decision`,
-        `recent_log`. An empty `sections` - the default - is all of them. A
-        name that is not on that list is refused, with the list, rather than
-        quietly ignored.
+        `recent_log`, `known_cards`. An empty `sections` - the default - is
+        all of them. A name that is not on that list is refused, with the
+        list, rather than quietly ignored.
+
+        `known_cards` is what you know about hidden cards because an effect
+        showed them to you or tracked where they went: `hand` lists cards in
+        another player's hand, `library` lists a card whose live position
+        (`index_from_top`) you still know (CR 401.2; a reorder or a further
+        put on top ends the record), `sideboard` lists sideboard cards -
+        keyed by the player who knows, which after redaction is only ever
+        your own entry.
 
         `side` is `both` (the default), `mine`, or `opponent`, and it is
         resolved from the uid you passed, not from a username you have to get
@@ -991,12 +1006,20 @@ def build_server(seats: Seats) -> MCPServer:
                   ability is granting the spell right now (CR 610.5, CR 611.3d) -
                   `keyword` is still that keyword's own name either way.
 
-                A card you `suspend`d needs no `keyword`: once its last time counter
-                is off (removed one per the suspending player's own upkeep, CR
-                702.62a), the free cast it grants is
-                picked up automatically as a live `PlayPermission` - the same is true
-                of cascade and Past in Flames, and `play_permissions` in your state
-                names every one that is currently live for you.
+                A card covered by a live standing `PlayPermission` needs no `keyword`
+                either - Past in Flames' graveyard grant, a flashback grant, a card
+                exiled and made playable "this turn" - and `play_permissions` in your
+                state names every one that is currently live for you.
+
+                Cascade's hit and a suspended card's own free cast are NOT
+                `PlayPermission`s (battle 8): accepting either casts the card
+                immediately while the permitting trigger is still resolving (CR
+                608.2g), through the SAME `decide` call that accepted the "you may
+                cast it" - answer whichever face, mode, target or additional cost
+                (kicker, entwine, escalate, ...) it then asks, one `pending_decision`
+                at a time, chained off that accept. There is no later `cast` to make
+                for either of these, and nothing shows up in `play_permissions` for
+                them at all.
 
         **A cost is not always mana, and `targets` is never how you pay one.**
                 `targets` is the spell's own targets (CR 601.2c) and nothing else -

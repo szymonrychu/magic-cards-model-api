@@ -551,10 +551,15 @@ class CastRequest(BoardRead):
       them", or CR 611.3d's "each ... card in your graveyard has X") - named
       the same way a printed one would be.
 
-    A card freshly granted a `PlayPermission` (suspend's own free cast, CR
-    702.62a's third ability; cascade; Past in Flames) needs no `keyword`:
-    that permission is found and used automatically whenever one is live for
-    this player and card - see `play_permissions` on the state view."""
+    A card covered by a live standing `PlayPermission` (Past in Flames'
+    graveyard grant, a flashback grant, a card exiled and made playable
+    "this turn") needs no `keyword`: that permission is found and used
+    automatically whenever one is live for this player and card - see
+    `play_permissions` on the state view. Cascade's hit and a suspended
+    card's own free cast (CR 702.62a's third ability) are not
+    `PlayPermission`s any more (battle 8): accepting either casts the card
+    immediately while the permitting spell or ability is still resolving,
+    answered through `decide`, never through a later `cast`."""
     convoke: list[ConvokeChoice] | None = None
     """Creatures tapped for convoke (CR 702.51a). Applied after the total
     cost is determined, never as part of the announcement."""
@@ -1577,7 +1582,6 @@ class PlayPermissionView(BaseModel):
     granted_step: str | None = None
     expires: str
     expired: bool
-    bottom_if_unused: bool
     usable_now: bool
     why_not: str | None = None
 
@@ -1662,6 +1666,26 @@ class CombatView(BaseModel):
     attacks: list[CombatAttackView]
 
 
+class KnownLibraryCardView(BaseModel):
+    """One library card a player knows, with where it sits right now
+    (`serialize._known_cards_view`; CR 701.20d ends the record on a
+    reordering)."""
+
+    index_from_top: int
+    card: CardView
+
+
+class KnownCardsView(BaseModel):
+    """What one player knows about hidden cards (`Game.known_to`): cards in
+    another player's hand seen by some effect, library cards with their live
+    position, and sideboard cards. The player's own hand and sideboard are
+    never listed - it already sees those whole."""
+
+    hand: list[CardView]
+    library: list[KnownLibraryCardView]
+    sideboard: list[CardView]
+
+
 class GameStateView(BaseModel):
     """The full board (`serialize.state_view`), as a viewer may see it after
     `visibility.redact_view` - see this section's own module-level note for
@@ -1689,6 +1713,11 @@ class GameStateView(BaseModel):
     graveyards: dict[str, list[CardView]]
     libraries: dict[str, list[CardView]] | None = None
     sideboards: dict[str, list[CardView]] | None = None
+    known_cards: dict[str, KnownCardsView] = Field(default_factory=dict)
+    """Keyed by the player who knows - `serialize._known_cards_view`. Unlike
+    `libraries`/`sideboards`, `visibility.redact_view` never removes this key
+    outright: it keeps only the viewer's own entry (admin sees every
+    player's, a viewer who is nobody gets `{}`)."""
     winner: str | None = None
     drawn: bool
     losers: list[str]

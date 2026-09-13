@@ -58,6 +58,7 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "pregame": ("pregame",),
     "pending_decision": ("pending_decision",),
     "recent_log": ("recent_log",),
+    "known_cards": ("known_cards",),
 }
 
 #: Keys no `sections` value ever removes - the turn, the step, who has

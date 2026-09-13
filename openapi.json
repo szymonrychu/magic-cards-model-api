@@ -1713,6 +1713,13 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
+            "type": "object"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -5078,6 +5085,13 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
+            "type": "object"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -5434,6 +5448,57 @@
           "candidates"
         ],
         "title": "ImproviseCostView",
+        "type": "object"
+      },
+      "KnownCardsView": {
+        "description": "What one player knows about hidden cards (`Game.known_to`): cards in\nanother player's hand seen by some effect, library cards with their live\nposition, and sideboard cards. The player's own hand and sideboard are\nnever listed - it already sees those whole.",
+        "properties": {
+          "hand": {
+            "items": {
+              "$ref": "#/components/schemas/CardView"
+            },
+            "title": "Hand",
+            "type": "array"
+          },
+          "library": {
+            "items": {
+              "$ref": "#/components/schemas/KnownLibraryCardView"
+            },
+            "title": "Library",
+            "type": "array"
+          },
+          "sideboard": {
+            "items": {
+              "$ref": "#/components/schemas/CardView"
+            },
+            "title": "Sideboard",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hand",
+          "library",
+          "sideboard"
+        ],
+        "title": "KnownCardsView",
+        "type": "object"
+      },
+      "KnownLibraryCardView": {
+        "description": "One library card a player knows, with where it sits right now\n(`serialize._known_cards_view`; CR 701.20d ends the record on a\nreordering).",
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/CardView"
+          },
+          "index_from_top": {
+            "title": "Index From Top",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index_from_top",
+          "card"
+        ],
+        "title": "KnownLibraryCardView",
         "type": "object"
       },
       "Layout": {
@@ -6131,6 +6196,13 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
+            "type": "object"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -6535,6 +6607,13 @@
               "type": "array"
             },
             "title": "Hands",
+            "type": "object"
+          },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
             "type": "object"
           },
           "libraries": {
@@ -7522,6 +7601,13 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
+            "type": "object"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -8088,10 +8174,6 @@
             "title": "Action",
             "type": "string"
           },
-          "bottom_if_unused": {
-            "title": "Bottom If Unused",
-            "type": "boolean"
-          },
           "card": {
             "$ref": "#/components/schemas/CardView"
           },
@@ -8165,7 +8247,6 @@
           "immediate",
           "expires",
           "expired",
-          "bottom_if_unused",
           "usable_now"
         ],
         "title": "PlayPermissionView",
@@ -8340,6 +8421,13 @@
               "type": "array"
             },
             "title": "Hands",
+            "type": "object"
+          },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
             "type": "object"
           },
           "libraries": {
@@ -8748,6 +8836,13 @@
             "title": "Hands",
             "type": "object"
           },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
+            "type": "object"
+          },
           "libraries": {
             "anyOf": [
               {
@@ -9154,6 +9249,13 @@
               "type": "array"
             },
             "title": "Hands",
+            "type": "object"
+          },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
             "type": "object"
           },
           "libraries": {
@@ -10018,6 +10120,13 @@
               "type": "array"
             },
             "title": "Hands",
+            "type": "object"
+          },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
             "type": "object"
           },
           "libraries": {
@@ -10973,6 +11082,13 @@
               "type": "array"
             },
             "title": "Hands",
+            "type": "object"
+          },
+          "known_cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/KnownCardsView"
+            },
+            "title": "Known Cards",
             "type": "object"
           },
           "libraries": {

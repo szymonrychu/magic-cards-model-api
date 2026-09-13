@@ -78,12 +78,16 @@ export function surfaceForChoice(kind) {
  *
  * **Every plan that ACTS opens a popover, single option and all** - playing
  * a land, casting, activating the one ability a permanent has, and using a
- * dynamic play permission (`"permission"`: cascade's hit, suspend's own
- * third ability - a cast begun out of exile or a graveyard, wired to the
- * board's own `#permitted-row` and zone ribbon as much as to the zones
- * modal) all used to fire on the click itself, and now open the same
- * anchored picker a multi-ability permanent already opened. A one-item menu
- * IS the confirm:
+ * dynamic play permission (`"permission"`: a flashback grant, a card exiled
+ * and made playable "this turn" - a cast begun out of exile or a graveyard,
+ * wired to the board's own `#permitted-row` and zone ribbon as much as to
+ * the zones modal) all used to fire on the click itself, and now open the
+ * same anchored picker a multi-ability permanent already opened. Cascade's
+ * hit and suspend's own third ability no longer grant one of these (battle
+ * 8): accepting either casts the card immediately while the permitting
+ * spell or ability is still resolving, so what shows up for them instead is
+ * an ordinary `pending_decision` - see `render/decision_controls.js`. A
+ * one-item menu IS the confirm:
  * there is no separate confirm component and no Cancel item, because
  * `render/ribbon.js`'s `showPopover` already leaves on Escape, on a click
  * away, and on picking something. What that item then begins - a cast or an

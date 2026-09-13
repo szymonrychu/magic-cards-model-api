@@ -220,8 +220,10 @@ function patchZoneRibbon(container, rows, app, handlers) {
 }
 
 /**
- * CR 601.3's dynamic play permissions (cascade, suspend's own third
- * ability) - `state.play_permissions[you]`, `serialize.py`'s
+ * CR 601.3's dynamic play permissions - a flashback grant, an exiled card
+ * made playable "this turn" (cascade's hit and suspend's own third ability
+ * no longer grant one of these, battle 8 - each casts inline instead, as an
+ * ordinary `pending_decision`) - `state.play_permissions[you]`, `serialize.py`'s
  * `_play_permission_view`: `{card, from_zone, granted_by, usable_now,
  * why_not, ...}`. Keyed by the permitted card's own id (a permission
  * disappears from the list, rather than changing identity, once its card
@@ -238,8 +240,8 @@ function patchPermissions(container, permissions, onClick) {
     (p) => cardNode(p.card, "card-md", {}),
     (el, p) => {
       updateCardNode(el, p.card, { dimmed: !p.usable_now });
-      // `p.rule` already carries its own CR citation (cascade's, suspend's -
-      // whichever effect actually granted this permission), so this only
+      // `p.rule` already carries its own CR citation (whichever effect
+      // actually granted this permission), so this only
       // adds the granting source's name in front of it, not a second CR
       // 601.3 citation on top.
       el.title = p.usable_now ? `${p.granted_by}: ${p.rule || ""}` : p.why_not || "";

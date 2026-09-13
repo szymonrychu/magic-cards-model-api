@@ -160,7 +160,7 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-18"
+PROTOCOL_VERSION = "seatkit-19"
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
 #: legal-action row of kind `equip`, and rows gaining `printed_cost`,
@@ -268,6 +268,32 @@ PROTOCOL_VERSION = "seatkit-18"
 #: the engine's own (`keyword: Equip`, no `ability_index`), still served as
 #: `kind: equip`, listed once and priced. An older process ignores the two
 #: new keys, so nothing it sends is refused.
+#:
+#: `seatkit-19` is a **response** shape change - a field removed, not added,
+#: so it is a bump rather than a ride: a legal-action or `play_permissions`
+#: entry's `bottom_if_unused` is gone. Battle 8's funnel commit took the
+#: standing `PlayPermission` away from cascade, suspend, rebound, Mosswort
+#: Bridge and the rest of the "cast/play it without paying its mana cost"
+#: effects - each now casts inline while the permitting spell or ability is
+#: still resolving (`Game.cast_during_resolution`/`may_cast_during_
+#: resolution`, CR 608.2g) - and took with it the one cleanup sweep
+#: (`Game._bottom_unused_cascade_permissions`) that ever set the field to
+#: anything but its own default. Permanently `False` on every permission this
+#: engine still grants, it carried nothing left to say, so it is dropped
+#: rather than kept as a key that can only ever read one value. An older
+#: process reading `bottom_if_unused` off a row gets a plain missing key
+#: (Python's `dict.get` default, not a KeyError) - safe for any reader that
+#: was already treating it as informational rather than branching on it, and
+#: `mcp.py`'s own tool description never told a seat to.
+#:
+#: Riding the same `seatkit-19`, additive response only: the state view (and
+#: `battlefield_state`'s own `known_cards` section) now carries `known_cards`,
+#: keyed by the player who knows - `Game.known_to`'s read of a hidden card's
+#: live position (CR 401.2, CR 400.7), the same knowledge policy battle 5's
+#: public-zone-to-hand tracking already used, extended by battle 8 (B8-03) to
+#: a card put into a library from a public zone. An older process has no
+#: `known_cards` parameter to ask for and ignores the new key on a row it
+#: already reads whole.
 #:
 #: `seatkit-17` is an **additive request** change and an **additive
 #: response** one: `cast` gained `optional_costs`, and a legal-action row

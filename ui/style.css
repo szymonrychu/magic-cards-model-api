@@ -391,8 +391,10 @@ h3 { font-size: 14px; }
 .hand-row { background: rgba(107, 164, 255, 0.05); }
 .hand-row-opp { opacity: 0.75; }
 /* CR 601.3's dynamic play permissions - a card castable from somewhere other
-   than the hand right now (cascade's exiled hit, suspend's free cast) - a
-   dashed accent border tells it apart from the ordinary hand row above it. */
+   than the hand right now (a flashback grant, an exiled card made playable
+   "this turn" - cascade's hit and suspend's free cast no longer grant one of
+   these, battle 8) - a dashed accent border tells it apart from the ordinary
+   hand row above it. */
 .permitted-row { border: 1px dashed var(--accent); }
 .stack-row {
   border: 1px dashed var(--line-bright);
