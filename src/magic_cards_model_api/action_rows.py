@@ -73,7 +73,7 @@ from magic_cards_model.machines.cost import (
     total_cost_for_phrase,
 )
 from magic_cards_model.machines.decisions import PendingDecision
-from magic_cards_model.machines.keywords import equip_activation, off_zone_abilities
+from magic_cards_model.machines.keywords import off_zone_abilities
 from magic_cards_model.machines.legal_actions import (
     _cast_action,
     _cost_affordability,
@@ -82,15 +82,13 @@ from magic_cards_model.machines.legal_actions import (
 )
 from magic_cards_model.machines.objects_as_costs import has_improvise, improvise_offer
 from magic_cards_model.models import Action, CardState, Color, Game, Zone
-from magic_cards_model.models.action import ActionKind, Affordability, TargetSlot
+from magic_cards_model.models.action import ActionKind, Affordability
 from magic_cards_model.models.mana import ManaCost, ManaSpend, ManaSymbol, SymbolKind
 
-from .affordances import activation_profile
 from .engine_api import (
     activate_ability,
     dry_run_copy,
     effective_production,
-    equip_target_requirements,
     unreadable_mode_notice,
     unreadable_modes,
     without_loyalty_mana_advice,
@@ -146,6 +144,17 @@ _IMPROVISE_NOT_EVALUATED = (
 _MAX_MANUAL_TRIALS = 16
 
 
+def is_equip_row(action: Action) -> bool:
+    """The engine's equip row (CR 702.6a): an `ACTIVATE` with `keyword="Equip"`
+    and no `ability_index`, since equip has no entry in
+    `Game.activated_abilities`."""
+    return (
+        action.kind is ActionKind.ACTIVATE
+        and action.keyword == "Equip"
+        and action.ability_index is None
+    )
+
+
 def legal_action_rows(
     game: Game, player: str, pending: PendingDecision | None
 ) -> tuple[list[Action], list[dict[str, Any]]]:
@@ -159,7 +168,7 @@ def legal_action_rows(
         return actions, [action.model_dump(mode="json") for action in actions]
     rows = _Rows(game, player)
     actions = [
-        rows.with_target_slots(rows.as_loyalty_activation(rows.with_front_face_cost(action)))
+        rows.as_loyalty_activation(rows.with_front_face_cost(action))
         for action in actions
         if rows.functions_where_it_is(action)
     ]
@@ -167,15 +176,16 @@ def legal_action_rows(
     actions = [action for action, _ in charged]
     views = [action.model_dump(mode="json") for action in actions]
     for (action, charge), view in zip(charged, views, strict=True):
+        if is_equip_row(action):
+            # CR 702.6a: the engine's own equip row, taken by
+            # `POST .../actions/equip` - the kind names that route.
+            view["kind"] = "equip"
         view.update(charge)
         if action.kind is ActionKind.CAST:
             rows.add_optional_costs(action, view)
             rows.name_unreadable_modes(action, view)
         elif action.kind is ActionKind.ACTIVATE_MANA:
             rows.state_production(action, view)
-    for action, view in rows.equip_rows():
-        actions.append(action)
-        views.append(view)
     for action, view in zip(actions, views, strict=True):
         if action.kind is ActionKind.CAST:
             rows.offer_manual_mana(action, view)
@@ -346,85 +356,6 @@ class _Rows:
             # top-level `{X}` check does not look.
             rebuilt = rebuilt.model_copy(update={"x_range": (0, None)})
         return rebuilt
-
-    # -- equip (CR 702.6a) --------------------------------------------------------
-
-    def equip_rows(self) -> list[tuple[Action, dict[str, Any]]]:
-        """One `equip` row per Equipment this seat controls whose equip ability
-        `machines.keywords.equip_activation` allows right now (its `why_not`,
-        CR 602.5, "Activate only as a sorcery" included).
-
-        The engine's enumeration has no row for equip: `Game.
-        activated_abilities` does not list a keyword ability, so Blade of the
-        Bloodchief offered nothing at all. The row is built from the
-        activation itself - its cost, its affordability by the engine's own
-        planner, and the target slot the engine's targeting parser reads off
-        CR 702.6a's "Attach this permanent to target creature you control".
-        `kind` is `equip`, the tail of `POST .../actions/equip`, the way every
-        other row's kind names its route; the engine-side `Action` it is
-        index-aligned with is an `activate` carrying `keyword: Equip`.
-
-        The activation is built with the Equipment standing in as its own
-        target: a target is needed to build one, and nothing read here (cost,
-        timing, the ability's text) depends on which object it is."""
-        found: list[tuple[Action, dict[str, Any]]] = []
-        board: Any = None
-        for permanent in self.game.permanents_controlled_by(self.player):
-            if not any(
-                ability.canonical.lower() == "equip"
-                for ability in keyword_abilities(permanent.card)
-            ):
-                continue
-            try:
-                activation = equip_activation(self.game, permanent, permanent, self.player)
-            except ValueError as error:
-                action = Action(
-                    kind=ActionKind.ACTIVATE,
-                    player=self.player,
-                    rule="CR 702.6a",
-                    card_id=permanent.id,
-                    from_zone=Zone.BATTLEFIELD,
-                    keyword="Equip",
-                    affordable=Affordability.UNKNOWN,
-                    unaffordable_reason=str(error),
-                )
-                found.append((action, {**action.model_dump(mode="json"), "kind": "equip"}))
-                continue
-            if activation.why_not() is not None:
-                continue
-            if board is None:
-                board = self.game.computed_board()
-            affordable, reason, pays_with = _cost_affordability(
-                self.game,
-                self.player,
-                activation.cost,
-                self.scan,
-                spend=ManaSpend.activating(board.of(permanent)),
-            )
-            cost, mana_cost = _cost_strings(activation.cost)
-            action = Action(
-                kind=ActionKind.ACTIVATE,
-                player=self.player,
-                rule=activation.rule,
-                card_id=permanent.id,
-                from_zone=Zone.BATTLEFIELD,
-                keyword=activation.keyword,
-                cost=cost,
-                mana_cost=mana_cost,
-                affordable=affordable,
-                unaffordable_reason=reason,
-                pays_with=pays_with,
-                target_slots=tuple(
-                    TargetSlot(
-                        phrase=requirement.phrase,
-                        minimum=requirement.minimum,
-                        maximum=None if requirement.unbounded else requirement.count,
-                    )
-                    for requirement in equip_target_requirements(activation)
-                ),
-            )
-            found.append((action, {**action.model_dump(mode="json"), "kind": "equip"}))
-        return found
 
     # -- where an ability functions (CR 113.6, CR 602.2) ------------------------
 
@@ -638,44 +569,6 @@ class _Rows:
                 }
                 for mode in unreadable
             ]
-
-    # -- an activation's targets ---------------------------------------------------
-
-    def with_target_slots(self, action: Action) -> Action:
-        """CR 602.2b: an activation announces its targets as a cast does, but
-        the engine's `legal_actions` builds `target_slots` only for a cast row,
-        so every activation row read `[]` - "targets nothing" - for Goblin
-        Bombardment's "Sacrifice a creature: ... any target" (B5-10). Filled
-        here from the same announcement profile the cast row's come from."""
-        if (
-            action.kind not in (ActionKind.ACTIVATE, ActionKind.ACTIVATE_OFF_ZONE)
-            or action.target_slots
-            or action.ability_index is None
-        ):
-            return action
-        card = self._card(action.card_id)
-        if card is None:
-            return action
-        try:
-            profile = activation_profile(
-                self.game,
-                card,
-                action.ability_index,
-                off_zone=action.kind is ActionKind.ACTIVATE_OFF_ZONE,
-            )
-        except (IndexError, ValueError):
-            return action
-        if not profile.understood or not profile.requirements:
-            return action
-        slots = tuple(
-            TargetSlot(
-                phrase=requirement.phrase,
-                minimum=requirement.minimum,
-                maximum=None if requirement.unbounded else requirement.count,
-            )
-            for requirement in profile.requirements
-        )
-        return action.model_copy(update={"target_slots": slots})
 
     # -- optional additional costs ------------------------------------------------
 
