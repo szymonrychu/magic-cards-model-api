@@ -175,6 +175,7 @@ boxed("prompt-box");
 boxed("casting-strip", true);
 boxed("priority-box");
 boxed("stops-box");
+boxed("concede-slot");
 boxed("popover", true);
 
 function makeStore(initial) {
@@ -776,7 +777,10 @@ def test_a_scry_decision_renders_no_split_rows_in_the_prompt_box() -> None:
 
 
 def test_concede_is_a_plain_button_until_it_is_armed() -> None:
-    label = run_module(
+    """Concede renders into `#concede-slot` (the pinned top-right toolbar),
+    not into `#priority-box` - moved there so it sits with Report and Lobby
+    at every width rather than in the ribbon."""
+    result = run_module(
         "render/ribbon.js",
         FAKE_DOM
         + """
@@ -785,12 +789,19 @@ def test_concede_is_a_plain_button_until_it_is_armed() -> None:
           const store = makeStore(baseApp(state));
           m.mountRibbon(document, store, HANDLERS);
           store.set({});
-          const box = document.querySelector("#priority-box");
-          return box.children.map((c) => c.textContent);
+          const slot = document.querySelector("#concede-slot");
+          const priorityBox = document.querySelector("#priority-box");
+          return {
+            slotText: slot.children.map((c) => c.textContent),
+            priorityBoxHasConcede: findByText(priorityBox, "button", "Concede") !== null,
+          };
         })()
         """,
     )
-    assert label == ["", "Concede"], "with no verbs on offer, Concede is the only button there"
+    assert result["slotText"] == ["Concede"], "Concede should be the only thing in #concede-slot"
+    assert result["priorityBoxHasConcede"] is False, (
+        "Concede must not also render into #priority-box"
+    )
 
 
 def test_an_armed_concede_says_so_and_asks_for_the_second_click() -> None:
@@ -824,7 +835,7 @@ def test_a_finished_game_offers_no_concede_at_all(over: dict) -> None:
           const store = makeStore(baseApp(state));
           m.mountRibbon(document, store, HANDLERS);
           store.set({});
-          return findByText(document.querySelector("#priority-box"), "button", "Concede") !== null;
+          return findByText(document.querySelector("#concede-slot"), "button", "Concede") !== null;
         })()
         """,
         over=over,

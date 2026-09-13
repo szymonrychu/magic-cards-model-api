@@ -327,13 +327,14 @@ def exiled(id_, **over):
     return {"id": id_, "name": id_, "zone": "exile", **over}
 
 
-def ribbon_state(exile=None, graveyards=None, battlefield=None, you="alice"):
+def ribbon_state(exile=None, graveyards=None, battlefield=None, you="alice", command=None):
     return {
         "you": you,
         "players": [{"username": "alice"}, {"username": "bob"}],
         "battlefield": battlefield or [],
         "exile": exile or [],
         "graveyards": graveyards or {},
+        "command": command or [],
     }
 
 
@@ -352,17 +353,41 @@ def cards_in(rows, key):
 def test_the_ribbon_runs_from_the_opponents_zones_down_to_your_own() -> None:
     """The far seat's zones sit far from you and your own sit near you - the
     same mirroring the battlefield rows already use, so the two halves read as
-    a reflection rather than as one uniform top-to-bottom list."""
+    a reflection rather than as one uniform top-to-bottom list. The command
+    zone (CR 408's own zone - commanders, emblems) bookends the four rows the
+    ribbon has always had, rather than sitting between them, so a board with
+    nothing in it reads exactly as it always did."""
     rows = ribbon(ribbon_state())
-    assert keys(rows) == ["opp-graveyard", "opp-exile", "you-exile", "you-graveyard"]
-    assert [row["side"] for row in rows] == ["opp", "opp", "you", "you"]
-    assert [row["zone"] for row in rows] == ["graveyard", "exile", "exile", "graveyard"]
+    assert keys(rows) == [
+        "opp-command",
+        "opp-graveyard",
+        "opp-exile",
+        "you-exile",
+        "you-graveyard",
+        "you-command",
+    ]
+    assert [row["side"] for row in rows] == ["opp", "opp", "opp", "you", "you", "you"]
+    assert [row["zone"] for row in rows] == [
+        "command",
+        "graveyard",
+        "exile",
+        "exile",
+        "graveyard",
+        "command",
+    ]
 
 
 def test_each_row_names_the_seat_whose_zone_it_is() -> None:
     rows = ribbon(ribbon_state())
-    assert [row["seat"] for row in rows] == ["bob", "bob", "alice", "alice"]
-    assert [row["seatLabel"] for row in rows] == ["bob", "bob", "alice", "alice"]
+    assert [row["seat"] for row in rows] == ["bob", "bob", "bob", "alice", "alice", "alice"]
+    assert [row["seatLabel"] for row in rows] == [
+        "bob",
+        "bob",
+        "bob",
+        "alice",
+        "alice",
+        "alice",
+    ]
 
 
 def test_the_ribbon_mirrors_for_the_other_seat() -> None:
@@ -436,20 +461,34 @@ def test_a_card_exiled_with_a_permanent_is_not_in_the_ribbon() -> None:
     assert cards_in(rows, "opp-exile") == []
 
 
-def test_the_four_rows_are_there_even_with_every_zone_empty() -> None:
+def test_the_six_rows_are_there_even_with_every_zone_empty() -> None:
     """The ribbon keeps its shape from turn one, so the battlefield does not
     reflow the first time a card reaches a graveyard."""
     rows = ribbon(ribbon_state())
-    assert keys(rows) == ["opp-graveyard", "opp-exile", "you-exile", "you-graveyard"]
+    assert keys(rows) == [
+        "opp-command",
+        "opp-graveyard",
+        "opp-exile",
+        "you-exile",
+        "you-graveyard",
+        "you-command",
+    ]
     assert all(row["cards"] == [] for row in rows)
 
 
-def test_a_missing_graveyards_key_is_tolerated() -> None:
+def test_a_missing_graveyards_or_command_key_is_tolerated() -> None:
     rows = run_module(
         "board_layout.js",
         'm.zoneRibbon({ you: "alice", players: [{ username: "alice" }] })',
     )
-    assert keys(rows) == ["opp-graveyard", "opp-exile", "you-exile", "you-graveyard"]
+    assert keys(rows) == [
+        "opp-command",
+        "opp-graveyard",
+        "opp-exile",
+        "you-exile",
+        "you-graveyard",
+        "you-command",
+    ]
     assert all(row["cards"] == [] for row in rows)
 
 
@@ -458,8 +497,34 @@ def test_a_seat_with_no_opponent_yet_still_gets_the_far_rows() -> None:
         "board_layout.js",
         'm.zoneRibbon({ you: "alice", players: [{ username: "alice" }] })',
     )
-    assert [row["seat"] for row in rows] == [None, None, "alice", "alice"]
-    assert [row["seatLabel"] for row in rows] == ["opponent", "opponent", "alice", "alice"]
+    assert [row["seat"] for row in rows] == [None, None, None, "alice", "alice", "alice"]
+    assert [row["seatLabel"] for row in rows] == [
+        "opponent",
+        "opponent",
+        "opponent",
+        "alice",
+        "alice",
+        "alice",
+    ]
+
+
+def test_command_zone_cards_are_split_by_whose_they_are() -> None:
+    """CR 408's command zone (commanders, emblems) is the one zone the old
+    Zones popover showed that nothing else on the board ever drew - removing
+    that button (the owner's request) would have made a commander
+    unreachable, not merely one click further away. It joins the ribbon
+    itself instead, split by controller/owner the same way exile already is,
+    with an orphaned card drawn on the far side rather than dropped."""
+    state = ribbon_state(
+        command=[
+            {"id": "my-cmdr", "name": "my-cmdr", "controller": "alice"},
+            {"id": "their-cmdr", "name": "their-cmdr", "controller": "bob"},
+            {"id": "orphan", "name": "orphan"},
+        ]
+    )
+    rows = ribbon(state)
+    assert cards_in(rows, "you-command") == ["my-cmdr"]
+    assert cards_in(rows, "opp-command") == ["their-cmdr", "orphan"]
 
 
 def test_the_ribbon_reuses_a_layout_it_is_handed() -> None:

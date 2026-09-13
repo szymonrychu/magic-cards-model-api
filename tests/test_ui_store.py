@@ -64,7 +64,7 @@ boxed("ai-stall-banner", true);
 boxed("modal", true);
 
 const TOPBAR_HANDLERS = {
-  onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+  onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
 };
 
 // Mount the real ribbon and the real topbar on a real `createStore`, with the

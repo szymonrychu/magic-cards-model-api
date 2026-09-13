@@ -12,6 +12,11 @@
 // over the card it is about, drawn on top of the board rather than into it,
 // so a click never changes the board's geometry (`ui/menus.js`).
 //
+// Concede (CR 104.3a) is rendered from here too (`renderConcedeButton`), but
+// not into this ribbon: it patches `#concede-slot` in the pinned top-right
+// toolbar (`ui/index.html`), beside Report and Lobby - the owner asked for
+// the three to live together rather than Concede staying in `#priority-box`.
+//
 // Every button here fires a request the API already documents; nothing in
 // this file invents a rule. `decisions.js`'s `viewModel` is the single
 // source of truth for what a pending decision asks and how a draft becomes
@@ -748,18 +753,34 @@ function renderPriorityBox(el, app, handlers) {
       );
     }
   }
-  // CR 104.3a lets a player concede at any time, so the button is here for as
-  // long as the game is live - but it takes two clicks, and it is gone once
-  // the game is over. `winner || drawn` is the same pair `stopReason` and
-  // `renderPromptBox` read as "over": a draw ends the game just as finally as
-  // a win, and offering a concede afterwards would be offering nothing.
-  //
-  // The two clicks come from the browser pass: whenever you do not hold
-  // priority `passButtonsFor` offers no verbs at all, which slid Concede up
-  // into the exact spot "Pass" had occupied a moment earlier. One stray click
-  // ended that game with nothing asked and nothing to undo. The armed button
-  // says so and looks like it (`button.danger.armed` in `style.css`), so the
-  // second click is never the one you did not mean to make.
+}
+
+// -------------------------------------------------------------- #concede-slot
+
+/** Concede (CR 104.3a lets a player do this at any time), rendered into its
+ * own slot in the pinned top-right toolbar (`ui/index.html`'s
+ * `#concede-slot`, beside Report and Lobby) rather than appended to
+ * `#priority-box` - the owner asked for the three to sit together, reachable
+ * at every width, rather than Concede living in the ribbon and the other two
+ * in the topbar.
+ *
+ * It takes two clicks, and it is gone once the game is over. `winner ||
+ * drawn` is the same pair `stopReason` and `renderPromptBox` read as "over":
+ * a draw ends the game just as finally as a win, and offering a concede
+ * afterwards would be offering nothing.
+ *
+ * The two clicks come from the browser pass: whenever you do not hold
+ * priority `passButtonsFor` offers no verbs at all, which used to slide
+ * Concede up into the exact spot "Pass" had occupied a moment earlier when
+ * both lived in `#priority-box` - one stray click ended a game with nothing
+ * asked and nothing to undo. Moving Concede into its own fixed slot removes
+ * that hazard outright (nothing else in the toolbar ever changes position
+ * under it), and the arming still guards the click itself: the armed button
+ * says so and looks like it (`button.danger.armed` in `style.css`), so the
+ * second click is never the one you did not mean to make. */
+function renderConcedeButton(el, app, handlers) {
+  if (!el) return;
+  clear(el);
   if (app.state && (app.state.winner || app.state.drawn)) return;
   el.appendChild(
     h(
@@ -845,6 +866,7 @@ export function mountRibbon(root, store, handlers) {
     strip: root.querySelector("#casting-strip"),
     priority: root.querySelector("#priority-box"),
     stops: root.querySelector("#stops-box"),
+    concedeSlot: root.querySelector("#concede-slot"),
   };
   return store.subscribe((app) => {
     if (!app.state) return;
@@ -852,6 +874,7 @@ export function mountRibbon(root, store, handlers) {
     renderCastingStrip(els.strip, app, handlers);
     renderPriorityBox(els.priority, app, handlers);
     renderStopsBox(els.stops, app, handlers);
+    renderConcedeButton(els.concedeSlot, app, handlers);
   });
 }
 

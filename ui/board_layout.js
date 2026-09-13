@@ -132,15 +132,17 @@ function belongsTo(card) {
 }
 
 /** The zone ribbon between the battlefield and the control ribbon, top to
- * bottom: the opponent's graveyard, the opponent's exile, your exile, your
- * graveyard.
+ * bottom: the opponent's command zone, the opponent's graveyard, the
+ * opponent's exile, your exile, your graveyard, your command zone.
  *
  * That order is the battlefield's own mirroring applied to the zones - the
- * far seat's cards far from you, your own nearest you - not a uniform list
- * that happens to run graveyard, exile, exile, graveyard. Reversing either
- * half would put a seat's zones on the other seat's side of the board.
+ * far seat's cards far from you, your own nearest you - not a uniform list.
+ * The command zone bookends the graveyard/exile pair the ribbon has always
+ * had rather than sitting between them, so a board with nothing in either
+ * command zone reads exactly as it always did. Reversing either half would
+ * put a seat's zones on the other seat's side of the board.
  *
- * Returns four rows, always all four: `{key, side, zone, seat, seatLabel,
+ * Returns six rows, always all six: `{key, side, zone, seat, seatLabel,
  * cards}`. A zone with nothing in it still gets its row, so the board keeps
  * its geometry from turn one instead of reflowing the first time a card is
  * discarded; `render/board.js` collapses an empty row to its label.
@@ -151,6 +153,11 @@ function belongsTo(card) {
  * dropped: exile is a public zone and a card in it must be on screen
  * somewhere. What is drawn is `layout.exile` - a card exiled *with* a
  * permanent is already drawn tucked under it and is not in the ribbon at all.
+ * The command zone (CR 408) is split the same way: `state.command` is one
+ * shared list, and this is the only place on the board that ever draws it -
+ * the "Zones" popover this replaced was the sole way to see a commander or an
+ * emblem at all, so it moved into the ribbon itself rather than dropping out
+ * of the UI along with the button that used to open it.
  *
  * `layout` defaults to `boardLayout(state)`; `render/board.js` passes the one
  * it already computed for the battlefield rather than paying for a second.
@@ -162,6 +169,7 @@ export function zoneRibbon(state, layout) {
   const exile = (layout || boardLayout(state)).exile;
   const graveyards = (state && state.graveyards) || {};
   const graveyard = (seat) => (seat === null ? [] : graveyards[seat] || []);
+  const command = (state && state.command) || [];
   const row = (side, zone, seat, cards) => ({
     key: `${side}-${zone}`,
     side,
@@ -171,9 +179,11 @@ export function zoneRibbon(state, layout) {
     cards,
   });
   return [
+    row("opp", "command", opponent, command.filter((c) => belongsTo(c) !== you)),
     row("opp", "graveyard", opponent, graveyard(opponent)),
     row("opp", "exile", opponent, exile.filter((c) => belongsTo(c) !== you)),
     row("you", "exile", you, exile.filter((c) => belongsTo(c) === you)),
     row("you", "graveyard", you, graveyard(you)),
+    row("you", "command", you, command.filter((c) => belongsTo(c) === you)),
   ];
 }

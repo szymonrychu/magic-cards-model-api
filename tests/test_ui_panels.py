@@ -166,7 +166,7 @@ def test_ai_panel_shows_a_fallback_status_with_the_command_and_opens_it_on_click
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
           });
           store.set({
             aiStatus: {
@@ -219,7 +219,7 @@ def test_the_stall_banner_offers_a_pass_priority_button_for_the_ai_seat() -> Non
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onReportProblem: NOOP,
             onPassForAiSeat: (player) => calls.push(player),
           });
           store.set({
@@ -259,7 +259,7 @@ def test_live_activity_hides_the_stall_banner_but_the_pill_still_speaks() -> Non
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onReportProblem: NOOP,
             onPassForAiSeat: NOOP,
           });
           const banner = document.querySelector("#ai-stall-banner");
@@ -315,7 +315,7 @@ def test_the_loading_banner_shows_while_booting_and_clears_once_ready() -> None:
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
           });
           const banner = document.querySelector("#ai-loading-banner");
           const beforeStart = { hidden: banner.hidden };
@@ -360,7 +360,7 @@ def test_the_loading_banner_marks_a_genuine_failure_distinctly() -> None:
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
           });
           store.set({
             aiStatus: {
@@ -399,7 +399,7 @@ def test_the_ai_pill_says_what_the_agent_is_actually_doing() -> None:
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
           });
           const panel = document.querySelector("#ai-panel");
           const seen = [];
@@ -449,7 +449,7 @@ def test_the_ai_pill_falls_back_to_the_seat_state_when_nothing_was_observed() ->
             connection: "ok",
           });
           m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
+            onLeaveGame: NOOP, onPassForAiSeat: NOOP, onReportProblem: NOOP,
           });
           const panel = document.querySelector("#ai-panel");
           store.set({
@@ -470,173 +470,3 @@ def test_the_ai_pill_falls_back_to_the_seat_state_when_nothing_was_observed() ->
     )
     assert result["plain"] == "AI (claude): thinking"
     assert result["unreachable"] == "AI (claude): unreachablewhy"
-
-
-# ------------------------------------------------------ the log overlay ----
-#
-# The game log used to be the bottom panel of `#side-panel`; the mtg-buddy
-# advisor took that corner (the owner asked for exactly that), so the log
-# moved into `#log-modal` behind a new topbar button. These cover the three
-# things that move can get wrong.
-
-LOG_MODAL = """
-  const modal = document.createElement("div");
-  modal.setAttribute("id", "log-modal");
-  modal.hidden = true;
-  const box = document.createElement("div");
-  box.setAttribute("id", "log-box");
-  box.scrollTop = 0;
-  box.scrollHeight = 0;
-  box.clientHeight = 40;
-  const line = document.createElement("div");
-  line.setAttribute("id", "a-log-line");
-  box.appendChild(line);
-  modal.appendChild(box);
-  document.appendChild(modal);
-"""
-
-
-def test_toggling_the_log_overlay_only_ever_hides_and_shows_it() -> None:
-    """The whole reason `#log-modal` is not built through `showModal`:
-    `closeModal` empties `#modal`'s content, and `render/log.js`'s `mountLog`
-    subscribes ONCE at boot and keyed-patches one `#log-box` element for the
-    life of the page. Empty this one and that subscription spends the rest of
-    the game patching a detached node - the log silently stops growing. So
-    the content survives every toggle, and visibility moves through `hidden`
-    rather than `style.display` (`style.css`'s global
-    `[hidden] { display: none !important }` is what beats `.modal`'s own
-    `display: flex`)."""
-    result = run_module(
-        "render/panels.js",
-        FAKE_DOM
-        + LOG_MODAL
-        + """
-        (() => {
-          const seen = [];
-          m.toggleLogModal(document);
-          seen.push({
-            hidden: modal.hidden,
-            lines: box.children.length,
-            open: m.logModalIsOpen(document),
-          });
-          m.toggleLogModal(document);
-          seen.push({
-            hidden: modal.hidden,
-            lines: box.children.length,
-            open: m.logModalIsOpen(document),
-          });
-          m.toggleLogModal(document);
-          m.closeLogModal(document);
-          seen.push({
-            hidden: modal.hidden,
-            lines: box.children.length,
-            open: m.logModalIsOpen(document),
-          });
-          return {
-            seen,
-            display: modal.style.display || null,
-            sameBox: document.querySelector("#log-box") === box,
-          };
-        })()
-        """,
-    )
-    assert [s["hidden"] for s in result["seen"]] == [False, True, True]
-    assert [s["open"] for s in result["seen"]] == [True, False, False]
-    assert [s["lines"] for s in result["seen"]] == [1, 1, 1], (
-        "toggling the overlay destroyed the log's content - mountLog's element must survive"
-    )
-    assert result["sameBox"] is True, "#log-box was replaced, so mountLog is patching a dead node"
-    assert not result["display"], "the overlay was toggled with style.display instead of `hidden`"
-
-
-def test_opening_the_log_shows_its_newest_entries_not_its_oldest() -> None:
-    """`mountLog`'s auto-scroll reads real scroll geometry, and a hidden
-    element has none: while the overlay is closed, `scrollHeight` is 0, so
-    every patch pins `scrollTop` to 0. Opened, that would show entry #1 of
-    500 and leave the player scrolling to find the turn they are on.
-
-    Fixed here rather than in `mountLog`, which is untouched: the element's
-    layout only exists once this function has made it visible, so this is the
-    only place that can read the real height. Reading `scrollHeight` right
-    after clearing `hidden` forces the browser's own synchronous reflow."""
-    result = run_module(
-        "render/panels.js",
-        FAKE_DOM
-        + LOG_MODAL
-        + """
-        (() => {
-          // What a browser has after laying the box out: taller content than
-          // viewport, and a scroll position still at the top.
-          box.scrollHeight = 900;
-          m.toggleLogModal(document);
-          return { scrollTop: box.scrollTop };
-        })()
-        """,
-    )
-    assert result["scrollTop"] == 900, "opening the log left it scrolled to the oldest entries"
-
-
-def test_the_topbars_log_button_toggles_the_overlay_through_its_handler() -> None:
-    """The wiring, end to end: `mountTopbar` binds `#open-log`, and a click
-    calls `handlers.onToggleLog` - which is what `app.js` points at
-    `toggleLogModal`."""
-    result = run_module(
-        "render/panels.js",
-        FAKE_DOM
-        + """
-        (() => {
-          const button = document.createElement("button");
-          button.setAttribute("id", "open-log");
-          document.appendChild(button);
-          let toggles = 0;
-          const store = makeStore({ state: null, connection: "ok" });
-          m.mountTopbar(document, store, {
-            onOpenZones: NOOP,
-            onToggleLog: () => { toggles += 1; },
-            onLeaveGame: NOOP,
-            onPassForAiSeat: NOOP,
-            onReportProblem: NOOP,
-          });
-          button.onclick();
-          button.onclick();
-          return toggles;
-        })()
-        """,
-    )
-    assert result == 2
-
-
-def test_clicking_beside_the_log_closes_it_but_clicking_the_log_does_not() -> None:
-    """The overlay covers the whole viewport, topbar included, so the Log
-    button that opened it is not reachable to close it again - without this,
-    Escape would be the only way out of a panel a mouse opened. Clicking the
-    dimmed backdrop closes it; a click that lands on the log itself (reading
-    it, selecting a line) must not, which is what the `e.target === modal`
-    test distinguishes."""
-    result = run_module(
-        "render/panels.js",
-        FAKE_DOM
-        + LOG_MODAL
-        + """
-        (() => {
-          const store = makeStore({ state: null, connection: "ok" });
-          m.mountTopbar(document, store, {
-            onOpenZones: NOOP, onToggleLog: NOOP, onLeaveGame: NOOP,
-            onPassForAiSeat: NOOP, onReportProblem: NOOP,
-          });
-          m.toggleLogModal(document);
-          const openAfterInsideClick = (() => {
-            modal.listeners.click({ target: box, currentTarget: modal });
-            return m.logModalIsOpen(document);
-          })();
-          const openAfterBackdropClick = (() => {
-            modal.listeners.click({ target: modal, currentTarget: modal });
-            return m.logModalIsOpen(document);
-          })();
-          return { openAfterInsideClick, openAfterBackdropClick, lines: box.children.length };
-        })()
-        """,
-    )
-    assert result["openAfterInsideClick"] is True, "reading the log closed it"
-    assert result["openAfterBackdropClick"] is False, "clicking beside the log did not close it"
-    assert result["lines"] == 1, "closing it emptied the log"

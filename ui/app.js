@@ -42,15 +42,7 @@ import { mountAdvice } from "./render/advice.js";
 import { withoutUid } from "./advice_model.js";
 import { mountLobby } from "./render/lobby.js";
 import { mountReview } from "./render/review.js";
-import {
-  mountTopbar,
-  openZonesModal,
-  mountHoverPreview,
-  closeModal,
-  toggleLogModal,
-  closeLogModal,
-  logModalIsOpen,
-} from "./render/panels.js";
+import { mountTopbar, mountHoverPreview, closeModal } from "./render/panels.js";
 import { loadSavedGames, saveGames, upsertSavedGame, seatsFromRow } from "./lobby_model.js";
 import { loadConfig, apiBase, lobbyBase } from "./config.js";
 
@@ -817,20 +809,24 @@ function openActionMenu(card, event, items, run) {
 }
 
 /** `anchorFor`, plus the one case where the clicked node is the wrong thing
- * to anchor to: a card inside the zones popover.
+ * to anchor to: a card inside `#modal` (the report form and AI-seat error
+ * box are the two things that can be open there now that the zones popover
+ * is gone - neither renders a clickable card, so this branch is dormant in
+ * practice, but it costs nothing to keep and `tests/test_ui_app.py` still
+ * pins the behaviour).
  *
- * That popover is a `.modal` and an anchored menu is a `.popover`, and the
- * modal is drawn on top of it (`style.css`) - so a confirm opened over one
- * of the modal's own cards would sit under the scrim, dimmed and
- * unclickable, and Escape would close the modal rather than the menu. The
- * menu's geometry and stacking are deliberately not this file's to change,
- * so the modal is closed instead: the player clicked a card to act on it,
- * which is the end of browsing zones either way, and the confirm anchors
- * over the board's own node for that card. There always is one - the board
- * draws every graveyard and exile card in its zone ribbon and every play
- * permission in `#permitted-row`, both keyed by card id (`dom.js`'s
- * `patchChildren`) - and the clicked node itself is the fallback if there
- * somehow is not, so the menu opens either way. */
+ * That modal and an anchored menu is a `.popover`, and the modal is drawn on
+ * top of it (`style.css`) - so a confirm opened over one of the modal's own
+ * cards would sit under the scrim, dimmed and unclickable, and Escape would
+ * close the modal rather than the menu. The menu's geometry and stacking are
+ * deliberately not this file's to change, so the modal is closed instead: the
+ * player clicked a card to act on it, which is the end of whatever the modal
+ * was showing either way, and the confirm anchors over the board's own node
+ * for that card. There always is one - the board draws every graveyard and
+ * exile card in its zone ribbon and every play permission in
+ * `#permitted-row`, both keyed by card id (`dom.js`'s `patchChildren`) - and
+ * the clicked node itself is the fallback if there somehow is not, so the
+ * menu opens either way. */
 function actionAnchor(card, event) {
   const clicked = event && event.currentTarget;
   const modal = document.querySelector("#modal");
@@ -1546,12 +1542,6 @@ function nameOf(id) {
   return card ? card.name : id;
 }
 
-function onOpenZones() {
-  const app = store.get();
-  if (!app.state) return;
-  openZonesModal(document, app, { onPermanent, onPermission });
-}
-
 async function reportProblem(text) {
   const res = await send("POST", gamePath("report"), { player: you(), text });
   if (res === null) return;
@@ -1905,8 +1895,6 @@ async function main() {
   mountLog(document, store);
   mountAdvice(document, store, { onApprove: approveAdvice });
   mountTopbar(document, store, {
-    onOpenZones,
-    onToggleLog: () => toggleLogModal(document),
     onLeaveGame: leaveGame,
     onPassForAiSeat: passForAiSeat,
     onReportProblem: reportProblem,
@@ -1917,14 +1905,6 @@ async function main() {
     const modal = document.querySelector("#modal");
     if (modal && !modal.hidden) {
       closeModal(document);
-      return;
-    }
-    // The log's own overlay, closed after the shared one and never through
-    // `closeModal`: that empties `#modal`'s content, and emptying this one
-    // would tear `#log-box` out from under `mountLog`'s subscription for the
-    // rest of the page's life. It is only ever toggled.
-    if (logModalIsOpen(document)) {
-      closeLogModal(document);
       return;
     }
     // A pending decision's window minimizes; it is never closed while the

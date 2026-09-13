@@ -1,37 +1,36 @@
 // Everything above the board that is not the ribbon: the topbar (turn info,
 // phase track, AI seat panel, connection pill), the AI-stall banner, the
-// hover card preview, and the two modal-shaped overlays - the zones popover
-// (graveyards, shared exile, CR 406.4's marked exile piles, and the command
-// zone) and the "report a problem" form. Split out of `ui/app.js` per Task
-// 17's own size guidance, once porting the old classic script's AI panel and
-// modal pieces onto the new buildless modules would have pushed `app.js`
-// well past ~700 lines.
+// hover card preview, and the "report a problem" form, `#modal`'s other
+// occupant. Split out of `ui/app.js` per Task 17's own size guidance, once
+// porting the old classic script's AI panel and modal pieces onto the new
+// buildless modules would have pushed `app.js` well past ~700 lines.
 //
 // Ported from the old `ui/app.js` (deleted by this task): `renderAiPanel`,
 // `showAiError`, `showFallbackBox` (app.js:2835-2883), `renderPhaseTrack`/the
 // `$("#turn-info")` line (app.js:456-512), `renderAiStallBanner`/
 // `aiUnchangedSeconds` (app.js:1712-1748), `setConnection` (app.js:411-418),
-// `openZonesModal`/`openReportModal`/`showModal`/`closeModal`/`toggleLogModal`
-// (app.js:2645-2698), and `wireCardPreview`/`showPreview`/`hidePreview`
-// (app.js:656-700) - rebuilt as `h()`/`patchChildren` nodes instead of
-// `innerHTML` strings. The zones popover's cards are wired to the same
-// `onPermanent` targeting click the board itself uses (the old modal only
-// ever displayed them) via `render/board.js`'s exported `targetingOpts`, or
-// to `onPermission` when a CR 601.3 play permission names that exact card
-// (a cast begun from exile/a graveyard rather than the hand).
+// `openReportModal`/`showModal`/`closeModal` (app.js:2645-2698), and
+// `wireCardPreview`/`showPreview`/`hidePreview` (app.js:656-700) - rebuilt as
+// `h()`/`patchChildren` nodes instead of `innerHTML` strings.
+//
+// This file used to hold a "Zones" popover too (graveyards, shared exile,
+// CR 406.4's marked exile piles, and the command zone) and a `toggleLogModal`/
+// `closeLogModal`/`logModalIsOpen` trio for a persistent log overlay, both
+// behind topbar buttons. The owner asked for both buttons gone: the command
+// zone (the one thing the popover showed that nothing else did) now draws in
+// the zone ribbon itself (`ui/board_layout.js`'s `zoneRibbon`), and the log
+// (`render/log.js`'s `mountLog`) moved back into `#side-panel`, always
+// visible, instead of behind an overlay.
 //
 // CR numbers here (verified with `knowledge_search(type="rules")` in the
-// session that wrote this file): 406.4 (exiled cards kept in separate,
-// marked piles - suspend/plot/foretell), 117.3d (passing priority for a
-// silent AI seat is an ordinary pass, nothing special-cased), 601.3 (a
-// player can cast a spell only if some rule or effect allows it - the
-// dynamic half of that is `PlayPermission`, `machines/casting.py`).
+// session that wrote this file): 117.3d (passing priority for a silent AI
+// seat is an ordinary pass, nothing special-cased), 601.3 (a player can cast
+// a spell only if some rule or effect allows it - the dynamic half of that is
+// `PlayPermission`, `machines/casting.py`).
 
 import { h, clear } from "../dom.js";
-import { cardNode } from "../cards.js";
 import { withSymbols } from "../symbols.js";
 import { decisionCards } from "../decisions.js";
-import { targetingOpts } from "./board.js";
 import { STEPS, PHASE_OF } from "../priority.js";
 import { aiStallNotice, aiSeatLoadingNotice, aiSeatActivityLabel } from "../store.js";
 
@@ -54,8 +53,8 @@ const STEP_LABELS = {
 
 /** Close `#modal` and empty it - exported so `app.js`'s own Escape handler
  * can close whatever is open without knowing anything about how it was
- * built (a report form, a zones popover, an AI-seat error box all share this
- * one overlay). */
+ * built (the report form and an AI-seat error box both share this one
+ * overlay). */
 export function closeModal(root) {
   const modal = root.querySelector("#modal");
   if (!modal) return;
@@ -63,57 +62,12 @@ export function closeModal(root) {
   clear(modal);
 }
 
-// ---------------------------------------------------------- log overlay --
-//
-// `#log-modal` is the game log's own persistent overlay, and it is
-// deliberately NOT built through `showModal` above. That empties `#modal` on
-// every open and `closeModal` empties it again on every close, which is
-// right for a dialog whose content is rebuilt each time - and fatal for the
-// log: `render/log.js`'s `mountLog` subscribes once, at boot, and keyed-
-// patches one `#log-box` element for the life of the page. Destroying that
-// element out from under it leaves it patching a detached node, so the log
-// silently stops growing. `#log-modal` is built once in `index.html` and
-// these three functions only ever toggle it.
-
-/** Whether the log overlay is open. */
-export function logModalIsOpen(root) {
-  const modal = root.querySelector("#log-modal");
-  return Boolean(modal && !modal.hidden);
-}
-
-/** Close the log overlay, content untouched. */
-export function closeLogModal(root) {
-  const modal = root.querySelector("#log-modal");
-  if (modal) modal.hidden = true;
-}
-
-/** Show the log overlay if it is hidden, hide it if it is not - what the
- * topbar's Log button does. `hidden`, never `style.display`: `style.css`'s
- * global `[hidden] { display: none !important }` is the only thing that
- * beats `.modal`'s own `display: flex`, which is why a "hidden" modal once
- * covered the whole page and swallowed every click. */
-export function toggleLogModal(root) {
-  const modal = root.querySelector("#log-modal");
-  if (!modal) return;
-  modal.hidden = !modal.hidden;
-  if (modal.hidden) return;
-  // Newest entries first sight, which needs doing HERE and not in `mountLog`
-  // (untouched on purpose). `mountLog`'s auto-scroll reads real scroll
-  // geometry, and a hidden element has none: while this overlay is closed,
-  // `scrollHeight` is 0, so every patch pins `scrollTop` to 0 and the log
-  // would open showing entry #1 of 500. Reading `scrollHeight` immediately
-  // after clearing `hidden` is what forces the browser's own synchronous
-  // reflow, so the height is the laid-out one rather than the stale zero.
-  const box = modal.querySelector("#log-box");
-  if (box) box.scrollTop = box.scrollHeight;
-}
-
 // ------------------------------------------------------- modal (shared) --
 
 /** Build `#modal`'s content via `builder(inner, close)` and show it. One
- * shared overlay for every dialog-shaped thing this module needs (the zones
- * popover, the report form, the AI seat's error/fallback boxes) rather than
- * one element per dialog. */
+ * shared overlay for every dialog-shaped thing this module needs (the report
+ * form, the AI seat's error/fallback boxes) rather than one element per
+ * dialog. */
 function showModal(root, builder) {
   const modal = root.querySelector("#modal");
   if (!modal) return;
@@ -298,29 +252,20 @@ function renderPhaseTrack(el, state) {
 
 /** Mount the topbar into `root` (normally `document`): `#turn-info`,
  * `#phase-track`, `#ai-panel`, `#conn-status`/`#conn-status-game`, and
- * `#ai-loading-banner`/`#ai-stall-banner`, plus wiring `#open-zones`/
- * `#open-log`/`#leave-game`/`#report-problem`. `handlers = {onOpenZones(),
- * onToggleLog(), onLeaveGame(), onPassForAiSeat(aiPlayer),
- * onReportProblem(text)}`. Returns the `store.subscribe` unsubscribe
- * function. */
+ * `#ai-loading-banner`/`#ai-stall-banner`, plus wiring `#leave-game`/
+ * `#report-problem` - moved out of `#topbar` into the pinned top-right
+ * `.game-toolbar` (`index.html`), but wired the same way regardless of where
+ * in the page they physically sit. `handlers = {onLeaveGame(),
+ * onPassForAiSeat(aiPlayer), onReportProblem(text)}`. Returns the
+ * `store.subscribe` unsubscribe function.
+ *
+ * Zones and Log are gone: the "Zones" button and its popover (this file's
+ * `openZonesModal`, until this task) are removed, and `ui/board_layout.js`'s
+ * `zoneRibbon` now also draws the command zone - the one thing that popover
+ * showed that the always-visible ribbon did not already. The "Log" button
+ * and `#log-modal` are removed too; `#log-box` moved back into `#side-panel`,
+ * always visible, wired by `render/log.js`'s `mountLog` exactly as before. */
 export function mountTopbar(root, store, handlers) {
-  const openZones = root.querySelector("#open-zones");
-  if (openZones) openZones.onclick = () => handlers.onOpenZones();
-  const openLog = root.querySelector("#open-log");
-  if (openLog) openLog.onclick = () => handlers.onToggleLog();
-  // The log overlay covers the whole viewport, this topbar included, so the
-  // button that opened it cannot close it again - without a backdrop click,
-  // Escape would be the only way out of a panel a mouse opened. `e.target
-  // === logModal` is the test that tells the dimmed backdrop apart from the
-  // log itself, so reading (or selecting a line in) the log does not dismiss
-  // it. Closing never empties it: `mountLog` keeps its element for the life
-  // of the page.
-  const logModal = root.querySelector("#log-modal");
-  if (logModal) {
-    logModal.addEventListener("click", (e) => {
-      if (e.target === logModal) closeLogModal(root);
-    });
-  }
   const leave = root.querySelector("#leave-game");
   if (leave) leave.onclick = () => handlers.onLeaveGame();
   const report = root.querySelector("#report-problem");
@@ -374,67 +319,6 @@ export function openReportModal(root, handlers) {
         h("button", { onClick: close }, "Cancel")
       )
     );
-  });
-}
-
-// --------------------------------------------------------------- zones ----
-
-/** Append one zone's label and card grid straight into `inner` (siblings,
- * not wrapped in an extra container) - `.modal-inner > .label` (`style.css`)
- * is a direct-child selector, so a wrapper here would silently opt every
- * zone heading in this popover out of it. */
-function zoneSection(inner, app, handlers, label, cards) {
-  inner.appendChild(h("div", { class: "label" }, label));
-  if (!cards || !cards.length) {
-    inner.appendChild(h("div", { class: "zone-empty" }, "empty"));
-    return;
-  }
-  const grid = h("div", { class: "zone-grid" });
-  // CR 601.3's dynamic play permissions can name a card sitting in exile or
-  // a graveyard (a flashback grant, an exiled card made playable "this
-  // turn" - cascade's hit and suspend's own third ability no longer grant
-  // one of these, battle 8) - clicking one of those begins casting it from
-  // there instead of an ordinary targeting click, the same choice
-  // `render/board.js`'s `#permitted-row` offers.
-  const permissions = (app.state.play_permissions && app.state.play_permissions[app.state.you]) || [];
-  for (const card of cards) {
-    const opts = targetingOpts(app, card.id);
-    const node = cardNode(card, "card-sm", {});
-    node.classList.toggle("targetable", opts.targetable);
-    node.classList.toggle("chosen", opts.chosen);
-    node.classList.toggle("dimmed", opts.dimmed);
-    const permission = permissions.find((p) => p.card.id === card.id);
-    node.onclick = (event) =>
-      permission ? handlers.onPermission(permission, event) : handlers.onPermanent(card, event);
-    grid.appendChild(node);
-  }
-  inner.appendChild(grid);
-}
-
-/** Graveyards, the shared exile zone, CR 406.4's separately-tracked marked
- * exile piles (suspended/plotted/foretold cards), and the command zone -
- * `handlers.onPermanent` wired onto every card the same way the board wires
- * it, so a spell that targets a graveyard or exiled card can actually be
- * pointed at one; a card a CR 601.3 permission names goes through
- * `handlers.onPermission` instead. */
-export function openZonesModal(root, app, handlers) {
-  const state = app.state;
-  const you = state.you;
-  const opponent = (state.players || []).find((p) => p.username !== you);
-  showModal(root, (inner, close) => {
-    inner.appendChild(h("h3", {}, "Zones"));
-    zoneSection(inner, app, handlers, "Your graveyard", (state.graveyards || {})[you]);
-    zoneSection(
-      inner,
-      app,
-      handlers,
-      `${opponent ? opponent.username : "opponent"}'s graveyard`,
-      (state.graveyards || {})[opponent && opponent.username]
-    );
-    zoneSection(inner, app, handlers, "Exile (shared)", state.exile);
-    zoneSection(inner, app, handlers, "Marked exile piles (CR 406.4) - suspended, plotted, foretold", state.exile_pile);
-    zoneSection(inner, app, handlers, "Command zone", state.command);
-    inner.appendChild(h("button", { onClick: close }, "Close"));
   });
 }
 
@@ -503,8 +387,8 @@ function hidePreview(root) {
  * classic script's `wireCardPreview`/`showPreview`/`hidePreview`. A no-op
  * (rather than double-wiring listeners) on an element already wired -
  * `boardEl.dataset.previewWired` marks it, the same guard the old code used
- * - so this can safely be called again after the zones popover rebuilds its
- * own content on every open. */
+ * - so this can safely be called again after `#modal` rebuilds its own
+ * content on every open. */
 function wireOn(root, boardEl, store) {
   if (!boardEl || boardEl.dataset.previewWired) return;
   boardEl.dataset.previewWired = "1";
@@ -523,11 +407,11 @@ function wireOn(root, boardEl, store) {
   });
 }
 
-/** Mount the hover preview onto `#mtg-board`, the zones popover's `#modal`
- * (its content is rebuilt fresh every time it opens, but the modal element
- * itself persists, so wiring it once here is enough), and the persistent
- * `#decision-window`. `store` supplies both the card lookup and the
- * mana-symbol map for oracle text. */
+/** Mount the hover preview onto `#mtg-board`, `#modal` (its content is
+ * rebuilt fresh every time it opens, but the modal element itself persists,
+ * so wiring it once here is enough), and the persistent `#decision-window`.
+ * `store` supplies both the card lookup and the mana-symbol map for oracle
+ * text. */
 export function mountHoverPreview(root, store) {
   wireOn(root, root.querySelector("#mtg-board"), store);
   wireOn(root, root.querySelector("#modal"), store);

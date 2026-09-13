@@ -642,17 +642,19 @@ def test_the_casting_strip_is_in_the_control_ribbon_not_inside_the_board():
     assert 'id="casting-strip"' in side.group(1)
 
 
-def test_the_control_ribbon_holds_exactly_the_five_panels_that_ask_or_advise():
+def test_the_control_ribbon_holds_exactly_the_six_panels_that_ask_advise_or_record():
     """What that column is, in order, top to bottom: what is being asked
     (`#prompt-box`), the announcement in progress (`#casting-strip`), the
     priority controls (`#priority-box`), the stops autopilot halts for
-    (`#stops-box`), and the mtg-buddy advisor's current proposal
-    (`#advice-box`) - which absorbs the leftover height, the role
-    `#log-box` used to have here.
+    (`#stops-box`), the mtg-buddy advisor's current proposal (`#advice-box`
+    - which absorbs the leftover height), and the game log (`#log-box`,
+    last).
 
-    The log is deliberately NOT in this list any more: the owner asked for
-    the advisor to "reuse bottom-right corner, where game log lives right
-    now", so it moved into `#log-modal` behind the topbar's Log button
+    The log used to move out behind a topbar Log button (`#log-modal`) once
+    the advisor took this corner; that button is gone at the owner's request
+    (removing the "Zones" and "Log" buttons), so the log came back into this
+    column rather than being lost along with it - with a bounded height of
+    its own instead of the advisor's flexible space
     (`tests/test_ui_advice_layout.py` holds that half). Pinned as an ordered
     list rather than a set of `in` checks, because this column's order is
     the reading order a player relies on.
@@ -666,6 +668,7 @@ def test_the_control_ribbon_holds_exactly_the_five_panels_that_ask_or_advise():
         "priority-box",
         "stops-box",
         "advice-box",
+        "log-box",
     ]
 
 
