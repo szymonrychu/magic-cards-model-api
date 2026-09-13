@@ -66,7 +66,15 @@ def parse_decklist(text: str) -> tuple[list[tuple[int, str]], list[tuple[int, st
     - bare "Deck" and "Sideboard" header lines (colon optional) to switch
       which board following lines belong to; before any header, lines are
       mainboard
-    - blank lines, and comments starting with # or //
+    - a blank line, which also closes the mainboard - the boundary mtg-decks'
+      own `scripts/decklist.py` documents ("the mainboard runs until the
+      first blank line or a `Sideboard` header, whichever comes first"),
+      needed for an MTGO export that separates the two with a blank line and
+      no header at all (B8-05: dimir-frog's real decklist.txt is exactly
+      this shape). A blank line before any real entry is just leading
+      whitespace, not a boundary; once the mainboard has been closed, later
+      blank lines are spacing, never a third section, matching mtg-decks
+    - comments starting with # or //
     - a set bracket and collector number after a name - "4 Lightning Bolt
       [2X2] 129" - stripped away, though Arena and MTGO never export one
 
@@ -75,22 +83,28 @@ def parse_decklist(text: str) -> tuple[list[tuple[int, str]], list[tuple[int, st
     mainboard: dict[str, int] = {}
     sideboard: dict[str, int] = {}
     board = mainboard
+    seen_content = False
 
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or line.startswith("//"):
+            if not line and seen_content:
+                board = sideboard
             continue
         header = _HEADER.match(line)
         if header is not None:
             board = sideboard if header.group(1).lower() == "sideboard" else mainboard
+            seen_content = True
             continue
         prefixed = _SB_PREFIX.match(line)
         if prefixed is not None:
             count, name = _count_and_name(prefixed.group(1).strip())
             _add_entry(sideboard, name, line, count=count)
+            seen_content = True
             continue
         count, name = _count_and_name(line)
         _add_entry(board, name, line, count=count)
+        seen_content = True
 
     return (
         [(count, name) for name, count in mainboard.items()],

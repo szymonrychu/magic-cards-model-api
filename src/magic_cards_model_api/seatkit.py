@@ -211,6 +211,19 @@ PROTOCOL_VERSION = "seatkit-18"
 #: and the stack. An older process passes the new fields through untouched,
 #: so a seat on it simply does not see them.
 #:
+#: Battle 8 riveted the last hole in the same `game_over` refusal shape
+#: `seatkit-18` first introduced (B6-06 above): the server's own 409 was
+#: already right, but `run_action`'s refusal branch answered every `allowed:
+#: False` alike, so a finished game still came back `held_priority: true`,
+#: `wake_reason: "refused - nothing changed, still your move"` - contradicting
+#: "the game is over" in the same answer (B8-07). It now recognises
+#: `type: game_over` and answers `held_priority: null` with the server's own
+#: reason instead. Purely a client-side reading fix - no request or response
+#: shape changed, so an older MCP process reading a newer api's `game_over`
+#: body is unaffected either way; this still rides `seatkit-18`. (B8-05, the
+#: decklist parser's blank-line sideboard boundary, is a lobby/api-layer fix
+#: with no seat-facing contract at all and touches no tool shape.)
+#:
 #: Battle 4 made combat damage assignment a decision (B4-06), also riding
 #: `seatkit-18`: the engine's `ASSIGN_COMBAT_DAMAGE` kind (CR 703.4k, 510.1c,
 #: 702.19b), asked when a blocked attacker has two or more blockers or
@@ -2071,6 +2084,17 @@ def _refused(outcome: Any) -> bool:
     return isinstance(outcome, dict) and outcome.get("allowed") is False
 
 
+def _game_over(outcome: Any) -> bool:
+    """Whether `outcome` is `commands.GameOverError`'s own 409 (CR 104.1) -
+    `type: game_over`, named by the server precisely so a client can tell
+    this refusal apart from an ordinary one without parsing the sentence
+    (see `GameOverError`'s own docstring). It also carries `allowed: False`,
+    so `_refused` is true of it too - this is the one case `run_action`'s own
+    refusal branch must not answer with `held_priority: True`/"still your
+    move": the game is over, so there is no move left to hold (B8-07)."""
+    return isinstance(outcome, dict) and outcome.get("type") == "game_over"
+
+
 def added_mana(outcome: Any) -> bool:
     """Whether `outcome` is a successful activation of a *mana* ability -
     `engine_api.activate_ability` marks exactly those `mana_ability: True`,
@@ -2408,6 +2432,20 @@ def run_action(
 
     if _refused(outcome):
         state = seat.fetch_state()
+        if _game_over(outcome):
+            # B8-07: CR 104.1 - once the game has ended nothing more can be
+            # done in it, so a refusal for that reason must not also claim
+            # this seat holds priority or has a move to make; both would
+            # flatly contradict "the game is over" in the very same answer.
+            # The reason the server already gave (`GameOverError.__str__`)
+            # says why, so it is reused rather than re-worded here.
+            return answered(
+                state,
+                outcome=outcome,
+                held_priority=None,
+                wake_reason=outcome.get("reason")
+                or "the game is over (CR 104.1) - read the final state and stop",
+            )
         return answered(
             state,
             outcome=outcome,
