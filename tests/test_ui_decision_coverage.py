@@ -213,7 +213,14 @@ def test_every_engine_decision_kind_is_covered_somewhere_in_the_ui(
 #: The kinds answered in `ui/render/decision_window.js`'s floating window
 #: (several cards to see, arrange or pick) - every other `DECISION_KINDS`
 #: entry keeps rendering in `#prompt-box`.
-_WINDOW_KINDS = {"scry", "surveil", "choose_cards", "order_triggers", "mulligan"}
+_WINDOW_KINDS = {
+    "scry",
+    "surveil",
+    "choose_cards",
+    "order_triggers",
+    "mulligan",
+    "assign_combat_damage",
+}
 
 
 def test_every_ui_decision_kind_has_exactly_one_surface() -> None:
