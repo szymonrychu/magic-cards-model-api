@@ -3107,6 +3107,17 @@
             ],
             "title": "Mana Cost"
           },
+          "mana_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Value"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -3262,6 +3273,17 @@
               }
             ],
             "title": "Type Line"
+          },
+          "x_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Value"
           },
           "zone": {
             "title": "Zone",
@@ -8984,6 +9006,17 @@
             "title": "Battlefield",
             "type": "array"
           },
+          "changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed"
+          },
           "combat": {
             "$ref": "#/components/schemas/CombatView"
           },
@@ -10533,6 +10566,17 @@
             ],
             "title": "Mana Cost"
           },
+          "mana_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mana Value"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -10688,6 +10732,17 @@
               }
             ],
             "title": "Type Line"
+          },
+          "x_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Value"
           },
           "zone": {
             "title": "Zone",

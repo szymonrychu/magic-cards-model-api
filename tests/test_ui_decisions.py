@@ -232,6 +232,84 @@ def test_placing_a_card_in_a_split_lane() -> None:
     ]
 
 
+# -- L1a: split()/viewModel must read amount/exact, the same as chooseCards
+# already does, instead of always allowing any split and saying nothing
+# about the count validate_answer actually enforces (PR #31) -------------
+
+SCRY_ANY_NUMBER = {**SCRY, "amount": 2, "exact": False}
+SPLIT_EXACT_ONE = {**SCRY, "cards": ["a", "b"], "amount": 1, "exact": True}
+SPLIT_UP_TO_ONE = {**SCRY, "cards": ["a"], "amount": 1, "exact": False}
+
+
+def test_split_states_any_number_when_the_ceiling_is_the_whole_look() -> None:
+    control = run_module(
+        "decisions.js", "m.viewModel(p, { moved: [] }).controls[0]", p=SCRY_ANY_NUMBER
+    )
+    assert "any number" in control["countHint"].lower()
+    assert (
+        run_module(
+            "decisions.js",
+            "m.viewModel(p, { moved: ['a', 'b'] }).submit.enabled",
+            p=SCRY_ANY_NUMBER,
+        )
+        is True
+    )
+
+
+def test_split_refuses_a_count_other_than_the_exact_amount() -> None:
+    assert (
+        run_module(
+            "decisions.js", "m.viewModel(p, { moved: ['a'] }).submit.enabled", p=SPLIT_EXACT_ONE
+        )
+        is True
+    )
+    assert (
+        run_module(
+            "decisions.js", "m.viewModel(p, { moved: [] }).submit.enabled", p=SPLIT_EXACT_ONE
+        )
+        is False
+    )
+    assert (
+        run_module(
+            "decisions.js",
+            "m.viewModel(p, { moved: ['a', 'b'] }).submit.enabled",
+            p=SPLIT_EXACT_ONE,
+        )
+        is False
+    )
+    control = run_module("decisions.js", "m.viewModel(p, {}).controls[0]", p=SPLIT_EXACT_ONE)
+    assert "exactly 1" in control["countHint"]
+
+
+def test_split_allows_up_to_the_ceiling_never_past_it() -> None:
+    assert (
+        run_module(
+            "decisions.js", "m.viewModel(p, { moved: [] }).submit.enabled", p=SPLIT_UP_TO_ONE
+        )
+        is True
+    )
+    assert (
+        run_module(
+            "decisions.js", "m.viewModel(p, { moved: ['a'] }).submit.enabled", p=SPLIT_UP_TO_ONE
+        )
+        is True
+    )
+    control = run_module("decisions.js", "m.viewModel(p, {}).controls[0]", p=SPLIT_UP_TO_ONE)
+    assert "up to 1" in control["countHint"]
+
+
+def test_split_with_no_amount_at_all_stays_unconstrained() -> None:
+    """An older engine build (or any payload with `amount: None`) must not be
+    newly refused - the same "no ceiling to enforce" fallback `chooseCards`
+    already gets."""
+    assert (
+        run_module("decisions.js", "m.viewModel(p, { moved: ['a', 'b'] }).submit.enabled", p=SCRY)
+        is True
+    )
+    control = run_module("decisions.js", "m.viewModel(p, {}).controls[0]", p=SCRY)
+    assert control["countHint"] is None
+
+
 def test_placing_an_id_in_a_list() -> None:
     result = run_module(
         "decisions.js",

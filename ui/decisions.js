@@ -215,6 +215,30 @@ function chooseTargets(pending, draft) {
   };
 }
 
+/** How many cards a scry/surveil/look-then-split answer may move, read off
+ * `pending.amount`/`pending.exact` the same way `chooseCards` already reads
+ * them (L1a) - `validate_answer` enforces the identical count
+ * (`decisions.py`'s SCRY/SURVEIL branch, which this mirrors) so a client
+ * that let every count through was letting a seat submit an answer the
+ * engine was always going to refuse.
+ *
+ * `amount` absent (an older server) stays unconstrained, same as
+ * `chooseCards`'s own fallback: `ok` is always true and `hint` is `null`. */
+function splitCount(pending, movedCount) {
+  const amount = pending.amount;
+  if (amount === null || amount === undefined) return { ok: true, hint: null };
+  const exact = pending.exact !== false;
+  const total = (pending.cards || []).length;
+  if (exact) return { ok: movedCount === amount, hint: `exactly ${amount}` };
+  // `amount === 1` reads as "up to 1" even when only one card was looked at
+  // (Codecracker Hound's shape) - `decisions.py`'s `_answer_argument` makes
+  // the identical call for the identical reason, so the two surfaces agree.
+  if (amount !== 1 && amount === total) {
+    return { ok: movedCount <= amount, hint: "any number, including none" };
+  }
+  return { ok: movedCount <= amount, hint: `up to ${amount}` };
+}
+
 function split(pending, draft) {
   const moved = draft.moved || [];
   const kept = (pending.cards || []).filter((id) => !moved.includes(id));
@@ -232,6 +256,7 @@ function split(pending, draft) {
     ...draftOrder.filter((id) => kept.includes(id)),
     ...kept.filter((id) => !draftOrder.includes(id)),
   ];
+  const count = splitCount(pending, moved.length);
   return {
     kind: pending.kind,
     title: pending.source || pending.kind,
@@ -247,11 +272,12 @@ function split(pending, draft) {
         movedLabel: pending.moved_label || (pending.kind === "surveil" ? "graveyard" : "bottom"),
         keptLabel: pending.kept_label || "top",
         order,
+        countHint: count.hint,
       },
     ],
     submit: {
       label: "Done",
-      enabled: true,
+      enabled: count.ok,
       answer: { moved, top_order: order.length ? order : null },
     },
     secondary: null,
