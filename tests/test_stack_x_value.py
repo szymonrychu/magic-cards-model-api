@@ -32,7 +32,7 @@ def test_x_spell_on_the_stack_shows_chosen_x_and_mana_value(client, game):
     lunge = find(board["hands"]["alice"], "Postmortem Lunge")
     bears = find(board["graveyards"]["alice"], "Grizzly Bears")
     swamps = [c["id"] for c in board["battlefield"] if c["name"] == "Swamp"]
-    assert lunge.get("mana_value") is None, "off the stack, no mana_value is carried at all"
+    assert lunge["mana_value"] == 1.0, "off the stack X reads as 0 (CR 107.3g): the printed mana value"
 
     cast = client.post(
         f"/api/games/{game}/actions/cast",
