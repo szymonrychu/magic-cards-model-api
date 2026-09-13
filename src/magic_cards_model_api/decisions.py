@@ -1140,6 +1140,20 @@ def validate_answer(decision: Decision, value: object) -> None:
                 f"{decision.prompt}: cannot move a card that was not looked at "
                 f"(CR 701.22a, CR 701.25a): {', '.join(stray)}"
             )
+        # `Game.ask`'s count check, word for word: `amount`/`exact` are the
+        # printed number of cards the player may pick, and picking outside it
+        # is an option CR 608.2d does not allow.
+        chosen = len(set(value.moved))
+        if decision.exact and chosen != decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: exactly {decision.amount} card(s) must be chosen, "
+                f"{chosen} given (CR 608.2d)"
+            )
+        if chosen > decision.amount:
+            raise ValueError(
+                f"{decision.prompt}: at most {decision.amount} card(s) may be chosen, "
+                f"{chosen} given (CR 608.2d)"
+            )
         return
 
     if decision.kind in (DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS):
