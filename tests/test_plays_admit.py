@@ -99,8 +99,10 @@ def test_priority_clamps_to_0_100_and_accumulates_one_delta_per_play(capsys, roo
 def test_priority_needs_exactly_one_of_delta_or_set(capsys, root):
     with pytest.raises(SystemExit):
         priority(capsys, root, "fetch-untapped-shock", "--delta", "1", "--set", "4")
+    assert "argument --set: not allowed with argument --delta" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         priority(capsys, root, "fetch-untapped-shock")
+    assert "one of the arguments --delta --set is required" in capsys.readouterr().err
 
 
 def test_priority_of_an_unknown_play_fails(capsys, root):
