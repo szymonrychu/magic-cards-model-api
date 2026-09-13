@@ -717,8 +717,8 @@ async function previewAndMaybeFire() {
 // "up to"/unbounded slot waits for the player's Cast or Done.
 
 // Exported for `tests/test_ui_app.py` only - same reason `store` is (its own
-// comment above): a real, awaited drive of the auto-pass-after-casting
-// default against a stubbed `fetch`, rather than a Python restatement of it.
+// comment above): a real, awaited drive of the keep-priority default against
+// a stubbed `fetch`, rather than a Python restatement of it.
 export async function fire() {
   const app = store.get();
   const action = app.action;
@@ -732,15 +732,12 @@ export async function fire() {
   }
   store.set({ action: null, preview: null });
   const onStack = !(res.mana_ability || action.kind === "special");
-  // CR 117.3c already gives you priority back after casting or activating;
-  // the harness spends it for you with one auto-pass by default (the
-  // MCP/agent side's own `hold_priority` default, `mcp.py`'s module
-  // docstring). `action.holdPriority` is this one cast's own override, reset
-  // every time a new cast begins; `stops.keepPriorityAfterCasting` is the
-  // standing one from the stops panel, checked every time in its place
-  // rather than only at the moment casting began - either is enough to keep
-  // priority.
-  if (onStack && !action.holdPriority && !store.get().stops.keepPriorityAfterCasting) {
+  // CR 117.3c already gives you priority back after casting or activating.
+  // `action.holdPriority` is this one action's tick; untouched (`null`) it
+  // follows the stops panel's standing `keepPriorityByDefault`, read fresh
+  // here and on unless explicitly `false`.
+  const hold = action.holdPriority ?? store.get().stops.keepPriorityByDefault !== false;
+  if (onStack && !hold) {
     await passOnce();
   }
   await refresh();
@@ -1746,10 +1743,10 @@ async function main() {
         return { stops };
       }),
     // Same shape, beside it: not a step either, and `fire()` reads it fresh
-    // on every cast rather than only at the moment casting began.
-    onToggleKeepPriorityAfterCasting: () =>
+    // on every action rather than only at the moment the action began.
+    onToggleKeepPriorityByDefault: () =>
       store.set((s) => {
-        const stops = { ...s.stops, keepPriorityAfterCasting: !s.stops.keepPriorityAfterCasting };
+        const stops = { ...s.stops, keepPriorityByDefault: s.stops.keepPriorityByDefault === false };
         P.saveStops(localStorage, stops);
         return { stops };
       }),

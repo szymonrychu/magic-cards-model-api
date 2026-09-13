@@ -697,7 +697,12 @@ function renderCastingStrip(el, app, handlers) {
       h(
         "label",
         { class: "hint" },
-        h("input", { type: "checkbox", checked: action.holdPriority, onChange: (e) => handlers.onHoldPriority(e.target.checked) }),
+        h("input", {
+          type: "checkbox",
+          // Untouched (`null`), the tick shows the standing default it follows.
+          checked: action.holdPriority ?? app.stops.keepPriorityByDefault !== false,
+          onChange: (e) => handlers.onHoldPriority(e.target.checked),
+        }),
         " keep priority (CR 117.3c)"
       )
     );
@@ -778,19 +783,19 @@ function renderStopsBox(el, app, handlers) {
   );
   // Beside it, not inside either step column, for the same reason: it is not
   // a step, it fires (or rather, doesn't) regardless of which one you are
-  // in. Off by default - casting a spell auto-passes priority to the
-  // opponent unless this is ticked (`priority.js`'s header has the CR 117.3c
-  // reasoning and the MCP/agent side's own `hold_priority` twin).
+  // in. On by default - casting a spell or activating an ability keeps
+  // priority unless this is unticked (`priority.js`'s `DEFAULT_STOPS` comment
+  // has the reasoning). Absent reads as ticked, like the stack tick.
   el.appendChild(
     h(
       "label",
       { class: "stops-anything" },
       h("input", {
         type: "checkbox",
-        checked: app.stops.keepPriorityAfterCasting === true,
-        onChange: () => handlers.onToggleKeepPriorityAfterCasting(),
+        checked: app.stops.keepPriorityByDefault !== false,
+        onChange: () => handlers.onToggleKeepPriorityByDefault(),
       }),
-      " keep priority after casting"
+      " Keep priority by default"
     )
   );
   const grid = h("div", { class: "stops-grid" }, h("div", {}, "my turn"), h("div", {}, "their turn"));

@@ -2982,3 +2982,13 @@ whoever works on the repo itself.
   drag-and-drop, which never fires for touch. A trigger-ordering window shows
   the offered order as a full order, so confirming untouched posts it; the
   answer is still `answerFor` over that order.
+
+- **2026-09-13 - the play UI keeps priority by default, under `mcm.stops.v2`.**
+  The owner: casting without keeping priority was too easy, and activating
+  must match. `stops.keepPriorityAfterCasting` (default off, v1) became
+  `stops.keepPriorityByDefault` (default on, v2). The key moved because every
+  v1 payload wrote `false` as the old default, not as a choice, so v1's value
+  is ignored rather than migrated; v1's step ticks and stack tick still load
+  when no v2 payload exists. `A.begin` seeds `holdPriority: null`, meaning the
+  casting strip's tick follows the standing default until touched. Agent and
+  REST defaults (`hold_priority=false`) are deliberately unchanged.

@@ -200,7 +200,7 @@ const HANDLERS = {
   onUnfill: NOOP, onSetShare: NOOP, onDone: NOOP, onCast: NOOP, onCancel: NOOP,
   onHoldPriority: NOOP, onDecisionDraft: NOOP, onDecide: NOOP, onVerb: NOOP,
   onStopRun: NOOP, onToggleStop: NOOP, onToggleStackStop: NOOP,
-  onToggleKeepPriorityAfterCasting: NOOP,
+  onToggleKeepPriorityByDefault: NOOP,
   onAttackConfirm: NOOP, onAttackNone: NOOP,
   onBlockConfirm: NOOP, onBlockNone: NOOP, onConcede: NOOP, onPregame: NOOP,
   nameOf: (id) => id,
@@ -1047,12 +1047,11 @@ def test_the_mine_declare_attackers_tick_carries_no_helper_text() -> None:
     assert "*" not in result, "no asterisk decoration either"
 
 
-def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_up() -> None:
-    """The owner's newest ask: a standing tick beside "anything on the
-    stack" that overrides the new default (casting auto-passes priority),
-    the same shape as the stack tick's own test above - same placement
-    rationale (not a step, fires regardless of which one you are in), same
-    off-by-default-unless-`false`-was-never-written asymmetry check."""
+def test_the_stops_box_offers_keep_priority_by_default_and_wires_it_up() -> None:
+    """The standing tick beside "anything on the stack": casting a spell or
+    activating an ability keeps priority unless it is unticked. Absent from
+    the stops object reads as ticked, the same `!== false` reading as the
+    stack tick."""
     result = run_module(
         "render/ribbon.js",
         FAKE_DOM
@@ -1063,34 +1062,89 @@ def test_the_stops_box_offers_the_keep_priority_after_casting_tick_and_wires_it_
             const toggled = [];
             m.mountRibbon(document, store, {
               ...HANDLERS,
-              onToggleKeepPriorityAfterCasting: () => toggled.push(1),
+              onToggleKeepPriorityByDefault: () => toggled.push(1),
             });
             store.set({});
             const box = document.querySelector("#stops-box");
-            const tick = findByText(box, "label", "keep priority after casting");
+            const tick = findByText(box, "label", "Keep priority by default");
             const checkbox = tick && tick.children.find((c) => c.tagName === "input");
             if (checkbox && checkbox.listeners && checkbox.listeners.change) {
               checkbox.listeners.change({ target: checkbox });
             }
             return {
               offered: Boolean(tick),
+              text: box.textContent,
               checked: checkbox ? "checked" in checkbox.attrs : null,
               toggles: toggled.length,
             };
           };
           return {
-            off: look({ mine: [], theirs: [], keepPriorityAfterCasting: false }),
-            on: look({ mine: [], theirs: [], keepPriorityAfterCasting: true }),
+            absent: look({ mine: [], theirs: [] }),
+            off: look({ mine: [], theirs: [], keepPriorityByDefault: false }),
+            on: look({ mine: [], theirs: [], keepPriorityByDefault: true }),
           };
         })()
         """,
     )
-    off, on = result["off"], result["on"]
+    absent, off, on = result["absent"], result["off"], result["on"]
     assert off["offered"] is True, "the stops panel never renders the keep-priority tick"
+    assert "after casting" not in off["text"], "the old wording must be gone"
     assert off["checked"] is False
     assert off["toggles"] == 1, "clicking the tick reaches no handler"
     assert on["offered"] is True
     assert on["checked"] is True
+    assert absent["checked"] is True, "a stops object with no setting must read as ticked"
+
+
+def test_the_per_action_tick_starts_from_the_standing_default_and_reports_an_untick() -> None:
+    """The casting strip's own tick for one action. It starts where the
+    standing default is (`holdPriority: null` means "not touched yet"), and
+    unticking it reports `false` for that action alone."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const look = (holdPriority, stops) => {
+            const action = { ...koz_action, holdPriority };
+            const state = baseState({ hands: { alice: [koz] } });
+            const store = makeStore(baseApp(state, { action, stops }));
+            const reported = [];
+            m.mountRibbon(document, store, {
+              ...HANDLERS,
+              onHoldPriority: (hold) => reported.push(hold),
+            });
+            store.set({});
+            const strip = document.querySelector("#casting-strip");
+            const tick = findByText(strip, "label", "keep priority");
+            const checkbox = tick && tick.children.find((c) => c.tagName === "input");
+            const checked = checkbox ? "checked" in checkbox.attrs : null;
+            if (checkbox && checkbox.listeners && checkbox.listeners.change) {
+              checkbox.listeners.change({ target: { checked: false } });
+            }
+            return { offered: Boolean(tick), checked, reported };
+          };
+          return {
+            fresh: look(null, { mine: [], theirs: [] }),
+            freshOff: look(null, { mine: [], theirs: [], keepPriorityByDefault: false }),
+            unticked: look(false, { mine: [], theirs: [], keepPriorityByDefault: true }),
+          };
+        })()
+        """,
+        koz=KOZILEK,
+        koz_action={
+            "kind": "cast", "cardId": KOZILEK["id"], "card": KOZILEK, "abilityIndex": None,
+            "keyword": None, "fromZone": None, "modes": [], "xValue": None, "color": None,
+            "altCost": None, "choosing": [], "convoke": [], "delve": [], "crewing": [],
+            "slots": [], "shares": {}, "pinned": [], "freeTargets": [], "pendingTargets": [],
+            "focusSlot": None, "affordance": KOZ_AFF, "error": None, "done": False,
+        },
+    )
+    assert result["fresh"]["offered"] is True
+    assert result["fresh"]["checked"] is True, "the per-action tick must start ticked"
+    assert result["fresh"]["reported"] == [False]
+    assert result["freshOff"]["checked"] is False
+    assert result["unticked"]["checked"] is False
 
 
 # ------------------------------ CR 106.6 restricted mana, mid-payment --------
