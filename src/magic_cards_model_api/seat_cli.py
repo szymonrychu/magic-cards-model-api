@@ -70,7 +70,6 @@ from .playscripts import guides_propose as playscripts_guides
 from .playscripts import lint as playscripts_lint
 from .playscripts.gitwork import GUIDES_ROOT, SUCCESS
 from .seatkit import (
-    _UUID,
     AUTOPASS_STEPS,
     AUTOPASS_WHOSE_TURN,
     DEFAULT_API,
@@ -80,7 +79,9 @@ from .seatkit import (
     api_trouble,
     autopass_target_error,
     block_until_wake,
+    card_reference,
     parse_convoke,
+    parse_optional_costs,
     pass_until,
     run_action,
 )
@@ -301,6 +302,21 @@ def build_parser() -> argparse.ArgumentParser:
             "(CR 702.51a). A creature pays '{1} or one mana of that creature's "
             "color', so an entry is a bare id for the generic symbol or "
             "<id>:W to cover a coloured one"
+        ),
+    )
+    cast.add_argument(
+        "--optional-costs",
+        default="",
+        help=(
+            "comma-separated optional additional costs to pay (CR 601.2b), each "
+            "the keyword from the cast row's own optional_costs: 'Kicker' kicks "
+            "(CR 702.33a). A repeatable one takes a count ('Multikicker:2', "
+            "'Replicate:3'), a gift names the opponent ('Gift:bob'), and a cost "
+            "naming objects takes their ids ('Blight:<creature id>'). 'Entwine' "
+            "chooses every mode (list them in --modes too, CR 702.42a); escalate "
+            "is charged per mode beyond the first (CR 702.120a) and "
+            "'Escalate:<card id>' names what it discards; a --keyword Harmonize "
+            "cast taps 'Harmonize:<creature id>' to cut its cost (CR 702.180a)"
         ),
     )
     priority_flag(cast)
@@ -932,10 +948,7 @@ def run(argv: list[str] | None = None) -> int:
         note(woken["state"])
     elif args.command == "cast":
         body: dict[str, Any] = {"player": seat.player, "dry_run": args.dry_run}
-        if _UUID.match(args.card.strip()):
-            body["card_id"] = args.card.strip()
-        else:
-            body["card"] = args.card
+        body.update(card_reference(args.card))
         if args.spell_face.strip():
             body["spell_face"] = args.spell_face.strip()
         if args.target:
@@ -967,6 +980,8 @@ def run(argv: list[str] | None = None) -> int:
                 body[field] = _parse_ids(value)
         if args.convoke:
             body["convoke"] = parse_convoke(args.convoke)
+        if args.optional_costs:
+            body["optional_costs"] = parse_optional_costs(args.optional_costs)
         if args.reasoning:
             body["reasoning"] = args.reasoning
         act(
@@ -975,10 +990,7 @@ def run(argv: list[str] | None = None) -> int:
         )
     elif args.command in ("suspend", "plot", "foretell"):
         body = {"player": seat.player, "dry_run": args.dry_run}
-        if _UUID.match(args.card.strip()):
-            body["card_id"] = args.card.strip()
-        else:
-            body["card"] = args.card
+        body.update(card_reference(args.card))
         sources = sources_or_all(args.sources)
         if sources:
             body["mana_sources"] = sources
@@ -990,10 +1002,7 @@ def run(argv: list[str] | None = None) -> int:
         )
     elif args.command == "cycle":
         body = {"player": seat.player, "ability_index": args.index, "dry_run": args.dry_run}
-        if _UUID.match(args.card.strip()):
-            body["card_id"] = args.card.strip()
-        else:
-            body["card"] = args.card
+        body.update(card_reference(args.card))
         sources = sources_or_all(args.sources)
         if sources:
             body["mana_sources"] = sources
@@ -1005,10 +1014,7 @@ def run(argv: list[str] | None = None) -> int:
         )
     elif args.command == "play-land":
         body = {"player": seat.player}
-        if _UUID.match(args.card.strip()):
-            body["card_id"] = args.card.strip()
-        else:
-            body["card"] = args.card
+        body.update(card_reference(args.card))
         if args.reasoning:
             body["reasoning"] = args.reasoning
         act(lambda: seat.call_json("POST", f"/api/games/{gid}/actions/play-land", body))

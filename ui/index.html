@@ -241,6 +241,13 @@
   <div id="card-preview" class="card-preview" hidden></div>
   <div id="toast" class="toast" hidden></div>
   <div id="popover" class="popover" hidden></div>
+  <!-- A small decision (yes/no, a payment, an amount, a quality or mode, top
+       or bottom) opens here, beside the card asking it, when that card is on
+       screen (`ui/render/decision_popover.js`); otherwise it stays in
+       `#prompt-box`. Its own element, not `#popover`: the card menu closes on
+       an outside click and on Escape, and a required decision does neither.
+       Built once and only toggled, like `#decision-window` below. -->
+  <div id="decision-popover" class="decision-popover" role="dialog" aria-modal="false" aria-label="Decision" tabindex="-1" hidden></div>
 
   <!-- The decision window (`ui/render/decision_window.js`): every complex
        decision - scry, surveil, a look-at-the-top split, every choose-cards,

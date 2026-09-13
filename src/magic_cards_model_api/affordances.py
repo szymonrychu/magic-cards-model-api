@@ -276,9 +276,13 @@ def cast_hints(state: CardState) -> dict[str, Any]:
     """
     card = state.card
     modal = modal_profile(card)
+    # CR 712.8a: a double-faced card off the battlefield and stack has only its
+    # front face's characteristics, and Scryfall leaves the top-level cost of a
+    # `transform`/`modal_dfc` printing blank - the face carries it.
+    mana_cost = card.mana_cost or state.mana_cost
     hints: dict[str, Any] = {
-        "mana_cost": card.mana_cost,
-        "needs_x": _needs_x(card.mana_cost),
+        "mana_cost": mana_cost,
+        "needs_x": _needs_x(mana_cost),
         "targeting": _profile_view(targeting_profile(card)),
     }
     if modal is not None:

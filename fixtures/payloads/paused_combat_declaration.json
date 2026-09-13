@@ -172,6 +172,7 @@
     "player": "alice",
     "prompt": "declare attackers",
     "source": null,
+    "source_card_id": null,
     "target_maximum": null,
     "target_minimum": 0,
     "targets": []

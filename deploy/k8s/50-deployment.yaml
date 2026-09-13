@@ -151,7 +151,7 @@ spec:
             - name: SPELLSLINGER_MCP_URL
               value: http://spellslinger-mcp-http.spellslinger-development.svc.cluster.local:8080/mcp
             - name: MAX_LIVE_GAMES
-              value: "4"
+              value: "12"
             # The browser re-reads the game, long-polls its log, and re-reads
             # the AI seat's status every ~1.2s. Successful reads of those
             # routes, and of the healthcheck, are kept out of uvicorn's access

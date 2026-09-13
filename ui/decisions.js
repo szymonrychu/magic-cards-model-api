@@ -9,8 +9,10 @@
 // `ViewModel = {kind, title, prompt, controls, submit, secondary, remaining}`
 // - pure data, no DOM and no `innerHTML`; the screens turn it into markup:
 // `render/decision_controls.js`'s `renderDecision` in `#prompt-box` for the
-// small kinds, `render/decision_window.js` for the kinds `usesDecisionWindow`
-// names. Both post exactly the answer the view model says.
+// small kinds (or in `render/decision_popover.js`'s popover beside the asking
+// card, for the kinds `usesDecisionPopover` names), `render/decision_window.js`
+// for the kinds `usesDecisionWindow` names. All post exactly the answer the
+// view model says.
 import { fill, flatten, isSatisfied, slotsFromAffordance } from "./targeting.js";
 
 // -- moved verbatim from ui/app.js (chooseCardsOptions, triggerOrderOptions)
@@ -419,6 +421,29 @@ const WINDOW_KINDS = new Set(["scry", "surveil", "choose_cards", "order_triggers
  * prompt box. */
 export function usesDecisionWindow(pending) {
   return Boolean(pending && WINDOW_KINDS.has(pending.kind));
+}
+
+// The small kinds that open beside their source card
+// (`render/decision_popover.js`) when `pending.source_card_id` names a card on
+// screen, and render in `#prompt-box` otherwise. `choose_targets` is small but
+// answered by clicking the board, so it stays in the prompt box.
+const POPOVER_KINDS = new Set([
+  "may",
+  "pay_life",
+  "pay_energy",
+  "pay_mana",
+  "pay_energy_amount",
+  "pay_life_amount",
+  "choose_a_quality",
+  "choose_a_mode",
+  "put_on_top_or_bottom",
+  "opening_hand_action",
+]);
+
+/** Whether `pending` is a kind the card-anchored popover may answer. Whether
+ * it actually does also depends on its source card being rendered. */
+export function usesDecisionPopover(pending) {
+  return Boolean(pending && POPOVER_KINDS.has(pending.kind));
 }
 
 /** The cards a decision is about, one card-like object per `pending.cards`

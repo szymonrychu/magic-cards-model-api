@@ -24,7 +24,7 @@ from magic_cards_model.models.card import Layout
 from magic_cards_model.models.game import KnownCard
 from magic_cards_model.models.mana import ManaPool
 
-from . import assets, scryfall
+from . import assets, commands, scryfall
 from .affordances import cast_hints
 from .commands import paused_game
 from .decisions import PendingDecision
@@ -549,7 +549,11 @@ def _card_view(game: Game, state: CardState, images: dict[str, dict[str, str]]) 
         # animated or pumped one is flagged rather than just silently shown
         # with a different number a player has to notice on their own.
         "type_line": type_line,
-        "mana_cost": state.card.mana_cost,
+        # A `transform`/`modal_dfc` printing leaves both top-level fields blank
+        # and carries them per face; the object's own reading (`CardState.
+        # mana_cost`/`oracle_text`, its up face - the front one in hand,
+        # CR 712.8a) fills them in. A printing that has them keeps them.
+        "mana_cost": state.card.mana_cost or state.mana_cost,
         "oracle_text": _oracle_text(state),
         "zone": state.zone.value,
         "controller": state.controller,
@@ -645,8 +649,12 @@ def _stack_view(game: Game, images: dict[str, dict[str, str]]) -> list[dict[str,
     return views
 
 
-def _player_view(game: Game, player: Player) -> dict[str, Any]:
-    """One seat's own block.
+def _player_view(
+    game: Game, player: Player, counters: dict[str, int] | None = None
+) -> dict[str, Any]:
+    """One seat's own block. `counters`, when given, replaces the committed
+    player's own - `state_view` hands in the ones a paused command is
+    standing on (`_counters_at_pause`).
 
     No `decklist` or `agent` field any more (2b's T8, map's S6): both used to
     be read here from lobby-owned state (`store.decklists`/
@@ -666,7 +674,7 @@ def _player_view(game: Game, player: Player) -> dict[str, Any]:
     return {
         "username": player.username,
         "life": player.life,
-        "counters": dict(player.counters.root),
+        "counters": dict(player.counters.root) if counters is None else counters,
         "mana_pool": _mana_pool_view(player.mana_pool),
         "hand_count": len(player.hand),
         "library_count": len(player.library),
@@ -1041,6 +1049,43 @@ def _contents_view(
     ]
 
 
+#: `_counters_at_pause`'s answers, keyed by what makes one stale: the game, the
+#: standing question's generation (bumped by every new pause), and the
+#: committed counters the replay started from. A poll repeats the key for as
+#: long as one question stands, so the replay runs once per question.
+_PAUSED_COUNTERS: dict[tuple[str, int, str], dict[str, dict[str, int]]] = {}
+_PAUSED_COUNTERS_LIMIT = 64
+
+
+def _counters_at_pause(game_id: str, game: Game, paused: Any) -> dict[str, dict[str, int]]:
+    """Each player's counters on the board a paused command is standing on,
+    or `{}` when nothing is paused (or the replay no longer pauses).
+
+    CR 122.1 puts counters "on an object or player", and CR 107.14's energy is
+    one: "To pay {E}, a player removes one energy counter from themselves." A
+    pause is never committed (`commands.board_at_pause`), so without this the
+    view showed the counters from before the command - `{}` while Galvanic
+    Discharge asked how much of the energy it had just given to pay.
+    """
+    if paused is None:
+        return {}
+    command, tape, _ = paused
+    committed = repr(sorted((p.username, sorted(p.counters.root.items())) for p in game.players))
+    key = (game_id, store.pause_generation(game_id), committed)
+    cached = _PAUSED_COUNTERS.get(key)
+    if cached is None:
+        board = commands.board_at_pause(game, command, tape)
+        cached = (
+            {player.username: dict(player.counters.root) for player in board.players}
+            if board is not None
+            else {}
+        )
+        if len(_PAUSED_COUNTERS) >= _PAUSED_COUNTERS_LIMIT:
+            _PAUSED_COUNTERS.clear()
+        _PAUSED_COUNTERS[key] = cached
+    return cached
+
+
 def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> dict[str, Any]:
     """T1: this dict's shape is formalised as `schemas.GameStateView` - see
     that class and the "Response views" section it opens for the field-by-
@@ -1062,6 +1107,17 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
     every field a redaction step can remove `| None = None` rather than by
     reaching for `dict[str, Any]`.
     """
+    # While an announcement is paused, the board is the one the question was
+    # raised over, not the committed one from before it began: a cast
+    # trigger's target question comes after CR 601.2a put the card on the
+    # stack and CR 601.2h paid its cost (B2-13, `commands.paused_board`).
+    # Nothing is committed by reading it. Resolution and turn-based pauses
+    # keep serving the committed board - `advance`'s own docstring and
+    # `seatkit.pass_until`'s stops read the step `advance` was called from.
+    paused = store.paused_command(game_id)
+    committed = game
+    if paused is not None and paused[0].kind in commands.ANNOUNCING_KINDS:
+        game = commands.paused_board(game, *paused) or game
     images = _images_for(game)
 
     def views(cards: list[StackObject]) -> list[dict[str, Any]]:
@@ -1075,12 +1131,15 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
     # mutating request that crosses an unanswered question pauses and returns
     # immediately, and this is what a state read shows for it until
     # `POST .../decide` resumes it.
-    paused = store.paused_command(game_id)
     pending = (
         PendingDecision.from_engine(paused[2].decision, store.pause_generation(game_id))
         if paused is not None
         else None
     )
+    # The player counters that question is asked with (`_counters_at_pause`):
+    # `committed` is the board from before the paused command, which never shows
+    # Galvanic Discharge's three energy while it asks how many to pay.
+    paused_counters = _counters_at_pause(game_id, committed, paused)
     exile_views = views(game.shared_zones.get(Zone.EXILE, []))
     # CR 500.1 makes a phase part of a turn, and the engine's two pregame steps
     # (`Step.MULLIGAN`, `Step.PREGAME_ACTIONS`) run before CR 103.8's first
@@ -1099,7 +1158,10 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
         "pregame": pregame_view(game),
         "active_player": turn.players[turn.active_index] if turn is not None else None,
         "priority_holder": game.priority.holder if game.priority is not None else None,
-        "players": [_player_view(game, player) for player in game.players],
+        "players": [
+            _player_view(game, player, paused_counters.get(player.username))
+            for player in game.players
+        ],
         "battlefield": views(game.shared_zones.get(Zone.BATTLEFIELD, [])),
         "stack": _stack_view(game, images),
         "exile": exile_views,
@@ -1123,7 +1185,9 @@ def state_view(game: Game, game_id: str, *, include_contents: bool = False) -> d
         "sideboards": {player.username: views(player.sideboard) for player in game.players},
         # A sibling of `hands`, never inside it - see `_known_cards_view`.
         "known_cards": _known_cards_view(
-            game, images, paused_game(game, paused[0], paused[1]) if paused is not None else None
+            game,
+            images,
+            paused_game(committed, paused[0], paused[1]) if paused is not None else None,
         ),
         "winner": game.winner,
         "drawn": game.drawn,

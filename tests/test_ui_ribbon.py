@@ -693,6 +693,51 @@ def test_clicking_a_choose_a_mode_option_reports_choice() -> None:
     assert calls == [{"choice": "Draw a card"}]
 
 
+def test_a_decision_anchored_to_a_rendered_card_leaves_only_a_pointer_in_the_prompt_box() -> None:
+    """A small decision whose `source_card_id` names a card on the board is
+    answered in `render/decision_popover.js`'s popover by that card; the
+    prompt box says where it went and renders none of its controls. The same
+    decision with no rendered source still renders its Yes/No here."""
+    result = run_module(
+        "render/ribbon.js",
+        FAKE_DOM
+        + """
+        (() => {
+          const cards = [];
+          document.querySelectorAll = (sel) =>
+            cards.filter(() => sel.includes(".card[data-card-id]"));
+          const pending = {
+            kind: "may", player: "alice", source: "Rhystic Study",
+            prompt: "Pay one mana?", source_card_id: "rs",
+          };
+          const store = makeStore(baseApp(baseState({ pending_decision: pending })));
+          m.mountRibbon(document, store, HANDLERS);
+          store.set({});
+          const box = document.querySelector("#prompt-box");
+          const yes = () => Boolean(findByText(box, "button", "Yes"));
+          const unrendered = { text: box.textContent, yes: yes() };
+          const card = document.createElement("div");
+          card.dataset.cardId = "rs";
+          card.getBoundingClientRect = () =>
+            ({ left: 10, top: 10, right: 118, bottom: 160, width: 108, height: 150 });
+          card.closest = () => null;
+          document.appendChild(card);
+          cards.push(card);
+          store.set({});
+          return {
+            unrendered,
+            anchored: { text: box.textContent, yes: yes() },
+          };
+        })()
+        """,
+    )
+    assert result["unrendered"]["yes"] is True
+    assert "Pay one mana?" in result["unrendered"]["text"]
+    assert result["anchored"]["yes"] is False
+    assert "Rhystic Study" in result["anchored"]["text"]
+    assert "at the card" in result["anchored"]["text"]
+
+
 def test_a_scry_decision_renders_no_split_rows_in_the_prompt_box() -> None:
     result = run_module(
         "render/ribbon.js",

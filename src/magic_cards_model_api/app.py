@@ -23,7 +23,6 @@ from fastapi.staticfiles import StaticFiles
 from magic_cards_model.machines import Step
 from magic_cards_model.machines.decisions import Answer, DecisionKind
 from magic_cards_model.machines.decisions import PendingDecision as PendingDecisionEngine
-from magic_cards_model.machines.legal_actions import legal_actions as compute_legal_actions
 from magic_cards_model.machines.priority import PriorityOutcome
 from magic_cards_model.models import Card, CardState, Color, Game, Player, Zone
 from starlette.convertors import Convertor, register_url_convertor
@@ -51,6 +50,7 @@ from . import (
     symbology,
     visibility,
 )
+from .action_rows import legal_action_rows
 from .repository import RECENT_RECORDS_WINDOW, ArchivedGame, GameUnloadable
 from .repository_postgres import VersionConflict
 from .schemas import (
@@ -442,19 +442,64 @@ def _value_error(_: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+#: pydantic's error types for a value that is not a UUID. Every `UUID` field a
+#: request carries (body or path) is a card or ability id.
+_UUID_ERROR_TYPES = frozenset({"uuid_parsing", "uuid_type", "uuid_version"})
+
+
 @app.exception_handler(RequestValidationError)
 def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     # No `include_url`/`include_input` kwargs: pydantic 2.13 removed them from
     # `errors()`, and calling them turned every malformed request body into a
     # raw 500 instead of this 422.
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": [
-                {key: error.get(key) for key in ("loc", "msg", "type")} for error in exc.errors()
-            ]
-        },
-    )
+    errors = exc.errors()
+    if not any(error.get("type") in _UUID_ERROR_TYPES for error in errors):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {key: error.get(key) for key in ("loc", "msg", "type")} for error in errors
+                ]
+            },
+        )
+    return JSONResponse(status_code=422, content=_malformed_id_refusal(errors))
+
+
+def _malformed_id_refusal(errors: Sequence[Any]) -> dict[str, Any]:
+    """D15: a bad id is refused as one, naming the value and the full form
+    (`decisions.malformed_id_reason`), instead of pydantic's length complaint.
+
+    The same `detail` list as every other 422, each id error rewritten to
+    `type: malformed_card_id`, plus `allowed: False` and `reason` so a seat
+    reads it as the typed refusal every action answer already is. A
+    `UUID | ManaSource` union reports one bad string once per branch
+    (`(..., 0, 'uuid')` and `(..., 0, 'ManaSource')`); only the id branch is
+    what a string meant, so the siblings at that position are dropped and
+    the id error is reported at the position itself."""
+    union_positions = {
+        tuple(error["loc"][:-1])
+        for error in errors
+        if error.get("type") in _UUID_ERROR_TYPES and error["loc"] and error["loc"][-1] == "uuid"
+    }
+    detail: list[dict[str, Any]] = []
+    for error in errors:
+        loc = tuple(error.get("loc") or ())
+        if error.get("type") in _UUID_ERROR_TYPES:
+            position = loc[:-1] if tuple(loc[:-1]) in union_positions else loc
+            detail.append(
+                {
+                    "loc": list(position),
+                    "msg": decisions.malformed_id_reason(error.get("input")),
+                    "type": "malformed_card_id",
+                }
+            )
+        elif not any(loc[: len(position)] == position for position in union_positions):
+            detail.append({key: error.get(key) for key in ("loc", "msg", "type")})
+    return {
+        "detail": detail,
+        "allowed": False,
+        "reason": "; ".join(str(entry["msg"]) for entry in detail),
+    }
 
 
 def game_or_404(game_id: str) -> Game:
@@ -783,6 +828,20 @@ def _paused_on(result: commands.RunResult) -> dict[str, str]:
     return {"player": result.pending.decision.player, "kind": result.pending.decision.kind.value}
 
 
+def _paused_pending_view(
+    game_id: str, pending: decisions.PendingDecision, viewer: visibility.Viewer
+) -> dict[str, Any]:
+    """`pending` as an acting route's paused response may carry it back to
+    `viewer`, the actor this route already trusts (`req.player`, or the seat
+    the uid resolved to for `decide` and the declaration aliases) - see
+    `visibility.redact_paused_pending`. A resumed or fresh command can pause
+    on a question for the *other* seat, and handing it back whole leaked
+    that seat's candidates and the id of the card asking."""
+    return visibility.redact_paused_pending(
+        pending.to_view(), state_view(game_or_404(game_id), game_id), viewer
+    )
+
+
 def _respond(
     game_id: str,
     action: str,
@@ -821,7 +880,7 @@ def _respond(
             "allowed": None,
             "reason": None,
             "paused": True,
-            "pending_decision": pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, pending, keys.get("player")),
         }
         if dry_run:
             return {**body, "log_seq": None}
@@ -2070,8 +2129,7 @@ def get_legal_actions(
         )
     paused = store.paused_command(game_id)
     pending = paused[2] if paused is not None else None
-    actions = compute_legal_actions(game, player, pending=pending)
-    views = [action.model_dump(mode="json") for action in actions]
+    actions, views = legal_action_rows(game, player, pending)
     if candidates:
         _attach_target_candidates(game, player, actions, views)
     # The ledger position this enumeration describes, handed back with it
@@ -2121,7 +2179,7 @@ def action_concede(game_id: str, req: ConcedeRequest) -> dict[str, Any]:
         return {
             "allowed": None,
             "paused": True,
-            "pending_decision": pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, pending, req.player),
             "log_seq": logged,
         }
     assert isinstance(result.outcome, dict)
@@ -2300,7 +2358,7 @@ def _answer_declaration(
     # *pre*-mutation enumeration, since nothing here has touched `game` yet.
     legal_before = records.legal_actions_before(game, engine_decision.player, pending)
     try:
-        value = decisions.declared_pairs_answer(pairs)
+        value = decisions.declared_pairs_answer(pairs, {p.username for p in game.players})
         decisions.validate_answer(engine_decision, value)
     except ValueError as exc:
         return refuse(str(exc), legal_before)
@@ -2331,7 +2389,7 @@ def _answer_declaration(
         return {
             "allowed": True,
             "paused": True,
-            "pending_decision": next_pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, next_pending, engine_decision.player),
             "log_seq": seq,
         }
     return {"allowed": True, "log_seq": seq}
@@ -2487,7 +2545,7 @@ def action_pass_priority(game_id: str, req: PassPriorityRequest) -> dict[str, An
         return {
             "allowed": None,
             "paused": True,
-            "pending_decision": pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, pending, req.player),
             "outcome": None,
             "log_seq": seq,
         }
@@ -3333,11 +3391,11 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         try:
             answer_value: Any = decisions.card_ids_answer(req.card_ids)
         except ValueError as exc:
-            return refuse(f"bad card id: {exc}", **detail)
+            return refuse(str(exc), **detail)
         detail["card_ids"] = req.card_ids
     elif kind is DecisionKind.CHOOSE_TARGETS:
         try:
-            answer_value = decisions.targets_answer(req.targets)
+            answer_value = decisions.targets_answer(req.targets, {p.username for p in game.players})
         except ValueError as exc:
             return refuse(f"bad target: {exc}", **detail)
         detail["targets"] = req.targets
@@ -3353,7 +3411,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         try:
             answer_value = decisions.order_answer(req.order)
         except ValueError as exc:
-            return refuse(f"bad ability id: {exc}", **detail)
+            return refuse(str(exc), **detail)
         detail["order"] = req.order
     elif kind in (
         DecisionKind.MAY,
@@ -3410,7 +3468,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         try:
             answer_value = decisions.card_split_answer(req.moved, req.top_order)
         except ValueError as exc:
-            return refuse(f"bad card id: {exc}", **detail)
+            return refuse(str(exc), **detail)
         detail["moved"] = req.moved
         detail["top_order"] = req.top_order
     elif kind in (DecisionKind.DECLARE_ATTACKERS, DecisionKind.DECLARE_BLOCKERS):
@@ -3419,7 +3477,9 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         # build from their own request shape, see those routes) as well as
         # through the two aliases.
         try:
-            answer_value = decisions.declared_pairs_answer(req.pairs)
+            answer_value = decisions.declared_pairs_answer(
+                req.pairs, {p.username for p in game.players}
+            )
         except ValueError as exc:
             return refuse(f"bad pair: {exc}", **detail)
         detail["pairs"] = [{"creature": str(p.creature), "defender": p.defender} for p in req.pairs]
@@ -3470,7 +3530,7 @@ def decide(game_id: str, req: DecideRequest, uid: str | None = None) -> dict[str
         return {
             "accepted": True,
             "paused": True,
-            "pending_decision": next_pending.to_view(),
+            "pending_decision": _paused_pending_view(game_id, next_pending, req.player),
             "log_seq": seq,
         }
     return {"accepted": True, "log_seq": seq}

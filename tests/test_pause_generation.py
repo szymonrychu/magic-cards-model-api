@@ -146,7 +146,8 @@ def test_an_idempotent_re_post_does_not_advance_the_generation(client, game) -> 
 
     retry = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
     assert retry.status_code == 200, retry.text
-    assert retry.json()["pending_decision"]["generation"] == before["generation"], retry.json()
+    assert retry.json()["pending_decision"]["player"] == "alice", retry.json()
+    assert pending_of(client, game, uids["alice"])["generation"] == before["generation"]
 
     answered = client.post(
         f"/api/games/{game}/decide",
