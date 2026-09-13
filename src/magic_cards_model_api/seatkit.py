@@ -160,7 +160,33 @@ DEFAULT_API = "http://127.0.0.1:8000"
 #: 2026-09-08). `tests/test_protocol_boundary.py` pins the two together.
 #:
 #: Bump this alongside any change to a tool's request/response shape.
-PROTOCOL_VERSION = "seatkit-18"
+PROTOCOL_VERSION = "seatkit-19"
+#: `seatkit-19` is an **additive response** change: a `CardView` for a spell
+#: on the stack now carries `mana_value` (CR 202.3e's on-stack figure, the X
+#: it was cast for already substituted in - not `CardState.mana_value`'s own
+#: off-stack CR 107.3g reading of 0) and, only when its cost has an `{X}` to
+#: announce, `x_value` (the chosen X itself). `resolve-top`'s own response
+#: also gained `changed` - the same marker `pass_priority`'s `resolve_top`
+#: outcome has always carried, now on the direct route too, which used to
+#: report no signal at all for whether anything actually happened.
+#:
+#: Battle 7 found both gaps: B7-13, a spell cast for X (Nature's Rhythm,
+#: harmonized for X=8) showed `mana_value 2.0` and no X field anywhere on the
+#: stack - `CardState` itself has nowhere to keep an announced X once casting
+#: is over, so the fix reads `Game.cast_record(state).x_value` the same way
+#: `Game.put_on_stack`'s own `CAST_SPELL` event already does. B7-11, an
+#: until-end-of-turn P/T pump (Craterhoof Behemoth's trigger, a prowess
+#: trigger, Mutagenic Growth) or a direct `/resolve-top` call read as
+#: `changed: false`/no marker at all - `commands._card_fingerprint` tracked
+#: zone, tap, sickness, damage, counters and attachment but never power or
+#: toughness, and `_run_resolve_top` never fingerprinted at all.
+#:
+#: A bump, the same reasoning as `seatkit-17`/`seatkit-18`: an MCP process
+#: built before it has no `mana_value`/`x_value`/`changed` fields to read, so
+#: a seat asking "what X was this cast for" or "did that resolve do anything"
+#: gets nothing; an older build meeting the new fields passes them through
+#: untouched.
+#:
 #: `seatkit-18` is an **additive request** change and an **additive
 #: response** one: a new `equip` tool over a new `actions/equip` route, a
 #: legal-action row of kind `equip`, and rows gaining `printed_cost`,

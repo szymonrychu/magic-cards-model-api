@@ -436,6 +436,79 @@ def test_an_implemented_instant_that_leaves_the_stack_records_changed_true(clien
     assert entry["detail"]["changed"] is True
 
 
+def test_an_until_end_of_turn_pump_records_changed_true(client, game):
+    """B7-11 (battle-7): `_card_fingerprint` used to carry zone stamp,
+    tapped, sickness, damage, counters and attachment only - no power or
+    toughness - so an until-end-of-turn pump (Craterhoof Behemoth's trigger,
+    a prowess trigger, Mutagenic Growth) read as `changed: false` even though
+    every creature on the board grew. Giant Growth is the simplest real card
+    with that exact shape: no zone move, no tap, no counter, just power and
+    toughness."""
+    add_card(client, game, "Forest", "alice", "battlefield")
+    add_card(client, game, "Grizzly Bears", "alice", "battlefield")
+    add_card(client, game, "Giant Growth", "alice", "hand")
+    board = state(client, game)
+    forest = find(board["battlefield"], "Forest")
+    bears = find(board["battlefield"], "Grizzly Bears")
+    assert (bears["power"], bears["toughness"]) == (2, 2)
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Giant Growth",
+            "targets": [bears["id"]],
+            "mana_sources": [{"card_id": forest["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "alice"})
+    resolving = client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
+    assert resolving.json()["outcome"] == PriorityOutcome.RESOLVE_TOP.value
+
+    entry = entry_of(log_of(client, game), "pass_priority")
+    assert entry["detail"]["resolved"] == "Giant Growth"
+    assert entry["detail"]["changed"] is True
+    pumped = find(state(client, game)["battlefield"], "Grizzly Bears")
+    assert (pumped["power"], pumped["toughness"]) == (5, 5)
+
+
+def test_resolve_top_endpoint_reports_changed_for_a_life_gain(client, game):
+    """B7-11 (battle-7): the direct `/resolve-top` route - used outside
+    `pass-priority`'s own auto-resolve, e.g. by a harness settling a paused
+    resolution - never carried a `changed` marker at all: only the
+    `pass_priority` path (`_run_pass_priority`) computed one, and
+    `engine_api.resolve_top` itself returns only `resolved`/`zone`/`reason`.
+    Lightning Helix's life gain is the reported shape: a real change that is
+    neither a zone move, a tap, nor a counter."""
+    add_card(client, game, "Mountain", "alice", "battlefield")
+    add_card(client, game, "Plains", "alice", "battlefield")
+    add_card(client, game, "Lightning Helix", "alice", "hand")
+    board = state(client, game)
+    mountain = find(board["battlefield"], "Mountain")
+    plains = find(board["battlefield"], "Plains")
+
+    cast = client.post(
+        f"/api/games/{game}/actions/cast",
+        json={
+            "player": "alice",
+            "card": "Lightning Helix",
+            "targets": ["bob"],
+            "mana_sources": [{"card_id": mountain["id"]}, {"card_id": plains["id"]}],
+        },
+    )
+    assert cast.json()["allowed"] is True, cast.text
+
+    resolved = client.post(f"/api/games/{game}/resolve-top").json()
+    assert resolved["resolved"] == "Lightning Helix"
+    assert resolved["changed"] is True
+    alice = next(p for p in resolved["players"] if p["username"] == "alice")
+    bob = next(p for p in resolved["players"] if p["username"] == "bob")
+    assert alice["life"] == 23
+    assert bob["life"] == 17
+
+
 def test_dry_run_cast_is_not_audited(client, game):
     """A `dry_run` cast probe - what `seatkit.available_actions` used to
     issue per hand card, before T11 pointed it at the engine's own

@@ -77,6 +77,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from magic_cards_model.machines.abilities import keywords_in_lines
+from magic_cards_model.machines.combat import Keyword
 from magic_cards_model.machines.decisions import (
     Answer,
     DecisionPending,
@@ -172,7 +174,25 @@ def _run_activate_ability(game: Game, payload: dict[str, Any]) -> Any:
 
 
 def _run_resolve_top(game: Game, payload: dict[str, Any]) -> Any:
-    return engine_api.resolve_top(game)
+    """`engine_api.resolve_top` itself only ever returns `resolved`/`zone`/
+    `reason` - it has no notion of whether resolving actually changed
+    anything, unlike `_run_pass_priority`'s own `RESOLVE_TOP` branch (see
+    that function's docstring for why the fingerprint is taken *before* the
+    resolve call). This route is the same resolve, called directly instead
+    of through a pass, and battle-7 (B7-11) found it silently carried no
+    `changed` marker at all - every direct `/resolve-top` call read as
+    unauditable rather than merely wrong. Same fingerprint, same discount,
+    same `None` when there was nothing on the stack to resolve."""
+    resolving_obj = game.stack[-1] if game.stack else None
+    resolving_spell_id = resolving_obj.id if isinstance(resolving_obj, CardState) else None
+    before = _resolution_state(game)
+    result = engine_api.resolve_top(game)
+    if result.get("resolved") is None:
+        return result
+    after = _resolution_state(game)
+    if resolving_spell_id is not None:
+        after = _without_own_arrival(game, resolving_spell_id, after)
+    return {**result, "changed": after != before}
 
 
 def _run_suspend(game: Game, payload: dict[str, Any]) -> Any:
@@ -210,9 +230,45 @@ def _run_concede(game: Game, payload: dict[str, Any]) -> Any:
     return {"winner": game.winner}
 
 
+def _current_power_toughness(game: Game, state: CardState) -> tuple[int | None, int | None]:
+    """This card's power and toughness right now: the computed board
+    (CR 613.5) on the battlefield, so an until-end-of-turn pump or a static
+    anthem is seen, or the printed-plus-counters accessors everywhere else,
+    where there is no computed board to ask ("permanents exist only on the
+    battlefield", CR 403.3). The same split `serialize._current_characteristics`
+    makes for its own display purposes; kept here too since `_card_fingerprint`
+    needs it and `commands.py` cannot import `serialize` (`serialize` already
+    imports `commands`)."""
+    if state.zone is not Zone.BATTLEFIELD:
+        return state.power, state.toughness
+    characteristics = game.characteristics_of(state)
+    return characteristics.power, characteristics.toughness
+
+
+def _current_keywords(game: Game, state: CardState) -> tuple[str, ...]:
+    """This card's keyword abilities right now, continuous effects included
+    (CR 613.5) - the same computation `serialize._keywords_of` makes for
+    display; see `_current_power_toughness`'s docstring for why it is
+    duplicated here rather than imported."""
+    printed = state.keywords
+    if state.zone is not Zone.BATTLEFIELD:
+        return tuple(printed)
+    characteristics = game.characteristics_of(state)
+    vocabulary = [keyword.value for keyword in Keyword] + list(printed)
+    return tuple(sorted(keywords_in_lines(list(characteristics.abilities), vocabulary)))
+
+
 def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
     """One card's own observable state, identity included (CR 400.7) - see
-    `_resolution_state`."""
+    `_resolution_state`.
+
+    Power, toughness and keywords are computed (`_current_power_toughness`/
+    `_current_keywords`), not read off the printed card: an until-end-of-turn
+    pump (Craterhoof Behemoth's trigger, a prowess trigger, Mutagenic Growth)
+    touches none of the other fields here - no zone move, no tap, no counter,
+    no attachment - so without these two a resolution that only grew every
+    creature on the board read as `changed: false` (battle-7, B7-11)."""
+    power, toughness = _current_power_toughness(game, state)
     return (
         str(state.zone_change_stamp),
         state.tapped,
@@ -220,6 +276,9 @@ def _card_fingerprint(state: CardState, game: Game) -> tuple[Any, ...]:
         state.damage,
         tuple(sorted(state.counters.root.items())),
         state.attachment,
+        power,
+        toughness,
+        _current_keywords(game, state),
     )
 
 
