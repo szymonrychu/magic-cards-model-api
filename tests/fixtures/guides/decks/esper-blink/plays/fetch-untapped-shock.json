@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-untapped-shock",
   "name": "Crack a fetch for an untapped shockland when no Plains is up",
-  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland carrying Plains (white for Phelia and Ephemerate) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Plains is up, fetch-untapped-shock-second-color checks Swamp. It prefers a shock with Plains, then a basic Plains, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3, and only while a shock with Plains is still in my library. With Plains, Swamp and Island all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Boggart Bog, the land face of Boggart Trawler, and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
+  "intent": "Crack Flooded Strand, Marsh Flats or Polluted Delta on my precombat main for an untapped shockland carrying Plains (white for Phelia and Ephemerate) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Plains is up, fetch-untapped-shock-second-color checks Swamp. It prefers a shock with Plains, then a basic Plains, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3, and only while a shock with Plains is still in my library. With Plains, Swamp and Island all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Boggart Bog, the land face of Boggart Trawler, and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics. When both Godless Shrine and Hallowed Fountain are still in the library, both carry Plains and tie for the first preference below; it breaks that tie toward Godless Shrine, since Swamp is the deck's second colour (fetch-untapped-shock-second-color checks it next) and Island only the third.",
   "priority": 60,
   "opposing_archetypes": [
     "*"
@@ -113,6 +113,9 @@
                 "subtypes_any": [
                   "Plains"
                 ]
+              },
+              {
+                "oracle_has": "{B}"
               },
               {
                 "supertypes_any": [

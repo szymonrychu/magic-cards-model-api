@@ -95,14 +95,13 @@
             "count": 1,
             "prefer": [
               {
-                "subtypes_any": [
-                  "Island"
-                ]
+                "oracle_has": "{G} or {U}"
               },
               {
-                "subtypes_any": [
-                  "Forest"
-                ]
+                "oracle_has": "{U} or {R}"
+              },
+              {
+                "oracle_has": "{R} or {G}"
               }
             ]
           }

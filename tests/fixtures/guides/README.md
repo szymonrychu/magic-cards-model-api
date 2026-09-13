@@ -1,7 +1,7 @@
 # Vendored slice of the deck-guides corpus
 
-Copied verbatim from `github.com/szymonrychu/mtg-decks` at commit `67f9663`
-(`67f966305c3d0c39b6ca166c7aa1e429ee6a7ccf`), the same corpus a seat Job
+Copied verbatim from `github.com/szymonrychu/mtg-decks` at commit `3772971`
+(`3772971c530309dbd79efbbd856e45b19e1e3da3`), the same corpus a seat Job
 clones to `/guides`. That commit is on the mtg-decks **`script-dsl`
 integration branch**, not on `main`: it carries the play scripts that are
 not on mtg-decks `main` yet, so the pin names the
@@ -10,9 +10,13 @@ that carries it at the next refresh after. Not hand-written and not
 trimmed: `tests/driver/test_matchup_card.py` asserts a byte budget on what
 `matchup_card.render_matchup_card` produces, and a budget measured against an
 approximation of the input is worth nothing. Every file the previous pin
-(`9aff048`) vendored outside `plays/` is byte-identical at `67f9663`; the
-refresh re-copied the sixteen plays that changed and added twenty new ones,
-in both slices.
+(`67f9663`) vendored outside `plays/` is byte-identical at `3772971`
+except `devoted-combo/archetype.json` (a wording fix to the combo's `why`,
+naming Vizier of Remedies as the counter-stopper and dropping the Tyvar
+claim); the refresh re-copied the twenty-four plays that changed and
+replaced each tron deck's three `map-for-tron-*` plays with one
+`map-for-tron-missing-piece` play, a net four fewer plays (45 -> 41), in
+both slices.
 
 What is here, and why only this much:
 
@@ -53,15 +57,15 @@ What is here, and why only this much:
   corpus is in the slice (`living-end/.../matchups/devoted-combo.json`, 28492
   bytes), which is where that prose's "28 KB at the largest" comes from.
 - `decks/*/plays/*.json` - **every play script in the corpus**, for every
-  deck that has any (all thirteen at `67f9663`, 45 plays), including the
+  deck that has any (all thirteen at `3772971`, 41 plays), including the
   seven decks that are otherwise only an `archetype.json` here. Plays are
   part of the slice so `mcp-seat plays check --root tests/fixtures/guides`
-  lints the real corpus rather than a hand-built root; at `67f9663` it
-  reports 45 plays in 13 decks with zero errors and zero warnings.
+  lints the real corpus rather than a hand-built root; at `3772971` it
+  reports 41 plays in 13 decks with zero errors and zero warnings.
   `tests/test_playscript_end_to_end.py` also registers these plays through
   the API and runs every one of them against the real engine.
 - `decks/*/plays/inputs.json` - part of the slice wherever a deck declares
-  one. No deck does at `67f9663`, so none is vendored; a refresh copies each
+  one. No deck does at `3772971`, so none is vendored; a refresh copies each
   one that appears.
 - `meta/card-data.json` - the card index the play lint's name and phrase rules
   read from the guides root. Without it `plays check` cannot run over this
@@ -70,12 +74,13 @@ What is here, and why only this much:
 ## What the card actually renders to
 
 Measured with the code at this commit, over **all thirteen** guides of
-`git archive 67f9663`, and quoted for the corpus root at `~/Documents/mtg-decks`
+`git archive 3772971`, and quoted for the corpus root at `~/Documents/mtg-decks`
 (`/Users/szymonri/Documents/mtg-decks`; the archive was extracted elsewhere and
 its raw figures shifted by twice the difference in root length, the relation
 `test_a_raw_card_size_moves_by_exactly_twice_the_corpus_root` pins). Both tables
 were re-measured at this pin and every figure is unchanged from the previous
-one: the refresh changed only plays, which the card does not read. None of the thirteen is truncated and
+one: the refresh changed only plays and one archetype.json wording fix,
+neither of which the card reads. None of the thirteen is truncated and
 none loses a field; the hard cap is 12288 bytes.
 
 | guide | boarding plan | rendered card |

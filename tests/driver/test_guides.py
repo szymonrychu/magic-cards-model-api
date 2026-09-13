@@ -42,7 +42,7 @@ from mtg_agent.driver.guides import (
 #: github.com/szymonrychu/mtg-decks, the commit the fixtures under
 #: `fixtures/mtg-decks/` were copied from. Grep for it there to see exactly
 #: which signatures this suite is pinned to.
-MTG_DECKS_SHA = "67f966305c3d0c39b6ca166c7aa1e429ee6a7ccf"
+MTG_DECKS_SHA = "3772971c530309dbd79efbbd856e45b19e1e3da3"
 
 #: The vendored corpus: `<slug>/archetype.json` + `<slug>/decklist.txt`.
 CORPUS = Path(__file__).resolve().parent / "fixtures" / "mtg-decks"
@@ -927,7 +927,7 @@ def test_a_deck_guide_locates_and_loads_its_plays(tmp_path):
     assert guide.plays_dir == deck / "plays"
     corpus = guide.plays()
     assert sorted(script["id"] for script in corpus.scripts) == _fixture_play_ids("eldrazi-tron")
-    assert len(corpus.scripts) == 3
+    assert len(corpus.scripts) == 1
     assert corpus.notices == ()
 
 

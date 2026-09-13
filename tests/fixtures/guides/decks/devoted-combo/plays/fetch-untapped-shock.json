@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fetch-untapped-shock",
   "name": "Crack a fetch for an untapped shockland when no Forest is up",
-  "intent": "Crack Misty Rainforest, Verdant Catacombs, Windswept Heath or Wooded Foothills on my precombat main for an untapped shockland carrying Forest (green for nearly every spell) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Forest is up, fetch-untapped-shock-second-color checks Swamp. It prefers a shock with Forest, then a basic Forest, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3, and only while a shock with Forest is still in my library. With Forest, Swamp and Plains all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Boseiju, Nurturing Peatland, Birds of Paradise, Delighted Halfling and Leyline of Abundance and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics.",
+  "intent": "Crack Misty Rainforest, Verdant Catacombs, Windswept Heath or Wooded Foothills on my precombat main for an untapped shockland carrying Forest (green for nearly every spell) when no untapped land of mine carries that type, paying 2 life because that colour is actually missing. If Forest is up, fetch-untapped-shock-second-color checks Swamp. It prefers a shock with Forest, then a basic Forest, then any basic, so with no such shock in reach it takes a free basic rather than paying for a colour that is up. Only at 8 life or more, because the fetch plus the shock costs 3, and only while a shock with Forest is still in my library. With Forest, Swamp and Plains all up no fetch play fires: every colour a shock would give is already available, and fetching a basic or holding the fetch is the pilot's call. Limits: a colour counts as up only from an untapped land with its basic land type, so Boseiju, Nurturing Peatland, Birds of Paradise, Delighted Halfling and Leyline of Abundance and mana creatures are not seen, and this can pay for a colour they already make; one play cannot say that any one of several colours is missing, hence one play per colour; and a library count cannot tell which fetch gets cracked, which is why the pick falls back to basics. When both Overgrown Tomb and Temple Garden are still in the library, both carry Forest and tie for the first preference below; it breaks that tie toward Overgrown Tomb, since Swamp is the deck's second colour (fetch-untapped-shock-second-color checks it next, for four copies of Tyvar, Jubilant Brawler) and Plains is only the third, a singleton Vizier of Remedies.",
   "priority": 60,
   "opposing_archetypes": [
     "*"
@@ -113,6 +113,9 @@
                 "subtypes_any": [
                   "Forest"
                 ]
+              },
+              {
+                "oracle_has": "{B}"
               },
               {
                 "supertypes_any": [
