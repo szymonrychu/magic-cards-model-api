@@ -12,7 +12,15 @@ write` for the deck, `check` for it (`gate_failed` on either, the generated
 files put back), a commit of the edit and the regenerated guides with the
 admit identity and `Game-Id` trailer, a push of the branch (never main, never
 forced) and a pull request through the GitHub REST API. The clone returns to
-an untouched main; merging is mtg-decks automerge's call, on full CI.
+an untouched main.
+
+mtg-decks is a private repo with no GitHub Actions budget, so its `ci` and
+`automerge` workflows never run there: the pull request sits
+`awaiting_owner_review` until the owner reviews and merges it by hand. This
+command returns the moment the PR is open - it never polls for checks,
+automerge, or merge state, and the guide edit is not live until the owner
+merges it. Play scripts are unaffected: `mcp-seat plays admit` still pushes
+straight to mtg-decks main after the in-pod gate.
 """
 
 from __future__ import annotations
@@ -186,9 +194,14 @@ def _publish(git: Git, deck: str, game_id: str, branch: str) -> dict[str, Any]:
         branch,
         f"Guides: {deck} after game {game_id}",
         "A matchup play_plan / notes edit with its regenerated guides, from "
-        "`mcp-seat guides propose`. Merging is left to automerge on full CI.\n\n"
+        "`mcp-seat guides propose`. mtg-decks has no CI budget, so please "
+        "review and merge this by hand.\n\n"
         f"Game-Id: {game_id}\n",
     )
     return result(
-        "pr_opened", f"opened a pull request from {branch}", pr_url=url, branch=branch, sha=sha
+        "awaiting_owner_review",
+        f"opened a pull request from {branch}; the owner merges it by hand",
+        pr_url=url,
+        branch=branch,
+        sha=sha,
     )

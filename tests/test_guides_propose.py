@@ -1,6 +1,10 @@
 """`mcp-seat guides propose`: a seat's matchup play_plan / notes edit and its
 NOTES.md become regenerated guides on a pushed branch and a pull request,
-never a push to main - mtg-decks' automerge merges it on full CI.
+never a push to main. mtg-decks is private with no GitHub Actions budget, so
+its `ci` and `automerge` workflows never run there; the pull request sits
+`awaiting_owner_review` until the owner merges it by hand, and this command
+never polls for its checks or merge state - it returns the moment the PR is
+open.
 
 Runs against a tmp bare repo and a fake GitHub REST server
 (`guides_git_testkit`).
@@ -94,7 +98,7 @@ def test_render_runs_and_the_generated_guides_are_committed_on_a_pr_branch(
     (root / NOTES).write_text("# notes\n- the frog is a race\n", encoding="utf-8")
 
     rc, result, out, err = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "pr_opened"), result
+    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
     assert result["pr_url"] == f"https://github.com/{REPO}/pull/1"
     assert result["branch"] == BRANCH
 
@@ -113,6 +117,11 @@ def test_render_runs_and_the_generated_guides_are_committed_on_a_pr_branch(
     (pull,) = github.pulls()
     assert (pull["body"]["head"], pull["body"]["base"]) == (BRANCH, "main")
     assert pull["headers"]["authorization"] == f"Bearer {TOKEN}"
+    # The PR body sends merging to a human - mtg-decks has no CI/automerge to
+    # rely on - and the command never polls the fake server for anything else.
+    assert "automerge" not in pull["body"]["body"].lower()
+    assert "review and merge this by hand" in pull["body"]["body"].lower()
+    assert len(github.requests) == 1
     # The clone is back on an untouched main; the change lives on the branch.
     assert git(root, "symbolic-ref", "--short", "HEAD") == "main"
     assert git(root, "rev-parse", "HEAD") == main_before
@@ -127,7 +136,7 @@ def test_render_runs_and_the_generated_guides_are_committed_on_a_pr_branch(
 def test_notes_md_alone_is_proposed(capsys, root, bare, render_log):
     (root / NOTES).write_text("# notes\n- new\n", encoding="utf-8")
     rc, result, _, _ = propose(capsys, root)
-    assert (rc, result["result"]) == (0, "pr_opened"), result
+    assert (rc, result["result"]) == (0, "awaiting_owner_review"), result
     assert git(bare, "diff", "--name-only", "main", BRANCH).splitlines() == [NOTES]
 
 
