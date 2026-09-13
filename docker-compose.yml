@@ -219,12 +219,11 @@ services:
       - GAME_API=http://game:8000
       - WRAPPER_API=http://agent:8080
       - DRIVER_SELF_URL=http://driver:8090
-      # Also where the driver reads the guides corpus revision from. There
-      # is no `.guides-revision` stamp here - that is written by
-      # `deploy/guides-clone.sh` itself, both for the kubernetes `guides`
-      # initContainer (`deploy/seat-job.yaml`) and for `guides-init` below -
-      # so the driver reads it out of the `agent-guides` checkout's own
-      # `.git`. See `mtg_agent/driver/revision.py`.
+      # Also where the driver reads the guides corpus revision from: the
+      # `.guides-revision` stamp `deploy/guides-clone.sh` writes, the same
+      # for `guides-init` below as for the kubernetes `guides` initContainer
+      # (`deploy/seat-job.yaml`), with the checkout's own `.git` as the
+      # fallback. See `mtg_agent/driver/revision.py`.
       - GUIDES_ROOT=/guides
       - MEMORY_ROOT=/workspace/memory
       - DRIVER_WORKSPACE=/driver-workspace
