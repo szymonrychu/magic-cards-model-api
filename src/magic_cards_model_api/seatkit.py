@@ -233,9 +233,10 @@ PROTOCOL_VERSION = "seatkit-18"
 #: `run_script` runs one registered script with `playscripts.runtime` and
 #: answers like an action: the narrowed board plus `script_exit` - `exit`,
 #: `script`, `moves_done`, `moves_total`, and only the typed fields the exit
-#: set (`failing_condition`, `stop_reason`, `refusal`, `resume` for a run the
-#: time cap cut off, ...). `list_scripts` judges every registered script
-#: against the board without running it, by priority, with its conflicts.
+#: set (`failing_condition`, `stop_reason`, `refusal`, `invalid_input` for an
+#: `invalid_input` exit, `resume` for a run the time cap cut off, ...).
+#: `list_scripts` judges every registered script against the board without
+#: running it, by priority, with its conflicts.
 #: No existing tool's request or response moved; a seatkit-17 process simply
 #: does not advertise either tool, and the PROTOCOL MISMATCH sentence says so
 #: before a seat ever calls one.

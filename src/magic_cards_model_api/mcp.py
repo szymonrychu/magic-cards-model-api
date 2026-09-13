@@ -2285,7 +2285,9 @@ def build_server(seats: Seats) -> MCPServer:
         and no next script applies), `not_applicable` (with
         `failing_condition`: the `list` and `index` that stopped it and what
         it `seen`), `needs_input` (a required input is missing, named in
-        `needs_input`), `unforeseen` (with `stop_reason`), `interrupted`
+        `needs_input`), `invalid_input` (a supplied input is not a value the
+        deck declares, with `invalid_input`: its `name`, `value` and
+        `reason`), `unforeseen` (with `stop_reason`), `interrupted`
         (someone else acted), `ambiguous` (two cards or two next scripts
         tie), `refused` (with `refusal`, the server's or the runner's words),
         `stale`, `unknown_outcome`, `needs_plan` (call `declare_plan`
