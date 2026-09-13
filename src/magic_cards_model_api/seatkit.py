@@ -833,9 +833,11 @@ DRY_RUN_SHAPES = frozenset(
 #: ways of *saying* something about a game rather than doing something to it,
 #: and the server already decides which of them an advisor may use: `/advice`
 #: is advise mode's own channel (proposing through it must not recurse),
-#: `/report` files a problem, and `/plan`/`/reflection` are seat-only - their
-#: own refusal is the honest answer to give, not a proposal dressed up as one.
-ADVISE_PASSTHROUGH_SUFFIXES = ("/advice", "/report", "/plan", "/reflection")
+#: `/report` files a problem, `/plan`/`/reflection` are seat-only - their
+#: own refusal is the honest answer to give, not a proposal dressed up as one -
+#: and `/script-runs` is the play-script runner reporting a buddy's advise run
+#: (`game_access.ADVISOR_POST_SUFFIXES` lets an advisor post it).
+ADVISE_PASSTHROUGH_SUFFIXES = ("/advice", "/report", "/plan", "/reflection", "/script-runs")
 
 #: Why an advise `Seat` cannot run an auto-pass. A `pass_until` run gives up
 #: priority over and over until a named point in the turn - which is not
@@ -1461,6 +1463,13 @@ class Seats:
         #: long as `_by_uid` does - the cross-call watermark `block_until_wake`
         #: needs, since a `Seat` itself is remade fresh on every call.
         self._wake_signatures: dict[str, Any] = {}
+        #: `(game_id, uid)` -> the play-script corpus that uid registered
+        #: (`GET /api/games/{id}/seats/{uid}/scripts`), read once by
+        #: `playscripts.runtime` and handed to it by reference. It lives here
+        #: and never on a `Seat` for the same reason `_wake_signatures` does:
+        #: `seat_for` mints a fresh `Seat` on every tool call. Keyed by game
+        #: too, because a uid is only ever valid inside the game it opens.
+        self.script_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         #: 2b T11: the http transport is one long-running process that may
         #: serve several concurrently-live games at once - "the one live
         #: game" (`game_id()` below) stops being a coherent idea for it, and
@@ -2159,6 +2168,7 @@ def run_action(
     hold_priority: bool = False,
     release: bool = True,
     reasoning: str | None = None,
+    include_actions: bool = True,
 ) -> dict[str, Any]:
     """Do one action, then behave the way both transports promise: unless
     told to hold, release priority, then check once for this seat's next
@@ -2209,6 +2219,10 @@ def run_action(
     the same string through here that the tool call itself gave, so an agent
     seat's auto-release never gets refused with a 422 for a reasoning field
     nothing here would know how to fill in honestly.
+
+    `include_actions=False` leaves `available_actions` out of every answer:
+    the play-script runner builds its request bodies from the state view and
+    never pays for the enumeration (design D1).
     """
     before = seat.fetch_state()
     # Read by `answered` below, and set here rather than beside the retry
@@ -2224,12 +2238,10 @@ def run_action(
         the state the action left behind, this seat's legal actions in it,
         and the tail of what has actually happened (`recent_log` - see
         `Seat.recent_log`)."""
-        answer = {
-            **fields,
-            "state": state,
-            "available_actions": available_actions(seat, state),
-            "recent_log": seat.recent_log(),
-        }
+        answer = {**fields, "state": state}
+        if include_actions:
+            answer["available_actions"] = available_actions(seat, state)
+        answer["recent_log"] = seat.recent_log()
         if stale_retry:
             # P4, and only when it happened: this action was refused as
             # stale once and re-sent against a freshly read board. A reader
@@ -2787,6 +2799,7 @@ def pass_until(
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
     max_seconds: float = 0.0,
+    include_actions: bool = True,
 ) -> dict[str, Any]:
     """`_pass_until_once` (below), optionally ridden out across a bounded wait
     rather than handed straight back the first time it would otherwise have
@@ -2806,6 +2819,9 @@ def pass_until(
     the board*, and retrying it automatically would spend the whole bound
     re-hitting the same cap instead.
 
+    `include_actions=False` leaves `available_actions` out of the answer, as
+    `run_action`'s own switch does, for the play-script runner.
+
     The owner's problem this exists for: `wait_for_priority`'s own bounded
     wait (`block_until_wake`) covers the space between a seat's own actions,
     but a `pass_until` run handed back specifically because it is waiting on
@@ -2819,15 +2835,17 @@ def pass_until(
         # `ADVISE_NO_PASS_UNTIL`. The answer keeps `_pass_until_once`'s own
         # shape so a caller reads this refusal the one way it already knows.
         state = seat.fetch_state()
-        return {
+        refused = {
             "stopped_because": ADVISE_NO_PASS_UNTIL,
             "passes": 0,
             "finished": True,
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
-            "available_actions": available_actions(seat, state),
-            "recent_log": seat.recent_log(),
         }
+        if include_actions:
+            refused["available_actions"] = available_actions(seat, state)
+        refused["recent_log"] = seat.recent_log()
+        return refused
     max_seconds = max(0.0, min(max_seconds, MAX_WAIT_SECONDS))
     deadline = time.monotonic() + max_seconds
     kwargs: dict[str, Any] = {
@@ -2837,6 +2855,7 @@ def pass_until(
         "stop_when_attacked": stop_when_attacked,
         "stop_when_you_can_attack": stop_when_you_can_attack,
         "reasoning": reasoning,
+        "include_actions": include_actions,
     }
     result = _pass_until_once(seat, resume=resume, **kwargs)
     while not result["finished"] and result.get("retryable", False) and time.monotonic() < deadline:
@@ -2856,6 +2875,7 @@ def _pass_until_once(
     stop_when_you_can_attack: bool = True,
     resume: dict[str, Any] | None = None,
     reasoning: str | None = None,
+    include_actions: bool = True,
 ) -> dict[str, Any]:
     """Pass every priority this seat is *currently* able to pass, up to a named
     point in the turn - then return. Never sleeps, never waits for the
@@ -2939,7 +2959,10 @@ def _pass_until_once(
             "finished": finished,
             "until": {"step": until_step, "whose_turn": whose_turn},
             "state": state,
-            "available_actions": available_actions(seat, state),
+        }
+        if include_actions:
+            result["available_actions"] = available_actions(seat, state)
+        result |= {
             # A run crosses windows this seat never looks at, so it is the
             # tool with the most to say about what happened while it was not
             # watching - and until this it said none of it, leaving the seat
